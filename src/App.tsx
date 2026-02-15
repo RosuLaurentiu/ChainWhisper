@@ -3034,11 +3034,19 @@ export default function App() {
                   className={isActive ? 'contact-card active' : 'contact-card'}
                   role="button"
                   tabIndex={0}
-                  onClick={() => setActiveContact(contact.address)}
+                  onClick={() => {
+                    setActiveContact(contact.address);
+                    if (isMobileNav) {
+                      setActiveMobileView('chat');
+                    }
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       setActiveContact(contact.address);
+                      if (isMobileNav) {
+                        setActiveMobileView('chat');
+                      }
                     }
                   }}
                 >
