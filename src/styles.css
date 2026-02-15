@@ -518,6 +518,45 @@ body {
   border-radius: 4px;
 }
 
+.contact-chat-icon {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.contact-chat-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.sound-toggle-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.sound-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sound-toggle-btn[aria-pressed="true"] {
+  background: #e6f7e6;
+  color: #0a8a00;
+  border-color: #0a8a00;
+  box-shadow: 0 2px 6px rgba(10, 138, 0, 0.12);
+}
+.sound-toggle-btn[aria-pressed="false"] {
+  opacity: 0.9;
+  color: var(--muted);
+}
+
 .contact-copy-primary {
   color: var(--text);
   font-size: 0.92rem;

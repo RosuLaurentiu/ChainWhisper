@@ -1172,6 +1172,109 @@ export default function App() {
   const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [messageInput, setMessageInput] = useState('');
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
+  const UNREAD_STORAGE_KEY = 'coti-chat-unread';
+  const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(UNREAD_STORAGE_KEY) : null;
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, boolean>;
+      const normalized: Record<string, boolean> = {};
+      for (const k of Object.keys(parsed)) {
+        normalized[k.toLowerCase()] = Boolean(parsed[k]);
+      }
+      return normalized;
+    } catch {
+      return {};
+    }
+  });
+  const prevLastMessageIdRef = useRef<Record<string, string | null>>({});
+  const SOUND_ENABLED_STORAGE_KEY = 'coti-chat-sound-enabled';
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(SOUND_ENABLED_STORAGE_KEY) : null;
+      return raw === null ? true : raw === 'true';
+    } catch {
+      return true;
+    }
+  });
+  const NOTIF_SOUND_URL: string | null = (() => {
+    try {
+      return new URL('./lib/mixkit-long-pop-2358.wav', import.meta.url).href;
+    } catch {
+      return null;
+    }
+  })();
+  const audioUrlRef = useRef<string | null>(NOTIF_SOUND_URL);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+
+  const initPersistentAudio = () => {
+    try {
+      if (audioElRef.current) return;
+      const uri = audioUrlRef.current ?? NOTIF_SOUND_URL ?? null;
+      if (!uri) return;
+      audioUrlRef.current = uri;
+      const a = new Audio(uri);
+      a.preload = 'auto';
+      a.volume = 1;
+      a.loop = false;
+      audioElRef.current = a;
+      void a.play().catch(() => {});
+    } catch {}
+  };
+
+  const showDesktopNotification = (title: string, body?: string, tag?: string) => {
+    try {
+      if (typeof window === 'undefined' || !('Notification' in window)) return;
+      if (Notification.permission !== 'granted') return;
+      const n = new Notification(title, {
+        body: body ?? '',
+        tag: tag,
+        renotify: true
+      });
+      n.onclick = () => {
+        try {
+          window.focus();
+          n.close();
+        } catch {}
+      };
+    } catch {}
+  };
+
+  const ensureNotificationPermission = () => {
+    try {
+      if (typeof window === 'undefined' || !('Notification' in window)) return;
+      if (Notification.permission === 'default') {
+        // request permission on user gesture when enabling sounds
+        void Notification.requestPermission().catch(() => {});
+      }
+    } catch {}
+  };
+  const suppressSoundOnConnectRef = useRef<boolean>(false);
+
+  const playNotificationSound = () => {
+    if (!soundEnabled) return;
+    try {
+      initPersistentAudio();
+      const a = audioElRef.current;
+      if (!a) return;
+      try {
+        a.currentTime = 0;
+      } catch {}
+      const p = a.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          // retry once after a short delay
+          try {
+            setTimeout(() => {
+              try {
+                if (audioElRef.current) audioElRef.current.play().catch(() => {});
+              } catch {}
+            }, 200);
+          } catch {}
+        });
+      }
+    } catch {}
+  };
   const [sending, setSending] = useState(false);
   const [syncingHistory, setSyncingHistory] = useState(false);
   const [deepSyncingHistory, setDeepSyncingHistory] = useState(false);
@@ -1208,6 +1311,126 @@ export default function App() {
   const pendingSyncOptionsRef = useRef<SyncConversationOptions | null>(null);
   const previousWalletAddressRef = useRef<string>('');
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(UNREAD_STORAGE_KEY, JSON.stringify(unreadMap));
+    } catch {}
+  }, [unreadMap]);
+
+  useEffect(() => {
+    const prev = prevLastMessageIdRef.current || {};
+    const next = messagesByContact || {};
+    let updated: Record<string, boolean> | null = null;
+
+    // If we have no previous snapshot, initialize it from current messages
+    // and do not mark existing messages as unread (prevents marking on first load/connect).
+    if (Object.keys(prev).length === 0 && Object.keys(next).length > 0) {
+      for (const rawContact of Object.keys(next)) {
+        const msgs = next[rawContact] || [];
+        prev[rawContact.toLowerCase()] = msgs.length ? msgs[msgs.length - 1].id : null;
+      }
+      prevLastMessageIdRef.current = prev;
+      return;
+    }
+
+    for (const rawContact of Object.keys(next)) {
+      const contact = rawContact.toLowerCase();
+      const msgs = next[rawContact] || [];
+      const last = msgs.length ? msgs[msgs.length - 1].id : null;
+      const prevLast = prev[contact] ?? null;
+
+      if (last && last !== prevLast) {
+        const startIndex = prevLast ? msgs.findIndex((m) => m.id === prevLast) : -1;
+        const newMsgs = startIndex >= 0 ? msgs.slice(startIndex + 1) : msgs;
+        if (newMsgs.some((m) => m.direction === 'incoming')) {
+          const isActive = contact === (activeContact ?? '').toLowerCase();
+          const pageVisible = typeof document !== 'undefined' && !document.hidden && (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+
+          if (isActive) {
+            // If user is viewing the chat but the page is not visible/focused,
+            // treat incoming messages as unread so we can play the sound and
+            // surface an indicator. If the page is visible and focused, keep as read.
+            if (!pageVisible) {
+              updated = updated || { ...unreadMap };
+              updated[contact] = true;
+            }
+          } else {
+            if (!unreadMap[contact]) {
+              updated = updated || { ...unreadMap };
+              updated[contact] = true;
+            }
+          }
+        }
+      }
+
+      prev[contact] = last;
+    }
+
+    if (updated) {
+      setUnreadMap(updated);
+    }
+
+    prevLastMessageIdRef.current = prev;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messagesByContact, activeContact]);
+
+  useEffect(() => {
+    if (!activeContact) return;
+    const key = activeContact.toLowerCase();
+    const pageVisible = typeof document !== 'undefined' && !document.hidden && (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+    if (!pageVisible) return; // don't mark as read if page/tab isn't visible/focused
+    setUnreadMap((prev) => {
+      if (!prev[key]) return prev;
+      const copy = { ...prev };
+      delete copy[key];
+      return copy;
+    });
+  }, [activeContact]);
+
+  const prevUnreadRef = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    const prev = prevUnreadRef.current || {};
+    const next = unreadMap || {};
+    for (const k of Object.keys(next)) {
+      if (next[k] && !prev[k]) {
+        if (!suppressSoundOnConnectRef.current) {
+          // If page is hidden, prefer desktop notification (system) which may play a sound.
+          try {
+            if (typeof document !== 'undefined' && document.hidden) {
+              // attempt to show desktop notification; fall back to audio
+              const contactKey = k;
+              const contactName = (contacts.find((c) => c.address.toLowerCase() === contactKey)?.name) || contactKey;
+              showDesktopNotification(contactName, 'New message');
+              // still try to play audio as well
+              playNotificationSound();
+            } else {
+              playNotificationSound();
+            }
+          } catch {
+            playNotificationSound();
+          }
+        }
+        break;
+      }
+    }
+    prevUnreadRef.current = { ...next };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unreadMap, soundEnabled]);
+
+  useEffect(() => {
+    const prev = previousWalletAddressRef.current || '';
+    const next = (walletAddress || '').trim();
+    if (!prev && next) {
+      // user just connected a wallet; suppress immediate notification sound briefly
+      suppressSoundOnConnectRef.current = true;
+      setTimeout(() => {
+        suppressSoundOnConnectRef.current = false;
+      }, 1200);
+    }
+    previousWalletAddressRef.current = next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress]);
   const oldestLoadedBlockByContactRef = useRef<Record<string, number>>({});
   const hasOlderHistoryByContactRef = useRef<Record<string, boolean>>({});
   const loadingOlderHistoryRef = useRef(false);
@@ -3933,6 +4156,82 @@ export default function App() {
           >
             ☰
           </button>
+          <button
+            type="button"
+            className="sound-toggle-btn"
+            onClick={() => {
+              setSoundEnabled((prev) => {
+                const next = !prev;
+                try {
+                  localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, String(next));
+                } catch {}
+                if (next) {
+                  // user gesture: initialize persistent audio and play once to unlock
+                  try {
+                    initPersistentAudio();
+                    ensureNotificationPermission();
+                  } catch {}
+                } else {
+                  // disable: revoke any persistent audio URL
+                  try {
+                    if (audioUrlRef.current) {
+                      try {
+                        if (audioUrlRef.current.startsWith('blob:')) {
+                          URL.revokeObjectURL(audioUrlRef.current);
+                        }
+                      } catch {}
+                      audioUrlRef.current = null;
+                    }
+                    if (audioElRef.current) {
+                      audioElRef.current.pause();
+                      audioElRef.current.src = '';
+                      audioElRef.current = null;
+                    }
+                  } catch {}
+                }
+                return next;
+              });
+            }}
+            title={soundEnabled ? 'Disable sound' : 'Enable sound'}
+            aria-pressed={soundEnabled}
+            style={{ marginLeft: 8 }}
+          >
+            {soundEnabled ? (
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+                <path fill="currentColor" d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h16v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+                <path fill="currentColor" d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h9.17l3.7 3.7 1.41-1.41L7.41 4 6 5.41 16.59 16H18v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z" />
+              </svg>
+            )}
+          </button>
+          {typeof window !== 'undefined' && window.location.search.includes('debug') ? (
+            <button
+              type="button"
+              className="sound-toggle-btn"
+              onClick={() => {
+                // simulate an incoming message for testing
+                const contactsList = contacts.length ? contacts : [];
+                const target = contactsList[0]?.address ?? activeContact ?? '0x' + Math.random().toString(16).slice(2, 10);
+                const key = target.toLowerCase();
+                const nowId = `sim-${Date.now()}-${Math.random().toString(16).slice(2,6)}`;
+                const msg: ChatMessage = { id: nowId, direction: 'incoming', text: 'Simulated incoming', timestamp: Math.floor(Date.now() / 1000) };
+                setMessagesByContact((prev) => {
+                  const copy = { ...prev };
+                  const arr = (copy[key] ?? []).slice();
+                  arr.push(msg);
+                  copy[key] = arr;
+                  return copy;
+                });
+              }}
+              title="Simulate incoming message (debug)"
+              style={{ marginLeft: 6 }}
+            >
+              🧪
+            </button>
+          ) : null}
+          
         </div>
         <nav
           id="top-navigation-links-desktop"
@@ -4274,6 +4573,15 @@ export default function App() {
                   tabIndex={0}
                   onClick={() => {
                     setActiveContact(contact.address);
+                    try {
+                      const key = contact.address.toLowerCase();
+                      setUnreadMap((prev) => {
+                        if (!prev[key]) return prev;
+                        const copy = { ...prev };
+                        delete copy[key];
+                        return copy;
+                      });
+                    } catch {}
                     if (isMobileNav) {
                       setActiveMobileView('chat');
                     }
@@ -4282,6 +4590,15 @@ export default function App() {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       setActiveContact(contact.address);
+                      try {
+                        const key = contact.address.toLowerCase();
+                        setUnreadMap((prev) => {
+                          if (!prev[key]) return prev;
+                          const copy = { ...prev };
+                          delete copy[key];
+                          return copy;
+                        });
+                      } catch {}
                       if (isMobileNav) {
                         setActiveMobileView('chat');
                       }
@@ -4320,8 +4637,15 @@ export default function App() {
                       )}
                     </div>
                     {hasConversation ? (
-                      <span aria-label="Has conversation" title="Has conversation">
-                        💬
+                      <span
+                        className="contact-chat-icon"
+                        aria-label={unreadMap[contact.address.toLowerCase()] ? 'Unread messages' : 'Has conversation'}
+                        title={unreadMap[contact.address.toLowerCase()] ? 'Unread messages' : 'Has conversation'}
+                        style={{ marginRight: 6, color: unreadMap[contact.address.toLowerCase()] ? '#e33' : undefined }}
+                      >
+                        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+                          <path fill="currentColor" d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z" />
+                        </svg>
                       </span>
                     ) : null}
                     {!isEditing ? (
@@ -4420,7 +4744,22 @@ export default function App() {
               </button>
             </div>
 
-            <div className="chat-messages" ref={chatMessagesRef}>
+            <div
+              className="chat-messages"
+              ref={chatMessagesRef}
+              onClick={() => {
+                try {
+                  if (!activeContact) return;
+                  const key = activeContact.toLowerCase();
+                  setUnreadMap((prev) => {
+                    if (!prev[key]) return prev;
+                    const copy = { ...prev };
+                    delete copy[key];
+                    return copy;
+                  });
+                } catch {}
+              }}
+            >
               {loadingOlderHistory ? <p className="chat-empty">Loading older messages...</p> : null}
               {activeMessages.length === 0 ? (
                 <p className="chat-empty">No messages yet.</p>
