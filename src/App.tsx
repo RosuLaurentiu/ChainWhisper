@@ -1138,6 +1138,8 @@ const getMessageDisplayText = (text: string): string => {
 
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
+    // Telegram bot link
+    const telegramBotLink = 'https://t.me/CipherTrade_bot';
   const [contacts, setContacts] = useState<Contact[]>(() => loadStoredContacts());
   const [newContact, setNewContact] = useState('');
   const [newContactName, setNewContactName] = useState('');
@@ -2232,20 +2234,37 @@ export default function App() {
 
     const snapshotContacts = normalizeContactsForBackup(payload.contacts);
     const snapshotNickname = payload.nickname.slice(0, 42);
+    const snapshotContactsByKey = new Map<string, Contact>();
+    for (const contact of snapshotContacts) {
+      snapshotContactsByKey.set(contact.address.toLowerCase(), contact);
+    }
 
-    setContacts(() =>
-      snapshotContacts.map((contact) => {
+    setContacts((previous) => {
+      const merged = mergeUniqueContacts(
+        previous,
+        snapshotContacts.map((contact) => contact.address)
+      );
+
+      return merged.map((contact) => {
         const key = contact.address.toLowerCase();
-        const snapshotName = normalizeContactName(contact.name ?? '');
+        const snapshotName = normalizeContactName(snapshotContactsByKey.get(key)?.name ?? '');
+        const existingName = normalizeContactName(contact.name ?? '');
         const discoveredName = normalizeContactName(discoveredNicknames?.get(key) ?? '');
-        const name = snapshotName ?? discoveredName;
+        const name = snapshotName ?? existingName ?? discoveredName;
+
+        if (!name) {
+          return {
+            ...contact,
+            name: undefined
+          };
+        }
 
         return {
-          address: contact.address,
+          ...contact,
           name
         };
-      })
-    );
+      });
+    });
 
     setMyNickname(snapshotNickname);
     lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
@@ -2489,7 +2508,33 @@ export default function App() {
         contract.queryFilter(incomingFilter, fromBlock, toBlock),
         contract.queryFilter(outgoingFilter, fromBlock, toBlock)
       ]);
+
+      const blockNumbers = new Set<number>();
+      for (const log of incomingLogs) {
+        blockNumbers.add(log.blockNumber);
+      }
+      for (const log of outgoingLogs) {
+        blockNumbers.add(log.blockNumber);
+      }
+
+      const blockTimestampMap = new Map<number, number>();
       const blockTimestampCache = blockTimestampCacheRef.current;
+      await Promise.all(
+        Array.from(blockNumbers).map(async (blockNumber) => {
+          const cachedTimestamp = blockTimestampCache.get(blockNumber);
+          if (typeof cachedTimestamp === 'number') {
+            blockTimestampMap.set(blockNumber, cachedTimestamp);
+            return;
+          }
+
+          const block = await readProvider.getBlock(blockNumber);
+          if (block?.timestamp) {
+            const timestamp = Number(block.timestamp);
+            blockTimestampMap.set(blockNumber, timestamp);
+            blockTimestampCache.set(blockNumber, timestamp);
+          }
+        })
+      );
 
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
@@ -2589,7 +2634,7 @@ export default function App() {
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
             logIndex: log.index,
-            timestamp: blockTimestampCache.get(log.blockNumber)
+            timestamp: blockTimestampMap.get(log.blockNumber)
           });
           continue;
         }
@@ -2628,7 +2673,7 @@ export default function App() {
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
-          timestamp: blockTimestampCache.get(log.blockNumber)
+          timestamp: blockTimestampMap.get(log.blockNumber)
         });
       }
 
@@ -2715,7 +2760,7 @@ export default function App() {
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
             logIndex: log.index,
-            timestamp: blockTimestampCache.get(log.blockNumber)
+            timestamp: blockTimestampMap.get(log.blockNumber)
           });
           continue;
         }
@@ -2751,48 +2796,12 @@ export default function App() {
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
-          timestamp: blockTimestampCache.get(log.blockNumber)
+          timestamp: blockTimestampMap.get(log.blockNumber)
         });
       }
 
       if (shouldLoadContactPreviews) {
         entries.push(...previewByContact.values());
-      }
-
-      if (entries.length > 0) {
-        const pendingTimestampBlocks = new Set<number>();
-
-        for (const entry of entries) {
-          const cachedTimestamp = blockTimestampCache.get(entry.blockNumber);
-          if (typeof cachedTimestamp === 'number') {
-            entry.timestamp = cachedTimestamp;
-            continue;
-          }
-
-          pendingTimestampBlocks.add(entry.blockNumber);
-        }
-
-        if (pendingTimestampBlocks.size > 0) {
-          await Promise.all(
-            Array.from(pendingTimestampBlocks).map(async (blockNumber) => {
-              const block = await readProvider.getBlock(blockNumber);
-              if (block?.timestamp) {
-                blockTimestampCache.set(blockNumber, Number(block.timestamp));
-              }
-            })
-          );
-
-          for (const entry of entries) {
-            if (typeof entry.timestamp === 'number') {
-              continue;
-            }
-
-            const cachedTimestamp = blockTimestampCache.get(entry.blockNumber);
-            if (typeof cachedTimestamp === 'number') {
-              entry.timestamp = cachedTimestamp;
-            }
-          }
-        }
       }
 
       if (!options?.contactsOnly || shouldLoadContactPreviews) {
@@ -2981,7 +2990,7 @@ export default function App() {
     gradualContactDiscoveryInFlightRef.current[targetAddress] = true;
 
     try {
-      const readProvider = await loadCotiReadProvider(true);
+      const readProvider = await loadCotiReadProvider(false);
       let cursor =
         typeof gradualContactDiscoveryCursorRef.current[targetAddress] === 'number'
           ? (gradualContactDiscoveryCursorRef.current[targetAddress] as number)
@@ -3931,6 +3940,7 @@ export default function App() {
           aria-label="Top navigation"
           style={{ display: isMobileNav ? 'none' : 'flex' }}
         >
+          <a href={telegramBotLink} target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
           <a href="https://bridge.coti.io/bridge" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
           <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
           <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
@@ -3956,6 +3966,7 @@ export default function App() {
               : { display: 'none' }
           }
         >
+          <a href={telegramBotLink} target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
           <a href="https://bridge.coti.io/bridge" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
           <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
           <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
