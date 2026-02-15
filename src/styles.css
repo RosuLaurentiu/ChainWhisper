@@ -1,18 +1,18 @@
 :root {
   color-scheme: dark;
   font-family: Inter, Segoe UI, Arial, sans-serif;
-  --bg: #0a1118;
-  --bg-elev-1: #0d1621;
-  --bg-elev-2: #101b28;
-  --bg-elev-3: #152334;
-  --border: #24364b;
-  --border-strong: #3c5777;
-  --text: #e5edf7;
-  --muted: #9bb0c8;
-  --accent: #7aa2ff;
-  --accent-soft: #183154;
-  --glass: rgba(16, 27, 40, 0.72);
-  --glass-strong: rgba(19, 34, 51, 0.78);
+  --bg: #080b14;
+  --bg-elev-1: #101626;
+  --bg-elev-2: #151c31;
+  --bg-elev-3: #1b2540;
+  --border: #314060;
+  --border-strong: #6271a1;
+  --text: #edf2ff;
+  --muted: #b0bcdf;
+  --accent: #a78bfa;
+  --accent-soft: #261d47;
+  --glass: rgba(21, 28, 49, 0.76);
+  --glass-strong: rgba(27, 37, 64, 0.8);
 }
 
 * {
@@ -22,8 +22,8 @@
 body {
   margin: 0;
   background:
-    radial-gradient(1200px 520px at 85% -140px, rgba(122, 162, 255, 0.14), transparent 65%),
-    radial-gradient(900px 420px at -8% 100%, rgba(122, 162, 255, 0.08), transparent 62%),
+    radial-gradient(1200px 520px at 85% -140px, rgba(167, 139, 250, 0.18), transparent 65%),
+    radial-gradient(900px 420px at -8% 100%, rgba(139, 92, 246, 0.1), transparent 62%),
     var(--bg);
   color: var(--text);
 }
@@ -137,7 +137,7 @@ body {
   gap: 14px;
   background: var(--bg-elev-2);
   max-height: calc(100vh - 49px);
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .title {
@@ -167,7 +167,7 @@ body {
 .connect-btn:hover,
 .contact-form button:hover,
 .contact:hover {
-  background: #1b2d43;
+  background: #2a2146;
   border-color: var(--border-strong);
 }
 
@@ -215,10 +215,10 @@ body {
 }
 
 .wallet-meta-text-editor {
-  border: 1px solid #243142;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #0f1720;
-  color: #d9e1ea;
+  background: var(--bg-elev-1);
+  color: var(--text);
   padding: 9px 10px;
   font-size: 0.85rem;
   min-height: 38px;
@@ -228,12 +228,12 @@ body {
 }
 
 .wallet-meta-text-editor:focus {
-  outline: 1px solid #3d5a80;
+  outline: 1px solid var(--accent);
 }
 
 .wallet-meta-text-editor:empty::before {
   content: attr(data-placeholder);
-  color: #9eb0c4;
+  color: var(--muted);
 }
 
 .topup-meta {
@@ -327,7 +327,7 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 0.8rem;
-  color: #9eb0c4;
+  color: var(--muted);
 }
 
 .profile-toggle input {
@@ -392,12 +392,49 @@ body {
 .contacts-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 8px;
   display: grid;
   gap: 8px;
+  width: 100%;
+  max-height: min(74vh, 760px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+}
+
+.contacts-list,
+.chat-messages {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.contacts-list::-webkit-scrollbar,
+.chat-messages::-webkit-scrollbar {
+  width: 10px;
+}
+
+.contacts-list::-webkit-scrollbar-track,
+.chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.contacts-list::-webkit-scrollbar-thumb,
+.chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(98, 113, 161, 0.85);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.contacts-list::-webkit-scrollbar-thumb:hover,
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.95);
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 .contact {
@@ -418,7 +455,7 @@ body {
 }
 
 .contact-card:hover {
-  background: #192a3f;
+  background: #221f3f;
 }
 
 .contact-card.active {
@@ -466,7 +503,7 @@ body {
 }
 
 .contact-icon:hover {
-  background: #1b2d43;
+  background: #2a2146;
 }
 
 .contact-copy {
@@ -494,7 +531,7 @@ body {
 }
 
 .contact-copy:hover {
-  color: #f3f8ff;
+  color: var(--text);
   background: transparent;
 }
 
@@ -541,7 +578,7 @@ body {
 }
 
 .contact-rename button:hover {
-  background: #1b2d43;
+  background: #2a2146;
 }
 
 .error {
@@ -553,7 +590,7 @@ body {
 .chat-panel {
   display: block;
   padding: 24px 20px;
-  background: radial-gradient(1200px 480px at 75% -60px, rgba(122, 162, 255, 0.08), transparent 62%);
+  background: radial-gradient(1200px 480px at 75% -60px, rgba(122, 162, 255, 0.07), transparent 62%);
 }
 
 .chat-placeholder {
@@ -572,7 +609,7 @@ body {
   height: min(92vh, 1020px);
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(13, 22, 33, 0.8);
+  background: rgba(12, 20, 30, 0.84);
   backdrop-filter: blur(10px);
   box-shadow: 0 18px 40px rgba(4, 10, 18, 0.35);
   display: grid;
@@ -643,7 +680,7 @@ body {
   padding: 10px 34px 10px 12px;
   font-size: 0.9rem;
   line-height: 1.35;
-  background: #122033;
+  background: #121c2a;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -733,7 +770,7 @@ body {
 }
 
 .message-row.outgoing .message-bubble {
-  background: #1a3252;
+  background: #1a2b40;
   border-color: var(--accent);
 }
 
@@ -749,7 +786,7 @@ body {
   grid-column: 1 / -1;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #122033;
+  background: #121c2a;
   padding: 8px 10px;
   display: flex;
   align-items: center;
@@ -770,7 +807,7 @@ body {
 }
 
 .chat-replying button:hover {
-  background: #1b2d43;
+  background: #2a2146;
 }
 
 .chat-compose input,
@@ -810,7 +847,7 @@ body {
 }
 
 .chat-compose button:hover {
-  background: #1b2d43;
+  background: #2a2146;
 }
 
 .chat-compose button:disabled {
@@ -934,7 +971,7 @@ body {
 
   .top-header .top-header-links-mobile.open a:hover {
     border-color: var(--border-strong);
-    background: #1b2d43;
+    background: #2a2146;
   }
 
   .app-shell {
@@ -982,7 +1019,7 @@ body {
     max-height: calc(100dvh - 54px - 74px);
     width: 100vw;
     min-width: 100vw;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   .chat-panel {

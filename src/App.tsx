@@ -56,15 +56,22 @@ const BURNER_PIN_PBKDF2_ITERATIONS = 250000;
 const PROFILE_STORAGE_KEY = 'coti-chat-profile';
 const PROFILE_SHARED_STORAGE_KEY = 'coti-chat-profile-shared';
 const AUTO_SYNC_INTERVAL_MS = 30000;
+const INITIAL_SYNC_LOOKBACK_BLOCKS = 12000;
 const NICKNAME_DELIMITER = '\u001f';
 const REPLY_DELIMITER = '\u001e';
-const PROFILE_METADATA_PREFIX = '[nick:';
-const REPLY_METADATA_PREFIX = '[reply:';
+const PROFILE_METADATA_PREFIX = '\u2063';
+const REPLY_METADATA_PREFIX = '\u2064';
+const LEGACY_PROFILE_METADATA_PREFIX = '[nick:';
+const LEGACY_REPLY_METADATA_PREFIX = '[reply:';
 const LEGACY_PROFILE_PREFIX = '[[coti-profile:v1]]';
 const LEGACY_PROFILE_PLAIN_PREFIX = '[[coti-nick:v1]]';
-const MAX_REPLY_PREVIEW_LENGTH = 48;
+const MAX_REPLY_PREVIEW_LENGTH = 28;
 const COTI_WEI = 10n ** 18n;
 const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+const PROFILE_METADATA_PREFIX_REGEX = new RegExp(PROFILE_METADATA_PREFIX, 'g');
+const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
 
 type BurnerWalletRecord = {
   id?: string;
@@ -236,7 +243,7 @@ const mergeOnboardInfo = (previous?: OnboardInfo, next?: OnboardInfo): OnboardIn
 });
 
 const encodeMemoPlaintext = (plain: string): string => {
-  const bytes = new TextEncoder().encode(plain);
+  const bytes = TEXT_ENCODER.encode(plain);
   let binary = '';
   for (let index = 0; index < bytes.length; index += 1) {
     binary += String.fromCharCode(bytes[index]);
@@ -251,7 +258,7 @@ const decodeMemoPlaintext = (raw: string): string => {
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
     }
-    return new TextDecoder().decode(bytes);
+    return TEXT_DECODER.decode(bytes);
   } catch {
     return raw;
   }
@@ -593,7 +600,7 @@ const deriveBurnerPinKey = async (
   iterations: number,
   usages: KeyUsage[]
 ): Promise<CryptoKey> => {
-  const pinMaterial = await window.crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, [
+  const pinMaterial = await window.crypto.subtle.importKey('raw', TEXT_ENCODER.encode(pin), 'PBKDF2', false, [
     'deriveKey'
   ]);
 
@@ -620,7 +627,7 @@ const encryptBurnerWalletVault = async (vault: BurnerWalletVault, pin: string): 
   const encrypted = await window.crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: toArrayBuffer(iv) },
     key,
-    new TextEncoder().encode(payload)
+    TEXT_ENCODER.encode(payload)
   );
 
   return {
@@ -646,7 +653,7 @@ const decryptBurnerWalletVault = async (
     key,
     toArrayBuffer(ciphertext)
   );
-  const rawPayload = new TextDecoder().decode(decrypted);
+  const rawPayload = TEXT_DECODER.decode(decrypted);
   const parsed = JSON.parse(rawPayload) as unknown;
 
   if (!parsed || typeof parsed !== 'object') {
@@ -750,13 +757,14 @@ const loadSharedNicknameContacts = (walletAddress?: string | null): Record<strin
 const buildMessageWithProfilePayload = (plainText: string, nickname: string, shouldShare: boolean): string => {
   const normalizedNickname = nickname
     .replace(/\u001f/g, '')
+    .replace(PROFILE_METADATA_PREFIX_REGEX, '')
     .replace(/\]/g, '')
     .trim();
   if (!shouldShare || !normalizedNickname) {
     return plainText;
   }
 
-  return `${PROFILE_METADATA_PREFIX}${normalizedNickname}] ${plainText}`;
+  return `${PROFILE_METADATA_PREFIX}${normalizedNickname}${PROFILE_METADATA_PREFIX}${plainText}`;
 };
 
 const trimReplyPreview = (text: string): string => {
@@ -773,12 +781,12 @@ const trimReplyPreview = (text: string): string => {
 };
 
 const buildMessageWithReplyPayload = (plainText: string, replyToText?: string, _replyToMessageId?: string): string => {
-  const preview = trimReplyPreview((replyToText ?? '').replace(/\]/g, ''));
+  const preview = trimReplyPreview((replyToText ?? '').replace(REPLY_METADATA_PREFIX_REGEX, '').replace(/\]/g, ''));
   if (!preview) {
     return plainText;
   }
 
-  return `${REPLY_METADATA_PREFIX}${preview}] ${plainText}`;
+  return `${REPLY_METADATA_PREFIX}${preview}${REPLY_METADATA_PREFIX}<: ${plainText}`;
 };
 
 const parseMessageReplyPayload = (text: string): {
@@ -787,9 +795,27 @@ const parseMessageReplyPayload = (text: string): {
   replyToMessageId?: string;
 } => {
   if (text.startsWith(REPLY_METADATA_PREFIX)) {
-    const metadataEnd = text.indexOf(']', REPLY_METADATA_PREFIX.length);
+    const metadataEnd = text.indexOf(REPLY_METADATA_PREFIX, REPLY_METADATA_PREFIX.length);
     if (metadataEnd > REPLY_METADATA_PREFIX.length) {
       const metadataChunk = text.slice(REPLY_METADATA_PREFIX.length, metadataEnd);
+      const previewChunk = trimReplyPreview(metadataChunk);
+      const remainingRaw = text.slice(metadataEnd + REPLY_METADATA_PREFIX.length);
+      const remaining = remainingRaw.startsWith('<: ')
+        ? remainingRaw.slice(3)
+        : remainingRaw.startsWith(': ')
+          ? remainingRaw.slice(2)
+          : remainingRaw;
+      return {
+        cleanText: remaining,
+        replyToText: previewChunk || undefined
+      };
+    }
+  }
+
+  if (text.startsWith(LEGACY_REPLY_METADATA_PREFIX)) {
+    const metadataEnd = text.indexOf(']', LEGACY_REPLY_METADATA_PREFIX.length);
+    if (metadataEnd > LEGACY_REPLY_METADATA_PREFIX.length) {
+      const metadataChunk = text.slice(LEGACY_REPLY_METADATA_PREFIX.length, metadataEnd);
       const separatorIndex = metadataChunk.indexOf('|');
       const hasLegacyIdChunk = separatorIndex > 0;
       const rawReplyId = hasLegacyIdChunk ? metadataChunk.slice(0, separatorIndex).trim() : '';
@@ -818,7 +844,11 @@ const parseMessageReplyPayload = (text: string): {
 
   const previewChunk = trimReplyPreview(text.slice(REPLY_DELIMITER.length, delimiterEnd));
   const remainingRaw = text.slice(delimiterEnd + REPLY_DELIMITER.length);
-  const remaining = remainingRaw.startsWith(': ') ? remainingRaw.slice(2) : remainingRaw;
+  const remaining = remainingRaw.startsWith('<: ')
+    ? remainingRaw.slice(3)
+    : remainingRaw.startsWith(': ')
+      ? remainingRaw.slice(2)
+      : remainingRaw;
 
   return {
     cleanText: remaining,
@@ -828,9 +858,22 @@ const parseMessageReplyPayload = (text: string): {
 
 const parseMessageProfilePayload = (text: string): { cleanText: string; nickname?: string } => {
   if (text.startsWith(PROFILE_METADATA_PREFIX)) {
-    const metadataEnd = text.indexOf(']', PROFILE_METADATA_PREFIX.length);
+    const metadataEnd = text.indexOf(PROFILE_METADATA_PREFIX, PROFILE_METADATA_PREFIX.length);
     if (metadataEnd > PROFILE_METADATA_PREFIX.length) {
       const nicknameChunk = text.slice(PROFILE_METADATA_PREFIX.length, metadataEnd).trim();
+      const nickname = normalizeContactName(nicknameChunk)?.slice(0, 42);
+      const remaining = text.slice(metadataEnd + PROFILE_METADATA_PREFIX.length);
+      return {
+        cleanText: remaining,
+        nickname
+      };
+    }
+  }
+
+  if (text.startsWith(LEGACY_PROFILE_METADATA_PREFIX)) {
+    const metadataEnd = text.indexOf(']', LEGACY_PROFILE_METADATA_PREFIX.length);
+    if (metadataEnd > LEGACY_PROFILE_METADATA_PREFIX.length) {
+      const nicknameChunk = text.slice(LEGACY_PROFILE_METADATA_PREFIX.length, metadataEnd).trim();
       const nickname = normalizeContactName(nicknameChunk)?.slice(0, 42);
       const remainingRaw = text.slice(metadataEnd + 1);
       const remaining = remainingRaw.startsWith(' ') ? remainingRaw.slice(1) : remainingRaw;
@@ -931,6 +974,7 @@ export default function App() {
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const [sending, setSending] = useState(false);
   const [syncingHistory, setSyncingHistory] = useState(false);
+  const [deepSyncingHistory, setDeepSyncingHistory] = useState(false);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
@@ -959,7 +1003,9 @@ export default function App() {
   const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
   const sendingRef = useRef(false);
   const syncingHistoryRef = useRef(false);
+  const pendingSyncOptionsRef = useRef<{ deep?: boolean } | null>(null);
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
+  const blockTimestampCacheRef = useRef<Map<number, number>>(new Map());
   const syncConversationHistoryRef = useRef<() => Promise<void>>(async () => {});
 
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
@@ -1897,7 +1943,7 @@ export default function App() {
     return { signer, cacheKey };
   };
 
-  const syncConversationHistory = async () => {
+  const syncConversationHistory = async (options?: { deep?: boolean }) => {
     setError('');
 
     if (!walletAddress) {
@@ -1905,6 +1951,10 @@ export default function App() {
     }
 
     if (syncingHistoryRef.current) {
+      const pending = pendingSyncOptionsRef.current;
+      pendingSyncOptionsRef.current = {
+        deep: Boolean(options?.deep || pending?.deep)
+      };
       return;
     }
 
@@ -1919,7 +1969,11 @@ export default function App() {
 
       const walletKey = walletAddress.toLowerCase();
       const lastSyncedBlock = lastSyncedBlockRef.current[walletKey];
-      const fromBlock = typeof lastSyncedBlock === 'number' ? lastSyncedBlock + 1 : 0;
+      const fromBlock = options?.deep
+        ? 0
+        : typeof lastSyncedBlock === 'number'
+          ? lastSyncedBlock + 1
+          : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
 
       if (fromBlock > latestBlock) {
         return;
@@ -1942,11 +1996,20 @@ export default function App() {
       }
 
       const blockTimestampMap = new Map<number, number>();
+      const blockTimestampCache = blockTimestampCacheRef.current;
       await Promise.all(
         Array.from(blockNumbers).map(async (blockNumber) => {
+          const cachedTimestamp = blockTimestampCache.get(blockNumber);
+          if (typeof cachedTimestamp === 'number') {
+            blockTimestampMap.set(blockNumber, cachedTimestamp);
+            return;
+          }
+
           const block = await readProvider.getBlock(blockNumber);
           if (block?.timestamp) {
-            blockTimestampMap.set(blockNumber, Number(block.timestamp));
+            const timestamp = Number(block.timestamp);
+            blockTimestampMap.set(blockNumber, timestamp);
+            blockTimestampCache.set(blockNumber, timestamp);
           }
         })
       );
@@ -2126,6 +2189,12 @@ export default function App() {
     } finally {
       syncingHistoryRef.current = false;
       setSyncingHistory(false);
+
+      const pendingOptions = pendingSyncOptionsRef.current;
+      pendingSyncOptionsRef.current = null;
+      if (pendingOptions) {
+        syncConversationHistory(pendingOptions).catch(() => {});
+      }
     }
   };
 
@@ -2240,6 +2309,19 @@ export default function App() {
 
   const loadLatestIncomingMessage = async () => {
     await syncConversationHistory();
+  };
+
+  const loadFullConversationHistory = async () => {
+    if (syncingHistoryRef.current) {
+      return;
+    }
+
+    setDeepSyncingHistory(true);
+    try {
+      await syncConversationHistory({ deep: true });
+    } finally {
+      setDeepSyncingHistory(false);
+    }
   };
   useEffect(() => {
     try {
@@ -3052,8 +3134,21 @@ export default function App() {
                   ? `${activeContactMeta?.name ? `${activeContactMeta.name} (${shortenAddress(activeContact)})` : shortenAddress(activeContact)} (self)`
                   : `${activeContactMeta?.name ? `${activeContactMeta.name} (${shortenAddress(activeContact)})` : shortenAddress(activeContact)}`}
               </strong>
-              <button type="button" className="contact" onClick={loadLatestIncomingMessage} disabled={syncingHistory}>
-                {syncingHistory ? 'Syncing...' : 'Sync History'}
+              <button
+                type="button"
+                className="contact"
+                onClick={loadFullConversationHistory}
+                disabled={syncingHistory || deepSyncingHistory}
+              >
+                {deepSyncingHistory ? 'Deep Syncing...' : 'Deep Sync'}
+              </button>
+              <button
+                type="button"
+                className="contact"
+                onClick={loadLatestIncomingMessage}
+                disabled={syncingHistory || deepSyncingHistory}
+              >
+                {deepSyncingHistory ? 'Deep Syncing...' : syncingHistory ? 'Syncing...' : 'Sync History'}
               </button>
             </div>
 
