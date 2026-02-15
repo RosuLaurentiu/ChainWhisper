@@ -2232,37 +2232,20 @@ export default function App() {
 
     const snapshotContacts = normalizeContactsForBackup(payload.contacts);
     const snapshotNickname = payload.nickname.slice(0, 42);
-    const snapshotContactsByKey = new Map<string, Contact>();
-    for (const contact of snapshotContacts) {
-      snapshotContactsByKey.set(contact.address.toLowerCase(), contact);
-    }
 
-    setContacts((previous) => {
-      const merged = mergeUniqueContacts(
-        previous,
-        snapshotContacts.map((contact) => contact.address)
-      );
-
-      return merged.map((contact) => {
+    setContacts(() =>
+      snapshotContacts.map((contact) => {
         const key = contact.address.toLowerCase();
-        const snapshotName = normalizeContactName(snapshotContactsByKey.get(key)?.name ?? '');
-        const existingName = normalizeContactName(contact.name ?? '');
+        const snapshotName = normalizeContactName(contact.name ?? '');
         const discoveredName = normalizeContactName(discoveredNicknames?.get(key) ?? '');
-        const name = snapshotName ?? existingName ?? discoveredName;
-
-        if (!name) {
-          return {
-            ...contact,
-            name: undefined
-          };
-        }
+        const name = snapshotName ?? discoveredName;
 
         return {
-          ...contact,
+          address: contact.address,
           name
         };
-      });
-    });
+      })
+    );
 
     setMyNickname(snapshotNickname);
     lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
@@ -2506,33 +2489,7 @@ export default function App() {
         contract.queryFilter(incomingFilter, fromBlock, toBlock),
         contract.queryFilter(outgoingFilter, fromBlock, toBlock)
       ]);
-
-      const blockNumbers = new Set<number>();
-      for (const log of incomingLogs) {
-        blockNumbers.add(log.blockNumber);
-      }
-      for (const log of outgoingLogs) {
-        blockNumbers.add(log.blockNumber);
-      }
-
-      const blockTimestampMap = new Map<number, number>();
       const blockTimestampCache = blockTimestampCacheRef.current;
-      await Promise.all(
-        Array.from(blockNumbers).map(async (blockNumber) => {
-          const cachedTimestamp = blockTimestampCache.get(blockNumber);
-          if (typeof cachedTimestamp === 'number') {
-            blockTimestampMap.set(blockNumber, cachedTimestamp);
-            return;
-          }
-
-          const block = await readProvider.getBlock(blockNumber);
-          if (block?.timestamp) {
-            const timestamp = Number(block.timestamp);
-            blockTimestampMap.set(blockNumber, timestamp);
-            blockTimestampCache.set(blockNumber, timestamp);
-          }
-        })
-      );
 
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
@@ -2632,7 +2589,7 @@ export default function App() {
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
             logIndex: log.index,
-            timestamp: blockTimestampMap.get(log.blockNumber)
+            timestamp: blockTimestampCache.get(log.blockNumber)
           });
           continue;
         }
@@ -2671,7 +2628,7 @@ export default function App() {
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
-          timestamp: blockTimestampMap.get(log.blockNumber)
+          timestamp: blockTimestampCache.get(log.blockNumber)
         });
       }
 
@@ -2758,7 +2715,7 @@ export default function App() {
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
             logIndex: log.index,
-            timestamp: blockTimestampMap.get(log.blockNumber)
+            timestamp: blockTimestampCache.get(log.blockNumber)
           });
           continue;
         }
@@ -2794,12 +2751,48 @@ export default function App() {
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
-          timestamp: blockTimestampMap.get(log.blockNumber)
+          timestamp: blockTimestampCache.get(log.blockNumber)
         });
       }
 
       if (shouldLoadContactPreviews) {
         entries.push(...previewByContact.values());
+      }
+
+      if (entries.length > 0) {
+        const pendingTimestampBlocks = new Set<number>();
+
+        for (const entry of entries) {
+          const cachedTimestamp = blockTimestampCache.get(entry.blockNumber);
+          if (typeof cachedTimestamp === 'number') {
+            entry.timestamp = cachedTimestamp;
+            continue;
+          }
+
+          pendingTimestampBlocks.add(entry.blockNumber);
+        }
+
+        if (pendingTimestampBlocks.size > 0) {
+          await Promise.all(
+            Array.from(pendingTimestampBlocks).map(async (blockNumber) => {
+              const block = await readProvider.getBlock(blockNumber);
+              if (block?.timestamp) {
+                blockTimestampCache.set(blockNumber, Number(block.timestamp));
+              }
+            })
+          );
+
+          for (const entry of entries) {
+            if (typeof entry.timestamp === 'number') {
+              continue;
+            }
+
+            const cachedTimestamp = blockTimestampCache.get(entry.blockNumber);
+            if (typeof cachedTimestamp === 'number') {
+              entry.timestamp = cachedTimestamp;
+            }
+          }
+        }
       }
 
       if (!options?.contactsOnly || shouldLoadContactPreviews) {
@@ -2988,7 +2981,7 @@ export default function App() {
     gradualContactDiscoveryInFlightRef.current[targetAddress] = true;
 
     try {
-      const readProvider = await loadCotiReadProvider(false);
+      const readProvider = await loadCotiReadProvider(true);
       let cursor =
         typeof gradualContactDiscoveryCursorRef.current[targetAddress] === 'number'
           ? (gradualContactDiscoveryCursorRef.current[targetAddress] as number)
