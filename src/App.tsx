@@ -30,7 +30,10 @@ type ChatMessage = {
   text: string;
   replyToMessageId?: string;
   replyToText?: string;
+  replyToTxHash?: string;
   timestamp?: number;
+  txHash?: string;
+  deliveryState?: 'pending' | 'sent' | 'failed';
 };
 
 type HistoryEntry = {
@@ -40,6 +43,8 @@ type HistoryEntry = {
   text: string;
   replyToMessageId?: string;
   replyToText?: string;
+  replyToTxHash?: string;
+  txHash: string;
   blockNumber: number;
   logIndex: number;
   timestamp?: number;
@@ -65,6 +70,7 @@ const LEGACY_PROFILE_METADATA_PREFIX = '[nick:';
 const LEGACY_REPLY_METADATA_PREFIX = '[reply:';
 const LEGACY_PROFILE_PREFIX = '[[coti-profile:v1]]';
 const LEGACY_PROFILE_PLAIN_PREFIX = '[[coti-nick:v1]]';
+const IMAGE_MESSAGE_PREFIX = '[[coti-image:v1]]';
 const MAX_REPLY_PREVIEW_LENGTH = 28;
 const COTI_WEI = 10n ** 18n;
 const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
@@ -72,6 +78,7 @@ const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 const PROFILE_METADATA_PREFIX_REGEX = new RegExp(PROFILE_METADATA_PREFIX, 'g');
 const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
+const EXTERNAL_REPLY_TXHASH_REGEX = /^\[r:(0x[a-fA-F0-9]{64})\]\s*/;
 
 type BurnerWalletRecord = {
   id?: string;
@@ -363,14 +370,31 @@ const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: string[])
   return Array.from(byLower.values());
 };
 
-const loadStoredContacts = (): Contact[] => {
+const loadStoredContacts = (walletAddress?: string | null): Contact[] => {
   try {
-    const raw = window.localStorage.getItem(CONTACTS_STORAGE_KEY);
+    const scopedKey = scopedStorageKey(CONTACTS_STORAGE_KEY, walletAddress);
+    const raw = window.localStorage.getItem(scopedKey);
     if (!raw) {
-      return [];
+      if (walletAddress) {
+        return [];
+      }
+
+      const legacyRaw = window.localStorage.getItem(CONTACTS_STORAGE_KEY);
+      if (!legacyRaw) {
+        return [];
+      }
+
+      return parseStoredContactsValue(legacyRaw);
     }
 
-    const parsed = JSON.parse(raw) as unknown;
+    return parseStoredContactsValue(raw);
+  } catch {
+    return [];
+  }
+};
+
+const parseStoredContactsPayload = (raw: string): Contact[] => {
+  const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
       return [];
     }
@@ -407,18 +431,32 @@ const loadStoredContacts = (): Contact[] => {
     }
 
     return Array.from(deduped.values());
+};
+
+const parseStoredContactsValue = (raw: string): Contact[] => {
+  try {
+    return parseStoredContactsPayload(raw);
   } catch {
     return [];
   }
 };
 
-const loadStoredActiveContact = (): string | null => {
+const loadStoredActiveContact = (walletAddress?: string | null): string | null => {
   try {
-    const stored = window.localStorage.getItem(ACTIVE_CONTACT_STORAGE_KEY);
-    if (!stored || !isWalletAddress(stored)) {
-      return null;
+    const scopedKey = scopedStorageKey(ACTIVE_CONTACT_STORAGE_KEY, walletAddress);
+    const scopedStored = window.localStorage.getItem(scopedKey);
+    if (scopedStored && isWalletAddress(scopedStored)) {
+      return scopedStored;
     }
-    return stored;
+
+    if (!walletAddress) {
+      const legacyStored = window.localStorage.getItem(ACTIVE_CONTACT_STORAGE_KEY);
+      if (legacyStored && isWalletAddress(legacyStored)) {
+        return legacyStored;
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -780,26 +818,36 @@ const trimReplyPreview = (text: string): string => {
   return `${singleLine.slice(0, MAX_REPLY_PREVIEW_LENGTH - 1)}…`;
 };
 
-const buildMessageWithReplyPayload = (plainText: string, replyToText?: string, _replyToMessageId?: string): string => {
+const buildMessageWithReplyPayload = (plainText: string, replyToText?: string, replyToTxHash?: string): string => {
+  const externalReplyPrefix = /^0x[a-fA-F0-9]{64}$/.test(replyToTxHash ?? '') ? `[r:${replyToTxHash}] ` : '';
   const preview = trimReplyPreview((replyToText ?? '').replace(REPLY_METADATA_PREFIX_REGEX, '').replace(/\]/g, ''));
   if (!preview) {
-    return plainText;
+    return `${externalReplyPrefix}${plainText}`;
   }
 
-  return `${REPLY_METADATA_PREFIX}${preview}${REPLY_METADATA_PREFIX}<: ${plainText}`;
+  return `${externalReplyPrefix}${REPLY_METADATA_PREFIX}${preview}${REPLY_METADATA_PREFIX}<: ${plainText}`;
 };
 
 const parseMessageReplyPayload = (text: string): {
   cleanText: string;
   replyToText?: string;
   replyToMessageId?: string;
+  replyToTxHash?: string;
 } => {
-  if (text.startsWith(REPLY_METADATA_PREFIX)) {
-    const metadataEnd = text.indexOf(REPLY_METADATA_PREFIX, REPLY_METADATA_PREFIX.length);
+  let workingText = text;
+  let replyToTxHash: string | undefined;
+  const externalMatch = workingText.match(EXTERNAL_REPLY_TXHASH_REGEX);
+  if (externalMatch) {
+    replyToTxHash = externalMatch[1];
+    workingText = workingText.slice(externalMatch[0].length);
+  }
+
+  if (workingText.startsWith(REPLY_METADATA_PREFIX)) {
+    const metadataEnd = workingText.indexOf(REPLY_METADATA_PREFIX, REPLY_METADATA_PREFIX.length);
     if (metadataEnd > REPLY_METADATA_PREFIX.length) {
-      const metadataChunk = text.slice(REPLY_METADATA_PREFIX.length, metadataEnd);
+      const metadataChunk = workingText.slice(REPLY_METADATA_PREFIX.length, metadataEnd);
       const previewChunk = trimReplyPreview(metadataChunk);
-      const remainingRaw = text.slice(metadataEnd + REPLY_METADATA_PREFIX.length);
+      const remainingRaw = workingText.slice(metadataEnd + REPLY_METADATA_PREFIX.length);
       const remaining = remainingRaw.startsWith('<: ')
         ? remainingRaw.slice(3)
         : remainingRaw.startsWith(': ')
@@ -807,43 +855,45 @@ const parseMessageReplyPayload = (text: string): {
           : remainingRaw;
       return {
         cleanText: remaining,
-        replyToText: previewChunk || undefined
+        replyToText: previewChunk || undefined,
+        replyToTxHash
       };
     }
   }
 
-  if (text.startsWith(LEGACY_REPLY_METADATA_PREFIX)) {
-    const metadataEnd = text.indexOf(']', LEGACY_REPLY_METADATA_PREFIX.length);
+  if (workingText.startsWith(LEGACY_REPLY_METADATA_PREFIX)) {
+    const metadataEnd = workingText.indexOf(']', LEGACY_REPLY_METADATA_PREFIX.length);
     if (metadataEnd > LEGACY_REPLY_METADATA_PREFIX.length) {
-      const metadataChunk = text.slice(LEGACY_REPLY_METADATA_PREFIX.length, metadataEnd);
+      const metadataChunk = workingText.slice(LEGACY_REPLY_METADATA_PREFIX.length, metadataEnd);
       const separatorIndex = metadataChunk.indexOf('|');
       const hasLegacyIdChunk = separatorIndex > 0;
       const rawReplyId = hasLegacyIdChunk ? metadataChunk.slice(0, separatorIndex).trim() : '';
       const rawPreview = hasLegacyIdChunk ? metadataChunk.slice(separatorIndex + 1) : metadataChunk;
       const previewChunk = trimReplyPreview(rawPreview);
       const replyToMessageId = hasLegacyIdChunk && /^[a-zA-Z0-9\-]+$/.test(rawReplyId) ? rawReplyId : undefined;
-      const remainingRaw = text.slice(metadataEnd + 1);
+      const remainingRaw = workingText.slice(metadataEnd + 1);
       const remaining = remainingRaw.startsWith(' ') ? remainingRaw.slice(1) : remainingRaw;
 
       return {
         cleanText: remaining,
         replyToText: previewChunk || undefined,
-        replyToMessageId
+        replyToMessageId,
+        replyToTxHash
       };
     }
   }
 
-  if (!text.startsWith(REPLY_DELIMITER)) {
-    return { cleanText: text };
+  if (!workingText.startsWith(REPLY_DELIMITER)) {
+    return { cleanText: workingText, replyToTxHash };
   }
 
-  const delimiterEnd = text.indexOf(REPLY_DELIMITER, REPLY_DELIMITER.length);
+  const delimiterEnd = workingText.indexOf(REPLY_DELIMITER, REPLY_DELIMITER.length);
   if (delimiterEnd < 0) {
-    return { cleanText: text };
+    return { cleanText: workingText, replyToTxHash };
   }
 
-  const previewChunk = trimReplyPreview(text.slice(REPLY_DELIMITER.length, delimiterEnd));
-  const remainingRaw = text.slice(delimiterEnd + REPLY_DELIMITER.length);
+  const previewChunk = trimReplyPreview(workingText.slice(REPLY_DELIMITER.length, delimiterEnd));
+  const remainingRaw = workingText.slice(delimiterEnd + REPLY_DELIMITER.length);
   const remaining = remainingRaw.startsWith('<: ')
     ? remainingRaw.slice(3)
     : remainingRaw.startsWith(': ')
@@ -852,7 +902,8 @@ const parseMessageReplyPayload = (text: string): {
 
   return {
     cleanText: remaining,
-    replyToText: previewChunk || undefined
+    replyToText: previewChunk || undefined,
+    replyToTxHash
   };
 };
 
@@ -938,6 +989,60 @@ const parseMessageProfilePayload = (text: string): { cleanText: string; nickname
   }
 };
 
+const normalizeImageUrl = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('ipfs://')) {
+    const ipfsPath = trimmed.slice('ipfs://'.length).replace(/^ipfs\//, '');
+    if (!ipfsPath) {
+      return null;
+    }
+    return `https://ipfs.io/ipfs/${ipfsPath}`;
+  }
+
+  return null;
+};
+
+const parseImageMessagePayload = (text: string): { cleanText: string; imageUrl?: string } => {
+  if (!text.startsWith(IMAGE_MESSAGE_PREFIX)) {
+    return { cleanText: text };
+  }
+
+  const payload = text.slice(IMAGE_MESSAGE_PREFIX.length).trim();
+  if (!payload) {
+    return { cleanText: text };
+  }
+
+  const firstWhitespace = payload.search(/\s/);
+  const rawUrl = firstWhitespace >= 0 ? payload.slice(0, firstWhitespace) : payload;
+  const rawCaption = firstWhitespace >= 0 ? payload.slice(firstWhitespace).trim() : '';
+  const normalizedUrl = normalizeImageUrl(rawUrl);
+  if (!normalizedUrl) {
+    return { cleanText: text };
+  }
+
+  return {
+    cleanText: rawCaption,
+    imageUrl: normalizedUrl
+  };
+};
+
+const getMessageDisplayText = (text: string): string => {
+  const parsedImage = parseImageMessagePayload(text);
+  if (parsedImage.imageUrl) {
+    return parsedImage.cleanText || '[Image]';
+  }
+
+  return parsedImage.cleanText;
+};
+
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
   const [contacts, setContacts] = useState<Contact[]>(() => loadStoredContacts());
@@ -971,6 +1076,9 @@ export default function App() {
   const [onboardStatus, setOnboardStatus] = useState<string>('Not onboarded');
   const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [messageInput, setMessageInput] = useState('');
+  const [showImageAttachComposer, setShowImageAttachComposer] = useState(false);
+  const [imageAttachUrlInput, setImageAttachUrlInput] = useState('');
+  const [imageAttachCaptionInput, setImageAttachCaptionInput] = useState('');
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const [sending, setSending] = useState(false);
   const [syncingHistory, setSyncingHistory] = useState(false);
@@ -1004,8 +1112,10 @@ export default function App() {
   const sendingRef = useRef(false);
   const syncingHistoryRef = useRef(false);
   const pendingSyncOptionsRef = useRef<{ deep?: boolean } | null>(null);
+  const previousWalletAddressRef = useRef<string>('');
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
   const blockTimestampCacheRef = useRef<Map<number, number>>(new Map());
+  const requiredFeeCacheRef = useRef<bigint | null>(null);
   const syncConversationHistoryRef = useRef<() => Promise<void>>(async () => {});
 
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
@@ -1585,15 +1695,21 @@ export default function App() {
     container.scrollTop = container.scrollHeight;
   };
 
-  const jumpToReferencedMessage = (replyToMessageId?: string, replyToText?: string) => {
+  const jumpToReferencedMessage = (replyToMessageId?: string, replyToText?: string, replyToTxHash?: string) => {
     if (!activeContact) {
       return;
     }
 
     let targetId = replyToMessageId;
+    if (!targetId && replyToTxHash) {
+      const normalizedReplyTxHash = replyToTxHash.toLowerCase();
+      const matchedByTxHash = activeMessages.find((message) => message.txHash?.toLowerCase() === normalizedReplyTxHash);
+      targetId = matchedByTxHash?.id;
+    }
+
     if (!targetId && replyToText) {
       const targetPreview = trimReplyPreview(replyToText);
-      const matched = activeMessages.find((message) => trimReplyPreview(message.text) === targetPreview);
+      const matched = activeMessages.find((message) => trimReplyPreview(getMessageDisplayText(message.text)) === targetPreview);
       targetId = matched?.id;
     }
 
@@ -1943,6 +2059,25 @@ export default function App() {
     return { signer, cacheKey };
   };
 
+  const resolveRequiredFeeForSend = async (): Promise<bigint> => {
+    if (requiredFeeCacheRef.current !== null && requiredFeeCacheRef.current > 0n) {
+      return requiredFeeCacheRef.current;
+    }
+
+    if (requiredFeeWei !== null && requiredFeeWei > 0n) {
+      requiredFeeCacheRef.current = requiredFeeWei;
+      return requiredFeeWei;
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const readProvider = await loadCotiReadProvider(true);
+    const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+    const resolvedFee = (await readContract.feeAmount()) as bigint;
+    requiredFeeCacheRef.current = resolvedFee;
+    setRequiredFeeWei(resolvedFee);
+    return resolvedFee;
+  };
+
   const syncConversationHistory = async (options?: { deep?: boolean }) => {
     setError('');
 
@@ -2035,6 +2170,7 @@ export default function App() {
         let messageText = '(Unable to decrypt message)';
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
+        let replyToTxHash: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
             const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -2044,6 +2180,7 @@ export default function App() {
             messageText = replyParsed.cleanText;
             replyToMessageId = replyParsed.replyToMessageId;
             replyToText = replyParsed.replyToText;
+            replyToTxHash = replyParsed.replyToTxHash;
             if (parsed.nickname) {
               discoveredNicknames.set(from.toLowerCase(), parsed.nickname);
             }
@@ -2059,6 +2196,8 @@ export default function App() {
           text: messageText,
           replyToMessageId,
           replyToText,
+          replyToTxHash,
+          txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
           timestamp: blockTimestampMap.get(log.blockNumber)
@@ -2078,6 +2217,7 @@ export default function App() {
         let messageText = '(Unable to decrypt message)';
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
+        let replyToTxHash: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
             const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -2087,6 +2227,7 @@ export default function App() {
             messageText = replyParsed.cleanText;
             replyToMessageId = replyParsed.replyToMessageId;
             replyToText = replyParsed.replyToText;
+            replyToTxHash = replyParsed.replyToTxHash;
           } catch {
             messageText = '(Unable to decrypt message)';
           }
@@ -2099,6 +2240,8 @@ export default function App() {
           text: messageText,
           replyToMessageId,
           replyToText,
+          replyToTxHash,
+          txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
           timestamp: blockTimestampMap.get(log.blockNumber)
@@ -2119,8 +2262,50 @@ export default function App() {
 
         const next: Record<string, ChatMessage[]> = { ...previous };
         const existingIdsByContact = new Map<string, Set<string>>();
+        const prunedOptimisticByContact = new Set<string>();
+        const confirmedOutgoingTxHashesByContact = new Map<string, Set<string>>();
+
+        for (const entry of entries) {
+          if (entry.direction !== 'outgoing' || !entry.txHash) {
+            continue;
+          }
+
+          const key = entry.contact.toLowerCase();
+          const existingHashes = confirmedOutgoingTxHashesByContact.get(key);
+          if (existingHashes) {
+            existingHashes.add(entry.txHash.toLowerCase());
+            continue;
+          }
+
+          confirmedOutgoingTxHashesByContact.set(key, new Set([entry.txHash.toLowerCase()]));
+        }
+
         for (const entry of entries) {
           const key = entry.contact.toLowerCase();
+          if (!prunedOptimisticByContact.has(key)) {
+            const confirmedHashes = confirmedOutgoingTxHashesByContact.get(key);
+            if (confirmedHashes && confirmedHashes.size > 0) {
+              next[key] = (next[key] ?? []).filter((message) => {
+                if (!message.txHash) {
+                  return true;
+                }
+
+                const isOptimistic =
+                  message.deliveryState === 'pending' ||
+                  message.deliveryState === 'sent' ||
+                  message.deliveryState === 'failed';
+
+                if (!isOptimistic) {
+                  return true;
+                }
+
+                return !confirmedHashes.has(message.txHash.toLowerCase());
+              });
+            }
+
+            prunedOptimisticByContact.add(key);
+          }
+
           const existing = next[key] ?? [];
           let existingIds = existingIdsByContact.get(key);
           if (!existingIds) {
@@ -2142,7 +2327,9 @@ export default function App() {
               text: entry.text,
               replyToMessageId: entry.replyToMessageId,
               replyToText: entry.replyToText,
-              timestamp: entry.timestamp
+              replyToTxHash: entry.replyToTxHash,
+              timestamp: entry.timestamp,
+              txHash: entry.txHash
             }
           ];
         }
@@ -2202,14 +2389,14 @@ export default function App() {
     syncConversationHistoryRef.current = syncConversationHistory;
   }, [syncConversationHistory]);
 
-  const sendMessage = async () => {
+  const sendMessage = async (overrideMessageText?: string) => {
     setError('');
 
     if (sendingRef.current) {
       return;
     }
 
-    const plainText = messageInput.trim();
+    const plainText = (overrideMessageText ?? messageInput).trim();
     if (!plainText) {
       setError('Enter a message first.');
       return;
@@ -2220,9 +2407,30 @@ export default function App() {
       return;
     }
 
+    const contactKey = activeContact.toLowerCase();
+    const replyingPreviewText = replyingToMessage ? getMessageDisplayText(replyingToMessage.text) : undefined;
+    const localMessageId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const localMessageTimestamp = Math.floor(Date.now() / 1000);
+
     try {
       sendingRef.current = true;
       setSending(true);
+      setMessagesByContact((previous) => ({
+        ...previous,
+        [contactKey]: [
+          ...(previous[contactKey] ?? []),
+          {
+            id: localMessageId,
+            direction: 'outgoing',
+            text: plainText,
+            replyToMessageId: replyingToMessage?.id,
+            replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
+            replyToTxHash: replyingToMessage?.txHash,
+            timestamp: localMessageTimestamp,
+            deliveryState: 'pending'
+          }
+        ]
+      }));
 
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
@@ -2233,16 +2441,15 @@ export default function App() {
       }
 
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-      const requiredFee = (await contract.feeAmount()) as bigint;
+      const requiredFee = await resolveRequiredFeeForSend();
 
-      const contactKey = activeContact.toLowerCase();
       const shouldShareProfile = Boolean(myNickname.trim()) && !sharedNicknameContacts[contactKey];
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
-        replyingToMessage?.text,
-        replyingToMessage?.id
+        replyingPreviewText,
+        replyingToMessage?.txHash
       );
-      const sendEncryptedMemo = async (textToSend: string): Promise<void> => {
+      const sendEncryptedMemo = async (textToSend: string): Promise<string> => {
         const encodedMemo = encodeMemoPlaintext(textToSend);
         const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
         if (
@@ -2258,17 +2465,31 @@ export default function App() {
 
         const memoTuple = [[encryptedMemo.ciphertext.value], encryptedMemo.signature] as const;
         const tx = await contract.submit(activeContact, memoTuple, { value: requiredFee });
-        await tx.wait();
+        return typeof tx?.hash === 'string' ? tx.hash : '';
       };
 
       let sentWithProfile = false;
+      let submittedTxHash = '';
       if (shouldShareProfile) {
         const plainTextWithProfile = buildMessageWithProfilePayload(plainTextWithReply, myNickname, true);
-        await sendEncryptedMemo(plainTextWithProfile);
+        submittedTxHash = await sendEncryptedMemo(plainTextWithProfile);
         sentWithProfile = true;
       } else {
-        await sendEncryptedMemo(plainTextWithReply);
+        submittedTxHash = await sendEncryptedMemo(plainTextWithReply);
       }
+
+      setMessagesByContact((previous) => ({
+        ...previous,
+        [contactKey]: (previous[contactKey] ?? []).map((message) =>
+          message.id === localMessageId
+            ? {
+                ...message,
+                deliveryState: 'sent',
+                txHash: submittedTxHash || undefined
+              }
+            : message
+        )
+      }));
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -2285,13 +2506,24 @@ export default function App() {
 
       setMessageInput('');
       setReplyingToMessage(null);
-      await syncConversationHistory();
+      syncConversationHistory().catch(() => {});
       if (activeSignerSource === 'burner') {
         setTopUpMetricsNonce((previous) => previous + 1);
       }
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : 'Failed to send message.';
       setError(message);
+      setMessagesByContact((previous) => ({
+        ...previous,
+        [contactKey]: (previous[contactKey] ?? []).map((messageRecord) =>
+          messageRecord.id === localMessageId
+            ? {
+                ...messageRecord,
+                deliveryState: 'failed'
+              }
+            : messageRecord
+        )
+      }));
 
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
         const shouldTopUp = window.confirm(
@@ -2305,6 +2537,32 @@ export default function App() {
       sendingRef.current = false;
       setSending(false);
     }
+  };
+
+  const openInlineImageAttachComposer = () => {
+    setError('');
+    setShowImageAttachComposer(true);
+  };
+
+  const closeInlineImageAttachComposer = () => {
+    setShowImageAttachComposer(false);
+    setImageAttachUrlInput('');
+    setImageAttachCaptionInput('');
+  };
+
+  const insertInlineImageMessage = async () => {
+    setError('');
+
+    const rawUrl = imageAttachUrlInput.trim();
+    if (!normalizeImageUrl(rawUrl)) {
+      setError('Enter a valid image URL (https://... or ipfs://...).');
+      return;
+    }
+
+    const caption = imageAttachCaptionInput.trim();
+    const payload = caption ? `${IMAGE_MESSAGE_PREFIX} ${rawUrl} ${caption}` : `${IMAGE_MESSAGE_PREFIX} ${rawUrl}`;
+    closeInlineImageAttachComposer();
+    await sendMessage(payload);
   };
 
   const loadLatestIncomingMessage = async () => {
@@ -2325,10 +2583,15 @@ export default function App() {
   };
   useEffect(() => {
     try {
-      window.localStorage.setItem(CONTACTS_STORAGE_KEY, JSON.stringify(contacts));
+      window.localStorage.setItem(scopedStorageKey(CONTACTS_STORAGE_KEY, walletAddress), JSON.stringify(contacts));
     } catch {
     }
-  }, [contacts]);
+  }, [contacts, walletAddress]);
+
+  useEffect(() => {
+    setContacts(loadStoredContacts(walletAddress));
+    setActiveContact(loadStoredActiveContact(walletAddress));
+  }, [walletAddress]);
 
   useEffect(() => {
     const scopedProfile = loadStoredProfile(walletAddress);
@@ -2386,14 +2649,15 @@ export default function App() {
 
   useEffect(() => {
     try {
+      const scopedKey = scopedStorageKey(ACTIVE_CONTACT_STORAGE_KEY, walletAddress);
       if (!activeContact) {
-        window.localStorage.removeItem(ACTIVE_CONTACT_STORAGE_KEY);
+        window.localStorage.removeItem(scopedKey);
       } else {
-        window.localStorage.setItem(ACTIVE_CONTACT_STORAGE_KEY, activeContact);
+        window.localStorage.setItem(scopedKey, activeContact);
       }
     } catch {
     }
-  }, [activeContact]);
+  }, [activeContact, walletAddress]);
 
   useEffect(() => {
     if (!walletAddress) {
@@ -2488,9 +2752,18 @@ export default function App() {
   }, [activeContact, activeMessages.length]);
 
   useEffect(() => {
-    if (!walletAddress) {
+    const previousWallet = previousWalletAddressRef.current;
+    const nextWallet = walletAddress.trim().toLowerCase();
+
+    if (previousWallet !== nextWallet) {
       setMessagesByContact({});
+      setReplyingToMessage(null);
+      setHighlightedMessageId(null);
+      lastSyncedBlockRef.current = {};
+      blockTimestampCacheRef.current = new Map();
     }
+
+    previousWalletAddressRef.current = nextWallet;
   }, [walletAddress]);
 
   useEffect(() => {
@@ -2571,6 +2844,10 @@ export default function App() {
       cancelled = true;
     };
   }, [burnerAddress, topUpMultiplier, topUpMetricsNonce]);
+
+  useEffect(() => {
+    requiredFeeCacheRef.current = requiredFeeWei;
+  }, [requiredFeeWei]);
 
   useEffect(() => {
     if (!burnerAddress || !isWalletAddress(burnerAddress)) {
@@ -3169,6 +3446,19 @@ export default function App() {
                     key={message.id}
                     className={message.direction === 'outgoing' ? 'message-row outgoing' : 'message-row incoming'}
                   >
+                    {(() => {
+                      const parsedImage = parseImageMessagePayload(message.text);
+                      const messageDisplayText = getMessageDisplayText(message.text);
+                      const deliveryLabel =
+                        message.deliveryState === 'pending'
+                          ? 'Sending…'
+                          : message.deliveryState === 'sent'
+                            ? 'Sent'
+                            : message.deliveryState === 'failed'
+                              ? 'Failed'
+                              : '';
+
+                      return (
                     <div
                       ref={(node) => {
                         messageElementRefs.current[message.id] = node;
@@ -3190,19 +3480,48 @@ export default function App() {
                       >
                         ↩
                       </button>
-                      {message.replyToText ? (
+                      {message.replyToText || message.replyToTxHash ? (
                         <button
                           type="button"
                           className="message-reply"
-                          onClick={() => jumpToReferencedMessage(message.replyToMessageId, message.replyToText)}
+                          onClick={() =>
+                            jumpToReferencedMessage(message.replyToMessageId, message.replyToText, message.replyToTxHash)
+                          }
                           title="Go to replied message"
                         >
-                          ↪ {message.replyToText}
+                          ↪ {message.replyToText ?? `Tx ${shortenAddress(message.replyToTxHash as string)}`}
                         </button>
                       ) : null}
-                      <div>{message.text}</div>
-                      {message.timestamp ? <div className="message-time">{formatMessageTimestamp(message.timestamp)}</div> : null}
+                      {parsedImage.imageUrl ? (
+                        <img
+                          src={parsedImage.imageUrl}
+                          alt={parsedImage.cleanText || 'Shared image'}
+                          style={{ maxWidth: 'min(320px, 72vw)', borderRadius: '10px', marginBottom: messageDisplayText ? '8px' : '0' }}
+                          loading="lazy"
+                        />
+                      ) : null}
+                      {messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                      {message.timestamp || deliveryLabel ? (
+                        <div className="message-meta">
+                          {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
+                          {deliveryLabel ? (
+                            <span
+                              className={
+                                message.deliveryState === 'failed'
+                                  ? 'message-delivery failed'
+                                  : message.deliveryState === 'pending'
+                                    ? 'message-delivery pending'
+                                    : 'message-delivery sent'
+                              }
+                            >
+                              {deliveryLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
+                      );
+                    })()}
                   </div>
                 ))
               )}
@@ -3211,8 +3530,36 @@ export default function App() {
             <div className="chat-compose">
               {replyingToMessage ? (
                 <div className="chat-replying">
-                  <span>Replying to: {trimReplyPreview(replyingToMessage.text)}</span>
+                  <span>Replying to: {trimReplyPreview(getMessageDisplayText(replyingToMessage.text))}</span>
                   <button type="button" onClick={() => setReplyingToMessage(null)}>
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
+              {showImageAttachComposer ? (
+                <div className="chat-image-attach">
+                  <input
+                    value={imageAttachUrlInput}
+                    onChange={(event) => setImageAttachUrlInput(event.target.value)}
+                    placeholder="https://... or ipfs://..."
+                    aria-label="Image URL"
+                  />
+                  <input
+                    value={imageAttachCaptionInput}
+                    onChange={(event) => setImageAttachCaptionInput(event.target.value)}
+                    placeholder="Caption (optional)"
+                    aria-label="Image caption"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      insertInlineImageMessage().catch(() => {});
+                    }}
+                    disabled={sending}
+                  >
+                    Send
+                  </button>
+                  <button type="button" onClick={closeInlineImageAttachComposer}>
                     Cancel
                   </button>
                 </div>
@@ -3225,7 +3572,7 @@ export default function App() {
                 role="textbox"
                 aria-multiline="false"
                 aria-label="Message"
-                data-placeholder="Type a private message"
+                data-placeholder="Type a message or [[coti-image:v1]] https://... optional caption"
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
@@ -3241,7 +3588,16 @@ export default function App() {
                   setMessageInput(singleLine);
                 }}
               />
-              <button type="button" onClick={sendMessage} disabled={sending}>
+              <button type="button" onClick={openInlineImageAttachComposer} disabled={sending}>
+                Attach Image URL
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sendMessage().catch(() => {});
+                }}
+                disabled={sending}
+              >
                 {sending ? 'Sending...' : 'Send'}
               </button>
             </div>

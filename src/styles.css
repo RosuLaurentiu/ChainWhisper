@@ -770,6 +770,36 @@ body {
   color: var(--muted);
 }
 
+.message-meta {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.message-meta .message-time {
+  margin-top: 0;
+}
+
+.message-delivery {
+  font-size: 0.7rem;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+}
+
+.message-delivery.pending {
+  color: var(--muted);
+}
+
+.message-delivery.sent {
+  color: var(--text);
+}
+
+.message-delivery.failed {
+  color: var(--accent);
+}
+
 .message-row.outgoing .message-bubble {
   background: #1a2b40;
   border-color: var(--accent);
@@ -817,6 +847,13 @@ body {
 
 .chat-replying button:hover {
   background: #2a2146;
+}
+
+.chat-image-attach {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto auto;
+  gap: 8px;
 }
 
 .chat-compose input,
@@ -1081,6 +1118,10 @@ body {
   .chat-compose {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
+  }
+
+  .chat-image-attach {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .chat-compose button {
