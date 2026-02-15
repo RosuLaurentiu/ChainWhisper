@@ -147,6 +147,7 @@ type StateBackupPayload = {
   updatedAt: number;
   nickname: string;
   contacts: Contact[];
+  walletLabel?: string;
 };
 
 const COTI_NETWORK = {
@@ -406,9 +407,11 @@ const normalizeContactsForBackup = (contacts: Contact[]): Contact[] => {
 
     const key = address.toLowerCase();
     const name = normalizeContactName(contact.name ?? '');
+    const shortAddress = shortenAddress(address);
     const existing = deduped.get(key);
     if (!existing) {
-      deduped.set(key, { address, name });
+      // store only the shortened address in backups to avoid publishing full addresses
+      deduped.set(key, { address: shortAddress, name });
       continue;
     }
 
@@ -420,14 +423,26 @@ const normalizeContactsForBackup = (contacts: Contact[]): Contact[] => {
   return Array.from(deduped.values()).sort((left, right) => left.address.localeCompare(right.address));
 };
 
-const buildStateBackupPayload = (nickname: string, contacts: Contact[]): StateBackupPayload => ({
+const buildStateBackupPayload = (nickname: string, contacts: Contact[], walletLabel?: string): StateBackupPayload => ({
   version: STATE_BACKUP_VERSION,
   updatedAt: Math.floor(Date.now() / 1000),
   nickname: nickname.slice(0, 42),
-  contacts: normalizeContactsForBackup(contacts)
+  contacts: normalizeContactsForBackup(contacts),
+  walletLabel: walletLabel ? walletLabel.slice(0, 42) : undefined
 });
 
-const buildStateBackupText = (payload: StateBackupPayload): string => `${STATE_BACKUP_PREFIX}${JSON.stringify(payload)}`;
+const buildStateBackupText = (payload: StateBackupPayload): string => {
+  // Compact format: {v, u, n, c: [[addr, name], ...]} to minimize on-chain size
+  const compact = {
+    v: payload.version,
+    u: payload.updatedAt,
+    n: payload.nickname,
+    l: payload.walletLabel ?? '',
+    c: payload.contacts.map((ct) => [ct.address, ct.name ?? ''])
+  } as const;
+
+  return `${STATE_BACKUP_PREFIX}${JSON.stringify(compact)}`;
+};
 
 const parseStateBackupText = (text: string): StateBackupPayload | null => {
   if (!text.startsWith(STATE_BACKUP_PREFIX)) {
@@ -440,33 +455,60 @@ const parseStateBackupText = (text: string): StateBackupPayload | null => {
       return null;
     }
 
-    const parsed = JSON.parse(rawPayload) as Partial<StateBackupPayload>;
-    if (parsed.version !== STATE_BACKUP_VERSION) {
-      return null;
+    const parsed = JSON.parse(rawPayload) as any;
+
+    // New compact format: object with 'v','u','n','c' where c is array of [addr, name]
+    if (parsed && typeof parsed === 'object' && parsed.v === STATE_BACKUP_VERSION && Array.isArray(parsed.c)) {
+      const updatedAt = typeof parsed.u === 'number' ? parsed.u : 0;
+      const nickname = typeof parsed.n === 'string' ? parsed.n.slice(0, 42) : '';
+      const contacts = parsed.c
+        .map((item: unknown) => {
+          if (!Array.isArray(item) || item.length === 0) return null;
+          const addr = String(item[0] ?? '').trim();
+          const name = normalizeContactName(String(item[1] ?? ''));
+          return { address: addr, name } as Contact;
+        })
+        .filter(Boolean) as Contact[];
+      const walletLabel = typeof parsed.l === 'string' && parsed.l.trim() ? parsed.l.slice(0, 42) : undefined;
+      return {
+        version: STATE_BACKUP_VERSION,
+        updatedAt,
+        nickname,
+        contacts,
+        walletLabel
+      };
     }
 
-    const updatedAt = typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0;
-    const nickname = typeof parsed.nickname === 'string' ? parsed.nickname.slice(0, 42) : '';
-    const contacts = Array.isArray(parsed.contacts)
-      ? normalizeContactsForBackup(parsed.contacts as Contact[])
-      : [];
+    // Fallback to legacy full-obj format
+    if (parsed && typeof parsed === 'object' && parsed.version === STATE_BACKUP_VERSION) {
+      const updatedAt = typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0;
+      const nickname = typeof parsed.nickname === 'string' ? parsed.nickname.slice(0, 42) : '';
+      const contacts = Array.isArray(parsed.contacts)
+        ? (parsed.contacts as unknown[])
+            .map((c) => ({ address: ((c as any).address ?? '').trim(), name: normalizeContactName((c as any).name ?? '') }))
+            .filter((c) => c.name || c.address)
+        : [];
 
-    return {
-      version: STATE_BACKUP_VERSION,
-      updatedAt,
-      nickname,
-      contacts
-    };
+      const walletLabel = typeof (parsed as any).walletLabel === 'string' ? (parsed as any).walletLabel.slice(0, 42) : undefined;
+      return {
+        version: STATE_BACKUP_VERSION,
+        updatedAt,
+        nickname,
+        contacts,
+        walletLabel
+      };
+    }
+
+    return null;
   } catch {
     return null;
   }
 };
 
-const createStateBackupFingerprint = (nickname: string, contacts: Contact[]): string =>
-  JSON.stringify({
-    nickname: nickname.slice(0, 42),
-    contacts: normalizeContactsForBackup(contacts)
-  });
+const createStateBackupFingerprint = (nickname: string, contacts: Contact[], walletLabel?: string): string => {
+  const normalized = normalizeContactsForBackup(contacts).map((c) => [c.address, c.name ?? '']);
+  return JSON.stringify({ n: nickname.slice(0, 42), c: normalized, l: walletLabel ?? '' });
+};
 
 const sortMessagesChronologically = (messages: ChatMessage[]): ChatMessage[] => {
   const next = [...messages];
@@ -2450,30 +2492,55 @@ export default function App() {
     payload: StateBackupPayload,
     discoveredNicknames?: Map<string, string>
   ) => {
+  
     const currentBackupTs = lastAppliedStateBackupTsRef.current[walletKey] ?? 0;
     if (payload.updatedAt <= currentBackupTs) {
       return;
     }
 
-    const snapshotContacts = normalizeContactsForBackup(payload.contacts);
+    const rawSnapshotContacts = Array.isArray(payload.contacts) ? payload.contacts : [];
+    const snapshotContacts: Contact[] = rawSnapshotContacts
+      .map((c) => ({ address: (c.address ?? '').trim(), name: normalizeContactName((c as Contact).name ?? '') }))
+      .filter((c) => c.name || c.address);
+
     const snapshotNickname = payload.nickname.slice(0, 42);
-    const snapshotContactsByKey = new Map<string, Contact>();
+
+    const snapshotContactsByFull = new Map<string, Contact>();
+    const snapshotContactsByShort = new Map<string, Contact>();
     for (const contact of snapshotContacts) {
-      snapshotContactsByKey.set(contact.address.toLowerCase(), contact);
+      if (isWalletAddress(contact.address)) {
+        snapshotContactsByFull.set(contact.address.toLowerCase(), contact);
+      } else if (contact.address) {
+        snapshotContactsByShort.set(contact.address.toLowerCase(), contact);
+      }
     }
+    
 
     setContacts((previous) => {
-      const merged = mergeUniqueContacts(
-        previous,
-        snapshotContacts.map((contact) => contact.address)
-      );
+      const snapshotFullAddresses = snapshotContacts
+        .map((contact) => contact.address)
+        .filter((a) => isWalletAddress(a));
+
+      const merged = mergeUniqueContacts(previous, snapshotFullAddresses);
 
       return merged.map((contact) => {
         const key = contact.address.toLowerCase();
-        const snapshotName = normalizeContactName(snapshotContactsByKey.get(key)?.name ?? '');
+        let snapshotName = normalizeContactName(snapshotContactsByFull.get(key)?.name ?? '');
+        
+        // if this backup carries a wallet label for the owner wallet, apply it for that address
+        if (!snapshotName && key === walletKey && payload.walletLabel) {
+          snapshotName = normalizeContactName(payload.walletLabel ?? '');
+        }
+        if (!snapshotName) {
+          const short = shortenAddress(contact.address).toLowerCase();
+          snapshotName = normalizeContactName(snapshotContactsByShort.get(short)?.name ?? '');
+        }
+
         const existingName = normalizeContactName(contact.name ?? '');
         const discoveredName = normalizeContactName(discoveredNicknames?.get(key) ?? '');
         const name = snapshotName ?? existingName ?? discoveredName;
+
+        
 
         if (!name) {
           return {
@@ -2493,8 +2560,24 @@ export default function App() {
     lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
     lastBackedUpStateFingerprintRef.current[walletKey] = createStateBackupFingerprint(
       snapshotNickname,
-      snapshotContacts
+      snapshotContacts,
+      payload.walletLabel
     );
+
+    if (payload.walletLabel) {
+      try {
+        setBurnerWallets((previous) =>
+          previous.map((w) => (w.address?.toLowerCase() === walletKey ? { ...w, name: payload.walletLabel } : w))
+        );
+
+        if (burnerRecordRef.current?.address?.toLowerCase() === walletKey) {
+          burnerRecordRef.current = {
+            ...burnerRecordRef.current,
+            name: payload.walletLabel
+          };
+        }
+      } catch {}
+    }
   };
 
   const restoreStateFromChainSelfBackup = async (address?: string) => {
@@ -2611,10 +2694,6 @@ export default function App() {
     }
 
     const walletKey = walletAddress.toLowerCase();
-    const nextFingerprint = createStateBackupFingerprint(snapshotNickname, snapshotContacts);
-    if (lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
-      return;
-    }
 
     try {
       backupInFlightRef.current = true;
@@ -2628,7 +2707,12 @@ export default function App() {
         throw new Error('Unable to resolve submit selector.');
       }
 
-      const payload = buildStateBackupPayload(snapshotNickname, snapshotContacts);
+      const walletLabel = burnerRecordRef.current?.name ?? findContactNameForWalletAddress(walletAddress) ?? '';
+      const payload = buildStateBackupPayload(snapshotNickname, snapshotContacts, walletLabel);
+      const nextFingerprint = createStateBackupFingerprint(snapshotNickname, snapshotContacts, walletLabel);
+      if (lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
+        return;
+      }
       const backupText = buildStateBackupText(payload);
       const encodedMemo = encodeMemoPlaintext(backupText);
       const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
@@ -2647,6 +2731,11 @@ export default function App() {
       const requiredFee = await resolveRequiredFeeForSend();
       const memoTuple = [[encryptedMemo.ciphertext.value], encryptedMemo.signature] as const;
       await contract.submit(walletAddress, memoTuple, { value: requiredFee });
+
+      // Apply the backup payload locally so local state and localStorage update immediately
+      try {
+        applyStateBackupPayload(walletKey, payload);
+      } catch (e) {}
 
       lastBackedUpStateFingerprintRef.current[walletKey] = nextFingerprint;
       lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
