@@ -63,9 +63,12 @@ const BURNER_PIN_PBKDF2_ITERATIONS = 250000;
 const PROFILE_STORAGE_KEY = 'coti-chat-profile';
 const PROFILE_SHARED_STORAGE_KEY = 'coti-chat-profile-shared';
 const AUTO_SYNC_INTERVAL_MS = 30000;
-const INITIAL_SYNC_LOOKBACK_BLOCKS = 12000;
+const INITIAL_SYNC_LOOKBACK_BLOCKS = 2500;
 const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
+const GRADUAL_CONTACT_DISCOVERY_BLOCK_WINDOW = 50000;
+const GRADUAL_CONTACT_DISCOVERY_WINDOWS_PER_TICK = 2;
+const GRADUAL_CONTACT_DISCOVERY_DELAY_MS = 120;
 const NICKNAME_DELIMITER = '\u001f';
 const REPLY_DELIMITER = '\u001e';
 const PROFILE_METADATA_PREFIX = '\u2063';
@@ -133,6 +136,10 @@ type PendingBurnerInit = {
 type SyncConversationOptions = {
   deep?: boolean;
   contactsOnly?: boolean;
+  previewPerContact?: boolean;
+  background?: boolean;
+  fromBlock?: number;
+  toBlock?: number;
 };
 
 type StateBackupPayload = {
@@ -1206,6 +1213,9 @@ export default function App() {
   const requiredFeeCacheRef = useRef<bigint | null>(null);
   const backupInFlightRef = useRef(false);
   const initialDeepContactSyncDoneRef = useRef<Record<string, boolean>>({});
+  const gradualContactDiscoveryInFlightRef = useRef<Record<string, boolean>>({});
+  const gradualContactDiscoveryCursorRef = useRef<Record<string, number>>({});
+  const gradualContactDiscoveryTimerRef = useRef<number | null>(null);
   const lastAppliedStateBackupTsRef = useRef<Record<string, number>>({});
   const lastBackedUpStateFingerprintRef = useRef<Record<string, string>>({});
   const syncConversationHistoryRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
@@ -1494,7 +1504,7 @@ export default function App() {
       setStatus('Connected (Burner)');
       await restoreStateFromChainSelfBackup(burnerWallet.address);
       await syncConversationHistoryRef.current();
-      await runInitialDeepContactDiscovery(burnerWallet.address);
+      runInitialDeepContactDiscovery(burnerWallet.address).catch(() => {});
       return 'connected';
     } catch (burnerError) {
       const message = burnerError instanceof Error ? burnerError.message : 'Failed to initialize burner wallet.';
@@ -2066,7 +2076,7 @@ export default function App() {
       setStatus('Connected (MetaMask)');
       await restoreStateFromChainSelfBackup(selected);
       await syncConversationHistory();
-      await runInitialDeepContactDiscovery(selected);
+      runInitialDeepContactDiscovery(selected).catch(() => {});
     } catch (connectionError) {
       const message = connectionError instanceof Error ? connectionError.message : 'Failed to connect wallet.';
       setError(message);
@@ -2438,15 +2448,35 @@ export default function App() {
     if (syncingHistoryRef.current) {
       const pending = pendingSyncOptionsRef.current;
       pendingSyncOptionsRef.current = {
+        ...pending,
+        ...options,
         deep: Boolean(options?.deep || pending?.deep),
-        contactsOnly: Boolean(options?.contactsOnly || pending?.contactsOnly)
+        contactsOnly: Boolean(options?.contactsOnly || pending?.contactsOnly),
+        previewPerContact: Boolean(options?.previewPerContact || pending?.previewPerContact),
+        background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
+        fromBlock:
+          typeof options?.fromBlock === 'number' && typeof pending?.fromBlock === 'number'
+            ? Math.min(options.fromBlock, pending.fromBlock)
+            : typeof options?.fromBlock === 'number'
+              ? options.fromBlock
+              : pending?.fromBlock,
+        toBlock:
+          typeof options?.toBlock === 'number' && typeof pending?.toBlock === 'number'
+            ? Math.max(options.toBlock, pending.toBlock)
+            : typeof options?.toBlock === 'number'
+              ? options.toBlock
+              : pending?.toBlock
       };
       return;
     }
 
     try {
+      const runInBackground = Boolean(options?.background);
+      const shouldLoadContactPreviews = Boolean(options?.contactsOnly && options?.previewPerContact);
       syncingHistoryRef.current = true;
-      setSyncingHistory(true);
+      if (!runInBackground) {
+        setSyncingHistory(true);
+      }
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
@@ -2455,13 +2485,17 @@ export default function App() {
 
       const walletKey = walletAddress.toLowerCase();
       const lastSyncedBlock = lastSyncedBlockRef.current[walletKey];
-      const fromBlock = options?.deep
-        ? 0
-        : typeof lastSyncedBlock === 'number'
-          ? lastSyncedBlock + 1
-          : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
+      const toBlock = typeof options?.toBlock === 'number' ? Math.min(options.toBlock, latestBlock) : latestBlock;
+      const fromBlock =
+        typeof options?.fromBlock === 'number'
+          ? Math.max(0, options.fromBlock)
+          : options?.deep
+            ? 0
+            : typeof lastSyncedBlock === 'number'
+              ? lastSyncedBlock + 1
+              : Math.max(0, toBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
 
-      if (fromBlock > latestBlock) {
+      if (fromBlock > toBlock) {
         return;
       }
 
@@ -2469,8 +2503,8 @@ export default function App() {
       const outgoingFilter = contract.filters.MessageSubmitted(null, walletAddress);
 
       const [incomingLogs, outgoingLogs] = await Promise.all([
-        contract.queryFilter(incomingFilter, fromBlock, latestBlock),
-        contract.queryFilter(outgoingFilter, fromBlock, latestBlock)
+        contract.queryFilter(incomingFilter, fromBlock, toBlock),
+        contract.queryFilter(outgoingFilter, fromBlock, toBlock)
       ]);
 
       const blockNumbers = new Set<number>();
@@ -2503,6 +2537,7 @@ export default function App() {
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
       const entries: HistoryEntry[] = [];
+      const previewByContact = new Map<string, HistoryEntry>();
       let latestStateBackup:
         | {
             payload: StateBackupPayload;
@@ -2547,7 +2582,58 @@ export default function App() {
 
         discoveredContacts.add(from);
 
-        if (options?.contactsOnly) {
+        if (options?.contactsOnly && !shouldLoadContactPreviews) {
+          continue;
+        }
+
+        if (shouldLoadContactPreviews) {
+          const contactKey = from.toLowerCase();
+          const existingPreview = previewByContact.get(contactKey);
+          const isNewerPreview =
+            !existingPreview ||
+            log.blockNumber > existingPreview.blockNumber ||
+            (log.blockNumber === existingPreview.blockNumber && log.index > existingPreview.logIndex);
+
+          if (!isNewerPreview) {
+            continue;
+          }
+
+          const userCiphertext = extractUserCiphertext(args?.messageForRecipient);
+          let messageText = '(Unable to decrypt message)';
+          let replyToMessageId: string | undefined;
+          let replyToText: string | undefined;
+          let replyToTxHash: string | undefined;
+          if (userCiphertext && userCiphertext.value.length > 0) {
+            try {
+              const decrypted = await signer.decryptValue(userCiphertext as never);
+              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
+              const parsed = parseMessageProfilePayload(decodeMemoPlaintext(raw));
+              const replyParsed = parseMessageReplyPayload(parsed.cleanText);
+              messageText = replyParsed.cleanText;
+              replyToMessageId = replyParsed.replyToMessageId;
+              replyToText = replyParsed.replyToText;
+              replyToTxHash = replyParsed.replyToTxHash;
+              if (parsed.nickname) {
+                discoveredNicknames.set(contactKey, parsed.nickname);
+              }
+            } catch {
+              messageText = '(Unable to decrypt message)';
+            }
+          }
+
+          previewByContact.set(contactKey, {
+            id: `${log.transactionHash}-${log.index}-in`,
+            contact: from,
+            direction: 'incoming',
+            text: messageText,
+            replyToMessageId,
+            replyToText,
+            replyToTxHash,
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
+            logIndex: log.index,
+            timestamp: blockTimestampMap.get(log.blockNumber)
+          });
           continue;
         }
 
@@ -2625,7 +2711,55 @@ export default function App() {
 
         discoveredContacts.add(recipient);
 
-        if (options?.contactsOnly) {
+        if (options?.contactsOnly && !shouldLoadContactPreviews) {
+          continue;
+        }
+
+        if (shouldLoadContactPreviews) {
+          const contactKey = recipient.toLowerCase();
+          const existingPreview = previewByContact.get(contactKey);
+          const isNewerPreview =
+            !existingPreview ||
+            log.blockNumber > existingPreview.blockNumber ||
+            (log.blockNumber === existingPreview.blockNumber && log.index > existingPreview.logIndex);
+
+          if (!isNewerPreview) {
+            continue;
+          }
+
+          const userCiphertext = extractUserCiphertext(args?.messageForSender);
+          let messageText = '(Unable to decrypt message)';
+          let replyToMessageId: string | undefined;
+          let replyToText: string | undefined;
+          let replyToTxHash: string | undefined;
+          if (userCiphertext && userCiphertext.value.length > 0) {
+            try {
+              const decrypted = await signer.decryptValue(userCiphertext as never);
+              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
+              const parsed = parseMessageProfilePayload(decodeMemoPlaintext(raw));
+              const replyParsed = parseMessageReplyPayload(parsed.cleanText);
+              messageText = replyParsed.cleanText;
+              replyToMessageId = replyParsed.replyToMessageId;
+              replyToText = replyParsed.replyToText;
+              replyToTxHash = replyParsed.replyToTxHash;
+            } catch {
+              messageText = '(Unable to decrypt message)';
+            }
+          }
+
+          previewByContact.set(contactKey, {
+            id: `${log.transactionHash}-${log.index}-out`,
+            contact: recipient,
+            direction: 'outgoing',
+            text: messageText,
+            replyToMessageId,
+            replyToText,
+            replyToTxHash,
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
+            logIndex: log.index,
+            timestamp: blockTimestampMap.get(log.blockNumber)
+          });
           continue;
         }
 
@@ -2664,7 +2798,11 @@ export default function App() {
         });
       }
 
-      if (!options?.contactsOnly) {
+      if (shouldLoadContactPreviews) {
+        entries.push(...previewByContact.values());
+      }
+
+      if (!options?.contactsOnly || shouldLoadContactPreviews) {
         entries.sort((a, b) => {
           if (a.blockNumber !== b.blockNumber) {
             return a.blockNumber - b.blockNumber;
@@ -2801,7 +2939,9 @@ export default function App() {
         applyStateBackupPayload(walletKey, latestStateBackup.payload, discoveredNicknames);
       }
 
-      lastSyncedBlockRef.current[walletKey] = latestBlock;
+      if (!options?.contactsOnly && typeof options?.toBlock !== 'number') {
+        lastSyncedBlockRef.current[walletKey] = latestBlock;
+      }
 
       if (!activeContact && discoveredContacts.size > 0) {
         setActiveContact(Array.from(discoveredContacts)[0]);
@@ -2813,11 +2953,15 @@ export default function App() {
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
     } catch (syncError) {
-      const message = syncError instanceof Error ? syncError.message : 'Failed to sync history.';
-      setError(message);
+      if (!options?.background) {
+        const message = syncError instanceof Error ? syncError.message : 'Failed to sync history.';
+        setError(message);
+      }
     } finally {
       syncingHistoryRef.current = false;
-      setSyncingHistory(false);
+      if (!options?.background) {
+        setSyncingHistory(false);
+      }
 
       const pendingOptions = pendingSyncOptionsRef.current;
       pendingSyncOptionsRef.current = null;
@@ -2837,14 +2981,58 @@ export default function App() {
       return;
     }
 
-    if (initialDeepContactSyncDoneRef.current[targetAddress]) {
+    if (initialDeepContactSyncDoneRef.current[targetAddress] || gradualContactDiscoveryInFlightRef.current[targetAddress]) {
       return;
     }
 
-    initialDeepContactSyncDoneRef.current[targetAddress] = true;
+    gradualContactDiscoveryInFlightRef.current[targetAddress] = true;
+
     try {
-      await syncConversationHistoryRef.current({ deep: true, contactsOnly: true });
+      const readProvider = await loadCotiReadProvider(false);
+      let cursor =
+        typeof gradualContactDiscoveryCursorRef.current[targetAddress] === 'number'
+          ? (gradualContactDiscoveryCursorRef.current[targetAddress] as number)
+          : await readProvider.getBlockNumber();
+
+      const runTick = async () => {
+        if (!isWalletAddress(targetAddress)) {
+          gradualContactDiscoveryInFlightRef.current[targetAddress] = false;
+          return;
+        }
+
+        for (
+          let iteration = 0;
+          iteration < GRADUAL_CONTACT_DISCOVERY_WINDOWS_PER_TICK && cursor >= 0;
+          iteration += 1
+        ) {
+          const fromBlock = Math.max(0, cursor - GRADUAL_CONTACT_DISCOVERY_BLOCK_WINDOW + 1);
+          await syncConversationHistoryRef.current({
+            contactsOnly: true,
+            previewPerContact: true,
+            background: true,
+            fromBlock,
+            toBlock: cursor
+          });
+          cursor = fromBlock - 1;
+          gradualContactDiscoveryCursorRef.current[targetAddress] = cursor;
+        }
+
+        if (cursor < 0) {
+          gradualContactDiscoveryInFlightRef.current[targetAddress] = false;
+          initialDeepContactSyncDoneRef.current[targetAddress] = true;
+          return;
+        }
+
+        gradualContactDiscoveryTimerRef.current = window.setTimeout(() => {
+          runTick().catch(() => {
+            gradualContactDiscoveryInFlightRef.current[targetAddress] = false;
+          });
+        }, GRADUAL_CONTACT_DISCOVERY_DELAY_MS);
+      };
+
+      await runTick();
     } catch {
+      gradualContactDiscoveryInFlightRef.current[targetAddress] = false;
       initialDeepContactSyncDoneRef.current[targetAddress] = false;
     }
   };
@@ -3504,6 +3692,10 @@ export default function App() {
     const nextWallet = walletAddress.trim().toLowerCase();
 
     if (previousWallet !== nextWallet) {
+      if (gradualContactDiscoveryTimerRef.current !== null) {
+        window.clearTimeout(gradualContactDiscoveryTimerRef.current);
+        gradualContactDiscoveryTimerRef.current = null;
+      }
       setMessagesByContact({});
       setReplyingToMessage(null);
       setHighlightedMessageId(null);
@@ -3511,6 +3703,9 @@ export default function App() {
       oldestLoadedBlockByContactRef.current = {};
       hasOlderHistoryByContactRef.current = {};
       blockTimestampCacheRef.current = new Map();
+      gradualContactDiscoveryInFlightRef.current = {};
+      gradualContactDiscoveryCursorRef.current = {};
+      initialDeepContactSyncDoneRef.current = {};
     }
 
     previousWalletAddressRef.current = nextWallet;
