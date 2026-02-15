@@ -1215,6 +1215,7 @@ export default function App() {
   const [messageInput, setMessageInput] = useState('');
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const UNREAD_STORAGE_KEY = 'coti-chat-unread';
+  const LAST_READ_STORAGE_KEY = 'coti-chat-lastread';
   const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>(() => {
     try {
       const raw = typeof window !== 'undefined' ? localStorage.getItem(UNREAD_STORAGE_KEY) : null;
@@ -1223,6 +1224,21 @@ export default function App() {
       const normalized: Record<string, boolean> = {};
       for (const k of Object.keys(parsed)) {
         normalized[k.toLowerCase()] = Boolean(parsed[k]);
+      }
+      return normalized;
+    } catch {
+      return {};
+    }
+  });
+  const [lastReadMap, setLastReadMap] = useState<Record<string, number>>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(LAST_READ_STORAGE_KEY) : null;
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      const normalized: Record<string, number> = {};
+      for (const k of Object.keys(parsed)) {
+        const v = Number(parsed[k]) || 0;
+        normalized[k.toLowerCase()] = v;
       }
       return normalized;
     } catch {
@@ -1361,8 +1377,15 @@ export default function App() {
   }, [unreadMap]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(LAST_READ_STORAGE_KEY, JSON.stringify(lastReadMap));
+    } catch {}
+  }, [lastReadMap]);
+
+  useEffect(() => {
     const prev = prevLastMessageIdRef.current || {};
     const next = messagesByContact || {};
+
     let updated: Record<string, boolean> | null = null;
 
     // If we have no previous snapshot, initialize it from current messages
@@ -1386,6 +1409,9 @@ export default function App() {
         const startIndex = prevLast ? msgs.findIndex((m) => m.id === prevLast) : -1;
         const newMsgs = startIndex >= 0 ? msgs.slice(startIndex + 1) : msgs;
         if (newMsgs.some((m) => m.direction === 'incoming')) {
+          const lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
+          const lastMsgTs = (lastMsg && typeof lastMsg.timestamp === 'number') ? Number(lastMsg.timestamp) : Math.floor(Date.now() / 1000);
+          const lastReadTs = (lastReadMap && lastReadMap[contact]) ? Number(lastReadMap[contact]) : 0;
           const isActive = contact === (activeContact ?? '').toLowerCase();
           const pageVisible = typeof document !== 'undefined' && !document.hidden && (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
 
@@ -1393,14 +1419,16 @@ export default function App() {
             // If user is viewing the chat but the page is not visible/focused,
             // treat incoming messages as unread so we can play the sound and
             // surface an indicator. If the page is visible and focused, keep as read.
-            if (!pageVisible) {
+            if (!pageVisible && lastMsgTs > lastReadTs) {
               updated = updated || { ...unreadMap };
               updated[contact] = true;
             }
           } else {
-            if (!unreadMap[contact]) {
-              updated = updated || { ...unreadMap };
-              updated[contact] = true;
+            if (lastMsgTs > lastReadTs) {
+              if (!unreadMap[contact]) {
+                updated = updated || { ...unreadMap };
+                updated[contact] = true;
+              }
             }
           }
         }
@@ -1415,13 +1443,22 @@ export default function App() {
 
     prevLastMessageIdRef.current = prev;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messagesByContact, activeContact]);
+  }, [messagesByContact, activeContact, lastReadMap, unreadMap]);
 
   useEffect(() => {
     if (!activeContact) return;
     const key = activeContact.toLowerCase();
     const pageVisible = typeof document !== 'undefined' && !document.hidden && (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
     if (!pageVisible) return; // don't mark as read if page/tab isn't visible/focused
+    try {
+      const msgs = messagesByContact[key] ?? [];
+      const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
+      setLastReadMap((prev) => {
+        const copy = { ...prev };
+        copy[key] = lastTs;
+        return copy;
+      });
+    } catch {}
     setUnreadMap((prev) => {
       if (!prev[key]) return prev;
       const copy = { ...prev };
@@ -2754,6 +2791,10 @@ export default function App() {
 
   const syncConversationHistory = async (options?: SyncConversationOptions) => {
     setError('');
+    try {
+      // eslint-disable-next-line no-console
+      console.debug('[sync] start', { walletAddress, options, hasAesReady, chainId });
+    } catch {}
 
     if (!walletAddress) {
       return;
@@ -3267,6 +3308,10 @@ export default function App() {
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
     } catch (syncError) {
+      try {
+        // eslint-disable-next-line no-console
+        console.error('[sync] error', syncError);
+      } catch {}
       if (!options?.background) {
         const message = syncError instanceof Error ? syncError.message : 'Failed to sync history.';
         setError(message);
@@ -4283,7 +4328,11 @@ export default function App() {
             }}
             title={soundEnabled ? 'Disable sound' : 'Enable sound'}
             aria-pressed={soundEnabled}
-            style={{ marginLeft: 8 }}
+            style={
+              isMobileNav
+                ? { display: 'inline-grid', position: 'fixed', top: '8px', right: '64px', zIndex: 120 }
+                : { marginLeft: 8 }
+            }
           >
             {soundEnabled ? (
               <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
@@ -4664,6 +4713,11 @@ export default function App() {
                     setActiveContact(contact.address);
                     try {
                       const key = contact.address.toLowerCase();
+                      try {
+                        const msgs = messagesByContact[key] ?? [];
+                        const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
+                        setLastReadMap((prev) => ({ ...prev, [key]: lastTs }));
+                      } catch {}
                       setUnreadMap((prev) => {
                         if (!prev[key]) return prev;
                         const copy = { ...prev };
@@ -4681,6 +4735,11 @@ export default function App() {
                       setActiveContact(contact.address);
                       try {
                         const key = contact.address.toLowerCase();
+                        try {
+                          const msgs = messagesByContact[key] ?? [];
+                          const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
+                          setLastReadMap((prev) => ({ ...prev, [key]: lastTs }));
+                        } catch {}
                         setUnreadMap((prev) => {
                           if (!prev[key]) return prev;
                           const copy = { ...prev };
@@ -4840,6 +4899,11 @@ export default function App() {
                 try {
                   if (!activeContact) return;
                   const key = activeContact.toLowerCase();
+                  try {
+                    const msgs = messagesByContact[key] ?? [];
+                    const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
+                    setLastReadMap((prev) => ({ ...prev, [key]: lastTs }));
+                  } catch {}
                   setUnreadMap((prev) => {
                     if (!prev[key]) return prev;
                     const copy = { ...prev };
