@@ -921,6 +921,54 @@ body {
   color: var(--muted);
 }
 
+/* Chat image display */
+.chat-image,
+.message-bubble img {
+  display: block;
+  max-width: min(75%, 320px);
+  max-height: 320px;
+  width: auto;
+  height: auto;
+  border-radius: 8px;
+  margin-top: 8px;
+  object-fit: cover;
+  cursor: zoom-in;
+  transition: transform 0.12s ease;
+}
+
+.chat-image-loading,
+.chat-image-error {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin-top: 8px;
+}
+
+/* Lightbox */
+.image-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.image-lightbox-content {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.image-lightbox-content img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  cursor: zoom-out;
+}
+
 .chat-compose button {
   border: 1px solid var(--border);
   background: var(--bg-elev-3);

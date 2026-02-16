@@ -1,4 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import ChatImage from './components/ChatImage';
+import { parseImageTag } from './lib/imagePull';
 import type { BrowserProvider, JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 
 declare global {
@@ -5119,7 +5121,13 @@ export default function App() {
                           ↪ {message.replyToText ?? `Tx ${shortenAddress(message.replyToTxHash as string)}`}
                         </button>
                       ) : null}
-                      {messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                      {
+                        (() => {
+                          const imgParsed = parseImageTag(message.text);
+                          if (imgParsed) return <ChatImage tag={message.text} />;
+                          return messageDisplayText ? <div>{messageDisplayText}</div> : null;
+                        })()
+                      }
                       {message.timestamp || deliveryLabel ? (
                         <div className="message-meta">
                           {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
