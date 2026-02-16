@@ -5090,6 +5090,7 @@ export default function App() {
               placeholder="Mnemonic phrase or 0x private key"
               aria-label="Import burner wallet"
             />
+            {error ? <p className="error">{error}</p> : null}
             <div className="modal-actions">
               <button
                 type="button"
@@ -5111,6 +5112,7 @@ export default function App() {
         <div className="modal-backdrop" onClick={closeBurnerPinModal}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <h3>{burnerPinMode === 'set' ? 'Set Burner PIN' : 'Unlock Burner Wallet'}</h3>
+            {error ? <p className="error">{error}</p> : null}
             <input
               value={burnerPinInput}
               name={burnerPinMode === 'set' ? 'pin-new' : 'pin-unlock'}
