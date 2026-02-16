@@ -1195,10 +1195,12 @@ export default function App() {
   const [showBurnerMnemonic, setShowBurnerMnemonic] = useState(false);
   const [burnerImportInput, setBurnerImportInput] = useState('');
   const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>([]);
+  const [restoredWalletLabels, setRestoredWalletLabels] = useState<Record<string, string>>({});
   const [activeBurnerWalletId, setActiveBurnerWalletId] = useState('');
   const [burnerWalletLabelInput, setBurnerWalletLabelInput] = useState('');
   const [showBurnerImportModal, setShowBurnerImportModal] = useState(false);
   const [showBurnerPinModal, setShowBurnerPinModal] = useState(false);
+  const [restoredShortNicknames, setRestoredShortNicknames] = useState<Record<string, string>>({});
   const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
   const [burnerPinInput, setBurnerPinInput] = useState('');
   const [pendingBurnerInit, setPendingBurnerInit] = useState<PendingBurnerInit | null>(null);
@@ -1593,7 +1595,10 @@ export default function App() {
     return burnerWallets.find((walletRecord) => walletRecord.address?.toLowerCase() === address.toLowerCase())?.name;
   };
   const getBurnerWalletDisplayName = (walletRecord: BurnerWalletRecord, index: number): string =>
-    walletRecord.name ?? findContactNameForWalletAddress(walletRecord.address) ?? `Wallet ${index + 1}`;
+    restoredWalletLabels[walletRecord.address?.toLowerCase() ?? ''] ??
+    walletRecord.name ??
+    findContactNameForWalletAddress(walletRecord.address) ??
+    `Wallet ${index + 1}`;
   const findBurnerWalletDefaultNameForAddress = (address: string): string | undefined => {
     const normalizedAddress = address.toLowerCase();
     const walletIndex = burnerWallets.findIndex(
@@ -1946,6 +1951,15 @@ export default function App() {
       if (pending.mode === 'import') {
         setShowBurnerImportModal(false);
       }
+
+      // Ensure UI updates (contacts/nicknames) after import/connect by
+      // performing a delayed re-sync. This avoids the need for a manual
+      // refresh in some environments where state updates race.
+      setTimeout(() => {
+        try {
+          syncConversationHistoryRef.current({ deep: true }).catch(() => {});
+        } catch {}
+      }, 300);
 
       if (initResult === 'connected' && burnerPinMode === 'unlock' && pin.length < BURNER_PIN_MIN_LENGTH) {
         setStatus(`Connected. Please update PIN to at least ${BURNER_PIN_MIN_LENGTH} digits.`);
@@ -2551,6 +2565,66 @@ export default function App() {
         snapshotContactsByShort.set(contact.address.toLowerCase(), contact);
       }
     }
+    // If any snapshot entries use shortened addresses, try to match them
+    // to existing full-address contacts and apply names immediately.
+    try {
+      const shortToFull = new Map<string, string>();
+      for (const c of contacts) {
+        try {
+          if (isWalletAddress(c.address)) {
+            shortToFull.set(shortenAddress(c.address).toLowerCase(), c.address.toLowerCase());
+          }
+        } catch {}
+      }
+
+      const updates: Record<string, string> = {};
+      for (const [shortAddr, snap] of snapshotContactsByShort.entries()) {
+        if (!snap.name) continue;
+        const full = shortToFull.get(shortAddr.toLowerCase());
+        if (full) {
+          updates[full] = snap.name as string;
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        setContacts((previous) =>
+          previous.map((c) => {
+            const key = c.address.toLowerCase();
+            const existingName = normalizeContactName(c.name ?? '');
+            const newName = updates[key];
+            if (newName && !existingName) {
+              return { ...c, name: newName };
+            }
+            return c;
+          })
+        );
+      }
+    } catch {}
+    // Populate restored-short-name map so we can apply names later when full
+    // addresses are discovered (e.g. during history sync).
+    try {
+      const shortMap: Record<string, string> = {};
+      for (const [shortAddr, ct] of snapshotContactsByShort.entries()) {
+        if (ct.name) shortMap[shortAddr.toLowerCase()] = ct.name;
+      }
+      if (Object.keys(shortMap).length > 0) {
+        setRestoredShortNicknames((prev) => ({ ...prev, ...shortMap }));
+      }
+    } catch {}
+    // If the backup only contains shortened addresses, try to apply names for
+    // the owner wallet by matching the shortened address to the current wallet key.
+    try {
+      const ownerShort = shortenAddress(walletKey).toLowerCase();
+      const ownerSnapshot = snapshotContactsByShort.get(ownerShort);
+      if (ownerSnapshot && ownerSnapshot.name) {
+        // Ensure the owner's contact exists (with full address) and has the snapshot name
+        setContacts((previous) => {
+          const hasOwner = previous.some((c) => c.address.toLowerCase() === walletKey);
+          if (hasOwner) return previous.map((c) => (c.address.toLowerCase() === walletKey ? { ...c, name: c.name || ownerSnapshot.name } : c));
+          return [...previous, { address: walletKey, name: ownerSnapshot.name }];
+        });
+      }
+    } catch {}
     
 
     setContacts((previous) => {
@@ -2575,7 +2649,8 @@ export default function App() {
 
         const existingName = normalizeContactName(contact.name ?? '');
         const discoveredName = normalizeContactName(discoveredNicknames?.get(key) ?? '');
-        const name = snapshotName ?? existingName ?? discoveredName;
+        // Prefer on‑chain snapshot name, then discovered (recent messages), then local existing name
+        const name = snapshotName ?? discoveredName ?? existingName;
 
         
 
@@ -2600,6 +2675,22 @@ export default function App() {
       snapshotContacts,
       payload.walletLabel
     );
+    // Persist contacts and profile immediately under the correct scoped key
+    try {
+      window.localStorage.setItem(scopedStorageKey(CONTACTS_STORAGE_KEY, walletKey), JSON.stringify(snapshotContacts));
+    } catch {}
+    try {
+      window.localStorage.setItem(scopedStorageKey(PROFILE_STORAGE_KEY, walletKey), JSON.stringify({ nickname: snapshotNickname }));
+    } catch {}
+    try {
+      // eslint-disable-next-line no-console
+      console.debug('[apply] applied state backup', {
+        walletKey,
+        snapshotNickname,
+        contactsCount: snapshotContacts.length,
+        walletLabel: payload.walletLabel
+      });
+    } catch {}
 
     if (payload.walletLabel) {
       try {
@@ -2613,6 +2704,8 @@ export default function App() {
             name: payload.walletLabel
           };
         }
+        // Also store restored label for display when vault records are not yet loaded
+        setRestoredWalletLabels((prev) => ({ ...prev, [walletKey]: payload.walletLabel ?? '' }));
       } catch {}
     }
   };
@@ -2927,6 +3020,17 @@ export default function App() {
                     blockNumber: log.blockNumber,
                     logIndex: log.index
                   };
+                    try {
+                      // eslint-disable-next-line no-console
+                      console.debug('[restore] found state backup', {
+                        address: targetAddress.toLowerCase(),
+                        nickname: backupPayload.nickname,
+                        walletLabel: backupPayload.walletLabel,
+                        tx: log.transactionHash,
+                        block: log.blockNumber,
+                        index: log.index
+                      });
+                    } catch {}
                 }
               }
             } catch {
@@ -2969,7 +3073,18 @@ export default function App() {
               replyToText = replyParsed.replyToText;
               replyToTxHash = replyParsed.replyToTxHash;
               if (parsed.nickname) {
-                discoveredNicknames.set(contactKey, parsed.nickname);
+                  discoveredNicknames.set(contactKey, parsed.nickname);
+                  try {
+                    // debug: show where nickname came from
+                    // eslint-disable-next-line no-console
+                    console.debug('[sync] discovered nickname', {
+                      address: contactKey,
+                      nickname: parsed.nickname,
+                      tx: log.transactionHash,
+                      block: log.blockNumber,
+                      index: log.index
+                    });
+                  } catch {}
               }
             } catch {
               messageText = '(Unable to decrypt message)';
@@ -3008,7 +3123,17 @@ export default function App() {
             replyToText = replyParsed.replyToText;
             replyToTxHash = replyParsed.replyToTxHash;
             if (parsed.nickname) {
-              discoveredNicknames.set(from.toLowerCase(), parsed.nickname);
+                discoveredNicknames.set(from.toLowerCase(), parsed.nickname);
+                try {
+                  // eslint-disable-next-line no-console
+                  console.debug('[sync] discovered nickname', {
+                    address: from.toLowerCase(),
+                    nickname: parsed.nickname,
+                    tx: log.transactionHash,
+                    block: log.blockNumber,
+                    index: log.index
+                  });
+                } catch {}
             }
           } catch {
             messageText = '(Unable to decrypt message)';
@@ -3278,15 +3403,21 @@ export default function App() {
             return contact;
           }
 
-          const nickname = discoveredNicknames.get(contact.address.toLowerCase());
-          if (!nickname) {
-            return contact;
+          const key = contact.address.toLowerCase();
+          const nickname = discoveredNicknames.get(key);
+          if (nickname) {
+            return { ...contact, name: nickname };
           }
 
-          return {
-            ...contact,
-            name: nickname
-          };
+          try {
+            const short = shortenAddress(contact.address).toLowerCase();
+            const restored = restoredShortNicknames[short];
+            if (restored) {
+              return { ...contact, name: restored };
+            }
+          } catch {}
+
+          return contact;
         });
       });
 
@@ -4669,16 +4800,37 @@ export default function App() {
               setMyNickname(singleLine);
             }}
           />
-          <button
-            type="button"
-            className="contact"
-            onClick={() => {
-              backupLocalStateToSelf(myNickname, contacts).catch(() => {});
-            }}
-            disabled={!hasAesReady || backingUpState}
-          >
-            {backingUpState ? 'Saving on chain...' : 'Save on chain'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className="contact"
+              onClick={() => {
+                backupLocalStateToSelf(myNickname, contacts).catch(() => {});
+              }}
+              disabled={!hasAesReady || backingUpState}
+            >
+              {backingUpState ? 'Saving on chain...' : 'Save on chain'}
+            </button>
+            <button
+              type="button"
+              className="contact"
+              onClick={async () => {
+                setError('');
+                setDeepSyncingHistory(true);
+                try {
+                  await syncConversationHistory({ deep: true, background: false });
+                } catch (e) {
+                  const message = e instanceof Error ? e.message : 'Failed to sync.';
+                  setError(message);
+                } finally {
+                  setDeepSyncingHistory(false);
+                }
+              }}
+              disabled={!hasAesReady || deepSyncingHistory}
+            >
+              {deepSyncingHistory ? 'Syncing...' : 'Sync Data'}
+            </button>
+          </div>
         </div>
 
         <form className="contact-form" onSubmit={handleAddContact}>
@@ -4773,7 +4925,7 @@ export default function App() {
                       ) : (
                         <button
                           type="button"
-                          className="contact-copy contact-copy-secondary"
+                          className="contact-copy"
                           onClick={(event) => {
                             event.stopPropagation();
                             copyAddressToClipboard(contact.address);
