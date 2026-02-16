@@ -3023,7 +3023,7 @@ export default function App() {
                     try {
                       // eslint-disable-next-line no-console
                       console.debug('[restore] found state backup', {
-                        address: targetAddress.toLowerCase(),
+                        address: walletKey,
                         nickname: backupPayload.nickname,
                         walletLabel: backupPayload.walletLabel,
                         tx: log.transactionHash,
