@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { parseImageTag, fetchAndDecryptToUrl } from '../lib/imagePull';
 
 type Props = { tag: string };

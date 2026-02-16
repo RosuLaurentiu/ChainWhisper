@@ -20,10 +20,10 @@ export async function fetchEncryptedBlob(blobId: string): Promise<ArrayBuffer> {
 }
 
 export async function decryptBlobToObjectUrl(encrypted: ArrayBuffer, keyHex: string, ivHex: string, mime?: string): Promise<string> {
-  const keyBuf = hexToBytes(keyHex).buffer;
-  const ivBuf = hexToBytes(ivHex).buffer;
-  const cryptoKey = await crypto.subtle.importKey('raw', keyBuf, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBuf }, cryptoKey, encrypted);
+  const keyBytes = hexToBytes(keyHex);
+  const ivBytes = hexToBytes(ivHex);
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBytes as unknown as BufferSource, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes as unknown as BufferSource }, cryptoKey, encrypted);
   const blob = new Blob([pt], { type: mime ?? 'application/octet-stream' });
   return URL.createObjectURL(blob);
 }
