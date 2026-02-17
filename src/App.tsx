@@ -156,12 +156,19 @@ type StateBackupPayload = {
   nickname: string;
   contacts: Contact[];
   walletLabel?: string;
+  readState?: BackupReadStateEntry[];
+  unreadContacts?: string[];
 };
 
 type ReadCursorPayload = {
   peer: string;
   lastReadTs: number;
   lastReadBlock?: number;
+};
+
+type BackupReadStateEntry = {
+  address: string;
+  lastReadTs: number;
 };
 
 type BackupLocalStateOptions = {
@@ -288,6 +295,7 @@ const loadCotiReadProvider = async (preferWebSocket = true): Promise<CotiReadPro
 const shortenAddress = (address: string): string => `${address.slice(0, 6)}...${address.slice(-4)}`;
 
 const isWalletAddress = (value: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+const isShortAddress = (value: string): boolean => /^0x[a-fA-F0-9]{4}\.\.\.[a-fA-F0-9]{4}$/.test(value.trim());
 const normalizeContactName = (value: string): string | undefined => {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -554,22 +562,169 @@ const normalizeContactsForBackup = (contacts: Contact[]): Contact[] => {
   return Array.from(deduped.values()).sort((left, right) => left.address.localeCompare(right.address));
 };
 
-const buildStateBackupPayload = (nickname: string, contacts: Contact[], walletLabel?: string): StateBackupPayload => ({
-  version: STATE_BACKUP_VERSION,
-  updatedAt: Math.floor(Date.now() / 1000),
-  nickname: nickname.slice(0, 42),
-  contacts: normalizeContactsForBackup(contacts),
-  walletLabel: walletLabel ? walletLabel.slice(0, 42) : undefined
-});
+const normalizeBackupAddressToken = (value: unknown): string | null => {
+  const token = String(value ?? '').trim().toLowerCase();
+  if (!token) {
+    return null;
+  }
+
+  if (isWalletAddress(token) || isShortAddress(token)) {
+    return token;
+  }
+
+  return null;
+};
+
+const normalizeReadStateEntries = (value: unknown): BackupReadStateEntry[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const maxTsByAddress = new Map<string, number>();
+  for (const item of value) {
+    const entry =
+      Array.isArray(item) && item.length >= 2
+        ? { address: item[0], lastReadTs: item[1] }
+        : item && typeof item === 'object'
+          ? {
+              address: (item as { address?: unknown; p?: unknown }).address ?? (item as { p?: unknown }).p,
+              lastReadTs: (item as { lastReadTs?: unknown; t?: unknown }).lastReadTs ?? (item as { t?: unknown }).t
+            }
+          : null;
+    if (!entry) {
+      continue;
+    }
+
+    const address = normalizeBackupAddressToken(entry.address);
+    const lastReadTs = toSafeNumber(entry.lastReadTs);
+    if (!address || !Number.isFinite(lastReadTs) || lastReadTs <= 0) {
+      continue;
+    }
+
+    const existing = maxTsByAddress.get(address) ?? 0;
+    if (lastReadTs > existing) {
+      maxTsByAddress.set(address, lastReadTs);
+    }
+  }
+
+  return Array.from(maxTsByAddress.entries())
+    .map(([address, lastReadTs]) => ({ address, lastReadTs }))
+    .sort((left, right) => left.address.localeCompare(right.address));
+};
+
+const normalizeUnreadContactsEntries = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => normalizeBackupAddressToken(item))
+        .filter((token): token is string => Boolean(token))
+    )
+  ).sort((left, right) => left.localeCompare(right));
+};
+
+const normalizeReadStateForBackup = (lastReadState: Record<string, number>): BackupReadStateEntry[] => {
+  const byShortAddress = new Map<string, { owner: string; lastReadTs: number }>();
+  const ambiguousShortAddresses = new Set<string>();
+
+  for (const [address, rawTs] of Object.entries(lastReadState)) {
+    const normalizedAddress = address.trim().toLowerCase();
+    const lastReadTs = toSafeNumber(rawTs);
+    if (!isWalletAddress(normalizedAddress) || !Number.isFinite(lastReadTs) || lastReadTs <= 0) {
+      continue;
+    }
+
+    const shortAddress = shortenAddress(normalizedAddress).toLowerCase();
+    if (ambiguousShortAddresses.has(shortAddress)) {
+      continue;
+    }
+
+    const existing = byShortAddress.get(shortAddress);
+    if (existing && existing.owner !== normalizedAddress) {
+      byShortAddress.delete(shortAddress);
+      ambiguousShortAddresses.add(shortAddress);
+      continue;
+    }
+
+    if (!existing || lastReadTs > existing.lastReadTs) {
+      byShortAddress.set(shortAddress, {
+        owner: normalizedAddress,
+        lastReadTs
+      });
+    }
+  }
+
+  return Array.from(byShortAddress.entries())
+    .map(([address, entry]) => ({ address, lastReadTs: entry.lastReadTs }))
+    .sort((left, right) => left.address.localeCompare(right.address));
+};
+
+const normalizeUnreadContactsForBackup = (unreadState: Record<string, boolean>): string[] => {
+  const byShortAddress = new Map<string, string>();
+  const ambiguousShortAddresses = new Set<string>();
+
+  for (const [address, isUnread] of Object.entries(unreadState)) {
+    if (!isUnread) {
+      continue;
+    }
+
+    const normalizedAddress = address.trim().toLowerCase();
+    if (!isWalletAddress(normalizedAddress)) {
+      continue;
+    }
+
+    const shortAddress = shortenAddress(normalizedAddress).toLowerCase();
+    if (ambiguousShortAddresses.has(shortAddress)) {
+      continue;
+    }
+
+    const existing = byShortAddress.get(shortAddress);
+    if (existing && existing !== normalizedAddress) {
+      byShortAddress.delete(shortAddress);
+      ambiguousShortAddresses.add(shortAddress);
+      continue;
+    }
+
+    byShortAddress.set(shortAddress, normalizedAddress);
+  }
+
+  return Array.from(byShortAddress.keys()).sort((left, right) => left.localeCompare(right));
+};
+
+const buildStateBackupPayload = (
+  nickname: string,
+  contacts: Contact[],
+  walletLabel?: string,
+  readState: BackupReadStateEntry[] = [],
+  unreadContacts: string[] = []
+): StateBackupPayload => {
+  const normalizedReadState = normalizeReadStateEntries(readState);
+  const normalizedUnreadContacts = normalizeUnreadContactsEntries(unreadContacts);
+
+  return {
+    version: STATE_BACKUP_VERSION,
+    updatedAt: Math.floor(Date.now() / 1000),
+    nickname: nickname.slice(0, 42),
+    contacts: normalizeContactsForBackup(contacts),
+    walletLabel: walletLabel ? walletLabel.slice(0, 42) : undefined,
+    readState: normalizedReadState.length > 0 ? normalizedReadState : undefined,
+    unreadContacts: normalizedUnreadContacts.length > 0 ? normalizedUnreadContacts : undefined
+  };
+};
 
 const buildStateBackupText = (payload: StateBackupPayload): string => {
-  // Compact format: {v, u, n, c: [[addr, name], ...]} to minimize on-chain size
+  // Compact format: {v, u, n, l, c, r, q} to minimize on-chain size.
   const compact = {
     v: payload.version,
     u: payload.updatedAt,
     n: payload.nickname,
     l: payload.walletLabel ?? '',
-    c: payload.contacts.map((ct) => [ct.address, ct.name ?? ''])
+    c: payload.contacts.map((ct) => [ct.address, ct.name ?? '']),
+    r: (payload.readState ?? []).map((entry) => [entry.address, entry.lastReadTs]),
+    q: payload.unreadContacts ?? []
   } as const;
 
   return `${STATE_BACKUP_PREFIX}${JSON.stringify(compact)}`;
@@ -601,12 +756,16 @@ const parseStateBackupText = (text: string): StateBackupPayload | null => {
         })
         .filter(Boolean) as Contact[];
       const walletLabel = typeof parsed.l === 'string' && parsed.l.trim() ? parsed.l.slice(0, 42) : undefined;
+      const readState = normalizeReadStateEntries(parsed.r);
+      const unreadContacts = normalizeUnreadContactsEntries(parsed.q);
       return {
         version: STATE_BACKUP_VERSION,
         updatedAt,
         nickname,
         contacts,
-        walletLabel
+        walletLabel,
+        readState: readState.length > 0 ? readState : undefined,
+        unreadContacts: unreadContacts.length > 0 ? unreadContacts : undefined
       };
     }
 
@@ -621,12 +780,16 @@ const parseStateBackupText = (text: string): StateBackupPayload | null => {
         : [];
 
       const walletLabel = typeof (parsed as any).walletLabel === 'string' ? (parsed as any).walletLabel.slice(0, 42) : undefined;
+      const readState = normalizeReadStateEntries((parsed as any).readState);
+      const unreadContacts = normalizeUnreadContactsEntries((parsed as any).unreadContacts);
       return {
         version: STATE_BACKUP_VERSION,
         updatedAt,
         nickname,
         contacts,
-        walletLabel
+        walletLabel,
+        readState: readState.length > 0 ? readState : undefined,
+        unreadContacts: unreadContacts.length > 0 ? unreadContacts : undefined
       };
     }
 
@@ -678,9 +841,23 @@ const parseReadCursorText = (text: string): ReadCursorPayload | null => {
   }
 };
 
-const createStateBackupFingerprint = (nickname: string, contacts: Contact[], walletLabel?: string): string => {
+const createStateBackupFingerprint = (
+  nickname: string,
+  contacts: Contact[],
+  walletLabel?: string,
+  readState: BackupReadStateEntry[] = [],
+  unreadContacts: string[] = []
+): string => {
   const normalized = normalizeContactsForBackup(contacts).map((c) => [c.address, c.name ?? '']);
-  return JSON.stringify({ n: nickname.slice(0, 42), c: normalized, l: walletLabel ?? '' });
+  const normalizedReadState = normalizeReadStateEntries(readState).map((entry) => [entry.address, entry.lastReadTs]);
+  const normalizedUnread = normalizeUnreadContactsEntries(unreadContacts);
+  return JSON.stringify({
+    n: nickname.slice(0, 42),
+    c: normalized,
+    l: walletLabel ?? '',
+    r: normalizedReadState,
+    q: normalizedUnread
+  });
 };
 
 const sortMessagesChronologically = (messages: ChatMessage[]): ChatMessage[] => {
@@ -1082,7 +1259,7 @@ const parseMessageReplyPayload = (text: string): {
       const rawReplyId = hasLegacyIdChunk ? metadataChunk.slice(0, separatorIndex).trim() : '';
       const rawPreview = hasLegacyIdChunk ? metadataChunk.slice(separatorIndex + 1) : metadataChunk;
       const previewChunk = trimReplyPreview(rawPreview);
-      const replyToMessageId = hasLegacyIdChunk && /^[a-zA-Z0-9\-]+$/.test(rawReplyId) ? rawReplyId : undefined;
+      const replyToMessageId = hasLegacyIdChunk && /^[a-zA-Z0-9-]+$/.test(rawReplyId) ? rawReplyId : undefined;
       const remainingRaw = workingText.slice(metadataEnd + 1);
       const remaining = remainingRaw.startsWith(' ') ? remainingRaw.slice(1) : remainingRaw;
 
@@ -1388,6 +1565,13 @@ export default function App() {
     try {
       const msgs = messagesByContact[key] ?? [];
       const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
+      const currentTs = Number(lastReadMapRef.current[key] ?? 0);
+      if (lastTs > currentTs) {
+        lastReadMapRef.current = {
+          ...lastReadMapRef.current,
+          [key]: lastTs
+        };
+      }
       setLastReadMap((prev) => {
         const copy = { ...prev };
         copy[key] = lastTs;
@@ -1415,7 +1599,6 @@ export default function App() {
       }
     }
     prevUnreadRef.current = { ...next };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unreadMap, soundEnabled]);
 
   useEffect(() => {
@@ -1429,15 +1612,19 @@ export default function App() {
       }, 1200);
     }
     previousWalletAddressRef.current = next;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
   const oldestLoadedBlockByContactRef = useRef<Record<string, number>>({});
   const hasOlderHistoryByContactRef = useRef<Record<string, boolean>>({});
   const loadingOlderHistoryRef = useRef(false);
   const blockTimestampCacheRef = useRef<Map<number, number>>(new Map());
   const requiredFeeCacheRef = useRef<bigint | null>(null);
+  const requiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
+  const nicknameMaxBytesRequestRef = useRef<Promise<number> | null>(null);
+  const nicknameMaxBytesLoadedRef = useRef(false);
+  const submitSelectorRef = useRef<string | null>(null);
   const backupInFlightRef = useRef(false);
   const onChainNicknameCacheRef = useRef<Record<string, string | null>>({});
+  const lastMessageTimeCacheRef = useRef<Record<string, number>>({});
   const lastAppliedStateBackupTsRef = useRef<Record<string, number>>({});
   const lastBackedUpStateFingerprintRef = useRef<Record<string, string>>({});
   const cachedStateBackupMemoRef = useRef<Record<string, { fingerprint: string; memo: SubmitMemoPayload }>>({});
@@ -2078,10 +2265,7 @@ export default function App() {
       const funderSigner = await browserProvider.getSigner();
       let topUpAmount = topUpAmountWei;
       if (topUpAmount === null) {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
-        const requiredFee = (await readContract.feeAmount()) as bigint;
+        const requiredFee = await resolveRequiredFeeForSend();
         topUpAmount = calculateTopUpAmount(requiredFee, topUpMultiplier);
       }
 
@@ -2283,6 +2467,13 @@ export default function App() {
     const lastTimestamp =
       latestMessage && typeof latestMessage.timestamp === 'number' ? Number(latestMessage.timestamp) : fallbackTimestamp;
     const lastBlockNumber = latestMessage?.blockNumber;
+    const currentTs = Number(lastReadMapRef.current[key] ?? 0);
+    if (lastTimestamp > currentTs) {
+      lastReadMapRef.current = {
+        ...lastReadMapRef.current,
+        [key]: lastTimestamp
+      };
+    }
 
     setLastReadMap((previous) => {
       if (previous[key] === lastTimestamp) {
@@ -2566,6 +2757,21 @@ export default function App() {
     return { signer, cacheKey };
   };
 
+  const resolveSubmitSelector = async (): Promise<string> => {
+    if (submitSelectorRef.current) {
+      return submitSelectorRef.current;
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const selector = new cotiEthers.Interface(CHAT_CONTRACT_ABI).getFunction('submit')?.selector;
+    if (!selector) {
+      throw new Error('Unable to resolve submit selector.');
+    }
+
+    submitSelectorRef.current = selector;
+    return selector;
+  };
+
   const resolveRequiredFeeForSend = async (): Promise<bigint> => {
     if (requiredFeeCacheRef.current !== null && requiredFeeCacheRef.current > 0n) {
       return requiredFeeCacheRef.current;
@@ -2576,13 +2782,23 @@ export default function App() {
       return requiredFeeWei;
     }
 
-    const cotiEthers = await loadCotiEthersModule();
-    const readProvider = await loadCotiReadProvider(true);
-    const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
-    const resolvedFee = (await readContract.feeAmount()) as bigint;
-    requiredFeeCacheRef.current = resolvedFee;
-    setRequiredFeeWei(resolvedFee);
-    return resolvedFee;
+    if (!requiredFeeRequestRef.current) {
+      requiredFeeRequestRef.current = (async () => {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+        const resolvedFee = (await readContract.feeAmount()) as bigint;
+        requiredFeeCacheRef.current = resolvedFee;
+        setRequiredFeeWei(resolvedFee);
+        return resolvedFee;
+      })();
+    }
+
+    try {
+      return await requiredFeeRequestRef.current;
+    } finally {
+      requiredFeeRequestRef.current = null;
+    }
   };
 
   const emitReadCursorToChain = async (
@@ -2614,12 +2830,7 @@ export default function App() {
     readCursorSubmitInFlightRef.current[peer] = true;
     try {
       const { signer, cacheKey } = await getMemoSigner();
-      const cotiEthers = await loadCotiEthersModule();
-      const memoContractInterface = new cotiEthers.Interface(CHAT_CONTRACT_ABI);
-      const selector = memoContractInterface.getFunction('submit')?.selector;
-      if (!selector) {
-        throw new Error('Unable to resolve submit selector.');
-      }
+      const selector = await resolveSubmitSelector();
 
       const payloadText = buildReadCursorText({ peer, lastReadTs, lastReadBlock });
       const encodedMemo = encodeMemoPlaintext(payloadText);
@@ -2627,6 +2838,7 @@ export default function App() {
       const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
       const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
 
+      const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForSend();
       await contract.submit(me, memoTuple, { value: requiredFee });
@@ -2646,19 +2858,34 @@ export default function App() {
   };
 
   const getNicknameMaxLength = async (): Promise<number> => {
-    try {
-      const cotiEthers = await loadCotiEthersModule();
-      const readProvider = await loadCotiReadProvider(true);
-      const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
-      const onChainMax = toSafeNumber(await readContract.NICKNAME_MAX_BYTES());
-      if (onChainMax > 0) {
-        setNicknameMaxBytes(onChainMax);
-        return onChainMax;
-      }
-    } catch {
+    if (nicknameMaxBytesLoadedRef.current) {
+      return nicknameMaxBytes;
     }
 
-    return nicknameMaxBytes;
+    if (!nicknameMaxBytesRequestRef.current) {
+      nicknameMaxBytesRequestRef.current = (async () => {
+        try {
+          const cotiEthers = await loadCotiEthersModule();
+          const readProvider = await loadCotiReadProvider(true);
+          const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+          const onChainMax = toSafeNumber(await readContract.NICKNAME_MAX_BYTES());
+          if (onChainMax > 0) {
+            setNicknameMaxBytes(onChainMax);
+            nicknameMaxBytesLoadedRef.current = true;
+            return onChainMax;
+          }
+        } catch {
+        }
+
+        return nicknameMaxBytes;
+      })();
+    }
+
+    try {
+      return await nicknameMaxBytesRequestRef.current;
+    } finally {
+      nicknameMaxBytesRequestRef.current = null;
+    }
   };
 
   const fetchOnChainNicknames = async (addresses: string[]): Promise<Map<string, string>> => {
@@ -2780,7 +3007,8 @@ export default function App() {
     walletKey: string,
     payload: StateBackupPayload,
     discoveredNicknames?: Map<string, string>,
-    backupBlockNumber?: number
+    backupBlockNumber?: number,
+    discoveredAddresses?: Iterable<string>
   ) => {
   
     const currentBackupTs = lastAppliedStateBackupTsRef.current[walletKey] ?? 0;
@@ -2794,6 +3022,8 @@ export default function App() {
       .filter((c) => c.name || c.address);
 
     const snapshotNickname = payload.nickname.slice(0, 42);
+    const snapshotReadState = normalizeReadStateEntries(payload.readState);
+    const snapshotUnreadContacts = normalizeUnreadContactsEntries(payload.unreadContacts);
 
     const snapshotContactsByFull = new Map<string, Contact>();
     const snapshotContactsByShort = new Map<string, Contact>();
@@ -2807,11 +3037,18 @@ export default function App() {
     // If any snapshot entries use shortened addresses, try to match them
     // to existing full-address contacts and apply names immediately.
     try {
-      const shortToFull = new Map<string, string>();
+      const shortToFull = new Map<string, string | null>();
       for (const c of contacts) {
         try {
           if (isWalletAddress(c.address)) {
-            shortToFull.set(shortenAddress(c.address).toLowerCase(), c.address.toLowerCase());
+            const short = shortenAddress(c.address).toLowerCase();
+            const full = c.address.toLowerCase();
+            const existing = shortToFull.get(short);
+            if (typeof existing === 'undefined') {
+              shortToFull.set(short, full);
+            } else if (existing !== full) {
+              shortToFull.set(short, null);
+            }
           }
         } catch {}
       }
@@ -2820,7 +3057,7 @@ export default function App() {
       for (const [shortAddr, snap] of snapshotContactsByShort.entries()) {
         if (!snap.name) continue;
         const full = shortToFull.get(shortAddr.toLowerCase());
-        if (full) {
+        if (full && isWalletAddress(full)) {
           updates[full] = snap.name as string;
         }
       }
@@ -2843,8 +3080,19 @@ export default function App() {
     // addresses are discovered (e.g. during history sync).
     try {
       const shortMap: Record<string, string> = {};
+      const ambiguousShorts = new Set<string>();
       for (const [shortAddr, ct] of snapshotContactsByShort.entries()) {
-        if (ct.name) shortMap[shortAddr.toLowerCase()] = ct.name;
+        const key = shortAddr.toLowerCase();
+        if (!ct.name || ambiguousShorts.has(key)) {
+          continue;
+        }
+        const existing = shortMap[key];
+        if (existing && existing !== ct.name) {
+          ambiguousShorts.add(key);
+          delete shortMap[key];
+          continue;
+        }
+        shortMap[key] = ct.name;
       }
       if (Object.keys(shortMap).length > 0) {
         setRestoredShortNicknames((prev) => ({ ...prev, ...shortMap }));
@@ -2872,6 +3120,14 @@ export default function App() {
         .filter((a) => isWalletAddress(a));
 
       const merged = mergeUniqueContacts(previous, snapshotFullAddresses);
+      const shortAddressCounts = new Map<string, number>();
+      for (const mergedContact of merged) {
+        if (!isWalletAddress(mergedContact.address)) {
+          continue;
+        }
+        const short = shortenAddress(mergedContact.address).toLowerCase();
+        shortAddressCounts.set(short, (shortAddressCounts.get(short) ?? 0) + 1);
+      }
 
       return merged.map((contact) => {
         const key = contact.address.toLowerCase();
@@ -2883,7 +3139,9 @@ export default function App() {
         }
         if (!snapshotName) {
           const short = shortenAddress(contact.address).toLowerCase();
-          snapshotName = normalizeContactName(snapshotContactsByShort.get(short)?.name ?? '');
+          if ((shortAddressCounts.get(short) ?? 0) === 1) {
+            snapshotName = normalizeContactName(snapshotContactsByShort.get(short)?.name ?? '');
+          }
         }
 
         const existingName = normalizeContactName(contact.name ?? '');
@@ -2907,14 +3165,133 @@ export default function App() {
       });
     };
 
-    setContacts((previous) => resolveContactsFromBackup(previous));
+    let resolvedContactsForFingerprint: Contact[] | null = null;
+    setContacts((previous) => {
+      const resolved = resolveContactsFromBackup(previous);
+      resolvedContactsForFingerprint = resolved;
+      return resolved;
+    });
+    const contactsForFingerprint = resolvedContactsForFingerprint ?? resolveContactsFromBackup(contacts);
+
+    const shortToFull = new Map<string, string | null>();
+    const fullAddressCandidates = new Set<string>();
+    for (const contact of contactsForFingerprint) {
+      const fullAddress = contact.address.trim().toLowerCase();
+      if (isWalletAddress(fullAddress)) {
+        fullAddressCandidates.add(fullAddress);
+      }
+    }
+    if (discoveredAddresses) {
+      for (const discoveredAddress of discoveredAddresses) {
+        const fullAddress = String(discoveredAddress ?? '').trim().toLowerCase();
+        if (isWalletAddress(fullAddress)) {
+          fullAddressCandidates.add(fullAddress);
+        }
+      }
+    }
+    for (const fullAddress of fullAddressCandidates) {
+      const shortAddress = shortenAddress(fullAddress).toLowerCase();
+      const existing = shortToFull.get(shortAddress);
+      if (typeof existing === 'undefined') {
+        shortToFull.set(shortAddress, fullAddress);
+      } else if (existing !== fullAddress) {
+        shortToFull.set(shortAddress, null);
+      }
+    }
+
+    const resolveBackupAddress = (addressToken: string): string | null => {
+      const normalizedToken = addressToken.trim().toLowerCase();
+      if (isWalletAddress(normalizedToken)) {
+        return normalizedToken;
+      }
+      if (!isShortAddress(normalizedToken)) {
+        return null;
+      }
+      const resolved = shortToFull.get(normalizedToken);
+      return resolved && isWalletAddress(resolved) ? resolved : null;
+    };
+
+    const resolvedReadState: Record<string, number> = {};
+    for (const readEntry of snapshotReadState) {
+      const resolvedAddress = resolveBackupAddress(readEntry.address);
+      if (!resolvedAddress) {
+        continue;
+      }
+
+      const existingTs = resolvedReadState[resolvedAddress] ?? 0;
+      if (readEntry.lastReadTs > existingTs) {
+        resolvedReadState[resolvedAddress] = readEntry.lastReadTs;
+      }
+    }
+    if (Object.keys(resolvedReadState).length > 0) {
+      const immediateNextReadMap = { ...lastReadMapRef.current };
+      let immediateReadMapChanged = false;
+      for (const [address, lastReadTs] of Object.entries(resolvedReadState)) {
+        const existingTs = Number(immediateNextReadMap[address] ?? 0);
+        if (lastReadTs > existingTs) {
+          immediateNextReadMap[address] = lastReadTs;
+          immediateReadMapChanged = true;
+        }
+      }
+      if (immediateReadMapChanged) {
+        lastReadMapRef.current = immediateNextReadMap;
+      }
+
+      setLastReadMap((previous) => {
+        let changed = false;
+        const next = { ...previous };
+        for (const [address, lastReadTs] of Object.entries(resolvedReadState)) {
+          const existingTs = Number(next[address] ?? 0);
+          if (lastReadTs > existingTs) {
+            next[address] = lastReadTs;
+            changed = true;
+          }
+        }
+        return changed ? next : previous;
+      });
+    }
+
+    const resolvedUnreadAddresses = new Set<string>();
+    for (const unreadAddress of snapshotUnreadContacts) {
+      const resolvedAddress = resolveBackupAddress(unreadAddress);
+      if (resolvedAddress) {
+        resolvedUnreadAddresses.add(resolvedAddress);
+      }
+    }
+    if (resolvedUnreadAddresses.size > 0 || Object.keys(resolvedReadState).length > 0) {
+      setUnreadMap((previous) => {
+        let changed = false;
+        const next = { ...previous };
+
+        for (const address of resolvedUnreadAddresses) {
+          if (!next[address]) {
+            next[address] = true;
+            changed = true;
+          }
+        }
+
+        for (const address of Object.keys(resolvedReadState)) {
+          if (resolvedUnreadAddresses.has(address)) {
+            continue;
+          }
+          if (next[address]) {
+            delete next[address];
+            changed = true;
+          }
+        }
+
+        return changed ? next : previous;
+      });
+    }
 
     setMyNickname(snapshotNickname);
     lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
     lastBackedUpStateFingerprintRef.current[walletKey] = createStateBackupFingerprint(
       snapshotNickname,
-      snapshotContacts,
-      payload.walletLabel
+      contactsForFingerprint,
+      payload.walletLabel,
+      snapshotReadState,
+      snapshotUnreadContacts
     );
     if (typeof backupBlockNumber === 'number' && Number.isFinite(backupBlockNumber)) {
       lastStateBackupBlockRef.current[walletKey] = backupBlockNumber;
@@ -2924,7 +3301,9 @@ export default function App() {
       walletKey,
       snapshotNickname,
       contactsCount: snapshotContacts.length,
-      walletLabel: payload.walletLabel
+      walletLabel: payload.walletLabel,
+      readStateCount: snapshotReadState.length,
+      unreadCount: snapshotUnreadContacts.length
     });
 
     if (payload.walletLabel) {
@@ -3139,21 +3518,47 @@ export default function App() {
       }
 
       const { signer, cacheKey } = await getMemoSigner();
-      const cotiEthers = await loadCotiEthersModule();
-      const memoContractInterface = new cotiEthers.Interface(CHAT_CONTRACT_ABI);
-      const selector = memoContractInterface.getFunction('submit')?.selector;
-      if (!selector) {
-        throw new Error('Unable to resolve submit selector.');
-      }
+      const selector = await resolveSubmitSelector();
 
       const walletLabel = burnerRecordRef.current?.name ?? findContactNameForWalletAddress(walletAddress) ?? '';
-      const payload = buildStateBackupPayload(snapshotNickname, snapshotContacts, walletLabel);
-      const nextFingerprint = createStateBackupFingerprint(snapshotNickname, snapshotContacts, walletLabel);
+      const readStateSnapshot = { ...lastReadMapRef.current };
+      if (activeContact) {
+        const activeKey = activeContact.trim().toLowerCase();
+        if (isWalletAddress(activeKey) && !unreadMap[activeKey]) {
+          const activeMessagesSnapshot = messagesByContact[activeKey] ?? [];
+          const latestActiveMessage =
+            activeMessagesSnapshot.length > 0 ? activeMessagesSnapshot[activeMessagesSnapshot.length - 1] : null;
+          const latestActiveTimestamp =
+            latestActiveMessage && typeof latestActiveMessage.timestamp === 'number'
+              ? Number(latestActiveMessage.timestamp)
+              : 0;
+          if (latestActiveTimestamp > 0) {
+            readStateSnapshot[activeKey] = Math.max(readStateSnapshot[activeKey] ?? 0, latestActiveTimestamp);
+          }
+        }
+      }
+      const snapshotReadState = normalizeReadStateForBackup(readStateSnapshot);
+      const snapshotUnreadContacts = normalizeUnreadContactsForBackup(unreadMap);
+      const payload = buildStateBackupPayload(
+        snapshotNickname,
+        snapshotContacts,
+        walletLabel,
+        snapshotReadState,
+        snapshotUnreadContacts
+      );
+      const nextFingerprint = createStateBackupFingerprint(
+        snapshotNickname,
+        snapshotContacts,
+        walletLabel,
+        snapshotReadState,
+        snapshotUnreadContacts
+      );
       if (!options?.force && lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
         return;
       }
       const backupText = buildStateBackupText(payload);
       const encodedMemo = encodeMemoPlaintext(backupText);
+      const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForSend();
       const cachedMemoEntry = cachedStateBackupMemoRef.current[walletKey];
@@ -3316,6 +3721,7 @@ export default function App() {
 
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
+      const latestObservedMessageTimeByContact = new Map<string, number>();
       const entries: HistoryEntry[] = [];
       const previewByContact = new Map<string, HistoryEntry>();
       let latestStateBackup:
@@ -3333,6 +3739,27 @@ export default function App() {
           logIndex: number;
         }
       >();
+      const updateLatestObservedMessageTime = (address: string, blockNumber: number): void => {
+        const normalizedAddress = address.trim().toLowerCase();
+        if (!isWalletAddress(normalizedAddress)) {
+          return;
+        }
+
+        const blockTimestamp = blockTimestampMap.get(blockNumber);
+        if (typeof blockTimestamp !== 'number' || blockTimestamp <= 0) {
+          return;
+        }
+
+        const existingObserved = latestObservedMessageTimeByContact.get(normalizedAddress) ?? 0;
+        if (blockTimestamp > existingObserved) {
+          latestObservedMessageTimeByContact.set(normalizedAddress, blockTimestamp);
+        }
+
+        const existingCached = lastMessageTimeCacheRef.current[normalizedAddress] ?? 0;
+        if (blockTimestamp > existingCached) {
+          lastMessageTimeCacheRef.current[normalizedAddress] = blockTimestamp;
+        }
+      };
 
       for (const log of incomingLogs) {
         const args = (log as { args?: Record<string, unknown> }).args;
@@ -3398,6 +3825,7 @@ export default function App() {
         }
 
         discoveredContacts.add(from);
+        updateLatestObservedMessageTime(from, log.blockNumber);
 
         if (options?.contactsOnly && !shouldLoadContactPreviews) {
           continue;
@@ -3556,6 +3984,7 @@ export default function App() {
         }
 
         discoveredContacts.add(recipient);
+        updateLatestObservedMessageTime(recipient, log.blockNumber);
 
         if (options?.contactsOnly && !shouldLoadContactPreviews) {
           continue;
@@ -3813,6 +4242,14 @@ export default function App() {
 
       setContacts((previous) => {
         const mergedContacts = mergeUniqueContacts(previous, Array.from(discoveredContacts));
+        const shortAddressCounts = new Map<string, number>();
+        for (const mergedContact of mergedContacts) {
+          if (!isWalletAddress(mergedContact.address)) {
+            continue;
+          }
+          const short = shortenAddress(mergedContact.address).toLowerCase();
+          shortAddressCounts.set(short, (shortAddressCounts.get(short) ?? 0) + 1);
+        }
 
         if (discoveredNicknames.size === 0) {
           if (onChainNicknames.size === 0) {
@@ -3849,7 +4286,8 @@ export default function App() {
 
           try {
             const short = shortenAddress(contact.address).toLowerCase();
-            const restored = restoredShortNicknames[short];
+            const isUniqueShortAddress = (shortAddressCounts.get(short) ?? 0) === 1;
+            const restored = isUniqueShortAddress ? restoredShortNicknames[short] : undefined;
             if (restored) {
               return { ...contact, name: restored };
             }
@@ -3860,6 +4298,24 @@ export default function App() {
       });
 
       if (latestReadCursorByPeer.size > 0) {
+        let mergedReadMapForUnread = lastReadMapRef.current;
+        const mergedReadMap = { ...mergedReadMapForUnread };
+        let mergedReadMapChanged = false;
+        for (const [peer, cursor] of latestReadCursorByPeer.entries()) {
+          if (!isWalletAddress(peer)) {
+            continue;
+          }
+          const existing = Number(mergedReadMap[peer] ?? 0);
+          if (cursor.lastReadTs > existing) {
+            mergedReadMap[peer] = cursor.lastReadTs;
+            mergedReadMapChanged = true;
+          }
+        }
+        if (mergedReadMapChanged) {
+          mergedReadMapForUnread = mergedReadMap;
+          lastReadMapRef.current = mergedReadMap;
+        }
+
         setLastReadMap((previous) => {
           let changed = false;
           const next = { ...previous };
@@ -3879,6 +4335,20 @@ export default function App() {
           }
           return changed ? next : previous;
         });
+
+        if (mergedReadMapChanged) {
+          lastReadMapRef.current = mergedReadMapForUnread;
+        }
+      }
+
+      if (latestStateBackup) {
+        applyStateBackupPayload(
+          walletKey,
+          latestStateBackup.payload,
+          discoveredNicknames,
+          latestStateBackup.blockNumber,
+          discoveredContacts
+        );
       }
 
       const unreadCandidateAddresses = Array.from(
@@ -3890,8 +4360,21 @@ export default function App() {
       if (unreadCandidateAddresses.length > 0) {
         const latestTimes = await Promise.all(
           unreadCandidateAddresses.map(async (address) => {
+            const observed = latestObservedMessageTimeByContact.get(address) ?? 0;
+            const hasCached = Object.prototype.hasOwnProperty.call(lastMessageTimeCacheRef.current, address);
+            const cached = hasCached ? lastMessageTimeCacheRef.current[address] ?? 0 : 0;
+            if (observed > cached) {
+              lastMessageTimeCacheRef.current[address] = observed;
+              return [address, observed] as const;
+            }
+
+            if (hasCached) {
+              return [address, cached] as const;
+            }
+
             try {
               const latestMessageTime = toSafeNumber(await contract.getLastMessageTime(walletAddress, address));
+              lastMessageTimeCacheRef.current[address] = latestMessageTime;
               return [address, latestMessageTime] as const;
             } catch {
               return [address, 0] as const;
@@ -3936,15 +4419,6 @@ export default function App() {
         });
       }
 
-      if (latestStateBackup) {
-        applyStateBackupPayload(
-          walletKey,
-          latestStateBackup.payload,
-          discoveredNicknames,
-          latestStateBackup.blockNumber
-        );
-      }
-
       const knownBackupBlockNumber =
         latestStateBackup?.blockNumber ?? lastStateBackupBlockRef.current[walletKey];
       const lastAutoBackupAttemptBlock = lastAutoBackupAttemptBlockRef.current[walletKey] ?? -AUTO_STATE_BACKUP_RETRY_BLOCKS;
@@ -3976,7 +4450,6 @@ export default function App() {
 
     } catch (syncError) {
       try {
-        // eslint-disable-next-line no-console
         console.error('[sync] error', syncError);
       } catch {}
       if (!options?.background) {
@@ -4356,11 +4829,7 @@ export default function App() {
 
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
-      const memoContractInterface = new cotiEthers.Interface(CHAT_CONTRACT_ABI);
-      const selector = memoContractInterface.getFunction('submit')?.selector;
-      if (!selector) {
-        throw new Error('Unable to resolve submit selector.');
-      }
+      const selector = await resolveSubmitSelector();
 
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForSend();
@@ -4373,18 +4842,8 @@ export default function App() {
       const sendEncryptedMemo = async (textToSend: string): Promise<string> => {
         const encodedMemo = encodeMemoPlaintext(textToSend);
         const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
-        if (
-          typeof encryptedMemo !== 'object' ||
-          encryptedMemo === null ||
-          typeof encryptedMemo.ciphertext !== 'object' ||
-          encryptedMemo.ciphertext === null ||
-          !('value' in encryptedMemo.ciphertext) ||
-          !Array.isArray(encryptedMemo.signature)
-        ) {
-          throw new Error('Encrypted memo format mismatch for submit().');
-        }
-
-        const memoTuple = [[encryptedMemo.ciphertext.value], encryptedMemo.signature] as const;
+        const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+        const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
         const tx = await contract.submit(activeContact, memoTuple, { value: requiredFee });
         return typeof tx?.hash === 'string' ? tx.hash : '';
       };
@@ -4838,6 +5297,7 @@ export default function App() {
       oldestLoadedBlockByContactRef.current = {};
       hasOlderHistoryByContactRef.current = {};
       blockTimestampCacheRef.current = new Map();
+      lastMessageTimeCacheRef.current = {};
     }
 
     previousWalletAddressRef.current = nextWallet;
@@ -5322,12 +5782,12 @@ export default function App() {
           aria-label="Top navigation"
           style={{ display: isMobileNav ? 'none' : 'flex' }}
         >
-          <a href={telegramBotLink} target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
-          <a href="https://bridge.coti.io/bridge" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
-          <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
-          <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
-          <a href="https://app.houdiniswap.com/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>Houdini Swap</a>
-          <a href="https://app.chainport.io/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>ChainPort</a>
+          <a href={telegramBotLink} target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
+          <a href="https://bridge.coti.io/bridge" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
+          <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
+          <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
+          <a href="https://app.houdiniswap.com/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Houdini Swap</a>
+          <a href="https://app.chainport.io/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>ChainPort</a>
         </nav>
         <nav
           id="top-navigation-links-mobile"
@@ -5348,12 +5808,12 @@ export default function App() {
               : { display: 'none' }
           }
         >
-          <a href={telegramBotLink} target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
-          <a href="https://bridge.coti.io/bridge" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
-          <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
-          <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
-          <a href="https://app.houdiniswap.com/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>Houdini Swap</a>
-          <a href="https://app.chainport.io/" target="_blank" rel="noreferrer" onClick={() => setMobileLinksOpen(false)}>ChainPort</a>
+          <a href={telegramBotLink} target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
+          <a href="https://bridge.coti.io/bridge" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
+          <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
+          <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
+          <a href="https://app.houdiniswap.com/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Houdini Swap</a>
+          <a href="https://app.chainport.io/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>ChainPort</a>
         </nav>
       </header>
 
