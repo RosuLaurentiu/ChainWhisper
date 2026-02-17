@@ -24,7 +24,8 @@ const resolveVendorChunk = (id: string): string | undefined => {
 };
 
 export default defineConfig({
-  base: process.env.GITHUB_ACTIONS ? '/coti-messaging-app/' : '/',
+  // Custom domain (chainwhisper.chat) serves the app from root.
+  base: '/',
   plugins: [react()],
   build: {
     chunkSizeWarningLimit: 900,
