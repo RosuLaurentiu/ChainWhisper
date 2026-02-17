@@ -54,25 +54,17 @@ type HistoryEntry = {
   timestamp?: number;
 };
 
-const CONTACTS_STORAGE_KEY = 'coti-chat-contacts';
 const BURNER_WALLET_STORAGE_KEY = 'coti-chat-burner-wallet';
 const BURNER_WALLET_STORAGE_VERSION = 2;
 const BURNER_WALLET_VAULT_VERSION = 1;
 const BURNER_PIN_MIN_LENGTH = 5;
 const LEGACY_BURNER_PIN_MIN_LENGTH = 4;
 const BURNER_PIN_PBKDF2_ITERATIONS = 250000;
-const PROFILE_STORAGE_KEY = 'coti-chat-profile';
-const PROFILE_SHARED_STORAGE_KEY = 'coti-chat-profile-shared';
-const PROFILE_STORAGE_VERSION = 1;
-const RECENT_MESSAGES_STORAGE_KEY = 'coti-chat-recent-messages';
-const CONTACT_ORDER_STORAGE_KEY = 'coti-chat-contact-order';
-const RECENT_MESSAGES_STORAGE_VERSION = 1;
 const AUTO_SYNC_INTERVAL_MS = 30000;
 const WS_HEALTHCHECK_TTL_MS = 12000;
 const WS_RETRY_COOLDOWN_MS = 15000;
 const REALTIME_SYNC_DEBOUNCE_MS = 250;
 const INITIAL_SYNC_LOOKBACK_BLOCKS = 2500;
-const RECENT_MESSAGES_PER_CONTACT_LIMIT = 100;
 const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
 const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
@@ -88,7 +80,9 @@ const LEGACY_PROFILE_PREFIX = '[[coti-profile:v1]]';
 const LEGACY_PROFILE_PLAIN_PREFIX = '[[coti-nick:v1]]';
 const IMAGE_MESSAGE_PREFIX = '[[coti-image:v1]]';
 const STATE_BACKUP_PREFIX = '[[coti-state:v1]]';
+const READ_CURSOR_PREFIX = '[[coti-read:v1]]';
 const STATE_BACKUP_VERSION = 1;
+const READ_CURSOR_SUBMIT_THROTTLE_MS = 12000;
 const MAX_REPLY_PREVIEW_LENGTH = 28;
 const MAX_MESSAGE_LENGTH = 2000;
 const COTI_WEI = 10n ** 18n;
@@ -120,26 +114,10 @@ type EncryptedBurnerWalletRecord = {
   iterations: number;
 };
 
-type EncryptedRecentMessagesRecord = {
-  version: number;
-  iv: string;
-  ciphertext: string;
-};
-
-type EncryptedProfileRecord = {
-  version: number;
-  iv: string;
-  ciphertext: string;
-};
-
 type BurnerWalletStorageState =
   | { kind: 'none' }
   | { kind: 'legacy'; record: BurnerWalletRecord }
   | { kind: 'encrypted'; record: EncryptedBurnerWalletRecord };
-
-type UserProfile = {
-  nickname: string;
-};
 
 type BurnerInitMode = 'generate' | 'import' | 'stored';
 type SignerSource = 'burner' | 'metamask';
@@ -171,6 +149,12 @@ type StateBackupPayload = {
   nickname: string;
   contacts: Contact[];
   walletLabel?: string;
+};
+
+type ReadCursorPayload = {
+  peer: string;
+  lastReadTs: number;
+  lastReadBlock?: number;
 };
 
 type BackupLocalStateOptions = {
@@ -300,11 +284,6 @@ const isWalletAddress = (value: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(v
 const normalizeContactName = (value: string): string | undefined => {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-};
-
-const scopedStorageKey = (baseKey: string, walletAddress?: string | null): string => {
-  const scope = walletAddress?.trim().toLowerCase();
-  return `${baseKey}:${scope && isWalletAddress(scope) ? scope : 'global'}`;
 };
 
 const normalizeChainId = (chainId: string | number): number => {
@@ -600,6 +579,48 @@ const parseStateBackupText = (text: string): StateBackupPayload | null => {
   }
 };
 
+const buildReadCursorText = (payload: ReadCursorPayload): string => {
+  const compact = {
+    p: payload.peer.toLowerCase(),
+    t: payload.lastReadTs,
+    b: payload.lastReadBlock ?? 0
+  } as const;
+  return `${READ_CURSOR_PREFIX}${JSON.stringify(compact)}`;
+};
+
+const parseReadCursorText = (text: string): ReadCursorPayload | null => {
+  if (!text.startsWith(READ_CURSOR_PREFIX)) {
+    return null;
+  }
+
+  try {
+    const rawPayload = text.slice(READ_CURSOR_PREFIX.length).trim();
+    if (!rawPayload) {
+      return null;
+    }
+
+    const parsed = JSON.parse(rawPayload) as { p?: unknown; t?: unknown; b?: unknown };
+    const peer = typeof parsed.p === 'string' ? parsed.p.trim().toLowerCase() : '';
+    if (!isWalletAddress(peer)) {
+      return null;
+    }
+
+    const lastReadTs = toSafeNumber(parsed.t);
+    const lastReadBlock = toSafeNumber(parsed.b);
+    if (!lastReadTs || !Number.isFinite(lastReadTs)) {
+      return null;
+    }
+
+    return {
+      peer,
+      lastReadTs,
+      lastReadBlock: lastReadBlock > 0 ? lastReadBlock : undefined
+    };
+  } catch {
+    return null;
+  }
+};
+
 const createStateBackupFingerprint = (nickname: string, contacts: Contact[], walletLabel?: string): string => {
   const normalized = normalizeContactsForBackup(contacts).map((c) => [c.address, c.name ?? '']);
   return JSON.stringify({ n: nickname.slice(0, 42), c: normalized, l: walletLabel ?? '' });
@@ -646,225 +667,6 @@ const normalizeMessagesByContact = (messagesByContact: Record<string, ChatMessag
   return next;
 };
 
-const pruneRecentMessagesForStorage = (
-  messagesByContact: Record<string, ChatMessage[]>
-): Record<string, ChatMessage[]> => {
-  const next: Record<string, ChatMessage[]> = {};
-
-  for (const [contactKeyRaw, messages] of Object.entries(messagesByContact)) {
-    const contactKey = contactKeyRaw.toLowerCase();
-    if (!isWalletAddress(contactKey)) {
-      continue;
-    }
-
-    const seenMessages = sortMessagesChronologically(messages).filter((message) => {
-      // Keep recent conversation context from both sides, but never persist
-      // optimistic/failed local messages.
-      return message.deliveryState !== 'pending' && message.deliveryState !== 'failed';
-    });
-
-    if (seenMessages.length === 0) {
-      continue;
-    }
-
-    const trimmed = seenMessages.slice(-RECENT_MESSAGES_PER_CONTACT_LIMIT).map((message) => ({
-      id: message.id,
-      direction: message.direction,
-      text: message.text,
-      replyToMessageId: message.replyToMessageId,
-      replyToText: message.replyToText,
-      replyToTxHash: message.replyToTxHash,
-      timestamp: message.timestamp,
-      blockNumber: message.blockNumber,
-      logIndex: message.logIndex,
-      txHash: message.txHash
-    }));
-
-    next[contactKey] = trimmed;
-  }
-
-  return normalizeMessagesByContact(next);
-};
-
-const parseStoredRecentMessagesPayload = (parsed: unknown): Record<string, ChatMessage[]> => {
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return {};
-  }
-
-  const next: Record<string, ChatMessage[]> = {};
-  for (const [contactKeyRaw, value] of Object.entries(parsed as Record<string, unknown>)) {
-    const contactKey = contactKeyRaw.toLowerCase();
-    if (!isWalletAddress(contactKey) || !Array.isArray(value)) {
-      continue;
-    }
-
-    const restored: ChatMessage[] = [];
-    for (const item of value) {
-      if (!item || typeof item !== 'object') {
-        continue;
-      }
-
-      const candidate = item as Partial<ChatMessage>;
-      if (
-        typeof candidate.id !== 'string' ||
-        (candidate.direction !== 'incoming' && candidate.direction !== 'outgoing') ||
-        typeof candidate.text !== 'string'
-      ) {
-        continue;
-      }
-
-      restored.push({
-        id: candidate.id,
-        direction: candidate.direction,
-        text: candidate.text,
-        replyToMessageId: typeof candidate.replyToMessageId === 'string' ? candidate.replyToMessageId : undefined,
-        replyToText: typeof candidate.replyToText === 'string' ? candidate.replyToText : undefined,
-        replyToTxHash: typeof candidate.replyToTxHash === 'string' ? candidate.replyToTxHash : undefined,
-        timestamp: typeof candidate.timestamp === 'number' ? candidate.timestamp : undefined,
-        blockNumber: typeof candidate.blockNumber === 'number' ? candidate.blockNumber : undefined,
-        logIndex: typeof candidate.logIndex === 'number' ? candidate.logIndex : undefined,
-        txHash: typeof candidate.txHash === 'string' ? candidate.txHash : undefined
-      });
-    }
-
-    if (restored.length > 0) {
-      next[contactKey] = restored.slice(-RECENT_MESSAGES_PER_CONTACT_LIMIT);
-    }
-  }
-
-  return normalizeMessagesByContact(next);
-};
-
-const deriveRecentMessagesStorageKey = async (aesKey: string): Promise<CryptoKey> => {
-  const material = TEXT_ENCODER.encode(aesKey.trim());
-  const digest = await window.crypto.subtle.digest('SHA-256', material);
-  return window.crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-};
-
-const encryptRecentMessagesPayload = async (
-  messagesByContact: Record<string, ChatMessage[]>,
-  aesKey: string
-): Promise<EncryptedRecentMessagesRecord> => {
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const cryptoKey = await deriveRecentMessagesStorageKey(aesKey);
-  const plainText = TEXT_ENCODER.encode(JSON.stringify(messagesByContact));
-  const encrypted = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv) }, cryptoKey, plainText);
-
-  return {
-    version: RECENT_MESSAGES_STORAGE_VERSION,
-    iv: bytesToBase64(iv),
-    ciphertext: bytesToBase64(new Uint8Array(encrypted))
-  };
-};
-
-const decryptRecentMessagesPayload = async (
-  encryptedRecord: EncryptedRecentMessagesRecord,
-  aesKey: string
-): Promise<Record<string, ChatMessage[]>> => {
-  if (
-    encryptedRecord.version !== RECENT_MESSAGES_STORAGE_VERSION ||
-    typeof encryptedRecord.iv !== 'string' ||
-    typeof encryptedRecord.ciphertext !== 'string'
-  ) {
-    return {};
-  }
-
-  const iv = base64ToBytes(encryptedRecord.iv);
-  const ciphertext = base64ToBytes(encryptedRecord.ciphertext);
-  const cryptoKey = await deriveRecentMessagesStorageKey(aesKey);
-  const decrypted = await window.crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
-    cryptoKey,
-    toArrayBuffer(ciphertext)
-  );
-  const decoded = TEXT_DECODER.decode(new Uint8Array(decrypted));
-  const parsed = JSON.parse(decoded) as unknown;
-  return parseStoredRecentMessagesPayload(parsed);
-};
-
-const loadStoredRecentMessages = async (
-  walletAddress?: string | null,
-  aesKey?: string
-): Promise<Record<string, ChatMessage[]>> => {
-  if (!walletAddress || !isWalletAddress(walletAddress)) {
-    return {};
-  }
-
-  try {
-    const raw = window.localStorage.getItem(scopedStorageKey(RECENT_MESSAGES_STORAGE_KEY, walletAddress));
-    if (!raw) {
-      return {};
-    }
-
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return {};
-    }
-
-    if ('ciphertext' in parsed && 'iv' in parsed) {
-      if (!aesKey?.trim()) {
-        return {};
-      }
-      return await decryptRecentMessagesPayload(parsed as EncryptedRecentMessagesRecord, aesKey);
-    }
-
-    return parseStoredRecentMessagesPayload(parsed);
-  } catch {
-    return {};
-  }
-};
-
-const loadStoredUnreadMap = (walletAddress?: string | null): Record<string, boolean> => {
-  if (!walletAddress || !isWalletAddress(walletAddress)) {
-    return {};
-  }
-
-  try {
-    const raw = window.localStorage.getItem(scopedStorageKey('coti-chat-unread', walletAddress));
-    if (!raw) {
-      return {};
-    }
-
-    const parsed = JSON.parse(raw) as Record<string, boolean>;
-    const normalized: Record<string, boolean> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      const normalizedKey = key.toLowerCase();
-      if (!isWalletAddress(normalizedKey)) {
-        continue;
-      }
-      normalized[normalizedKey] = Boolean(value);
-    }
-    return normalized;
-  } catch {
-    return {};
-  }
-};
-
-const loadStoredLastReadMap = (walletAddress?: string | null): Record<string, number> => {
-  if (!walletAddress || !isWalletAddress(walletAddress)) {
-    return {};
-  }
-
-  try {
-    const raw = window.localStorage.getItem(scopedStorageKey('coti-chat-lastread', walletAddress));
-    if (!raw) {
-      return {};
-    }
-
-    const parsed = JSON.parse(raw) as Record<string, number>;
-    const normalized: Record<string, number> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      const normalizedKey = key.toLowerCase();
-      if (!isWalletAddress(normalizedKey)) {
-        continue;
-      }
-      normalized[normalizedKey] = Number(value) || 0;
-    }
-    return normalized;
-  } catch {
-    return {};
-  }
-};
 
 const bytesToBase64 = (value: Uint8Array): string => {
   let binary = '';
@@ -1150,112 +952,6 @@ const saveEncryptedBurnerWalletVault = async (vault: BurnerWalletVault, pin: str
   window.localStorage.setItem(BURNER_WALLET_STORAGE_KEY, JSON.stringify(encrypted));
 };
 
-const parseStoredProfilePayload = (parsed: unknown): UserProfile => {
-  if (!parsed || typeof parsed !== 'object') {
-    return { nickname: '' };
-  }
-
-  const record = parsed as { nickname?: unknown };
-  return {
-    nickname: typeof record.nickname === 'string' ? record.nickname : ''
-  };
-};
-
-const encryptStoredProfile = async (profile: UserProfile, aesKey: string): Promise<EncryptedProfileRecord> => {
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const cryptoKey = await deriveRecentMessagesStorageKey(aesKey);
-  const plainText = TEXT_ENCODER.encode(JSON.stringify(profile));
-  const encrypted = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv) }, cryptoKey, plainText);
-  return {
-    version: PROFILE_STORAGE_VERSION,
-    iv: bytesToBase64(iv),
-    ciphertext: bytesToBase64(new Uint8Array(encrypted))
-  };
-};
-
-const decryptStoredProfile = async (record: EncryptedProfileRecord, aesKey: string): Promise<UserProfile> => {
-  if (
-    record.version !== PROFILE_STORAGE_VERSION ||
-    typeof record.iv !== 'string' ||
-    typeof record.ciphertext !== 'string'
-  ) {
-    return { nickname: '' };
-  }
-
-  const iv = base64ToBytes(record.iv);
-  const ciphertext = base64ToBytes(record.ciphertext);
-  const cryptoKey = await deriveRecentMessagesStorageKey(aesKey);
-  const decrypted = await window.crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
-    cryptoKey,
-    toArrayBuffer(ciphertext)
-  );
-  const decoded = TEXT_DECODER.decode(new Uint8Array(decrypted));
-  return parseStoredProfilePayload(JSON.parse(decoded) as unknown);
-};
-
-const loadStoredProfile = async (walletAddress?: string | null, aesKey?: string): Promise<UserProfile> => {
-  if (!walletAddress || !isWalletAddress(walletAddress)) {
-    return { nickname: '' };
-  }
-
-  try {
-    const raw = window.localStorage.getItem(scopedStorageKey(PROFILE_STORAGE_KEY, walletAddress));
-    if (!raw) {
-      return { nickname: '' };
-    }
-
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return { nickname: '' };
-    }
-
-    if ('ciphertext' in parsed && 'iv' in parsed) {
-      if (!aesKey?.trim()) {
-        return { nickname: '' };
-      }
-      return await decryptStoredProfile(parsed as EncryptedProfileRecord, aesKey);
-    }
-
-    return parseStoredProfilePayload(parsed);
-  } catch {
-    return { nickname: '' };
-  }
-};
-
-const saveStoredProfile = async (walletAddress: string, nickname: string, aesKey?: string): Promise<void> => {
-  if (!walletAddress || !isWalletAddress(walletAddress) || !aesKey?.trim()) {
-    return;
-  }
-
-  const encrypted = await encryptStoredProfile({ nickname }, aesKey);
-  window.localStorage.setItem(scopedStorageKey(PROFILE_STORAGE_KEY, walletAddress), JSON.stringify(encrypted));
-};
-
-const loadSharedNicknameContacts = (walletAddress?: string | null): Record<string, boolean> => {
-  try {
-    const raw = window.localStorage.getItem(scopedStorageKey(PROFILE_SHARED_STORAGE_KEY, walletAddress));
-    if (!raw) {
-      return {};
-    }
-
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') {
-      return {};
-    }
-
-    const result: Record<string, boolean> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value === 'boolean') {
-        result[key.toLowerCase()] = value;
-      }
-    }
-
-    return result;
-  } catch {
-    return {};
-  }
-};
 
 const trimReplyPreview = (text: string): string => {
   const singleLine = text.replace(/\s+/g, ' ').trim();
@@ -1481,7 +1177,6 @@ export default function App() {
   const [myNickname, setMyNickname] = useState('');
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
   const [savingNicknameOnChain, setSavingNicknameOnChain] = useState(false);
-  const [sharedNicknameContacts, setSharedNicknameContacts] = useState<Record<string, boolean>>({});
   const [activeSignerSource, setActiveSignerSource] = useState<SignerSource>('burner');
   const [connectionMethod, setConnectionMethod] = useState<'metamask' | null>(null);
   const [connectingMethod, setConnectingMethod] = useState<'metamask' | null>(null);
@@ -1490,11 +1185,12 @@ export default function App() {
   const [messageInput, setMessageInput] = useState('');
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
-  const UNREAD_STORAGE_KEY = 'coti-chat-unread';
-  const LAST_READ_STORAGE_KEY = 'coti-chat-lastread';
   const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>({});
   const [lastReadMap, setLastReadMap] = useState<Record<string, number>>({});
-  const prevLastMessageIdRef = useRef<Record<string, string | null>>({});
+  const lastReadMapRef = useRef<Record<string, number>>({});
+  const readCursorSubmitAtRef = useRef<Record<string, number>>({});
+  const lastSubmittedReadCursorTsRef = useRef<Record<string, number>>({});
+  const readCursorSubmitInFlightRef = useRef<Record<string, boolean>>({});
   const SOUND_ENABLED_STORAGE_KEY = 'coti-chat-sound-enabled';
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     try {
@@ -1600,115 +1296,8 @@ export default function App() {
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-    try {
-      window.localStorage.setItem(scopedStorageKey(UNREAD_STORAGE_KEY, walletAddress), JSON.stringify(unreadMap));
-    } catch {}
-  }, [walletAddress, unreadMap]);
-
-  useEffect(() => {
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-    try {
-      window.localStorage.setItem(scopedStorageKey(LAST_READ_STORAGE_KEY, walletAddress), JSON.stringify(lastReadMap));
-    } catch {}
-  }, [walletAddress, lastReadMap]);
-
-  useEffect(() => {
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-
-    const cacheAesKey = sessionOnboardInfo[walletAddress.toLowerCase()]?.aesKey;
-    if (!cacheAesKey) {
-      return;
-    }
-
-    let cancelled = false;
-    try {
-      persistRecentMessagesCacheForWallet(walletAddress, messagesByContact, cacheAesKey)
-        .then(() => {
-          if (cancelled) {
-            return;
-          }
-        })
-        .catch(() => {});
-    } catch {}
-
-    return () => {
-      cancelled = true;
-    };
-  }, [walletAddress, messagesByContact, sessionOnboardInfo]);
-
-  useEffect(() => {
-    const prev = prevLastMessageIdRef.current || {};
-    const next = messagesByContact || {};
-
-    let updated: Record<string, boolean> | null = null;
-
-    // If we have no previous snapshot, initialize it from current messages
-    // and do not mark existing messages as unread (prevents marking on first load/connect).
-    if (Object.keys(prev).length === 0 && Object.keys(next).length > 0) {
-      for (const rawContact of Object.keys(next)) {
-        const msgs = next[rawContact] || [];
-        prev[rawContact.toLowerCase()] = msgs.length ? msgs[msgs.length - 1].id : null;
-      }
-      prevLastMessageIdRef.current = prev;
-      return;
-    }
-
-    for (const rawContact of Object.keys(next)) {
-      const contact = rawContact.toLowerCase();
-      if (walletAddress && contact === walletAddress.toLowerCase()) {
-        prev[contact] = next[rawContact]?.length ? next[rawContact][next[rawContact].length - 1].id : null;
-        continue;
-      }
-      const msgs = next[rawContact] || [];
-      const last = msgs.length ? msgs[msgs.length - 1].id : null;
-      const prevLast = prev[contact] ?? null;
-
-      if (last && last !== prevLast) {
-        const startIndex = prevLast ? msgs.findIndex((m) => m.id === prevLast) : -1;
-        const newMsgs = startIndex >= 0 ? msgs.slice(startIndex + 1) : msgs;
-        if (newMsgs.some((m) => m.direction === 'incoming')) {
-          const lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
-          const lastMsgTs = (lastMsg && typeof lastMsg.timestamp === 'number') ? Number(lastMsg.timestamp) : Math.floor(Date.now() / 1000);
-          const lastReadTs = (lastReadMap && lastReadMap[contact]) ? Number(lastReadMap[contact]) : 0;
-          const isActive = contact === (activeContact ?? '').toLowerCase();
-          const pageVisible = typeof document !== 'undefined' && !document.hidden && (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
-
-          if (isActive) {
-            // If user is viewing the chat but the page is not visible/focused,
-            // treat incoming messages as unread so we can play the sound and
-            // surface an indicator. If the page is visible and focused, keep as read.
-            if (!pageVisible && lastMsgTs > lastReadTs) {
-              updated = updated || { ...unreadMap };
-              updated[contact] = true;
-            }
-          } else {
-            if (lastMsgTs > lastReadTs) {
-              if (!unreadMap[contact]) {
-                updated = updated || { ...unreadMap };
-                updated[contact] = true;
-              }
-            }
-          }
-        }
-      }
-
-      prev[contact] = last;
-    }
-
-    if (updated) {
-      setUnreadMap(updated);
-    }
-
-    prevLastMessageIdRef.current = prev;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messagesByContact, activeContact, lastReadMap, unreadMap, walletAddress]);
+    lastReadMapRef.current = lastReadMap;
+  }, [lastReadMap]);
 
   useEffect(() => {
     if (!activeContact) return;
@@ -1774,64 +1363,6 @@ export default function App() {
   const lastStateBackupBlockRef = useRef<Record<string, number>>({});
   const lastAutoBackupAttemptBlockRef = useRef<Record<string, number>>({});
   const syncConversationHistoryRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
-  const messagesByContactRef = useRef<Record<string, ChatMessage[]>>({});
-
-  const persistRecentMessagesCacheForWallet = async (
-    targetWalletAddress: string,
-    sourceMessages: Record<string, ChatMessage[]>,
-    aesKey?: string
-  ): Promise<void> => {
-    if (!targetWalletAddress || !isWalletAddress(targetWalletAddress) || !aesKey?.trim()) {
-      return;
-    }
-
-    const scopedKey = scopedStorageKey(RECENT_MESSAGES_STORAGE_KEY, targetWalletAddress);
-    const pruned = pruneRecentMessagesForStorage(sourceMessages);
-    if (Object.keys(pruned).length === 0) {
-      window.localStorage.removeItem(scopedKey);
-      return;
-    }
-
-    const encrypted = await encryptRecentMessagesPayload(pruned, aesKey);
-    window.localStorage.setItem(scopedKey, JSON.stringify(encrypted));
-  };
-
-  const hydrateRecentMessagesFromCache = async (
-    targetWalletAddress: string,
-    aesKey?: string
-  ): Promise<void> => {
-    if (!targetWalletAddress || !isWalletAddress(targetWalletAddress) || !aesKey?.trim()) {
-      return;
-    }
-
-    const cachedRecentMessages = await loadStoredRecentMessages(targetWalletAddress, aesKey);
-    if (Object.keys(cachedRecentMessages).length === 0) {
-      return;
-    }
-
-    setMessagesByContact((previous) => {
-      const next: Record<string, ChatMessage[]> = { ...previous };
-      for (const [contactKeyRaw, cachedMessages] of Object.entries(cachedRecentMessages)) {
-        const contactKey = contactKeyRaw.toLowerCase();
-        const existing = next[contactKey] ?? [];
-        const existingIds = new Set(existing.map((message) => message.id));
-        const merged = [...existing];
-        for (const cachedMessage of cachedMessages) {
-          if (existingIds.has(cachedMessage.id)) {
-            continue;
-          }
-          existingIds.add(cachedMessage.id);
-          merged.push(cachedMessage);
-        }
-        next[contactKey] = merged;
-      }
-      return normalizeMessagesByContact(next);
-    });
-  };
-
-  useEffect(() => {
-    messagesByContactRef.current = messagesByContact;
-  }, [messagesByContact]);
 
   useEffect(() => {
     currentWalletKeyRef.current = walletAddress.trim().toLowerCase();
@@ -2142,9 +1673,7 @@ export default function App() {
       setPendingSensitiveAction(null);
       setBurnerPinInput('');
       try {
-        await hydrateRecentMessagesFromCache(burnerWallet.address, onboardInfo.aesKey);
-        const cachedProfile = await loadStoredProfile(burnerWallet.address, onboardInfo.aesKey);
-        setMyNickname(await loadMyNicknameFromChain(burnerWallet.address, cachedProfile.nickname));
+        setMyNickname(await loadMyNicknameFromChain(burnerWallet.address));
         await restoreStateFromChainSelfBackupWithRetry(burnerWallet.address, 4, 900);
         await syncConversationHistoryRef.current({
           contactsOnly: true,
@@ -2591,16 +2120,6 @@ export default function App() {
       previous.filter((contact) => contact.address.toLowerCase() !== normalizedAddress)
     );
 
-    setSharedNicknameContacts((previous) => {
-      if (!(normalizedAddress in previous)) {
-        return previous;
-      }
-
-      const next = { ...previous };
-      delete next[normalizedAddress];
-      return next;
-    });
-
     if (activeContact?.toLowerCase() === normalizedAddress) {
       setActiveContact(null);
     }
@@ -2643,6 +2162,7 @@ export default function App() {
     const fallbackTimestamp = Math.floor(Date.now() / 1000);
     const lastTimestamp =
       latestMessage && typeof latestMessage.timestamp === 'number' ? Number(latestMessage.timestamp) : fallbackTimestamp;
+    const lastBlockNumber = latestMessage?.blockNumber;
 
     setLastReadMap((previous) => {
       if (previous[key] === lastTimestamp) {
@@ -2661,6 +2181,8 @@ export default function App() {
       delete next[key];
       return next;
     });
+
+    emitReadCursorToChain(key, lastTimestamp, lastBlockNumber).catch(() => {});
   }, [messagesByContact]);
 
   const activateContact = useCallback((contactAddress: string) => {
@@ -2785,14 +2307,11 @@ export default function App() {
       setActiveSignerSource('metamask');
       setWalletAddress(selected);
 
-      const onboardInfo = await onboardAddressAes(selected, provider);
+      await onboardAddressAes(selected, provider);
       const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
       setChainId(normalizeChainId(currentChain));
       setStatus('Connected (MetaMask)');
-      const onboardAesKey = typeof onboardInfo.aesKey === 'string' && onboardInfo.aesKey ? onboardInfo.aesKey : undefined;
-      await hydrateRecentMessagesFromCache(selected, onboardAesKey);
-      const cachedProfile = await loadStoredProfile(selected, onboardAesKey);
-      setMyNickname(await loadMyNicknameFromChain(selected, cachedProfile.nickname));
+      setMyNickname(await loadMyNicknameFromChain(selected));
       await restoreStateFromChainSelfBackupWithRetry(selected, 4, 900);
       await syncConversationHistory({
         contactsOnly: true,
@@ -2944,6 +2463,66 @@ export default function App() {
     requiredFeeCacheRef.current = resolvedFee;
     setRequiredFeeWei(resolvedFee);
     return resolvedFee;
+  };
+
+  const emitReadCursorToChain = async (
+    peerAddress: string,
+    lastReadTs: number,
+    lastReadBlock?: number
+  ): Promise<void> => {
+    const me = walletAddress.trim().toLowerCase();
+    const peer = peerAddress.trim().toLowerCase();
+    if (!isWalletAddress(me) || !isWalletAddress(peer) || !Number.isFinite(lastReadTs) || lastReadTs <= 0) {
+      return;
+    }
+
+    const previousSubmittedTs = lastSubmittedReadCursorTsRef.current[peer] ?? 0;
+    if (lastReadTs <= previousSubmittedTs) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastSubmittedAt = readCursorSubmitAtRef.current[peer] ?? 0;
+    if (now - lastSubmittedAt < READ_CURSOR_SUBMIT_THROTTLE_MS) {
+      return;
+    }
+
+    if (readCursorSubmitInFlightRef.current[peer]) {
+      return;
+    }
+
+    readCursorSubmitInFlightRef.current[peer] = true;
+    try {
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const memoContractInterface = new cotiEthers.Interface(CHAT_CONTRACT_ABI);
+      const selector = memoContractInterface.getFunction('submit')?.selector;
+      if (!selector) {
+        throw new Error('Unable to resolve submit selector.');
+      }
+
+      const payloadText = buildReadCursorText({ peer, lastReadTs, lastReadBlock });
+      const encodedMemo = encodeMemoPlaintext(payloadText);
+      const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
+      const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+      const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
+
+      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
+      const requiredFee = await resolveRequiredFeeForSend();
+      await contract.submit(me, memoTuple, { value: requiredFee });
+
+      lastSubmittedReadCursorTsRef.current[peer] = lastReadTs;
+      readCursorSubmitAtRef.current[peer] = Date.now();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+    } catch {
+    } finally {
+      readCursorSubmitInFlightRef.current[peer] = false;
+    }
   };
 
   const getNicknameMaxLength = async (): Promise<number> => {
@@ -3220,12 +2799,6 @@ export default function App() {
     if (typeof backupBlockNumber === 'number' && Number.isFinite(backupBlockNumber)) {
       lastStateBackupBlockRef.current[walletKey] = backupBlockNumber;
       lastAutoBackupAttemptBlockRef.current[walletKey] = backupBlockNumber;
-    }
-    // Profile is persisted explicitly; contacts persistence is handled by the
-    // main contacts effect to avoid stale writes from closure state here.
-    const backupAesKey = sessionOnboardInfo[walletKey]?.aesKey;
-    if (typeof backupAesKey === 'string' && backupAesKey) {
-      saveStoredProfile(walletKey, snapshotNickname, backupAesKey).catch(() => {});
     }
     try {
       // eslint-disable-next-line no-console
@@ -3638,6 +3211,14 @@ export default function App() {
             logIndex: number;
           }
         | null = null;
+      const latestReadCursorByPeer = new Map<
+        string,
+        {
+          lastReadTs: number;
+          blockNumber: number;
+          logIndex: number;
+        }
+      >();
 
       for (const log of incomingLogs) {
         const args = (log as { args?: Record<string, unknown> }).args;
@@ -3649,7 +3230,7 @@ export default function App() {
         const isSelfIncoming = from.toLowerCase() === walletKey;
         if (isSelfIncoming) {
           const selfCiphertext = extractUserCiphertext(args?.messageForRecipient);
-          let isStateBackupMessage = false;
+          let isSystemSelfMessage = false;
           if (selfCiphertext && selfCiphertext.value.length > 0) {
             try {
               const decrypted = await signer.decryptValue(selfCiphertext as never);
@@ -3657,7 +3238,7 @@ export default function App() {
               const plain = decodeMemoPlaintext(raw);
               const backupPayload = parseStateBackupText(plain);
               if (backupPayload) {
-                isStateBackupMessage = true;
+                isSystemSelfMessage = true;
                 if (
                   !latestStateBackup ||
                   log.blockNumber > latestStateBackup.blockNumber ||
@@ -3681,10 +3262,26 @@ export default function App() {
                     } catch {}
                 }
               }
+              const readCursorPayload = parseReadCursorText(plain);
+              if (readCursorPayload) {
+                isSystemSelfMessage = true;
+                const existingCursor = latestReadCursorByPeer.get(readCursorPayload.peer);
+                if (
+                  !existingCursor ||
+                  log.blockNumber > existingCursor.blockNumber ||
+                  (log.blockNumber === existingCursor.blockNumber && log.index > existingCursor.logIndex)
+                ) {
+                  latestReadCursorByPeer.set(readCursorPayload.peer, {
+                    lastReadTs: readCursorPayload.lastReadTs,
+                    blockNumber: log.blockNumber,
+                    logIndex: log.index
+                  });
+                }
+              }
             } catch {
             }
           }
-          if (isStateBackupMessage) {
+          if (isSystemSelfMessage) {
             continue;
           }
         }
@@ -3831,6 +3428,21 @@ export default function App() {
                     blockNumber: log.blockNumber,
                     logIndex: log.index
                   };
+                }
+              }
+              const readCursorPayload = parseReadCursorText(plain);
+              if (readCursorPayload) {
+                const existingCursor = latestReadCursorByPeer.get(readCursorPayload.peer);
+                if (
+                  !existingCursor ||
+                  log.blockNumber > existingCursor.blockNumber ||
+                  (log.blockNumber === existingCursor.blockNumber && log.index > existingCursor.logIndex)
+                ) {
+                  latestReadCursorByPeer.set(readCursorPayload.peer, {
+                    lastReadTs: readCursorPayload.lastReadTs,
+                    blockNumber: log.blockNumber,
+                    logIndex: log.index
+                  });
                 }
               }
             } catch {
@@ -4008,6 +3620,57 @@ export default function App() {
               prunedOptimisticByContact.add(key);
             }
 
+            if (entry.direction === 'outgoing') {
+              const existingForDedupe = next[key] ?? [];
+              let matchedLocalIndex = -1;
+              let matchedLocalScore = Number.MAX_SAFE_INTEGER;
+
+              for (let index = 0; index < existingForDedupe.length; index += 1) {
+                const candidate = existingForDedupe[index];
+                if (
+                  !candidate.id.startsWith('local-') ||
+                  candidate.direction !== 'outgoing' ||
+                  candidate.text !== entry.text ||
+                  (candidate.replyToText ?? '') !== (entry.replyToText ?? '') ||
+                  (candidate.replyToTxHash ?? '') !== (entry.replyToTxHash ?? '')
+                ) {
+                  continue;
+                }
+
+                const isOptimisticCandidate =
+                  candidate.deliveryState === 'pending' ||
+                  candidate.deliveryState === 'sent' ||
+                  candidate.deliveryState === 'failed';
+                if (!isOptimisticCandidate) {
+                  continue;
+                }
+
+                const candidateTimestamp = typeof candidate.timestamp === 'number' ? candidate.timestamp : undefined;
+                const entryTimestamp = typeof entry.timestamp === 'number' ? entry.timestamp : undefined;
+                if (typeof candidateTimestamp === 'number' && typeof entryTimestamp === 'number') {
+                  const diff = Math.abs(candidateTimestamp - entryTimestamp);
+                  if (diff > 180) {
+                    continue;
+                  }
+                  if (diff < matchedLocalScore) {
+                    matchedLocalScore = diff;
+                    matchedLocalIndex = index;
+                  }
+                  continue;
+                }
+
+                if (matchedLocalIndex === -1) {
+                  matchedLocalIndex = index;
+                }
+              }
+
+              if (matchedLocalIndex >= 0) {
+                const pruned = [...existingForDedupe];
+                pruned.splice(matchedLocalIndex, 1);
+                next[key] = pruned;
+              }
+            }
+
             const existing = next[key] ?? [];
             let existingIds = existingIdsByContact.get(key);
             if (!existingIds) {
@@ -4092,6 +3755,83 @@ export default function App() {
         });
       });
 
+      if (latestReadCursorByPeer.size > 0) {
+        setLastReadMap((previous) => {
+          let changed = false;
+          const next = { ...previous };
+          for (const [peer, cursor] of latestReadCursorByPeer.entries()) {
+            if (!isWalletAddress(peer)) {
+              continue;
+            }
+            const existing = Number(next[peer] ?? 0);
+            if (cursor.lastReadTs > existing) {
+              next[peer] = cursor.lastReadTs;
+              changed = true;
+            }
+            const submitted = Number(lastSubmittedReadCursorTsRef.current[peer] ?? 0);
+            if (cursor.lastReadTs > submitted) {
+              lastSubmittedReadCursorTsRef.current[peer] = cursor.lastReadTs;
+            }
+          }
+          return changed ? next : previous;
+        });
+      }
+
+      const unreadCandidateAddresses = Array.from(
+        new Set([...Array.from(discoveredContacts), ...contacts.map((contact) => contact.address)])
+      )
+        .map((address) => address.trim().toLowerCase())
+        .filter((address) => isWalletAddress(address) && address !== walletKey);
+
+      if (unreadCandidateAddresses.length > 0) {
+        const latestTimes = await Promise.all(
+          unreadCandidateAddresses.map(async (address) => {
+            try {
+              const latestMessageTime = toSafeNumber(await contract.getLastMessageTime(walletAddress, address));
+              return [address, latestMessageTime] as const;
+            } catch {
+              return [address, 0] as const;
+            }
+          })
+        );
+
+        const candidateSet = new Set(unreadCandidateAddresses);
+        const activeKey = activeContact?.toLowerCase();
+        const pageVisible =
+          typeof document !== 'undefined' &&
+          !document.hidden &&
+          (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+
+        setUnreadMap((previous) => {
+          let changed = false;
+          const next = { ...previous };
+          const currentLastReadMap = lastReadMapRef.current;
+
+          for (const [address, latestMessageTime] of latestTimes) {
+            const readTs = Number(currentLastReadMap[address] ?? 0);
+            const shouldUnread = latestMessageTime > readTs && !(address === activeKey && pageVisible);
+            if (shouldUnread) {
+              if (!next[address]) {
+                next[address] = true;
+                changed = true;
+              }
+            } else if (next[address]) {
+              delete next[address];
+              changed = true;
+            }
+          }
+
+          for (const existingKey of Object.keys(next)) {
+            if (!candidateSet.has(existingKey)) {
+              delete next[existingKey];
+              changed = true;
+            }
+          }
+
+          return changed ? next : previous;
+        });
+      }
+
       if (latestStateBackup) {
         applyStateBackupPayload(
           walletKey,
@@ -4130,13 +3870,6 @@ export default function App() {
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
 
-      if (options?.deep) {
-        const rawPersistAesKey = nextOnboardInfo?.aesKey ?? sessionOnboardInfo[walletKey]?.aesKey;
-        const persistAesKey = typeof rawPersistAesKey === 'string' && rawPersistAesKey ? rawPersistAesKey : undefined;
-        window.setTimeout(() => {
-          persistRecentMessagesCacheForWallet(walletAddress, messagesByContactRef.current, persistAesKey).catch(() => {});
-        }, 0);
-      }
     } catch (syncError) {
       try {
         // eslint-disable-next-line no-console
@@ -4554,18 +4287,56 @@ export default function App() {
 
       const submittedTxHash = await sendEncryptedMemo(plainTextWithReply);
 
-      setMessagesByContact((previous) => ({
-        ...previous,
-        [contactKey]: (previous[contactKey] ?? []).map((message) =>
-          message.id === localMessageId
-            ? {
-                ...message,
-                deliveryState: 'sent',
-                txHash: submittedTxHash || undefined
-              }
-            : message
-        )
-      }));
+      setMessagesByContact((previous) => {
+        const existing = previous[contactKey] ?? [];
+        const normalizedSubmittedTxHash = submittedTxHash.trim().toLowerCase();
+        const hasConfirmedTwinByTxHash =
+          normalizedSubmittedTxHash.length > 0 &&
+          existing.some(
+            (message) =>
+              !message.id.startsWith('local-') &&
+              message.direction === 'outgoing' &&
+              typeof message.txHash === 'string' &&
+              message.txHash.toLowerCase() === normalizedSubmittedTxHash
+          );
+
+        const localMessageRecord = existing.find((message) => message.id === localMessageId);
+        const hasConfirmedTwinByContent =
+          !hasConfirmedTwinByTxHash &&
+          Boolean(
+            localMessageRecord &&
+              existing.some((message) => {
+                if (message.id.startsWith('local-') || message.direction !== 'outgoing') {
+                  return false;
+                }
+                return (
+                  message.text === localMessageRecord.text &&
+                  (message.replyToText ?? '') === (localMessageRecord.replyToText ?? '') &&
+                  (message.replyToTxHash ?? '') === (localMessageRecord.replyToTxHash ?? '')
+                );
+              })
+          );
+
+        if (hasConfirmedTwinByTxHash || hasConfirmedTwinByContent) {
+          return {
+            ...previous,
+            [contactKey]: existing.filter((message) => message.id !== localMessageId)
+          };
+        }
+
+        return {
+          ...previous,
+          [contactKey]: existing.map((message) =>
+            message.id === localMessageId
+              ? {
+                  ...message,
+                  deliveryState: 'sent',
+                  txHash: submittedTxHash || undefined
+                }
+              : message
+          )
+        };
+      });
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -4640,22 +4411,19 @@ export default function App() {
   };
 
   useEffect(() => {
-    try {
-      window.localStorage.removeItem(CONTACTS_STORAGE_KEY);
-      window.localStorage.removeItem(scopedStorageKey(CONTACTS_STORAGE_KEY, walletAddress));
-      window.localStorage.removeItem(scopedStorageKey(CONTACT_ORDER_STORAGE_KEY, walletAddress));
-    } catch {}
-
     setContacts([]);
     setPersistedContactOrder([]);
     setActiveContact(null);
   }, [walletAddress]);
 
   useEffect(() => {
-    setUnreadMap(loadStoredUnreadMap(walletAddress));
-    setLastReadMap(loadStoredLastReadMap(walletAddress));
+    setUnreadMap({});
+    setLastReadMap({});
     prevUnreadRef.current = {};
-    prevLastMessageIdRef.current = {};
+    lastReadMapRef.current = {};
+    readCursorSubmitAtRef.current = {};
+    lastSubmittedReadCursorTsRef.current = {};
+    readCursorSubmitInFlightRef.current = {};
   }, [walletAddress]);
 
   useEffect(() => {
@@ -4687,8 +4455,7 @@ export default function App() {
       getNicknameMaxLength().catch(() => {});
 
       try {
-        const scopedProfile = await loadStoredProfile(walletAddress);
-        const resolvedNickname = await loadMyNicknameFromChain(walletAddress, scopedProfile.nickname);
+        const resolvedNickname = await loadMyNicknameFromChain(walletAddress);
         if (!cancelled) {
           setMyNickname(resolvedNickname);
         }
@@ -4707,10 +4474,6 @@ export default function App() {
   }, [walletAddress]);
 
   useEffect(() => {
-    setSharedNicknameContacts(loadSharedNicknameContacts(walletAddress));
-  }, [walletAddress]);
-
-  useEffect(() => {
     if (!nicknameEditorRef.current) {
       return;
     }
@@ -4720,26 +4483,6 @@ export default function App() {
       nicknameEditorRef.current.textContent = nextValue;
     }
   }, [myNickname]);
-
-  useEffect(() => {
-    const rawProfileAesKey = walletAddress ? sessionOnboardInfo[walletAddress.toLowerCase()]?.aesKey : undefined;
-    const profileAesKey = typeof rawProfileAesKey === 'string' ? rawProfileAesKey : undefined;
-    if (typeof profileAesKey !== 'string' || !profileAesKey) {
-      return;
-    }
-
-    saveStoredProfile(walletAddress, myNickname, profileAesKey).catch(() => {});
-  }, [walletAddress, myNickname, sessionOnboardInfo]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        scopedStorageKey(PROFILE_SHARED_STORAGE_KEY, walletAddress),
-        JSON.stringify(sharedNicknameContacts)
-      );
-    } catch {
-    }
-  }, [walletAddress, sharedNicknameContacts]);
 
   useEffect(() => {
     if (!contacts.length) {
@@ -5008,30 +4751,6 @@ export default function App() {
       });
     });
   }, [isConnected, activeContact]);
-
-  useEffect(() => {
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-
-    const cacheAesKey = sessionOnboardInfo[walletAddress.toLowerCase()]?.aesKey;
-    if (!cacheAesKey) {
-      return;
-    }
-
-    let cancelled = false;
-    hydrateRecentMessagesFromCache(walletAddress, cacheAesKey)
-      .then(() => {
-        if (cancelled) {
-          return;
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [walletAddress, sessionOnboardInfo]);
 
   useEffect(() => {
     if (!activeBurnerWalletMeta) {
