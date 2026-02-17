@@ -13,6 +13,7 @@
   --accent-soft: #261d47;
   --glass: rgba(21, 28, 49, 0.76);
   --glass-strong: rgba(27, 37, 64, 0.8);
+  --header-height: 56px;
 }
 
 * {
@@ -43,6 +44,7 @@ body {
 .top-header {
   display: grid;
   grid-template-columns: 320px 1fr;
+  min-height: var(--header-height);
   background: var(--bg);
   align-items: center;
   gap: 0;
@@ -54,6 +56,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: var(--header-height);
   background: var(--bg-elev-1);
   border-right: 1px solid var(--border);
   position: relative;
@@ -61,10 +64,31 @@ body {
 }
 
 .top-header-section {
-  padding: 12px 20px;
+  padding: 7px 20px;
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+.top-header-branding {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.top-header-brand-title {
+  font-size: 0.96rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.top-header-brand-subtitle {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  line-height: 1.1;
 }
 
 .top-header-section:first-child {
@@ -76,7 +100,8 @@ body {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  padding: 12px 20px;
+  min-height: var(--header-height);
+  padding: 7px 20px;
   gap: 10px 14px;
   background: var(--bg-elev-2);
 }
@@ -125,7 +150,7 @@ body {
   flex-direction: column;
   gap: 14px;
   background: var(--bg-elev-1);
-  max-height: calc(100vh - 49px);
+  max-height: calc(100vh - var(--header-height));
   overflow-y: auto;
 }
 
@@ -136,7 +161,7 @@ body {
   flex-direction: column;
   gap: 14px;
   background: var(--bg-elev-2);
-  max-height: calc(100vh - 49px);
+  max-height: calc(100vh - var(--header-height));
   overflow: hidden;
 }
 

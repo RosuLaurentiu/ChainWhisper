@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChatImage from './components/ChatImage';
 import { parseImageTag } from './lib/imagePull';
 import type { BrowserProvider, JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
@@ -68,10 +68,15 @@ const RECENT_MESSAGES_STORAGE_KEY = 'coti-chat-recent-messages';
 const CONTACT_ORDER_STORAGE_KEY = 'coti-chat-contact-order';
 const RECENT_MESSAGES_STORAGE_VERSION = 1;
 const AUTO_SYNC_INTERVAL_MS = 30000;
+const WS_HEALTHCHECK_TTL_MS = 12000;
+const WS_RETRY_COOLDOWN_MS = 15000;
+const REALTIME_SYNC_DEBOUNCE_MS = 250;
 const INITIAL_SYNC_LOOKBACK_BLOCKS = 2500;
 const RECENT_MESSAGES_PER_CONTACT_LIMIT = 100;
 const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
+const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
+const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
 const NICKNAME_DELIMITER = '\u001f';
 const REPLY_DELIMITER = '\u001e';
 const PROFILE_METADATA_PREFIX = '\u2063';
@@ -84,6 +89,7 @@ const IMAGE_MESSAGE_PREFIX = '[[coti-image:v1]]';
 const STATE_BACKUP_PREFIX = '[[coti-state:v1]]';
 const STATE_BACKUP_VERSION = 1;
 const MAX_REPLY_PREVIEW_LENGTH = 28;
+const MAX_MESSAGE_LENGTH = 2000;
 const COTI_WEI = 10n ** 18n;
 const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
 const TEXT_ENCODER = new TextEncoder();
@@ -167,6 +173,16 @@ type StateBackupPayload = {
   walletLabel?: string;
 };
 
+type BackupLocalStateOptions = {
+  force?: boolean;
+  background?: boolean;
+};
+
+type SubmitMemoPayload = {
+  ciphertextValue: bigint[];
+  signature: string[];
+};
+
 const COTI_NETWORK = {
   chainIdHex: '0x282b34',
   chainIdDecimal: 2632500,
@@ -195,6 +211,8 @@ type CotiReadProvider = CotiWsProvider | CotiHttpProvider;
 let cotiEthersModulePromise: Promise<CotiEthersModule> | null = null;
 let cotiWsProviderPromise: Promise<CotiWsProvider> | null = null;
 let cotiHttpProviderPromise: Promise<CotiHttpProvider> | null = null;
+let cotiWsLastHealthyAt = 0;
+let cotiWsBackoffUntil = 0;
 
 const loadCotiEthersModule = (): Promise<CotiEthersModule> => {
   if (!cotiEthersModulePromise) {
@@ -248,11 +266,21 @@ const resetCotiWsProvider = async (): Promise<void> => {
 
 const loadCotiReadProvider = async (preferWebSocket = true): Promise<CotiReadProvider> => {
   if (preferWebSocket) {
+    const now = Date.now();
+    if (now < cotiWsBackoffUntil) {
+      return loadCotiHttpProvider();
+    }
+
     try {
       const wsProvider = await loadCotiWsProvider();
-      await wsProvider.getBlockNumber();
+      if (now - cotiWsLastHealthyAt > WS_HEALTHCHECK_TTL_MS) {
+        await wsProvider.getBlockNumber();
+      }
+      cotiWsLastHealthyAt = Date.now();
       return wsProvider;
     } catch {
+      cotiWsLastHealthyAt = 0;
+      cotiWsBackoffUntil = Date.now() + WS_RETRY_COOLDOWN_MS;
       await resetCotiWsProvider();
     }
   }
@@ -392,6 +420,32 @@ const extractUserCiphertext = (memo: unknown): { value: bigint[] } | null => {
   }
 
   return null;
+};
+
+const parseSubmitMemoPayload = (encryptedMemo: unknown): SubmitMemoPayload => {
+  if (
+    typeof encryptedMemo !== 'object' ||
+    encryptedMemo === null ||
+    !('ciphertext' in encryptedMemo) ||
+    !('signature' in encryptedMemo)
+  ) {
+    throw new Error('Encrypted memo format mismatch for submit().');
+  }
+
+  const ciphertext = (encryptedMemo as { ciphertext: unknown }).ciphertext;
+  const signature = (encryptedMemo as { signature: unknown }).signature;
+  const ciphertextValue =
+    ciphertext && typeof ciphertext === 'object' && 'value' in ciphertext
+      ? toBigIntArray((ciphertext as { value: unknown }).value)
+      : [];
+  if (!Array.isArray(signature)) {
+    throw new Error('Encrypted memo format mismatch for submit().');
+  }
+
+  return {
+    ciphertextValue,
+    signature: signature as string[]
+  };
 };
 
 const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: string[]): Contact[] => {
@@ -736,77 +790,6 @@ const loadStoredRecentMessages = async (
   }
 };
 
-const loadStoredContacts = (walletAddress?: string | null): Contact[] => {
-  try {
-    const scopedKey = scopedStorageKey(CONTACTS_STORAGE_KEY, walletAddress);
-    const raw = window.localStorage.getItem(scopedKey);
-    if (!raw) {
-      if (walletAddress) {
-        return [];
-      }
-
-      const legacyRaw = window.localStorage.getItem(CONTACTS_STORAGE_KEY);
-      if (!legacyRaw) {
-        return [];
-      }
-
-      return parseStoredContactsValue(legacyRaw);
-    }
-
-    return parseStoredContactsValue(raw);
-  } catch {
-    return [];
-  }
-};
-
-const parseStoredContactsPayload = (raw: string): Contact[] => {
-  const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    const deduped = new Map<string, Contact>();
-
-    for (const item of parsed) {
-      if (typeof item === 'string') {
-        const address = item.trim();
-        if (isWalletAddress(address)) {
-          const key = address.toLowerCase();
-          if (!deduped.has(key)) {
-            deduped.set(key, { address });
-          }
-        }
-        continue;
-      }
-
-      if (item && typeof item === 'object' && 'address' in item) {
-        const address = typeof item.address === 'string' ? item.address.trim() : '';
-        if (!isWalletAddress(address)) {
-          continue;
-        }
-
-        const key = address.toLowerCase();
-        const name = normalizeContactName(typeof item.name === 'string' ? item.name : '');
-        const existing = deduped.get(key);
-        if (!existing) {
-          deduped.set(key, { address, name });
-        } else if (!existing.name && name) {
-          deduped.set(key, { ...existing, name });
-        }
-      }
-    }
-
-    return Array.from(deduped.values());
-};
-
-const parseStoredContactsValue = (raw: string): Contact[] => {
-  try {
-    return parseStoredContactsPayload(raw);
-  } catch {
-    return [];
-  }
-};
-
 const loadStoredUnreadMap = (walletAddress?: string | null): Record<string, boolean> => {
   if (!walletAddress || !isWalletAddress(walletAddress)) {
     return {};
@@ -856,44 +839,6 @@ const loadStoredLastReadMap = (walletAddress?: string | null): Record<string, nu
     return normalized;
   } catch {
     return {};
-  }
-};
-
-const loadStoredContactOrder = (walletAddress?: string | null): string[] => {
-  if (!walletAddress || !isWalletAddress(walletAddress)) {
-    return [];
-  }
-
-  try {
-    const raw = window.localStorage.getItem(scopedStorageKey(CONTACT_ORDER_STORAGE_KEY, walletAddress));
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    const deduped: string[] = [];
-    const seen = new Set<string>();
-    for (const value of parsed) {
-      if (typeof value !== 'string') {
-        continue;
-      }
-
-      const key = value.trim().toLowerCase();
-      if (!isWalletAddress(key) || seen.has(key)) {
-        continue;
-      }
-
-      seen.add(key);
-      deduped.push(key);
-    }
-
-    return deduped;
-  } catch {
-    return [];
   }
 };
 
@@ -1497,7 +1442,7 @@ export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
     // Telegram bot link
     const telegramBotLink = 'https://t.me/CipherTrade_bot';
-  const [contacts, setContacts] = useState<Contact[]>(() => loadStoredContacts());
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [newContact, setNewContact] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [activeContact, setActiveContact] = useState<string | null>(null);
@@ -1571,33 +1516,6 @@ export default function App() {
     } catch {}
   };
 
-  const showDesktopNotification = (title: string, body?: string, tag?: string) => {
-    try {
-      if (typeof window === 'undefined' || !('Notification' in window)) return;
-      if (Notification.permission !== 'granted') return;
-      const n = new Notification(title, {
-        body: body ?? '',
-        tag: tag,
-        renotify: true
-      });
-      n.onclick = () => {
-        try {
-          window.focus();
-          n.close();
-        } catch {}
-      };
-    } catch {}
-  };
-
-  const ensureNotificationPermission = () => {
-    try {
-      if (typeof window === 'undefined' || !('Notification' in window)) return;
-      if (Notification.permission === 'default') {
-        // request permission on user gesture when enabling sounds
-        void Notification.requestPermission().catch(() => {});
-      }
-    } catch {}
-  };
   const suppressSoundOnConnectRef = useRef<boolean>(false);
 
   const playNotificationSound = () => {
@@ -1808,21 +1726,7 @@ export default function App() {
     for (const k of Object.keys(next)) {
       if (next[k] && !prev[k]) {
         if (!suppressSoundOnConnectRef.current) {
-          // If page is hidden, prefer desktop notification (system) which may play a sound.
-          try {
-            if (typeof document !== 'undefined' && document.hidden) {
-              // attempt to show desktop notification; fall back to audio
-              const contactKey = k;
-              const contactName = (contacts.find((c) => c.address.toLowerCase() === contactKey)?.name) || contactKey;
-              showDesktopNotification(contactName, 'New message');
-              // still try to play audio as well
-              playNotificationSound();
-            } else {
-              playNotificationSound();
-            }
-          } catch {
-            playNotificationSound();
-          }
+          playNotificationSound();
         }
         break;
       }
@@ -1852,6 +1756,9 @@ export default function App() {
   const backupInFlightRef = useRef(false);
   const lastAppliedStateBackupTsRef = useRef<Record<string, number>>({});
   const lastBackedUpStateFingerprintRef = useRef<Record<string, string>>({});
+  const cachedStateBackupMemoRef = useRef<Record<string, { fingerprint: string; memo: SubmitMemoPayload }>>({});
+  const lastStateBackupBlockRef = useRef<Record<string, number>>({});
+  const lastAutoBackupAttemptBlockRef = useRef<Record<string, number>>({});
   const syncConversationHistoryRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
   const messagesByContactRef = useRef<Record<string, ChatMessage[]>>({});
 
@@ -2687,6 +2594,45 @@ export default function App() {
     }
   };
 
+  const markConversationAsRead = useCallback((contactAddress?: string | null) => {
+    if (!contactAddress) {
+      return;
+    }
+
+    const key = contactAddress.toLowerCase();
+    const messages = messagesByContact[key] ?? [];
+    const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    const fallbackTimestamp = Math.floor(Date.now() / 1000);
+    const lastTimestamp =
+      latestMessage && typeof latestMessage.timestamp === 'number' ? Number(latestMessage.timestamp) : fallbackTimestamp;
+
+    setLastReadMap((previous) => {
+      if (previous[key] === lastTimestamp) {
+        return previous;
+      }
+
+      return { ...previous, [key]: lastTimestamp };
+    });
+
+    setUnreadMap((previous) => {
+      if (!previous[key]) {
+        return previous;
+      }
+
+      const next = { ...previous };
+      delete next[key];
+      return next;
+    });
+  }, [messagesByContact]);
+
+  const activateContact = useCallback((contactAddress: string) => {
+    setActiveContact(contactAddress);
+    markConversationAsRead(contactAddress);
+    if (isMobileNav) {
+      setActiveMobileView('chat');
+    }
+  }, [isMobileNav, markConversationAsRead]);
+
   const ensureCotiNetwork = async (provider: Eip1193Provider) => {
     if (!provider) {
       throw new Error('Wallet provider is not available.');
@@ -2859,6 +2805,7 @@ export default function App() {
     setConnectedProvider(null);
     burnerPinRef.current = '';
     signerCacheRef.current = {};
+    cachedStateBackupMemoRef.current = {};
   };
 
   const getMemoSigner = async () => {
@@ -2964,7 +2911,8 @@ export default function App() {
   const applyStateBackupPayload = (
     walletKey: string,
     payload: StateBackupPayload,
-    discoveredNicknames?: Map<string, string>
+    discoveredNicknames?: Map<string, string>,
+    backupBlockNumber?: number
   ) => {
   
     const currentBackupTs = lastAppliedStateBackupTsRef.current[walletKey] ?? 0;
@@ -3100,6 +3048,10 @@ export default function App() {
       snapshotContacts,
       payload.walletLabel
     );
+    if (typeof backupBlockNumber === 'number' && Number.isFinite(backupBlockNumber)) {
+      lastStateBackupBlockRef.current[walletKey] = backupBlockNumber;
+      lastAutoBackupAttemptBlockRef.current[walletKey] = backupBlockNumber;
+    }
     // Profile is persisted explicitly; contacts persistence is handled by the
     // main contacts effect to avoid stale writes from closure state here.
     const backupAesKey = sessionOnboardInfo[walletKey]?.aesKey;
@@ -3149,6 +3101,7 @@ export default function App() {
       const selfFilter = contract.filters.MessageSubmitted(targetAddress, targetAddress);
 
       let latestPayload: StateBackupPayload | null = null;
+      let latestPayloadBlockNumber: number | undefined;
       let latestNonEmptyNickname: string | undefined;
 
       let windowEnd = latestBlock;
@@ -3185,6 +3138,7 @@ export default function App() {
                 if (parsed) {
                   if (!latestPayload) {
                     latestPayload = parsed;
+                    latestPayloadBlockNumber = log.blockNumber;
                   }
 
                   const parsedNickname = normalizeContactName(parsed.nickname ?? '')?.slice(0, 42);
@@ -3227,7 +3181,7 @@ export default function App() {
               nickname: resolvedNickname
             };
 
-      applyStateBackupPayload(targetAddress.toLowerCase(), payloadToApply);
+      applyStateBackupPayload(targetAddress.toLowerCase(), payloadToApply, undefined, latestPayloadBlockNumber);
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -3288,7 +3242,11 @@ export default function App() {
     }
   };
 
-  const backupLocalStateToSelf = async (snapshotNickname: string, snapshotContacts: Contact[]) => {
+  const backupLocalStateToSelf = async (
+    snapshotNickname: string,
+    snapshotContacts: Contact[],
+    options?: BackupLocalStateOptions
+  ) => {
     if (backupInFlightRef.current) {
       return;
     }
@@ -3301,7 +3259,9 @@ export default function App() {
 
     try {
       backupInFlightRef.current = true;
-      setBackingUpState(true);
+      if (!options?.background) {
+        setBackingUpState(true);
+      }
 
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
@@ -3314,27 +3274,42 @@ export default function App() {
       const walletLabel = burnerRecordRef.current?.name ?? findContactNameForWalletAddress(walletAddress) ?? '';
       const payload = buildStateBackupPayload(snapshotNickname, snapshotContacts, walletLabel);
       const nextFingerprint = createStateBackupFingerprint(snapshotNickname, snapshotContacts, walletLabel);
-      if (lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
+      if (!options?.force && lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
         return;
       }
       const backupText = buildStateBackupText(payload);
       const encodedMemo = encodeMemoPlaintext(backupText);
-      const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
-      if (
-        typeof encryptedMemo !== 'object' ||
-        encryptedMemo === null ||
-        typeof encryptedMemo.ciphertext !== 'object' ||
-        encryptedMemo.ciphertext === null ||
-        !('value' in encryptedMemo.ciphertext) ||
-        !Array.isArray(encryptedMemo.signature)
-      ) {
-        throw new Error('Encrypted memo format mismatch for submit().');
-      }
-
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForSend();
-      const memoTuple = [[encryptedMemo.ciphertext.value], encryptedMemo.signature] as const;
-      await contract.submit(walletAddress, memoTuple, { value: requiredFee });
+      const cachedMemoEntry = cachedStateBackupMemoRef.current[walletKey];
+      const hasReusableMemo = cachedMemoEntry?.fingerprint === nextFingerprint;
+
+      const buildMemoPayload = async (): Promise<SubmitMemoPayload> => {
+        const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
+        return parseSubmitMemoPayload(encryptedMemo);
+      };
+
+      let memoPayload = hasReusableMemo ? cachedMemoEntry.memo : await buildMemoPayload();
+      if (!hasReusableMemo) {
+        cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
+      }
+
+      const submitWithMemoPayload = async (payloadToSubmit: SubmitMemoPayload): Promise<void> => {
+        const memoTuple = [[payloadToSubmit.ciphertextValue], payloadToSubmit.signature] as const;
+        await contract.submit(walletAddress, memoTuple, { value: requiredFee });
+      };
+
+      try {
+        await submitWithMemoPayload(memoPayload);
+      } catch (submitError) {
+        if (!hasReusableMemo) {
+          throw submitError;
+        }
+
+        memoPayload = await buildMemoPayload();
+        cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
+        await submitWithMemoPayload(memoPayload);
+      }
 
       // Apply the backup payload locally so local state and localStorage update immediately
       try {
@@ -3352,7 +3327,9 @@ export default function App() {
     } catch {
     } finally {
       backupInFlightRef.current = false;
-      setBackingUpState(false);
+      if (!options?.background) {
+        setBackingUpState(false);
+      }
     }
   };
 
@@ -3910,15 +3887,35 @@ export default function App() {
       });
 
       if (latestStateBackup) {
-        applyStateBackupPayload(walletKey, latestStateBackup.payload, discoveredNicknames);
+        applyStateBackupPayload(
+          walletKey,
+          latestStateBackup.payload,
+          discoveredNicknames,
+          latestStateBackup.blockNumber
+        );
+      }
+
+      const knownBackupBlockNumber =
+        latestStateBackup?.blockNumber ?? lastStateBackupBlockRef.current[walletKey];
+      const lastAutoBackupAttemptBlock = lastAutoBackupAttemptBlockRef.current[walletKey] ?? -AUTO_STATE_BACKUP_RETRY_BLOCKS;
+      const blocksSinceAutoBackupAttempt = latestBlock - lastAutoBackupAttemptBlock;
+      const hasLocalStateSnapshot =
+        Boolean(myNickname.trim()) ||
+        contacts.length > 0 ||
+        Boolean(normalizeContactName(burnerRecordRef.current?.name ?? ''));
+      const shouldAutoBackupForDistance =
+        hasLocalStateSnapshot &&
+        typeof knownBackupBlockNumber === 'number' &&
+        latestBlock - knownBackupBlockNumber >= AUTO_STATE_BACKUP_BLOCK_DISTANCE &&
+        blocksSinceAutoBackupAttempt >= AUTO_STATE_BACKUP_RETRY_BLOCKS;
+
+      if (shouldAutoBackupForDistance) {
+        lastAutoBackupAttemptBlockRef.current[walletKey] = latestBlock;
+        backupLocalStateToSelf(myNickname, contacts, { force: true, background: true }).catch(() => {});
       }
 
       if ((options?.updateHead || !options?.contactsOnly) && typeof options?.toBlock !== 'number') {
         lastSyncedBlockRef.current[walletKey] = latestBlock;
-      }
-
-      if (!activeContact && discoveredContacts.size > 0) {
-        setActiveContact(Array.from(discoveredContacts)[0]);
       }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -4261,6 +4258,11 @@ export default function App() {
       return;
     }
 
+    if (plainText.length > MAX_MESSAGE_LENGTH) {
+      setError(`Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`);
+      return;
+    }
+
     if (plainText.startsWith(IMAGE_MESSAGE_PREFIX)) {
       setError('Image messages are disabled for security reasons.');
       return;
@@ -4424,20 +4426,17 @@ export default function App() {
       setSyncingData(false);
     }
   };
+
   useEffect(() => {
     try {
-      window.localStorage.setItem(scopedStorageKey(CONTACTS_STORAGE_KEY, walletAddress), JSON.stringify(contacts));
-    } catch {
-    }
-  }, [contacts, walletAddress]);
+      window.localStorage.removeItem(CONTACTS_STORAGE_KEY);
+      window.localStorage.removeItem(scopedStorageKey(CONTACTS_STORAGE_KEY, walletAddress));
+      window.localStorage.removeItem(scopedStorageKey(CONTACT_ORDER_STORAGE_KEY, walletAddress));
+    } catch {}
 
-  useEffect(() => {
-    setContacts(loadStoredContacts(walletAddress));
+    setContacts([]);
+    setPersistedContactOrder([]);
     setActiveContact(null);
-  }, [walletAddress]);
-
-  useEffect(() => {
-    setPersistedContactOrder(loadStoredContactOrder(walletAddress));
   }, [walletAddress]);
 
   useEffect(() => {
@@ -4461,19 +4460,6 @@ export default function App() {
 
     setPersistedContactOrder(nextOrder);
   }, [walletAddress, sortedContacts, persistedContactOrder]);
-
-  useEffect(() => {
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem(
-        scopedStorageKey(CONTACT_ORDER_STORAGE_KEY, walletAddress),
-        JSON.stringify(persistedContactOrder)
-      );
-    } catch {}
-  }, [walletAddress, persistedContactOrder]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4942,12 +4928,60 @@ export default function App() {
       return;
     }
 
-    const intervalId = window.setInterval(() => {
+    let cancelled = false;
+    let unsubscribeBlocks: (() => void) | null = null;
+    let lastRefreshAt = 0;
+    const bumpTopUpMetrics = () => {
+      const now = Date.now();
+      if (now - lastRefreshAt < AUTO_SYNC_INTERVAL_MS) {
+        return;
+      }
+
+      lastRefreshAt = now;
       setTopUpMetricsNonce((previous) => previous + 1);
+    };
+
+    const intervalId = window.setInterval(() => {
+      if (!cancelled) {
+        bumpTopUpMetrics();
+      }
     }, AUTO_SYNC_INTERVAL_MS);
 
+    loadCotiWsProvider()
+      .then(async (wsProvider) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (Date.now() - cotiWsLastHealthyAt > WS_HEALTHCHECK_TTL_MS) {
+          await wsProvider.getBlockNumber();
+        }
+        cotiWsLastHealthyAt = Date.now();
+
+        const providerWithEvents = wsProvider as unknown as {
+          on?: (event: string, listener: (...args: unknown[]) => void) => void;
+          off?: (event: string, listener: (...args: unknown[]) => void) => void;
+        };
+
+        const handleBlock = () => {
+          if (!cancelled) {
+            bumpTopUpMetrics();
+          }
+        };
+
+        providerWithEvents.on?.('block', handleBlock);
+        unsubscribeBlocks = () => {
+          providerWithEvents.off?.('block', handleBlock);
+        };
+      })
+      .catch(() => {
+        // Keep interval-only fallback.
+      });
+
     return () => {
+      cancelled = true;
       window.clearInterval(intervalId);
+      unsubscribeBlocks?.();
     };
   }, [burnerAddress]);
 
@@ -4963,6 +4997,34 @@ export default function App() {
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
     let pollIntervalId: number | null = null;
+    let wsReconnectIntervalId: number | null = null;
+    let wsReconnectInFlight = false;
+    let realtimeSyncTimerId: number | null = null;
+
+    const scheduleRealtimeSync = () => {
+      if (cancelled || realtimeSyncTimerId !== null) {
+        return;
+      }
+
+      realtimeSyncTimerId = window.setTimeout(() => {
+        realtimeSyncTimerId = null;
+        if (!cancelled) {
+          syncConversationHistoryRef.current().catch(() => {});
+        }
+      }, REALTIME_SYNC_DEBOUNCE_MS);
+    };
+
+    const clearPollFallback = () => {
+      if (pollIntervalId !== null) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+
+      if (wsReconnectIntervalId !== null) {
+        window.clearInterval(wsReconnectIntervalId);
+        wsReconnectIntervalId = null;
+      }
+    };
 
     const setupRealtimeSubscription = async () => {
       try {
@@ -4972,16 +5034,15 @@ export default function App() {
 
         const cotiEthers = await loadCotiEthersModule();
         const wsProvider = await loadCotiWsProvider();
-        await wsProvider.getBlockNumber();
+        if (Date.now() - cotiWsLastHealthyAt > WS_HEALTHCHECK_TTL_MS) {
+          await wsProvider.getBlockNumber();
+        }
+        cotiWsLastHealthyAt = Date.now();
         const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, wsProvider);
 
         const incomingFilter = contract.filters.MessageSubmitted(walletAddress, null);
         const outgoingFilter = contract.filters.MessageSubmitted(null, walletAddress);
-        const handleMessageSubmitted = () => {
-          if (!cancelled) {
-            syncConversationHistoryRef.current().catch(() => {});
-          }
-        };
+        const handleMessageSubmitted = () => scheduleRealtimeSync();
 
         contract.on(incomingFilter, handleMessageSubmitted);
         contract.on(outgoingFilter, handleMessageSubmitted);
@@ -4996,12 +5057,31 @@ export default function App() {
           contract.off(incomingFilter, handleMessageSubmitted);
           contract.off(outgoingFilter, handleMessageSubmitted);
         };
+
+        clearPollFallback();
       } catch {
         await resetCotiWsProvider();
         if (!cancelled) {
-          pollIntervalId = window.setInterval(() => {
-            syncConversationHistoryRef.current().catch(() => {});
-          }, AUTO_SYNC_INTERVAL_MS);
+          if (pollIntervalId === null) {
+            pollIntervalId = window.setInterval(() => {
+              scheduleRealtimeSync();
+            }, AUTO_SYNC_INTERVAL_MS);
+          }
+
+          if (wsReconnectIntervalId === null) {
+            wsReconnectIntervalId = window.setInterval(() => {
+              if (wsReconnectInFlight || cancelled) {
+                return;
+              }
+
+              wsReconnectInFlight = true;
+              setupRealtimeSubscription()
+                .catch(() => {})
+                .finally(() => {
+                  wsReconnectInFlight = false;
+                });
+            }, WS_RETRY_COOLDOWN_MS);
+          }
         }
       }
     };
@@ -5015,8 +5095,9 @@ export default function App() {
 
     return () => {
       cancelled = true;
-      if (pollIntervalId !== null) {
-        window.clearInterval(pollIntervalId);
+      clearPollFallback();
+      if (realtimeSyncTimerId !== null) {
+        window.clearTimeout(realtimeSyncTimerId);
       }
       unsubscribe?.();
     };
@@ -5062,7 +5143,10 @@ export default function App() {
     <div className={`app-shell mobile-view-${activeMobileView}`}>
       <header className="top-header" ref={topHeaderRef}>
         <div className="top-header-brand">
-          <div className="top-header-section">COTI Chat</div>
+          <div className="top-header-section top-header-branding">
+            <span className="top-header-brand-title">ChainWhisper</span>
+            <span className="top-header-brand-subtitle">powered by COTI</span>
+          </div>
           <button
             type="button"
             className="top-header-menu-btn"
@@ -5091,7 +5175,6 @@ export default function App() {
                   // user gesture: initialize persistent audio and play once to unlock
                   try {
                     initPersistentAudio();
-                    ensureNotificationPermission();
                   } catch {}
                 } else {
                   // disable: revoke any persistent audio URL
@@ -5489,47 +5572,11 @@ export default function App() {
                   className={isActive ? 'contact-card active' : 'contact-card'}
                   role="button"
                   tabIndex={0}
-                  onClick={() => {
-                    setActiveContact(contact.address);
-                    try {
-                      const key = contact.address.toLowerCase();
-                      try {
-                        const msgs = messagesByContact[key] ?? [];
-                        const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
-                        setLastReadMap((prev) => ({ ...prev, [key]: lastTs }));
-                      } catch {}
-                      setUnreadMap((prev) => {
-                        if (!prev[key]) return prev;
-                        const copy = { ...prev };
-                        delete copy[key];
-                        return copy;
-                      });
-                    } catch {}
-                    if (isMobileNav) {
-                      setActiveMobileView('chat');
-                    }
-                  }}
+                  onClick={() => activateContact(contact.address)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      setActiveContact(contact.address);
-                      try {
-                        const key = contact.address.toLowerCase();
-                        try {
-                          const msgs = messagesByContact[key] ?? [];
-                          const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
-                          setLastReadMap((prev) => ({ ...prev, [key]: lastTs }));
-                        } catch {}
-                        setUnreadMap((prev) => {
-                          if (!prev[key]) return prev;
-                          const copy = { ...prev };
-                          delete copy[key];
-                          return copy;
-                        });
-                      } catch {}
-                      if (isMobileNav) {
-                        setActiveMobileView('chat');
-                      }
+                      activateContact(contact.address);
                     }
                   }}
                 >
@@ -5667,23 +5714,7 @@ export default function App() {
             <div
               className="chat-messages"
               ref={chatMessagesRef}
-              onClick={() => {
-                try {
-                  if (!activeContact) return;
-                  const key = activeContact.toLowerCase();
-                  try {
-                    const msgs = messagesByContact[key] ?? [];
-                    const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
-                    setLastReadMap((prev) => ({ ...prev, [key]: lastTs }));
-                  } catch {}
-                  setUnreadMap((prev) => {
-                    if (!prev[key]) return prev;
-                    const copy = { ...prev };
-                    delete copy[key];
-                    return copy;
-                  });
-                } catch {}
-              }}
+              onClick={() => markConversationAsRead(activeContact)}
             >
               {loadingOlderHistory ? <p className="chat-empty">Loading older messages...</p> : null}
               {activeMessages.length === 0 ? (
@@ -5741,8 +5772,8 @@ export default function App() {
                       ) : null}
                       {
                         (() => {
-                          const imgParsed = parseImageTag(message.text);
-                          if (imgParsed) return <ChatImage tag={message.text} />;
+                          const parsedImageTag = parseImageTag(message.text);
+                          if (parsedImageTag) return <ChatImage tag={message.text} parsed={parsedImageTag} />;
                           return messageDisplayText ? <div>{messageDisplayText}</div> : null;
                         })()
                       }
@@ -5787,22 +5818,24 @@ export default function App() {
                 contentEditable
                 suppressContentEditableWarning
                 role="textbox"
-                aria-multiline="false"
+                aria-multiline={isMobileNav}
                 aria-label="Message"
                 data-placeholder="Type a message"
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
+                  if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
                     event.preventDefault();
                     sendMessage().catch(() => {});
                   }
                 }}
                 onInput={(event) => {
                   const raw = event.currentTarget.textContent ?? '';
-                  const singleLine = raw.replace(/\r?\n/g, '');
-                  if (singleLine !== raw) {
-                    event.currentTarget.textContent = singleLine;
+                  const normalized = raw.replace(/\r/g, '');
+                  const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
+                  const capped = nextValue.slice(0, MAX_MESSAGE_LENGTH);
+                  if (capped !== raw) {
+                    event.currentTarget.textContent = capped;
                   }
-                  setMessageInput(singleLine);
+                  setMessageInput(capped);
                 }}
               />
               <button

@@ -1,9 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, memo } from 'react';
 import { parseImageTag, fetchAndDecryptToUrl } from '../lib/imagePull';
+import type { ParsedImageTag } from '../lib/imagePull';
 
-type Props = { tag: string };
+type Props = { tag: string; parsed?: ParsedImageTag };
 
-export default function ChatImage({ tag }: Props) {
+function ChatImage({ tag, parsed }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -11,29 +12,40 @@ export default function ChatImage({ tag }: Props) {
   useEffect(() => {
     let mounted = true;
     let revokeUrl: string | null = null;
-    const parsed = parseImageTag(tag);
-    if (!parsed) {
+    const parsedTag = parsed ?? parseImageTag(tag);
+    if (!parsedTag) {
       setError('Invalid image tag');
+      setUrl(null);
       return;
     }
+    setError(null);
+    setUrl(null);
+    const abortController = new AbortController();
 
     (async () => {
       try {
-        const objUrl = await fetchAndDecryptToUrl(parsed.blobId, parsed.keyHex, parsed.ivHex, parsed.mime);
+        const objUrl = await fetchAndDecryptToUrl(
+          parsedTag.blobId,
+          parsedTag.keyHex,
+          parsedTag.ivHex,
+          parsedTag.mime,
+          abortController.signal
+        );
         if (!mounted) return;
         revokeUrl = objUrl;
         setUrl(objUrl);
       } catch (err: any) {
-        if (!mounted) return;
-        setError(String(err?.message ?? err));
+        if (!mounted || abortController.signal.aborted) return;
+        setError('Unable to load image.');
       }
     })();
 
     return () => {
       mounted = false;
+      abortController.abort();
       if (revokeUrl) URL.revokeObjectURL(revokeUrl);
     };
-  }, [tag]);
+  }, [tag, parsed]);
 
   const openLightbox = useCallback(() => setLightboxOpen(true), []);
   const closeLightbox = useCallback(() => setLightboxOpen(false), []);
@@ -63,3 +75,5 @@ export default function ChatImage({ tag }: Props) {
     </>
   );
 }
+
+export default memo(ChatImage, (previous, next) => previous.tag === next.tag);
