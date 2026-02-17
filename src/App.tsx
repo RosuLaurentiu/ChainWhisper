@@ -55,6 +55,7 @@ type HistoryEntry = {
 };
 
 const BURNER_WALLET_STORAGE_KEY = 'coti-chat-burner-wallet';
+const BURNER_WALLET_STORAGE_PROBE_KEY = 'coti-chat-burner-wallet-probe';
 const BURNER_WALLET_STORAGE_VERSION = 2;
 const BURNER_WALLET_VAULT_VERSION = 1;
 const BURNER_PIN_MIN_LENGTH = 5;
@@ -399,6 +400,17 @@ async function withTimeout<T>(task: Promise<T>, timeoutMs: number, timeoutMessag
     }
   }
 }
+
+const isBurnerStorageAvailable = (): boolean => {
+  try {
+    const probeValue = `${Date.now()}`;
+    window.localStorage.setItem(BURNER_WALLET_STORAGE_PROBE_KEY, probeValue);
+    window.localStorage.removeItem(BURNER_WALLET_STORAGE_PROBE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number') {
@@ -993,8 +1005,15 @@ const loadBurnerWalletVaultFromStorage = async (pin: string): Promise<BurnerWall
 };
 
 const saveEncryptedBurnerWalletVault = async (vault: BurnerWalletVault, pin: string): Promise<void> => {
+  if (!isBurnerStorageAvailable()) {
+    throw new Error('Browser storage is unavailable. Disable private browsing or storage restrictions, then try again.');
+  }
   const encrypted = await encryptBurnerWalletVault(vault, pin);
-  window.localStorage.setItem(BURNER_WALLET_STORAGE_KEY, JSON.stringify(encrypted));
+  try {
+    window.localStorage.setItem(BURNER_WALLET_STORAGE_KEY, JSON.stringify(encrypted));
+  } catch {
+    throw new Error('Failed to persist wallet data in browser storage.');
+  }
 };
 
 
@@ -1211,6 +1230,7 @@ export default function App() {
   const [activeBurnerWalletId, setActiveBurnerWalletId] = useState('');
   const [burnerWalletLabelInput, setBurnerWalletLabelInput] = useState('');
   const [showBurnerImportModal, setShowBurnerImportModal] = useState(false);
+  const [burnerStorageBlocked, setBurnerStorageBlocked] = useState<boolean>(() => !isBurnerStorageAvailable());
   const [showBurnerPinModal, setShowBurnerPinModal] = useState(false);
   const [restoredShortNicknames, setRestoredShortNicknames] = useState<Record<string, string>>({});
   const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
@@ -1339,10 +1359,26 @@ export default function App() {
   const currentWalletKeyRef = useRef<string>('');
   const postConnectDataSyncRunIdRef = useRef(0);
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
+  const refreshBurnerStorageStatus = useCallback(() => {
+    setBurnerStorageBlocked(!isBurnerStorageAvailable());
+  }, []);
 
   useEffect(() => {
     lastReadMapRef.current = lastReadMap;
   }, [lastReadMap]);
+
+  useEffect(() => {
+    refreshBurnerStorageStatus();
+    const onVisibilityOrFocus = () => {
+      refreshBurnerStorageStatus();
+    };
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+    };
+  }, [refreshBurnerStorageStatus]);
 
   useEffect(() => {
     if (!activeContact) return;
@@ -1484,7 +1520,10 @@ export default function App() {
   const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
   const burnerWalletSelectionValue = activeBurnerWalletId || burnerRecordRef.current?.id || '';
   const activeBurnerWalletMeta = burnerWallets.find((walletRecord) => walletRecord.id === burnerWalletSelectionValue);
-  const hasSavedBurnerWallet = useMemo(() => parseBurnerWalletStorageState().kind !== 'none', [burnerWallets]);
+  const hasSavedBurnerWallet = useMemo(
+    () => !burnerStorageBlocked && parseBurnerWalletStorageState().kind !== 'none',
+    [burnerWallets, burnerStorageBlocked]
+  );
   const findContactNameForWalletAddress = (address?: string): string | undefined => {
     if (!address) {
       return undefined;
@@ -1821,6 +1860,11 @@ export default function App() {
 
   const beginBurnerPinFlow = async (mode: BurnerInitMode, seedOrPrivateKey?: string) => {
     setError('');
+    refreshBurnerStorageStatus();
+    if (!isBurnerStorageAvailable()) {
+      setError('Browser storage is unavailable. Wallet persistence requires local storage access.');
+      return;
+    }
 
     const storageState = parseBurnerWalletStorageState();
     if (mode === 'stored' && storageState.kind === 'none') {
@@ -5359,7 +5403,7 @@ export default function App() {
                 beginBurnerPinFlow('generate').catch(() => {});
               }}
               type="button"
-              disabled={initializingBurner}
+              disabled={initializingBurner || burnerStorageBlocked}
             >
               {initializingBurner ? 'Initializing Wallet...' : 'Generate Wallet'}
             </button>
@@ -5370,12 +5414,17 @@ export default function App() {
                 beginBurnerPinFlow('stored').catch(() => {});
               }}
               type="button"
-              disabled={initializingBurner || !hasSavedBurnerWallet}
+              disabled={initializingBurner || burnerStorageBlocked || !hasSavedBurnerWallet}
             >
               Connect Wallet
             </button>
 
-            <button className="connect-btn" onClick={() => setShowBurnerImportModal(true)} type="button" disabled={initializingBurner}>
+            <button
+              className="connect-btn"
+              onClick={() => setShowBurnerImportModal(true)}
+              type="button"
+              disabled={initializingBurner || burnerStorageBlocked}
+            >
               Import Wallet
             </button>
 
@@ -5409,6 +5458,11 @@ export default function App() {
               Disconnect
             </button>
           </div>
+          {burnerStorageBlocked ? (
+            <p className="error">
+              Browser storage is blocked. Disable private mode or storage restrictions to persist wallets.
+            </p>
+          ) : null}
         </div>
 
         <div className="wallet-meta">
