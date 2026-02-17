@@ -95,5 +95,5 @@ export async function fetchAndDecryptToUrl(
   signal?: AbortSignal
 ): Promise<string> {
   const encrypted = await fetchEncryptedBlob(blobId, signal);
-  return await decryptBlobToObjectUrl(encrypted, keyHex, ivHex, mime);
+  return decryptBlobToObjectUrl(encrypted, keyHex, ivHex, mime);
 }

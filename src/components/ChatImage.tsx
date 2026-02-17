@@ -3,6 +3,12 @@ import { parseImageTag, fetchAndDecryptToUrl } from '../lib/imagePull';
 import type { ParsedImageTag } from '../lib/imagePull';
 
 type Props = { tag: string; parsed?: ParsedImageTag };
+type CachedImage = { url: string; refs: number };
+
+const imageUrlCache = new Map<string, CachedImage>();
+
+const createImageCacheKey = (parsed: ParsedImageTag): string =>
+  `${parsed.blobId}|${parsed.keyHex}|${parsed.ivHex}|${parsed.mime}`;
 
 function ChatImage({ tag, parsed }: Props) {
   const [url, setUrl] = useState<string | null>(null);
@@ -11,13 +17,34 @@ function ChatImage({ tag, parsed }: Props) {
 
   useEffect(() => {
     let mounted = true;
-    let revokeUrl: string | null = null;
+    let activeCacheKey: string | null = null;
     const parsedTag = parsed ?? parseImageTag(tag);
     if (!parsedTag) {
       setError('Invalid image tag');
       setUrl(null);
       return;
     }
+
+    const cacheKey = createImageCacheKey(parsedTag);
+    const cached = imageUrlCache.get(cacheKey);
+    if (cached) {
+      cached.refs += 1;
+      activeCacheKey = cacheKey;
+      setError(null);
+      setUrl(cached.url);
+      return () => {
+        mounted = false;
+        if (!activeCacheKey) return;
+        const active = imageUrlCache.get(activeCacheKey);
+        if (!active) return;
+        active.refs -= 1;
+        if (active.refs <= 0) {
+          URL.revokeObjectURL(active.url);
+          imageUrlCache.delete(activeCacheKey);
+        }
+      };
+    }
+
     setError(null);
     setUrl(null);
     const abortController = new AbortController();
@@ -32,9 +59,10 @@ function ChatImage({ tag, parsed }: Props) {
           abortController.signal
         );
         if (!mounted) return;
-        revokeUrl = objUrl;
+        imageUrlCache.set(cacheKey, { url: objUrl, refs: 1 });
+        activeCacheKey = cacheKey;
         setUrl(objUrl);
-      } catch (err: any) {
+      } catch {
         if (!mounted || abortController.signal.aborted) return;
         setError('Unable to load image.');
       }
@@ -43,7 +71,14 @@ function ChatImage({ tag, parsed }: Props) {
     return () => {
       mounted = false;
       abortController.abort();
-      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+      if (!activeCacheKey) return;
+      const active = imageUrlCache.get(activeCacheKey);
+      if (!active) return;
+      active.refs -= 1;
+      if (active.refs <= 0) {
+        URL.revokeObjectURL(active.url);
+        imageUrlCache.delete(activeCacheKey);
+      }
     };
   }, [tag, parsed]);
 
@@ -60,7 +95,7 @@ function ChatImage({ tag, parsed }: Props) {
   }, [lightboxOpen, closeLightbox]);
 
   if (error) return <div className="chat-image-error">{error}</div>;
-  if (!url) return <div className="chat-image-loading">Loading image…</div>;
+  if (!url) return <div className="chat-image-loading">Loading image...</div>;
 
   return (
     <>

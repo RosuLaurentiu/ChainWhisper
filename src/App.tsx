@@ -69,6 +69,7 @@ const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
 const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
+const BURNER_ONBOARD_TIMEOUT_MS = 45000;
 const DEFAULT_NICKNAME_MAX_BYTES = 42;
 const NICKNAME_DELIMITER = '\u001f';
 const REPLY_DELIMITER = '\u001e';
@@ -91,6 +92,11 @@ const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
 const EXTERNAL_REPLY_TXHASH_REGEX = /^\[r:(0x[a-fA-F0-9]{64})\]\s*/;
+const debugLog = (...args: unknown[]): void => {
+  if (import.meta.env.DEV) {
+    console.debug(...args);
+  }
+};
 
 type BurnerWalletRecord = {
   id?: string;
@@ -122,7 +128,7 @@ type BurnerWalletStorageState =
 type BurnerInitMode = 'generate' | 'import' | 'stored';
 type SignerSource = 'burner' | 'metamask';
 type BurnerPinMode = 'set' | 'unlock';
-type BurnerInitResult = 'connected' | 'needs-funding' | 'failed';
+type BurnerInitResult = 'connected' | 'needs-funding' | 'imported' | 'failed';
 type SensitiveAction = 'reveal-backup';
 type MobileView = 'wallets' | 'contacts' | 'chat';
 
@@ -354,6 +360,45 @@ const formatCotiAmount = (weiAmount: bigint): string => {
 
 const hasInsufficientFundsError = (message: string): boolean =>
   /insufficient funds|exceeds balance|not enough funds|account balance is 0/i.test(message);
+
+const normalizeImportInput = (value: string): string => value.replace(/\r?\n/g, ' ').trim();
+
+const normalizeMnemonicInput = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((part) => part.length > 0)
+    .join(' ');
+
+const normalizePrivateKeyInput = (value: string): string | null => {
+  const compact = value.replace(/\s+/g, '');
+  if (!/^(0x)?[a-fA-F0-9]{64}$/.test(compact)) {
+    return null;
+  }
+
+  return compact.startsWith('0x') ? compact : `0x${compact}`;
+};
+
+const looksLikePrivateKeyInput = (value: string): boolean => {
+  const compact = value.replace(/\s+/g, '');
+  return compact.startsWith('0x') || /^[a-fA-F0-9]+$/.test(compact);
+};
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([task, timeoutPromise]);
+  } finally {
+    if (typeof timeoutId === 'number') {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
 
 const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number') {
@@ -1508,7 +1553,7 @@ export default function App() {
     pin?: string,
     preferredWalletId?: string
   ): Promise<{ record: BurnerWalletRecord; vault?: BurnerWalletVault }> => {
-    const normalizedSeed = seedOrPrivateKey?.trim() ?? '';
+    const normalizedSeed = normalizeImportInput(seedOrPrivateKey ?? '');
     const cotiEthers = await loadCotiEthersModule();
 
     if (mode === 'import') {
@@ -1516,15 +1561,26 @@ export default function App() {
         throw new Error('Enter a mnemonic phrase or private key.');
       }
 
-      if (/^0x[a-fA-F0-9]{64}$/.test(normalizedSeed)) {
-        return { record: { privateKey: normalizedSeed } };
+      const normalizedPrivateKey = normalizePrivateKeyInput(normalizedSeed);
+      if (normalizedPrivateKey) {
+        return { record: { privateKey: normalizedPrivateKey } };
       }
 
-      const importedWallet = cotiEthers.Wallet.fromPhrase(normalizedSeed);
+      if (looksLikePrivateKeyInput(normalizedSeed)) {
+        throw new Error('Invalid private key. Use exactly 64 hex characters (optionally prefixed with 0x).');
+      }
+
+      const normalizedMnemonic = normalizeMnemonicInput(normalizedSeed);
+      let importedWallet: { privateKey: string };
+      try {
+        importedWallet = cotiEthers.Wallet.fromPhrase(normalizedMnemonic);
+      } catch {
+        throw new Error('Invalid mnemonic phrase.');
+      }
       return {
         record: {
           privateKey: importedWallet.privateKey,
-          mnemonic: normalizedSeed
+          mnemonic: normalizedMnemonic
         }
       };
     }
@@ -1568,6 +1624,7 @@ export default function App() {
     setInitializingBurner(true);
     setBurnerNeedsFunding(false);
     let aesOnboardingComplete = false;
+    let walletPersisted = false;
 
     try {
       const storageState = parseBurnerWalletStorageState();
@@ -1594,6 +1651,7 @@ export default function App() {
       }
 
       await saveEncryptedBurnerWalletVault(burnerVault, sessionPin);
+      walletPersisted = true;
 
       const activeWalletRecord =
         burnerVault.wallets.find((walletRecord) => walletRecord.id === burnerVault.activeWalletId) ??
@@ -1635,7 +1693,11 @@ export default function App() {
         setShowBurnerMnemonic(false);
       }
 
-      const burnerBalance = (await rpcProvider.getBalance(burnerWallet.address)) as bigint;
+      const burnerBalance = (await withTimeout(
+        rpcProvider.getBalance(burnerWallet.address) as Promise<bigint>,
+        BURNER_ONBOARD_TIMEOUT_MS,
+        'Timed out while reading burner wallet balance.'
+      )) as bigint;
       if (burnerBalance <= 0n) {
         setBurnerNeedsFunding(true);
         setStatus('Burner wallet created. Fund it, then connect burner wallet.');
@@ -1654,7 +1716,11 @@ export default function App() {
       }
 
       setOnboardStatus('Onboarding...');
-      await burnerWallet.generateOrRecoverAes();
+      await withTimeout(
+        burnerWallet.generateOrRecoverAes(),
+        BURNER_ONBOARD_TIMEOUT_MS,
+        'Timed out while preparing burner wallet encryption keys. Try again.'
+      );
       const onboardInfo = burnerWallet.getUserOnboardInfo();
 
       if (!onboardInfo?.aesKey) {
@@ -1672,20 +1738,25 @@ export default function App() {
       setPendingBurnerInit(null);
       setPendingSensitiveAction(null);
       setBurnerPinInput('');
-      try {
-        setMyNickname(await loadMyNicknameFromChain(burnerWallet.address));
-        await restoreStateFromChainSelfBackupWithRetry(burnerWallet.address, 4, 900);
-        await syncConversationHistoryRef.current({
-          contactsOnly: true,
-          previewPerContact: true,
-          updateHead: true
-        });
-        await syncConversationHistoryRef.current({ deep: true });
-        await restoreStateFromChainSelfBackupWithRetry(burnerWallet.address, 4, 900);
-      } catch {
-        // Post-onboarding sync failures should not block a successful burner unlock.
-      }
-      runPostConnectDataSyncUntilApplied(burnerWallet.address).catch(() => {});
+      const connectedAddress = burnerWallet.address;
+      void (async () => {
+        try {
+          setMyNickname(await loadMyNicknameFromChain(connectedAddress));
+          await restoreStateFromChainSelfBackupWithRetry(connectedAddress, 4, 900);
+          await syncConversationHistoryRef.current({
+            contactsOnly: true,
+            previewPerContact: true,
+            updateHead: true,
+            background: true
+          });
+          await syncConversationHistoryRef.current({ deep: true, background: true });
+          await restoreStateFromChainSelfBackupWithRetry(connectedAddress, 4, 900);
+        } catch {
+          // Post-onboarding sync failures should not block a successful burner unlock.
+        } finally {
+          runPostConnectDataSyncUntilApplied(connectedAddress).catch(() => {});
+        }
+      })();
       return 'connected';
     } catch (burnerError) {
       if (aesOnboardingComplete) {
@@ -1703,9 +1774,14 @@ export default function App() {
         setBurnerNeedsFunding(true);
         setStatus('Burner needs funding');
         return 'needs-funding';
-      } else {
-        setStatus('Disconnected');
       }
+      if (mode === 'import' && walletPersisted) {
+        setStatus('Wallet imported. Connect saved wallet to finish setup.');
+        setError(message);
+        setOnboardStatus('Not onboarded');
+        return 'imported';
+      }
+      setStatus('Disconnected');
       setError(message);
       setOnboardStatus('Not onboarded');
       return 'failed';
@@ -1825,7 +1901,7 @@ export default function App() {
     }
 
     const initResult = await initializeBurnerWallet(pending.mode, pending.seedOrPrivateKey, pin, pending.walletId);
-    if (initResult === 'connected' || initResult === 'needs-funding') {
+    if (initResult === 'connected' || initResult === 'needs-funding' || initResult === 'imported') {
       setShowBurnerPinModal(false);
       setPendingBurnerInit(null);
       setPendingSensitiveAction(null);
@@ -2800,15 +2876,12 @@ export default function App() {
       lastStateBackupBlockRef.current[walletKey] = backupBlockNumber;
       lastAutoBackupAttemptBlockRef.current[walletKey] = backupBlockNumber;
     }
-    try {
-      // eslint-disable-next-line no-console
-      console.debug('[apply] applied state backup', {
-        walletKey,
-        snapshotNickname,
-        contactsCount: snapshotContacts.length,
-        walletLabel: payload.walletLabel
-      });
-    } catch {}
+    debugLog('[apply] applied state backup', {
+      walletKey,
+      snapshotNickname,
+      contactsCount: snapshotContacts.length,
+      walletLabel: payload.walletLabel
+    });
 
     if (payload.walletLabel) {
       try {
@@ -3093,10 +3166,7 @@ export default function App() {
 
   const syncConversationHistory = async (options?: SyncConversationOptions) => {
     setError('');
-    try {
-      // eslint-disable-next-line no-console
-      console.debug('[sync] start', { walletAddress, options, hasAesReady, chainId });
-    } catch {}
+    debugLog('[sync] start', { walletAddress, options, hasAesReady, chainId });
 
     if (!walletAddress) {
       return;
@@ -3249,17 +3319,14 @@ export default function App() {
                     blockNumber: log.blockNumber,
                     logIndex: log.index
                   };
-                    try {
-                      // eslint-disable-next-line no-console
-                      console.debug('[restore] found state backup', {
-                        address: walletKey,
-                        nickname: backupPayload.nickname,
-                        walletLabel: backupPayload.walletLabel,
-                        tx: log.transactionHash,
-                        block: log.blockNumber,
-                        index: log.index
-                      });
-                    } catch {}
+                    debugLog('[restore] found state backup', {
+                      address: walletKey,
+                      nickname: backupPayload.nickname,
+                      walletLabel: backupPayload.walletLabel,
+                      tx: log.transactionHash,
+                      block: log.blockNumber,
+                      index: log.index
+                    });
                 }
               }
               const readCursorPayload = parseReadCursorText(plain);
@@ -3321,17 +3388,13 @@ export default function App() {
               replyToTxHash = replyParsed.replyToTxHash;
               if (parsed.nickname) {
                   discoveredNicknames.set(contactKey, parsed.nickname);
-                  try {
-                    // debug: show where nickname came from
-                    // eslint-disable-next-line no-console
-                    console.debug('[sync] discovered nickname', {
-                      address: contactKey,
-                      nickname: parsed.nickname,
-                      tx: log.transactionHash,
-                      block: log.blockNumber,
-                      index: log.index
-                    });
-                  } catch {}
+                  debugLog('[sync] discovered nickname', {
+                    address: contactKey,
+                    nickname: parsed.nickname,
+                    tx: log.transactionHash,
+                    block: log.blockNumber,
+                    index: log.index
+                  });
               }
             } catch {
               messageText = '(Unable to decrypt message)';
@@ -3371,16 +3434,13 @@ export default function App() {
             replyToTxHash = replyParsed.replyToTxHash;
             if (parsed.nickname) {
                 discoveredNicknames.set(from.toLowerCase(), parsed.nickname);
-                try {
-                  // eslint-disable-next-line no-console
-                  console.debug('[sync] discovered nickname', {
-                    address: from.toLowerCase(),
-                    nickname: parsed.nickname,
-                    tx: log.transactionHash,
-                    block: log.blockNumber,
-                    index: log.index
-                  });
-                } catch {}
+                debugLog('[sync] discovered nickname', {
+                  address: from.toLowerCase(),
+                  nickname: parsed.nickname,
+                  tx: log.transactionHash,
+                  block: log.blockNumber,
+                  index: log.index
+                });
             }
           } catch {
             messageText = '(Unable to decrypt message)';
@@ -5697,86 +5757,79 @@ export default function App() {
               {activeMessages.length === 0 ? (
                 <p className="chat-empty">No messages yet.</p>
               ) : (
-                activeMessages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={message.direction === 'outgoing' ? 'message-row outgoing' : 'message-row incoming'}
-                  >
-                    {(() => {
-                      const messageDisplayText = getMessageDisplayText(message.text);
-                      const deliveryLabel =
-                        message.deliveryState === 'pending'
-                          ? 'Sending…'
-                          : message.deliveryState === 'sent'
-                            ? 'Sent'
-                            : message.deliveryState === 'failed'
-                              ? 'Failed'
-                              : '';
+                activeMessages.map((message) => {
+                  const messageDisplayText = getMessageDisplayText(message.text);
+                  const parsedImageTag = parseImageTag(message.text);
+                  const deliveryLabel =
+                    message.deliveryState === 'pending'
+                      ? 'Sending...'
+                      : message.deliveryState === 'sent'
+                        ? 'Sent'
+                        : message.deliveryState === 'failed'
+                          ? 'Failed'
+                          : '';
 
-                      return (
+                  return (
                     <div
-                      ref={(node) => {
-                        messageElementRefs.current[message.id] = node;
-                      }}
-                      className={
-                        highlightedMessageId === message.id
-                          ? 'message-bubble highlighted'
-                          : replyingToMessage?.id === message.id
-                            ? 'message-bubble replying'
-                            : 'message-bubble'
-                      }
+                      key={message.id}
+                      className={message.direction === 'outgoing' ? 'message-row outgoing' : 'message-row incoming'}
                     >
-                      <button
-                        type="button"
-                        className="message-reply-action"
-                        onClick={() => setReplyingToMessage(message)}
-                        aria-label="Reply to this message"
-                        title="Reply"
+                      <div
+                        ref={(node) => {
+                          messageElementRefs.current[message.id] = node;
+                        }}
+                        className={
+                          highlightedMessageId === message.id
+                            ? 'message-bubble highlighted'
+                            : replyingToMessage?.id === message.id
+                              ? 'message-bubble replying'
+                              : 'message-bubble'
+                        }
                       >
-                        ↩
-                      </button>
-                      {message.replyToText || message.replyToTxHash ? (
                         <button
                           type="button"
-                          className="message-reply"
-                          onClick={() =>
-                            jumpToReferencedMessage(message.replyToMessageId, message.replyToText, message.replyToTxHash)
-                          }
-                          title="Go to replied message"
+                          className="message-reply-action"
+                          onClick={() => setReplyingToMessage(message)}
+                          aria-label="Reply to this message"
+                          title="Reply"
                         >
-                          ↪ {message.replyToText ?? `Tx ${shortenAddress(message.replyToTxHash as string)}`}
+                          ↩
                         </button>
-                      ) : null}
-                      {
-                        (() => {
-                          const parsedImageTag = parseImageTag(message.text);
-                          if (parsedImageTag) return <ChatImage tag={message.text} parsed={parsedImageTag} />;
-                          return messageDisplayText ? <div>{messageDisplayText}</div> : null;
-                        })()
-                      }
-                      {message.timestamp || deliveryLabel ? (
-                        <div className="message-meta">
-                          {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
-                          {deliveryLabel ? (
-                            <span
-                              className={
-                                message.deliveryState === 'failed'
-                                  ? 'message-delivery failed'
-                                  : message.deliveryState === 'pending'
-                                    ? 'message-delivery pending'
-                                    : 'message-delivery sent'
-                              }
-                            >
-                              {deliveryLabel}
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
+                        {message.replyToText || message.replyToTxHash ? (
+                          <button
+                            type="button"
+                            className="message-reply"
+                            onClick={() =>
+                              jumpToReferencedMessage(message.replyToMessageId, message.replyToText, message.replyToTxHash)
+                            }
+                            title="Go to replied message"
+                          >
+                            ↪ {message.replyToText ?? `Tx ${shortenAddress(message.replyToTxHash as string)}`}
+                          </button>
+                        ) : null}
+                        {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                        {message.timestamp || deliveryLabel ? (
+                          <div className="message-meta">
+                            {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
+                            {deliveryLabel ? (
+                              <span
+                                className={
+                                  message.deliveryState === 'failed'
+                                    ? 'message-delivery failed'
+                                    : message.deliveryState === 'pending'
+                                      ? 'message-delivery pending'
+                                      : 'message-delivery sent'
+                                }
+                              >
+                                {deliveryLabel}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                      );
-                    })()}
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
