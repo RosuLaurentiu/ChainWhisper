@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import ChatImage from './components/ChatImage';
 import { parseImageTag } from './lib/imagePull';
 import type { BrowserProvider, JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import { unzlibSync, zlibSync } from 'fflate';
 
 declare global {
   interface Window {
@@ -82,6 +83,7 @@ const LEGACY_PROFILE_PREFIX = '[[coti-profile:v1]]';
 const LEGACY_PROFILE_PLAIN_PREFIX = '[[coti-nick:v1]]';
 const IMAGE_MESSAGE_PREFIX = '[[coti-image:v1]]';
 const STATE_BACKUP_PREFIX = '[[coti-state:v1]]';
+const STATE_BACKUP_COMPRESSED_PREFIX = 'z:';
 const READ_CURSOR_PREFIX = '[[coti-read:v1]]';
 const STATE_BACKUP_VERSION = 1;
 const READ_CURSOR_SUBMIT_THROTTLE_MS = 12000;
@@ -121,9 +123,15 @@ type EncryptedBurnerWalletRecord = {
   iterations: number;
 };
 
+type LegacyBurnerWalletVaultRecord = {
+  wallets: BurnerWalletRecord[];
+  activeWalletId?: string;
+};
+
 type BurnerWalletStorageState =
   | { kind: 'none' }
   | { kind: 'legacy'; record: BurnerWalletRecord }
+  | { kind: 'legacy-vault'; record: LegacyBurnerWalletVaultRecord }
   | { kind: 'encrypted'; record: EncryptedBurnerWalletRecord };
 
 type BurnerInitMode = 'generate' | 'import' | 'stored';
@@ -727,7 +735,18 @@ const buildStateBackupText = (payload: StateBackupPayload): string => {
     q: payload.unreadContacts ?? []
   } as const;
 
-  return `${STATE_BACKUP_PREFIX}${JSON.stringify(compact)}`;
+  const rawJson = JSON.stringify(compact);
+  try {
+    const compressedBytes = zlibSync(TEXT_ENCODER.encode(rawJson), { level: 9 });
+    const encodedCompressed = bytesToBase64(compressedBytes);
+    const compressedPayload = `${STATE_BACKUP_COMPRESSED_PREFIX}${encodedCompressed}`;
+    if (compressedPayload.length < rawJson.length) {
+      return `${STATE_BACKUP_PREFIX}${compressedPayload}`;
+    }
+  } catch {
+  }
+
+  return `${STATE_BACKUP_PREFIX}${rawJson}`;
 };
 
 const parseStateBackupText = (text: string): StateBackupPayload | null => {
@@ -736,9 +755,23 @@ const parseStateBackupText = (text: string): StateBackupPayload | null => {
   }
 
   try {
-    const rawPayload = text.slice(STATE_BACKUP_PREFIX.length).trim();
+    let rawPayload = text.slice(STATE_BACKUP_PREFIX.length).trim();
     if (!rawPayload) {
       return null;
+    }
+
+    if (rawPayload.startsWith(STATE_BACKUP_COMPRESSED_PREFIX)) {
+      const encodedCompressed = rawPayload.slice(STATE_BACKUP_COMPRESSED_PREFIX.length);
+      if (!encodedCompressed) {
+        return null;
+      }
+
+      const compressedBytes = base64ToBytes(encodedCompressed);
+      const inflatedBytes = unzlibSync(compressedBytes);
+      rawPayload = TEXT_DECODER.decode(inflatedBytes).trim();
+      if (!rawPayload) {
+        return null;
+      }
     }
 
     const parsed = JSON.parse(rawPayload) as any;
@@ -1037,21 +1070,53 @@ const parseBurnerWalletStorageState = (): BurnerWalletStorageState => {
       iterations?: unknown;
     };
 
-    if (
-      encryptedCandidate.version === BURNER_WALLET_STORAGE_VERSION &&
+    const hasEncryptedShape =
       typeof encryptedCandidate.salt === 'string' &&
       typeof encryptedCandidate.iv === 'string' &&
-      typeof encryptedCandidate.ciphertext === 'string' &&
-      typeof encryptedCandidate.iterations === 'number'
-    ) {
+      typeof encryptedCandidate.ciphertext === 'string';
+    if (hasEncryptedShape) {
+      const salt = encryptedCandidate.salt as string;
+      const iv = encryptedCandidate.iv as string;
+      const ciphertext = encryptedCandidate.ciphertext as string;
+      const parsedIterations =
+        typeof encryptedCandidate.iterations === 'number'
+          ? encryptedCandidate.iterations
+          : typeof encryptedCandidate.iterations === 'string'
+            ? Number(encryptedCandidate.iterations)
+            : Number.NaN;
+      const iterations =
+        Number.isFinite(parsedIterations) && parsedIterations > 0
+          ? Math.floor(parsedIterations)
+          : BURNER_PIN_PBKDF2_ITERATIONS;
+      const version =
+        typeof encryptedCandidate.version === 'number' && Number.isFinite(encryptedCandidate.version)
+          ? Math.floor(encryptedCandidate.version)
+          : BURNER_WALLET_STORAGE_VERSION;
       return {
         kind: 'encrypted',
         record: {
-          version: encryptedCandidate.version,
-          salt: encryptedCandidate.salt,
-          iv: encryptedCandidate.iv,
-          ciphertext: encryptedCandidate.ciphertext,
-          iterations: encryptedCandidate.iterations
+          version,
+          salt,
+          iv,
+          ciphertext,
+          iterations
+        }
+      };
+    }
+
+    const legacyVaultCandidate = parsed as {
+      wallets?: unknown;
+      activeWalletId?: unknown;
+    };
+    if (Array.isArray(legacyVaultCandidate.wallets)) {
+      return {
+        kind: 'legacy-vault',
+        record: {
+          wallets: legacyVaultCandidate.wallets as BurnerWalletRecord[],
+          activeWalletId:
+            typeof legacyVaultCandidate.activeWalletId === 'string'
+              ? legacyVaultCandidate.activeWalletId
+              : undefined
         }
       };
     }
@@ -1168,6 +1233,10 @@ const loadBurnerWalletVaultFromStorage = async (pin: string): Promise<BurnerWall
 
   if (storageState.kind === 'legacy') {
     return createBurnerWalletVault([storageState.record]);
+  }
+
+  if (storageState.kind === 'legacy-vault') {
+    return createBurnerWalletVault(storageState.record.wallets, storageState.record.activeWalletId);
   }
 
   if (!pin.trim()) {
