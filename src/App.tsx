@@ -77,6 +77,7 @@ const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
 const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
+const DEFAULT_NICKNAME_MAX_BYTES = 42;
 const NICKNAME_DELIMITER = '\u001f';
 const REPLY_DELIMITER = '\u001e';
 const PROFILE_METADATA_PREFIX = '\u2063';
@@ -94,7 +95,6 @@ const COTI_WEI = 10n ** 18n;
 const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
-const PROFILE_METADATA_PREFIX_REGEX = new RegExp(PROFILE_METADATA_PREFIX, 'g');
 const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
 const EXTERNAL_REPLY_TXHASH_REGEX = /^\[r:(0x[a-fA-F0-9]{64})\]\s*/;
 
@@ -197,10 +197,16 @@ const COTI_NETWORK = {
   blockExplorerUrl: 'https://mainnet.cotiscan.io'
 };
 
-const CHAT_CONTRACT_ADDRESS = '0x81DEfBfba1cdc5AF972566342F4935853E02923d';
+const CHAT_CONTRACT_ADDRESS = '0x3b7151a7B7F1ccEB9b2325A27f99B24b6479d2D7';
 const CHAT_CONTRACT_ABI = [
   'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
+  'function setMyNickname(string name)',
+  'function nicknames(address account) view returns (string)',
+  'function getLastBlockForConversation(address me, address peer) view returns (uint256)',
+  'function getLastMessageTime(address me, address peer) view returns (uint256)',
+  'function NICKNAME_MAX_BYTES() view returns (uint256)',
   'function feeAmount() view returns (uint256)',
+  'event NicknameSet(address indexed user, string nickname)',
   'event MessageSubmitted(address indexed recipient, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender)'
 ] as const;
 
@@ -369,6 +375,24 @@ const formatCotiAmount = (weiAmount: bigint): string => {
 
 const hasInsufficientFundsError = (message: string): boolean =>
   /insufficient funds|exceeds balance|not enough funds|account balance is 0/i.test(message);
+
+const toSafeNumber = (value: unknown): number => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === 'bigint') {
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    return Number(value > max ? max : value);
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+};
 
 const toBigIntArray = (value: unknown): bigint[] => {
   const parseSingle = (item: unknown): bigint[] => {
@@ -1233,19 +1257,6 @@ const loadSharedNicknameContacts = (walletAddress?: string | null): Record<strin
   }
 };
 
-const buildMessageWithProfilePayload = (plainText: string, nickname: string, shouldShare: boolean): string => {
-  const normalizedNickname = nickname
-    .replace(/\u001f/g, '')
-    .replace(PROFILE_METADATA_PREFIX_REGEX, '')
-    .replace(/\]/g, '')
-    .trim();
-  if (!shouldShare || !normalizedNickname) {
-    return plainText;
-  }
-
-  return `${PROFILE_METADATA_PREFIX}${normalizedNickname}${PROFILE_METADATA_PREFIX}${plainText}`;
-};
-
 const trimReplyPreview = (text: string): string => {
   const singleLine = text.replace(/\s+/g, ' ').trim();
   if (!singleLine) {
@@ -1468,6 +1479,8 @@ export default function App() {
   const [initializingBurner, setInitializingBurner] = useState(false);
   const [burnerNeedsFunding, setBurnerNeedsFunding] = useState(false);
   const [myNickname, setMyNickname] = useState('');
+  const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
+  const [savingNicknameOnChain, setSavingNicknameOnChain] = useState(false);
   const [sharedNicknameContacts, setSharedNicknameContacts] = useState<Record<string, boolean>>({});
   const [activeSignerSource, setActiveSignerSource] = useState<SignerSource>('burner');
   const [connectionMethod, setConnectionMethod] = useState<'metamask' | null>(null);
@@ -1754,6 +1767,7 @@ export default function App() {
   const blockTimestampCacheRef = useRef<Map<number, number>>(new Map());
   const requiredFeeCacheRef = useRef<bigint | null>(null);
   const backupInFlightRef = useRef(false);
+  const onChainNicknameCacheRef = useRef<Record<string, string | null>>({});
   const lastAppliedStateBackupTsRef = useRef<Record<string, number>>({});
   const lastBackedUpStateFingerprintRef = useRef<Record<string, string>>({});
   const cachedStateBackupMemoRef = useRef<Record<string, { fingerprint: string; memo: SubmitMemoPayload }>>({});
@@ -2022,6 +2036,7 @@ export default function App() {
     setError('');
     setInitializingBurner(true);
     setBurnerNeedsFunding(false);
+    let aesOnboardingComplete = false;
 
     try {
       const storageState = parseBurnerWalletStorageState();
@@ -2094,6 +2109,10 @@ export default function App() {
         setBurnerNeedsFunding(true);
         setStatus('Burner wallet created. Fund it, then connect burner wallet.');
         setOnboardStatus('Funding required');
+        setShowBurnerPinModal(false);
+        setPendingBurnerInit(null);
+        setPendingSensitiveAction(null);
+        setBurnerPinInput('');
         return 'needs-funding';
       }
 
@@ -2115,22 +2134,41 @@ export default function App() {
         ...previous,
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
       }));
+      aesOnboardingComplete = true;
       setOnboardStatus('AES key ready');
-      setStatus('Connected (Burner)');
-      await hydrateRecentMessagesFromCache(burnerWallet.address, onboardInfo.aesKey);
-      const cachedProfile = await loadStoredProfile(burnerWallet.address, onboardInfo.aesKey);
-      setMyNickname(cachedProfile.nickname);
-      await restoreStateFromChainSelfBackupWithRetry(burnerWallet.address, 4, 900);
-      await syncConversationHistoryRef.current({
-        contactsOnly: true,
-        previewPerContact: true,
-        updateHead: true
-      });
-      await syncConversationHistoryRef.current({ deep: true });
-      await restoreStateFromChainSelfBackupWithRetry(burnerWallet.address, 4, 900);
+      setStatus('Connected');
+      setShowBurnerPinModal(false);
+      setPendingBurnerInit(null);
+      setPendingSensitiveAction(null);
+      setBurnerPinInput('');
+      try {
+        await hydrateRecentMessagesFromCache(burnerWallet.address, onboardInfo.aesKey);
+        const cachedProfile = await loadStoredProfile(burnerWallet.address, onboardInfo.aesKey);
+        setMyNickname(await loadMyNicknameFromChain(burnerWallet.address, cachedProfile.nickname));
+        await restoreStateFromChainSelfBackupWithRetry(burnerWallet.address, 4, 900);
+        await syncConversationHistoryRef.current({
+          contactsOnly: true,
+          previewPerContact: true,
+          updateHead: true
+        });
+        await syncConversationHistoryRef.current({ deep: true });
+        await restoreStateFromChainSelfBackupWithRetry(burnerWallet.address, 4, 900);
+      } catch {
+        // Post-onboarding sync failures should not block a successful burner unlock.
+      }
       runPostConnectDataSyncUntilApplied(burnerWallet.address).catch(() => {});
       return 'connected';
     } catch (burnerError) {
+      if (aesOnboardingComplete) {
+        setOnboardStatus('AES key ready');
+        setStatus('Connected');
+        setShowBurnerPinModal(false);
+        setPendingBurnerInit(null);
+        setPendingSensitiveAction(null);
+        setBurnerPinInput('');
+        return 'connected';
+      }
+
       const message = burnerError instanceof Error ? burnerError.message : 'Failed to initialize burner wallet.';
       if (message.includes('Account balance is 0 so user cannot be onboarded')) {
         setBurnerNeedsFunding(true);
@@ -2754,7 +2792,7 @@ export default function App() {
       const onboardAesKey = typeof onboardInfo.aesKey === 'string' && onboardInfo.aesKey ? onboardInfo.aesKey : undefined;
       await hydrateRecentMessagesFromCache(selected, onboardAesKey);
       const cachedProfile = await loadStoredProfile(selected, onboardAesKey);
-      setMyNickname(cachedProfile.nickname);
+      setMyNickname(await loadMyNicknameFromChain(selected, cachedProfile.nickname));
       await restoreStateFromChainSelfBackupWithRetry(selected, 4, 900);
       await syncConversationHistory({
         contactsOnly: true,
@@ -2906,6 +2944,137 @@ export default function App() {
     requiredFeeCacheRef.current = resolvedFee;
     setRequiredFeeWei(resolvedFee);
     return resolvedFee;
+  };
+
+  const getNicknameMaxLength = async (): Promise<number> => {
+    try {
+      const cotiEthers = await loadCotiEthersModule();
+      const readProvider = await loadCotiReadProvider(true);
+      const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+      const onChainMax = toSafeNumber(await readContract.NICKNAME_MAX_BYTES());
+      if (onChainMax > 0) {
+        setNicknameMaxBytes(onChainMax);
+        return onChainMax;
+      }
+    } catch {
+    }
+
+    return nicknameMaxBytes;
+  };
+
+  const fetchOnChainNicknames = async (addresses: string[]): Promise<Map<string, string>> => {
+    const uniqueAddresses = Array.from(
+      new Set(
+        addresses
+          .map((address) => address.trim().toLowerCase())
+          .filter((address) => isWalletAddress(address))
+      )
+    );
+    if (uniqueAddresses.length === 0) {
+      return new Map();
+    }
+
+    const cache = onChainNicknameCacheRef.current;
+    const uncachedAddresses = uniqueAddresses.filter(
+      (address) => !Object.prototype.hasOwnProperty.call(cache, address)
+    );
+    if (uncachedAddresses.length > 0) {
+      const maxLength = await getNicknameMaxLength();
+      const cotiEthers = await loadCotiEthersModule();
+      const readProvider = await loadCotiReadProvider(true);
+      const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+      await Promise.all(
+        uncachedAddresses.map(async (address) => {
+          try {
+            const raw = await readContract.nicknames(address);
+            const normalized = normalizeContactName(String(raw ?? '').replace(/\r?\n/g, ''))?.slice(0, maxLength) ?? null;
+            cache[address] = normalized;
+          } catch {
+            delete cache[address];
+          }
+        })
+      );
+    }
+
+    const resolved = new Map<string, string>();
+    for (const address of uniqueAddresses) {
+      const cached = cache[address];
+      if (typeof cached === 'string' && cached) {
+        resolved.set(address, cached);
+      }
+    }
+    return resolved;
+  };
+
+  const saveMyNicknameOnChain = async (overrideNickname?: string): Promise<boolean> => {
+    const address = walletAddress.trim().toLowerCase();
+    if (!isWalletAddress(address)) {
+      return false;
+    }
+
+    const maxLength = await getNicknameMaxLength();
+    const nextNickname = normalizeContactName(
+      (typeof overrideNickname === 'string' ? overrideNickname : myNickname).replace(/\r?\n/g, '')
+    )?.slice(0, maxLength);
+    if (!nextNickname) {
+      return false;
+    }
+
+    const cachedNickname = onChainNicknameCacheRef.current[address];
+    if (cachedNickname === nextNickname) {
+      return true;
+    }
+
+    try {
+      setSavingNicknameOnChain(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.setMyNickname(nextNickname);
+      await tx.wait();
+
+      onChainNicknameCacheRef.current[address] = nextNickname;
+      setMyNickname(nextNickname);
+      setContacts((previous) =>
+        previous.map((contact) =>
+          contact.address.toLowerCase() === address ? { ...contact, name: nextNickname } : contact
+        )
+      );
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+      return true;
+    } catch (nicknameError) {
+      const message = nicknameError instanceof Error ? nicknameError.message : 'Failed to save nickname on chain.';
+      setError(message);
+      return false;
+    } finally {
+      setSavingNicknameOnChain(false);
+    }
+  };
+
+  const loadMyNicknameFromChain = async (
+    targetAddress: string,
+    fallbackNickname?: string
+  ): Promise<string> => {
+    if (!isWalletAddress(targetAddress)) {
+      return normalizeContactName(fallbackNickname ?? '') ?? '';
+    }
+
+    const lowerTargetAddress = targetAddress.toLowerCase();
+    try {
+      const names = await fetchOnChainNicknames([lowerTargetAddress]);
+      const fromChain = names.get(lowerTargetAddress);
+      if (fromChain) {
+        return fromChain;
+      }
+    } catch {
+    }
+
+    return normalizeContactName(fallbackNickname ?? '') ?? '';
   };
 
   const applyStateBackupPayload = (
@@ -3099,66 +3268,82 @@ export default function App() {
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
       const latestBlock = await readProvider.getBlockNumber();
       const selfFilter = contract.filters.MessageSubmitted(targetAddress, targetAddress);
+      const latestSelfConversationBlock = toSafeNumber(
+        await contract.getLastBlockForConversation(targetAddress, targetAddress)
+      );
 
       let latestPayload: StateBackupPayload | null = null;
       let latestPayloadBlockNumber: number | undefined;
       let latestNonEmptyNickname: string | undefined;
 
+      const tryDecodeBackupLogs = async (
+        logs: Array<{
+          blockNumber: number;
+          index: number;
+          args?: Record<string, unknown>;
+        }>
+      ) => {
+        if (logs.length === 0 || (latestPayload && latestNonEmptyNickname)) {
+          return;
+        }
+
+        const sortedLogs = [...logs].sort((left, right) => {
+          if (left.blockNumber !== right.blockNumber) {
+            return right.blockNumber - left.blockNumber;
+          }
+
+          return right.index - left.index;
+        });
+
+        for (const log of sortedLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const ciphertextCandidates = [
+            extractUserCiphertext(args?.messageForSender),
+            extractUserCiphertext(args?.messageForRecipient)
+          ];
+
+          for (const candidate of ciphertextCandidates) {
+            if (!candidate || candidate.value.length === 0) {
+              continue;
+            }
+
+            try {
+              const decrypted = await signer.decryptValue(candidate as never);
+              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
+              const plain = decodeMemoPlaintext(raw);
+              const parsed = parseStateBackupText(plain);
+              if (parsed) {
+                if (!latestPayload) {
+                  latestPayload = parsed;
+                  latestPayloadBlockNumber = log.blockNumber;
+                }
+
+                const parsedNickname = normalizeContactName(parsed.nickname ?? '')?.slice(0, 42);
+                if (parsedNickname && !latestNonEmptyNickname) {
+                  latestNonEmptyNickname = parsedNickname;
+                }
+
+                if (latestPayload && latestNonEmptyNickname) {
+                  return;
+                }
+              }
+            } catch {
+            }
+          }
+        }
+      };
+
+      if (latestSelfConversationBlock > 0) {
+        const headBlock = Math.min(latestBlock, latestSelfConversationBlock);
+        const headLogs = await contract.queryFilter(selfFilter, headBlock, headBlock);
+        await tryDecodeBackupLogs(headLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
+      }
+
       let windowEnd = latestBlock;
       while (windowEnd >= 0 && (!latestPayload || !latestNonEmptyNickname)) {
         const windowStart = Math.max(0, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
         const windowLogs = await contract.queryFilter(selfFilter, windowStart, windowEnd);
-
-        if (windowLogs.length > 0) {
-          const sortedLogs = [...windowLogs].sort((left, right) => {
-            if (left.blockNumber !== right.blockNumber) {
-              return right.blockNumber - left.blockNumber;
-            }
-
-            return right.index - left.index;
-          });
-
-          for (const log of sortedLogs) {
-            const args = (log as { args?: Record<string, unknown> }).args;
-            const ciphertextCandidates = [
-              extractUserCiphertext(args?.messageForSender),
-              extractUserCiphertext(args?.messageForRecipient)
-            ];
-
-            for (const candidate of ciphertextCandidates) {
-              if (!candidate || candidate.value.length === 0) {
-                continue;
-              }
-
-              try {
-                const decrypted = await signer.decryptValue(candidate as never);
-                const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-                const plain = decodeMemoPlaintext(raw);
-                const parsed = parseStateBackupText(plain);
-                if (parsed) {
-                  if (!latestPayload) {
-                    latestPayload = parsed;
-                    latestPayloadBlockNumber = log.blockNumber;
-                  }
-
-                  const parsedNickname = normalizeContactName(parsed.nickname ?? '')?.slice(0, 42);
-                  if (parsedNickname && !latestNonEmptyNickname) {
-                    latestNonEmptyNickname = parsedNickname;
-                  }
-
-                  if (latestPayload && latestNonEmptyNickname) {
-                    break;
-                  }
-                }
-              } catch {
-              }
-            }
-
-            if (latestPayload && latestNonEmptyNickname) {
-              break;
-            }
-          }
-        }
+        await tryDecodeBackupLogs(windowLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
 
         if (windowStart === 0) {
           break;
@@ -3167,17 +3352,17 @@ export default function App() {
         windowEnd = windowStart - 1;
       }
 
-      if (!latestPayload) {
+      const resolvedLatestPayload = latestPayload as StateBackupPayload | null;
+      if (!resolvedLatestPayload) {
         return false;
       }
-
-      const latestPayloadNickname = normalizeContactName(latestPayload.nickname ?? '')?.slice(0, 42);
+      const latestPayloadNickname = normalizeContactName(resolvedLatestPayload.nickname ?? '')?.slice(0, 42);
       const resolvedNickname = latestPayloadNickname ?? latestNonEmptyNickname ?? '';
       const payloadToApply: StateBackupPayload =
-        resolvedNickname === latestPayload.nickname.slice(0, 42)
-          ? latestPayload
+        resolvedNickname === resolvedLatestPayload.nickname.slice(0, 42)
+          ? resolvedLatestPayload
           : {
-              ...latestPayload,
+              ...resolvedLatestPayload,
               nickname: resolvedNickname
             };
 
@@ -3856,11 +4041,32 @@ export default function App() {
           return normalizeMessagesByContact(next);
         });
       }
+      const nicknameLookupAddresses = Array.from(new Set([...Array.from(discoveredContacts), ...contacts.map((c) => c.address)]));
+      const onChainNicknames = await fetchOnChainNicknames(nicknameLookupAddresses);
+
       setContacts((previous) => {
         const mergedContacts = mergeUniqueContacts(previous, Array.from(discoveredContacts));
 
         if (discoveredNicknames.size === 0) {
-          return mergedContacts;
+          if (onChainNicknames.size === 0) {
+            return mergedContacts;
+          }
+
+          return mergedContacts.map((contact) => {
+            if (contact.name) {
+              return contact;
+            }
+
+            const onChainNickname = onChainNicknames.get(contact.address.toLowerCase());
+            if (!onChainNickname) {
+              return contact;
+            }
+
+            return {
+              ...contact,
+              name: onChainNickname
+            };
+          });
         }
 
         return mergedContacts.map((contact) => {
@@ -3869,7 +4075,7 @@ export default function App() {
           }
 
           const key = contact.address.toLowerCase();
-          const nickname = discoveredNicknames.get(key);
+          const nickname = discoveredNicknames.get(key) ?? onChainNicknames.get(key);
           if (nickname) {
             return { ...contact, name: nickname };
           }
@@ -3990,6 +4196,14 @@ export default function App() {
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
       const latestBlock = await readProvider.getBlockNumber();
+      const conversationLastBlock = toSafeNumber(
+        await contract.getLastBlockForConversation(walletAddress, contactAddress)
+      );
+      if (conversationLastBlock <= 0) {
+        hasOlderHistoryByContactRef.current[contactKey] = false;
+        return;
+      }
+      const cappedConversationLastBlock = Math.min(latestBlock, conversationLastBlock);
 
       const knownEarliest = oldestLoadedBlockByContactRef.current[contactKey];
       const knownMessages = messagesByContact[contactKey] ?? [];
@@ -4010,7 +4224,7 @@ export default function App() {
           ? knownEarliest
           : typeof knownEarliestFromMessages === 'number'
             ? knownEarliestFromMessages
-            : latestBlock + 1;
+            : cappedConversationLastBlock + 1;
 
       const toBlock = upperExclusive - 1;
       if (toBlock < 0) {
@@ -4211,14 +4425,19 @@ export default function App() {
         });
       }
 
-      if (discoveredNicknames.size > 0) {
+      const onChainNicknames = await fetchOnChainNicknames([contactAddress]);
+      const onChainNicknameForContact = onChainNicknames.get(contactKey);
+
+      if (discoveredNicknames.size > 0 || onChainNicknameForContact) {
         setContacts((previous) =>
           previous.map((contact) => {
             if (contact.name) {
               return contact;
             }
 
-            const nickname = discoveredNicknames.get(contact.address.toLowerCase());
+            const nickname =
+              discoveredNicknames.get(contact.address.toLowerCase()) ??
+              onChainNicknames.get(contact.address.toLowerCase());
             if (!nickname) {
               return contact;
             }
@@ -4309,7 +4528,6 @@ export default function App() {
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForSend();
 
-      const shouldShareProfile = Boolean(myNickname.trim()) && !sharedNicknameContacts[contactKey];
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
         replyingPreviewText,
@@ -4334,15 +4552,7 @@ export default function App() {
         return typeof tx?.hash === 'string' ? tx.hash : '';
       };
 
-      let sentWithProfile = false;
-      let submittedTxHash = '';
-      if (shouldShareProfile) {
-        const plainTextWithProfile = buildMessageWithProfilePayload(plainTextWithReply, myNickname, true);
-        submittedTxHash = await sendEncryptedMemo(plainTextWithProfile);
-        sentWithProfile = true;
-      } else {
-        submittedTxHash = await sendEncryptedMemo(plainTextWithReply);
-      }
+      const submittedTxHash = await sendEncryptedMemo(plainTextWithReply);
 
       setMessagesByContact((previous) => ({
         ...previous,
@@ -4362,13 +4572,6 @@ export default function App() {
         ...previous,
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
-
-      if (sentWithProfile) {
-        setSharedNicknameContacts((previous) => ({
-          ...previous,
-          [contactKey]: true
-        }));
-      }
 
       setMessageInput('');
       setReplyingToMessage(null);
@@ -4427,6 +4630,15 @@ export default function App() {
     }
   };
 
+  const saveProfileStateOnChain = async () => {
+    setError('');
+    const normalizedNickname = normalizeContactName(myNickname.replace(/\r?\n/g, ''));
+    if (normalizedNickname) {
+      await saveMyNicknameOnChain(normalizedNickname);
+    }
+    await backupLocalStateToSelf(myNickname, contacts);
+  };
+
   useEffect(() => {
     try {
       window.localStorage.removeItem(CONTACTS_STORAGE_KEY);
@@ -4464,18 +4676,30 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    loadStoredProfile(walletAddress)
-      .then((scopedProfile) => {
-        if (cancelled) {
-          return;
-        }
-        setMyNickname(scopedProfile.nickname);
-      })
-      .catch(() => {
+    const hydrateNickname = async () => {
+      if (!walletAddress || !isWalletAddress(walletAddress)) {
         if (!cancelled) {
           setMyNickname('');
         }
-      });
+        return;
+      }
+
+      getNicknameMaxLength().catch(() => {});
+
+      try {
+        const scopedProfile = await loadStoredProfile(walletAddress);
+        const resolvedNickname = await loadMyNicknameFromChain(walletAddress, scopedProfile.nickname);
+        if (!cancelled) {
+          setMyNickname(resolvedNickname);
+        }
+      } catch {
+        if (!cancelled) {
+          setMyNickname('');
+        }
+      }
+    };
+
+    hydrateNickname().catch(() => {});
 
     return () => {
       cancelled = true;
@@ -5042,20 +5266,47 @@ export default function App() {
 
         const incomingFilter = contract.filters.MessageSubmitted(walletAddress, null);
         const outgoingFilter = contract.filters.MessageSubmitted(null, walletAddress);
+        const nicknameFilter = contract.filters.NicknameSet();
         const handleMessageSubmitted = () => scheduleRealtimeSync();
+        const handleNicknameSet = (user: unknown, nickname: unknown) => {
+          const userAddress = String(user ?? '').trim().toLowerCase();
+          if (!isWalletAddress(userAddress)) {
+            return;
+          }
+
+          const normalizedNickname = normalizeContactName(String(nickname ?? '').replace(/\r?\n/g, '')) ?? null;
+          onChainNicknameCacheRef.current[userAddress] = normalizedNickname;
+          if (normalizedNickname && userAddress === walletAddress.toLowerCase()) {
+            setMyNickname(normalizedNickname);
+          }
+
+          setContacts((previous) =>
+            previous.map((contact) =>
+              contact.address.toLowerCase() === userAddress
+                ? {
+                    ...contact,
+                    name: normalizedNickname ?? undefined
+                  }
+                : contact
+            )
+          );
+        };
 
         contract.on(incomingFilter, handleMessageSubmitted);
         contract.on(outgoingFilter, handleMessageSubmitted);
+        contract.on(nicknameFilter, handleNicknameSet);
 
         if (cancelled) {
           contract.off(incomingFilter, handleMessageSubmitted);
           contract.off(outgoingFilter, handleMessageSubmitted);
+          contract.off(nicknameFilter, handleNicknameSet);
           return;
         }
 
         unsubscribe = () => {
           contract.off(incomingFilter, handleMessageSubmitted);
           contract.off(outgoingFilter, handleMessageSubmitted);
+          contract.off(nicknameFilter, handleNicknameSet);
         };
 
         clearPollFallback();
@@ -5513,11 +5764,18 @@ export default function App() {
             }}
             onInput={(event) => {
               const raw = event.currentTarget.textContent ?? '';
-              const singleLine = raw.replace(/\r?\n/g, '').slice(0, 42);
+              const singleLine = raw.replace(/\r?\n/g, '').slice(0, nicknameMaxBytes);
               if (singleLine !== raw) {
                 event.currentTarget.textContent = singleLine;
               }
               setMyNickname(singleLine);
+            }}
+            onBlur={() => {
+              if (!hasAesReady || !walletAddress) {
+                return;
+              }
+
+              saveMyNicknameOnChain().catch(() => {});
             }}
           />
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -5525,11 +5783,11 @@ export default function App() {
               type="button"
               className="contact"
               onClick={() => {
-                backupLocalStateToSelf(myNickname, contacts).catch(() => {});
+                saveProfileStateOnChain().catch(() => {});
               }}
-              disabled={!hasAesReady || backingUpState}
+              disabled={!hasAesReady || backingUpState || savingNicknameOnChain}
             >
-              {backingUpState ? 'Saving on chain...' : 'Save on chain'}
+              {savingNicknameOnChain || backingUpState ? 'Saving on chain...' : 'Save on chain'}
             </button>
             <button
               type="button"
@@ -5922,7 +6180,7 @@ export default function App() {
       {showBurnerPinModal ? (
         <div className="modal-backdrop" onClick={closeBurnerPinModal}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-            <h3>{burnerPinMode === 'set' ? 'Set Burner PIN' : 'Unlock Burner Wallet'}</h3>
+            <h3>{burnerPinMode === 'set' ? 'Set PIN' : 'Unlock Wallet'}</h3>
             {error ? <p className="error">{error}</p> : null}
             <input
               value={burnerPinInput}
@@ -5936,7 +6194,7 @@ export default function App() {
               data-bwignore="true"
               onChange={(event) => setBurnerPinInput(event.target.value)}
               placeholder={burnerPinMode === 'set' ? `Choose PIN (${BURNER_PIN_MIN_LENGTH}+ digits)` : 'Enter PIN'}
-              aria-label="Burner PIN"
+              aria-label="Wallet PIN"
               type="password"
             />
             <div className="modal-actions">
