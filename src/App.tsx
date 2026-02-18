@@ -2043,7 +2043,7 @@ export default function App() {
 
       if (burnerRecord.mnemonic) {
         setBurnerMnemonicBackup(burnerRecord.mnemonic);
-        setShowBurnerMnemonic(mode === 'generate');
+        setShowBurnerMnemonic(false);
       } else {
         setBurnerMnemonicBackup('');
         setShowBurnerMnemonic(false);
@@ -6160,6 +6160,9 @@ export default function App() {
                 {showBurnerMnemonic ? 'Hide phrase' : 'Show phrase'}
               </button>
             </div>
+            <p className="wallet-reminder">
+              Reminder: Save your seed phrase securely offline. You need it to recover this wallet.
+            </p>
             {showBurnerMnemonic ? <p>{burnerMnemonicBackup}</p> : null}
           </div>
         ) : null}

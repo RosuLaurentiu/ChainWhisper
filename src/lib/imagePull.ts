@@ -16,6 +16,20 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/avif'
 ]);
 
+const getSecureWebCrypto = (): { webCrypto: Crypto; subtle: SubtleCrypto } => {
+  const webCrypto = globalThis.crypto;
+  const subtle = webCrypto?.subtle;
+  if (webCrypto && subtle) {
+    return { webCrypto, subtle };
+  }
+
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    throw new Error('Image decryption requires HTTPS. Open the app using an https:// URL.');
+  }
+
+  throw new Error('Web Crypto API is unavailable in this browser.');
+};
+
 export function parseImageTag(plaintext: string): ParsedImageTag | null {
   const m = /\[img:([0-9a-f-]+)\|([0-9a-f]+):([0-9a-f]+)\|(\d+)\|([a-z/+-]+)\]/i.exec(plaintext);
   if (!m) return null;
@@ -76,10 +90,17 @@ export async function decryptBlobToObjectUrl(encrypted: ArrayBuffer, keyHex: str
     throw new Error('Encrypted image blob exceeds limit.');
   }
 
+  const { subtle } = getSecureWebCrypto();
   const keyBytes = hexToBytes(keyHex);
   const ivBytes = hexToBytes(ivHex);
-  const cryptoKey = await crypto.subtle.importKey('raw', keyBytes as unknown as BufferSource, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes as unknown as BufferSource }, cryptoKey, encrypted);
+  const cryptoKey = await subtle.importKey(
+    'raw',
+    keyBytes as unknown as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+  const pt = await subtle.decrypt({ name: 'AES-GCM', iv: ivBytes as unknown as BufferSource }, cryptoKey, encrypted);
   if ((pt as ArrayBuffer).byteLength > MAX_IMAGE_PLAINTEXT_BYTES) {
     throw new Error('Decrypted image exceeds size limit.');
   }

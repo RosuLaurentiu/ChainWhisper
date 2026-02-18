@@ -304,6 +304,13 @@ body {
   font-weight: 600;
 }
 
+.wallet-reminder {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .status-with-dot {
   display: inline-flex;
   align-items: center;
