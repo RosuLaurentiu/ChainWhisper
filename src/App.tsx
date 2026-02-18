@@ -569,22 +569,93 @@ const parseSubmitMemoPayload = (encryptedMemo: unknown): SubmitMemoPayload => {
 };
 
 const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: string[]): Contact[] => {
-  const byLower = new Map<string, Contact>();
+  const fullByLower = new Map<string, Contact>();
+
+  const upsertFull = (addressValue: string, incomingName?: string): void => {
+    const address = addressValue.trim();
+    if (!isWalletAddress(address)) {
+      return;
+    }
+
+    const key = address.toLowerCase();
+    const name = normalizeContactName(incomingName ?? '');
+    const existingContact = fullByLower.get(key);
+    if (!existingContact) {
+      fullByLower.set(key, name ? { address, name } : { address });
+      return;
+    }
+
+    const existingName = normalizeContactName(existingContact.name ?? '');
+    if (!existingName && name) {
+      fullByLower.set(key, { ...existingContact, name });
+    }
+  };
 
   for (const contact of existing) {
-    byLower.set(contact.address.toLowerCase(), contact);
+    upsertFull(contact.address, contact.name);
   }
 
   for (const address of discoveredAddresses) {
-    if (isWalletAddress(address)) {
-      const lower = address.toLowerCase();
-      if (!byLower.has(lower)) {
-        byLower.set(lower, { address });
-      }
+    upsertFull(address);
+  }
+
+  const shortToFull = new Map<string, string | null>();
+  for (const fullAddress of fullByLower.keys()) {
+    const short = shortenAddress(fullAddress).toLowerCase();
+    const existingMatch = shortToFull.get(short);
+    if (typeof existingMatch === 'undefined') {
+      shortToFull.set(short, fullAddress);
+    } else if (existingMatch !== fullAddress) {
+      shortToFull.set(short, null);
     }
   }
 
-  return Array.from(byLower.values());
+  const unresolvedByLower = new Map<string, Contact>();
+  const upsertUnresolved = (addressValue: string, incomingName?: string): void => {
+    const address = addressValue.trim();
+    if (!address) {
+      return;
+    }
+
+    const key = address.toLowerCase();
+    const name = normalizeContactName(incomingName ?? '');
+    const existingContact = unresolvedByLower.get(key);
+    if (!existingContact) {
+      unresolvedByLower.set(key, name ? { address, name } : { address });
+      return;
+    }
+
+    const existingName = normalizeContactName(existingContact.name ?? '');
+    if (!existingName && name) {
+      unresolvedByLower.set(key, { ...existingContact, name });
+    }
+  };
+
+  for (const contact of existing) {
+    const rawAddress = contact.address.trim();
+    if (!rawAddress || isWalletAddress(rawAddress)) {
+      continue;
+    }
+
+    const lowerAddress = rawAddress.toLowerCase();
+    if (isShortAddress(lowerAddress)) {
+      const resolvedFull = shortToFull.get(lowerAddress);
+      if (resolvedFull && isWalletAddress(resolvedFull)) {
+        const shortName = normalizeContactName(contact.name ?? '');
+        if (shortName) {
+          const resolvedContact = fullByLower.get(resolvedFull);
+          if (resolvedContact && !normalizeContactName(resolvedContact.name ?? '')) {
+            fullByLower.set(resolvedFull, { ...resolvedContact, name: shortName });
+          }
+        }
+        continue;
+      }
+    }
+
+    upsertUnresolved(rawAddress, contact.name);
+  }
+
+  return [...fullByLower.values(), ...unresolvedByLower.values()];
 };
 
 const normalizeContactsForBackup = (contacts: Contact[]): Contact[] => {
