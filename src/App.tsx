@@ -6,11 +6,7 @@ import { unzlibSync, zlibSync } from 'fflate';
 
 declare global {
   interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
-      on?: (event: string, listener: (...args: unknown[]) => void) => void;
-      removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
-    };
+    ethereum?: InjectedEthereumProvider;
   }
 }
 
@@ -20,6 +16,12 @@ type Eip1193Provider = {
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
   disconnect?: () => Promise<void>;
+};
+
+type InjectedEthereumProvider = Eip1193Provider & {
+  isMetaMask?: boolean;
+  isBraveWallet?: boolean;
+  providers?: InjectedEthereumProvider[];
 };
 
 type Contact = {
@@ -312,6 +314,48 @@ const normalizeContactName = (value: string): string | undefined => {
 const normalizeChainId = (chainId: string | number): number => {
   if (typeof chainId === 'number') return chainId;
   return chainId.startsWith('0x') ? parseInt(chainId, 16) : Number(chainId);
+};
+
+const getMetaMaskProvider = (): InjectedEthereumProvider | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const injected = window.ethereum;
+  if (!injected) {
+    return null;
+  }
+
+  const candidates =
+    Array.isArray(injected.providers) && injected.providers.length > 0 ? injected.providers : [injected];
+
+  const explicitMetaMask = candidates.find((candidate) => candidate.isMetaMask && !candidate.isBraveWallet);
+  if (explicitMetaMask) {
+    return explicitMetaMask;
+  }
+
+  if (injected.isMetaMask && !injected.isBraveWallet) {
+    return injected;
+  }
+
+  return candidates.find((candidate) => candidate.isMetaMask) ?? (injected.isMetaMask ? injected : null);
+};
+
+const getProviderErrorMessage = (error: unknown, fallbackMessage: string): string => {
+  const rawMessage = error instanceof Error ? error.message : '';
+  const normalized = rawMessage.toLowerCase();
+  const codeCandidate = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  const code = typeof codeCandidate === 'number' ? codeCandidate : null;
+
+  if (code === -32002 || normalized.includes('already pending')) {
+    return 'A MetaMask request is already pending. Open MetaMask and approve or reject it first.';
+  }
+
+  if (code === 4001) {
+    return 'The MetaMask request was rejected.';
+  }
+
+  return rawMessage || fallbackMessage;
 };
 
 const createCotiBrowserProvider = async (ethereum: Eip1193Provider): Promise<BrowserProvider> => {
@@ -955,9 +999,23 @@ const base64ToBytes = (value: string): Uint8Array => {
 const toArrayBuffer = (value: Uint8Array): ArrayBuffer =>
   value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer;
 
+const getSecureWebCrypto = (): { webCrypto: Crypto; subtle: SubtleCrypto } => {
+  const webCrypto = globalThis.crypto;
+  const subtle = webCrypto?.subtle;
+  if (webCrypto && subtle) {
+    return { webCrypto, subtle };
+  }
+
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    throw new Error('Browser encryption requires HTTPS. Open the app using an https:// URL.');
+  }
+
+  throw new Error('Web Crypto API is unavailable in this browser.');
+};
+
 const createBurnerWalletId = (): string =>
-  typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
+  typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 const createBurnerWalletVault = async (
@@ -1143,11 +1201,12 @@ const deriveBurnerPinKey = async (
   iterations: number,
   usages: KeyUsage[]
 ): Promise<CryptoKey> => {
-  const pinMaterial = await window.crypto.subtle.importKey('raw', TEXT_ENCODER.encode(pin), 'PBKDF2', false, [
+  const { subtle } = getSecureWebCrypto();
+  const pinMaterial = await subtle.importKey('raw', TEXT_ENCODER.encode(pin), 'PBKDF2', false, [
     'deriveKey'
   ]);
 
-  return window.crypto.subtle.deriveKey(
+  return subtle.deriveKey(
     {
       name: 'PBKDF2',
       salt: toArrayBuffer(salt),
@@ -1162,12 +1221,13 @@ const deriveBurnerPinKey = async (
 };
 
 const encryptBurnerWalletVault = async (vault: BurnerWalletVault, pin: string): Promise<EncryptedBurnerWalletRecord> => {
-  const salt = window.crypto.getRandomValues(new Uint8Array(16));
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const { webCrypto, subtle } = getSecureWebCrypto();
+  const salt = webCrypto.getRandomValues(new Uint8Array(16));
+  const iv = webCrypto.getRandomValues(new Uint8Array(12));
   const key = await deriveBurnerPinKey(pin, salt, BURNER_PIN_PBKDF2_ITERATIONS, ['encrypt']);
 
   const payload = JSON.stringify(vault);
-  const encrypted = await window.crypto.subtle.encrypt(
+  const encrypted = await subtle.encrypt(
     { name: 'AES-GCM', iv: toArrayBuffer(iv) },
     key,
     TEXT_ENCODER.encode(payload)
@@ -1190,8 +1250,9 @@ const decryptBurnerWalletVault = async (
   const iv = base64ToBytes(encryptedRecord.iv);
   const ciphertext = base64ToBytes(encryptedRecord.ciphertext);
   const key = await deriveBurnerPinKey(pin, salt, encryptedRecord.iterations, ['decrypt']);
+  const { subtle } = getSecureWebCrypto();
 
-  const decrypted = await window.crypto.subtle.decrypt(
+  const decrypted = await subtle.decrypt(
     { name: 'AES-GCM', iv: toArrayBuffer(iv) },
     key,
     toArrayBuffer(ciphertext)
@@ -1828,7 +1889,7 @@ export default function App() {
 
   const getConnectedProvider = (): Eip1193Provider | null => {
     if (connectionMethod === 'metamask') {
-      return activeProviderRef.current ?? activeProvider ?? window.ethereum ?? null;
+      return activeProviderRef.current ?? activeProvider ?? getMetaMaskProvider();
     }
 
     return activeProviderRef.current ?? activeProvider ?? null;
@@ -2319,7 +2380,7 @@ export default function App() {
       return;
     }
 
-    const provider = window.ethereum;
+    const provider = getMetaMaskProvider();
     if (!provider) {
       setError('MetaMask not detected. Please install MetaMask to top up burner wallet.');
       return;
@@ -2357,7 +2418,7 @@ export default function App() {
         setStatus('Burner topped up. Unlock burner wallet to continue.');
       }
     } catch (fundError) {
-      const message = fundError instanceof Error ? fundError.message : 'Failed to top up burner wallet.';
+      const message = getProviderErrorMessage(fundError, 'Failed to top up burner wallet.');
       setError(message);
       setStatus('Burner needs funding');
     }
@@ -2666,7 +2727,7 @@ export default function App() {
     setError('');
     setConnectingMethod('metamask');
 
-    const provider = window.ethereum;
+    const provider = getMetaMaskProvider();
     if (!provider) {
       setError('MetaMask not detected. Please install MetaMask.');
       setConnectingMethod(null);
@@ -2702,7 +2763,7 @@ export default function App() {
       await restoreStateFromChainSelfBackupWithRetry(selected, 4, 900);
       runPostConnectDataSyncUntilApplied(selected).catch(() => {});
     } catch (connectionError) {
-      const message = connectionError instanceof Error ? connectionError.message : 'Failed to connect wallet.';
+      const message = getProviderErrorMessage(connectionError, 'Failed to connect wallet.');
       setError(message);
       setStatus('Disconnected');
       setOnboardStatus('Not onboarded');
