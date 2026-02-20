@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, group-test]
   workflow_dispatch:
 
 permissions:
@@ -32,6 +32,15 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Preserve custom domain
+        run: |
+          if [ -f CNAME ]; then
+            cp CNAME dist/CNAME
+          fi
+
+      - name: Disable Jekyll processing
+        run: touch dist/.nojekyll
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
