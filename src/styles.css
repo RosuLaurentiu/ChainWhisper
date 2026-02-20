@@ -912,7 +912,7 @@ body {
   border-top: 1px solid var(--border);
   padding: 12px;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
 }
 
@@ -1267,7 +1267,7 @@ body {
   }
 
   .chat-compose {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
   }
 

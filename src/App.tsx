@@ -91,6 +91,7 @@ const LEGACY_REPLY_METADATA_PREFIX = '[reply:';
 const LEGACY_PROFILE_PREFIX = '[[coti-profile:v1]]';
 const LEGACY_PROFILE_PLAIN_PREFIX = '[[coti-nick:v1]]';
 const IMAGE_MESSAGE_PREFIX = '[[coti-image:v1]]';
+const TIP_NOTICE_PREFIX = '[[coti-tip:v1]]';
 const STATE_BACKUP_PREFIX = '[[coti-state:v1]]';
 const STATE_BACKUP_COMPRESSED_PREFIX = 'z:';
 const READ_CURSOR_PREFIX = '[[coti-read:v1]]';
@@ -416,7 +417,7 @@ const formatMessageTimestamp = (timestamp?: number): string => {
 };
 
 const calculateTopUpAmount = (requiredFee: bigint, multiplier: number): bigint => {
-  const safeMultiplier = Math.max(1, Math.floor(multiplier));
+  const safeMultiplier = Math.max(0, Math.floor(multiplier));
   return requiredFee > 0n ? requiredFee * BigInt(safeMultiplier) : MIN_BURNER_TOP_UP_WEI * BigInt(safeMultiplier);
 };
 
@@ -424,6 +425,50 @@ const formatCotiAmount = (weiAmount: bigint): string => {
   const whole = weiAmount / COTI_WEI;
   const fraction = (weiAmount % COTI_WEI).toString().padStart(18, '0').slice(0, 6).replace(/0+$/, '');
   return fraction ? `${whole.toString()}.${fraction}` : whole.toString();
+};
+
+const parseTipNoticePayload = (text: string): { tipAmountWei: bigint; messageCount: number } | null => {
+  if (!text.startsWith(TIP_NOTICE_PREFIX)) {
+    return null;
+  }
+
+  const raw = text.slice(TIP_NOTICE_PREFIX.length).trim();
+  const separatorIndex = raw.indexOf('|');
+  if (separatorIndex < 1) {
+    return null;
+  }
+
+  const weiChunk = raw.slice(0, separatorIndex).trim();
+  const countChunk = raw.slice(separatorIndex + 1).trim();
+  if (!/^\d+$/.test(weiChunk) || !/^\d+$/.test(countChunk)) {
+    return null;
+  }
+
+  try {
+    const tipAmountWei = BigInt(weiChunk);
+    const messageCount = Math.max(0, Number.parseInt(countChunk, 10));
+    if (!Number.isFinite(messageCount)) {
+      return null;
+    }
+    return { tipAmountWei, messageCount };
+  } catch {
+    return null;
+  }
+};
+
+const formatTipNoticeText = (
+  amountCoti: string,
+  messageCount: number,
+  direction?: 'incoming' | 'outgoing'
+): string => {
+  const unit = messageCount === 1 ? 'message' : 'messages';
+  if (direction === 'outgoing') {
+    return `You tipped ${amountCoti} COTI (${messageCount} ${unit}).`;
+  }
+  if (direction === 'incoming') {
+    return `You received a tip of ${amountCoti} COTI (${messageCount} ${unit}).`;
+  }
+  return `Tip: ${amountCoti} COTI (${messageCount} ${unit}).`;
 };
 
 const hasInsufficientFundsError = (message: string): boolean =>
@@ -1517,9 +1562,27 @@ const parseChatMessagePayload = (text: string): {
   };
 };
 
-const getMessageDisplayText = (text: string): string => {
+const getMessageDisplayText = (text: string, direction?: 'incoming' | 'outgoing'): string => {
   if (text.startsWith(IMAGE_MESSAGE_PREFIX)) {
     return '[Image disabled for security]';
+  }
+
+  const parsedTipPayload = parseTipNoticePayload(text);
+  if (parsedTipPayload) {
+    return formatTipNoticeText(
+      formatCotiAmount(parsedTipPayload.tipAmountWei),
+      parsedTipPayload.messageCount,
+      direction
+    );
+  }
+
+  const legacyTipMatch = text.match(/^\[TIP\]\s*You received\s+([0-9]+(?:\.[0-9]+)?)\s+COTI\s+\((\d+)\s+messages?\)\.?$/i);
+  if (legacyTipMatch) {
+    const amountCoti = legacyTipMatch[1];
+    const messageCount = Number.parseInt(legacyTipMatch[2], 10);
+    if (Number.isFinite(messageCount) && messageCount >= 0) {
+      return formatTipNoticeText(amountCoti, messageCount, direction);
+    }
   }
 
   return text;
@@ -1636,9 +1699,10 @@ export default function App() {
   const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
   const [requiredFeeWei, setRequiredFeeWei] = useState<bigint | null>(null);
   const [burnerBalanceWei, setBurnerBalanceWei] = useState<bigint | null>(null);
-  const [topUpMultiplier, setTopUpMultiplier] = useState(20);
+  const [topUpMultiplier, setTopUpMultiplier] = useState(0);
   const [loadingTopUpQuote, setLoadingTopUpQuote] = useState(false);
   const [topUpMetricsNonce, setTopUpMetricsNonce] = useState(0);
+  const [tipping, setTipping] = useState(false);
   const [backingUpState, setBackingUpState] = useState(false);
   const [error, setError] = useState<string>('');
   const [activeMobileView, setActiveMobileView] = useState<MobileView>('wallets');
@@ -1863,6 +1927,8 @@ export default function App() {
 
     return burnerBalanceWei / requiredFeeWei;
   }, [requiredFeeWei, burnerBalanceWei]);
+  const tipMessagesCount = Math.max(0, Math.floor(topUpMultiplier));
+  const tipMessagesLabel = `${tipMessagesCount} ${tipMessagesCount === 1 ? 'msg' : 'msgs'}`;
   const isStatusConnected = useMemo(() => /^connected/i.test(status.trim()), [status]);
   const isAesConnected = useMemo(() => onboardStatus === 'AES key ready', [onboardStatus]);
 
@@ -2338,6 +2404,9 @@ export default function App() {
 
       if (topUpAmount === null) {
         throw new Error('Unable to calculate top-up amount.');
+      }
+      if (topUpAmount <= 0n) {
+        throw new Error('Choose a top-up amount greater than zero.');
       }
 
       const tx = await funderSigner.sendTransaction({
@@ -4647,6 +4716,101 @@ export default function App() {
     }
   };
 
+  const sendTipToActiveContact = async () => {
+    setError('');
+
+    if (sendingRef.current || tipping) {
+      return;
+    }
+
+    if (!activeContact) {
+      setError('Select a contact first.');
+      return;
+    }
+
+    const recipient = activeContact.trim();
+    if (!isWalletAddress(recipient)) {
+      setError('Invalid contact address.');
+      return;
+    }
+
+    if (walletAddress && recipient.toLowerCase() === walletAddress.toLowerCase()) {
+      setError('Cannot tip your own wallet.');
+      return;
+    }
+
+    const tipMessageCount = Math.max(0, Math.floor(topUpMultiplier));
+    let tipAmount = topUpAmountWei;
+    if (tipAmount === null) {
+      const requiredFee = await resolveRequiredFeeForSend();
+      tipAmount = calculateTopUpAmount(requiredFee, topUpMultiplier);
+    }
+
+    if (tipAmount <= 0n) {
+      setError('Move the top-up slider above zero to set a tip amount.');
+      return;
+    }
+
+    let transferSucceeded = false;
+    try {
+      setTipping(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const tx = await signer.sendTransaction({
+        to: recipient,
+        value: tipAmount
+      });
+      await tx.wait();
+      transferSucceeded = true;
+
+      if (activeSignerSource === 'burner') {
+        setBurnerBalanceWei((previous) => {
+          if (previous === null) {
+            return previous;
+          }
+          return previous > tipAmount ? previous - tipAmount : 0n;
+        });
+        setTopUpMetricsNonce((previous) => previous + 1);
+      }
+      setTopUpMultiplier(0);
+      setTopUpAmountWei(0n);
+
+      const cotiEthers = await loadCotiEthersModule();
+      const selector = await resolveSubmitSelector();
+      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
+      const requiredFee = await resolveRequiredFeeForSend();
+      const tipNoticeText = `[TIP] You received ${formatCotiAmount(tipAmount)} COTI (${tipMessageCount} ${
+        tipMessageCount === 1 ? 'message' : 'messages'
+      }).`;
+      const encodedTipMemo = encodeMemoPlaintext(tipNoticeText);
+      const encryptedTipMemo = await signer.encryptValue(encodedTipMemo, CHAT_CONTRACT_ADDRESS, selector);
+      const submitTipMemoPayload = parseSubmitMemoPayload(encryptedTipMemo);
+      const tipMemoTuple = [[submitTipMemoPayload.ciphertextValue], submitTipMemoPayload.signature] as const;
+      const tipMemoTx = await contract.submit(recipient, tipMemoTuple, { value: requiredFee });
+      await tipMemoTx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+      syncConversationHistory().catch(() => {});
+    } catch (tipError) {
+      const rawMessage = tipError instanceof Error ? tipError.message : '';
+      const message = rawMessage || (transferSucceeded ? 'Tip sent, but notification message failed.' : 'Failed to send tip.');
+      setError(transferSucceeded ? `Tip sent, but notification failed: ${message}` : message);
+      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+        const shouldTopUp = window.confirm(
+          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+        );
+        if (shouldTopUp) {
+          await topUpBurnerWithMetaMask();
+        }
+      }
+    } finally {
+      setTipping(false);
+    }
+  };
+
   const loadFullConversationHistory = async () => {
     if (syncingHistoryRef.current) {
       return;
@@ -5662,7 +5826,7 @@ export default function App() {
             className="connect-btn"
             onClick={topUpBurnerWithMetaMask}
             type="button"
-            disabled={initializingBurner || !burnerAddress}
+            disabled={initializingBurner || !burnerAddress || topUpAmountWei === null || topUpAmountWei <= 0n}
           >
             Top Up with MetaMask
           </button>
@@ -5673,7 +5837,7 @@ export default function App() {
           <input
             className="topup-slider"
             type="range"
-            min={1}
+            min={0}
             max={100}
             step={1}
             value={topUpMultiplier}
@@ -5986,7 +6150,7 @@ export default function App() {
                 <p className="chat-empty">No messages yet.</p>
               ) : (
                 activeMessages.map((message) => {
-                  const messageDisplayText = getMessageDisplayText(message.text);
+                  const messageDisplayText = getMessageDisplayText(message.text, message.direction);
                   const parsedImageTag = parseImageTag(message.text);
                   const deliveryLabel =
                     message.deliveryState === 'pending'
@@ -6101,9 +6265,30 @@ export default function App() {
                 onClick={() => {
                   sendMessage().catch(() => {});
                 }}
-                disabled={sending}
+                disabled={sending || tipping}
               >
                 {sending ? 'Sending...' : 'Send'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sendTipToActiveContact().catch(() => {});
+                }}
+                disabled={
+                  tipping ||
+                  sending ||
+                  !activeContact ||
+                  isSelfChat ||
+                  topUpAmountWei === null ||
+                  topUpAmountWei <= 0n
+                }
+                title={
+                  topUpAmountWei !== null && topUpAmountWei > 0n
+                    ? `Tip ${formatCotiAmount(topUpAmountWei)} COTI (${tipMessagesLabel})`
+                    : 'Set a tip amount above zero in the top-up slider'
+                }
+              >
+                {tipping ? `Tipping ${tipMessagesLabel}...` : `Tip ${tipMessagesLabel}`}
               </button>
             </div>
           </div>
