@@ -3583,7 +3583,9 @@ export default function App() {
     setError('');
     debugLog('[sync] start', { walletAddress, options, hasAesReady, chainId });
 
-    if (!walletAddress) {
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
       return;
     }
 
@@ -3640,8 +3642,11 @@ export default function App() {
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
       const latestBlock = await readProvider.getBlockNumber();
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
-      const walletKey = walletAddress.toLowerCase();
+      const walletKey = requestedWalletKey;
       const lastSyncedBlock = lastSyncedBlockRef.current[walletKey];
       const toBlock = typeof options?.toBlock === 'number' ? Math.min(options.toBlock, latestBlock) : latestBlock;
       const fromBlock =
@@ -3659,13 +3664,16 @@ export default function App() {
         return;
       }
 
-      const incomingFilter = contract.filters.MessageSubmitted(walletAddress, null);
-      const outgoingFilter = contract.filters.MessageSubmitted(null, walletAddress);
+      const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, null);
+      const outgoingFilter = contract.filters.MessageSubmitted(null, requestedWalletAddress);
 
       const [incomingLogs, outgoingLogs] = await Promise.all([
         contract.queryFilter(incomingFilter, fromBlock, toBlock),
         contract.queryFilter(outgoingFilter, fromBlock, toBlock)
       ]);
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       const blockNumbers = new Set<number>();
       for (const log of incomingLogs) {
@@ -4029,6 +4037,9 @@ export default function App() {
       if (shouldLoadContactPreviews) {
         entries.push(...previewByContact.values());
       }
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       if (!options?.contactsOnly || shouldLoadContactPreviews) {
         entries.sort((a, b) => {
@@ -4190,48 +4201,34 @@ export default function App() {
           return normalizeMessagesByContact(next);
         });
       }
-      const nicknameLookupAddresses = Array.from(new Set([...Array.from(discoveredContacts), ...contacts.map((c) => c.address)]));
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      const nicknameLookupAddresses = Array.from(
+        new Set([...Array.from(discoveredContacts), ...contacts.map((c) => c.address)])
+      );
       const onChainNicknames = await fetchOnChainNicknames(nicknameLookupAddresses);
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       setContacts((previous) => {
         const mergedContacts = mergeUniqueContacts(previous, Array.from(discoveredContacts));
 
-        if (discoveredNicknames.size === 0) {
-          if (onChainNicknames.size === 0) {
-            return mergedContacts;
-          }
-
-          return mergedContacts.map((contact) => {
-            if (contact.name) {
-              return contact;
-            }
-
-            const onChainNickname = onChainNicknames.get(contact.address.toLowerCase());
-            if (!onChainNickname) {
-              return contact;
-            }
-
-            return {
-              ...contact,
-              name: onChainNickname
-            };
-          });
-        }
-
         return mergedContacts.map((contact) => {
-          if (contact.name) {
+          const key = contact.address.toLowerCase();
+          const nickname = discoveredNicknames.get(key) ?? onChainNicknames.get(key);
+          if (!nickname || contact.name === nickname) {
             return contact;
           }
 
-          const key = contact.address.toLowerCase();
-          const nickname = discoveredNicknames.get(key) ?? onChainNicknames.get(key);
-          if (nickname) {
-            return { ...contact, name: nickname };
-          }
-
-          return contact;
+          return { ...contact, name: nickname };
         });
       });
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       if (latestStateBackup) {
         applyStateBackupPayload(
@@ -4337,6 +4334,9 @@ export default function App() {
       if ((options?.updateHead || !options?.contactsOnly) && typeof options?.toBlock !== 'number') {
         lastSyncedBlockRef.current[walletKey] = latestBlock;
       }
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -4381,7 +4381,9 @@ export default function App() {
       return;
     }
 
-    const walletKey = walletAddress.toLowerCase();
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    const walletKey = requestedWalletKey;
     const contactAddress = activeContact.trim();
     if (!isWalletAddress(contactAddress)) {
       return;
@@ -4402,8 +4404,11 @@ export default function App() {
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
       const latestBlock = await readProvider.getBlockNumber();
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
       const conversationLastBlock = toSafeNumber(
-        await contract.getLastBlockForConversation(walletAddress, contactAddress)
+        await contract.getLastBlockForConversation(requestedWalletAddress, contactAddress)
       );
       if (conversationLastBlock <= 0) {
         hasOlderHistoryByContactRef.current[contactKey] = false;
@@ -4440,12 +4445,15 @@ export default function App() {
 
       const fromBlock = Math.max(0, toBlock - HISTORY_PAGINATION_BLOCK_WINDOW + 1);
 
-      const incomingFilter = contract.filters.MessageSubmitted(walletAddress, contactAddress);
-      const outgoingFilter = contract.filters.MessageSubmitted(contactAddress, walletAddress);
+      const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, contactAddress);
+      const outgoingFilter = contract.filters.MessageSubmitted(contactAddress, requestedWalletAddress);
       const [incomingLogs, outgoingLogs] = await Promise.all([
         contract.queryFilter(incomingFilter, fromBlock, toBlock),
         contract.queryFilter(outgoingFilter, fromBlock, toBlock)
       ]);
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       oldestLoadedBlockByContactRef.current[contactKey] = fromBlock;
       if (fromBlock === 0) {
@@ -4478,6 +4486,9 @@ export default function App() {
           }
         })
       );
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       const entries: HistoryEntry[] = [];
       const discoveredNicknames = new Map<string, string>();
@@ -4637,21 +4648,23 @@ export default function App() {
           return normalizeMessagesByContact(next);
         });
       }
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       const onChainNicknames = await fetchOnChainNicknames([contactAddress]);
       const onChainNicknameForContact = onChainNicknames.get(contactKey);
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       if (discoveredNicknames.size > 0 || onChainNicknameForContact) {
         setContacts((previous) =>
           previous.map((contact) => {
-            if (contact.name) {
-              return contact;
-            }
-
             const nickname =
               discoveredNicknames.get(contact.address.toLowerCase()) ??
               onChainNicknames.get(contact.address.toLowerCase());
-            if (!nickname) {
+            if (!nickname || contact.name === nickname) {
               return contact;
             }
 
@@ -4661,6 +4674,9 @@ export default function App() {
             };
           })
         );
+      }
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
       }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -4678,7 +4694,9 @@ export default function App() {
   };
 
   const syncGroupData = async (options?: SyncGroupOptions) => {
-    if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress) || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
       return;
     }
 
@@ -4692,7 +4710,7 @@ export default function App() {
       return;
     }
 
-    const walletKey = walletAddress.toLowerCase();
+    const walletKey = requestedWalletKey;
 
     try {
       syncGroupDataInFlightRef.current = true;
@@ -4705,6 +4723,9 @@ export default function App() {
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
       const latestBlock = await readProvider.getBlockNumber();
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
       const selectedActiveGroupId = activeGroupIdRef.current;
 
       const knownGroupIds = new Set<number>();
@@ -4738,16 +4759,19 @@ export default function App() {
           inviteDeclinedLogs,
           inviteRevokedLogs
         ] = await Promise.all([
-          contract.queryFilter(contract.filters.GroupCreated(null, walletAddress), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupMemberAdded(null, walletAddress), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupMemberRemoved(null, walletAddress), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupMemberLeft(null, walletAddress), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupInviteCreated(null, walletAddress, null), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupInviteAccepted(null, walletAddress, null), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupInviteAccepted(null, null, walletAddress), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupInviteDeclined(null, walletAddress, null), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupInviteRevoked(null, walletAddress, null), fromBlock, toBlock)
+          contract.queryFilter(contract.filters.GroupCreated(null, requestedWalletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupMemberAdded(null, requestedWalletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupMemberRemoved(null, requestedWalletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupMemberLeft(null, requestedWalletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteCreated(null, requestedWalletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteAccepted(null, requestedWalletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteAccepted(null, null, requestedWalletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteDeclined(null, requestedWalletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteRevoked(null, requestedWalletAddress, null), fromBlock, toBlock)
         ]);
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
 
         const groupIdFromArgs = (value: unknown): number => {
           const parsed = toSafeNumber(value);
@@ -4795,8 +4819,8 @@ export default function App() {
           }
 
           const [memberRaw, inviteRaw] = await Promise.all([
-            contract.isMember(groupId, walletAddress).catch(() => false),
-            contract.getInvite(groupId, walletAddress).catch(() => null)
+            contract.isMember(groupId, requestedWalletAddress).catch(() => false),
+            contract.getInvite(groupId, requestedWalletAddress).catch(() => null)
           ]);
 
           const isMember = Boolean(memberRaw);
@@ -4892,6 +4916,43 @@ export default function App() {
           }
         })
       );
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      const nicknameLookupFromGroups = Array.from(
+        new Set(
+          [
+            ...nextGroups.flatMap((group) => group.members),
+            ...nextGroups.map((group) => group.admin),
+            ...nextInvites.map((invite) => invite.inviter),
+            requestedWalletAddress
+          ]
+            .map((address) => address.trim())
+            .filter((address) => isWalletAddress(address))
+        )
+      );
+      if (nicknameLookupFromGroups.length > 0) {
+        const onChainNicknames = await fetchOnChainNicknames(nicknameLookupFromGroups);
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
+
+        setContacts((previous) => {
+          const mergedContacts = mergeUniqueContacts(previous, nicknameLookupFromGroups);
+          return mergedContacts.map((contact) => {
+            const nickname = onChainNicknames.get(contact.address.toLowerCase());
+            if (!nickname || contact.name === nickname) {
+              return contact;
+            }
+
+            return { ...contact, name: nickname };
+          });
+        });
+      }
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       setGroups(nextGroups);
       setGroupInvites(nextInvites.filter((invite) => !invite.expired));
@@ -4914,9 +4975,12 @@ export default function App() {
 
         if (groupFromBlock <= latestBlock) {
           const [incomingLogs, outgoingLogs] = await Promise.all([
-            contract.queryFilter(contract.filters.GroupMessageDelivered(groupId, null, walletAddress), groupFromBlock, latestBlock),
-            contract.queryFilter(contract.filters.GroupMessageSubmitted(groupId, walletAddress), groupFromBlock, latestBlock)
+            contract.queryFilter(contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress), groupFromBlock, latestBlock),
+            contract.queryFilter(contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress), groupFromBlock, latestBlock)
           ]);
+          if (currentWalletKeyRef.current !== requestedWalletKey) {
+            return;
+          }
 
           const blockNumbers = new Set<number>();
           for (const log of incomingLogs) {
@@ -4944,6 +5008,9 @@ export default function App() {
               }
             })
           );
+          if (currentWalletKeyRef.current !== requestedWalletKey) {
+            return;
+          }
 
           const entries: GroupMessageEntry[] = [];
           for (const log of incomingLogs) {
@@ -5007,7 +5074,7 @@ export default function App() {
               groupId,
               direction: 'outgoing',
               text: messageText,
-              senderAddress: walletAddress,
+              senderAddress: requestedWalletAddress,
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
               logIndex: log.index,
@@ -5023,6 +5090,9 @@ export default function App() {
           });
 
           if (entries.length > 0) {
+            if (currentWalletKeyRef.current !== requestedWalletKey) {
+              return;
+            }
             setMessagesByGroup((previous) => {
               const groupKey = String(groupId);
               const existing = previous[groupKey] ?? [];
@@ -5070,6 +5140,9 @@ export default function App() {
         }
 
         groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = latestBlock;
+      }
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
       }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -5278,6 +5351,12 @@ export default function App() {
       setError('Image messages are disabled for security reasons.');
       return;
     }
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
+      setError('Connect a wallet first.');
+      return;
+    }
 
     const groupId = activeGroupId;
     const groupKey = String(groupId);
@@ -5294,7 +5373,7 @@ export default function App() {
             id: localMessageId,
             direction: 'outgoing',
             text: plainText,
-            senderAddress: walletAddress,
+            senderAddress: requestedWalletAddress,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
@@ -5314,6 +5393,9 @@ export default function App() {
 
       const tx = await contract.submitGroupMessage(groupId, memoTuple, { value: requiredFee });
       const submittedTxHash = typeof tx?.hash === 'string' ? tx.hash : '';
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       setMessagesByGroup((previous) => ({
         ...previous,
@@ -5340,6 +5422,9 @@ export default function App() {
         setTopUpMetricsNonce((previous) => previous + 1);
       }
     } catch (sendError) {
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
       const message = sendError instanceof Error ? sendError.message : 'Failed to send group message.';
       setError(message);
       setMessagesByGroup((previous) => ({
@@ -5455,6 +5540,11 @@ export default function App() {
       setError('Select a contact first.');
       return;
     }
+    const requestedWalletKey = walletAddress.trim().toLowerCase();
+    if (!requestedWalletKey || !isWalletAddress(requestedWalletKey)) {
+      setError('Connect a wallet first.');
+      return;
+    }
 
     const contactAddress = activeContact;
     const contactKey = contactAddress.toLowerCase();
@@ -5502,6 +5592,9 @@ export default function App() {
       };
 
       const submittedTxHash = await sendEncryptedMemo(plainTextWithReply);
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
 
       setMessagesByContact((previous) => {
         const existing = previous[contactKey] ?? [];
@@ -5567,6 +5660,9 @@ export default function App() {
         setTopUpMetricsNonce((previous) => previous + 1);
       }
     } catch (sendError) {
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
       const message = sendError instanceof Error ? sendError.message : 'Failed to send message.';
       setError(message);
       setMessagesByContact((previous) => ({
