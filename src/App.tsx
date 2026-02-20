@@ -33,6 +33,7 @@ type ChatMessage = {
   id: string;
   direction: 'incoming' | 'outgoing';
   text: string;
+  senderAddress?: string;
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
@@ -51,6 +52,38 @@ type HistoryEntry = {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  txHash: string;
+  blockNumber: number;
+  logIndex: number;
+  timestamp?: number;
+};
+
+type GroupSummary = {
+  id: number;
+  admin: string;
+  title: string;
+  createdAt: number;
+  memberCount: number;
+  members: string[];
+  lastBlock: number;
+  lastTimestamp: number;
+};
+
+type GroupInvite = {
+  groupId: number;
+  inviter: string;
+  expiresAt: number;
+  expired: boolean;
+  title?: string;
+  admin?: string;
+};
+
+type GroupMessageEntry = {
+  id: string;
+  groupId: number;
+  direction: 'incoming' | 'outgoing';
+  text: string;
+  senderAddress: string;
   txHash: string;
   blockNumber: number;
   logIndex: number;
@@ -167,6 +200,12 @@ type SyncConversationOptions = {
   toBlock?: number;
 };
 
+type SyncGroupOptions = {
+  deep?: boolean;
+  background?: boolean;
+  overviewOnly?: boolean;
+};
+
 type StateBackupPayload = {
   version: number;
   updatedAt: number;
@@ -224,6 +263,32 @@ const CHAT_CONTRACT_ABI = [
   'function feeAmount() view returns (uint256)',
   'event NicknameSet(address indexed user, string nickname)',
   'event MessageSubmitted(address indexed recipient, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender)'
+] as const;
+
+const GROUP_CHAT_CONTRACT_ADDRESS = '0xe468Fcd281D1F4f40C0C88Eeb3A66a56DE3CDa68';
+const GROUP_CHAT_CONTRACT_ABI = [
+  'function feeAmount() view returns (uint256)',
+  'function INVITE_TTL_DEFAULT() view returns (uint64)',
+  'function nextGroupId() view returns (uint256)',
+  'function createGroup(string title, address[] initialMembers) returns (uint256 groupId)',
+  'function inviteMembers(uint256 groupId, address[] accounts, uint64 inviteTtlSeconds)',
+  'function acceptInvite(uint256 groupId)',
+  'function declineInvite(uint256 groupId)',
+  'function getInvite(uint256 groupId, address account) view returns (bool pending, address inviter, uint64 expiresAt, bool expired)',
+  'function getGroupInfo(uint256 groupId) view returns (address admin, uint64 createdAt, uint32 memberCount, string title, uint256 lastBlock, uint256 lastTimestamp)',
+  'function getGroupMembers(uint256 groupId) view returns (address[])',
+  'function isMember(uint256 groupId, address account) view returns (bool)',
+  'function submitGroupMessage(uint256 groupId, ((uint256[] value), bytes[] signature) encryptedMessage) payable',
+  'event GroupCreated(uint256 indexed groupId, address indexed admin, string title)',
+  'event GroupMemberAdded(uint256 indexed groupId, address indexed account)',
+  'event GroupMemberRemoved(uint256 indexed groupId, address indexed account)',
+  'event GroupMemberLeft(uint256 indexed groupId, address indexed account)',
+  'event GroupInviteCreated(uint256 indexed groupId, address indexed account, address indexed inviter, uint64 expiresAt)',
+  'event GroupInviteAccepted(uint256 indexed groupId, address indexed account, address indexed inviter)',
+  'event GroupInviteDeclined(uint256 indexed groupId, address indexed account, address indexed inviter)',
+  'event GroupInviteRevoked(uint256 indexed groupId, address indexed account, address indexed revokedBy)',
+  'event GroupMessageSubmitted(uint256 indexed groupId, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender, uint256 valueSent, uint256 feeTaken)',
+  'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
 
 type CotiEthersModule = typeof import('@coti-io/coti-ethers');
@@ -314,6 +379,28 @@ const shortenAddress = (address: string): string => `${address.slice(0, 6)}...${
 
 const isWalletAddress = (value: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 const isShortAddress = (value: string): boolean => /^0x[a-fA-F0-9]{4}\.\.\.[a-fA-F0-9]{4}$/.test(value.trim());
+const parseWalletAddressListInput = (value: string): string[] => {
+  const seen = new Set<string>();
+  const parsed: string[] = [];
+  const chunks = value
+    .split(/[\s,;\n\r]+/)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0);
+
+  for (const chunk of chunks) {
+    if (!isWalletAddress(chunk)) {
+      continue;
+    }
+    const key = chunk.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    parsed.push(chunk);
+  }
+
+  return parsed;
+};
 const normalizeContactName = (value: string): string | undefined => {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -1596,6 +1683,7 @@ export default function App() {
   const [newContact, setNewContact] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [activeContact, setActiveContact] = useState<string | null>(null);
+  const [activeGroupId, setActiveGroupId] = useState<number | null>(null);
   const [editingContactAddress, setEditingContactAddress] = useState<string | null>(null);
   const [editingContactName, setEditingContactName] = useState('');
   const [walletAddress, setWalletAddress] = useState<string>('');
@@ -1624,6 +1712,13 @@ export default function App() {
   const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [messageInput, setMessageInput] = useState('');
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
+  const [messagesByGroup, setMessagesByGroup] = useState<Record<string, ChatMessage[]>>({});
+  const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
+  const [newGroupTitle, setNewGroupTitle] = useState('');
+  const [newGroupMembersInput, setNewGroupMembersInput] = useState('');
+  const [groupInviteMembersInput, setGroupInviteMembersInput] = useState('');
+  const [groupInviteTtlInput, setGroupInviteTtlInput] = useState('86400');
   const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
   const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>({});
   const [lastReadAllTs, setLastReadAllTs] = useState(0);
@@ -1703,6 +1798,9 @@ export default function App() {
   const [loadingTopUpQuote, setLoadingTopUpQuote] = useState(false);
   const [topUpMetricsNonce, setTopUpMetricsNonce] = useState(0);
   const [tipping, setTipping] = useState(false);
+  const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
+  const [processingGroupAction, setProcessingGroupAction] = useState(false);
+  const [syncingGroups, setSyncingGroups] = useState(false);
   const [backingUpState, setBackingUpState] = useState(false);
   const [error, setError] = useState<string>('');
   const [activeMobileView, setActiveMobileView] = useState<MobileView>('wallets');
@@ -1791,9 +1889,12 @@ export default function App() {
   const blockTimestampCacheRef = useRef<Map<number, number>>(new Map());
   const requiredFeeCacheRef = useRef<bigint | null>(null);
   const requiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
+  const groupRequiredFeeCacheRef = useRef<bigint | null>(null);
+  const groupRequiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const nicknameMaxBytesRequestRef = useRef<Promise<number> | null>(null);
   const nicknameMaxBytesLoadedRef = useRef(false);
   const submitSelectorRef = useRef<string | null>(null);
+  const groupSubmitSelectorRef = useRef<string | null>(null);
   const backupInFlightRef = useRef(false);
   const onChainNicknameCacheRef = useRef<Record<string, string | null>>({});
   const lastAppliedStateBackupTsRef = useRef<Record<string, number>>({});
@@ -1804,10 +1905,30 @@ export default function App() {
   const readStateBackupTimerRef = useRef<number | null>(null);
   const lastReadStateBackupSubmittedAtRef = useRef(0);
   const syncConversationHistoryRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
+  const syncGroupDataRef = useRef<(options?: SyncGroupOptions) => Promise<void>>(async () => {});
+  const syncGroupDataInFlightRef = useRef(false);
+  const pendingGroupSyncOptionsRef = useRef<SyncGroupOptions | null>(null);
+  const groupOverviewLastSyncedBlockRef = useRef<Record<string, number>>({});
+  const groupMessageLastSyncedBlockRef = useRef<Record<string, number>>({});
+  const groupsRef = useRef<GroupSummary[]>([]);
+  const groupInvitesRef = useRef<GroupInvite[]>([]);
+  const activeGroupIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     currentWalletKeyRef.current = walletAddress.trim().toLowerCase();
   }, [walletAddress]);
+
+  useEffect(() => {
+    groupsRef.current = groups;
+  }, [groups]);
+
+  useEffect(() => {
+    groupInvitesRef.current = groupInvites;
+  }, [groupInvites]);
+
+  useEffect(() => {
+    activeGroupIdRef.current = activeGroupId;
+  }, [activeGroupId]);
 
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
   const onCotiNetwork = useMemo(() => chainId === COTI_NETWORK.chainIdDecimal, [chainId]);
@@ -1817,6 +1938,29 @@ export default function App() {
     }
     return messagesByContact[activeContact.toLowerCase()] ?? [];
   }, [activeContact, messagesByContact]);
+  const activeGroupMeta = useMemo(
+    () => (activeGroupId !== null ? groups.find((group) => group.id === activeGroupId) ?? null : null),
+    [groups, activeGroupId]
+  );
+  const activeGroupMessages = useMemo(() => {
+    if (activeGroupId === null) {
+      return [];
+    }
+    return messagesByGroup[String(activeGroupId)] ?? [];
+  }, [activeGroupId, messagesByGroup]);
+  const activeThreadKey = useMemo(() => {
+    if (activeGroupId !== null) {
+      return `group:${activeGroupId}`;
+    }
+    if (activeContact) {
+      return `contact:${activeContact.toLowerCase()}`;
+    }
+    return null;
+  }, [activeGroupId, activeContact]);
+  const activeThreadMessages = useMemo(
+    () => (activeGroupId !== null ? activeGroupMessages : activeMessages),
+    [activeGroupId, activeGroupMessages, activeMessages]
+  );
   const sortedContacts = useMemo(() => {
     const persistedOrderIndex = new Map<string, number>();
     for (let index = 0; index < persistedContactOrder.length; index += 1) {
@@ -1865,6 +2009,20 @@ export default function App() {
 
     return withIndex.map((item) => item.contact);
   }, [contacts, messagesByContact, persistedContactOrder]);
+  const sortedGroups = useMemo(
+    () =>
+      [...groups].sort((left, right) => {
+        if (left.lastTimestamp !== right.lastTimestamp) {
+          return right.lastTimestamp - left.lastTimestamp;
+        }
+        return left.id - right.id;
+      }),
+    [groups]
+  );
+  const sortedGroupInvites = useMemo(
+    () => [...groupInvites].sort((left, right) => left.expiresAt - right.expiresAt || left.groupId - right.groupId),
+    [groupInvites]
+  );
   const activeContactMeta = useMemo(
     () => contacts.find((contact) => contact.address.toLowerCase() === activeContact?.toLowerCase()),
     [contacts, activeContact]
@@ -2663,6 +2821,8 @@ export default function App() {
   }, [activeContact, markConversationAsRead, messagesByContact]);
 
   const activateContact = useCallback((contactAddress: string) => {
+    activeGroupIdRef.current = null;
+    setActiveGroupId(null);
     setActiveContact(contactAddress);
     markConversationAsRead(contactAddress);
     if (isMobileNav) {
@@ -2938,6 +3098,21 @@ export default function App() {
     return selector;
   };
 
+  const resolveGroupSubmitSelector = async (): Promise<string> => {
+    if (groupSubmitSelectorRef.current) {
+      return groupSubmitSelectorRef.current;
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const selector = new cotiEthers.Interface(GROUP_CHAT_CONTRACT_ABI).getFunction('submitGroupMessage')?.selector;
+    if (!selector) {
+      throw new Error('Unable to resolve group submit selector.');
+    }
+
+    groupSubmitSelectorRef.current = selector;
+    return selector;
+  };
+
   const resolveRequiredFeeForSend = async (): Promise<bigint> => {
     if (requiredFeeCacheRef.current !== null && requiredFeeCacheRef.current > 0n) {
       return requiredFeeCacheRef.current;
@@ -2964,6 +3139,29 @@ export default function App() {
       return await requiredFeeRequestRef.current;
     } finally {
       requiredFeeRequestRef.current = null;
+    }
+  };
+
+  const resolveRequiredFeeForGroupSend = async (): Promise<bigint> => {
+    if (groupRequiredFeeCacheRef.current !== null && groupRequiredFeeCacheRef.current > 0n) {
+      return groupRequiredFeeCacheRef.current;
+    }
+
+    if (!groupRequiredFeeRequestRef.current) {
+      groupRequiredFeeRequestRef.current = (async () => {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const readContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+        const resolvedFee = (await readContract.feeAmount()) as bigint;
+        groupRequiredFeeCacheRef.current = resolvedFee;
+        return resolvedFee;
+      })();
+    }
+
+    try {
+      return await groupRequiredFeeRequestRef.current;
+    } finally {
+      groupRequiredFeeRequestRef.current = null;
     }
   };
 
@@ -4479,6 +4677,687 @@ export default function App() {
     }
   };
 
+  const syncGroupData = async (options?: SyncGroupOptions) => {
+    if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
+      return;
+    }
+
+    if (syncGroupDataInFlightRef.current) {
+      const pending = pendingGroupSyncOptionsRef.current;
+      pendingGroupSyncOptionsRef.current = {
+        deep: Boolean(options?.deep || pending?.deep),
+        background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
+        overviewOnly: Boolean(options?.overviewOnly && pending?.overviewOnly)
+      };
+      return;
+    }
+
+    const walletKey = walletAddress.toLowerCase();
+
+    try {
+      syncGroupDataInFlightRef.current = true;
+      if (!options?.background) {
+        setSyncingGroups(true);
+      }
+
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const readProvider = await loadCotiReadProvider(true);
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+      const latestBlock = await readProvider.getBlockNumber();
+      const selectedActiveGroupId = activeGroupIdRef.current;
+
+      const knownGroupIds = new Set<number>();
+      for (const group of groupsRef.current) {
+        knownGroupIds.add(group.id);
+      }
+      for (const invite of groupInvitesRef.current) {
+        knownGroupIds.add(invite.groupId);
+      }
+      if (selectedActiveGroupId !== null) {
+        knownGroupIds.add(selectedActiveGroupId);
+      }
+
+      const overviewLastSyncedBlock = groupOverviewLastSyncedBlockRef.current[walletKey];
+      const fromBlock = options?.deep
+        ? 0
+        : typeof overviewLastSyncedBlock === 'number'
+          ? overviewLastSyncedBlock + 1
+          : 0;
+      const toBlock = latestBlock;
+
+      if (fromBlock <= toBlock) {
+        const [
+          createdByMeLogs,
+          memberAddedLogs,
+          memberRemovedLogs,
+          memberLeftLogs,
+          inviteCreatedLogs,
+          inviteAcceptedForMeLogs,
+          inviteAcceptedByMeLogs,
+          inviteDeclinedLogs,
+          inviteRevokedLogs
+        ] = await Promise.all([
+          contract.queryFilter(contract.filters.GroupCreated(null, walletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupMemberAdded(null, walletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupMemberRemoved(null, walletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupMemberLeft(null, walletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteCreated(null, walletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteAccepted(null, walletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteAccepted(null, null, walletAddress), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteDeclined(null, walletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteRevoked(null, walletAddress, null), fromBlock, toBlock)
+        ]);
+
+        const groupIdFromArgs = (value: unknown): number => {
+          const parsed = toSafeNumber(value);
+          return parsed > 0 ? parsed : 0;
+        };
+
+        for (const log of [
+          ...createdByMeLogs,
+          ...memberAddedLogs,
+          ...memberRemovedLogs,
+          ...memberLeftLogs,
+          ...inviteCreatedLogs,
+          ...inviteAcceptedForMeLogs,
+          ...inviteAcceptedByMeLogs,
+          ...inviteDeclinedLogs,
+          ...inviteRevokedLogs
+        ]) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const groupId = groupIdFromArgs(args?.groupId);
+          if (groupId > 0) {
+            knownGroupIds.add(groupId);
+          }
+        }
+      }
+
+      if (knownGroupIds.size === 0 && options?.deep) {
+        const nextGroupId = toSafeNumber(await contract.nextGroupId());
+        const cappedGroupId = Math.min(nextGroupId, 250);
+        for (let groupId = 1; groupId < cappedGroupId; groupId += 1) {
+          knownGroupIds.add(groupId);
+        }
+      }
+
+      if (knownGroupIds.size === 0 && !options?.deep) {
+        return;
+      }
+
+      const nowTs = Math.floor(Date.now() / 1000);
+      const nextGroups: GroupSummary[] = [];
+      const nextInvites: GroupInvite[] = [];
+      await Promise.all(
+        Array.from(knownGroupIds).map(async (groupId) => {
+          if (!Number.isFinite(groupId) || groupId <= 0) {
+            return;
+          }
+
+          const [memberRaw, inviteRaw] = await Promise.all([
+            contract.isMember(groupId, walletAddress).catch(() => false),
+            contract.getInvite(groupId, walletAddress).catch(() => null)
+          ]);
+
+          const isMember = Boolean(memberRaw);
+          const invitePending = Boolean(
+            inviteRaw && typeof inviteRaw === 'object' ? (inviteRaw as { pending?: unknown }).pending : null
+          ) ||
+            (Array.isArray(inviteRaw) ? Boolean(inviteRaw[0]) : false);
+          const inviteInviter = inviteRaw && typeof inviteRaw === 'object'
+            ? String((inviteRaw as { inviter?: unknown }).inviter ?? '')
+            : Array.isArray(inviteRaw)
+              ? String(inviteRaw[1] ?? '')
+              : '';
+          const inviteExpiresAt = inviteRaw && typeof inviteRaw === 'object'
+            ? toSafeNumber((inviteRaw as { expiresAt?: unknown }).expiresAt)
+            : Array.isArray(inviteRaw)
+              ? toSafeNumber(inviteRaw[2])
+              : 0;
+          const inviteExpired = inviteRaw && typeof inviteRaw === 'object'
+            ? Boolean((inviteRaw as { expired?: unknown }).expired)
+            : Array.isArray(inviteRaw)
+              ? Boolean(inviteRaw[3])
+              : inviteExpiresAt > 0 && inviteExpiresAt <= nowTs;
+
+          if (!isMember && !invitePending) {
+            return;
+          }
+
+          const infoRaw = await contract.getGroupInfo(groupId).catch(() => null);
+          if (!infoRaw) {
+            return;
+          }
+
+          const admin = infoRaw && typeof infoRaw === 'object'
+            ? String((infoRaw as { admin?: unknown }).admin ?? '')
+            : Array.isArray(infoRaw)
+              ? String(infoRaw[0] ?? '')
+              : '';
+          const createdAt = infoRaw && typeof infoRaw === 'object'
+            ? toSafeNumber((infoRaw as { createdAt?: unknown }).createdAt)
+            : Array.isArray(infoRaw)
+              ? toSafeNumber(infoRaw[1])
+              : 0;
+          const memberCount = infoRaw && typeof infoRaw === 'object'
+            ? toSafeNumber((infoRaw as { memberCount?: unknown }).memberCount)
+            : Array.isArray(infoRaw)
+              ? toSafeNumber(infoRaw[2])
+              : 0;
+          const title = infoRaw && typeof infoRaw === 'object'
+            ? String((infoRaw as { title?: unknown }).title ?? '')
+            : Array.isArray(infoRaw)
+              ? String(infoRaw[3] ?? '')
+              : '';
+          const lastBlock = infoRaw && typeof infoRaw === 'object'
+            ? toSafeNumber((infoRaw as { lastBlock?: unknown }).lastBlock)
+            : Array.isArray(infoRaw)
+              ? toSafeNumber(infoRaw[4])
+              : 0;
+          const lastTimestamp = infoRaw && typeof infoRaw === 'object'
+            ? toSafeNumber((infoRaw as { lastTimestamp?: unknown }).lastTimestamp)
+            : Array.isArray(infoRaw)
+              ? toSafeNumber(infoRaw[5])
+              : 0;
+
+          if (isMember) {
+            const membersRaw = await contract.getGroupMembers(groupId).catch(() => []);
+            const members = Array.isArray(membersRaw)
+              ? membersRaw
+                  .map((addressValue) => String(addressValue ?? '').trim())
+                  .filter((addressValue) => isWalletAddress(addressValue))
+              : [];
+
+            nextGroups.push({
+              id: groupId,
+              admin,
+              title: normalizeContactName(title) ?? `Group ${groupId}`,
+              createdAt,
+              memberCount: memberCount > 0 ? memberCount : members.length,
+              members,
+              lastBlock,
+              lastTimestamp
+            });
+          }
+
+          if (invitePending) {
+            nextInvites.push({
+              groupId,
+              inviter: inviteInviter,
+              expiresAt: inviteExpiresAt,
+              expired: inviteExpired,
+              title: normalizeContactName(title) ?? `Group ${groupId}`,
+              admin
+            });
+          }
+        })
+      );
+
+      setGroups(nextGroups);
+      setGroupInvites(nextInvites.filter((invite) => !invite.expired));
+
+      if (selectedActiveGroupId !== null && !nextGroups.some((group) => group.id === selectedActiveGroupId)) {
+        setActiveGroupId(null);
+      }
+
+      groupOverviewLastSyncedBlockRef.current[walletKey] = latestBlock;
+
+      if (!options?.overviewOnly && selectedActiveGroupId !== null) {
+        const groupId = selectedActiveGroupId;
+        const groupMessageSyncKey = `${walletKey}:${groupId}`;
+        const previousGroupMessageBlock = groupMessageLastSyncedBlockRef.current[groupMessageSyncKey];
+        const groupFromBlock = options?.deep
+          ? 0
+          : typeof previousGroupMessageBlock === 'number'
+            ? previousGroupMessageBlock + 1
+            : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
+
+        if (groupFromBlock <= latestBlock) {
+          const [incomingLogs, outgoingLogs] = await Promise.all([
+            contract.queryFilter(contract.filters.GroupMessageDelivered(groupId, null, walletAddress), groupFromBlock, latestBlock),
+            contract.queryFilter(contract.filters.GroupMessageSubmitted(groupId, walletAddress), groupFromBlock, latestBlock)
+          ]);
+
+          const blockNumbers = new Set<number>();
+          for (const log of incomingLogs) {
+            blockNumbers.add(log.blockNumber);
+          }
+          for (const log of outgoingLogs) {
+            blockNumbers.add(log.blockNumber);
+          }
+
+          const blockTimestampMap = new Map<number, number>();
+          const blockTimestampCache = blockTimestampCacheRef.current;
+          await Promise.all(
+            Array.from(blockNumbers).map(async (blockNumber) => {
+              const cachedTimestamp = blockTimestampCache.get(blockNumber);
+              if (typeof cachedTimestamp === 'number') {
+                blockTimestampMap.set(blockNumber, cachedTimestamp);
+                return;
+              }
+
+              const block = await readProvider.getBlock(blockNumber);
+              if (block?.timestamp) {
+                const timestamp = Number(block.timestamp);
+                blockTimestampMap.set(blockNumber, timestamp);
+                blockTimestampCache.set(blockNumber, timestamp);
+              }
+            })
+          );
+
+          const entries: GroupMessageEntry[] = [];
+          for (const log of incomingLogs) {
+            const args = (log as { args?: Record<string, unknown> }).args;
+            const from = String(args?.from ?? '').trim();
+            if (!isWalletAddress(from)) {
+              continue;
+            }
+
+            const userCiphertext = extractUserCiphertext(args?.messageForRecipient);
+            let messageText = '(Unable to decrypt message)';
+            if (userCiphertext && userCiphertext.value.length > 0) {
+              try {
+                const decrypted = await signer.decryptValue(userCiphertext as never);
+                const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
+                const plain = decodeMemoPlaintext(raw);
+                const parsedMessage = parseChatMessagePayload(plain);
+                messageText = parsedMessage.cleanText;
+                if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+                  continue;
+                }
+              } catch {
+                messageText = '(Unable to decrypt message)';
+              }
+            }
+
+            entries.push({
+              id: `${log.transactionHash}-${log.index}-group-in`,
+              groupId,
+              direction: 'incoming',
+              text: messageText,
+              senderAddress: from,
+              txHash: log.transactionHash,
+              blockNumber: log.blockNumber,
+              logIndex: log.index,
+              timestamp: blockTimestampMap.get(log.blockNumber)
+            });
+          }
+
+          for (const log of outgoingLogs) {
+            const args = (log as { args?: Record<string, unknown> }).args;
+            const userCiphertext = extractUserCiphertext(args?.messageForSender);
+            let messageText = '(Unable to decrypt message)';
+            if (userCiphertext && userCiphertext.value.length > 0) {
+              try {
+                const decrypted = await signer.decryptValue(userCiphertext as never);
+                const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
+                const plain = decodeMemoPlaintext(raw);
+                const parsedMessage = parseChatMessagePayload(plain);
+                messageText = parsedMessage.cleanText;
+                if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+                  continue;
+                }
+              } catch {
+                messageText = '(Unable to decrypt message)';
+              }
+            }
+
+            entries.push({
+              id: `${log.transactionHash}-${log.index}-group-out`,
+              groupId,
+              direction: 'outgoing',
+              text: messageText,
+              senderAddress: walletAddress,
+              txHash: log.transactionHash,
+              blockNumber: log.blockNumber,
+              logIndex: log.index,
+              timestamp: blockTimestampMap.get(log.blockNumber)
+            });
+          }
+
+          entries.sort((left, right) => {
+            if (left.blockNumber !== right.blockNumber) {
+              return left.blockNumber - right.blockNumber;
+            }
+            return left.logIndex - right.logIndex;
+          });
+
+          if (entries.length > 0) {
+            setMessagesByGroup((previous) => {
+              const groupKey = String(groupId);
+              const existing = previous[groupKey] ?? [];
+              const confirmedOutgoingTxHashes = new Set(
+                entries
+                  .filter((entry) => entry.direction === 'outgoing')
+                  .map((entry) => entry.txHash.toLowerCase())
+              );
+              const prunedExisting = existing.filter((message) => {
+                if (!message.id.startsWith('local-group-')) {
+                  return true;
+                }
+                if (!message.txHash) {
+                  return true;
+                }
+                return !confirmedOutgoingTxHashes.has(message.txHash.toLowerCase());
+              });
+
+              const nextMessages = [...prunedExisting];
+              const existingIds = new Set(nextMessages.map((message) => message.id));
+              for (const entry of entries) {
+                if (existingIds.has(entry.id)) {
+                  continue;
+                }
+
+                existingIds.add(entry.id);
+                nextMessages.push({
+                  id: entry.id,
+                  direction: entry.direction,
+                  text: entry.text,
+                  senderAddress: entry.senderAddress,
+                  timestamp: entry.timestamp,
+                  blockNumber: entry.blockNumber,
+                  logIndex: entry.logIndex,
+                  txHash: entry.txHash
+                });
+              }
+
+              return {
+                ...previous,
+                [groupKey]: sortMessagesChronologically(nextMessages)
+              };
+            });
+          }
+        }
+
+        groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = latestBlock;
+      }
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+    } catch (syncError) {
+      if (!options?.background) {
+        const message = syncError instanceof Error ? syncError.message : 'Failed to sync group data.';
+        setError(message);
+      }
+    } finally {
+      syncGroupDataInFlightRef.current = false;
+      if (!options?.background) {
+        setSyncingGroups(false);
+      }
+
+      const pendingOptions = pendingGroupSyncOptionsRef.current;
+      pendingGroupSyncOptionsRef.current = null;
+      if (pendingOptions) {
+        syncGroupData(pendingOptions).catch(() => {});
+      }
+    }
+  };
+
+  useEffect(() => {
+    syncGroupDataRef.current = syncGroupData;
+  }, [syncGroupData]);
+
+  const activateGroup = useCallback((groupId: number) => {
+    if (!Number.isFinite(groupId) || groupId <= 0) {
+      return;
+    }
+    activeGroupIdRef.current = groupId;
+    setActiveContact(null);
+    setReplyingToMessage(null);
+    setActiveGroupId(groupId);
+    if (isMobileNav) {
+      setActiveMobileView('chat');
+    }
+  }, [isMobileNav]);
+
+  const createGroup = async () => {
+    setError('');
+
+    const title = normalizeContactName(newGroupTitle ?? '');
+    if (!title) {
+      setError('Enter a group title.');
+      return;
+    }
+
+    const myAddress = walletAddress.trim().toLowerCase();
+    const initialMembers = parseWalletAddressListInput(newGroupMembersInput).filter(
+      (address) => address.toLowerCase() !== myAddress
+    );
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.createGroup(title, initialMembers);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      setNewGroupTitle('');
+      setNewGroupMembersInput('');
+      await syncGroupData({ deep: true });
+    } catch (createGroupError) {
+      const message = createGroupError instanceof Error ? createGroupError.message : 'Failed to create group.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const inviteMembersToActiveGroup = async () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+
+    const myAddress = walletAddress.trim().toLowerCase();
+    const existingMembers = new Set((activeGroupMeta?.members ?? []).map((member) => member.toLowerCase()));
+    const accounts = parseWalletAddressListInput(groupInviteMembersInput).filter((address) => {
+      const key = address.toLowerCase();
+      if (key === myAddress) {
+        return false;
+      }
+      return !existingMembers.has(key);
+    });
+    if (accounts.length === 0) {
+      setError('Enter at least one valid wallet address to invite.');
+      return;
+    }
+
+    const ttlParsed = Math.max(0, Math.floor(Number(groupInviteTtlInput)));
+    if (!Number.isFinite(ttlParsed) || ttlParsed <= 0) {
+      setError('Invite TTL must be a positive number of seconds.');
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.inviteMembers(activeGroupId, accounts, ttlParsed);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      setGroupInviteMembersInput('');
+      await syncGroupData({ deep: true });
+    } catch (inviteError) {
+      const message = inviteError instanceof Error ? inviteError.message : 'Failed to send invites.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const acceptGroupInvite = async (groupId: number) => {
+    setError('');
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.acceptInvite(groupId);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await syncGroupData({ deep: true });
+      activateGroup(groupId);
+    } catch (acceptError) {
+      const message = acceptError instanceof Error ? acceptError.message : 'Failed to accept invite.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const declineGroupInvite = async (groupId: number) => {
+    setError('');
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.declineInvite(groupId);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await syncGroupData({ deep: true });
+    } catch (declineError) {
+      const message = declineError instanceof Error ? declineError.message : 'Failed to decline invite.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const sendGroupMessage = async (overrideMessageText?: string) => {
+    setError('');
+
+    if (sendingGroupMessage) {
+      return;
+    }
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+
+    const plainText = (overrideMessageText ?? messageInput).trim();
+    if (!plainText) {
+      setError('Enter a message first.');
+      return;
+    }
+    if (plainText.length > MAX_MESSAGE_LENGTH) {
+      setError(`Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`);
+      return;
+    }
+    if (plainText.startsWith(IMAGE_MESSAGE_PREFIX)) {
+      setError('Image messages are disabled for security reasons.');
+      return;
+    }
+
+    const groupId = activeGroupId;
+    const groupKey = String(groupId);
+    const localMessageId = `local-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const localMessageTimestamp = Math.floor(Date.now() / 1000);
+
+    try {
+      setSendingGroupMessage(true);
+      setMessagesByGroup((previous) => ({
+        ...previous,
+        [groupKey]: [
+          ...(previous[groupKey] ?? []),
+          {
+            id: localMessageId,
+            direction: 'outgoing',
+            text: plainText,
+            senderAddress: walletAddress,
+            timestamp: localMessageTimestamp,
+            deliveryState: 'pending'
+          }
+        ]
+      }));
+
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const selector = await resolveGroupSubmitSelector();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const requiredFee = await resolveRequiredFeeForGroupSend();
+
+      const encodedMemo = encodeMemoPlaintext(plainText);
+      const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
+      const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+      const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
+
+      const tx = await contract.submitGroupMessage(groupId, memoTuple, { value: requiredFee });
+      const submittedTxHash = typeof tx?.hash === 'string' ? tx.hash : '';
+
+      setMessagesByGroup((previous) => ({
+        ...previous,
+        [groupKey]: (previous[groupKey] ?? []).map((message) =>
+          message.id === localMessageId
+            ? {
+                ...message,
+                deliveryState: 'sent',
+                txHash: submittedTxHash || undefined
+              }
+            : message
+        )
+      }));
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      setMessageInput('');
+      await syncGroupData({ background: true });
+      if (activeSignerSource === 'burner') {
+        setTopUpMetricsNonce((previous) => previous + 1);
+      }
+    } catch (sendError) {
+      const message = sendError instanceof Error ? sendError.message : 'Failed to send group message.';
+      setError(message);
+      setMessagesByGroup((previous) => ({
+        ...previous,
+        [groupKey]: (previous[groupKey] ?? []).map((messageRecord) =>
+          messageRecord.id === localMessageId
+            ? {
+                ...messageRecord,
+                deliveryState: 'failed'
+              }
+            : messageRecord
+        )
+      }));
+    } finally {
+      setSendingGroupMessage(false);
+    }
+  };
+
   const sendHiddenContactNameToContact = async (contactAddress: string, contactName: string): Promise<string> => {
     const normalizedAddress = contactAddress.trim();
     const normalizedContactName = normalizeContactName(contactName)?.slice(0, 42);
@@ -4880,6 +5759,21 @@ export default function App() {
   }, [walletAddress]);
 
   useEffect(() => {
+    setGroups([]);
+    setGroupInvites([]);
+    setActiveGroupId(null);
+    setMessagesByGroup({});
+    groupsRef.current = [];
+    groupInvitesRef.current = [];
+    activeGroupIdRef.current = null;
+    groupOverviewLastSyncedBlockRef.current = {};
+    groupMessageLastSyncedBlockRef.current = {};
+    groupRequiredFeeCacheRef.current = null;
+    groupRequiredFeeRequestRef.current = null;
+    groupSubmitSelectorRef.current = null;
+  }, [walletAddress]);
+
+  useEffect(() => {
     setUnreadMap({});
     unreadMapRef.current = {};
     setLastReadAllTs(0);
@@ -5032,7 +5926,7 @@ export default function App() {
     setMessageInput('');
     setReplyingToMessage(null);
     setHighlightedMessageId(null);
-  }, [activeContact]);
+  }, [activeContact, activeGroupId]);
 
   useEffect(() => {
     if (!chatComposerRef.current) {
@@ -5083,12 +5977,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const activeContactChanged = previousActiveContactForScrollRef.current !== activeContact;
-    const currentLastMessageId = activeMessages.length > 0 ? activeMessages[activeMessages.length - 1].id : null;
+    const activeContactChanged = previousActiveContactForScrollRef.current !== activeThreadKey;
+    const currentLastMessageId = activeThreadMessages.length > 0 ? activeThreadMessages[activeThreadMessages.length - 1].id : null;
     const latestMessageChanged = previousLastMessageIdForScrollRef.current !== currentLastMessageId;
     if (activeContactChanged) {
       stickToBottomRef.current = true;
-      previousActiveContactForScrollRef.current = activeContact;
+      previousActiveContactForScrollRef.current = activeThreadKey;
     }
     previousLastMessageIdForScrollRef.current = currentLastMessageId;
 
@@ -5118,7 +6012,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeContact, activeMessages]);
+  }, [activeThreadKey, activeThreadMessages]);
 
   useEffect(() => {
     const container = chatMessagesRef.current;
@@ -5132,7 +6026,7 @@ export default function App() {
         return;
       }
 
-      const lastMessage = activeMessages.length > 0 ? activeMessages[activeMessages.length - 1] : null;
+      const lastMessage = activeThreadMessages.length > 0 ? activeThreadMessages[activeThreadMessages.length - 1] : null;
       const lastMessageElement = lastMessage ? messageElementRefs.current[lastMessage.id] : null;
       const imageInLatestMessage = Boolean(lastMessageElement && target && lastMessageElement.contains(target));
       if (!stickToBottomRef.current && !imageInLatestMessage) {
@@ -5151,7 +6045,7 @@ export default function App() {
     return () => {
       container.removeEventListener('load', handleImageLoad, true);
     };
-  }, [activeContact, activeMessages]);
+  }, [activeThreadKey, activeThreadMessages]);
 
   useEffect(() => {
     const container = chatMessagesRef.current;
@@ -5183,7 +6077,7 @@ export default function App() {
     return () => {
       observer.disconnect();
     };
-  }, [activeContact]);
+  }, [activeThreadKey]);
 
   useEffect(() => {
     const previousWallet = previousWalletAddressRef.current;
@@ -5207,7 +6101,7 @@ export default function App() {
   }, [walletAddress]);
 
   useEffect(() => {
-    if (!isConnected || !activeContact) {
+    if (!isConnected || !activeThreadKey) {
       return;
     }
 
@@ -5217,7 +6111,7 @@ export default function App() {
         scrollChatToBottom();
       });
     });
-  }, [isConnected, activeContact]);
+  }, [isConnected, activeThreadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5500,6 +6394,138 @@ export default function App() {
       unsubscribe?.();
     };
   }, [walletAddress, chainId, hasAesReady]);
+
+  useEffect(() => {
+    if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal || !hasAesReady) {
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: number | null = null;
+    let unsubscribe: (() => void) | null = null;
+
+    const runGroupSync = (options?: SyncGroupOptions) => {
+      if (cancelled) {
+        return;
+      }
+      syncGroupDataRef.current({ background: true, ...options }).catch(() => {});
+    };
+
+    const setupGroupRealtimeSubscription = async () => {
+      try {
+        const cotiEthers = await loadCotiEthersModule();
+        const wsProvider = await loadCotiWsProvider();
+        if (Date.now() - cotiWsLastHealthyAt > WS_HEALTHCHECK_TTL_MS) {
+          await wsProvider.getBlockNumber();
+        }
+        cotiWsLastHealthyAt = Date.now();
+
+        const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, wsProvider);
+        const handleGroupEvent = () => runGroupSync();
+
+        const createdFilter = contract.filters.GroupCreated(null, walletAddress);
+        const memberAddedFilter = contract.filters.GroupMemberAdded(null, walletAddress);
+        const memberRemovedFilter = contract.filters.GroupMemberRemoved(null, walletAddress);
+        const memberLeftFilter = contract.filters.GroupMemberLeft(null, walletAddress);
+        const inviteCreatedFilter = contract.filters.GroupInviteCreated(null, walletAddress, null);
+        const inviteAcceptedFilter = contract.filters.GroupInviteAccepted(null, walletAddress, null);
+        const inviteDeclinedFilter = contract.filters.GroupInviteDeclined(null, walletAddress, null);
+        const inviteRevokedFilter = contract.filters.GroupInviteRevoked(null, walletAddress, null);
+        const submittedFilter = contract.filters.GroupMessageSubmitted(null, walletAddress);
+        const deliveredFilter = contract.filters.GroupMessageDelivered(null, null, walletAddress);
+
+        contract.on(createdFilter, handleGroupEvent);
+        contract.on(memberAddedFilter, handleGroupEvent);
+        contract.on(memberRemovedFilter, handleGroupEvent);
+        contract.on(memberLeftFilter, handleGroupEvent);
+        contract.on(inviteCreatedFilter, handleGroupEvent);
+        contract.on(inviteAcceptedFilter, handleGroupEvent);
+        contract.on(inviteDeclinedFilter, handleGroupEvent);
+        contract.on(inviteRevokedFilter, handleGroupEvent);
+        contract.on(submittedFilter, handleGroupEvent);
+        contract.on(deliveredFilter, handleGroupEvent);
+
+        if (cancelled) {
+          contract.off(createdFilter, handleGroupEvent);
+          contract.off(memberAddedFilter, handleGroupEvent);
+          contract.off(memberRemovedFilter, handleGroupEvent);
+          contract.off(memberLeftFilter, handleGroupEvent);
+          contract.off(inviteCreatedFilter, handleGroupEvent);
+          contract.off(inviteAcceptedFilter, handleGroupEvent);
+          contract.off(inviteDeclinedFilter, handleGroupEvent);
+          contract.off(inviteRevokedFilter, handleGroupEvent);
+          contract.off(submittedFilter, handleGroupEvent);
+          contract.off(deliveredFilter, handleGroupEvent);
+          return;
+        }
+
+        unsubscribe = () => {
+          contract.off(createdFilter, handleGroupEvent);
+          contract.off(memberAddedFilter, handleGroupEvent);
+          contract.off(memberRemovedFilter, handleGroupEvent);
+          contract.off(memberLeftFilter, handleGroupEvent);
+          contract.off(inviteCreatedFilter, handleGroupEvent);
+          contract.off(inviteAcceptedFilter, handleGroupEvent);
+          contract.off(inviteDeclinedFilter, handleGroupEvent);
+          contract.off(inviteRevokedFilter, handleGroupEvent);
+          contract.off(submittedFilter, handleGroupEvent);
+          contract.off(deliveredFilter, handleGroupEvent);
+        };
+      } catch {
+        // Fall back to polling if websocket subscription fails.
+      }
+    };
+
+    runGroupSync({ deep: true });
+
+    intervalId = window.setInterval(() => {
+      runGroupSync();
+    }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
+
+    setupGroupRealtimeSubscription().catch(() => {});
+
+    return () => {
+      cancelled = true;
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+      unsubscribe?.();
+    };
+  }, [walletAddress, chainId, hasAesReady]);
+
+  useEffect(() => {
+    if (activeGroupId === null || !walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
+      return;
+    }
+    syncGroupDataRef.current({ background: true }).catch(() => {});
+  }, [activeGroupId, walletAddress, hasAesReady, chainId]);
+
+  useEffect(() => {
+    if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadInviteTtlDefault = async () => {
+      try {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+        const ttlRaw = await contract.INVITE_TTL_DEFAULT();
+        const ttl = Math.max(1, toSafeNumber(ttlRaw));
+        if (!cancelled) {
+          setGroupInviteTtlInput(String(ttl));
+        }
+      } catch {
+      }
+    };
+
+    loadInviteTtlDefault().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, hasAesReady, chainId]);
 
   useEffect(() => {
     const provider = getConnectedProvider();
@@ -6115,6 +7141,156 @@ export default function App() {
           })}
         </ul>
 
+        <div className="contact-profile-card">
+          <span className="contact-profile-label">Groups</span>
+          <form
+            className="contact-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createGroup().catch(() => {});
+            }}
+          >
+            <input
+              value={newGroupTitle}
+              onChange={(event) => setNewGroupTitle(event.target.value)}
+              placeholder="Group title"
+              aria-label="Group title"
+            />
+            <input
+              value={newGroupMembersInput}
+              onChange={(event) => setNewGroupMembersInput(event.target.value)}
+              placeholder="Initial members (comma/space separated)"
+              aria-label="Initial group members"
+            />
+            <button type="submit" disabled={processingGroupAction || !hasAesReady}>
+              {processingGroupAction ? 'Creating...' : 'Create group'}
+            </button>
+          </form>
+
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button
+              type="button"
+              className="contact"
+              onClick={() => {
+                syncGroupData({ deep: true }).catch(() => {});
+              }}
+              disabled={syncingGroups || !hasAesReady}
+            >
+              {syncingGroups ? 'Syncing groups...' : 'Sync groups'}
+            </button>
+          </div>
+
+          {activeGroupId !== null ? (
+            <form
+              className="contact-form"
+              style={{ marginTop: '10px' }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                inviteMembersToActiveGroup().catch(() => {});
+              }}
+            >
+              <input
+                value={groupInviteMembersInput}
+                onChange={(event) => setGroupInviteMembersInput(event.target.value)}
+                placeholder="Invite members to active group"
+                aria-label="Invite members"
+              />
+              <input
+                value={groupInviteTtlInput}
+                onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
+                placeholder="Invite TTL (seconds)"
+                aria-label="Invite TTL seconds"
+              />
+              <button type="submit" disabled={processingGroupAction || !hasAesReady}>
+                {processingGroupAction ? 'Sending...' : 'Send invites'}
+              </button>
+            </form>
+          ) : null}
+
+          {sortedGroupInvites.length > 0 ? (
+            <ul className="contacts-list" style={{ marginTop: '10px' }}>
+              {sortedGroupInvites.map((invite) => (
+                <li key={`invite-${invite.groupId}`}>
+                  <div className="contact-card">
+                    <div className="contact-top">
+                      <div className="contact-main">
+                        <span className="contact-name-inline">
+                          {invite.title ?? `Group ${invite.groupId}`} (#{invite.groupId})
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+                      Inviter: {isWalletAddress(invite.inviter) ? shortenAddress(invite.inviter) : invite.inviter || 'Unknown'}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
+                      Expires: {invite.expiresAt > 0 ? formatMessageTimestamp(invite.expiresAt) : 'N/A'}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <button
+                        type="button"
+                        className="contact"
+                        onClick={() => {
+                          acceptGroupInvite(invite.groupId).catch(() => {});
+                        }}
+                        disabled={processingGroupAction}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className="contact"
+                        onClick={() => {
+                          declineGroupInvite(invite.groupId).catch(() => {});
+                        }}
+                        disabled={processingGroupAction}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <ul className="contacts-list" style={{ marginTop: '10px' }}>
+            {sortedGroups.map((group) => {
+              const isActive = activeGroupId === group.id;
+              const groupTitle = normalizeContactName(group.title) ?? `Group ${group.id}`;
+              return (
+                <li key={`group-${group.id}`}>
+                  <div
+                    className={isActive ? 'contact-card active' : 'contact-card'}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => activateGroup(group.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        activateGroup(group.id);
+                      }
+                    }}
+                  >
+                    <div className="contact-top">
+                      <div className="contact-main">
+                        <span className="contact-name-inline">
+                          {groupTitle} (#{group.id})
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+                      Members: {group.memberCount}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
+                      Last activity: {group.lastTimestamp > 0 ? formatMessageTimestamp(group.lastTimestamp) : 'N/A'}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
         {error ? <p className="error">{error}</p> : null}
       </aside>
       ) : null}
@@ -6122,6 +7298,124 @@ export default function App() {
       <main className="chat-panel">
         {!isConnected ? (
           <div className="chat-placeholder">Connect a wallet to view contacts and start messaging.</div>
+        ) : activeGroupId !== null ? (
+          <div className="chat-shell">
+            <div className="chat-header">
+              <strong>
+                {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) + ` (#${activeGroupId})`}
+              </strong>
+              <button
+                type="button"
+                className="contact"
+                onClick={() => {
+                  syncGroupData({ deep: true }).catch(() => {});
+                }}
+                disabled={syncingGroups || syncingData}
+              >
+                {syncingGroups ? 'Syncing...' : 'Sync Group'}
+              </button>
+            </div>
+
+            <div className="chat-messages" ref={chatMessagesRef}>
+              {activeGroupMessages.length === 0 ? (
+                <p className="chat-empty">No group messages yet.</p>
+              ) : (
+                activeGroupMessages.map((message) => {
+                  const messageDisplayText = getMessageDisplayText(message.text, message.direction);
+                  const parsedImageTag = parseImageTag(message.text);
+                  const deliveryLabel =
+                    message.deliveryState === 'pending'
+                      ? 'Sending...'
+                      : message.deliveryState === 'sent'
+                        ? 'Sent'
+                        : message.deliveryState === 'failed'
+                          ? 'Failed'
+                          : '';
+                  const normalizedSender = message.senderAddress?.trim().toLowerCase() ?? '';
+                  const isSelfSender =
+                    normalizedSender.length > 0 &&
+                    walletAddress.length > 0 &&
+                    normalizedSender === walletAddress.trim().toLowerCase();
+                  const senderLabel = isSelfSender
+                    ? 'You'
+                    : findContactNameForWalletAddress(message.senderAddress) ??
+                      (message.senderAddress && isWalletAddress(message.senderAddress)
+                        ? shortenAddress(message.senderAddress)
+                        : 'Member');
+
+                  return (
+                    <div
+                      key={message.id}
+                      className={message.direction === 'outgoing' ? 'message-row outgoing' : 'message-row incoming'}
+                    >
+                      <div className="message-bubble">
+                        {message.direction === 'incoming' ? (
+                          <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
+                        ) : null}
+                        {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                        {message.timestamp || deliveryLabel ? (
+                          <div className="message-meta">
+                            {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
+                            {deliveryLabel ? (
+                              <span
+                                className={
+                                  message.deliveryState === 'failed'
+                                    ? 'message-delivery failed'
+                                    : message.deliveryState === 'pending'
+                                      ? 'message-delivery pending'
+                                      : 'message-delivery sent'
+                                }
+                              >
+                                {deliveryLabel}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="chat-compose">
+              <div
+                ref={chatComposerRef}
+                className="chat-compose-editor"
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-multiline={isMobileNav}
+                aria-label="Group message"
+                data-placeholder="Type a group message"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
+                    event.preventDefault();
+                    sendGroupMessage().catch(() => {});
+                  }
+                }}
+                onInput={(event) => {
+                  const raw = event.currentTarget.textContent ?? '';
+                  const normalized = raw.replace(/\r/g, '');
+                  const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
+                  const capped = nextValue.slice(0, MAX_MESSAGE_LENGTH);
+                  if (capped !== raw) {
+                    event.currentTarget.textContent = capped;
+                  }
+                  setMessageInput(capped);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  sendGroupMessage().catch(() => {});
+                }}
+                disabled={sendingGroupMessage || processingGroupAction}
+              >
+                {sendingGroupMessage ? 'Sending...' : 'Send'}
+              </button>
+            </div>
+          </div>
         ) : activeContact ? (
           <div className="chat-shell">
             <div className="chat-header">
@@ -6293,7 +7587,7 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className="chat-placeholder">Select a contact to start messaging.</div>
+          <div className="chat-placeholder">Select a contact or group to start messaging.</div>
         )}
       </main>
 
