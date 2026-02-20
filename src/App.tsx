@@ -5831,7 +5831,7 @@ export default function App() {
             Top Up with MetaMask
           </button>
           <div className="meta-row">
-            <span>Top up scale</span>
+            <span>Topup/Tip</span>
             <strong>x{topUpMultiplier}</strong>
           </div>
           <input
