@@ -3322,22 +3322,31 @@ export default function App() {
 
     if (syncingHistoryRef.current) {
       const pending = pendingSyncOptionsRef.current;
+      const mergedDeep = Boolean(options?.deep || pending?.deep);
+      const mergedContactsOnly = mergedDeep
+        ? false
+        : Boolean(options?.contactsOnly || pending?.contactsOnly);
+      const mergedPreviewPerContact = mergedContactsOnly
+        ? Boolean(options?.previewPerContact || pending?.previewPerContact)
+        : false;
       pendingSyncOptionsRef.current = {
         ...pending,
         ...options,
-        deep: Boolean(options?.deep || pending?.deep),
-        contactsOnly: Boolean(options?.contactsOnly || pending?.contactsOnly),
-        previewPerContact: Boolean(options?.previewPerContact || pending?.previewPerContact),
-        updateHead: Boolean(options?.updateHead || pending?.updateHead),
-        lookbackBlocks:
-          typeof options?.lookbackBlocks === 'number' && typeof pending?.lookbackBlocks === 'number'
+        deep: mergedDeep,
+        contactsOnly: mergedContactsOnly,
+        previewPerContact: mergedPreviewPerContact,
+        updateHead: Boolean(options?.updateHead || pending?.updateHead || mergedDeep),
+        lookbackBlocks: mergedDeep
+          ? undefined
+          : typeof options?.lookbackBlocks === 'number' && typeof pending?.lookbackBlocks === 'number'
             ? Math.max(options.lookbackBlocks, pending.lookbackBlocks)
             : typeof options?.lookbackBlocks === 'number'
               ? options.lookbackBlocks
               : pending?.lookbackBlocks,
         background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
-        fromBlock:
-          typeof options?.fromBlock === 'number' && typeof pending?.fromBlock === 'number'
+        fromBlock: mergedDeep
+          ? undefined
+          : typeof options?.fromBlock === 'number' && typeof pending?.fromBlock === 'number'
             ? Math.min(options.fromBlock, pending.fromBlock)
             : typeof options?.fromBlock === 'number'
               ? options.fromBlock
@@ -3371,13 +3380,13 @@ export default function App() {
       const fromBlock =
         typeof options?.fromBlock === 'number'
           ? Math.max(0, options.fromBlock)
-          : typeof options?.lookbackBlocks === 'number'
-            ? Math.max(0, toBlock - Math.max(0, Math.floor(options.lookbackBlocks)))
           : options?.deep
             ? 0
-            : typeof lastSyncedBlock === 'number'
-              ? lastSyncedBlock + 1
-              : Math.max(0, toBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
+            : typeof options?.lookbackBlocks === 'number'
+              ? Math.max(0, toBlock - Math.max(0, Math.floor(options.lookbackBlocks)))
+              : typeof lastSyncedBlock === 'number'
+                ? lastSyncedBlock + 1
+                : Math.max(0, toBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
 
       if (fromBlock > toBlock) {
         return;
@@ -5474,6 +5483,7 @@ export default function App() {
           style={{ display: isMobileNav ? 'none' : 'flex' }}
         >
           <a href={telegramBotLink} target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
+          <a href="https://pengodefi.app/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>PengoDeFi</a>
           <a href="https://bridge.coti.io/bridge" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
           <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
           <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
@@ -5500,6 +5510,7 @@ export default function App() {
           }
         >
           <a href={telegramBotLink} target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
+          <a href="https://pengodefi.app/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>PengoDeFi</a>
           <a href="https://bridge.coti.io/bridge" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
           <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
           <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
