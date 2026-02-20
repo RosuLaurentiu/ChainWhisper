@@ -391,12 +391,41 @@ body {
   border-radius: 8px;
   background: var(--bg-elev-1);
   color: var(--text);
-  padding: 10px 12px;
+  padding: 10px 84px 10px 12px;
   font-size: 0.9rem;
   min-height: 42px;
   line-height: 1.2;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.contact-profile-editor-wrap {
+  position: relative;
+}
+
+.contact-profile-editor-action {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.contact-profile-editor-action:hover {
+  background: #2a2146;
+}
+
+.contact-profile-editor-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .contact-profile-editor:focus {

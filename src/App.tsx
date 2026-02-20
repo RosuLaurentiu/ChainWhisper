@@ -68,6 +68,10 @@ const AUTO_SYNC_INTERVAL_MS = 30000;
 const WS_HEALTHCHECK_TTL_MS = 12000;
 const WS_RETRY_COOLDOWN_MS = 15000;
 const REALTIME_SYNC_DEBOUNCE_MS = 250;
+const REALTIME_SYNC_BURST_THROTTLE_MS = 1500;
+const REALTIME_SYNC_FALLBACK_INTERVAL_MS = 5000;
+const READ_STATE_BACKUP_DEBOUNCE_MS = 2500;
+const READ_STATE_BACKUP_MIN_INTERVAL_MS = 45000;
 const INITIAL_SYNC_LOOKBACK_BLOCKS = 2500;
 const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
@@ -79,6 +83,9 @@ const NICKNAME_DELIMITER = '\u001f';
 const REPLY_DELIMITER = '\u001e';
 const PROFILE_METADATA_PREFIX = '\u2063';
 const REPLY_METADATA_PREFIX = '\u2064';
+const CONTACT_NAME_METADATA_PREFIX = '\u2065';
+const CONTACT_NAME_ENCODING_ZERO = '\u200b';
+const CONTACT_NAME_ENCODING_ONE = '\u200c';
 const LEGACY_PROFILE_METADATA_PREFIX = '[nick:';
 const LEGACY_REPLY_METADATA_PREFIX = '[reply:';
 const LEGACY_PROFILE_PREFIX = '[[coti-profile:v1]]';
@@ -88,7 +95,6 @@ const STATE_BACKUP_PREFIX = '[[coti-state:v1]]';
 const STATE_BACKUP_COMPRESSED_PREFIX = 'z:';
 const READ_CURSOR_PREFIX = '[[coti-read:v1]]';
 const STATE_BACKUP_VERSION = 1;
-const READ_CURSOR_SUBMIT_THROTTLE_MS = 12000;
 const MAX_REPLY_PREVIEW_LENGTH = 28;
 const MAX_MESSAGE_LENGTH = 2000;
 const COTI_WEI = 10n ** 18n;
@@ -163,9 +169,10 @@ type SyncConversationOptions = {
 type StateBackupPayload = {
   version: number;
   updatedAt: number;
-  nickname: string;
-  contacts: Contact[];
-  walletLabel?: string;
+  lastReadAllTs?: number;
+  // Legacy fields kept optional for backward compatibility while parsing old backups.
+  nickname?: string;
+  contacts?: Contact[];
   readState?: BackupReadStateEntry[];
   unreadContacts?: string[];
 };
@@ -658,33 +665,6 @@ const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: string[])
   return [...fullByLower.values(), ...unresolvedByLower.values()];
 };
 
-const normalizeContactsForBackup = (contacts: Contact[]): Contact[] => {
-  const deduped = new Map<string, Contact>();
-
-  for (const contact of contacts) {
-    const address = contact.address.trim();
-    if (!isWalletAddress(address)) {
-      continue;
-    }
-
-    const key = address.toLowerCase();
-    const name = normalizeContactName(contact.name ?? '');
-    const shortAddress = shortenAddress(address);
-    const existing = deduped.get(key);
-    if (!existing) {
-      // store only the shortened address in backups to avoid publishing full addresses
-      deduped.set(key, { address: shortAddress, name });
-      continue;
-    }
-
-    if (!existing.name && name) {
-      deduped.set(key, { ...existing, name });
-    }
-  }
-
-  return Array.from(deduped.values()).sort((left, right) => left.address.localeCompare(right.address));
-};
-
 const normalizeBackupAddressToken = (value: unknown): string | null => {
   const token = String(value ?? '').trim().toLowerCase();
   if (!token) {
@@ -735,120 +715,43 @@ const normalizeReadStateEntries = (value: unknown): BackupReadStateEntry[] => {
     .sort((left, right) => left.address.localeCompare(right.address));
 };
 
-const normalizeUnreadContactsEntries = (value: unknown): string[] => {
-  if (!Array.isArray(value)) {
-    return [];
+const normalizeLastReadAllTs = (value: unknown): number => {
+  const normalized = Math.floor(toSafeNumber(value));
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return 0;
   }
-
-  return Array.from(
-    new Set(
-      value
-        .map((item) => normalizeBackupAddressToken(item))
-        .filter((token): token is string => Boolean(token))
-    )
-  ).sort((left, right) => left.localeCompare(right));
+  return normalized;
 };
 
-const normalizeReadStateForBackup = (lastReadState: Record<string, number>): BackupReadStateEntry[] => {
-  const byShortAddress = new Map<string, { owner: string; lastReadTs: number }>();
-  const ambiguousShortAddresses = new Set<string>();
-
-  for (const [address, rawTs] of Object.entries(lastReadState)) {
-    const normalizedAddress = address.trim().toLowerCase();
-    const lastReadTs = toSafeNumber(rawTs);
-    if (!isWalletAddress(normalizedAddress) || !Number.isFinite(lastReadTs) || lastReadTs <= 0) {
-      continue;
-    }
-
-    const shortAddress = shortenAddress(normalizedAddress).toLowerCase();
-    if (ambiguousShortAddresses.has(shortAddress)) {
-      continue;
-    }
-
-    const existing = byShortAddress.get(shortAddress);
-    if (existing && existing.owner !== normalizedAddress) {
-      byShortAddress.delete(shortAddress);
-      ambiguousShortAddresses.add(shortAddress);
-      continue;
-    }
-
-    if (!existing || lastReadTs > existing.lastReadTs) {
-      byShortAddress.set(shortAddress, {
-        owner: normalizedAddress,
-        lastReadTs
-      });
+const deriveLegacyLastReadAllTs = (entries: BackupReadStateEntry[]): number => {
+  let latest = 0;
+  for (const entry of entries) {
+    if (entry.lastReadTs > latest) {
+      latest = entry.lastReadTs;
     }
   }
-
-  return Array.from(byShortAddress.entries())
-    .map(([address, entry]) => ({ address, lastReadTs: entry.lastReadTs }))
-    .sort((left, right) => left.address.localeCompare(right.address));
+  return latest;
 };
 
-const normalizeUnreadContactsForBackup = (unreadState: Record<string, boolean>): string[] => {
-  const byShortAddress = new Map<string, string>();
-  const ambiguousShortAddresses = new Set<string>();
-
-  for (const [address, isUnread] of Object.entries(unreadState)) {
-    if (!isUnread) {
-      continue;
-    }
-
-    const normalizedAddress = address.trim().toLowerCase();
-    if (!isWalletAddress(normalizedAddress)) {
-      continue;
-    }
-
-    const shortAddress = shortenAddress(normalizedAddress).toLowerCase();
-    if (ambiguousShortAddresses.has(shortAddress)) {
-      continue;
-    }
-
-    const existing = byShortAddress.get(shortAddress);
-    if (existing && existing !== normalizedAddress) {
-      byShortAddress.delete(shortAddress);
-      ambiguousShortAddresses.add(shortAddress);
-      continue;
-    }
-
-    byShortAddress.set(shortAddress, normalizedAddress);
-  }
-
-  return Array.from(byShortAddress.keys()).sort((left, right) => left.localeCompare(right));
-};
-
-const buildStateBackupPayload = (
-  nickname: string,
-  contacts: Contact[],
-  walletLabel?: string,
-  readState: BackupReadStateEntry[] = [],
-  unreadContacts: string[] = []
-): StateBackupPayload => {
-  const normalizedReadState = normalizeReadStateEntries(readState);
-  const normalizedUnreadContacts = normalizeUnreadContactsEntries(unreadContacts);
-
+const buildStateBackupPayload = (lastReadAllTs = 0): StateBackupPayload => {
   return {
     version: STATE_BACKUP_VERSION,
     updatedAt: Math.floor(Date.now() / 1000),
-    nickname: nickname.slice(0, 42),
-    contacts: normalizeContactsForBackup(contacts),
-    walletLabel: walletLabel ? walletLabel.slice(0, 42) : undefined,
-    readState: normalizedReadState.length > 0 ? normalizedReadState : undefined,
-    unreadContacts: normalizedUnreadContacts.length > 0 ? normalizedUnreadContacts : undefined
+    lastReadAllTs: normalizeLastReadAllTs(lastReadAllTs) || undefined
   };
 };
 
 const buildStateBackupText = (payload: StateBackupPayload): string => {
-  // Compact format: {v, u, n, l, c, r, q} to minimize on-chain size.
-  const compact = {
+  // Compact format: {v, u, g} to minimize on-chain size.
+  const normalizedLastReadAllTs = normalizeLastReadAllTs(payload.lastReadAllTs);
+  const compactBase = {
     v: payload.version,
-    u: payload.updatedAt,
-    n: payload.nickname,
-    l: payload.walletLabel ?? '',
-    c: payload.contacts.map((ct) => [ct.address, ct.name ?? '']),
-    r: (payload.readState ?? []).map((entry) => [entry.address, entry.lastReadTs]),
-    q: payload.unreadContacts ?? []
-  } as const;
+    u: payload.updatedAt
+  };
+  const compact =
+    normalizedLastReadAllTs > 0
+      ? { ...compactBase, g: normalizedLastReadAllTs }
+      : compactBase;
 
   const rawJson = JSON.stringify(compact);
   try {
@@ -891,53 +794,29 @@ const parseStateBackupText = (text: string): StateBackupPayload | null => {
 
     const parsed = JSON.parse(rawPayload) as any;
 
-    // New compact format: object with 'v','u','n','c' where c is array of [addr, name]
-    if (parsed && typeof parsed === 'object' && parsed.v === STATE_BACKUP_VERSION && Array.isArray(parsed.c)) {
+    // Current compact format: {v, u, g}
+    if (parsed && typeof parsed === 'object' && parsed.v === STATE_BACKUP_VERSION) {
       const updatedAt = typeof parsed.u === 'number' ? parsed.u : 0;
-      const nickname = typeof parsed.n === 'string' ? parsed.n.slice(0, 42) : '';
-      const contacts = parsed.c
-        .map((item: unknown) => {
-          if (!Array.isArray(item) || item.length === 0) return null;
-          const addr = String(item[0] ?? '').trim();
-          const name = normalizeContactName(String(item[1] ?? ''));
-          return { address: addr, name } as Contact;
-        })
-        .filter(Boolean) as Contact[];
-      const walletLabel = typeof parsed.l === 'string' && parsed.l.trim() ? parsed.l.slice(0, 42) : undefined;
-      const readState = normalizeReadStateEntries(parsed.r);
-      const unreadContacts = normalizeUnreadContactsEntries(parsed.q);
+      const legacyReadState = normalizeReadStateEntries(parsed.r);
+      const explicitReadAllTs = normalizeLastReadAllTs(parsed.g);
+      const fallbackReadAllTs = deriveLegacyLastReadAllTs(legacyReadState);
       return {
         version: STATE_BACKUP_VERSION,
         updatedAt,
-        nickname,
-        contacts,
-        walletLabel,
-        readState: readState.length > 0 ? readState : undefined,
-        unreadContacts: unreadContacts.length > 0 ? unreadContacts : undefined
+        lastReadAllTs: explicitReadAllTs || fallbackReadAllTs || undefined
       };
     }
 
-    // Fallback to legacy full-obj format
+    // Fallback to legacy full-object format.
     if (parsed && typeof parsed === 'object' && parsed.version === STATE_BACKUP_VERSION) {
       const updatedAt = typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0;
-      const nickname = typeof parsed.nickname === 'string' ? parsed.nickname.slice(0, 42) : '';
-      const contacts = Array.isArray(parsed.contacts)
-        ? (parsed.contacts as unknown[])
-            .map((c) => ({ address: ((c as any).address ?? '').trim(), name: normalizeContactName((c as any).name ?? '') }))
-            .filter((c) => c.name || c.address)
-        : [];
-
-      const walletLabel = typeof (parsed as any).walletLabel === 'string' ? (parsed as any).walletLabel.slice(0, 42) : undefined;
-      const readState = normalizeReadStateEntries((parsed as any).readState);
-      const unreadContacts = normalizeUnreadContactsEntries((parsed as any).unreadContacts);
+      const legacyReadState = normalizeReadStateEntries((parsed as any).readState ?? (parsed as any).r);
+      const explicitReadAllTs = normalizeLastReadAllTs((parsed as any).lastReadAllTs ?? (parsed as any).g);
+      const fallbackReadAllTs = deriveLegacyLastReadAllTs(legacyReadState);
       return {
         version: STATE_BACKUP_VERSION,
         updatedAt,
-        nickname,
-        contacts,
-        walletLabel,
-        readState: readState.length > 0 ? readState : undefined,
-        unreadContacts: unreadContacts.length > 0 ? unreadContacts : undefined
+        lastReadAllTs: explicitReadAllTs || fallbackReadAllTs || undefined
       };
     }
 
@@ -945,15 +824,6 @@ const parseStateBackupText = (text: string): StateBackupPayload | null => {
   } catch {
     return null;
   }
-};
-
-const buildReadCursorText = (payload: ReadCursorPayload): string => {
-  const compact = {
-    p: payload.peer.toLowerCase(),
-    t: payload.lastReadTs,
-    b: payload.lastReadBlock ?? 0
-  } as const;
-  return `${READ_CURSOR_PREFIX}${JSON.stringify(compact)}`;
 };
 
 const parseReadCursorText = (text: string): ReadCursorPayload | null => {
@@ -989,24 +859,10 @@ const parseReadCursorText = (text: string): ReadCursorPayload | null => {
   }
 };
 
-const createStateBackupFingerprint = (
-  nickname: string,
-  contacts: Contact[],
-  walletLabel?: string,
-  readState: BackupReadStateEntry[] = [],
-  unreadContacts: string[] = []
-): string => {
-  const normalized = normalizeContactsForBackup(contacts).map((c) => [c.address, c.name ?? '']);
-  const normalizedReadState = normalizeReadStateEntries(readState).map((entry) => [entry.address, entry.lastReadTs]);
-  const normalizedUnread = normalizeUnreadContactsEntries(unreadContacts);
-  return JSON.stringify({
-    n: nickname.slice(0, 42),
-    c: normalized,
-    l: walletLabel ?? '',
-    r: normalizedReadState,
-    q: normalizedUnread
+const createStateBackupFingerprint = (lastReadAllTs = 0): string =>
+  JSON.stringify({
+    g: normalizeLastReadAllTs(lastReadAllTs)
   });
-};
 
 const sortMessagesChronologically = (messages: ChatMessage[]): ChatMessage[] => {
   const next = [...messages];
@@ -1418,6 +1274,66 @@ const buildMessageWithReplyPayload = (plainText: string, replyToText?: string, r
   return `${externalReplyPrefix}${REPLY_METADATA_PREFIX}${preview}${REPLY_METADATA_PREFIX}<: ${plainText}`;
 };
 
+const encodeHiddenContactName = (contactName: string): string => {
+  const bytes = TEXT_ENCODER.encode(contactName);
+  let encoded = '';
+  for (const byte of bytes) {
+    for (let bitIndex = 7; bitIndex >= 0; bitIndex -= 1) {
+      encoded += byte & (1 << bitIndex) ? CONTACT_NAME_ENCODING_ONE : CONTACT_NAME_ENCODING_ZERO;
+    }
+  }
+  return encoded;
+};
+
+const decodeHiddenContactName = (encodedChunk: string): string | undefined => {
+  if (!encodedChunk || encodedChunk.length % 8 !== 0) {
+    return undefined;
+  }
+
+  const bytes = new Uint8Array(encodedChunk.length / 8);
+  for (let byteIndex = 0; byteIndex < bytes.length; byteIndex += 1) {
+    let nextByte = 0;
+    for (let bitIndex = 0; bitIndex < 8; bitIndex += 1) {
+      const character = encodedChunk[byteIndex * 8 + bitIndex];
+      if (character !== CONTACT_NAME_ENCODING_ZERO && character !== CONTACT_NAME_ENCODING_ONE) {
+        return undefined;
+      }
+      if (character === CONTACT_NAME_ENCODING_ONE) {
+        nextByte |= 1 << (7 - bitIndex);
+      }
+    }
+    bytes[byteIndex] = nextByte;
+  }
+
+  const decoded = TEXT_DECODER.decode(bytes);
+  return normalizeContactName(decoded)?.slice(0, 42);
+};
+
+const buildMessageWithContactNamePayload = (plainText: string, contactName?: string): string => {
+  const normalizedContactName = normalizeContactName(contactName ?? '')?.slice(0, 42);
+  if (!normalizedContactName) {
+    return plainText;
+  }
+  const encodedContactName = encodeHiddenContactName(normalizedContactName);
+  return `${CONTACT_NAME_METADATA_PREFIX}${encodedContactName}${CONTACT_NAME_METADATA_PREFIX}${plainText}`;
+};
+
+const parseContactNamePayload = (text: string): { cleanText: string; contactName?: string } => {
+  if (!text.startsWith(CONTACT_NAME_METADATA_PREFIX)) {
+    return { cleanText: text };
+  }
+  const metadataEnd = text.indexOf(CONTACT_NAME_METADATA_PREFIX, CONTACT_NAME_METADATA_PREFIX.length);
+  if (metadataEnd <= CONTACT_NAME_METADATA_PREFIX.length) {
+    return { cleanText: text };
+  }
+  const nameChunk = text.slice(CONTACT_NAME_METADATA_PREFIX.length, metadataEnd);
+  const contactName =
+    decodeHiddenContactName(nameChunk) ??
+    normalizeContactName(nameChunk.trim())?.slice(0, 42);
+  const remaining = text.slice(metadataEnd + CONTACT_NAME_METADATA_PREFIX.length);
+  return { cleanText: remaining, contactName };
+};
+
 const parseMessageReplyPayload = (text: string): {
   cleanText: string;
   replyToText?: string;
@@ -1579,6 +1495,28 @@ const parseMessageProfilePayload = (text: string): { cleanText: string; nickname
   }
 };
 
+const parseChatMessagePayload = (text: string): {
+  cleanText: string;
+  replyToMessageId?: string;
+  replyToText?: string;
+  replyToTxHash?: string;
+  embeddedNickname?: string;
+  embeddedContactName?: string;
+} => {
+  const contactNameParsed = parseContactNamePayload(text);
+  const profileParsed = parseMessageProfilePayload(contactNameParsed.cleanText);
+  const replyParsed = parseMessageReplyPayload(profileParsed.cleanText);
+
+  return {
+    cleanText: replyParsed.cleanText,
+    replyToMessageId: replyParsed.replyToMessageId,
+    replyToText: replyParsed.replyToText,
+    replyToTxHash: replyParsed.replyToTxHash,
+    embeddedNickname: profileParsed.nickname,
+    embeddedContactName: contactNameParsed.contactName
+  };
+};
+
 const getMessageDisplayText = (text: string): string => {
   if (text.startsWith(IMAGE_MESSAGE_PREFIX)) {
     return '[Image disabled for security]';
@@ -1604,13 +1542,10 @@ export default function App() {
   const [showBurnerMnemonic, setShowBurnerMnemonic] = useState(false);
   const [burnerImportInput, setBurnerImportInput] = useState('');
   const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>([]);
-  const [restoredWalletLabels, setRestoredWalletLabels] = useState<Record<string, string>>({});
   const [activeBurnerWalletId, setActiveBurnerWalletId] = useState('');
-  const [burnerWalletLabelInput, setBurnerWalletLabelInput] = useState('');
   const [showBurnerImportModal, setShowBurnerImportModal] = useState(false);
   const [burnerStorageBlocked, setBurnerStorageBlocked] = useState<boolean>(() => !isBurnerStorageAvailable());
   const [showBurnerPinModal, setShowBurnerPinModal] = useState(false);
-  const [restoredShortNicknames, setRestoredShortNicknames] = useState<Record<string, string>>({});
   const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
   const [burnerPinInput, setBurnerPinInput] = useState('');
   const [pendingBurnerInit, setPendingBurnerInit] = useState<PendingBurnerInit | null>(null);
@@ -1619,7 +1554,6 @@ export default function App() {
   const [burnerNeedsFunding, setBurnerNeedsFunding] = useState(false);
   const [myNickname, setMyNickname] = useState('');
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
-  const [savingNicknameOnChain, setSavingNicknameOnChain] = useState(false);
   const [activeSignerSource, setActiveSignerSource] = useState<SignerSource>('burner');
   const [connectionMethod, setConnectionMethod] = useState<'metamask' | null>(null);
   const [connectingMethod, setConnectingMethod] = useState<'metamask' | null>(null);
@@ -1629,11 +1563,10 @@ export default function App() {
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
   const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>({});
-  const [lastReadMap, setLastReadMap] = useState<Record<string, number>>({});
-  const lastReadMapRef = useRef<Record<string, number>>({});
-  const readCursorSubmitAtRef = useRef<Record<string, number>>({});
-  const lastSubmittedReadCursorTsRef = useRef<Record<string, number>>({});
-  const readCursorSubmitInFlightRef = useRef<Record<string, boolean>>({});
+  const [lastReadAllTs, setLastReadAllTs] = useState(0);
+  const lastReadAllTsRef = useRef(0);
+  const lastReadByContactRef = useRef<Record<string, number>>({});
+  const unreadMapRef = useRef<Record<string, boolean>>({});
   const SOUND_ENABLED_STORAGE_KEY = 'coti-chat-sound-enabled';
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     try {
@@ -1724,7 +1657,6 @@ export default function App() {
   const chatComposerRef = useRef<HTMLDivElement | null>(null);
   const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const highlightTimeoutRef = useRef<number | null>(null);
-  const burnerLabelAutoSaveTimerRef = useRef<number | null>(null);
   const previousActiveContactForScrollRef = useRef<string | null>(null);
   const previousLastMessageIdForScrollRef = useRef<string | null>(null);
   const lastObservedScrollHeightRef = useRef<number>(0);
@@ -1742,8 +1674,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    lastReadMapRef.current = lastReadMap;
-  }, [lastReadMap]);
+    lastReadAllTsRef.current = normalizeLastReadAllTs(lastReadAllTs);
+  }, [lastReadAllTs]);
 
   useEffect(() => {
     refreshBurnerStorageStatus();
@@ -1758,36 +1690,11 @@ export default function App() {
     };
   }, [refreshBurnerStorageStatus]);
 
-  useEffect(() => {
-    if (!activeContact) return;
-    const key = activeContact.toLowerCase();
-    const pageVisible = typeof document !== 'undefined' && !document.hidden && (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
-    if (!pageVisible) return; // don't mark as read if page/tab isn't visible/focused
-    try {
-      const msgs = messagesByContact[key] ?? [];
-      const lastTs = msgs.length ? (typeof msgs[msgs.length - 1].timestamp === 'number' ? Number(msgs[msgs.length - 1].timestamp) : Math.floor(Date.now() / 1000)) : Math.floor(Date.now() / 1000);
-      const currentTs = Number(lastReadMapRef.current[key] ?? 0);
-      if (lastTs > currentTs) {
-        lastReadMapRef.current = {
-          ...lastReadMapRef.current,
-          [key]: lastTs
-        };
-      }
-      setLastReadMap((prev) => {
-        const copy = { ...prev };
-        copy[key] = lastTs;
-        return copy;
-      });
-    } catch {}
-    setUnreadMap((prev) => {
-      if (!prev[key]) return prev;
-      const copy = { ...prev };
-      delete copy[key];
-      return copy;
-    });
-  }, [activeContact]);
-
   const prevUnreadRef = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    unreadMapRef.current = unreadMap || {};
+  }, [unreadMap]);
+
   useEffect(() => {
     const prev = prevUnreadRef.current || {};
     const next = unreadMap || {};
@@ -1825,12 +1732,13 @@ export default function App() {
   const submitSelectorRef = useRef<string | null>(null);
   const backupInFlightRef = useRef(false);
   const onChainNicknameCacheRef = useRef<Record<string, string | null>>({});
-  const lastMessageTimeCacheRef = useRef<Record<string, number>>({});
   const lastAppliedStateBackupTsRef = useRef<Record<string, number>>({});
   const lastBackedUpStateFingerprintRef = useRef<Record<string, string>>({});
   const cachedStateBackupMemoRef = useRef<Record<string, { fingerprint: string; memo: SubmitMemoPayload }>>({});
   const lastStateBackupBlockRef = useRef<Record<string, number>>({});
   const lastAutoBackupAttemptBlockRef = useRef<Record<string, number>>({});
+  const readStateBackupTimerRef = useRef<number | null>(null);
+  const lastReadStateBackupSubmittedAtRef = useRef(0);
   const syncConversationHistoryRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
 
   useEffect(() => {
@@ -1907,7 +1815,6 @@ export default function App() {
   );
   const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
   const burnerWalletSelectionValue = activeBurnerWalletId || burnerRecordRef.current?.id || '';
-  const activeBurnerWalletMeta = burnerWallets.find((walletRecord) => walletRecord.id === burnerWalletSelectionValue);
   const hasSavedBurnerWallet = useMemo(
     () => !burnerStorageBlocked && parseBurnerWalletStorageState().kind !== 'none',
     [burnerWallets, burnerStorageBlocked]
@@ -1919,20 +1826,26 @@ export default function App() {
 
     return contacts.find((contact) => contact.address.toLowerCase() === address.toLowerCase())?.name;
   };
-  const findBurnerWalletNameForAddress = (address?: string): string | undefined => {
-    if (!address) {
-      return undefined;
+  const getBurnerWalletDisplayName = (walletRecord: BurnerWalletRecord): string => {
+    const recordAddress = walletRecord.address?.toLowerCase();
+    const currentWalletKey = walletAddress.trim().toLowerCase();
+    if (recordAddress && recordAddress === currentWalletKey) {
+      const ownNickname = normalizeContactName(myNickname);
+      if (ownNickname) {
+        return ownNickname;
+      }
     }
-
-    return burnerWallets.find((walletRecord) => walletRecord.address?.toLowerCase() === address.toLowerCase())?.name;
+    return findContactNameForWalletAddress(walletRecord.address) ?? (walletRecord.address ? shortenAddress(walletRecord.address) : 'Unnamed');
   };
-  const getBurnerWalletDisplayName = (walletRecord: BurnerWalletRecord): string =>
-    restoredWalletLabels[walletRecord.address?.toLowerCase() ?? ''] ??
-    walletRecord.name ??
-    findContactNameForWalletAddress(walletRecord.address) ??
-    (walletRecord.address ? shortenAddress(walletRecord.address) : 'Unnamed');
   const findBurnerWalletDefaultNameForAddress = (address: string): string | undefined => {
     const normalizedAddress = address.toLowerCase();
+    const currentWalletKey = walletAddress.trim().toLowerCase();
+    if (normalizedAddress === currentWalletKey) {
+      const ownNickname = normalizeContactName(myNickname);
+      if (ownNickname) {
+        return ownNickname;
+      }
+    }
     const walletIndex = burnerWallets.findIndex(
       (walletRecord) => walletRecord.address?.toLowerCase() === normalizedAddress
     );
@@ -2394,53 +2307,6 @@ export default function App() {
     await initializeBurnerWallet('stored', undefined, burnerPinRef.current, walletId);
   };
 
-  const saveActiveBurnerWalletLabel = async (labelInputOverride?: string) => {
-    if (!activeBurnerWalletMeta?.id) {
-      return;
-    }
-
-    if (!burnerPinRef.current) {
-      return;
-    }
-
-    const normalizedName = normalizeContactName(
-      typeof labelInputOverride === 'string' ? labelInputOverride : burnerWalletLabelInput
-    );
-    const currentName = normalizeContactName(activeBurnerWalletMeta.name ?? '');
-    if ((normalizedName ?? '') === (currentName ?? '')) {
-      return;
-    }
-
-    const updatedWallets = burnerWallets.map((walletRecord) =>
-      walletRecord.id === activeBurnerWalletMeta.id
-        ? {
-            ...walletRecord,
-            name: normalizedName
-          }
-        : walletRecord
-    );
-
-    const nextVault = await createBurnerWalletVault(updatedWallets, activeBurnerWalletMeta.id);
-    await saveEncryptedBurnerWalletVault(nextVault, burnerPinRef.current);
-    setBurnerWallets(nextVault.wallets);
-    if (burnerRecordRef.current?.id === activeBurnerWalletMeta.id) {
-      burnerRecordRef.current = {
-        ...burnerRecordRef.current,
-        name: normalizedName
-      };
-    }
-    if (activeBurnerWalletMeta.address && normalizedName) {
-      setContacts((previous) =>
-        previous.map((contact) =>
-          contact.address.toLowerCase() === activeBurnerWalletMeta.address?.toLowerCase()
-            ? { ...contact, name: normalizedName }
-            : contact
-        )
-      );
-    }
-    setStatus('Burner wallet label updated.');
-  };
-
   const topUpBurnerWithMetaMask = async () => {
     setError('');
 
@@ -2552,7 +2418,8 @@ export default function App() {
     setError('');
 
     const address = newContact.trim();
-    const name = normalizeContactName(newContactName) ?? findBurnerWalletDefaultNameForAddress(address);
+    const explicitName = normalizeContactName(newContactName);
+    const name = explicitName ?? findBurnerWalletDefaultNameForAddress(address);
     if (!isWalletAddress(address)) {
       setError('Enter a valid EVM wallet address.');
       return;
@@ -2571,12 +2438,18 @@ export default function App() {
       );
       setNewContact('');
       setNewContactName('');
+      if (explicitName) {
+        syncContactNameAliasFromInput(address, explicitName).catch(() => {});
+      }
       return;
     }
 
     setContacts((previous) => [...previous, { address, name }]);
     setNewContact('');
     setNewContactName('');
+    if (explicitName) {
+      syncContactNameAliasFromInput(address, explicitName).catch(() => {});
+    }
     if (!activeContact) {
       setActiveContact(address);
     }
@@ -2606,6 +2479,7 @@ export default function App() {
       )
     );
     cancelRenameContact();
+    syncContactNameAliasFromInput(address, name).catch(() => {});
   };
 
   const removeContact = (address: string) => {
@@ -2661,41 +2535,63 @@ export default function App() {
       return;
     }
 
-    const key = contactAddress.toLowerCase();
-    const messages = messagesByContact[key] ?? [];
-    const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-    const fallbackTimestamp = Math.floor(Date.now() / 1000);
-    const lastTimestamp =
-      latestMessage && typeof latestMessage.timestamp === 'number' ? Number(latestMessage.timestamp) : fallbackTimestamp;
-    const lastBlockNumber = latestMessage?.blockNumber;
-    const currentTs = Number(lastReadMapRef.current[key] ?? 0);
-    if (lastTimestamp > currentTs) {
-      lastReadMapRef.current = {
-        ...lastReadMapRef.current,
-        [key]: lastTimestamp
+    const normalizedAddress = contactAddress.trim().toLowerCase();
+    if (!isWalletAddress(normalizedAddress)) {
+      return;
+    }
+
+    const localMessages = messagesByContact[normalizedAddress] ?? [];
+    let latestIncomingFromLocal = 0;
+    for (const message of localMessages) {
+      if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
+        continue;
+      }
+      const ts = Number(message.timestamp);
+      if (ts > latestIncomingFromLocal) {
+        latestIncomingFromLocal = ts;
+      }
+    }
+
+    const readAtTs = Math.max(Math.floor(Date.now() / 1000), latestIncomingFromLocal);
+    const previousContactReadTs = lastReadByContactRef.current[normalizedAddress] ?? 0;
+    if (readAtTs > previousContactReadTs) {
+      lastReadByContactRef.current = {
+        ...lastReadByContactRef.current,
+        [normalizedAddress]: readAtTs
       };
     }
 
-    setLastReadMap((previous) => {
-      if (previous[key] === lastTimestamp) {
-        return previous;
-      }
+    const previousUnread = unreadMapRef.current || {};
+    if (!previousUnread[normalizedAddress]) {
+      return;
+    }
 
-      return { ...previous, [key]: lastTimestamp };
-    });
+    const nextUnread = { ...previousUnread };
+    delete nextUnread[normalizedAddress];
+    unreadMapRef.current = nextUnread;
+    setUnreadMap(nextUnread);
 
-    setUnreadMap((previous) => {
-      if (!previous[key]) {
-        return previous;
-      }
-
-      const next = { ...previous };
-      delete next[key];
-      return next;
-    });
-
-    emitReadCursorToChain(key, lastTimestamp, lastBlockNumber).catch(() => {});
+    if (Object.keys(nextUnread).length === 0 && readAtTs > lastReadAllTsRef.current) {
+      lastReadAllTsRef.current = readAtTs;
+      setLastReadAllTs((previous) => (readAtTs > previous ? readAtTs : previous));
+    }
   }, [messagesByContact]);
+
+  useEffect(() => {
+    if (!activeContact) {
+      return;
+    }
+
+    const pageVisible =
+      typeof document !== 'undefined' &&
+      !document.hidden &&
+      (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+    if (!pageVisible) {
+      return;
+    }
+
+    markConversationAsRead(activeContact);
+  }, [activeContact, markConversationAsRead, messagesByContact]);
 
   const activateContact = useCallback((contactAddress: string) => {
     setActiveContact(contactAddress);
@@ -3002,62 +2898,6 @@ export default function App() {
     }
   };
 
-  const emitReadCursorToChain = async (
-    peerAddress: string,
-    lastReadTs: number,
-    lastReadBlock?: number
-  ): Promise<void> => {
-    const me = walletAddress.trim().toLowerCase();
-    const peer = peerAddress.trim().toLowerCase();
-    if (!isWalletAddress(me) || !isWalletAddress(peer) || !Number.isFinite(lastReadTs) || lastReadTs <= 0) {
-      return;
-    }
-
-    const previousSubmittedTs = lastSubmittedReadCursorTsRef.current[peer] ?? 0;
-    if (lastReadTs <= previousSubmittedTs) {
-      return;
-    }
-
-    const now = Date.now();
-    const lastSubmittedAt = readCursorSubmitAtRef.current[peer] ?? 0;
-    if (now - lastSubmittedAt < READ_CURSOR_SUBMIT_THROTTLE_MS) {
-      return;
-    }
-
-    if (readCursorSubmitInFlightRef.current[peer]) {
-      return;
-    }
-
-    readCursorSubmitInFlightRef.current[peer] = true;
-    try {
-      const { signer, cacheKey } = await getMemoSigner();
-      const selector = await resolveSubmitSelector();
-
-      const payloadText = buildReadCursorText({ peer, lastReadTs, lastReadBlock });
-      const encodedMemo = encodeMemoPlaintext(payloadText);
-      const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
-      const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
-      const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
-
-      const cotiEthers = await loadCotiEthersModule();
-      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-      const requiredFee = await resolveRequiredFeeForSend();
-      await contract.submit(me, memoTuple, { value: requiredFee });
-
-      lastSubmittedReadCursorTsRef.current[peer] = lastReadTs;
-      readCursorSubmitAtRef.current[peer] = Date.now();
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-    } catch {
-    } finally {
-      readCursorSubmitInFlightRef.current[peer] = false;
-    }
-  };
-
   const getNicknameMaxLength = async (): Promise<number> => {
     if (nicknameMaxBytesLoadedRef.current) {
       return nicknameMaxBytes;
@@ -3153,7 +2993,6 @@ export default function App() {
     }
 
     try {
-      setSavingNicknameOnChain(true);
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
@@ -3178,8 +3017,6 @@ export default function App() {
       const message = nicknameError instanceof Error ? nicknameError.message : 'Failed to save nickname on chain.';
       setError(message);
       return false;
-    } finally {
-      setSavingNicknameOnChain(false);
     }
   };
 
@@ -3207,322 +3044,38 @@ export default function App() {
   const applyStateBackupPayload = (
     walletKey: string,
     payload: StateBackupPayload,
-    discoveredNicknames?: Map<string, string>,
-    backupBlockNumber?: number,
-    discoveredAddresses?: Iterable<string>
+    backupBlockNumber?: number
   ) => {
-  
     const currentBackupTs = lastAppliedStateBackupTsRef.current[walletKey] ?? 0;
     if (payload.updatedAt < currentBackupTs) {
       return;
     }
 
-    const rawSnapshotContacts = Array.isArray(payload.contacts) ? payload.contacts : [];
-    const snapshotContacts: Contact[] = rawSnapshotContacts
-      .map((c) => ({ address: (c.address ?? '').trim(), name: normalizeContactName((c as Contact).name ?? '') }))
-      .filter((c) => c.name || c.address);
+    const snapshotLastReadAllTs = normalizeLastReadAllTs(payload.lastReadAllTs);
 
-    const snapshotNickname = payload.nickname.slice(0, 42);
-    const snapshotReadState = normalizeReadStateEntries(payload.readState);
-    const snapshotUnreadContacts = normalizeUnreadContactsEntries(payload.unreadContacts);
-
-    const snapshotContactsByFull = new Map<string, Contact>();
-    const snapshotContactsByShort = new Map<string, Contact>();
-    for (const contact of snapshotContacts) {
-      if (isWalletAddress(contact.address)) {
-        snapshotContactsByFull.set(contact.address.toLowerCase(), contact);
-      } else if (contact.address) {
-        snapshotContactsByShort.set(contact.address.toLowerCase(), contact);
-      }
-    }
-    // If any snapshot entries use shortened addresses, try to match them
-    // to existing full-address contacts and apply names immediately.
-    try {
-      const shortToFull = new Map<string, string | null>();
-      for (const c of contacts) {
-        try {
-          if (isWalletAddress(c.address)) {
-            const short = shortenAddress(c.address).toLowerCase();
-            const full = c.address.toLowerCase();
-            const existing = shortToFull.get(short);
-            if (typeof existing === 'undefined') {
-              shortToFull.set(short, full);
-            } else if (existing !== full) {
-              shortToFull.set(short, null);
-            }
-          }
-        } catch {}
-      }
-
-      const updates: Record<string, string> = {};
-      for (const [shortAddr, snap] of snapshotContactsByShort.entries()) {
-        if (!snap.name) continue;
-        const full = shortToFull.get(shortAddr.toLowerCase());
-        if (full && isWalletAddress(full)) {
-          updates[full] = snap.name as string;
-        }
-      }
-
-      if (Object.keys(updates).length > 0) {
-        setContacts((previous) =>
-          previous.map((c) => {
-            const key = c.address.toLowerCase();
-            const existingName = normalizeContactName(c.name ?? '');
-            const newName = updates[key];
-            if (newName && !existingName) {
-              return { ...c, name: newName };
-            }
-            return c;
-          })
-        );
-      }
-    } catch {}
-    // Populate restored-short-name map so we can apply names later when full
-    // addresses are discovered (e.g. during history sync).
-    try {
-      const shortMap: Record<string, string> = {};
-      const ambiguousShorts = new Set<string>();
-      for (const [shortAddr, ct] of snapshotContactsByShort.entries()) {
-        const key = shortAddr.toLowerCase();
-        if (!ct.name || ambiguousShorts.has(key)) {
-          continue;
-        }
-        const existing = shortMap[key];
-        if (existing && existing !== ct.name) {
-          ambiguousShorts.add(key);
-          delete shortMap[key];
-          continue;
-        }
-        shortMap[key] = ct.name;
-      }
-      if (Object.keys(shortMap).length > 0) {
-        setRestoredShortNicknames((prev) => ({ ...prev, ...shortMap }));
-      }
-    } catch {}
-    // If the backup only contains shortened addresses, try to apply names for
-    // the owner wallet by matching the shortened address to the current wallet key.
-    try {
-      const ownerShort = shortenAddress(walletKey).toLowerCase();
-      const ownerSnapshot = snapshotContactsByShort.get(ownerShort);
-      if (ownerSnapshot && ownerSnapshot.name) {
-        // Ensure the owner's contact exists (with full address) and has the snapshot name
-        setContacts((previous) => {
-          const hasOwner = previous.some((c) => c.address.toLowerCase() === walletKey);
-          if (hasOwner) return previous.map((c) => (c.address.toLowerCase() === walletKey ? { ...c, name: c.name || ownerSnapshot.name } : c));
-          return [...previous, { address: walletKey, name: ownerSnapshot.name }];
-        });
-      }
-    } catch {}
-    
-
-    const resolveContactsFromBackup = (previous: Contact[]): Contact[] => {
-      const snapshotFullAddresses = snapshotContacts
-        .map((contact) => contact.address)
-        .filter((a) => isWalletAddress(a));
-
-      const merged = mergeUniqueContacts(previous, snapshotFullAddresses);
-      const shortAddressCounts = new Map<string, number>();
-      for (const mergedContact of merged) {
-        if (!isWalletAddress(mergedContact.address)) {
-          continue;
-        }
-        const short = shortenAddress(mergedContact.address).toLowerCase();
-        shortAddressCounts.set(short, (shortAddressCounts.get(short) ?? 0) + 1);
-      }
-
-      return merged.map((contact) => {
-        const key = contact.address.toLowerCase();
-        let snapshotName = normalizeContactName(snapshotContactsByFull.get(key)?.name ?? '');
-        
-        // if this backup carries a wallet label for the owner wallet, apply it for that address
-        if (!snapshotName && key === walletKey && payload.walletLabel) {
-          snapshotName = normalizeContactName(payload.walletLabel ?? '');
-        }
-        if (!snapshotName) {
-          const short = shortenAddress(contact.address).toLowerCase();
-          if ((shortAddressCounts.get(short) ?? 0) === 1) {
-            snapshotName = normalizeContactName(snapshotContactsByShort.get(short)?.name ?? '');
-          }
-        }
-
-        const existingName = normalizeContactName(contact.name ?? '');
-        const discoveredName = normalizeContactName(discoveredNicknames?.get(key) ?? '');
-        // Prefer on‑chain snapshot name, then discovered (recent messages), then local existing name
-        const name = snapshotName ?? discoveredName ?? existingName;
-
-        
-
-        if (!name) {
-          return {
-            ...contact,
-            name: undefined
-          };
-        }
-
-        return {
-          ...contact,
-          name
-        };
-      });
-    };
-
-    let resolvedContactsForFingerprint: Contact[] | null = null;
-    setContacts((previous) => {
-      const resolved = resolveContactsFromBackup(previous);
-      resolvedContactsForFingerprint = resolved;
-      return resolved;
-    });
-    const contactsForFingerprint = resolvedContactsForFingerprint ?? resolveContactsFromBackup(contacts);
-
-    const shortToFull = new Map<string, string | null>();
-    const fullAddressCandidates = new Set<string>();
-    for (const contact of contactsForFingerprint) {
-      const fullAddress = contact.address.trim().toLowerCase();
-      if (isWalletAddress(fullAddress)) {
-        fullAddressCandidates.add(fullAddress);
-      }
-    }
-    if (discoveredAddresses) {
-      for (const discoveredAddress of discoveredAddresses) {
-        const fullAddress = String(discoveredAddress ?? '').trim().toLowerCase();
-        if (isWalletAddress(fullAddress)) {
-          fullAddressCandidates.add(fullAddress);
-        }
-      }
-    }
-    for (const fullAddress of fullAddressCandidates) {
-      const shortAddress = shortenAddress(fullAddress).toLowerCase();
-      const existing = shortToFull.get(shortAddress);
-      if (typeof existing === 'undefined') {
-        shortToFull.set(shortAddress, fullAddress);
-      } else if (existing !== fullAddress) {
-        shortToFull.set(shortAddress, null);
-      }
-    }
-
-    const resolveBackupAddress = (addressToken: string): string | null => {
-      const normalizedToken = addressToken.trim().toLowerCase();
-      if (isWalletAddress(normalizedToken)) {
-        return normalizedToken;
-      }
-      if (!isShortAddress(normalizedToken)) {
-        return null;
-      }
-      const resolved = shortToFull.get(normalizedToken);
-      return resolved && isWalletAddress(resolved) ? resolved : null;
-    };
-
-    const resolvedReadState: Record<string, number> = {};
-    for (const readEntry of snapshotReadState) {
-      const resolvedAddress = resolveBackupAddress(readEntry.address);
-      if (!resolvedAddress) {
-        continue;
-      }
-
-      const existingTs = resolvedReadState[resolvedAddress] ?? 0;
-      if (readEntry.lastReadTs > existingTs) {
-        resolvedReadState[resolvedAddress] = readEntry.lastReadTs;
-      }
-    }
-    if (Object.keys(resolvedReadState).length > 0) {
-      const immediateNextReadMap = { ...lastReadMapRef.current };
-      let immediateReadMapChanged = false;
-      for (const [address, lastReadTs] of Object.entries(resolvedReadState)) {
-        const existingTs = Number(immediateNextReadMap[address] ?? 0);
-        if (lastReadTs > existingTs) {
-          immediateNextReadMap[address] = lastReadTs;
-          immediateReadMapChanged = true;
-        }
-      }
-      if (immediateReadMapChanged) {
-        lastReadMapRef.current = immediateNextReadMap;
-      }
-
-      setLastReadMap((previous) => {
-        let changed = false;
-        const next = { ...previous };
-        for (const [address, lastReadTs] of Object.entries(resolvedReadState)) {
-          const existingTs = Number(next[address] ?? 0);
-          if (lastReadTs > existingTs) {
-            next[address] = lastReadTs;
-            changed = true;
-          }
-        }
-        return changed ? next : previous;
-      });
-    }
-
-    const resolvedUnreadAddresses = new Set<string>();
-    for (const unreadAddress of snapshotUnreadContacts) {
-      const resolvedAddress = resolveBackupAddress(unreadAddress);
-      if (resolvedAddress) {
-        resolvedUnreadAddresses.add(resolvedAddress);
-      }
-    }
-    if (resolvedUnreadAddresses.size > 0 || Object.keys(resolvedReadState).length > 0) {
+    if (snapshotLastReadAllTs > lastReadAllTsRef.current) {
+      lastReadAllTsRef.current = snapshotLastReadAllTs;
+      setLastReadAllTs((previous) => (snapshotLastReadAllTs > previous ? snapshotLastReadAllTs : previous));
       setUnreadMap((previous) => {
-        let changed = false;
-        const next = { ...previous };
-
-        for (const address of resolvedUnreadAddresses) {
-          if (!next[address]) {
-            next[address] = true;
-            changed = true;
-          }
+        if (Object.keys(previous).length === 0) {
+          return previous;
         }
-
-        for (const address of Object.keys(resolvedReadState)) {
-          if (resolvedUnreadAddresses.has(address)) {
-            continue;
-          }
-          if (next[address]) {
-            delete next[address];
-            changed = true;
-          }
-        }
-
-        return changed ? next : previous;
+        unreadMapRef.current = {};
+        return {};
       });
     }
 
-    setMyNickname(snapshotNickname);
     lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
-    lastBackedUpStateFingerprintRef.current[walletKey] = createStateBackupFingerprint(
-      snapshotNickname,
-      contactsForFingerprint,
-      payload.walletLabel,
-      snapshotReadState,
-      snapshotUnreadContacts
-    );
+    lastBackedUpStateFingerprintRef.current[walletKey] = createStateBackupFingerprint(snapshotLastReadAllTs);
     if (typeof backupBlockNumber === 'number' && Number.isFinite(backupBlockNumber)) {
       lastStateBackupBlockRef.current[walletKey] = backupBlockNumber;
       lastAutoBackupAttemptBlockRef.current[walletKey] = backupBlockNumber;
     }
     debugLog('[apply] applied state backup', {
       walletKey,
-      snapshotNickname,
-      contactsCount: snapshotContacts.length,
-      walletLabel: payload.walletLabel,
-      readStateCount: snapshotReadState.length,
-      unreadCount: snapshotUnreadContacts.length
+      updatedAt: payload.updatedAt,
+      lastReadAllTs: snapshotLastReadAllTs
     });
-
-    if (payload.walletLabel) {
-      try {
-        setBurnerWallets((previous) =>
-          previous.map((w) => (w.address?.toLowerCase() === walletKey ? { ...w, name: payload.walletLabel } : w))
-        );
-
-        if (burnerRecordRef.current?.address?.toLowerCase() === walletKey) {
-          burnerRecordRef.current = {
-            ...burnerRecordRef.current,
-            name: payload.walletLabel
-          };
-        }
-        // Also store restored label for display when vault records are not yet loaded
-        setRestoredWalletLabels((prev) => ({ ...prev, [walletKey]: payload.walletLabel ?? '' }));
-      } catch {}
-    }
   };
 
   const restoreStateFromChainSelfBackup = async (address?: string): Promise<boolean> => {
@@ -3544,7 +3097,6 @@ export default function App() {
 
       let latestPayload: StateBackupPayload | null = null;
       let latestPayloadBlockNumber: number | undefined;
-      let latestNonEmptyNickname: string | undefined;
 
       const tryDecodeBackupLogs = async (
         logs: Array<{
@@ -3553,7 +3105,7 @@ export default function App() {
           args?: Record<string, unknown>;
         }>
       ) => {
-        if (logs.length === 0 || (latestPayload && latestNonEmptyNickname)) {
+        if (logs.length === 0 || latestPayload) {
           return;
         }
 
@@ -3583,19 +3135,9 @@ export default function App() {
               const plain = decodeMemoPlaintext(raw);
               const parsed = parseStateBackupText(plain);
               if (parsed) {
-                if (!latestPayload) {
-                  latestPayload = parsed;
-                  latestPayloadBlockNumber = log.blockNumber;
-                }
-
-                const parsedNickname = normalizeContactName(parsed.nickname ?? '')?.slice(0, 42);
-                if (parsedNickname && !latestNonEmptyNickname) {
-                  latestNonEmptyNickname = parsedNickname;
-                }
-
-                if (latestPayload && latestNonEmptyNickname) {
-                  return;
-                }
+                latestPayload = parsed;
+                latestPayloadBlockNumber = log.blockNumber;
+                return;
               }
             } catch {
             }
@@ -3610,7 +3152,7 @@ export default function App() {
       }
 
       let windowEnd = latestBlock;
-      while (windowEnd >= 0 && (!latestPayload || !latestNonEmptyNickname)) {
+      while (windowEnd >= 0 && !latestPayload) {
         const windowStart = Math.max(0, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
         const windowLogs = await contract.queryFilter(selfFilter, windowStart, windowEnd);
         await tryDecodeBackupLogs(windowLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
@@ -3626,17 +3168,7 @@ export default function App() {
       if (!resolvedLatestPayload) {
         return false;
       }
-      const latestPayloadNickname = normalizeContactName(resolvedLatestPayload.nickname ?? '')?.slice(0, 42);
-      const resolvedNickname = latestPayloadNickname ?? latestNonEmptyNickname ?? '';
-      const payloadToApply: StateBackupPayload =
-        resolvedNickname === resolvedLatestPayload.nickname.slice(0, 42)
-          ? resolvedLatestPayload
-          : {
-              ...resolvedLatestPayload,
-              nickname: resolvedNickname
-            };
-
-      applyStateBackupPayload(targetAddress.toLowerCase(), payloadToApply, undefined, latestPayloadBlockNumber);
+      applyStateBackupPayload(targetAddress.toLowerCase(), resolvedLatestPayload, latestPayloadBlockNumber);
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -3697,11 +3229,7 @@ export default function App() {
     }
   };
 
-  const backupLocalStateToSelf = async (
-    snapshotNickname: string,
-    snapshotContacts: Contact[],
-    options?: BackupLocalStateOptions
-  ) => {
+  const backupLocalStateToSelf = async (options?: BackupLocalStateOptions) => {
     if (backupInFlightRef.current) {
       return;
     }
@@ -3721,39 +3249,9 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const selector = await resolveSubmitSelector();
 
-      const walletLabel = burnerRecordRef.current?.name ?? findContactNameForWalletAddress(walletAddress) ?? '';
-      const readStateSnapshot = { ...lastReadMapRef.current };
-      if (activeContact) {
-        const activeKey = activeContact.trim().toLowerCase();
-        if (isWalletAddress(activeKey) && !unreadMap[activeKey]) {
-          const activeMessagesSnapshot = messagesByContact[activeKey] ?? [];
-          const latestActiveMessage =
-            activeMessagesSnapshot.length > 0 ? activeMessagesSnapshot[activeMessagesSnapshot.length - 1] : null;
-          const latestActiveTimestamp =
-            latestActiveMessage && typeof latestActiveMessage.timestamp === 'number'
-              ? Number(latestActiveMessage.timestamp)
-              : 0;
-          if (latestActiveTimestamp > 0) {
-            readStateSnapshot[activeKey] = Math.max(readStateSnapshot[activeKey] ?? 0, latestActiveTimestamp);
-          }
-        }
-      }
-      const snapshotReadState = normalizeReadStateForBackup(readStateSnapshot);
-      const snapshotUnreadContacts = normalizeUnreadContactsForBackup(unreadMap);
-      const payload = buildStateBackupPayload(
-        snapshotNickname,
-        snapshotContacts,
-        walletLabel,
-        snapshotReadState,
-        snapshotUnreadContacts
-      );
-      const nextFingerprint = createStateBackupFingerprint(
-        snapshotNickname,
-        snapshotContacts,
-        walletLabel,
-        snapshotReadState,
-        snapshotUnreadContacts
-      );
+      const snapshotLastReadAllTs = normalizeLastReadAllTs(lastReadAllTsRef.current);
+      const payload = buildStateBackupPayload(snapshotLastReadAllTs);
+      const nextFingerprint = createStateBackupFingerprint(snapshotLastReadAllTs);
       if (!options?.force && lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
         return;
       }
@@ -3922,7 +3420,7 @@ export default function App() {
 
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
-      const latestObservedMessageTimeByContact = new Map<string, number>();
+      const latestIncomingMessageTimeByContact = new Map<string, number>();
       const entries: HistoryEntry[] = [];
       const previewByContact = new Map<string, HistoryEntry>();
       let latestStateBackup:
@@ -3932,15 +3430,7 @@ export default function App() {
             logIndex: number;
           }
         | null = null;
-      const latestReadCursorByPeer = new Map<
-        string,
-        {
-          lastReadTs: number;
-          blockNumber: number;
-          logIndex: number;
-        }
-      >();
-      const updateLatestObservedMessageTime = (address: string, blockNumber: number): void => {
+      const updateLatestIncomingMessageTime = (address: string, blockNumber: number): void => {
         const normalizedAddress = address.trim().toLowerCase();
         if (!isWalletAddress(normalizedAddress)) {
           return;
@@ -3951,14 +3441,9 @@ export default function App() {
           return;
         }
 
-        const existingObserved = latestObservedMessageTimeByContact.get(normalizedAddress) ?? 0;
+        const existingObserved = latestIncomingMessageTimeByContact.get(normalizedAddress) ?? 0;
         if (blockTimestamp > existingObserved) {
-          latestObservedMessageTimeByContact.set(normalizedAddress, blockTimestamp);
-        }
-
-        const existingCached = lastMessageTimeCacheRef.current[normalizedAddress] ?? 0;
-        if (blockTimestamp > existingCached) {
-          lastMessageTimeCacheRef.current[normalizedAddress] = blockTimestamp;
+          latestIncomingMessageTimeByContact.set(normalizedAddress, blockTimestamp);
         }
       };
 
@@ -3994,28 +3479,14 @@ export default function App() {
                     debugLog('[restore] found state backup', {
                       address: walletKey,
                       nickname: backupPayload.nickname,
-                      walletLabel: backupPayload.walletLabel,
                       tx: log.transactionHash,
                       block: log.blockNumber,
                       index: log.index
                     });
                 }
               }
-              const readCursorPayload = parseReadCursorText(plain);
-              if (readCursorPayload) {
+              if (parseReadCursorText(plain)) {
                 isSystemSelfMessage = true;
-                const existingCursor = latestReadCursorByPeer.get(readCursorPayload.peer);
-                if (
-                  !existingCursor ||
-                  log.blockNumber > existingCursor.blockNumber ||
-                  (log.blockNumber === existingCursor.blockNumber && log.index > existingCursor.logIndex)
-                ) {
-                  latestReadCursorByPeer.set(readCursorPayload.peer, {
-                    lastReadTs: readCursorPayload.lastReadTs,
-                    blockNumber: log.blockNumber,
-                    logIndex: log.index
-                  });
-                }
               }
             } catch {
             }
@@ -4026,7 +3497,7 @@ export default function App() {
         }
 
         discoveredContacts.add(from);
-        updateLatestObservedMessageTime(from, log.blockNumber);
+        updateLatestIncomingMessageTime(from, log.blockNumber);
 
         if (options?.contactsOnly && !shouldLoadContactPreviews) {
           continue;
@@ -4053,21 +3524,24 @@ export default function App() {
             try {
               const decrypted = await signer.decryptValue(userCiphertext as never);
               const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const parsed = parseMessageProfilePayload(decodeMemoPlaintext(raw));
-              const replyParsed = parseMessageReplyPayload(parsed.cleanText);
-              messageText = replyParsed.cleanText;
-              replyToMessageId = replyParsed.replyToMessageId;
-              replyToText = replyParsed.replyToText;
-              replyToTxHash = replyParsed.replyToTxHash;
-              if (parsed.nickname) {
-                  discoveredNicknames.set(contactKey, parsed.nickname);
-                  debugLog('[sync] discovered nickname', {
-                    address: contactKey,
-                    nickname: parsed.nickname,
-                    tx: log.transactionHash,
-                    block: log.blockNumber,
-                    index: log.index
-                  });
+              const plain = decodeMemoPlaintext(raw);
+              const parsedMessage = parseChatMessagePayload(plain);
+              messageText = parsedMessage.cleanText;
+              replyToMessageId = parsedMessage.replyToMessageId;
+              replyToText = parsedMessage.replyToText;
+              replyToTxHash = parsedMessage.replyToTxHash;
+              if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+                continue;
+              }
+              if (parsedMessage.embeddedNickname) {
+                discoveredNicknames.set(contactKey, parsedMessage.embeddedNickname);
+                debugLog('[sync] discovered nickname', {
+                  address: contactKey,
+                  nickname: parsedMessage.embeddedNickname,
+                  tx: log.transactionHash,
+                  block: log.blockNumber,
+                  index: log.index
+                });
               }
             } catch {
               messageText = '(Unable to decrypt message)';
@@ -4099,21 +3573,24 @@ export default function App() {
           try {
             const decrypted = await signer.decryptValue(userCiphertext as never);
             const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-            const parsed = parseMessageProfilePayload(decodeMemoPlaintext(raw));
-            const replyParsed = parseMessageReplyPayload(parsed.cleanText);
-            messageText = replyParsed.cleanText;
-            replyToMessageId = replyParsed.replyToMessageId;
-            replyToText = replyParsed.replyToText;
-            replyToTxHash = replyParsed.replyToTxHash;
-            if (parsed.nickname) {
-                discoveredNicknames.set(from.toLowerCase(), parsed.nickname);
-                debugLog('[sync] discovered nickname', {
-                  address: from.toLowerCase(),
-                  nickname: parsed.nickname,
-                  tx: log.transactionHash,
-                  block: log.blockNumber,
-                  index: log.index
-                });
+            const plain = decodeMemoPlaintext(raw);
+            const parsedMessage = parseChatMessagePayload(plain);
+            messageText = parsedMessage.cleanText;
+            replyToMessageId = parsedMessage.replyToMessageId;
+            replyToText = parsedMessage.replyToText;
+            replyToTxHash = parsedMessage.replyToTxHash;
+            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+              continue;
+            }
+            if (parsedMessage.embeddedNickname) {
+              discoveredNicknames.set(from.toLowerCase(), parsedMessage.embeddedNickname);
+              debugLog('[sync] discovered nickname', {
+                address: from.toLowerCase(),
+                nickname: parsedMessage.embeddedNickname,
+                tx: log.transactionHash,
+                block: log.blockNumber,
+                index: log.index
+              });
             }
           } catch {
             messageText = '(Unable to decrypt message)';
@@ -4163,20 +3640,8 @@ export default function App() {
                   };
                 }
               }
-              const readCursorPayload = parseReadCursorText(plain);
-              if (readCursorPayload) {
-                const existingCursor = latestReadCursorByPeer.get(readCursorPayload.peer);
-                if (
-                  !existingCursor ||
-                  log.blockNumber > existingCursor.blockNumber ||
-                  (log.blockNumber === existingCursor.blockNumber && log.index > existingCursor.logIndex)
-                ) {
-                  latestReadCursorByPeer.set(readCursorPayload.peer, {
-                    lastReadTs: readCursorPayload.lastReadTs,
-                    blockNumber: log.blockNumber,
-                    logIndex: log.index
-                  });
-                }
+              if (parseReadCursorText(plain)) {
+                continue;
               }
             } catch {
             }
@@ -4185,7 +3650,6 @@ export default function App() {
         }
 
         discoveredContacts.add(recipient);
-        updateLatestObservedMessageTime(recipient, log.blockNumber);
 
         if (options?.contactsOnly && !shouldLoadContactPreviews) {
           continue;
@@ -4212,12 +3676,18 @@ export default function App() {
             try {
               const decrypted = await signer.decryptValue(userCiphertext as never);
               const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const parsed = parseMessageProfilePayload(decodeMemoPlaintext(raw));
-              const replyParsed = parseMessageReplyPayload(parsed.cleanText);
-              messageText = replyParsed.cleanText;
-              replyToMessageId = replyParsed.replyToMessageId;
-              replyToText = replyParsed.replyToText;
-              replyToTxHash = replyParsed.replyToTxHash;
+              const plain = decodeMemoPlaintext(raw);
+              const parsedMessage = parseChatMessagePayload(plain);
+              messageText = parsedMessage.cleanText;
+              replyToMessageId = parsedMessage.replyToMessageId;
+              replyToText = parsedMessage.replyToText;
+              replyToTxHash = parsedMessage.replyToTxHash;
+              if (parsedMessage.embeddedContactName) {
+                discoveredNicknames.set(contactKey, parsedMessage.embeddedContactName);
+              }
+              if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+                continue;
+              }
             } catch {
               messageText = '(Unable to decrypt message)';
             }
@@ -4248,12 +3718,18 @@ export default function App() {
           try {
             const decrypted = await signer.decryptValue(userCiphertext as never);
             const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-            const parsed = parseMessageProfilePayload(decodeMemoPlaintext(raw));
-            const replyParsed = parseMessageReplyPayload(parsed.cleanText);
-            messageText = replyParsed.cleanText;
-            replyToMessageId = replyParsed.replyToMessageId;
-            replyToText = replyParsed.replyToText;
-            replyToTxHash = replyParsed.replyToTxHash;
+            const plain = decodeMemoPlaintext(raw);
+            const parsedMessage = parseChatMessagePayload(plain);
+            messageText = parsedMessage.cleanText;
+            replyToMessageId = parsedMessage.replyToMessageId;
+            replyToText = parsedMessage.replyToText;
+            replyToTxHash = parsedMessage.replyToTxHash;
+            if (parsedMessage.embeddedContactName) {
+              discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
+            }
+            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+              continue;
+            }
           } catch {
             messageText = '(Unable to decrypt message)';
           }
@@ -4443,14 +3919,6 @@ export default function App() {
 
       setContacts((previous) => {
         const mergedContacts = mergeUniqueContacts(previous, Array.from(discoveredContacts));
-        const shortAddressCounts = new Map<string, number>();
-        for (const mergedContact of mergedContacts) {
-          if (!isWalletAddress(mergedContact.address)) {
-            continue;
-          }
-          const short = shortenAddress(mergedContact.address).toLowerCase();
-          shortAddressCounts.set(short, (shortAddressCounts.get(short) ?? 0) + 1);
-        }
 
         if (discoveredNicknames.size === 0) {
           if (onChainNicknames.size === 0) {
@@ -4485,70 +3953,15 @@ export default function App() {
             return { ...contact, name: nickname };
           }
 
-          try {
-            const short = shortenAddress(contact.address).toLowerCase();
-            const isUniqueShortAddress = (shortAddressCounts.get(short) ?? 0) === 1;
-            const restored = isUniqueShortAddress ? restoredShortNicknames[short] : undefined;
-            if (restored) {
-              return { ...contact, name: restored };
-            }
-          } catch {}
-
           return contact;
         });
       });
-
-      if (latestReadCursorByPeer.size > 0) {
-        let mergedReadMapForUnread = lastReadMapRef.current;
-        const mergedReadMap = { ...mergedReadMapForUnread };
-        let mergedReadMapChanged = false;
-        for (const [peer, cursor] of latestReadCursorByPeer.entries()) {
-          if (!isWalletAddress(peer)) {
-            continue;
-          }
-          const existing = Number(mergedReadMap[peer] ?? 0);
-          if (cursor.lastReadTs > existing) {
-            mergedReadMap[peer] = cursor.lastReadTs;
-            mergedReadMapChanged = true;
-          }
-        }
-        if (mergedReadMapChanged) {
-          mergedReadMapForUnread = mergedReadMap;
-          lastReadMapRef.current = mergedReadMap;
-        }
-
-        setLastReadMap((previous) => {
-          let changed = false;
-          const next = { ...previous };
-          for (const [peer, cursor] of latestReadCursorByPeer.entries()) {
-            if (!isWalletAddress(peer)) {
-              continue;
-            }
-            const existing = Number(next[peer] ?? 0);
-            if (cursor.lastReadTs > existing) {
-              next[peer] = cursor.lastReadTs;
-              changed = true;
-            }
-            const submitted = Number(lastSubmittedReadCursorTsRef.current[peer] ?? 0);
-            if (cursor.lastReadTs > submitted) {
-              lastSubmittedReadCursorTsRef.current[peer] = cursor.lastReadTs;
-            }
-          }
-          return changed ? next : previous;
-        });
-
-        if (mergedReadMapChanged) {
-          lastReadMapRef.current = mergedReadMapForUnread;
-        }
-      }
 
       if (latestStateBackup) {
         applyStateBackupPayload(
           walletKey,
           latestStateBackup.payload,
-          discoveredNicknames,
-          latestStateBackup.blockNumber,
-          discoveredContacts
+          latestStateBackup.blockNumber
         );
       }
 
@@ -4559,29 +3972,21 @@ export default function App() {
         .filter((address) => isWalletAddress(address) && address !== walletKey);
 
       if (unreadCandidateAddresses.length > 0) {
-        const latestTimes = await Promise.all(
-          unreadCandidateAddresses.map(async (address) => {
-            const observed = latestObservedMessageTimeByContact.get(address) ?? 0;
-            const hasCached = Object.prototype.hasOwnProperty.call(lastMessageTimeCacheRef.current, address);
-            const cached = hasCached ? lastMessageTimeCacheRef.current[address] ?? 0 : 0;
-            if (observed > cached) {
-              lastMessageTimeCacheRef.current[address] = observed;
-              return [address, observed] as const;
+        const latestTimes = unreadCandidateAddresses.map((address) => {
+          const observed = latestIncomingMessageTimeByContact.get(address) ?? 0;
+          const localMessages = messagesByContact[address] ?? [];
+          let latestIncomingFromLocal = 0;
+          for (const message of localMessages) {
+            if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
+              continue;
             }
-
-            if (hasCached) {
-              return [address, cached] as const;
+            const ts = Number(message.timestamp);
+            if (ts > latestIncomingFromLocal) {
+              latestIncomingFromLocal = ts;
             }
-
-            try {
-              const latestMessageTime = toSafeNumber(await contract.getLastMessageTime(walletAddress, address));
-              lastMessageTimeCacheRef.current[address] = latestMessageTime;
-              return [address, latestMessageTime] as const;
-            } catch {
-              return [address, 0] as const;
-            }
-          })
-        );
+          }
+          return [address, Math.max(observed, latestIncomingFromLocal)] as const;
+        });
 
         const candidateSet = new Set(unreadCandidateAddresses);
         const activeKey = activeContact?.toLowerCase();
@@ -4589,35 +3994,51 @@ export default function App() {
           typeof document !== 'undefined' &&
           !document.hidden &&
           (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+        const globalReadTs = lastReadAllTsRef.current;
+        const nextReadByContact = { ...lastReadByContactRef.current };
+        let readByContactChanged = false;
+        const previousUnread = unreadMapRef.current || {};
+        const nextUnread = { ...previousUnread };
+        let unreadChanged = false;
 
-        setUnreadMap((previous) => {
-          let changed = false;
-          const next = { ...previous };
-          const currentLastReadMap = lastReadMapRef.current;
-
-          for (const [address, latestMessageTime] of latestTimes) {
-            const readTs = Number(currentLastReadMap[address] ?? 0);
-            const shouldUnread = latestMessageTime > readTs && !(address === activeKey && pageVisible);
-            if (shouldUnread) {
-              if (!next[address]) {
-                next[address] = true;
-                changed = true;
-              }
-            } else if (next[address]) {
-              delete next[address];
-              changed = true;
+        for (const [address, latestMessageTime] of latestTimes) {
+          if (address === activeKey && pageVisible && latestMessageTime > 0) {
+            const existingReadTs = nextReadByContact[address] ?? 0;
+            if (latestMessageTime > existingReadTs) {
+              nextReadByContact[address] = latestMessageTime;
+              readByContactChanged = true;
             }
           }
 
-          for (const existingKey of Object.keys(next)) {
-            if (!candidateSet.has(existingKey)) {
-              delete next[existingKey];
-              changed = true;
+          const contactReadTs = nextReadByContact[address] ?? 0;
+          const effectiveReadTs = Math.max(globalReadTs, contactReadTs);
+          const shouldUnread = latestMessageTime > effectiveReadTs && !(address === activeKey && pageVisible);
+          if (shouldUnread) {
+            if (!nextUnread[address]) {
+              nextUnread[address] = true;
+              unreadChanged = true;
             }
+          } else if (nextUnread[address]) {
+            delete nextUnread[address];
+            unreadChanged = true;
           }
+        }
 
-          return changed ? next : previous;
-        });
+        for (const existingKey of Object.keys(nextUnread)) {
+          if (!candidateSet.has(existingKey)) {
+            delete nextUnread[existingKey];
+            unreadChanged = true;
+          }
+        }
+
+        if (unreadChanged) {
+          unreadMapRef.current = nextUnread;
+          setUnreadMap(nextUnread);
+        }
+
+        if (readByContactChanged) {
+          lastReadByContactRef.current = nextReadByContact;
+        }
       }
 
       const knownBackupBlockNumber =
@@ -4625,9 +4046,7 @@ export default function App() {
       const lastAutoBackupAttemptBlock = lastAutoBackupAttemptBlockRef.current[walletKey] ?? -AUTO_STATE_BACKUP_RETRY_BLOCKS;
       const blocksSinceAutoBackupAttempt = latestBlock - lastAutoBackupAttemptBlock;
       const hasLocalStateSnapshot =
-        Boolean(myNickname.trim()) ||
-        contacts.length > 0 ||
-        Boolean(normalizeContactName(burnerRecordRef.current?.name ?? ''));
+        normalizeLastReadAllTs(lastReadAllTsRef.current) > 0;
       const shouldAutoBackupForDistance =
         hasLocalStateSnapshot &&
         typeof knownBackupBlockNumber === 'number' &&
@@ -4636,7 +4055,7 @@ export default function App() {
 
       if (shouldAutoBackupForDistance) {
         lastAutoBackupAttemptBlockRef.current[walletKey] = latestBlock;
-        backupLocalStateToSelf(myNickname, contacts, { force: true, background: true }).catch(() => {});
+        backupLocalStateToSelf({ force: true, background: true }).catch(() => {});
       }
 
       if ((options?.updateHead || !options?.contactsOnly) && typeof options?.toBlock !== 'number') {
@@ -4812,14 +4231,16 @@ export default function App() {
               }
             }
 
-            const parsed = parseMessageProfilePayload(plain);
-            const replyParsed = parseMessageReplyPayload(parsed.cleanText);
-            messageText = replyParsed.cleanText;
-            replyToMessageId = replyParsed.replyToMessageId;
-            replyToText = replyParsed.replyToText;
-            replyToTxHash = replyParsed.replyToTxHash;
-            if (parsed.nickname) {
-              discoveredNicknames.set(from.toLowerCase(), parsed.nickname);
+            const parsedMessage = parseChatMessagePayload(plain);
+            messageText = parsedMessage.cleanText;
+            replyToMessageId = parsedMessage.replyToMessageId;
+            replyToText = parsedMessage.replyToText;
+            replyToTxHash = parsedMessage.replyToTxHash;
+            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+              continue;
+            }
+            if (parsedMessage.embeddedNickname) {
+              discoveredNicknames.set(from.toLowerCase(), parsedMessage.embeddedNickname);
             }
           } catch {
             messageText = '(Unable to decrypt message)';
@@ -4868,12 +4289,17 @@ export default function App() {
               continue;
             }
 
-            const parsed = parseMessageProfilePayload(plain);
-            const replyParsed = parseMessageReplyPayload(parsed.cleanText);
-            messageText = replyParsed.cleanText;
-            replyToMessageId = replyParsed.replyToMessageId;
-            replyToText = replyParsed.replyToText;
-            replyToTxHash = replyParsed.replyToTxHash;
+            const parsedMessage = parseChatMessagePayload(plain);
+            messageText = parsedMessage.cleanText;
+            replyToMessageId = parsedMessage.replyToMessageId;
+            replyToText = parsedMessage.replyToText;
+            replyToTxHash = parsedMessage.replyToTxHash;
+            if (parsedMessage.embeddedContactName) {
+              discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
+            }
+            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+              continue;
+            }
           } catch {
             messageText = '(Unable to decrypt message)';
           }
@@ -4975,6 +4401,76 @@ export default function App() {
     }
   };
 
+  const sendHiddenContactNameToContact = async (contactAddress: string, contactName: string): Promise<string> => {
+    const normalizedAddress = contactAddress.trim();
+    const normalizedContactName = normalizeContactName(contactName)?.slice(0, 42);
+    if (!isWalletAddress(normalizedAddress)) {
+      throw new Error('Invalid contact address.');
+    }
+    if (!normalizedContactName) {
+      throw new Error('Contact name cannot be empty.');
+    }
+
+    const { signer, cacheKey } = await getMemoSigner();
+    const cotiEthers = await loadCotiEthersModule();
+    const selector = await resolveSubmitSelector();
+    const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
+    const requiredFee = await resolveRequiredFeeForSend();
+    const hiddenAliasPayload = buildMessageWithContactNamePayload('', normalizedContactName);
+    const encodedMemo = encodeMemoPlaintext(hiddenAliasPayload);
+    const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
+    const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+    const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
+    const tx = await contract.submit(normalizedAddress, memoTuple, { value: requiredFee });
+
+    const nextOnboardInfo = signer.getUserOnboardInfo();
+    setSessionOnboardInfo((previous) => ({
+      ...previous,
+      [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+    }));
+
+    return typeof tx?.hash === 'string' ? tx.hash : '';
+  };
+
+  const syncContactNameAliasFromInput = async (contactAddress: string, contactName: string): Promise<void> => {
+    const normalizedAddress = contactAddress.trim();
+    const normalizedContactName = normalizeContactName(contactName)?.slice(0, 42);
+    if (!isWalletAddress(normalizedAddress) || !normalizedContactName) {
+      return;
+    }
+
+    if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
+      return;
+    }
+
+    if (normalizedAddress.toLowerCase() === walletAddress.toLowerCase()) {
+      return;
+    }
+
+    try {
+      await sendHiddenContactNameToContact(normalizedAddress, normalizedContactName);
+      syncConversationHistory({
+        contactsOnly: true,
+        previewPerContact: true,
+        updateHead: true
+      }).catch(() => {});
+      if (activeSignerSource === 'burner') {
+        setTopUpMetricsNonce((previous) => previous + 1);
+      }
+    } catch (syncError) {
+      const message = syncError instanceof Error ? syncError.message : 'Failed to sync contact name alias.';
+      setError(`Saved locally, but alias sync failed: ${message}`);
+      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+        const shouldTopUp = window.confirm(
+          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+        );
+        if (shouldTopUp) {
+          await topUpBurnerWithMetaMask();
+        }
+      }
+    }
+  };
+
   const sendMessage = async (overrideMessageText?: string) => {
     setError('');
 
@@ -5003,7 +4499,8 @@ export default function App() {
       return;
     }
 
-    const contactKey = activeContact.toLowerCase();
+    const contactAddress = activeContact;
+    const contactKey = contactAddress.toLowerCase();
     const replyingPreviewText = replyingToMessage ? getMessageDisplayText(replyingToMessage.text) : undefined;
     const localMessageId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
@@ -5031,10 +4528,8 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const selector = await resolveSubmitSelector();
-
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForSend();
-
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
         replyingPreviewText,
@@ -5045,7 +4540,7 @@ export default function App() {
         const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
         const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
         const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
-        const tx = await contract.submit(activeContact, memoTuple, { value: requiredFee });
+        const tx = await contract.submit(contactAddress, memoTuple, { value: requiredFee });
         return typeof tx?.hash === 'string' ? tx.hash : '';
       };
 
@@ -5167,12 +4662,43 @@ export default function App() {
 
   const saveProfileStateOnChain = async () => {
     setError('');
-    const normalizedNickname = normalizeContactName(myNickname.replace(/\r?\n/g, ''));
-    if (normalizedNickname) {
-      await saveMyNicknameOnChain(normalizedNickname);
-    }
-    await backupLocalStateToSelf(myNickname, contacts);
+    await backupLocalStateToSelf();
   };
+
+  useEffect(() => {
+    const normalizedWalletAddress = walletAddress.trim();
+    const hasReadableState = normalizeLastReadAllTs(lastReadAllTs) > 0;
+    const canAutoBackupReadState =
+      isWalletAddress(normalizedWalletAddress) &&
+      hasAesReady &&
+      chainId === COTI_NETWORK.chainIdDecimal &&
+      hasReadableState;
+
+    if (!canAutoBackupReadState) {
+      if (readStateBackupTimerRef.current !== null) {
+        window.clearTimeout(readStateBackupTimerRef.current);
+        readStateBackupTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (readStateBackupTimerRef.current !== null) {
+      return;
+    }
+
+    const now = Date.now();
+    const dueAt = Math.max(
+      now + READ_STATE_BACKUP_DEBOUNCE_MS,
+      lastReadStateBackupSubmittedAtRef.current + READ_STATE_BACKUP_MIN_INTERVAL_MS
+    );
+    const delay = Math.max(0, dueAt - now);
+
+    readStateBackupTimerRef.current = window.setTimeout(() => {
+      readStateBackupTimerRef.current = null;
+      lastReadStateBackupSubmittedAtRef.current = Date.now();
+      backupLocalStateToSelf({ background: true }).catch(() => {});
+    }, delay);
+  }, [walletAddress, hasAesReady, chainId, lastReadAllTs]);
 
   useEffect(() => {
     setContacts([]);
@@ -5182,12 +4708,16 @@ export default function App() {
 
   useEffect(() => {
     setUnreadMap({});
-    setLastReadMap({});
+    unreadMapRef.current = {};
+    setLastReadAllTs(0);
     prevUnreadRef.current = {};
-    lastReadMapRef.current = {};
-    readCursorSubmitAtRef.current = {};
-    lastSubmittedReadCursorTsRef.current = {};
-    readCursorSubmitInFlightRef.current = {};
+    lastReadAllTsRef.current = 0;
+    lastReadByContactRef.current = {};
+    lastReadStateBackupSubmittedAtRef.current = 0;
+    if (readStateBackupTimerRef.current !== null) {
+      window.clearTimeout(readStateBackupTimerRef.current);
+      readStateBackupTimerRef.current = null;
+    }
   }, [walletAddress]);
 
   useEffect(() => {
@@ -5373,8 +4903,8 @@ export default function App() {
       if (highlightTimeoutRef.current !== null) {
         window.clearTimeout(highlightTimeoutRef.current);
       }
-      if (burnerLabelAutoSaveTimerRef.current !== null) {
-        window.clearTimeout(burnerLabelAutoSaveTimerRef.current);
+      if (readStateBackupTimerRef.current !== null) {
+        window.clearTimeout(readStateBackupTimerRef.current);
       }
     };
   }, []);
@@ -5498,7 +5028,6 @@ export default function App() {
       oldestLoadedBlockByContactRef.current = {};
       hasOlderHistoryByContactRef.current = {};
       blockTimestampCacheRef.current = new Map();
-      lastMessageTimeCacheRef.current = {};
     }
 
     previousWalletAddressRef.current = nextWallet;
@@ -5516,70 +5045,6 @@ export default function App() {
       });
     });
   }, [isConnected, activeContact]);
-
-  useEffect(() => {
-    if (!activeBurnerWalletMeta) {
-      setBurnerWalletLabelInput('');
-      return;
-    }
-
-    setBurnerWalletLabelInput(activeBurnerWalletMeta.name ?? findContactNameForWalletAddress(activeBurnerWalletMeta.address) ?? '');
-  }, [activeBurnerWalletMeta, contacts]);
-
-  useEffect(() => {
-    if (!activeBurnerWalletMeta?.id || initializingBurner || !burnerPinRef.current) {
-      return;
-    }
-
-    const normalizedInput = normalizeContactName(burnerWalletLabelInput) ?? '';
-    const normalizedCurrent = normalizeContactName(activeBurnerWalletMeta.name ?? '') ?? '';
-    if (normalizedInput === normalizedCurrent) {
-      return;
-    }
-
-    if (burnerLabelAutoSaveTimerRef.current !== null) {
-      window.clearTimeout(burnerLabelAutoSaveTimerRef.current);
-    }
-
-    burnerLabelAutoSaveTimerRef.current = window.setTimeout(() => {
-      saveActiveBurnerWalletLabel(burnerWalletLabelInput).catch((labelError) => {
-        const message = labelError instanceof Error ? labelError.message : 'Failed to update wallet label.';
-        setError(message);
-      });
-      burnerLabelAutoSaveTimerRef.current = null;
-    }, 450);
-
-    return () => {
-      if (burnerLabelAutoSaveTimerRef.current !== null) {
-        window.clearTimeout(burnerLabelAutoSaveTimerRef.current);
-        burnerLabelAutoSaveTimerRef.current = null;
-      }
-    };
-  }, [activeBurnerWalletMeta?.id, activeBurnerWalletMeta?.name, burnerWalletLabelInput, initializingBurner]);
-
-  useEffect(() => {
-    if (burnerWallets.length === 0) {
-      return;
-    }
-
-    setContacts((previous) => {
-      let changed = false;
-      const next = previous.map((contact) => {
-        const burnerWalletName = findBurnerWalletNameForAddress(contact.address);
-        if (!burnerWalletName || contact.name === burnerWalletName) {
-          return contact;
-        }
-
-        changed = true;
-        return {
-          ...contact,
-          name: burnerWalletName
-        };
-      });
-
-      return changed ? next : previous;
-    });
-  }, [burnerWallets]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5708,18 +5173,43 @@ export default function App() {
     let wsReconnectIntervalId: number | null = null;
     let wsReconnectInFlight = false;
     let realtimeSyncTimerId: number | null = null;
+    let lastRealtimeSyncDispatchAt = 0;
+
+    const dispatchRealtimeSync = () => {
+      lastRealtimeSyncDispatchAt = Date.now();
+      syncConversationHistoryRef.current({ background: true }).catch(() => {});
+    };
 
     const scheduleRealtimeSync = () => {
-      if (cancelled || realtimeSyncTimerId !== null) {
+      if (cancelled) {
         return;
       }
 
+      const now = Date.now();
+      const elapsedSinceLastDispatch = now - lastRealtimeSyncDispatchAt;
+      const canDispatchImmediately =
+        elapsedSinceLastDispatch >= REALTIME_SYNC_BURST_THROTTLE_MS &&
+        !syncingHistoryRef.current &&
+        realtimeSyncTimerId === null;
+      if (canDispatchImmediately) {
+        dispatchRealtimeSync();
+        return;
+      }
+
+      if (realtimeSyncTimerId !== null) {
+        return;
+      }
+
+      const nextDelay = Math.max(
+        REALTIME_SYNC_DEBOUNCE_MS,
+        REALTIME_SYNC_BURST_THROTTLE_MS - elapsedSinceLastDispatch
+      );
       realtimeSyncTimerId = window.setTimeout(() => {
         realtimeSyncTimerId = null;
         if (!cancelled) {
-          syncConversationHistoryRef.current().catch(() => {});
+          dispatchRealtimeSync();
         }
-      }, REALTIME_SYNC_DEBOUNCE_MS);
+      }, nextDelay);
     };
 
     const clearPollFallback = () => {
@@ -5800,7 +5290,7 @@ export default function App() {
           if (pollIntervalId === null) {
             pollIntervalId = window.setInterval(() => {
               scheduleRealtimeSync();
-            }, AUTO_SYNC_INTERVAL_MS);
+            }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
           }
 
           if (wsReconnectIntervalId === null) {
@@ -6152,12 +5642,6 @@ export default function App() {
                   );
                 })}
               </select>
-              <input
-                value={burnerWalletLabelInput}
-                onChange={(event) => setBurnerWalletLabelInput(event.target.value.slice(0, 42))}
-                placeholder="Wallet label (optional)"
-                aria-label="Wallet label"
-              />
             </>
           ) : null}
         </div>
@@ -6244,37 +5728,52 @@ export default function App() {
       <aside className="contacts-sidebar">
         <div className="contact-profile-card">
           <span className="contact-profile-label">Name</span>
-          <div
-            ref={nicknameEditorRef}
-            className="contact-profile-editor"
-            contentEditable
-            suppressContentEditableWarning
-            role="textbox"
-            aria-multiline="false"
-            aria-label="Name"
-            data-placeholder="Choose name"
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                event.currentTarget.blur();
-              }
-            }}
-            onInput={(event) => {
-              const raw = event.currentTarget.textContent ?? '';
-              const singleLine = raw.replace(/\r?\n/g, '').slice(0, nicknameMaxBytes);
-              if (singleLine !== raw) {
-                event.currentTarget.textContent = singleLine;
-              }
-              setMyNickname(singleLine);
-            }}
-            onBlur={() => {
-              if (!hasAesReady || !walletAddress) {
-                return;
-              }
+          <div className="contact-profile-editor-wrap">
+            <div
+              ref={nicknameEditorRef}
+              className="contact-profile-editor"
+              contentEditable
+              suppressContentEditableWarning
+              role="textbox"
+              aria-multiline="false"
+              aria-label="Name"
+              data-placeholder="Choose name"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                }
+              }}
+              onInput={(event) => {
+                const raw = event.currentTarget.textContent ?? '';
+                const singleLine = raw.replace(/\r?\n/g, '').slice(0, nicknameMaxBytes);
+                if (singleLine !== raw) {
+                  event.currentTarget.textContent = singleLine;
+                }
+                setMyNickname(singleLine);
+              }}
+              onBlur={() => {
+                if (!hasAesReady || !walletAddress) {
+                  return;
+                }
 
-              saveMyNicknameOnChain().catch(() => {});
-            }}
-          />
+                saveMyNicknameOnChain().catch(() => {});
+              }}
+            />
+            <button
+              type="button"
+              className="contact-profile-editor-action"
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+              onClick={() => {
+                saveMyNicknameOnChain().catch(() => {});
+              }}
+              disabled={!hasAesReady || !walletAddress}
+            >
+              Save
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               type="button"
@@ -6282,9 +5781,9 @@ export default function App() {
               onClick={() => {
                 saveProfileStateOnChain().catch(() => {});
               }}
-              disabled={!hasAesReady || backingUpState || savingNicknameOnChain}
+              disabled={!hasAesReady || backingUpState}
             >
-              {savingNicknameOnChain || backingUpState ? 'Saving on chain...' : 'Save on chain'}
+              {backingUpState ? 'Saving on chain...' : 'Save on chain'}
             </button>
             <button
               type="button"
