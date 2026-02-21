@@ -293,6 +293,14 @@ const CHAT_CONTRACT_ABI = [
 
 const GROUP_CHAT_CONTRACT_ADDRESS = '0xe9D356d11094E38B1F6529cd51cb995991F06E6F';
 const GROUP_CHAT_CONTRACT_ABI = [
+  'error AlreadyGroupMember()',
+  'error GroupPaused()',
+  'error GroupTooLarge()',
+  'error InvalidGroup()',
+  'error InvalidJoinCode()',
+  'error JoinCodeExhausted()',
+  'error JoinCodeExpired()',
+  'error JoinCodeNotFound()',
   'function feeAmount() view returns (uint256)',
   'function INVITE_TTL_DEFAULT() view returns (uint64)',
   'function JOIN_CODE_MAX_USES() view returns (uint32)',
@@ -326,6 +334,17 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupMessageSubmitted(uint256 indexed groupId, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender, uint256 valueSent, uint256 feeTaken)',
   'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
+
+const GROUP_JOIN_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
+  '0x569d6b43': 'You are already a member of this group.',
+  '0xc377608f': 'Group actions are currently paused on-chain. Try again later.',
+  '0x6ebf9e18': 'This group has reached its member limit.',
+  '0xdb140e40': 'This group no longer exists.',
+  '0x873c1c39': 'Invalid group code format.',
+  '0x5c47db1b': 'This group code has no remaining uses.',
+  '0x6763c1d5': 'This group code has expired.',
+  '0x7fb3f362': 'This group code is no longer active. Ask for a new code.'
+};
 
 type CotiEthersModule = typeof import('@coti-io/coti-ethers');
 type CotiWsProvider = InstanceType<CotiEthersModule['WebSocketProvider']>;
@@ -703,6 +722,98 @@ const getProviderErrorMessage = (error: unknown, fallbackMessage: string): strin
   return rawMessage || fallbackMessage;
 };
 
+const isHexDataString = (value: unknown): value is string =>
+  typeof value === 'string' && value.length >= 10 && value.length % 2 === 0 && /^0x[a-fA-F0-9]+$/.test(value);
+
+const pickLikelyRevertData = (values: string[]): string | null => {
+  const valid = values.filter((value) => isHexDataString(value));
+  if (valid.length === 0) {
+    return null;
+  }
+
+  valid.sort((left, right) => left.length - right.length);
+  return valid[0] ?? null;
+};
+
+const extractRevertData = (error: unknown): string | null => {
+  const candidates: string[] = [];
+  const pushCandidate = (value: unknown): void => {
+    if (typeof value === 'string') {
+      candidates.push(value);
+    }
+  };
+
+  if (typeof error === 'object' && error !== null) {
+    const errorObject = error as {
+      data?: unknown;
+      revert?: unknown;
+      error?: unknown;
+      info?: unknown;
+      cause?: unknown;
+    };
+
+    pushCandidate(errorObject.data);
+
+    if (typeof errorObject.revert === 'object' && errorObject.revert !== null) {
+      pushCandidate((errorObject.revert as { data?: unknown }).data);
+    }
+
+    if (typeof errorObject.error === 'object' && errorObject.error !== null) {
+      pushCandidate((errorObject.error as { data?: unknown }).data);
+    }
+
+    if (typeof errorObject.info === 'object' && errorObject.info !== null) {
+      const infoObject = errorObject.info as { data?: unknown; error?: unknown };
+      pushCandidate(infoObject.data);
+      if (typeof infoObject.error === 'object' && infoObject.error !== null) {
+        pushCandidate((infoObject.error as { data?: unknown }).data);
+      }
+    }
+
+    if (typeof errorObject.cause === 'object' && errorObject.cause !== null) {
+      pushCandidate((errorObject.cause as { data?: unknown }).data);
+    }
+  }
+
+  const dataFromObject = pickLikelyRevertData(candidates);
+  if (dataFromObject) {
+    return dataFromObject.toLowerCase();
+  }
+
+  const rawMessage = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (!rawMessage) {
+    return null;
+  }
+
+  const dataAttributeMatch = rawMessage.match(/\bdata=\"(0x[a-fA-F0-9]+)\"/);
+  if (dataAttributeMatch?.[1] && isHexDataString(dataAttributeMatch[1])) {
+    return dataAttributeMatch[1].toLowerCase();
+  }
+
+  const inlineHexValues = rawMessage.match(/0x[a-fA-F0-9]{8,}/g) ?? [];
+  const dataFromMessage = pickLikelyRevertData(inlineHexValues);
+  return dataFromMessage ? dataFromMessage.toLowerCase() : null;
+};
+
+const getGroupJoinErrorMessage = (error: unknown, fallbackMessage: string): string => {
+  const revertData = extractRevertData(error);
+  if (revertData) {
+    const selector = revertData.slice(0, 10).toLowerCase();
+    const mappedMessage = GROUP_JOIN_ERROR_MESSAGE_BY_SELECTOR[selector];
+    if (mappedMessage) {
+      return mappedMessage;
+    }
+  }
+
+  const providerMessage = getProviderErrorMessage(error, fallbackMessage);
+  const normalizedProviderMessage = providerMessage.toLowerCase();
+  if (normalizedProviderMessage.includes('unknown custom error') || normalizedProviderMessage.includes('execution reverted')) {
+    return fallbackMessage;
+  }
+
+  return providerMessage;
+};
+
 const createCotiBrowserProvider = async (ethereum: Eip1193Provider): Promise<BrowserProvider> => {
   const cotiEthers = await loadCotiEthersModule();
   return new cotiEthers.BrowserProvider(ethereum, {
@@ -877,6 +988,49 @@ const toSafeNumber = (value: unknown): number => {
   }
 
   return 0;
+};
+
+type ParsedGroupJoinCodeState = {
+  active: boolean;
+  creator: string;
+  expiresAt: number;
+  usesLeft: number;
+  expired: boolean;
+};
+
+const parseGroupJoinCodeState = (joinCodeRaw: unknown): ParsedGroupJoinCodeState | null => {
+  if (!joinCodeRaw) {
+    return null;
+  }
+
+  if (typeof joinCodeRaw === 'object' && !Array.isArray(joinCodeRaw)) {
+    const parsed = joinCodeRaw as {
+      active?: unknown;
+      creator?: unknown;
+      expiresAt?: unknown;
+      usesLeft?: unknown;
+      expired?: unknown;
+    };
+    return {
+      active: Boolean(parsed.active),
+      creator: typeof parsed.creator === 'string' ? parsed.creator : '',
+      expiresAt: toSafeNumber(parsed.expiresAt),
+      usesLeft: toSafeNumber(parsed.usesLeft),
+      expired: Boolean(parsed.expired)
+    };
+  }
+
+  if (Array.isArray(joinCodeRaw)) {
+    return {
+      active: Boolean(joinCodeRaw[0]),
+      creator: typeof joinCodeRaw[1] === 'string' ? joinCodeRaw[1] : '',
+      expiresAt: toSafeNumber(joinCodeRaw[2]),
+      usesLeft: toSafeNumber(joinCodeRaw[3]),
+      expired: Boolean(joinCodeRaw[4])
+    };
+  }
+
+  return null;
 };
 
 const toBigIntArray = (value: unknown): bigint[] => {
@@ -2564,6 +2718,16 @@ export default function App() {
 
       await saveEncryptedBurnerWalletVault(burnerVault, sessionPin);
       walletPersisted = true;
+      if (mode === 'import') {
+        const normalizedImportedPrivateKey = buildResult.record.privateKey.trim().toLowerCase();
+        const persistedVault = await loadBurnerWalletVaultFromStorage(sessionPin);
+        const importedWalletPersisted = persistedVault.wallets.some(
+          (walletRecord) => walletRecord.privateKey.trim().toLowerCase() === normalizedImportedPrivateKey
+        );
+        if (!importedWalletPersisted) {
+          throw new Error('Imported wallet was not found in persistent storage after saving.');
+        }
+      }
 
       const activeWalletRecord =
         burnerVault.wallets.find((walletRecord) => walletRecord.id === burnerVault.activeWalletId) ??
@@ -2750,7 +2914,7 @@ export default function App() {
       return;
     }
 
-    const nextPinMode: BurnerPinMode = mode === 'stored' && storageState.kind === 'encrypted' ? 'unlock' : 'set';
+    const nextPinMode: BurnerPinMode = storageState.kind === 'encrypted' ? 'unlock' : 'set';
 
     setPendingBurnerInit({ mode, seedOrPrivateKey, walletId: activeBurnerWalletId || undefined });
     setBurnerPinMode(nextPinMode);
@@ -6058,13 +6222,9 @@ export default function App() {
       await tx.wait();
 
       const joinCodeRaw = await contract.getJoinCode(activeGroupId, codeHash).catch(() => null);
-      const expiresAtFromChain = joinCodeRaw && typeof joinCodeRaw === 'object'
-        ? toSafeNumber((joinCodeRaw as { expiresAt?: unknown }).expiresAt)
-        : Array.isArray(joinCodeRaw)
-          ? toSafeNumber(joinCodeRaw[2])
-          : 0;
-      if (expiresAtFromChain > 0) {
-        expiresAt = expiresAtFromChain;
+      const joinCodeState = parseGroupJoinCodeState(joinCodeRaw);
+      if (joinCodeState && joinCodeState.expiresAt > 0) {
+        expiresAt = joinCodeState.expiresAt;
       }
 
       const inviterAddress = walletAddress.trim();
@@ -6160,7 +6320,38 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-      const tx = await contract.joinWithCode(parsedJoinCode.groupId, parsedJoinCode.code);
+      const normalizedCode = parsedJoinCode.code.trim().toUpperCase();
+      if (!normalizedCode) {
+        setError('Invalid group code.');
+        return;
+      }
+
+      const codeHash = cotiEthers.keccak256(cotiEthers.toUtf8Bytes(normalizedCode));
+      const [isAlreadyMemberRaw, joinCodeRaw] = await Promise.all([
+        contract.isMember(parsedJoinCode.groupId, requestedWalletAddress).catch(() => false),
+        contract.getJoinCode(parsedJoinCode.groupId, codeHash).catch(() => null)
+      ]);
+
+      if (Boolean(isAlreadyMemberRaw)) {
+        setError('You are already a member of this group.');
+        return;
+      }
+
+      const joinCodeState = parseGroupJoinCodeState(joinCodeRaw);
+      if (!joinCodeState || !joinCodeState.active) {
+        setError('This group code is no longer active. Ask for a new code.');
+        return;
+      }
+      if (joinCodeState.expired || (joinCodeState.expiresAt > 0 && joinCodeState.expiresAt <= nowTs)) {
+        setError('This group code has expired.');
+        return;
+      }
+      if (joinCodeState.usesLeft <= 0) {
+        setError('This group code has no remaining uses.');
+        return;
+      }
+
+      const tx = await contract.joinWithCode(parsedJoinCode.groupId, normalizedCode);
       await tx.wait();
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -6174,7 +6365,7 @@ export default function App() {
       activateGroup(parsedJoinCode.groupId);
       setShowQuickActionsModal(false);
     } catch (joinError) {
-      const message = joinError instanceof Error ? joinError.message : 'Failed to join group with code.';
+      const message = getGroupJoinErrorMessage(joinError, 'Failed to join group with code.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
