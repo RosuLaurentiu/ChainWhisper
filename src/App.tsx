@@ -34,6 +34,7 @@ type ChatMessage = {
   direction: 'incoming' | 'outgoing';
   text: string;
   senderAddress?: string;
+  isSystem?: boolean;
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
@@ -83,7 +84,8 @@ type GroupMessageEntry = {
   groupId: number;
   direction: 'incoming' | 'outgoing';
   text: string;
-  senderAddress: string;
+  senderAddress?: string;
+  isSystem?: boolean;
   txHash: string;
   blockNumber: number;
   logIndex: number;
@@ -377,6 +379,20 @@ const loadCotiReadProvider = async (preferWebSocket = true): Promise<CotiReadPro
 };
 
 const shortenAddress = (address: string): string => `${address.slice(0, 6)}...${address.slice(-4)}`;
+const formatGroupMembershipEventText = (
+  event: 'added' | 'removed' | 'left',
+  account?: string
+): string => {
+  const normalizedAddress = String(account ?? '').trim();
+  const memberLabel = isWalletAddress(normalizedAddress) ? shortenAddress(normalizedAddress) : 'A member';
+  if (event === 'added') {
+    return `[GROUP] ${memberLabel} joined the group.`;
+  }
+  if (event === 'removed') {
+    return `[GROUP] ${memberLabel} was removed from the group.`;
+  }
+  return `[GROUP] ${memberLabel} left the group.`;
+};
 
 const isWalletAddress = (value: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 const isShortAddress = (value: string): boolean => /^0x[a-fA-F0-9]{4}\.\.\.[a-fA-F0-9]{4}$/.test(value.trim());
@@ -5080,9 +5096,12 @@ export default function App() {
             : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
 
         if (groupFromBlock <= latestBlock) {
-          const [incomingLogs, outgoingLogs] = await Promise.all([
+          const [incomingLogs, outgoingLogs, memberAddedLogs, memberRemovedLogsForGroup, memberLeftLogs] = await Promise.all([
             contract.queryFilter(contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress), groupFromBlock, latestBlock),
-            contract.queryFilter(contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress), groupFromBlock, latestBlock)
+            contract.queryFilter(contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress), groupFromBlock, latestBlock),
+            contract.queryFilter(contract.filters.GroupMemberAdded(groupId, null), groupFromBlock, latestBlock),
+            contract.queryFilter(contract.filters.GroupMemberRemoved(groupId, null), groupFromBlock, latestBlock),
+            contract.queryFilter(contract.filters.GroupMemberLeft(groupId, null), groupFromBlock, latestBlock)
           ]);
           if (currentWalletKeyRef.current !== requestedWalletKey) {
             return;
@@ -5093,6 +5112,15 @@ export default function App() {
             blockNumbers.add(log.blockNumber);
           }
           for (const log of outgoingLogs) {
+            blockNumbers.add(log.blockNumber);
+          }
+          for (const log of memberAddedLogs) {
+            blockNumbers.add(log.blockNumber);
+          }
+          for (const log of memberRemovedLogsForGroup) {
+            blockNumbers.add(log.blockNumber);
+          }
+          for (const log of memberLeftLogs) {
             blockNumbers.add(log.blockNumber);
           }
 
@@ -5188,6 +5216,57 @@ export default function App() {
             });
           }
 
+          for (const log of memberAddedLogs) {
+            const args = (log as { args?: Record<string, unknown> }).args;
+            const account = String(args?.account ?? '').trim();
+            entries.push({
+              id: `${log.transactionHash}-${log.index}-group-member-added`,
+              groupId,
+              direction: 'incoming',
+              text: formatGroupMembershipEventText('added', account),
+              senderAddress: account,
+              isSystem: true,
+              txHash: log.transactionHash,
+              blockNumber: log.blockNumber,
+              logIndex: log.index,
+              timestamp: blockTimestampMap.get(log.blockNumber)
+            });
+          }
+
+          for (const log of memberRemovedLogsForGroup) {
+            const args = (log as { args?: Record<string, unknown> }).args;
+            const account = String(args?.account ?? '').trim();
+            entries.push({
+              id: `${log.transactionHash}-${log.index}-group-member-removed`,
+              groupId,
+              direction: 'incoming',
+              text: formatGroupMembershipEventText('removed', account),
+              senderAddress: account,
+              isSystem: true,
+              txHash: log.transactionHash,
+              blockNumber: log.blockNumber,
+              logIndex: log.index,
+              timestamp: blockTimestampMap.get(log.blockNumber)
+            });
+          }
+
+          for (const log of memberLeftLogs) {
+            const args = (log as { args?: Record<string, unknown> }).args;
+            const account = String(args?.account ?? '').trim();
+            entries.push({
+              id: `${log.transactionHash}-${log.index}-group-member-left`,
+              groupId,
+              direction: 'incoming',
+              text: formatGroupMembershipEventText('left', account),
+              senderAddress: account,
+              isSystem: true,
+              txHash: log.transactionHash,
+              blockNumber: log.blockNumber,
+              logIndex: log.index,
+              timestamp: blockTimestampMap.get(log.blockNumber)
+            });
+          }
+
           entries.sort((left, right) => {
             if (left.blockNumber !== right.blockNumber) {
               return left.blockNumber - right.blockNumber;
@@ -5230,6 +5309,7 @@ export default function App() {
                   direction: entry.direction,
                   text: entry.text,
                   senderAddress: entry.senderAddress,
+                  isSystem: entry.isSystem,
                   timestamp: entry.timestamp,
                   blockNumber: entry.blockNumber,
                   logIndex: entry.logIndex,
@@ -7618,6 +7698,7 @@ export default function App() {
                 <p className="chat-empty">No group messages yet.</p>
               ) : (
                 activeGroupMessages.map((message) => {
+                  const isGroupSystemMessage = Boolean(message.isSystem);
                   const messageDisplayText = getMessageDisplayText(message.text, message.direction);
                   const parsedImageTag = parseImageTag(message.text);
                   const deliveryLabel =
@@ -7640,14 +7721,20 @@ export default function App() {
                       (message.senderAddress && isWalletAddress(message.senderAddress)
                         ? shortenAddress(message.senderAddress)
                         : 'Member');
+                  const messageRowClassName = isGroupSystemMessage
+                    ? 'message-row system'
+                    : message.direction === 'outgoing'
+                      ? 'message-row outgoing'
+                      : 'message-row incoming';
+                  const messageBubbleClassName = isGroupSystemMessage ? 'message-bubble system' : 'message-bubble';
 
                   return (
                     <div
                       key={message.id}
-                      className={message.direction === 'outgoing' ? 'message-row outgoing' : 'message-row incoming'}
+                      className={messageRowClassName}
                     >
-                      <div className="message-bubble">
-                        {message.direction === 'incoming' ? (
+                      <div className={messageBubbleClassName}>
+                        {message.direction === 'incoming' && !isGroupSystemMessage ? (
                           canCopySenderAddress ? (
                             <button
                               type="button"

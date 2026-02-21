@@ -961,6 +961,10 @@ body {
   justify-content: flex-end;
 }
 
+.message-row.system {
+  justify-content: center;
+}
+
 .message-bubble {
   max-width: min(88%, 720px);
   border: 1px solid var(--border);
@@ -973,6 +977,15 @@ body {
   overflow-wrap: anywhere;
   word-break: break-word;
   position: relative;
+}
+
+.message-bubble.system {
+  max-width: min(92%, 760px);
+  text-align: center;
+  color: var(--muted);
+  border-style: dashed;
+  background: rgba(20, 28, 40, 0.6);
+  padding: 8px 12px;
 }
 
 .message-bubble.replying {
