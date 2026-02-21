@@ -386,6 +386,14 @@ body {
   color: var(--text);
 }
 
+.contact-section-label {
+  font-size: 0.76rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-left: 2px;
+}
+
 .contact-profile-editor {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -503,6 +511,13 @@ body {
   text-align: left;
   display: grid;
   gap: 2px;
+}
+
+.mark-read-button {
+  width: auto;
+  justify-self: flex-start;
+  padding: 6px 10px;
+  font-size: 0.78rem;
 }
 
 .contact-card {
@@ -750,7 +765,39 @@ body {
 }
 
 .chat-header-group > strong {
-  flex: 0 1 320px;
+  grid-area: title;
+  align-self: center;
+}
+
+.chat-header.chat-header-group {
+  --group-header-button-width: 124px;
+  --group-header-ttl-width: 44px;
+  display: grid;
+  grid-template-columns: minmax(170px, 240px) minmax(0, 1fr);
+  grid-template-areas:
+    "title controls"
+    "actions actions";
+  align-items: start;
+  gap: 10px 12px;
+}
+
+.group-header-controls {
+  grid-area: controls;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: var(--group-header-button-width) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  align-self: start;
+}
+
+.chat-header-group .group-members-dropdown {
+  justify-self: start;
+  align-self: start;
+}
+
+.group-header-controls > * {
+  min-width: 0;
 }
 
 .group-members-dropdown {
@@ -763,12 +810,18 @@ body {
   background: var(--bg-elev-2);
   color: var(--text);
   border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 0.8rem;
+  padding: 0 12px;
+  font-size: 0.78rem;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
   list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: var(--group-header-button-width);
+  box-sizing: border-box;
 }
 
 .group-members-dropdown > summary::-webkit-details-marker {
@@ -777,6 +830,94 @@ body {
 
 .group-members-dropdown[open] > summary {
   background: #2a2146;
+}
+
+.group-control-button {
+  height: 36px;
+  width: var(--group-header-button-width);
+  padding: 0 12px;
+  font-size: 0.78rem;
+  box-sizing: border-box;
+}
+
+.group-options-dropdown {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.group-options-dropdown > summary {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: var(--group-header-button-width);
+  box-sizing: border-box;
+}
+
+.group-options-dropdown > summary::-webkit-details-marker {
+  display: none;
+}
+
+.group-options-dropdown[open] > summary {
+  background: #2a2146;
+}
+
+.group-options-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(220px, calc(100vw - 32px));
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  display: grid;
+  gap: 6px;
+  z-index: 25;
+}
+
+.group-options-menu button {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-3);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+.group-options-menu button:hover {
+  background: #2a2146;
+}
+
+.group-options-menu button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.group-options-menu .group-options-danger {
+  border-color: #6b2a34;
+  background: #2b171c;
+  color: #f0c9cf;
+}
+
+.group-options-menu .group-options-danger:hover {
+  background: #3a1d24;
+  border-color: #8a3a46;
 }
 
 .group-members-list {
@@ -873,11 +1014,15 @@ body {
 }
 
 .group-header-invite {
-  flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
   margin: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px auto;
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--group-header-ttl-width)
+    var(--group-header-button-width)
+    var(--group-header-button-width);
   gap: 8px;
   align-items: center;
 }
@@ -889,7 +1034,41 @@ body {
   color: var(--text);
   padding: 8px 10px;
   font-size: 0.84rem;
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.group-header-invite .group-header-invite-ttl {
+  text-align: left;
+  padding-inline: 8px;
+  padding-left: 15px;
+  padding-right: 4px;
+}
+
+.group-header-invite .group-header-invite-address {
+  min-width: 0;
+}
+
+.group-header-invite-ttl-wrap {
+  position: relative;
+  display: block;
+  width: var(--group-header-ttl-width);
+  min-width: var(--group-header-ttl-width);
+  max-width: var(--group-header-ttl-width);
+}
+
+.group-header-invite-ttl-wrap::before {
+  content: "H";
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  pointer-events: none;
+  text-align: center;
 }
 
 .group-header-invite input:focus {
@@ -901,10 +1080,13 @@ body {
   background: var(--bg-elev-3);
   color: var(--text);
   border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 0.8rem;
+  padding: 0 12px;
+  font-size: 0.78rem;
   cursor: pointer;
   white-space: nowrap;
+  height: 36px;
+  width: var(--group-header-button-width);
+  box-sizing: border-box;
 }
 
 .group-header-invite button:hover {
@@ -917,21 +1099,28 @@ body {
 }
 
 .group-header-actions {
+  grid-area: actions;
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  justify-self: end;
+  align-self: start;
   gap: 8px;
   flex-shrink: 0;
 }
 
 .group-header-actions .contact {
-  width: auto;
+  width: var(--group-header-button-width);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   text-align: center;
   gap: 0;
-  padding: 8px 10px;
-  font-size: 0.8rem;
+  padding: 0 12px;
+  font-size: 0.78rem;
+  height: 36px;
+  box-sizing: border-box;
 }
 
 .group-header-actions .group-danger-button {
@@ -943,6 +1132,72 @@ body {
 .group-header-actions .group-danger-button:hover {
   background: #3a1d24;
   border-color: #8a3a46;
+}
+
+.group-header-controls .contact.active {
+  background: #2a2146;
+}
+
+.group-mobile-options-panel {
+  grid-area: actions;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.group-mobile-options-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.group-mobile-options-actions .contact {
+  width: 100%;
+  min-width: 0;
+}
+
+.group-generated-code {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--group-header-button-width);
+  gap: 8px;
+  align-items: center;
+}
+
+.group-header-invite .group-generated-code {
+  grid-column: 1 / -1;
+}
+
+.group-generated-code input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev-1);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.group-generated-code button {
+  width: var(--group-header-button-width);
+  height: 36px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1320px) {
+  .chat-header.chat-header-group {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "title"
+      "controls"
+      "actions";
+  }
+
+  .group-header-controls {
+    grid-template-columns: var(--group-header-button-width) minmax(0, 1fr);
+  }
 }
 
 .chat-messages {
@@ -1322,6 +1577,39 @@ body {
   gap: 8px;
 }
 
+.quick-actions-modal {
+  gap: 10px;
+}
+
+.quick-actions-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-actions-tabs button {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.quick-actions-tabs button:hover {
+  background: #2a2146;
+}
+
+.quick-actions-tabs button.active {
+  border-color: var(--accent);
+  background: #1e2f49;
+}
+
+.quick-actions-form {
+  margin-top: 4px;
+}
+
 .mobile-bottom-nav {
   display: none;
 }
@@ -1497,8 +1785,22 @@ body {
     max-width: none;
   }
 
-  .chat-header .group-members-dropdown {
+  .chat-header.chat-header-group {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "title"
+      "controls"
+      "actions";
+  }
+
+  .chat-header .group-header-controls {
     grid-column: 1 / -1;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .chat-header .group-members-dropdown {
     width: 100%;
   }
 
@@ -1512,30 +1814,53 @@ body {
     max-width: none;
   }
 
-  .chat-header .group-header-invite {
+  .chat-header .group-header-controls .contact,
+  .chat-header .group-members-dropdown > summary {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chat-header .group-mobile-options-panel {
     grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .chat-header .group-mobile-options-panel .group-header-invite-mobile-inline {
+    grid-template-columns: minmax(0, 1fr) var(--group-header-ttl-width);
+    width: 100%;
+  }
+
+  .chat-header .group-mobile-options-panel .group-header-invite-mobile-inline .group-header-invite-ttl-wrap {
+    width: var(--group-header-ttl-width);
+    min-width: var(--group-header-ttl-width);
+    max-width: var(--group-header-ttl-width);
+  }
+
+  .chat-header .group-mobile-options-panel .group-header-invite-mobile-inline input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chat-header .group-mobile-options-panel .group-mobile-options-actions {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chat-header .group-mobile-options-panel .group-mobile-options-actions .contact {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chat-header .group-mobile-options-panel .group-generated-code {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .chat-header .group-mobile-options-panel .group-generated-code button {
+    width: 100%;
+  }
+
+  .quick-actions-tabs {
     grid-template-columns: minmax(0, 1fr);
-    width: 100%;
-  }
-
-  .chat-header .group-header-invite input,
-  .chat-header .group-header-invite button {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .chat-header .group-header-actions {
-    grid-column: 1 / -1;
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .chat-header .group-header-actions .contact {
-    width: 100%;
-    min-width: 0;
-    padding: 8px 10px;
-    font-size: 0.76rem;
   }
 
   .chat-compose {

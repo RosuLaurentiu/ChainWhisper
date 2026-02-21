@@ -79,6 +79,13 @@ type GroupInvite = {
   admin?: string;
 };
 
+type GroupInviteCodePayload = {
+  version: 1;
+  groupId: number;
+  expiresAt: number;
+  inviter?: string;
+};
+
 type GroupMessageEntry = {
   id: string;
   groupId: number;
@@ -383,6 +390,60 @@ const loadCotiReadProvider = async (preferWebSocket = true): Promise<CotiReadPro
 };
 
 const shortenAddress = (address: string): string => `${address.slice(0, 6)}...${address.slice(-4)}`;
+const GROUP_INVITE_CODE_PREFIX = 'coti-group-code-v1:';
+const encodeBase64Url = (value: string): string =>
+  btoa(value)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+const decodeBase64Url = (value: string): string => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+  return atob(`${normalized}${padding}`);
+};
+const encodeGroupInviteCode = (payload: GroupInviteCodePayload): string => {
+  const serialized = JSON.stringify(payload);
+  return `${GROUP_INVITE_CODE_PREFIX}${encodeBase64Url(serialized)}`;
+};
+const parseGroupInviteCode = (input: string): GroupInviteCodePayload | null => {
+  const raw = input.trim();
+  if (!raw) {
+    return null;
+  }
+
+  const encodedPayload = raw.startsWith(GROUP_INVITE_CODE_PREFIX)
+    ? raw.slice(GROUP_INVITE_CODE_PREFIX.length)
+    : raw;
+  if (!encodedPayload) {
+    return null;
+  }
+
+  try {
+    const decoded = decodeBase64Url(encodedPayload);
+    const parsed = JSON.parse(decoded) as {
+      version?: unknown;
+      groupId?: unknown;
+      expiresAt?: unknown;
+      inviter?: unknown;
+    };
+    const version = Number(parsed.version);
+    const groupId = Number(parsed.groupId);
+    const expiresAt = Number(parsed.expiresAt);
+    const inviter = typeof parsed.inviter === 'string' ? parsed.inviter.trim() : undefined;
+    if (version !== 1 || !Number.isFinite(groupId) || groupId <= 0 || !Number.isFinite(expiresAt) || expiresAt <= 0) {
+      return null;
+    }
+
+    return {
+      version: 1,
+      groupId: Math.floor(groupId),
+      expiresAt: Math.floor(expiresAt),
+      inviter: inviter && isWalletAddress(inviter) ? inviter : undefined
+    };
+  } catch {
+    return null;
+  }
+};
 const formatGroupMembershipEventText = (
   event: 'added' | 'removed' | 'left',
   account?: string
@@ -1718,6 +1779,8 @@ export default function App() {
   const [showBurnerImportModal, setShowBurnerImportModal] = useState(false);
   const [burnerStorageBlocked, setBurnerStorageBlocked] = useState<boolean>(() => !isBurnerStorageAvailable());
   const [showBurnerPinModal, setShowBurnerPinModal] = useState(false);
+  const [showQuickActionsModal, setShowQuickActionsModal] = useState(false);
+  const [quickActionTab, setQuickActionTab] = useState<'contact' | 'create-group' | 'join-group'>('contact');
   const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
   const [burnerPinInput, setBurnerPinInput] = useState('');
   const [pendingBurnerInit, setPendingBurnerInit] = useState<PendingBurnerInit | null>(null);
@@ -1739,13 +1802,18 @@ export default function App() {
   const [newGroupTitle, setNewGroupTitle] = useState('');
   const [newGroupMembersInput, setNewGroupMembersInput] = useState('');
   const [groupInviteMembersInput, setGroupInviteMembersInput] = useState('');
-  const [groupInviteTtlInput, setGroupInviteTtlInput] = useState('86400');
+  const [groupInviteTtlInput, setGroupInviteTtlInput] = useState('8');
+  const [generatedGroupInviteCode, setGeneratedGroupInviteCode] = useState('');
+  const [groupJoinCodeInput, setGroupJoinCodeInput] = useState('');
   const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
   const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>({});
+  const [unreadGroupMap, setUnreadGroupMap] = useState<Record<string, boolean>>({});
   const [lastReadAllTs, setLastReadAllTs] = useState(0);
   const lastReadAllTsRef = useRef(0);
   const lastReadByContactRef = useRef<Record<string, number>>({});
+  const lastReadByGroupRef = useRef<Record<string, number>>({});
   const unreadMapRef = useRef<Record<string, boolean>>({});
+  const unreadGroupMapRef = useRef<Record<string, boolean>>({});
   const SOUND_ENABLED_STORAGE_KEY = 'coti-chat-sound-enabled';
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     try {
@@ -1808,7 +1876,6 @@ export default function App() {
   };
   const [sending, setSending] = useState(false);
   const [syncingHistory, setSyncingHistory] = useState(false);
-  const [syncingData, setSyncingData] = useState(false);
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
@@ -1822,13 +1889,22 @@ export default function App() {
   const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
   const [processingGroupAction, setProcessingGroupAction] = useState(false);
   const [syncingGroups, setSyncingGroups] = useState(false);
-  const [backingUpState, setBackingUpState] = useState(false);
   const [error, setError] = useState<string>('');
   const [activeMobileView, setActiveMobileView] = useState<MobileView>('wallets');
   const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
   const [isMobileNav, setIsMobileNav] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= MOBILE_NAV_BREAKPOINT_PX : false
   );
+  const [mobileGroupOptionsOpen, setMobileGroupOptionsOpen] = useState(false);
+  useEffect(() => {
+    setGroupInviteTtlInput((previous) => {
+      const normalized = previous.trim();
+      if (!normalized || normalized === '168') {
+        return '8';
+      }
+      return previous;
+    });
+  }, []);
   const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
   const topHeaderRef = useRef<HTMLElement | null>(null);
   const activeProviderRef = useRef<Eip1193Provider | null>(null);
@@ -1877,6 +1953,9 @@ export default function App() {
   useEffect(() => {
     unreadMapRef.current = unreadMap || {};
   }, [unreadMap]);
+  useEffect(() => {
+    unreadGroupMapRef.current = unreadGroupMap || {};
+  }, [unreadGroupMap]);
 
   useEffect(() => {
     const prev = prevUnreadRef.current || {};
@@ -1950,6 +2029,13 @@ export default function App() {
   useEffect(() => {
     activeGroupIdRef.current = activeGroupId;
   }, [activeGroupId]);
+  useEffect(() => {
+    setGeneratedGroupInviteCode('');
+  }, [activeGroupId, walletAddress]);
+
+  useEffect(() => {
+    setMobileGroupOptionsOpen(false);
+  }, [activeGroupId, walletAddress, isMobileNav]);
 
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
   const onCotiNetwork = useMemo(() => chainId === COTI_NETWORK.chainIdDecimal, [chainId]);
@@ -2089,6 +2175,12 @@ export default function App() {
   const sortedGroupInvites = useMemo(
     () => [...groupInvites].sort((left, right) => left.expiresAt - right.expiresAt || left.groupId - right.groupId),
     [groupInvites]
+  );
+  const hasUnreadConversations = useMemo(
+    () =>
+      Object.values(unreadMap).some((isUnread) => Boolean(isUnread)) ||
+      Object.values(unreadGroupMap).some((isUnread) => Boolean(isUnread)),
+    [unreadMap, unreadGroupMap]
   );
   const activeContactMeta = useMemo(
     () => contacts.find((contact) => contact.address.toLowerCase() === activeContact?.toLowerCase()),
@@ -2873,11 +2965,141 @@ export default function App() {
     unreadMapRef.current = nextUnread;
     setUnreadMap(nextUnread);
 
-    if (Object.keys(nextUnread).length === 0 && readAtTs > lastReadAllTsRef.current) {
+    if (
+      Object.keys(nextUnread).length === 0 &&
+      Object.keys(unreadGroupMapRef.current || {}).length === 0 &&
+      readAtTs > lastReadAllTsRef.current
+    ) {
       lastReadAllTsRef.current = readAtTs;
       setLastReadAllTs((previous) => (readAtTs > previous ? readAtTs : previous));
     }
   }, [messagesByContact]);
+  const markGroupConversationAsRead = useCallback((groupId?: number | null) => {
+    if (!Number.isFinite(groupId) || (groupId ?? 0) <= 0) {
+      return;
+    }
+
+    const normalizedGroupId = Math.floor(groupId as number);
+    const groupKey = String(normalizedGroupId);
+    const localMessages = messagesByGroup[groupKey] ?? [];
+    let latestIncomingFromLocal = 0;
+    for (const message of localMessages) {
+      if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
+        continue;
+      }
+      const ts = Number(message.timestamp);
+      if (ts > latestIncomingFromLocal) {
+        latestIncomingFromLocal = ts;
+      }
+    }
+
+    const groupSummary = groupsRef.current.find((group) => group.id === normalizedGroupId);
+    const latestFromSummary = groupSummary ? toSafeNumber(groupSummary.lastTimestamp) : 0;
+    const readAtTs = Math.max(Math.floor(Date.now() / 1000), latestIncomingFromLocal, latestFromSummary);
+    const previousGroupReadTs = lastReadByGroupRef.current[groupKey] ?? 0;
+    if (readAtTs > previousGroupReadTs) {
+      lastReadByGroupRef.current = {
+        ...lastReadByGroupRef.current,
+        [groupKey]: readAtTs
+      };
+    }
+
+    const previousUnread = unreadGroupMapRef.current || {};
+    if (!previousUnread[groupKey]) {
+      return;
+    }
+
+    const nextUnread = { ...previousUnread };
+    delete nextUnread[groupKey];
+    unreadGroupMapRef.current = nextUnread;
+    setUnreadGroupMap(nextUnread);
+
+    if (
+      Object.keys(nextUnread).length === 0 &&
+      Object.keys(unreadMapRef.current || {}).length === 0 &&
+      readAtTs > lastReadAllTsRef.current
+    ) {
+      lastReadAllTsRef.current = readAtTs;
+      setLastReadAllTs((previous) => (readAtTs > previous ? readAtTs : previous));
+    }
+  }, [messagesByGroup]);
+  const markAllConversationsAsRead = useCallback(() => {
+    const previousUnreadContacts = unreadMapRef.current || {};
+    const previousUnreadGroups = unreadGroupMapRef.current || {};
+    const unreadAddresses = Object.keys(previousUnreadContacts).filter((address) => isWalletAddress(address));
+    const unreadGroupKeys = Object.keys(previousUnreadGroups).filter(
+      (groupKey) => Number.isFinite(Number(groupKey)) && Number(groupKey) > 0
+    );
+    if (unreadAddresses.length === 0 && unreadGroupKeys.length === 0) {
+      return;
+    }
+
+    const nowTs = Math.floor(Date.now() / 1000);
+    const nextReadByContact = { ...lastReadByContactRef.current };
+    const nextReadByGroup = { ...lastReadByGroupRef.current };
+    let nextGlobalReadTs = Math.max(lastReadAllTsRef.current, nowTs);
+
+    for (const address of unreadAddresses) {
+      const localMessages = messagesByContact[address] ?? [];
+      let latestIncomingFromLocal = 0;
+      for (const message of localMessages) {
+        if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
+          continue;
+        }
+        const ts = Number(message.timestamp);
+        if (ts > latestIncomingFromLocal) {
+          latestIncomingFromLocal = ts;
+        }
+      }
+
+      const readAtTs = Math.max(nowTs, latestIncomingFromLocal);
+      const previousContactReadTs = nextReadByContact[address] ?? 0;
+      if (readAtTs > previousContactReadTs) {
+        nextReadByContact[address] = readAtTs;
+      }
+      if (readAtTs > nextGlobalReadTs) {
+        nextGlobalReadTs = readAtTs;
+      }
+    }
+
+    for (const groupKey of unreadGroupKeys) {
+      const localMessages = messagesByGroup[groupKey] ?? [];
+      let latestIncomingFromLocal = 0;
+      for (const message of localMessages) {
+        if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
+          continue;
+        }
+        const ts = Number(message.timestamp);
+        if (ts > latestIncomingFromLocal) {
+          latestIncomingFromLocal = ts;
+        }
+      }
+
+      const groupId = Number(groupKey);
+      const summary = groupsRef.current.find((group) => group.id === groupId);
+      const latestFromSummary = summary ? toSafeNumber(summary.lastTimestamp) : 0;
+      const readAtTs = Math.max(nowTs, latestIncomingFromLocal, latestFromSummary);
+      const previousGroupReadTs = nextReadByGroup[groupKey] ?? 0;
+      if (readAtTs > previousGroupReadTs) {
+        nextReadByGroup[groupKey] = readAtTs;
+      }
+      if (readAtTs > nextGlobalReadTs) {
+        nextGlobalReadTs = readAtTs;
+      }
+    }
+
+    lastReadByContactRef.current = nextReadByContact;
+    lastReadByGroupRef.current = nextReadByGroup;
+    unreadMapRef.current = {};
+    unreadGroupMapRef.current = {};
+    setUnreadMap({});
+    setUnreadGroupMap({});
+
+    if (nextGlobalReadTs > lastReadAllTsRef.current) {
+      lastReadAllTsRef.current = nextGlobalReadTs;
+      setLastReadAllTs((previous) => (nextGlobalReadTs > previous ? nextGlobalReadTs : previous));
+    }
+  }, [messagesByContact, messagesByGroup]);
 
   useEffect(() => {
     if (!activeContact) {
@@ -2894,6 +3116,21 @@ export default function App() {
 
     markConversationAsRead(activeContact);
   }, [activeContact, markConversationAsRead, messagesByContact]);
+  useEffect(() => {
+    if (activeGroupId === null) {
+      return;
+    }
+
+    const pageVisible =
+      typeof document !== 'undefined' &&
+      !document.hidden &&
+      (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+    if (!pageVisible) {
+      return;
+    }
+
+    markGroupConversationAsRead(activeGroupId);
+  }, [activeGroupId, markGroupConversationAsRead, messagesByGroup, groups]);
 
   const activateContact = useCallback((contactAddress: string) => {
     activeGroupIdRef.current = null;
@@ -3405,6 +3642,13 @@ export default function App() {
         unreadMapRef.current = {};
         return {};
       });
+      setUnreadGroupMap((previous) => {
+        if (Object.keys(previous).length === 0) {
+          return previous;
+        }
+        unreadGroupMapRef.current = {};
+        return {};
+      });
     }
 
     lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
@@ -3584,9 +3828,6 @@ export default function App() {
 
     try {
       backupInFlightRef.current = true;
-      if (!options?.background) {
-        setBackingUpState(true);
-      }
 
       const { signer, cacheKey } = await getMemoSigner();
       const selector = await resolveSubmitSelector();
@@ -3648,9 +3889,6 @@ export default function App() {
     } catch {
     } finally {
       backupInFlightRef.current = false;
-      if (!options?.background) {
-        setBackingUpState(false);
-      }
     }
   };
 
@@ -5089,6 +5327,7 @@ export default function App() {
       }
 
       groupOverviewLastSyncedBlockRef.current[walletKey] = latestBlock;
+      const latestIncomingByGroup = new Map<string, number>();
 
       if (!options?.overviewOnly && selectedActiveGroupId !== null) {
         const groupId = selectedActiveGroupId;
@@ -5297,6 +5536,17 @@ export default function App() {
             return left.logIndex - right.logIndex;
           });
 
+          const latestIncomingFromEntries = entries.reduce((max, entry) => {
+            if (entry.direction !== 'incoming' || typeof entry.timestamp !== 'number') {
+              return max;
+            }
+            const ts = Number(entry.timestamp);
+            return ts > max ? ts : max;
+          }, 0);
+          if (latestIncomingFromEntries > 0) {
+            latestIncomingByGroup.set(String(groupId), latestIncomingFromEntries);
+          }
+
           if (entries.length > 0) {
             if (currentWalletKeyRef.current !== requestedWalletKey) {
               return;
@@ -5357,6 +5607,71 @@ export default function App() {
         return;
       }
 
+      const nextReadByGroup = { ...lastReadByGroupRef.current };
+      const previousUnreadGroups = unreadGroupMapRef.current || {};
+      const nextUnreadGroups = { ...previousUnreadGroups };
+      const activeGroupKey = selectedActiveGroupId !== null ? String(selectedActiveGroupId) : null;
+      const pageVisible =
+        typeof document !== 'undefined' &&
+        !document.hidden &&
+        (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+      const globalReadTs = lastReadAllTsRef.current;
+      const candidateGroupKeys = new Set(nextGroups.map((group) => String(group.id)));
+      let readByGroupChanged = false;
+      let unreadGroupsChanged = false;
+
+      for (const group of nextGroups) {
+        const groupKey = String(group.id);
+        const localMessages = messagesByGroup[groupKey] ?? [];
+        let latestIncomingFromLocal = latestIncomingByGroup.get(groupKey) ?? 0;
+        for (const message of localMessages) {
+          if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
+            continue;
+          }
+          const ts = Number(message.timestamp);
+          if (ts > latestIncomingFromLocal) {
+            latestIncomingFromLocal = ts;
+          }
+        }
+
+        const latestMessageTs = Math.max(toSafeNumber(group.lastTimestamp), latestIncomingFromLocal);
+        if (groupKey === activeGroupKey && pageVisible && latestMessageTs > 0) {
+          const existingReadTs = nextReadByGroup[groupKey] ?? 0;
+          if (latestMessageTs > existingReadTs) {
+            nextReadByGroup[groupKey] = latestMessageTs;
+            readByGroupChanged = true;
+          }
+        }
+
+        const groupReadTs = nextReadByGroup[groupKey] ?? 0;
+        const effectiveReadTs = Math.max(globalReadTs, groupReadTs);
+        const shouldUnread = latestMessageTs > effectiveReadTs && !(groupKey === activeGroupKey && pageVisible);
+        if (shouldUnread) {
+          if (!nextUnreadGroups[groupKey]) {
+            nextUnreadGroups[groupKey] = true;
+            unreadGroupsChanged = true;
+          }
+        } else if (nextUnreadGroups[groupKey]) {
+          delete nextUnreadGroups[groupKey];
+          unreadGroupsChanged = true;
+        }
+      }
+
+      for (const existingGroupKey of Object.keys(nextUnreadGroups)) {
+        if (!candidateGroupKeys.has(existingGroupKey)) {
+          delete nextUnreadGroups[existingGroupKey];
+          unreadGroupsChanged = true;
+        }
+      }
+
+      if (unreadGroupsChanged) {
+        unreadGroupMapRef.current = nextUnreadGroups;
+        setUnreadGroupMap(nextUnreadGroups);
+      }
+      if (readByGroupChanged) {
+        lastReadByGroupRef.current = nextReadByGroup;
+      }
+
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
         ...previous,
@@ -5393,10 +5708,11 @@ export default function App() {
     setActiveContact(null);
     setReplyingToMessage(null);
     setActiveGroupId(groupId);
+    markGroupConversationAsRead(groupId);
     if (isMobileNav) {
       setActiveMobileView('chat');
     }
-  }, [isMobileNav]);
+  }, [isMobileNav, markGroupConversationAsRead]);
 
   const createGroup = async () => {
     setError('');
@@ -5458,11 +5774,12 @@ export default function App() {
       return;
     }
 
-    const ttlParsed = Math.max(0, Math.floor(Number(groupInviteTtlInput)));
-    if (!Number.isFinite(ttlParsed) || ttlParsed <= 0) {
-      setError('Invite TTL must be a positive number of seconds.');
+    const ttlHours = Math.max(0, Math.floor(Number(groupInviteTtlInput)));
+    if (!Number.isFinite(ttlHours) || ttlHours <= 0) {
+      setError('Invite TTL must be a positive number of hours.');
       return;
     }
+    const ttlParsed = ttlHours * 60 * 60;
 
     try {
       setProcessingGroupAction(true);
@@ -5485,6 +5802,91 @@ export default function App() {
       setError(message);
     } finally {
       setProcessingGroupAction(false);
+    }
+  };
+
+  const generateInviteCodeForActiveGroup = () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+
+    const ttlHours = Math.max(0, Math.floor(Number(groupInviteTtlInput)));
+    if (!Number.isFinite(ttlHours) || ttlHours <= 0) {
+      setError('Join code TTL must be a positive number of hours.');
+      return;
+    }
+    const ttlParsed = ttlHours * 60 * 60;
+
+    const nowTs = Math.floor(Date.now() / 1000);
+    const inviterAddress = walletAddress.trim();
+    const payload: GroupInviteCodePayload = {
+      version: 1,
+      groupId: activeGroupId,
+      expiresAt: nowTs + ttlParsed,
+      inviter: isWalletAddress(inviterAddress) ? inviterAddress : undefined
+    };
+    setGeneratedGroupInviteCode(encodeGroupInviteCode(payload));
+  };
+
+  const joinGroupWithCode = async () => {
+    setError('');
+
+    if (processingGroupAction) {
+      return;
+    }
+
+    const parsedCode = parseGroupInviteCode(groupJoinCodeInput);
+    if (!parsedCode) {
+      setError('Invalid group code.');
+      return;
+    }
+
+    const nowTs = Math.floor(Date.now() / 1000);
+    if (parsedCode.expiresAt <= nowTs) {
+      setError('This group code has expired.');
+      return;
+    }
+
+    const requestedWalletAddress = walletAddress.trim();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
+      setError('Connect a wallet first.');
+      return;
+    }
+
+    try {
+      const cotiEthers = await loadCotiEthersModule();
+      const readProvider = await loadCotiReadProvider(true);
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+      const inviteRaw = await contract.getInvite(parsedCode.groupId, requestedWalletAddress).catch(() => null);
+
+      const pending = Boolean(
+        inviteRaw && typeof inviteRaw === 'object' ? (inviteRaw as { pending?: unknown }).pending : null
+      ) ||
+        (Array.isArray(inviteRaw) ? Boolean(inviteRaw[0]) : false);
+      const inviteExpiresAt = inviteRaw && typeof inviteRaw === 'object'
+        ? toSafeNumber((inviteRaw as { expiresAt?: unknown }).expiresAt)
+        : Array.isArray(inviteRaw)
+          ? toSafeNumber(inviteRaw[2])
+          : 0;
+      const inviteExpired = inviteRaw && typeof inviteRaw === 'object'
+        ? Boolean((inviteRaw as { expired?: unknown }).expired)
+        : Array.isArray(inviteRaw)
+          ? Boolean(inviteRaw[3])
+          : inviteExpiresAt > 0 && inviteExpiresAt <= nowTs;
+
+      if (!pending || inviteExpired) {
+        setError('No active on-chain invite found for this wallet. Ask the group admin to invite your address first.');
+        return;
+      }
+
+      setGroupJoinCodeInput('');
+      await acceptGroupInvite(parsedCode.groupId);
+    } catch (joinError) {
+      const message = joinError instanceof Error ? joinError.message : 'Failed to join group with code.';
+      setError(message);
     }
   };
 
@@ -6163,23 +6565,13 @@ export default function App() {
     await syncConversationHistory({ deep: true });
   };
 
-  const syncDataFromChainBackup = async () => {
-    if (syncingData) {
+  const forceSyncAllData = async () => {
+    if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
       return;
     }
 
-    setError('');
-    setSyncingData(true);
-    try {
-      await restoreStateFromChainSelfBackupWithRetry(undefined, 4, 900);
-    } finally {
-      setSyncingData(false);
-    }
-  };
-
-  const saveProfileStateOnChain = async () => {
-    setError('');
-    await backupLocalStateToSelf();
+    syncConversationHistory({ deep: true }).catch(() => {});
+    syncGroupData({ deep: true }).catch(() => {});
   };
 
   useEffect(() => {
@@ -6228,6 +6620,8 @@ export default function App() {
     setGroupInvites([]);
     setActiveGroupId(null);
     setMessagesByGroup({});
+    setGeneratedGroupInviteCode('');
+    setGroupJoinCodeInput('');
     groupsRef.current = [];
     groupInvitesRef.current = [];
     activeGroupIdRef.current = null;
@@ -6240,11 +6634,14 @@ export default function App() {
 
   useEffect(() => {
     setUnreadMap({});
+    setUnreadGroupMap({});
     unreadMapRef.current = {};
+    unreadGroupMapRef.current = {};
     setLastReadAllTs(0);
     prevUnreadRef.current = {};
     lastReadAllTsRef.current = 0;
     lastReadByContactRef.current = {};
+    lastReadByGroupRef.current = {};
     lastReadStateBackupSubmittedAtRef.current = 0;
     if (readStateBackupTimerRef.current !== null) {
       window.clearTimeout(readStateBackupTimerRef.current);
@@ -6966,33 +7363,6 @@ export default function App() {
   }, [activeGroupId, walletAddress, hasAesReady, chainId]);
 
   useEffect(() => {
-    if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
-      return;
-    }
-
-    let cancelled = false;
-    const loadInviteTtlDefault = async () => {
-      try {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
-        const ttlRaw = await contract.INVITE_TTL_DEFAULT();
-        const ttl = Math.max(1, toSafeNumber(ttlRaw));
-        if (!cancelled) {
-          setGroupInviteTtlInput(String(ttl));
-        }
-      } catch {
-      }
-    };
-
-    loadInviteTtlDefault().catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [walletAddress, hasAesReady, chainId]);
-
-  useEffect(() => {
     const provider = getConnectedProvider();
 
     refreshWalletState(provider).catch(() => {
@@ -7443,43 +7813,38 @@ export default function App() {
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               type="button"
-              className="contact"
-              onClick={() => {
-                saveProfileStateOnChain().catch(() => {});
-              }}
-              disabled={!hasAesReady || backingUpState}
+              className="contact mark-read-button"
+              onClick={markAllConversationsAsRead}
+              disabled={!hasUnreadConversations}
             >
-              {backingUpState ? 'Saving on chain...' : 'Save on chain'}
+              Mark all as read
             </button>
+            <button
+              type="button"
+              className="contact mark-read-button"
+              onClick={() => {
+                forceSyncAllData().catch(() => {});
+              }}
+              disabled={syncingHistory || syncingGroups || !hasAesReady}
+            >
+              {syncingHistory || syncingGroups ? 'Syncing...' : 'Force sync'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', marginTop: '8px' }}>
             <button
               type="button"
               className="contact"
               onClick={() => {
-                syncDataFromChainBackup().catch(() => {});
+                setQuickActionTab('contact');
+                setShowQuickActionsModal(true);
               }}
-              disabled={!hasAesReady || syncingData || syncingHistory}
             >
-              {syncingData ? 'Syncing...' : 'Sync Data'}
+              Add a chat / group chat
             </button>
           </div>
         </div>
 
-        <form className="contact-form" onSubmit={handleAddContact}>
-          <input
-            value={newContactName}
-            onChange={(event) => setNewContactName(event.target.value)}
-            placeholder="Contact name (optional)"
-            aria-label="Contact name"
-          />
-          <input
-            value={newContact}
-            onChange={(event) => setNewContact(event.target.value)}
-            placeholder="0x... wallet address"
-            aria-label="Wallet address"
-          />
-          <button type="submit">Save Contact</button>
-        </form>
-
+        <span className="contact-section-label">Chats</span>
         <ul className="contacts-list">
           {sortedContacts.map((contact) => {
             const isActive = activeContact?.toLowerCase() === contact.address.toLowerCase();
@@ -7607,46 +7972,12 @@ export default function App() {
         </ul>
 
         <div className="contact-profile-card">
-          <span className="contact-profile-label">Groups</span>
-          <form
-            className="contact-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createGroup().catch(() => {});
-            }}
-          >
-            <input
-              value={newGroupTitle}
-              onChange={(event) => setNewGroupTitle(event.target.value)}
-              placeholder="Group title"
-              aria-label="Group title"
-            />
-            <input
-              value={newGroupMembersInput}
-              onChange={(event) => setNewGroupMembersInput(event.target.value)}
-              placeholder="Initial members (comma/space separated)"
-              aria-label="Initial group members"
-            />
-            <button type="submit" disabled={processingGroupAction || !hasAesReady}>
-              {processingGroupAction ? 'Creating...' : 'Create group'}
-            </button>
-          </form>
-
-          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-            <button
-              type="button"
-              className="contact"
-              onClick={() => {
-                syncGroupData({ deep: true }).catch(() => {});
-              }}
-              disabled={syncingGroups || !hasAesReady}
-            >
-              {syncingGroups ? 'Syncing groups...' : 'Sync groups'}
-            </button>
-          </div>
+          <span className="contact-profile-label">Group chats</span>
 
           {sortedGroupInvites.length > 0 ? (
-            <ul className="contacts-list" style={{ marginTop: '10px' }}>
+            <>
+              <span className="contact-section-label">Pending invites</span>
+              <ul className="contacts-list" style={{ marginTop: '2px' }}>
               {sortedGroupInvites.map((invite) => (
                 <li key={`invite-${invite.groupId}`}>
                   <div className="contact-card">
@@ -7688,13 +8019,17 @@ export default function App() {
                   </div>
                 </li>
               ))}
-            </ul>
+              </ul>
+            </>
           ) : null}
 
-          <ul className="contacts-list" style={{ marginTop: '10px' }}>
+          <span className="contact-section-label">Your groups</span>
+          <ul className="contacts-list" style={{ marginTop: '2px' }}>
             {sortedGroups.map((group) => {
               const isActive = activeGroupId === group.id;
               const groupTitle = normalizeContactName(group.title) ?? `Group ${group.id}`;
+              const groupKey = String(group.id);
+              const hasConversation = group.lastTimestamp > 0 || (messagesByGroup[groupKey]?.length ?? 0) > 0;
               return (
                 <li key={`group-${group.id}`}>
                   <div
@@ -7715,6 +8050,18 @@ export default function App() {
                           {groupTitle} (#{group.id})
                         </span>
                       </div>
+                      {hasConversation ? (
+                        <span
+                          className="contact-chat-icon"
+                          aria-label={unreadGroupMap[groupKey] ? 'Unread group messages' : 'Has group messages'}
+                          title={unreadGroupMap[groupKey] ? 'Unread group messages' : 'Has group messages'}
+                          style={{ marginRight: 6, color: unreadGroupMap[groupKey] ? '#e33' : undefined }}
+                        >
+                          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+                            <path fill="currentColor" d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z" />
+                          </svg>
+                        </span>
+                      ) : null}
                     </div>
                     <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
                       Members: {group.memberCount}
@@ -7742,116 +8089,253 @@ export default function App() {
               <strong>
                 {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) + ` (#${activeGroupId})`}
               </strong>
-              <details className="group-members-dropdown">
-                <summary>
-                  Members (
-                  {activeGroupParticipants.length > 0
-                    ? activeGroupParticipants.length
-                    : activeGroupMeta?.memberCount ?? 0}
-                  )
-                </summary>
-                <ul className="group-members-list">
-                  {activeGroupParticipants.length > 0 ? (
-                    activeGroupParticipants.map((participant) => (
-                      <li key={participant.key}>
-                        <div className="group-member-row">
-                          <button
-                            type="button"
-                            className="group-member-copy"
-                            onClick={(event) => {
-                              copyAddressToClipboard(participant.address).catch(() => {});
-                              const detailsElement = event.currentTarget.closest('details');
-                              if (detailsElement instanceof HTMLDetailsElement) {
-                                detailsElement.open = false;
-                              }
-                            }}
-                            title={`Copy ${participant.address}`}
-                          >
-                            <span className="group-member-name">
-                              {participant.name ?? participant.shortAddress}
-                              {participant.isSelf ? <span className="group-member-badge">You</span> : null}
-                              {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
-                            </span>
-                            <span className="group-member-address">{participant.shortAddress}</span>
-                          </button>
-                          {isActiveGroupAdmin && !participant.isSelf ? (
+              <div className="group-header-controls">
+                <details className="group-members-dropdown">
+                  <summary>
+                    Members (
+                    {activeGroupParticipants.length > 0
+                      ? activeGroupParticipants.length
+                      : activeGroupMeta?.memberCount ?? 0}
+                    )
+                  </summary>
+                  <ul className="group-members-list">
+                    {activeGroupParticipants.length > 0 ? (
+                      activeGroupParticipants.map((participant) => (
+                        <li key={participant.key}>
+                          <div className="group-member-row">
                             <button
                               type="button"
-                              className="group-member-remove"
-                              onClick={() => {
-                                removeMemberFromActiveGroup(participant.address).catch(() => {});
+                              className="group-member-copy"
+                              onClick={(event) => {
+                                copyAddressToClipboard(participant.address).catch(() => {});
+                                const detailsElement = event.currentTarget.closest('details');
+                                if (detailsElement instanceof HTMLDetailsElement) {
+                                  detailsElement.open = false;
+                                }
                               }}
-                              disabled={processingGroupAction}
-                              title={`Remove ${participant.address}`}
+                              title={`Copy ${participant.address}`}
                             >
-                              Remove
+                              <span className="group-member-name">
+                                {participant.name ?? participant.shortAddress}
+                                {participant.isSelf ? <span className="group-member-badge">You</span> : null}
+                                {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
+                              </span>
+                              <span className="group-member-address">{participant.shortAddress}</span>
                             </button>
-                          ) : null}
-                        </div>
-                      </li>
-                    ))
-                  ) : (
-                    <li className="group-members-empty">No members loaded yet.</li>
-                  )}
-                </ul>
-              </details>
-              <form
-                className="group-header-invite"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  inviteMembersToActiveGroup().catch(() => {});
-                }}
-              >
-                <input
-                  value={groupInviteMembersInput}
-                  onChange={(event) => setGroupInviteMembersInput(event.target.value)}
-                  placeholder="Invite wallets (comma/space separated)"
-                  aria-label="Invite members"
-                />
-                <input
-                  value={groupInviteTtlInput}
-                  onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
-                  placeholder="TTL sec"
-                  aria-label="Invite TTL seconds"
-                />
-                <button type="submit" disabled={processingGroupAction || !hasAesReady}>
-                  {processingGroupAction ? 'Sending...' : 'Send invites'}
-                </button>
-              </form>
-              <div className="group-header-actions">
-                <button
-                  type="button"
-                  className="contact"
-                  onClick={() => {
-                    leaveActiveGroup().catch(() => {});
-                  }}
-                  disabled={processingGroupAction}
-                >
-                  {processingGroupAction ? 'Working...' : 'Leave Group'}
-                </button>
-                {isActiveGroupAdmin ? (
+                            {isActiveGroupAdmin && !participant.isSelf ? (
+                              <button
+                                type="button"
+                                className="group-member-remove"
+                                onClick={() => {
+                                  removeMemberFromActiveGroup(participant.address).catch(() => {});
+                                }}
+                                disabled={processingGroupAction}
+                                title={`Remove ${participant.address}`}
+                              >
+                                Remove
+                              </button>
+                            ) : null}
+                          </div>
+                        </li>
+                      ))
+                    ) : (
+                      <li className="group-members-empty">No members loaded yet.</li>
+                    )}
+                  </ul>
+                </details>
+                {isMobileNav ? (
+                  <>
+                    <button
+                      type="button"
+                      className="contact"
+                      onClick={() => {
+                        syncGroupData({ deep: true }).catch(() => {});
+                      }}
+                      disabled={syncingGroups}
+                    >
+                      {syncingGroups ? 'Syncing...' : 'Sync Group'}
+                    </button>
+                    <button
+                      type="button"
+                      className={mobileGroupOptionsOpen ? 'contact active' : 'contact'}
+                      onClick={() => {
+                        setMobileGroupOptionsOpen((previous) => !previous);
+                      }}
+                    >
+                      Group options
+                    </button>
+                  </>
+                ) : (
+                  <form
+                    className="group-header-invite"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      inviteMembersToActiveGroup().catch(() => {});
+                    }}
+                  >
+                    <input
+                      value={groupInviteMembersInput}
+                      onChange={(event) => setGroupInviteMembersInput(event.target.value)}
+                      className="group-header-invite-address"
+                      placeholder="Invite wallets (comma/space separated)"
+                      aria-label="Invite members"
+                    />
+                    <div className="group-header-invite-ttl-wrap">
+                      <input
+                        id="group-invite-ttl-hours"
+                        value={groupInviteTtlInput}
+                        onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
+                        className="group-header-invite-ttl"
+                        placeholder="8"
+                        aria-label="Invite and join code timeout in hours"
+                      />
+                    </div>
+                    <button type="submit" disabled={processingGroupAction || !hasAesReady}>
+                      {processingGroupAction ? 'Sending...' : 'Send invites'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        generateInviteCodeForActiveGroup();
+                      }}
+                      disabled={processingGroupAction || !hasAesReady}
+                    >
+                      Generate join code
+                    </button>
+                    {generatedGroupInviteCode ? (
+                      <div className="group-generated-code">
+                        <input value={generatedGroupInviteCode} readOnly aria-label="Generated join code" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            copyAddressToClipboard(generatedGroupInviteCode).catch(() => {});
+                          }}
+                        >
+                          Copy code
+                        </button>
+                      </div>
+                    ) : null}
+                  </form>
+                )}
+              </div>
+              {isMobileNav ? (
+                mobileGroupOptionsOpen ? (
+                  <div className="group-mobile-options-panel">
+                    <div className="group-header-invite group-header-invite-mobile-inline">
+                      <input
+                        value={groupInviteMembersInput}
+                        onChange={(event) => setGroupInviteMembersInput(event.target.value)}
+                        className="group-header-invite-address"
+                        placeholder="Invite wallets (comma/space separated)"
+                        aria-label="Invite members"
+                      />
+                      <div className="group-header-invite-ttl-wrap">
+                        <input
+                          id="group-invite-ttl-hours-mobile"
+                          value={groupInviteTtlInput}
+                          onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
+                          className="group-header-invite-ttl"
+                          placeholder="8"
+                          aria-label="Invite and join code timeout in hours"
+                        />
+                      </div>
+                    </div>
+                    <div className="group-mobile-options-actions">
+                      <button
+                        type="button"
+                        className="contact"
+                        onClick={() => {
+                          inviteMembersToActiveGroup().catch(() => {});
+                        }}
+                        disabled={processingGroupAction || !hasAesReady}
+                      >
+                        {processingGroupAction ? 'Sending...' : 'Send invites'}
+                      </button>
+                      <button
+                        type="button"
+                        className="contact"
+                        onClick={() => {
+                          generateInviteCodeForActiveGroup();
+                        }}
+                        disabled={processingGroupAction || !hasAesReady}
+                      >
+                        Generate join code
+                      </button>
+                      <button
+                        type="button"
+                        className="contact"
+                        onClick={() => {
+                          leaveActiveGroup().catch(() => {});
+                        }}
+                        disabled={processingGroupAction}
+                      >
+                        {processingGroupAction ? 'Working...' : 'Leave Group'}
+                      </button>
+                      {isActiveGroupAdmin ? (
+                        <button
+                          type="button"
+                          className="contact group-danger-button"
+                          onClick={() => {
+                            disbandActiveGroup().catch(() => {});
+                          }}
+                          disabled={processingGroupAction}
+                        >
+                          {processingGroupAction ? 'Working...' : 'Disband Group'}
+                        </button>
+                      ) : null}
+                    </div>
+                    {generatedGroupInviteCode ? (
+                      <div className="group-generated-code">
+                        <input value={generatedGroupInviteCode} readOnly aria-label="Generated join code" />
+                        <button
+                          type="button"
+                          className="contact"
+                          onClick={() => {
+                            copyAddressToClipboard(generatedGroupInviteCode).catch(() => {});
+                          }}
+                        >
+                          Copy code
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null
+              ) : (
+                <div className="group-header-actions">
                   <button
                     type="button"
-                    className="contact group-danger-button"
+                    className="contact"
                     onClick={() => {
-                      disbandActiveGroup().catch(() => {});
+                      leaveActiveGroup().catch(() => {});
                     }}
                     disabled={processingGroupAction}
                   >
-                    {processingGroupAction ? 'Working...' : 'Disband Group'}
+                    {processingGroupAction ? 'Working...' : 'Leave Group'}
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="contact"
-                  onClick={() => {
-                    syncGroupData({ deep: true }).catch(() => {});
-                  }}
-                  disabled={syncingGroups || syncingData}
-                >
-                  {syncingGroups ? 'Syncing...' : 'Sync Group'}
-                </button>
-              </div>
+                  {isActiveGroupAdmin ? (
+                    <button
+                      type="button"
+                      className="contact group-danger-button"
+                      onClick={() => {
+                        disbandActiveGroup().catch(() => {});
+                      }}
+                      disabled={processingGroupAction}
+                    >
+                      {processingGroupAction ? 'Working...' : 'Disband Group'}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="contact"
+                    onClick={() => {
+                      syncGroupData({ deep: true }).catch(() => {});
+                    }}
+                    disabled={syncingGroups}
+                  >
+                    {syncingGroups ? 'Syncing...' : 'Sync Group'}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="chat-messages" ref={chatMessagesRef}>
@@ -8033,7 +8517,7 @@ export default function App() {
                 type="button"
                 className="contact"
                 onClick={loadFullConversationHistory}
-                disabled={syncingHistory || syncingData}
+                disabled={syncingHistory}
               >
                 {syncingHistory ? 'Syncing...' : 'Sync History'}
               </button>
@@ -8225,6 +8709,120 @@ export default function App() {
           </>
         ) : null}
       </nav>
+
+      {showQuickActionsModal ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setShowQuickActionsModal(false);
+          }}
+        >
+          <div className="modal-card quick-actions-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>New</h3>
+            <div className="quick-actions-tabs">
+              <button
+                type="button"
+                className={quickActionTab === 'contact' ? 'active' : undefined}
+                onClick={() => setQuickActionTab('contact')}
+              >
+                Add contact
+              </button>
+              <button
+                type="button"
+                className={quickActionTab === 'create-group' ? 'active' : undefined}
+                onClick={() => setQuickActionTab('create-group')}
+              >
+                Create group
+              </button>
+              <button
+                type="button"
+                className={quickActionTab === 'join-group' ? 'active' : undefined}
+                onClick={() => setQuickActionTab('join-group')}
+              >
+                Join group
+              </button>
+            </div>
+
+            {quickActionTab === 'contact' ? (
+              <form className="contact-form quick-actions-form" onSubmit={handleAddContact}>
+                <input
+                  value={newContactName}
+                  onChange={(event) => setNewContactName(event.target.value)}
+                  placeholder="Contact name (optional)"
+                  aria-label="Contact name"
+                />
+                <input
+                  value={newContact}
+                  onChange={(event) => setNewContact(event.target.value)}
+                  placeholder="0x... wallet address"
+                  aria-label="Wallet address"
+                />
+                <button type="submit">Save Contact</button>
+              </form>
+            ) : null}
+
+            {quickActionTab === 'create-group' ? (
+              <form
+                className="contact-form quick-actions-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  createGroup().catch(() => {});
+                }}
+              >
+                <input
+                  value={newGroupTitle}
+                  onChange={(event) => setNewGroupTitle(event.target.value)}
+                  placeholder="Group title"
+                  aria-label="Group title"
+                />
+                <input
+                  value={newGroupMembersInput}
+                  onChange={(event) => setNewGroupMembersInput(event.target.value)}
+                  placeholder="Initial members (comma/space separated)"
+                  aria-label="Initial group members"
+                />
+                <button type="submit" disabled={processingGroupAction || !hasAesReady}>
+                  {processingGroupAction ? 'Creating...' : 'Create group'}
+                </button>
+              </form>
+            ) : null}
+
+            {quickActionTab === 'join-group' ? (
+              <form
+                className="contact-form quick-actions-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  joinGroupWithCode().catch(() => {});
+                }}
+              >
+                <input
+                  value={groupJoinCodeInput}
+                  onChange={(event) => setGroupJoinCodeInput(event.target.value)}
+                  placeholder="Paste temporary join code"
+                  aria-label="Temporary group join code"
+                />
+                <button type="submit" disabled={processingGroupAction || !hasAesReady || !groupJoinCodeInput.trim()}>
+                  {processingGroupAction ? 'Working...' : 'Join with code'}
+                </button>
+                <div style={{ fontSize: 12, opacity: 0.82 }}>
+                  Code join still requires a pending on-chain invite for your wallet.
+                </div>
+              </form>
+            ) : null}
+
+            {error ? <p className="error">{error}</p> : null}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="connect-btn"
+                onClick={() => setShowQuickActionsModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showBurnerImportModal ? (
         <div
