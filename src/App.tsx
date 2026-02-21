@@ -949,7 +949,7 @@ const extractRevertData = (error: unknown): string | null => {
     return null;
   }
 
-  const dataAttributeMatch = rawMessage.match(/\bdata=\"(0x[a-fA-F0-9]+)\"/);
+  const dataAttributeMatch = rawMessage.match(/\bdata="(0x[a-fA-F0-9]+)"/);
   if (dataAttributeMatch?.[1] && isHexDataString(dataAttributeMatch[1])) {
     return dataAttributeMatch[1].toLowerCase();
   }
@@ -6670,7 +6670,7 @@ export default function App() {
         contract.getJoinCode(parsedJoinCode.groupId, codeHash).catch(() => null)
       ]);
 
-      if (Boolean(isAlreadyMemberRaw)) {
+      if (isAlreadyMemberRaw) {
         setError('You are already a member of this group.');
         return;
       }
