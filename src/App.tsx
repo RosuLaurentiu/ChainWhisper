@@ -135,6 +135,7 @@ const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
 const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
 const DEFAULT_GROUP_JOIN_CODE_MAX_USES = 1;
+const DEFAULT_GROUP_JOIN_CODE_MULTI_USES = 10;
 const BURNER_ONBOARD_TIMEOUT_MS = 45000;
 const DEFAULT_NICKNAME_MAX_BYTES = 42;
 const NICKNAME_DELIMITER = '\u001f';
@@ -1971,6 +1972,10 @@ export default function App() {
   const [newGroupMembersInput, setNewGroupMembersInput] = useState('');
   const [groupInviteMembersInput, setGroupInviteMembersInput] = useState('');
   const [groupInviteTtlInput, setGroupInviteTtlInput] = useState('8');
+  const [groupJoinCodeMode, setGroupJoinCodeMode] = useState<'single' | 'multi'>('single');
+  const [groupJoinCodeMaxUsesInput, setGroupJoinCodeMaxUsesInput] = useState(
+    String(DEFAULT_GROUP_JOIN_CODE_MULTI_USES)
+  );
   const [generatedGroupInviteCode, setGeneratedGroupInviteCode] = useState('');
   const [groupJoinCodeInput, setGroupJoinCodeInput] = useState('');
   const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
@@ -6024,12 +6029,31 @@ export default function App() {
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
       const codeHash = cotiEthers.keccak256(cotiEthers.toUtf8Bytes(code));
+      let maxUses = DEFAULT_GROUP_JOIN_CODE_MAX_USES;
+      if (groupJoinCodeMode === 'multi') {
+        const requestedMultiUses = Math.floor(Number(groupJoinCodeMaxUsesInput));
+        if (!Number.isFinite(requestedMultiUses) || requestedMultiUses < 2) {
+          setError('Multi-use codes require a max uses value of at least 2.');
+          return;
+        }
+        const contractMaxUsesRaw = await contract.JOIN_CODE_MAX_USES().catch(() => null);
+        const contractMaxUses = toSafeNumber(contractMaxUsesRaw);
+        if (contractMaxUses <= 1) {
+          setError('Multi-use join codes are not available on this contract.');
+          return;
+        }
+        if (requestedMultiUses > contractMaxUses) {
+          setError(`Max uses exceeds the on-chain limit (${contractMaxUses}).`);
+          return;
+        }
+        maxUses = requestedMultiUses;
+      }
 
       const tx = await contract.createJoinCode(
         activeGroupId,
         codeHash,
         ttlSeconds,
-        DEFAULT_GROUP_JOIN_CODE_MAX_USES
+        maxUses
       );
       await tx.wait();
 
@@ -6889,6 +6913,8 @@ export default function App() {
     setMessagesByGroup({});
     setGeneratedGroupInviteCode('');
     setGroupJoinCodeInput('');
+    setGroupJoinCodeMode('single');
+    setGroupJoinCodeMaxUsesInput(String(DEFAULT_GROUP_JOIN_CODE_MULTI_USES));
     groupsRef.current = [];
     groupInvitesRef.current = [];
     activeGroupIdRef.current = null;
@@ -7605,8 +7631,20 @@ export default function App() {
     };
 
     const parseGroupIdFromEvent = (value: unknown): number => {
-      const parsed = toSafeNumber(value);
-      return parsed > 0 ? parsed : 0;
+      const direct = toSafeNumber(value);
+      if (direct > 0) {
+        return direct;
+      }
+
+      if (value && typeof value === 'object') {
+        const maybeArgs = (value as { args?: Record<string, unknown> }).args;
+        const parsedFromArgs = toSafeNumber(maybeArgs?.groupId);
+        if (parsedFromArgs > 0) {
+          return parsedFromArgs;
+        }
+      }
+
+      return 0;
     };
 
     const setupGroupRealtimeSubscription = async () => {
@@ -7627,7 +7665,7 @@ export default function App() {
         const handleMessageEvent = (groupIdValue: unknown) => {
           const eventGroupId = parseGroupIdFromEvent(groupIdValue);
           const selectedActiveGroupId = activeGroupIdRef.current;
-          if (eventGroupId > 0 && selectedActiveGroupId !== null && eventGroupId === selectedActiveGroupId) {
+          if (selectedActiveGroupId !== null && (eventGroupId <= 0 || eventGroupId === selectedActiveGroupId)) {
             scheduleRealtimeSync();
             return;
           }
@@ -8462,12 +8500,12 @@ export default function App() {
         ) : activeGroupId !== null ? (
           <div className="chat-shell">
             <div className="chat-header chat-header-group">
-              <strong>
-                {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) +
+              <div className="group-header-meta">
+                <strong>
+                  {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) +
                   ` (#${activeGroupId})` +
                   (activeGroupMeta?.isPrivate ? ' · Private' : '')}
-              </strong>
-              <div className="group-header-controls">
+                </strong>
                 <details className="group-members-dropdown">
                   <summary>
                     Members (
@@ -8521,6 +8559,8 @@ export default function App() {
                     )}
                   </ul>
                 </details>
+              </div>
+              <div className="group-header-controls">
                 {isMobileNav ? (
                   <>
                     <button
@@ -8576,15 +8616,70 @@ export default function App() {
                     >
                       {processingGroupAction ? 'Sending...' : 'Invite'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        generateJoinCodeForActiveGroup().catch(() => {});
-                      }}
-                      disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                    >
-                      New code
-                    </button>
+                    <div className="group-join-code-settings">
+                      <span className="group-join-code-label">Join Code</span>
+                      <div className="group-join-code-main">
+                        <div className="group-join-code-main-left">
+                          <div className="group-join-code-mode">
+                            <label
+                              className={
+                                groupJoinCodeMode === 'single' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
+                              }
+                            >
+                              <input
+                                type="radio"
+                                name="group-join-code-mode-desktop"
+                                checked={groupJoinCodeMode === 'single'}
+                                onChange={() => setGroupJoinCodeMode('single')}
+                                disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                              />
+                              Single-use
+                            </label>
+                            <label
+                              className={
+                                groupJoinCodeMode === 'multi' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
+                              }
+                            >
+                              <input
+                                type="radio"
+                                name="group-join-code-mode-desktop"
+                                checked={groupJoinCodeMode === 'multi'}
+                                onChange={() => setGroupJoinCodeMode('multi')}
+                                disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                              />
+                              Multi-use
+                            </label>
+                          </div>
+                          {groupJoinCodeMode === 'multi' ? (
+                            <label className="group-join-code-max">
+                              <span>Max uses</span>
+                              <input
+                                type="number"
+                                min={2}
+                                step={1}
+                                value={groupJoinCodeMaxUsesInput}
+                                onChange={(event) => setGroupJoinCodeMaxUsesInput(event.target.value.replace(/[^\d]/g, ''))}
+                                aria-label="Join code max uses"
+                                className="group-join-code-max-input"
+                                disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                              />
+                            </label>
+                          ) : (
+                            <span className="group-join-code-hint">One successful join per code.</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="group-join-code-generate"
+                          onClick={() => {
+                            generateJoinCodeForActiveGroup().catch(() => {});
+                          }}
+                          disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                        >
+                          Invite code
+                        </button>
+                      </div>
+                    </div>
                     {generatedGroupInviteCode ? (
                       <div className="group-generated-code">
                         <input value={generatedGroupInviteCode} readOnly aria-label="Generated join code" />
@@ -8626,6 +8721,70 @@ export default function App() {
                       </div>
                     </div>
                     <div className="group-mobile-options-actions">
+                      <div className="group-join-code-settings group-join-code-settings-mobile">
+                        <span className="group-join-code-label">Join Code</span>
+                        <div className="group-join-code-main">
+                          <div className="group-join-code-main-left">
+                            <div className="group-join-code-mode">
+                              <label
+                                className={
+                                  groupJoinCodeMode === 'single' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
+                                }
+                              >
+                                <input
+                                  type="radio"
+                                  name="group-join-code-mode-mobile"
+                                  checked={groupJoinCodeMode === 'single'}
+                                  onChange={() => setGroupJoinCodeMode('single')}
+                                  disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                                />
+                                Single-use
+                              </label>
+                              <label
+                                className={
+                                  groupJoinCodeMode === 'multi' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
+                                }
+                              >
+                                <input
+                                  type="radio"
+                                  name="group-join-code-mode-mobile"
+                                  checked={groupJoinCodeMode === 'multi'}
+                                  onChange={() => setGroupJoinCodeMode('multi')}
+                                  disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                                />
+                                Multi-use
+                              </label>
+                            </div>
+                            {groupJoinCodeMode === 'multi' ? (
+                              <label className="group-join-code-max">
+                                <span>Max uses</span>
+                                <input
+                                  type="number"
+                                  min={2}
+                                  step={1}
+                                  value={groupJoinCodeMaxUsesInput}
+                                  onChange={(event) => setGroupJoinCodeMaxUsesInput(event.target.value.replace(/[^\d]/g, ''))}
+                                  aria-label="Join code max uses mobile"
+                                  className="group-join-code-max-input"
+                                  disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                                />
+                              </label>
+                            ) : (
+                              <span className="group-join-code-hint">One successful join per code.</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="group-join-code-generate"
+                            onClick={() => {
+                              generateJoinCodeForActiveGroup().catch(() => {});
+                            }}
+                            disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                          >
+                            Invite code
+                          </button>
+                        </div>
+                      </div>
                       <button
                         type="button"
                         className="contact"
@@ -8635,16 +8794,6 @@ export default function App() {
                         disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                       >
                         {processingGroupAction ? 'Sending...' : 'Invite'}
-                      </button>
-                      <button
-                        type="button"
-                        className="contact"
-                        onClick={() => {
-                          generateJoinCodeForActiveGroup().catch(() => {});
-                        }}
-                        disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                      >
-                        New code
                       </button>
                       <button
                         type="button"
