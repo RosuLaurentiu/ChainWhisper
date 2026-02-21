@@ -916,6 +916,35 @@ body {
   cursor: not-allowed;
 }
 
+.group-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.group-header-actions .contact {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+}
+
+.group-header-actions .group-danger-button {
+  border-color: #6b2a34;
+  background: #2b171c;
+  color: #f0c9cf;
+}
+
+.group-header-actions .group-danger-button:hover {
+  background: #3a1d24;
+  border-color: #8a3a46;
+}
+
 .chat-messages {
   padding: 14px;
   overflow-y: auto;
@@ -1493,6 +1522,20 @@ body {
   .chat-header .group-header-invite button {
     width: 100%;
     min-width: 0;
+  }
+
+  .chat-header .group-header-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .chat-header .group-header-actions .contact {
+    width: 100%;
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 0.76rem;
   }
 
   .chat-compose {

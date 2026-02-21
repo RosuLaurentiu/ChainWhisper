@@ -276,6 +276,7 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'function inviteMembers(uint256 groupId, address[] accounts, uint64 inviteTtlSeconds)',
   'function acceptInvite(uint256 groupId)',
   'function declineInvite(uint256 groupId)',
+  'function leaveGroup(uint256 groupId)',
   'function removeMember(uint256 groupId, address account)',
   'function getInvite(uint256 groupId, address account) view returns (bool pending, address inviter, uint64 expiresAt, bool expired)',
   'function getGroupInfo(uint256 groupId) view returns (address admin, uint64 createdAt, uint32 memberCount, string title, uint256 lastBlock, uint256 lastTimestamp)',
@@ -5508,6 +5509,107 @@ export default function App() {
     }
   };
 
+  const leaveActiveGroup = async () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+
+    const groupId = activeGroupId;
+    const groupLabel = `${activeGroupMeta?.title ?? 'Group'} (#${groupId})`;
+    if (!window.confirm(`Leave ${groupLabel}?`)) {
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.leaveGroup(groupId);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      if (activeGroupIdRef.current === groupId) {
+        setActiveGroupId(null);
+      }
+      await syncGroupData({ deep: true });
+    } catch (leaveError) {
+      const message = leaveError instanceof Error ? leaveError.message : 'Failed to leave group.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const disbandActiveGroup = async () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can disband the group.');
+      return;
+    }
+
+    const groupId = activeGroupId;
+    const normalizedSelf = walletAddress.trim().toLowerCase();
+    const removableMembers = Array.from(
+      new Set(
+        (activeGroupMeta?.members ?? [])
+          .map((member) => String(member ?? '').trim())
+          .filter((member) => isWalletAddress(member) && member.toLowerCase() !== normalizedSelf)
+      )
+    );
+    const confirmationMessage =
+      removableMembers.length > 0
+        ? `Disband this group? This will remove ${removableMembers.length} member(s) and then leave the group.`
+        : 'Disband this group? This will leave the group.';
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+
+      for (const memberAddress of removableMembers) {
+        const removeTx = await contract.removeMember(groupId, memberAddress);
+        await removeTx.wait();
+      }
+
+      const leaveTx = await contract.leaveGroup(groupId);
+      await leaveTx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      if (activeGroupIdRef.current === groupId) {
+        setActiveGroupId(null);
+      }
+      await syncGroupData({ deep: true });
+    } catch (disbandError) {
+      const message = disbandError instanceof Error ? disbandError.message : 'Failed to disband group.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
   const acceptGroupInvite = async (groupId: number) => {
     setError('');
     try {
@@ -7681,16 +7783,40 @@ export default function App() {
                   {processingGroupAction ? 'Sending...' : 'Send invites'}
                 </button>
               </form>
-              <button
-                type="button"
-                className="contact"
-                onClick={() => {
-                  syncGroupData({ deep: true }).catch(() => {});
-                }}
-                disabled={syncingGroups || syncingData}
-              >
-                {syncingGroups ? 'Syncing...' : 'Sync Group'}
-              </button>
+              <div className="group-header-actions">
+                <button
+                  type="button"
+                  className="contact"
+                  onClick={() => {
+                    leaveActiveGroup().catch(() => {});
+                  }}
+                  disabled={processingGroupAction}
+                >
+                  {processingGroupAction ? 'Working...' : 'Leave Group'}
+                </button>
+                {isActiveGroupAdmin ? (
+                  <button
+                    type="button"
+                    className="contact group-danger-button"
+                    onClick={() => {
+                      disbandActiveGroup().catch(() => {});
+                    }}
+                    disabled={processingGroupAction}
+                  >
+                    {processingGroupAction ? 'Working...' : 'Disband Group'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="contact"
+                  onClick={() => {
+                    syncGroupData({ deep: true }).catch(() => {});
+                  }}
+                  disabled={syncingGroups || syncingData}
+                >
+                  {syncingGroups ? 'Syncing...' : 'Sync Group'}
+                </button>
+              </div>
             </div>
 
             <div className="chat-messages" ref={chatMessagesRef}>
