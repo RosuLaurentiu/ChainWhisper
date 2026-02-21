@@ -274,6 +274,7 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'function inviteMembers(uint256 groupId, address[] accounts, uint64 inviteTtlSeconds)',
   'function acceptInvite(uint256 groupId)',
   'function declineInvite(uint256 groupId)',
+  'function removeMember(uint256 groupId, address account)',
   'function getInvite(uint256 groupId, address account) view returns (bool pending, address inviter, uint64 expiresAt, bool expired)',
   'function getGroupInfo(uint256 groupId) view returns (address admin, uint64 createdAt, uint32 memberCount, string title, uint256 lastBlock, uint256 lastTimestamp)',
   'function getGroupMembers(uint256 groupId) view returns (address[])',
@@ -1942,6 +1943,52 @@ export default function App() {
     () => (activeGroupId !== null ? groups.find((group) => group.id === activeGroupId) ?? null : null),
     [groups, activeGroupId]
   );
+  const activeGroupParticipants = useMemo(() => {
+    if (!activeGroupMeta) {
+      return [];
+    }
+
+    const currentWalletKey = walletAddress.trim().toLowerCase();
+    const adminKey = activeGroupMeta.admin.trim().toLowerCase();
+    const ownNickname = normalizeContactName(myNickname);
+    const seenMembers = new Set<string>();
+    const orderedMembers = [activeGroupMeta.admin, ...activeGroupMeta.members]
+      .map((address) => String(address ?? '').trim())
+      .filter((address) => isWalletAddress(address))
+      .filter((address) => {
+        const key = address.toLowerCase();
+        if (seenMembers.has(key)) {
+          return false;
+        }
+        seenMembers.add(key);
+        return true;
+      });
+
+    return orderedMembers.map((address) => {
+      const key = address.toLowerCase();
+      const isSelf = currentWalletKey.length > 0 && key === currentWalletKey;
+      const isAdmin = adminKey.length > 0 && key === adminKey;
+      const contactName = contacts.find((contact) => contact.address.toLowerCase() === key)?.name;
+      const onChainNickname = onChainNicknameCacheRef.current[key] ?? undefined;
+      const name = isSelf ? ownNickname ?? contactName ?? onChainNickname : contactName ?? onChainNickname;
+
+      return {
+        key,
+        address,
+        name,
+        shortAddress: shortenAddress(address),
+        isSelf,
+        isAdmin
+      };
+    });
+  }, [activeGroupMeta, walletAddress, myNickname, contacts]);
+  const isActiveGroupAdmin = useMemo(() => {
+    if (!activeGroupMeta || !walletAddress) {
+      return false;
+    }
+
+    return activeGroupMeta.admin.trim().toLowerCase() === walletAddress.trim().toLowerCase();
+  }, [activeGroupMeta, walletAddress]);
   const activeGroupMessages = useMemo(() => {
     if (activeGroupId === null) {
       return [];
@@ -2046,7 +2093,14 @@ export default function App() {
       return undefined;
     }
 
-    return contacts.find((contact) => contact.address.toLowerCase() === address.toLowerCase())?.name;
+    const normalizedAddress = address.toLowerCase();
+    const contactName = contacts.find((contact) => contact.address.toLowerCase() === normalizedAddress)?.name;
+    if (contactName) {
+      return contactName;
+    }
+
+    const onChainNickname = onChainNicknameCacheRef.current[normalizedAddress];
+    return onChainNickname ?? undefined;
   };
   const getBurnerWalletDisplayName = (walletRecord: BurnerWalletRecord): string => {
     const recordAddress = walletRecord.address?.toLowerCase();
@@ -4746,6 +4800,7 @@ export default function App() {
           ? overviewLastSyncedBlock + 1
           : 0;
       const toBlock = latestBlock;
+      const removedGroupIdsForWallet = new Set<number>();
 
       if (fromBlock <= toBlock) {
         const [
@@ -4777,6 +4832,14 @@ export default function App() {
           const parsed = toSafeNumber(value);
           return parsed > 0 ? parsed : 0;
         };
+
+        for (const log of memberRemovedLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const groupId = groupIdFromArgs(args?.groupId);
+          if (groupId > 0) {
+            removedGroupIdsForWallet.add(groupId);
+          }
+        }
 
         for (const log of [
           ...createdByMeLogs,
@@ -4938,24 +5001,67 @@ export default function App() {
           return;
         }
 
-        setContacts((previous) => {
-          const mergedContacts = mergeUniqueContacts(previous, nicknameLookupFromGroups);
-          return mergedContacts.map((contact) => {
+        setContacts((previous) =>
+          previous.map((contact) => {
             const nickname = onChainNicknames.get(contact.address.toLowerCase());
             if (!nickname || contact.name === nickname) {
               return contact;
             }
 
             return { ...contact, name: nickname };
-          });
-        });
+          })
+        );
       }
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
 
+      const previousGroups = groupsRef.current;
+      const nextGroupIdSet = new Set(nextGroups.map((group) => group.id));
+      const removedGroupsForWallet = previousGroups.filter((group) => !nextGroupIdSet.has(group.id));
+      const removedNowGroupIds = Array.from(removedGroupIdsForWallet).filter((groupId) => !nextGroupIdSet.has(groupId));
+      if (removedNowGroupIds.length > 0) {
+        const removedGroupLabel = removedNowGroupIds
+          .map((groupId) => {
+            const previousGroup = previousGroups.find((group) => group.id === groupId);
+            return previousGroup ? `${previousGroup.title} (#${previousGroup.id})` : `Group #${groupId}`;
+          })
+          .join(', ');
+        setError(
+          removedNowGroupIds.length === 1
+            ? `You were removed from ${removedGroupLabel}.`
+            : `You were removed from these groups: ${removedGroupLabel}.`
+        );
+      }
+
       setGroups(nextGroups);
       setGroupInvites(nextInvites.filter((invite) => !invite.expired));
+      const removedGroupIdsForUi = new Set<number>([
+        ...removedGroupsForWallet.map((group) => group.id),
+        ...removedNowGroupIds
+      ]);
+      if (removedGroupIdsForUi.size > 0) {
+        const removedGroupIdSet = new Set(Array.from(removedGroupIdsForUi).map((groupId) => String(groupId)));
+        setMessagesByGroup((previous) => {
+          let changed = false;
+          const nextEntries = Object.entries(previous).filter(([groupKey]) => {
+            const keep = !removedGroupIdSet.has(groupKey);
+            if (!keep) {
+              changed = true;
+            }
+            return keep;
+          });
+          if (!changed) {
+            return previous;
+          }
+          return Object.fromEntries(nextEntries);
+        });
+
+        for (const removedGroupId of removedGroupIdsForUi) {
+          const messageSyncKey = `${walletKey}:${removedGroupId}`;
+          delete groupMessageLastSyncedBlockRef.current[messageSyncKey];
+        }
+      }
 
       if (selectedActiveGroupId !== null && !nextGroups.some((group) => group.id === selectedActiveGroupId)) {
         setActiveGroupId(null);
@@ -5270,6 +5376,52 @@ export default function App() {
       await syncGroupData({ deep: true });
     } catch (inviteError) {
       const message = inviteError instanceof Error ? inviteError.message : 'Failed to send invites.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const removeMemberFromActiveGroup = async (account: string) => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can remove members.');
+      return;
+    }
+    if (!isWalletAddress(account)) {
+      setError('Invalid member wallet address.');
+      return;
+    }
+
+    const normalizedTarget = account.trim().toLowerCase();
+    const normalizedSelf = walletAddress.trim().toLowerCase();
+    if (normalizedTarget === normalizedSelf) {
+      setError('Use leave group for yourself. Removing your own admin account is disabled here.');
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.removeMember(activeGroupId, account);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await syncGroupData({ deep: true });
+    } catch (removeError) {
+      const message = removeError instanceof Error ? removeError.message : 'Failed to remove member.';
       setError(message);
     } finally {
       setProcessingGroupAction(false);
@@ -7276,33 +7428,6 @@ export default function App() {
             </button>
           </div>
 
-          {activeGroupId !== null ? (
-            <form
-              className="contact-form"
-              style={{ marginTop: '10px' }}
-              onSubmit={(event) => {
-                event.preventDefault();
-                inviteMembersToActiveGroup().catch(() => {});
-              }}
-            >
-              <input
-                value={groupInviteMembersInput}
-                onChange={(event) => setGroupInviteMembersInput(event.target.value)}
-                placeholder="Invite members to active group"
-                aria-label="Invite members"
-              />
-              <input
-                value={groupInviteTtlInput}
-                onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
-                placeholder="Invite TTL (seconds)"
-                aria-label="Invite TTL seconds"
-              />
-              <button type="submit" disabled={processingGroupAction || !hasAesReady}>
-                {processingGroupAction ? 'Sending...' : 'Send invites'}
-              </button>
-            </form>
-          ) : null}
-
           {sortedGroupInvites.length > 0 ? (
             <ul className="contacts-list" style={{ marginTop: '10px' }}>
               {sortedGroupInvites.map((invite) => (
@@ -7396,10 +7521,86 @@ export default function App() {
           <div className="chat-placeholder">Connect a wallet to view contacts and start messaging.</div>
         ) : activeGroupId !== null ? (
           <div className="chat-shell">
-            <div className="chat-header">
+            <div className="chat-header chat-header-group">
               <strong>
                 {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) + ` (#${activeGroupId})`}
               </strong>
+              <details className="group-members-dropdown">
+                <summary>
+                  Members (
+                  {activeGroupParticipants.length > 0
+                    ? activeGroupParticipants.length
+                    : activeGroupMeta?.memberCount ?? 0}
+                  )
+                </summary>
+                <ul className="group-members-list">
+                  {activeGroupParticipants.length > 0 ? (
+                    activeGroupParticipants.map((participant) => (
+                      <li key={participant.key}>
+                        <div className="group-member-row">
+                          <button
+                            type="button"
+                            className="group-member-copy"
+                            onClick={(event) => {
+                              copyAddressToClipboard(participant.address).catch(() => {});
+                              const detailsElement = event.currentTarget.closest('details');
+                              if (detailsElement instanceof HTMLDetailsElement) {
+                                detailsElement.open = false;
+                              }
+                            }}
+                            title={`Copy ${participant.address}`}
+                          >
+                            <span className="group-member-name">
+                              {participant.name ?? participant.shortAddress}
+                              {participant.isSelf ? <span className="group-member-badge">You</span> : null}
+                              {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
+                            </span>
+                            <span className="group-member-address">{participant.shortAddress}</span>
+                          </button>
+                          {isActiveGroupAdmin && !participant.isSelf ? (
+                            <button
+                              type="button"
+                              className="group-member-remove"
+                              onClick={() => {
+                                removeMemberFromActiveGroup(participant.address).catch(() => {});
+                              }}
+                              disabled={processingGroupAction}
+                              title={`Remove ${participant.address}`}
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="group-members-empty">No members loaded yet.</li>
+                  )}
+                </ul>
+              </details>
+              <form
+                className="group-header-invite"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  inviteMembersToActiveGroup().catch(() => {});
+                }}
+              >
+                <input
+                  value={groupInviteMembersInput}
+                  onChange={(event) => setGroupInviteMembersInput(event.target.value)}
+                  placeholder="Invite wallets (comma/space separated)"
+                  aria-label="Invite members"
+                />
+                <input
+                  value={groupInviteTtlInput}
+                  onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
+                  placeholder="TTL sec"
+                  aria-label="Invite TTL seconds"
+                />
+                <button type="submit" disabled={processingGroupAction || !hasAesReady}>
+                  {processingGroupAction ? 'Sending...' : 'Send invites'}
+                </button>
+              </form>
               <button
                 type="button"
                 className="contact"
@@ -7432,6 +7633,7 @@ export default function App() {
                     normalizedSender.length > 0 &&
                     walletAddress.length > 0 &&
                     normalizedSender === walletAddress.trim().toLowerCase();
+                  const canCopySenderAddress = Boolean(message.senderAddress && isWalletAddress(message.senderAddress));
                   const senderLabel = isSelfSender
                     ? 'You'
                     : findContactNameForWalletAddress(message.senderAddress) ??
@@ -7446,7 +7648,20 @@ export default function App() {
                     >
                       <div className="message-bubble">
                         {message.direction === 'incoming' ? (
-                          <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
+                          canCopySenderAddress ? (
+                            <button
+                              type="button"
+                              className="message-sender-copy"
+                              onClick={() => {
+                                copyAddressToClipboard(message.senderAddress as string).catch(() => {});
+                              }}
+                              title={`Copy ${message.senderAddress as string}`}
+                            >
+                              {senderLabel}
+                            </button>
+                          ) : (
+                            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
+                          )
                         ) : null}
                         {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
                         {message.timestamp || deliveryLabel ? (

@@ -749,6 +749,173 @@ body {
   font-size: 0.82rem;
 }
 
+.chat-header-group > strong {
+  flex: 0 1 320px;
+}
+
+.group-members-dropdown {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.group-members-dropdown > summary {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  list-style: none;
+}
+
+.group-members-dropdown > summary::-webkit-details-marker {
+  display: none;
+}
+
+.group-members-dropdown[open] > summary {
+  background: #2a2146;
+}
+
+.group-members-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(320px, calc(100vw - 64px));
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  display: grid;
+  gap: 6px;
+  z-index: 20;
+}
+
+.group-member-copy {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-1);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+}
+
+.group-member-copy:hover {
+  background: #2a2146;
+}
+
+.group-member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.group-member-remove {
+  border: 1px solid #6b2a34;
+  background: #2b171c;
+  color: #f0c9cf;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.76rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.group-member-remove:hover {
+  background: #3a1d24;
+}
+
+.group-member-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.group-member-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.group-member-address {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.group-member-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.group-members-empty {
+  font-size: 0.82rem;
+  color: var(--muted);
+  padding: 8px;
+}
+
+.group-header-invite {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.group-header-invite input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev-1);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.84rem;
+  min-width: 0;
+}
+
+.group-header-invite input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.group-header-invite button {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-3);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.group-header-invite button:hover {
+  background: #2a2146;
+}
+
+.group-header-invite button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .chat-messages {
   padding: 14px;
   overflow-y: auto;
@@ -763,6 +930,23 @@ body {
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.message-sender-copy {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0.9;
+  margin: 0 0 4px;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-sender-copy:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 
 .message-row {
@@ -1264,6 +1448,38 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .chat-header-group > strong {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+
+  .chat-header .group-members-dropdown {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .chat-header .group-members-dropdown > summary {
+    width: 100%;
+    text-align: center;
+  }
+
+  .chat-header .group-members-list {
+    width: 100%;
+    max-width: none;
+  }
+
+  .chat-header .group-header-invite {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .chat-header .group-header-invite input,
+  .chat-header .group-header-invite button {
+    width: 100%;
+    min-width: 0;
   }
 
   .chat-compose {
