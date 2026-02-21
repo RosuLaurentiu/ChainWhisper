@@ -86,6 +86,9 @@ type GroupMessageEntry = {
   text: string;
   senderAddress?: string;
   isSystem?: boolean;
+  replyToMessageId?: string;
+  replyToText?: string;
+  replyToTxHash?: string;
   txHash: string;
   blockNumber: number;
   logIndex: number;
@@ -2672,20 +2675,21 @@ export default function App() {
     container.scrollHeight - (container.scrollTop + container.clientHeight) <= 140;
 
   const jumpToReferencedMessage = (replyToMessageId?: string, replyToText?: string, replyToTxHash?: string) => {
-    if (!activeContact) {
+    const referencePool = activeGroupId !== null ? activeGroupMessages : activeMessages;
+    if (referencePool.length === 0) {
       return;
     }
 
     let targetId = replyToMessageId;
     if (!targetId && replyToTxHash) {
       const normalizedReplyTxHash = replyToTxHash.toLowerCase();
-      const matchedByTxHash = activeMessages.find((message) => message.txHash?.toLowerCase() === normalizedReplyTxHash);
+      const matchedByTxHash = referencePool.find((message) => message.txHash?.toLowerCase() === normalizedReplyTxHash);
       targetId = matchedByTxHash?.id;
     }
 
     if (!targetId && replyToText) {
       const targetPreview = trimReplyPreview(replyToText);
-      const matched = activeMessages.find((message) => trimReplyPreview(getMessageDisplayText(message.text)) === targetPreview);
+      const matched = referencePool.find((message) => trimReplyPreview(getMessageDisplayText(message.text)) === targetPreview);
       targetId = matched?.id;
     }
 
@@ -5157,6 +5161,9 @@ export default function App() {
 
             const userCiphertext = extractUserCiphertext(args?.messageForRecipient);
             let messageText = '(Unable to decrypt message)';
+            let replyToMessageId: string | undefined;
+            let replyToText: string | undefined;
+            let replyToTxHash: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
                 const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -5164,6 +5171,9 @@ export default function App() {
                 const plain = decodeMemoPlaintext(raw);
                 const parsedMessage = parseChatMessagePayload(plain);
                 messageText = parsedMessage.cleanText;
+                replyToMessageId = parsedMessage.replyToMessageId;
+                replyToText = parsedMessage.replyToText;
+                replyToTxHash = parsedMessage.replyToTxHash;
                 if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
                   continue;
                 }
@@ -5178,6 +5188,9 @@ export default function App() {
               direction: 'incoming',
               text: messageText,
               senderAddress: from,
+              replyToMessageId,
+              replyToText,
+              replyToTxHash,
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
               logIndex: log.index,
@@ -5189,6 +5202,9 @@ export default function App() {
             const args = (log as { args?: Record<string, unknown> }).args;
             const userCiphertext = extractUserCiphertext(args?.messageForSender);
             let messageText = '(Unable to decrypt message)';
+            let replyToMessageId: string | undefined;
+            let replyToText: string | undefined;
+            let replyToTxHash: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
                 const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -5196,6 +5212,9 @@ export default function App() {
                 const plain = decodeMemoPlaintext(raw);
                 const parsedMessage = parseChatMessagePayload(plain);
                 messageText = parsedMessage.cleanText;
+                replyToMessageId = parsedMessage.replyToMessageId;
+                replyToText = parsedMessage.replyToText;
+                replyToTxHash = parsedMessage.replyToTxHash;
                 if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
                   continue;
                 }
@@ -5210,6 +5229,9 @@ export default function App() {
               direction: 'outgoing',
               text: messageText,
               senderAddress: requestedWalletAddress,
+              replyToMessageId,
+              replyToText,
+              replyToTxHash,
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
               logIndex: log.index,
@@ -5311,6 +5333,9 @@ export default function App() {
                   text: entry.text,
                   senderAddress: entry.senderAddress,
                   isSystem: entry.isSystem,
+                  replyToMessageId: entry.replyToMessageId,
+                  replyToText: entry.replyToText,
+                  replyToTxHash: entry.replyToTxHash,
                   timestamp: entry.timestamp,
                   blockNumber: entry.blockNumber,
                   logIndex: entry.logIndex,
@@ -5694,6 +5719,7 @@ export default function App() {
 
     const groupId = activeGroupId;
     const groupKey = String(groupId);
+    const replyingPreviewText = replyingToMessage ? getMessageDisplayText(replyingToMessage.text) : undefined;
     const localMessageId = `local-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
 
@@ -5708,6 +5734,9 @@ export default function App() {
             direction: 'outgoing',
             text: plainText,
             senderAddress: requestedWalletAddress,
+            replyToMessageId: replyingToMessage?.id,
+            replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
+            replyToTxHash: replyingToMessage?.txHash,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
@@ -5720,7 +5749,12 @@ export default function App() {
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForGroupSend();
 
-      const encodedMemo = encodeMemoPlaintext(plainText);
+      const plainTextWithReply = buildMessageWithReplyPayload(
+        plainText,
+        replyingPreviewText,
+        replyingToMessage?.txHash
+      );
+      const encodedMemo = encodeMemoPlaintext(plainTextWithReply);
       const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
       const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
       const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
@@ -5751,6 +5785,7 @@ export default function App() {
       }));
 
       setMessageInput('');
+      setReplyingToMessage(null);
       await syncGroupData({ background: true });
       if (activeSignerSource === 'burner') {
         setTopUpMetricsNonce((previous) => previous + 1);
@@ -7847,19 +7882,45 @@ export default function App() {
                       (message.senderAddress && isWalletAddress(message.senderAddress)
                         ? shortenAddress(message.senderAddress)
                         : 'Member');
+                  const canReplyToGroupMessage = !isGroupSystemMessage;
                   const messageRowClassName = isGroupSystemMessage
                     ? 'message-row system'
                     : message.direction === 'outgoing'
                       ? 'message-row outgoing'
                       : 'message-row incoming';
-                  const messageBubbleClassName = isGroupSystemMessage ? 'message-bubble system' : 'message-bubble';
+                  const messageBubbleClassName = [
+                    isGroupSystemMessage ? 'message-bubble system' : 'message-bubble',
+                    highlightedMessageId === message.id
+                      ? 'highlighted'
+                      : canReplyToGroupMessage && replyingToMessage?.id === message.id
+                        ? 'replying'
+                        : ''
+                  ]
+                    .filter((className) => className.length > 0)
+                    .join(' ');
 
                   return (
                     <div
                       key={message.id}
                       className={messageRowClassName}
                     >
-                      <div className={messageBubbleClassName}>
+                      <div
+                        ref={(node) => {
+                          messageElementRefs.current[message.id] = node;
+                        }}
+                        className={messageBubbleClassName}
+                      >
+                        {canReplyToGroupMessage ? (
+                          <button
+                            type="button"
+                            className="message-reply-action"
+                            onClick={() => setReplyingToMessage(message)}
+                            aria-label="Reply to this message"
+                            title="Reply"
+                          >
+                            ↩
+                          </button>
+                        ) : null}
                         {message.direction === 'incoming' && !isGroupSystemMessage ? (
                           canCopySenderAddress ? (
                             <button
@@ -7875,6 +7936,18 @@ export default function App() {
                           ) : (
                             <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
                           )
+                        ) : null}
+                        {message.replyToText || message.replyToTxHash ? (
+                          <button
+                            type="button"
+                            className="message-reply"
+                            onClick={() =>
+                              jumpToReferencedMessage(message.replyToMessageId, message.replyToText, message.replyToTxHash)
+                            }
+                            title="Go to replied message"
+                          >
+                            ↪ {message.replyToText ?? `Tx ${shortenAddress(message.replyToTxHash as string)}`}
+                          </button>
                         ) : null}
                         {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
                         {message.timestamp || deliveryLabel ? (
@@ -7903,6 +7976,14 @@ export default function App() {
             </div>
 
             <div className="chat-compose">
+              {replyingToMessage ? (
+                <div className="chat-replying">
+                  <span>Replying to: {trimReplyPreview(getMessageDisplayText(replyingToMessage.text))}</span>
+                  <button type="button" onClick={() => setReplyingToMessage(null)}>
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
               <div
                 ref={chatComposerRef}
                 className="chat-compose-editor"
