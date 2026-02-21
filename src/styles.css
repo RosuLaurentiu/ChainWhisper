@@ -76,6 +76,27 @@ body {
 
 .top-header-branding {
   display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-header-brand-logo-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.top-header-brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+}
+
+.top-header-brand-copy {
+  display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
@@ -1457,6 +1478,45 @@ body {
   box-sizing: border-box;
 }
 
+.group-rename-form {
+  min-width: 0;
+  display: grid;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-header-actions .group-rename-form {
+  flex: 1 1 100%;
+  min-width: 0;
+  width: min(100%, 480px);
+  grid-template-columns: minmax(0, 1fr) var(--group-header-button-width) var(--group-header-button-width);
+}
+
+.group-rename-form input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev-1);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  box-sizing: border-box;
+}
+
+.group-rename-form input:focus {
+  border-color: #5b4593;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(91, 69, 147, 0.2);
+}
+
+.group-rename-form .contact {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+}
+
 .group-header-actions .group-danger-button {
   border-color: #6b2a34;
   background: #2b171c;
@@ -1540,6 +1600,17 @@ body {
 }
 
 .group-mobile-options-actions .contact {
+  width: 100%;
+  min-width: 0;
+}
+
+.group-mobile-options-actions .group-rename-form {
+  grid-column: 1 / -1;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(0, 1fr));
+}
+
+.group-mobile-options-actions .group-rename-form .contact {
   width: 100%;
   min-width: 0;
 }
@@ -2063,6 +2134,12 @@ body {
   .top-header .top-header-section {
     padding: 12px 14px;
     min-width: 0;
+  }
+
+  .top-header .top-header-brand-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
   }
 
   .top-header .top-header-menu-btn {

@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChatImage from './components/ChatImage';
 import { parseImageTag } from './lib/imagePull';
+import AppFavicon from './assets/favicon.png';
 import type { BrowserProvider, JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import { unzlibSync, zlibSync } from 'fflate';
 
@@ -280,6 +281,7 @@ const COTI_NETWORK = {
 };
 
 const CHAT_CONTRACT_ADDRESS = '0x3b7151a7B7F1ccEB9b2325A27f99B24b6479d2D7';
+const GROUP_ADMIN_BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 const CHAT_CONTRACT_ABI = [
   'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
   'function setMyNickname(string name)',
@@ -297,7 +299,11 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'error AlreadyGroupMember()',
   'error GroupPaused()',
   'error GroupTooLarge()',
+  'error InvalidAddress()',
   'error InvalidGroup()',
+  'error InvalidGroupTitle()',
+  'error NotGroupMember()',
+  'error OnlyGroupAdmin()',
   'error InvalidJoinCode()',
   'error JoinCodeExhausted()',
   'error JoinCodeExpired()',
@@ -307,6 +313,7 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'function JOIN_CODE_MAX_USES() view returns (uint32)',
   'function nextGroupId() view returns (uint256)',
   'function createGroup(string title, address[] initialMembers) returns (uint256 groupId)',
+  'function addMembers(uint256 groupId, address[] accounts)',
   'function inviteMembers(uint256 groupId, address[] accounts, uint64 inviteTtlSeconds)',
   'function createJoinCode(uint256 groupId, bytes32 codeHash, uint64 ttlSeconds, uint32 maxUses)',
   'function getJoinCode(uint256 groupId, bytes32 codeHash) view returns (bool active, address creator, uint64 expiresAt, uint32 usesLeft, bool expired)',
@@ -314,6 +321,8 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'function revokeJoinCode(uint256 groupId, bytes32 codeHash)',
   'function acceptInvite(uint256 groupId)',
   'function declineInvite(uint256 groupId)',
+  'function setGroupAdmin(uint256 groupId, address newAdmin)',
+  'function setGroupTitle(uint256 groupId, string nextTitle)',
   'function leaveGroup(uint256 groupId)',
   'function removeMember(uint256 groupId, address account)',
   'function getInvite(uint256 groupId, address account) view returns (bool pending, address inviter, uint64 expiresAt, bool expired)',
@@ -347,6 +356,16 @@ const GROUP_JOIN_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
   '0x7fb3f362': 'This group code is no longer active. Ask for a new code.'
 };
 const GROUP_CREATE_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
+  '0x0e03abe4': 'Group title is too long after encryption. Use a shorter title and try again.'
+};
+const GROUP_ACTION_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
+  '0x569d6b43': 'That wallet is already a member of this group.',
+  '0xc377608f': 'Group actions are currently paused on-chain. Try again later.',
+  '0x6ebf9e18': 'This group has reached its member limit.',
+  '0xe6c4247b': 'Invalid wallet address.',
+  '0x25114f49': 'Group admins cannot leave the group. Add another member and transfer admin first.',
+  '0x27ce6509': 'You are not a member of this group.',
+  '0xdb140e40': 'This group no longer exists.',
   '0x0e03abe4': 'Group title is too long after encryption. Use a shorter title and try again.'
 };
 
@@ -964,6 +983,24 @@ const getGroupCreateErrorMessage = (error: unknown, fallbackMessage: string): st
   if (revertData) {
     const selector = revertData.slice(0, 10).toLowerCase();
     const mappedMessage = GROUP_CREATE_ERROR_MESSAGE_BY_SELECTOR[selector];
+    if (mappedMessage) {
+      return mappedMessage;
+    }
+  }
+
+  const providerMessage = getProviderErrorMessage(error, fallbackMessage);
+  const normalizedProviderMessage = providerMessage.toLowerCase();
+  if (normalizedProviderMessage.includes('unknown custom error') || normalizedProviderMessage.includes('execution reverted')) {
+    return fallbackMessage;
+  }
+
+  return providerMessage;
+};
+const getGroupActionErrorMessage = (error: unknown, fallbackMessage: string): string => {
+  const revertData = extractRevertData(error);
+  if (revertData) {
+    const selector = revertData.slice(0, 10).toLowerCase();
+    const mappedMessage = GROUP_ACTION_ERROR_MESSAGE_BY_SELECTOR[selector];
     if (mappedMessage) {
       return mappedMessage;
     }
@@ -2297,6 +2334,8 @@ export default function App() {
   );
   const [generatedGroupInviteCode, setGeneratedGroupInviteCode] = useState('');
   const [groupJoinCodeInput, setGroupJoinCodeInput] = useState('');
+  const [groupRenameOpen, setGroupRenameOpen] = useState(false);
+  const [groupRenameInput, setGroupRenameInput] = useState('');
   const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
   const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>({});
   const [unreadGroupMap, setUnreadGroupMap] = useState<Record<string, boolean>>({});
@@ -2608,6 +2647,10 @@ export default function App() {
   useEffect(() => {
     setGeneratedGroupInviteCode('');
   }, [activeGroupId, walletAddress]);
+  useEffect(() => {
+    setGroupRenameOpen(false);
+    setGroupRenameInput('');
+  }, [activeGroupId, walletAddress]);
 
   useEffect(() => {
     setMobileGroupOptionsOpen(false);
@@ -2671,6 +2714,12 @@ export default function App() {
 
     return activeGroupMeta.admin.trim().toLowerCase() === walletAddress.trim().toLowerCase();
   }, [activeGroupMeta, walletAddress]);
+  useEffect(() => {
+    if (!isActiveGroupAdmin && groupRenameOpen) {
+      setGroupRenameOpen(false);
+      setGroupRenameInput('');
+    }
+  }, [isActiveGroupAdmin, groupRenameOpen]);
   const canInviteToActiveGroup = useMemo(() => {
     if (!activeGroupMeta) {
       return false;
@@ -2680,6 +2729,15 @@ export default function App() {
     }
     return isActiveGroupAdmin;
   }, [activeGroupMeta, isActiveGroupAdmin]);
+  const canSubmitGroupRename = useMemo(() => {
+    if (!isActiveGroupAdmin || activeGroupId === null) {
+      return false;
+    }
+
+    const nextTitle = normalizeContactName(groupRenameInput ?? '');
+    const currentTitle = normalizeContactName(activeGroupMeta?.title ?? '') ?? `Group ${activeGroupId}`;
+    return Boolean(nextTitle && nextTitle !== currentTitle);
+  }, [isActiveGroupAdmin, activeGroupId, groupRenameInput, activeGroupMeta]);
   const activeGroupMessages = useMemo(() => {
     if (activeGroupId === null) {
       return [];
@@ -6698,11 +6756,87 @@ export default function App() {
     }
   };
 
+  const beginRenameActiveGroup = () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can rename the group.');
+      return;
+    }
+
+    const groupId = activeGroupId;
+    const currentTitle = normalizeContactName(activeGroupMeta?.title ?? '') ?? `Group ${groupId}`;
+    setGroupRenameInput(currentTitle);
+    setGroupRenameOpen(true);
+  };
+
+  const cancelRenameActiveGroup = () => {
+    setGroupRenameOpen(false);
+    setGroupRenameInput('');
+  };
+
+  const renameActiveGroup = async () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can rename the group.');
+      return;
+    }
+
+    const groupId = activeGroupId;
+    const currentTitle = normalizeContactName(activeGroupMeta?.title ?? '') ?? `Group ${groupId}`;
+    const nextTitle = normalizeContactName(groupRenameInput);
+    if (!nextTitle) {
+      setError('Enter a group title.');
+      return;
+    }
+    if (nextTitle === currentTitle) {
+      cancelRenameActiveGroup();
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const encodedTitle = await encodeStoredGroupTitle(nextTitle, Boolean(activeGroupMeta?.isPrivate));
+      const tx = await contract.setGroupTitle(groupId, encodedTitle);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      cancelRenameActiveGroup();
+      await syncGroupData({ deep: true });
+    } catch (renameError) {
+      const message = getGroupActionErrorMessage(renameError, 'Failed to rename group.');
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
   const leaveActiveGroup = async () => {
     setError('');
 
     if (activeGroupId === null) {
       setError('Select a group first.');
+      return;
+    }
+    if (isActiveGroupAdmin) {
+      setError('Group admins cannot leave directly. Use Burn & Leave to transfer admin and exit.');
       return;
     }
 
@@ -6731,7 +6865,63 @@ export default function App() {
       }
       await syncGroupData({ deep: true });
     } catch (leaveError) {
-      const message = leaveError instanceof Error ? leaveError.message : 'Failed to leave group.';
+      const message = getGroupActionErrorMessage(leaveError, 'Failed to leave group.');
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const handoffAdminAndLeaveActiveGroup = async () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can use burn and leave.');
+      return;
+    }
+
+    const groupId = activeGroupId;
+    const groupLabel = `${activeGroupMeta?.title ?? 'Group'} (#${groupId})`;
+    const burnAddress = GROUP_ADMIN_BURN_ADDRESS;
+    const confirmationMessage = `Leave ${groupLabel} as admin?\n\nThis adds ${burnAddress} to the group (if needed), transfers admin to that burn wallet, and then leaves from your current wallet.\n\nThis action is irreversible.`;
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const burnMember = await contract.isMember(groupId, burnAddress).catch(() => false);
+      if (!burnMember) {
+        const addTx = await contract.addMembers(groupId, [burnAddress]);
+        await addTx.wait();
+      }
+
+      const transferTx = await contract.setGroupAdmin(groupId, burnAddress);
+      await transferTx.wait();
+
+      const leaveTx = await contract.leaveGroup(groupId);
+      await leaveTx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      if (activeGroupIdRef.current === groupId) {
+        setActiveGroupId(null);
+      }
+      await syncGroupData({ deep: true });
+      setStatus(`Left group. Admin was transferred to burn wallet ${shortenAddress(burnAddress)}.`);
+    } catch (handoffError) {
+      const message = getGroupActionErrorMessage(handoffError, 'Failed to transfer admin to burn wallet and leave group.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
@@ -6759,10 +6949,11 @@ export default function App() {
           .filter((member) => isWalletAddress(member) && member.toLowerCase() !== normalizedSelf)
       )
     );
-    const confirmationMessage =
-      removableMembers.length > 0
-        ? `Disband this group? This will remove ${removableMembers.length} member(s) and then leave the group.`
-        : 'Disband this group? This will leave the group.';
+    if (removableMembers.length === 0) {
+      setError('You are the only member. Use Burn & Leave to transfer admin to the burn wallet and exit.');
+      return;
+    }
+    const confirmationMessage = `Disband this group? This will remove ${removableMembers.length} member(s). You will stay as admin because admins cannot leave directly on this contract.`;
     if (!window.confirm(confirmationMessage)) {
       return;
     }
@@ -6778,21 +6969,14 @@ export default function App() {
         await removeTx.wait();
       }
 
-      const leaveTx = await contract.leaveGroup(groupId);
-      await leaveTx.wait();
-
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
         ...previous,
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
-
-      if (activeGroupIdRef.current === groupId) {
-        setActiveGroupId(null);
-      }
       await syncGroupData({ deep: true });
     } catch (disbandError) {
-      const message = disbandError instanceof Error ? disbandError.message : 'Failed to disband group.';
+      const message = getGroupActionErrorMessage(disbandError, 'Failed to disband group.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
@@ -8294,8 +8478,13 @@ export default function App() {
       <header className="top-header" ref={topHeaderRef}>
         <div className="top-header-brand">
           <div className="top-header-section top-header-branding">
-            <span className="top-header-brand-title">ChainWhisper</span>
-            <span className="top-header-brand-subtitle">powered by COTI</span>
+            <span className="top-header-brand-logo-shell" aria-hidden="true">
+              <img className="top-header-brand-logo" src={AppFavicon} alt="" />
+            </span>
+            <div className="top-header-brand-copy">
+              <span className="top-header-brand-title">ChainWhisper</span>
+              <span className="top-header-brand-subtitle">powered by COTI</span>
+            </div>
           </div>
           <button
             type="button"
@@ -9367,31 +9556,92 @@ export default function App() {
                     <div className="group-mobile-section group-mobile-section-actions">
                       <div className="group-mobile-section-header">
                         <span className="group-mobile-section-title">Group actions</span>
-                        <span className="group-mobile-section-subtitle">Leave or close group</span>
+                        <span className="group-mobile-section-subtitle">Rename, leave, or close group</span>
                       </div>
                       <div className="group-mobile-options-actions group-mobile-options-actions-secondary">
-                        <button
-                          type="button"
-                          className="contact"
-                          onClick={() => {
-                            leaveActiveGroup().catch(() => {});
-                          }}
-                          disabled={processingGroupAction}
-                        >
-                          {processingGroupAction ? 'Working...' : 'Leave'}
-                        </button>
                         {isActiveGroupAdmin ? (
+                          <>
+                            {groupRenameOpen ? (
+                              <form
+                                className="group-rename-form"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  renameActiveGroup().catch(() => {});
+                                }}
+                              >
+                                <input
+                                  value={groupRenameInput}
+                                  onChange={(event) => setGroupRenameInput(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Escape') {
+                                      event.preventDefault();
+                                      cancelRenameActiveGroup();
+                                    }
+                                  }}
+                                  placeholder="Group name"
+                                  aria-label="Rename group"
+                                  autoFocus
+                                  disabled={processingGroupAction}
+                                />
+                                <button
+                                  type="submit"
+                                  className="contact"
+                                  disabled={processingGroupAction || !canSubmitGroupRename}
+                                >
+                                  {processingGroupAction ? 'Saving...' : 'Save'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="contact"
+                                  onClick={cancelRenameActiveGroup}
+                                  disabled={processingGroupAction}
+                                >
+                                  Cancel
+                                </button>
+                              </form>
+                            ) : (
+                              <button
+                                type="button"
+                                className="contact"
+                                onClick={beginRenameActiveGroup}
+                                disabled={processingGroupAction}
+                              >
+                                Rename
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="contact group-danger-button"
+                              onClick={() => {
+                                handoffAdminAndLeaveActiveGroup().catch(() => {});
+                              }}
+                              disabled={processingGroupAction}
+                            >
+                              {processingGroupAction ? 'Working...' : 'Burn & Leave'}
+                            </button>
+                            <button
+                              type="button"
+                              className="contact group-danger-button"
+                              onClick={() => {
+                                disbandActiveGroup().catch(() => {});
+                              }}
+                              disabled={processingGroupAction}
+                            >
+                              {processingGroupAction ? 'Working...' : 'Disband'}
+                            </button>
+                          </>
+                        ) : (
                           <button
                             type="button"
-                            className="contact group-danger-button"
+                            className="contact"
                             onClick={() => {
-                              disbandActiveGroup().catch(() => {});
+                              leaveActiveGroup().catch(() => {});
                             }}
                             disabled={processingGroupAction}
                           >
-                            {processingGroupAction ? 'Working...' : 'Disband'}
+                            {processingGroupAction ? 'Working...' : 'Leave'}
                           </button>
-                        ) : null}
+                        )}
                       </div>
                     </div>
                   </div>
@@ -9399,28 +9649,89 @@ export default function App() {
                 ) : (
                   <div className="group-header-actions">
                     <span className="group-header-actions-label">Group actions</span>
-                    <button
-                      type="button"
-                      className="contact"
-                    onClick={() => {
-                      leaveActiveGroup().catch(() => {});
-                    }}
-                    disabled={processingGroupAction}
-                  >
-                    {processingGroupAction ? 'Working...' : 'Leave'}
-                  </button>
-                  {isActiveGroupAdmin ? (
-                    <button
-                      type="button"
-                      className="contact group-danger-button"
-                      onClick={() => {
-                        disbandActiveGroup().catch(() => {});
-                      }}
-                      disabled={processingGroupAction}
-                    >
-                      {processingGroupAction ? 'Working...' : 'Disband'}
-                    </button>
-                  ) : null}
+                    {isActiveGroupAdmin ? (
+                      <>
+                        {groupRenameOpen ? (
+                          <form
+                            className="group-rename-form"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              renameActiveGroup().catch(() => {});
+                            }}
+                          >
+                            <input
+                              value={groupRenameInput}
+                              onChange={(event) => setGroupRenameInput(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Escape') {
+                                  event.preventDefault();
+                                  cancelRenameActiveGroup();
+                                }
+                              }}
+                              placeholder="Group name"
+                              aria-label="Rename group"
+                              autoFocus
+                              disabled={processingGroupAction}
+                            />
+                            <button
+                              type="submit"
+                              className="contact"
+                              disabled={processingGroupAction || !canSubmitGroupRename}
+                            >
+                              {processingGroupAction ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              type="button"
+                              className="contact"
+                              onClick={cancelRenameActiveGroup}
+                              disabled={processingGroupAction}
+                            >
+                              Cancel
+                            </button>
+                          </form>
+                        ) : (
+                          <button
+                            type="button"
+                            className="contact"
+                            onClick={beginRenameActiveGroup}
+                            disabled={processingGroupAction}
+                          >
+                            Rename
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="contact group-danger-button"
+                          onClick={() => {
+                            handoffAdminAndLeaveActiveGroup().catch(() => {});
+                          }}
+                          disabled={processingGroupAction}
+                        >
+                          {processingGroupAction ? 'Working...' : 'Burn & Leave'}
+                        </button>
+                        <button
+                          type="button"
+                          className="contact group-danger-button"
+                          onClick={() => {
+                            disbandActiveGroup().catch(() => {});
+                          }}
+                          disabled={processingGroupAction}
+                        >
+                          {processingGroupAction ? 'Working...' : 'Disband'}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="contact"
+                        onClick={() => {
+                          leaveActiveGroup().catch(() => {});
+                        }}
+                        disabled={processingGroupAction}
+                      >
+                        {processingGroupAction ? 'Working...' : 'Leave'}
+                      </button>
+                    )}
                   <button
                     type="button"
                     className="contact"
