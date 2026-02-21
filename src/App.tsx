@@ -157,6 +157,7 @@ const READ_CURSOR_PREFIX = '[[coti-read:v1]]';
 const STATE_BACKUP_VERSION = 1;
 const MAX_REPLY_PREVIEW_LENGTH = 28;
 const MAX_MESSAGE_LENGTH = 2000;
+const COPY_FEEDBACK_DURATION_MS = 1400;
 const COTI_WEI = 10n ** 18n;
 const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
 const TEXT_ENCODER = new TextEncoder();
@@ -345,6 +346,9 @@ const GROUP_JOIN_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
   '0x6763c1d5': 'This group code has expired.',
   '0x7fb3f362': 'This group code is no longer active. Ask for a new code.'
 };
+const GROUP_CREATE_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
+  '0x0e03abe4': 'Group title is too long after encryption. Use a shorter title and try again.'
+};
 
 type CotiEthersModule = typeof import('@coti-io/coti-ethers');
 type CotiWsProvider = InstanceType<CotiEthersModule['WebSocketProvider']>;
@@ -434,6 +438,9 @@ const shortenAddress = (address: string): string => `${address.slice(0, 6)}...${
 const GROUP_JOIN_CODE_PREFIX = 'coti-group-code-v2:';
 const LEGACY_GROUP_INVITE_CODE_PREFIX = 'coti-group-code-v1:';
 const GROUP_TITLE_METADATA_PREFIX = '[[coti-group:v1]]';
+const GROUP_TITLE_COMPACT_PREFIX = 'cg3:';
+const GROUP_TITLE_ENCRYPTION_VERSION = 3;
+const GROUP_TITLE_KEY_MATERIAL = 'chainwhisper-group-title-aes-v1';
 const GROUP_JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const encodeBase64Url = (value: string): string =>
   btoa(value)
@@ -444,6 +451,92 @@ const decodeBase64Url = (value: string): string => {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
   return atob(`${normalized}${padding}`);
+};
+const encodeBase64UrlBytes = (value: Uint8Array): string => {
+  let binary = '';
+  for (let index = 0; index < value.length; index += 1) {
+    binary += String.fromCharCode(value[index]);
+  }
+  return encodeBase64Url(binary);
+};
+const decodeBase64UrlBytes = (value: string): Uint8Array => {
+  const binary = decodeBase64Url(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
+let groupTitleCryptoKeyPromise: Promise<CryptoKey | null> | null = null;
+const loadGroupTitleCryptoKey = (): Promise<CryptoKey | null> => {
+  if (!groupTitleCryptoKeyPromise) {
+    groupTitleCryptoKeyPromise = (async () => {
+      if (typeof crypto === 'undefined' || typeof crypto.subtle === 'undefined') {
+        return null;
+      }
+      const keySeed = TEXT_ENCODER.encode(GROUP_TITLE_KEY_MATERIAL);
+      const keyDigest = await crypto.subtle.digest('SHA-256', keySeed);
+      return crypto.subtle.importKey(
+        'raw',
+        keyDigest,
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    })().catch(() => null);
+  }
+  return groupTitleCryptoKeyPromise;
+};
+const encryptGroupTitle = async (plainTitle: string): Promise<{ iv: string; ciphertext: string } | null> => {
+  if (typeof crypto === 'undefined' || typeof crypto.subtle === 'undefined' || typeof crypto.getRandomValues !== 'function') {
+    return null;
+  }
+  const key = await loadGroupTitleCryptoKey();
+  if (!key) {
+    return null;
+  }
+
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(iv);
+  const plainBytes = new Uint8Array(TEXT_ENCODER.encode(plainTitle));
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    plainBytes
+  );
+  return {
+    iv: encodeBase64UrlBytes(iv),
+    ciphertext: encodeBase64UrlBytes(new Uint8Array(encryptedBuffer))
+  };
+};
+const decryptGroupTitle = async (ivRaw: string, ciphertextRaw: string): Promise<string | null> => {
+  if (typeof crypto === 'undefined' || typeof crypto.subtle === 'undefined') {
+    return null;
+  }
+  const key = await loadGroupTitleCryptoKey();
+  if (!key) {
+    return null;
+  }
+
+  try {
+    const iv = decodeBase64UrlBytes(ivRaw);
+    const ciphertext = decodeBase64UrlBytes(ciphertextRaw);
+    if (iv.length !== 12 || ciphertext.length === 0) {
+      return null;
+    }
+    const ivBytes = new Uint8Array(iv.length);
+    ivBytes.set(iv);
+    const ciphertextBytes = new Uint8Array(ciphertext.length);
+    ciphertextBytes.set(ciphertext);
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: ivBytes },
+      key,
+      ciphertextBytes
+    );
+    return normalizeContactName(TEXT_DECODER.decode(new Uint8Array(decryptedBuffer))) ?? null;
+  } catch {
+    return null;
+  }
 };
 const generateRandomGroupJoinCode = (): string => {
   const values = new Uint8Array(12);
@@ -463,6 +556,9 @@ const generateRandomGroupJoinCode = (): string => {
   return `${compactCode.slice(0, 4)}-${compactCode.slice(4, 8)}-${compactCode.slice(8, 12)}`;
 };
 const encodeGroupInviteCode = (payload: GroupInviteCodePayload): string => {
+  if (payload.version === 2) {
+    return `${payload.groupId}:${payload.code}`;
+  }
   const serialized = JSON.stringify(payload);
   return `${GROUP_JOIN_CODE_PREFIX}${encodeBase64Url(serialized)}`;
 };
@@ -553,33 +649,57 @@ const parseGroupJoinCodeFromPayload = (payload: GroupInviteCodePayload): GroupJo
 
   return null;
 };
-const encodeStoredGroupTitle = (title: string, isPrivate: boolean): string => {
+const encodeStoredGroupTitle = async (title: string, isPrivate: boolean): Promise<string> => {
   const normalizedTitle = normalizeContactName(title);
   if (!normalizedTitle) {
     return '';
   }
-  if (!isPrivate) {
-    return normalizedTitle;
+
+  const encryptedPayload = await encryptGroupTitle(normalizedTitle);
+  if (!encryptedPayload) {
+    throw new Error('Group title encryption is unavailable in this browser.');
   }
 
-  try {
-    const payload = JSON.stringify({
-      title: normalizedTitle,
-      private: isPrivate
-    });
-    return `${GROUP_TITLE_METADATA_PREFIX}${encodeBase64Url(payload)}`;
-  } catch {
-    return normalizedTitle;
-  }
+  const visibilityFlag = isPrivate ? 'p' : 'u';
+  return `${GROUP_TITLE_COMPACT_PREFIX}${visibilityFlag}:${encryptedPayload.iv}:${encryptedPayload.ciphertext}`;
 };
-const parseStoredGroupTitle = (rawTitle: string, groupId?: number): { title: string; isPrivate: boolean } => {
+const parseStoredGroupTitle = async (rawTitle: string, groupId?: number): Promise<{ title: string; isPrivate: boolean }> => {
   const normalizedRawTitle = normalizeContactName(rawTitle);
   const fallbackTitle =
     typeof groupId === 'number' && Number.isFinite(groupId) && groupId > 0 ? `Group ${Math.floor(groupId)}` : 'Group';
+  const privateFallbackTitle = 'Private group';
   if (!normalizedRawTitle) {
     return {
       title: fallbackTitle,
       isPrivate: false
+    };
+  }
+
+  if (normalizedRawTitle.startsWith(GROUP_TITLE_COMPACT_PREFIX)) {
+    const compactPayload = normalizedRawTitle.slice(GROUP_TITLE_COMPACT_PREFIX.length).trim();
+    const firstSeparatorIndex = compactPayload.indexOf(':');
+    const secondSeparatorIndex =
+      firstSeparatorIndex >= 0 ? compactPayload.indexOf(':', firstSeparatorIndex + 1) : -1;
+    const visibilityFlag = firstSeparatorIndex > 0 ? compactPayload.slice(0, firstSeparatorIndex) : '';
+    const ivRaw =
+      firstSeparatorIndex >= 0 && secondSeparatorIndex > firstSeparatorIndex
+        ? compactPayload.slice(firstSeparatorIndex + 1, secondSeparatorIndex)
+        : '';
+    const ciphertextRaw =
+      secondSeparatorIndex >= 0 ? compactPayload.slice(secondSeparatorIndex + 1).trim() : '';
+    const isPrivate = visibilityFlag === 'p';
+    if (ivRaw && ciphertextRaw) {
+      const decryptedTitle = await decryptGroupTitle(ivRaw, ciphertextRaw);
+      if (decryptedTitle) {
+        return {
+          title: decryptedTitle,
+          isPrivate
+        };
+      }
+    }
+    return {
+      title: isPrivate ? privateFallbackTitle : fallbackTitle,
+      isPrivate
     };
   }
 
@@ -601,20 +721,45 @@ const parseStoredGroupTitle = (rawTitle: string, groupId?: number): { title: str
   try {
     const decodedPayload = decodeBase64Url(encodedPayload);
     const parsedPayload = JSON.parse(decodedPayload) as {
+      version?: unknown;
       title?: unknown;
       private?: unknown;
+      iv?: unknown;
+      ciphertext?: unknown;
     };
-    const parsedTitle = typeof parsedPayload.title === 'string' ? normalizeContactName(parsedPayload.title) : undefined;
-    if (!parsedTitle) {
+    const isPrivate = Boolean(parsedPayload.private);
+    const version = Number(parsedPayload.version);
+    const ivRaw = typeof parsedPayload.iv === 'string' ? parsedPayload.iv : '';
+    const ciphertextRaw = typeof parsedPayload.ciphertext === 'string' ? parsedPayload.ciphertext : '';
+    if (
+      version === GROUP_TITLE_ENCRYPTION_VERSION &&
+      ivRaw.length > 0 &&
+      ciphertextRaw.length > 0
+    ) {
+      const decryptedTitle = await decryptGroupTitle(ivRaw, ciphertextRaw);
+      if (decryptedTitle) {
+        return {
+          title: decryptedTitle,
+          isPrivate
+        };
+      }
       return {
-        title: fallbackTitle,
-        isPrivate: false
+        title: isPrivate ? privateFallbackTitle : fallbackTitle,
+        isPrivate
+      };
+    }
+
+    const parsedTitle = typeof parsedPayload.title === 'string' ? normalizeContactName(parsedPayload.title) : undefined;
+    if (parsedTitle) {
+      return {
+        title: parsedTitle,
+        isPrivate
       };
     }
 
     return {
-      title: parsedTitle,
-      isPrivate: Boolean(parsedPayload.private)
+      title: isPrivate ? privateFallbackTitle : fallbackTitle,
+      isPrivate
     };
   } catch {
     const legacyTitle = normalizeContactName(encodedPayload);
@@ -626,7 +771,7 @@ const parseStoredGroupTitle = (rawTitle: string, groupId?: number): { title: str
     }
 
     return {
-      title: normalizedRawTitle,
+      title: fallbackTitle,
       isPrivate: false
     };
   }
@@ -800,6 +945,25 @@ const getGroupJoinErrorMessage = (error: unknown, fallbackMessage: string): stri
   if (revertData) {
     const selector = revertData.slice(0, 10).toLowerCase();
     const mappedMessage = GROUP_JOIN_ERROR_MESSAGE_BY_SELECTOR[selector];
+    if (mappedMessage) {
+      return mappedMessage;
+    }
+  }
+
+  const providerMessage = getProviderErrorMessage(error, fallbackMessage);
+  const normalizedProviderMessage = providerMessage.toLowerCase();
+  if (normalizedProviderMessage.includes('unknown custom error') || normalizedProviderMessage.includes('execution reverted')) {
+    return fallbackMessage;
+  }
+
+  return providerMessage;
+};
+
+const getGroupCreateErrorMessage = (error: unknown, fallbackMessage: string): string => {
+  const revertData = extractRevertData(error);
+  if (revertData) {
+    const selector = revertData.slice(0, 10).toLowerCase();
+    const mappedMessage = GROUP_CREATE_ERROR_MESSAGE_BY_SELECTOR[selector];
     if (mappedMessage) {
       return mappedMessage;
     }
@@ -2097,6 +2261,7 @@ export default function App() {
   const [showBurnerMnemonic, setShowBurnerMnemonic] = useState(false);
   const [burnerImportInput, setBurnerImportInput] = useState('');
   const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>([]);
+  const [savedBurnerWalletCount, setSavedBurnerWalletCount] = useState(0);
   const [activeBurnerWalletId, setActiveBurnerWalletId] = useState('');
   const [showBurnerImportModal, setShowBurnerImportModal] = useState(false);
   const [burnerStorageBlocked, setBurnerStorageBlocked] = useState<boolean>(() => !isBurnerStorageAvailable());
@@ -2135,6 +2300,7 @@ export default function App() {
   const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
   const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>({});
   const [unreadGroupMap, setUnreadGroupMap] = useState<Record<string, boolean>>({});
+  const [lastCopiedKey, setLastCopiedKey] = useState<string | null>(null);
   const [lastReadAllTs, setLastReadAllTs] = useState(0);
   const lastReadAllTsRef = useRef(0);
   const lastReadByContactRef = useRef<Record<string, number>>({});
@@ -2242,6 +2408,7 @@ export default function App() {
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const chatComposerRef = useRef<HTMLDivElement | null>(null);
   const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const copyFeedbackTimeoutRef = useRef<number | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const previousActiveContactForScrollRef = useRef<string | null>(null);
   const previousLastMessageIdForScrollRef = useRef<string | null>(null);
@@ -2276,7 +2443,69 @@ export default function App() {
     };
   }, [refreshBurnerStorageStatus]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncSavedBurnerWalletCount = async () => {
+      if (burnerStorageBlocked) {
+        if (!cancelled) {
+          setSavedBurnerWalletCount(0);
+        }
+        return;
+      }
+
+      const storageState = parseBurnerWalletStorageState();
+      if (storageState.kind === 'none') {
+        if (!cancelled) {
+          setSavedBurnerWalletCount(0);
+        }
+        return;
+      }
+
+      if (storageState.kind === 'legacy') {
+        if (!cancelled) {
+          setSavedBurnerWalletCount(1);
+        }
+        return;
+      }
+
+      if (storageState.kind === 'legacy-vault') {
+        if (!cancelled) {
+          setSavedBurnerWalletCount(storageState.record.wallets.length);
+        }
+        return;
+      }
+
+      const currentPin = burnerPinRef.current.trim();
+      if (currentPin.length >= LEGACY_BURNER_PIN_MIN_LENGTH) {
+        try {
+          const vault = await loadBurnerWalletVaultFromStorage(currentPin);
+          if (!cancelled) {
+            setSavedBurnerWalletCount(vault.wallets.length);
+          }
+          return;
+        } catch {
+        }
+      }
+
+      if (!cancelled) {
+        setSavedBurnerWalletCount(Math.max(burnerWallets.length, 1));
+      }
+    };
+
+    syncSavedBurnerWalletCount().catch(() => {
+      if (!cancelled) {
+        setSavedBurnerWalletCount(burnerWallets.length);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [burnerStorageBlocked, burnerWallets, walletAddress]);
+
   const prevUnreadRef = useRef<Record<string, boolean>>({});
+  const prevUnreadGroupRef = useRef<Record<string, boolean>>({});
   useEffect(() => {
     unreadMapRef.current = unreadMap || {};
   }, [unreadMap]);
@@ -2285,18 +2514,28 @@ export default function App() {
   }, [unreadGroupMap]);
 
   useEffect(() => {
-    const prev = prevUnreadRef.current || {};
-    const next = unreadMap || {};
-    for (const k of Object.keys(next)) {
-      if (next[k] && !prev[k]) {
-        if (!suppressSoundOnConnectRef.current) {
-          playNotificationSound();
+    const prevContacts = prevUnreadRef.current || {};
+    const nextContacts = unreadMap || {};
+    const prevGroups = prevUnreadGroupRef.current || {};
+    const nextGroups = unreadGroupMap || {};
+    const hasNewUnread = (next: Record<string, boolean>, previous: Record<string, boolean>) => {
+      for (const key of Object.keys(next)) {
+        if (next[key] && !previous[key]) {
+          return true;
         }
-        break;
       }
+      return false;
+    };
+
+    const shouldPlaySound =
+      hasNewUnread(nextContacts, prevContacts) || hasNewUnread(nextGroups, prevGroups);
+    if (shouldPlaySound && !suppressSoundOnConnectRef.current) {
+      playNotificationSound();
     }
-    prevUnreadRef.current = { ...next };
-  }, [unreadMap, soundEnabled]);
+
+    prevUnreadRef.current = { ...nextContacts };
+    prevUnreadGroupRef.current = { ...nextGroups };
+  }, [unreadMap, unreadGroupMap, soundEnabled]);
 
   useEffect(() => {
     const prev = previousWalletAddressRef.current || '';
@@ -2310,6 +2549,16 @@ export default function App() {
     }
     previousWalletAddressRef.current = next;
   }, [walletAddress]);
+
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current);
+        copyFeedbackTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   const oldestLoadedBlockByContactRef = useRef<Record<string, number>>({});
   const hasOlderHistoryByContactRef = useRef<Record<string, boolean>>({});
   const loadingOlderHistoryRef = useRef(false);
@@ -2512,6 +2761,16 @@ export default function App() {
     () => [...groupInvites].sort((left, right) => left.expiresAt - right.expiresAt || left.groupId - right.groupId),
     [groupInvites]
   );
+  const contactGroupPanelRatio = useMemo(() => {
+    const contactCount = Math.max(sortedContacts.length, 1);
+    const groupCount = Math.max(sortedGroups.length + sortedGroupInvites.length, 1);
+    const total = contactCount + groupCount;
+
+    const contactsPanelFlex = Math.max(0.9, Math.min(2.1, (contactCount / total) * 3));
+    const groupsPanelFlex = Math.max(0.9, Math.min(2.1, (groupCount / total) * 3));
+
+    return { contactsPanelFlex, groupsPanelFlex };
+  }, [sortedContacts.length, sortedGroups.length, sortedGroupInvites.length]);
   const hasUnreadConversations = useMemo(
     () =>
       Object.values(unreadMap).some((isUnread) => Boolean(isUnread)) ||
@@ -2532,10 +2791,7 @@ export default function App() {
   );
   const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
   const burnerWalletSelectionValue = activeBurnerWalletId || burnerRecordRef.current?.id || '';
-  const hasSavedBurnerWallet = useMemo(
-    () => !burnerStorageBlocked && parseBurnerWalletStorageState().kind !== 'none',
-    [burnerWallets, burnerStorageBlocked]
-  );
+  const hasSavedBurnerWallet = savedBurnerWalletCount > 0;
   const findContactNameForWalletAddress = (address?: string): string | undefined => {
     if (!address) {
       return undefined;
@@ -3250,27 +3506,51 @@ export default function App() {
     }
   };
 
-  const copyAddressToClipboard = async (address: string) => {
+  const copyAddressToClipboard = useCallback(async (value: string): Promise<boolean> => {
     setError('');
 
     try {
-      await navigator.clipboard.writeText(address);
+      await navigator.clipboard.writeText(value);
+      return true;
     } catch {
       try {
         const tempInput = document.createElement('textarea');
-        tempInput.value = address;
+        tempInput.value = value;
         tempInput.style.position = 'fixed';
         tempInput.style.opacity = '0';
         document.body.appendChild(tempInput);
         tempInput.focus();
         tempInput.select();
-        document.execCommand('copy');
+        const copied = document.execCommand('copy');
         document.body.removeChild(tempInput);
+        if (!copied) {
+          throw new Error('Clipboard copy command was rejected.');
+        }
+        return true;
       } catch {
         setError('Could not copy address to clipboard.');
+        return false;
       }
     }
-  };
+  }, []);
+
+  const copyWithFeedback = useCallback(async (value: string, feedbackKey: string) => {
+    const copied = await copyAddressToClipboard(value);
+    if (!copied) {
+      return;
+    }
+
+    setLastCopiedKey(feedbackKey);
+    if (copyFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(copyFeedbackTimeoutRef.current);
+      copyFeedbackTimeoutRef.current = null;
+    }
+
+    copyFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setLastCopiedKey((previous) => (previous === feedbackKey ? null : previous));
+      copyFeedbackTimeoutRef.current = null;
+    }, COPY_FEEDBACK_DURATION_MS);
+  }, [copyAddressToClipboard]);
 
   const markConversationAsRead = useCallback((contactAddress?: string | null) => {
     if (!contactAddress) {
@@ -5546,7 +5826,7 @@ export default function App() {
             : Array.isArray(infoRaw)
               ? String(infoRaw[3] ?? '')
               : '';
-          const parsedTitle = parseStoredGroupTitle(title, groupId);
+          const parsedTitle = await parseStoredGroupTitle(title, groupId);
           const lastBlock = infoRaw && typeof infoRaw === 'object'
             ? toSafeNumber((infoRaw as { lastBlock?: unknown }).lastBlock)
             : Array.isArray(infoRaw)
@@ -6086,7 +6366,7 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-      const encodedTitle = encodeStoredGroupTitle(title, newGroupIsPrivate);
+      const encodedTitle = await encodeStoredGroupTitle(title, newGroupIsPrivate);
       const tx = await contract.createGroup(encodedTitle, initialMembers);
       await tx.wait();
 
@@ -6102,7 +6382,7 @@ export default function App() {
       await syncGroupData({ deep: true });
       setShowQuickActionsModal(false);
     } catch (createGroupError) {
-      const message = createGroupError instanceof Error ? createGroupError.message : 'Failed to create group.';
+      const message = getGroupCreateErrorMessage(createGroupError, 'Failed to create group.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
@@ -7123,6 +7403,7 @@ export default function App() {
     unreadGroupMapRef.current = {};
     setLastReadAllTs(0);
     prevUnreadRef.current = {};
+    prevUnreadGroupRef.current = {};
     lastReadAllTsRef.current = 0;
     lastReadByContactRef.current = {};
     lastReadByGroupRef.current = {};
@@ -8180,11 +8461,17 @@ export default function App() {
             {walletAddress ? (
               <button
                 type="button"
-                className="burner-address-btn"
-                onClick={() => copyAddressToClipboard(walletAddress)}
+                className={
+                  lastCopiedKey === `wallet-address:${walletAddress.toLowerCase()}`
+                    ? 'burner-address-btn copied'
+                    : 'burner-address-btn'
+                }
+                onClick={() => {
+                  copyWithFeedback(walletAddress, `wallet-address:${walletAddress.toLowerCase()}`).catch(() => {});
+                }}
                 title={walletAddress}
               >
-                {shortenAddress(walletAddress)}
+                {lastCopiedKey === `wallet-address:${walletAddress.toLowerCase()}` ? 'Copied' : shortenAddress(walletAddress)}
               </button>
             ) : (
               <strong>—</strong>
@@ -8192,8 +8479,45 @@ export default function App() {
           </div>
         </div>
 
-        <div className="wallet-meta">
+        <div className="wallet-meta wallet-actions-card">
+          <div className="wallet-section-header">
+            <span className="wallet-section-label">Chat wallet</span>
+            <span className="wallet-section-hint">
+              {hasSavedBurnerWallet ? 'Wallet saved' : 'No wallet saved'}
+            </span>
+          </div>
+
           <div className="wallet-section-group">
+            {hasSavedBurnerWallet ? (
+              <button
+                className="connect-btn wallet-primary-action"
+                onClick={() => {
+                  beginBurnerPinFlow('stored').catch(() => {});
+                }}
+                type="button"
+                disabled={initializingBurner || burnerStorageBlocked}
+              >
+                Connect Wallet
+              </button>
+            ) : (
+              <p className="wallet-section-hint wallet-section-hint-note">
+                Generate or import a wallet to enable quick connect.
+              </p>
+            )}
+
+            {hasSavedBurnerWallet ? (
+              <button
+                className="connect-btn"
+                onClick={openChangeBurnerPin}
+                type="button"
+                disabled={initializingBurner || !burnerRecordRef.current}
+              >
+                Change PIN
+              </button>
+            ) : null}
+
+            <div className="wallet-section-divider" aria-hidden="true" />
+
             <button
               className="connect-btn"
               onClick={() => {
@@ -8207,35 +8531,16 @@ export default function App() {
 
             <button
               className="connect-btn"
-              onClick={() => {
-                beginBurnerPinFlow('stored').catch(() => {});
-              }}
-              type="button"
-              disabled={initializingBurner || burnerStorageBlocked || !hasSavedBurnerWallet}
-            >
-              Connect Wallet
-            </button>
-
-            <button
-              className="connect-btn"
               onClick={() => setShowBurnerImportModal(true)}
               type="button"
               disabled={initializingBurner || burnerStorageBlocked}
             >
               Import Wallet
             </button>
-
-            <button
-              className="connect-btn"
-              onClick={openChangeBurnerPin}
-              type="button"
-              disabled={initializingBurner || !burnerRecordRef.current}
-            >
-              Change PIN
-            </button>
           </div>
 
           <div className="wallet-section-group wallet-section-group-metamask">
+            <span className="wallet-section-label wallet-section-label-inline">MetaMask</span>
             <button
               className="connect-btn"
               onClick={connectAndOnboard}
@@ -8250,9 +8555,18 @@ export default function App() {
                   ? 'MetaMask + AES Ready'
                   : 'Sign AES Key'}
             </button>
+          </div>
 
-            <button className="connect-btn" onClick={disconnectWallet} type="button" disabled={!isConnected || connectingMethod !== null}>
-              Disconnect
+          <div className="wallet-section-group wallet-section-group-session">
+            <span className="wallet-section-label wallet-section-label-inline">Session</span>
+            <button
+              className="connect-btn"
+              onClick={disconnectWallet}
+              type="button"
+              disabled={!isConnected || connectingMethod !== null}
+              title="Disconnects the currently active wallet session."
+            >
+              Disconnect current wallet
             </button>
           </div>
           {burnerStorageBlocked ? (
@@ -8262,35 +8576,34 @@ export default function App() {
           ) : null}
         </div>
 
-        <div className="wallet-meta">
-          {burnerWallets.length > 0 ? (
-            <>
-              <select
-                value={burnerWalletSelectionValue}
-                onChange={(event) => {
-                  switchActiveBurnerWallet(event.target.value).catch((switchError) => {
-                    const message = switchError instanceof Error ? switchError.message : 'Failed to switch burner wallet.';
-                    setError(message);
-                  });
-                }}
-                aria-label="Select burner wallet"
-                disabled={initializingBurner}
-              >
-                {burnerWallets.map((walletRecord, index) => {
-                  const optionAddress = walletRecord.address
-                    ? shortenAddress(walletRecord.address)
-                    : 'Unknown';
-                  const optionName = getBurnerWalletDisplayName(walletRecord);
-                  return (
-                    <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
-                      {`${optionName} (${optionAddress})`}
-                    </option>
-                  );
-                })}
-              </select>
-            </>
-          ) : null}
-        </div>
+        {burnerWallets.length > 0 ? (
+          <div className="wallet-meta wallet-selector-meta">
+            <span className="wallet-section-label">Saved wallets</span>
+            <select
+              value={burnerWalletSelectionValue}
+              onChange={(event) => {
+                switchActiveBurnerWallet(event.target.value).catch((switchError) => {
+                  const message = switchError instanceof Error ? switchError.message : 'Failed to switch burner wallet.';
+                  setError(message);
+                });
+              }}
+              aria-label="Select burner wallet"
+              disabled={initializingBurner}
+            >
+              {burnerWallets.map((walletRecord, index) => {
+                const optionAddress = walletRecord.address
+                  ? shortenAddress(walletRecord.address)
+                  : 'Unknown';
+                const optionName = getBurnerWalletDisplayName(walletRecord);
+                return (
+                  <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
+                    {`${optionName} (${optionAddress})`}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        ) : null}
 
         <div className="wallet-meta topup-meta">
           <button
@@ -8372,7 +8685,7 @@ export default function App() {
 
       {isConnected ? (
       <aside className="contacts-sidebar">
-        <div className="contact-profile-card">
+        <div className="contact-profile-card contact-profile-card-fixed">
           <span className="contact-profile-label">Name</span>
           <div className="contact-profile-editor-wrap">
             <div
@@ -8454,14 +8767,19 @@ export default function App() {
           </div>
         </div>
 
-        <div className="contact-profile-card">
+        <div
+          className="contact-profile-card contact-profile-card-scroll contact-profile-card-contacts"
+          style={{ flexGrow: contactGroupPanelRatio.contactsPanelFlex }}
+        >
           <span className="contact-profile-label">Contacts</span>
-          <ul className="contacts-list">
+          <ul className="contacts-list contacts-list-scroll contacts-main-list">
           {sortedContacts.map((contact) => {
             const isActive = activeContact?.toLowerCase() === contact.address.toLowerCase();
             const isEditing = editingContactAddress?.toLowerCase() === contact.address.toLowerCase();
             const hasName = Boolean(contact.name?.trim());
             const hasConversation = (messagesByContact[contact.address.toLowerCase()]?.length ?? 0) > 0;
+            const contactCopyKey = `contact:${contact.address.toLowerCase()}`;
+            const isContactCopied = lastCopiedKey === contactCopyKey;
             return (
               <li key={contact.address}>
                 <div
@@ -8483,27 +8801,27 @@ export default function App() {
                           <span className="contact-name-inline">{contact.name}</span>
                           <button
                             type="button"
-                            className="contact-copy contact-copy-secondary"
+                            className={isContactCopied ? 'contact-copy contact-copy-secondary copied' : 'contact-copy contact-copy-secondary'}
                             onClick={(event) => {
                               event.stopPropagation();
-                              copyAddressToClipboard(contact.address);
+                              copyWithFeedback(contact.address, contactCopyKey).catch(() => {});
                             }}
-                            title="Copy address"
+                            title={isContactCopied ? 'Copied' : 'Copy address'}
                           >
-                            {shortenAddress(contact.address)}
+                            {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
                           </button>
                         </>
                       ) : (
                         <button
                           type="button"
-                          className="contact-copy"
+                          className={isContactCopied ? 'contact-copy copied' : 'contact-copy'}
                           onClick={(event) => {
                             event.stopPropagation();
-                            copyAddressToClipboard(contact.address);
+                            copyWithFeedback(contact.address, contactCopyKey).catch(() => {});
                           }}
-                          title="Copy address"
+                          title={isContactCopied ? 'Copied' : 'Copy address'}
                         >
-                          {shortenAddress(contact.address)}
+                          {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
                         </button>
                       )}
                     </div>
@@ -8583,13 +8901,16 @@ export default function App() {
           </ul>
         </div>
 
-        <div className="contact-profile-card">
+        <div
+          className="contact-profile-card contact-profile-card-scroll contact-profile-card-groups"
+          style={{ flexGrow: contactGroupPanelRatio.groupsPanelFlex }}
+        >
           <span className="contact-profile-label">Groups</span>
 
           {sortedGroupInvites.length > 0 ? (
             <>
               <span className="contact-section-label">Invites</span>
-              <ul className="contacts-list">
+              <ul className="contacts-list contacts-list-scroll groups-invites-list">
             {sortedGroupInvites.map((invite) => (
                 <li key={`invite-${invite.groupId}`}>
                   <div className="contact-card">
@@ -8632,7 +8953,7 @@ export default function App() {
             </>
           ) : null}
 
-          <ul className="contacts-list">
+          <ul className="contacts-list contacts-list-scroll groups-main-list">
             {sortedGroups.map((group) => {
               const isActive = activeGroupId === group.id;
               const groupTitle = group.title || `Group ${group.id}`;
@@ -8707,44 +9028,48 @@ export default function App() {
                   </summary>
                   <ul className="group-members-list">
                     {activeGroupParticipants.length > 0 ? (
-                      activeGroupParticipants.map((participant) => (
-                        <li key={participant.key}>
-                          <div className="group-member-row">
-                            <button
-                              type="button"
-                              className="group-member-copy"
-                              onClick={(event) => {
-                                copyAddressToClipboard(participant.address).catch(() => {});
-                                const detailsElement = event.currentTarget.closest('details');
-                                if (detailsElement instanceof HTMLDetailsElement) {
-                                  detailsElement.open = false;
-                                }
-                              }}
-                              title={`Copy ${participant.address}`}
-                            >
-                              <span className="group-member-name">
-                                {participant.name ?? participant.shortAddress}
-                                {participant.isSelf ? <span className="group-member-badge">You</span> : null}
-                                {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
-                              </span>
-                              <span className="group-member-address">{participant.shortAddress}</span>
-                            </button>
-                            {isActiveGroupAdmin && !participant.isSelf ? (
+                      activeGroupParticipants.map((participant) => {
+                        const participantCopyKey = `group-member:${participant.address.toLowerCase()}`;
+                        const isParticipantCopied = lastCopiedKey === participantCopyKey;
+                        return (
+                          <li key={participant.key}>
+                            <div className="group-member-row">
                               <button
                                 type="button"
-                                className="group-member-remove"
-                                onClick={() => {
-                                  removeMemberFromActiveGroup(participant.address).catch(() => {});
+                                className={isParticipantCopied ? 'group-member-copy copied' : 'group-member-copy'}
+                                onClick={(event) => {
+                                  copyWithFeedback(participant.address, participantCopyKey).catch(() => {});
+                                  const detailsElement = event.currentTarget.closest('details');
+                                  if (detailsElement instanceof HTMLDetailsElement) {
+                                    detailsElement.open = false;
+                                  }
                                 }}
-                                disabled={processingGroupAction}
-                                title={`Remove ${participant.address}`}
+                                title={isParticipantCopied ? 'Copied' : `Copy ${participant.address}`}
                               >
-                                Remove
+                                <span className="group-member-name">
+                                  {participant.name ?? participant.shortAddress}
+                                  {participant.isSelf ? <span className="group-member-badge">You</span> : null}
+                                  {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
+                                </span>
+                                <span className="group-member-address">{isParticipantCopied ? 'Copied' : participant.shortAddress}</span>
                               </button>
-                            ) : null}
-                          </div>
-                        </li>
-                      ))
+                              {isActiveGroupAdmin && !participant.isSelf ? (
+                                <button
+                                  type="button"
+                                  className="group-member-remove"
+                                  onClick={() => {
+                                    removeMemberFromActiveGroup(participant.address).catch(() => {});
+                                  }}
+                                  disabled={processingGroupAction}
+                                  title={`Remove ${participant.address}`}
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
+                            </div>
+                          </li>
+                        );
+                      })
                     ) : (
                       <li className="group-members-empty">No members loaded yet.</li>
                     )}
@@ -8756,22 +9081,24 @@ export default function App() {
                   <>
                     <button
                       type="button"
-                      className="contact"
+                      className="contact group-mobile-refresh-btn"
                       onClick={() => {
                         syncGroupData({ deep: true }).catch(() => {});
                       }}
                       disabled={syncingGroups}
                     >
-                      {syncingGroups ? 'Syncing...' : 'Sync'}
+                      {syncingGroups ? 'Refreshing...' : 'Refresh'}
                     </button>
                     <button
                       type="button"
-                      className={mobileGroupOptionsOpen ? 'contact active' : 'contact'}
+                      className={mobileGroupOptionsOpen ? 'contact active group-mobile-tools-toggle' : 'contact group-mobile-tools-toggle'}
+                      aria-expanded={mobileGroupOptionsOpen}
+                      aria-controls="group-mobile-tools-panel"
                       onClick={() => {
                         setMobileGroupOptionsOpen((previous) => !previous);
                       }}
                     >
-                      Options
+                      {mobileGroupOptionsOpen ? 'Hide tools' : 'Group tools'}
                     </button>
                   </>
                 ) : (
@@ -8782,31 +9109,37 @@ export default function App() {
                       inviteMembersToActiveGroup().catch(() => {});
                     }}
                   >
-                    <input
-                      value={groupInviteMembersInput}
-                      onChange={(event) => setGroupInviteMembersInput(event.target.value)}
-                      className="group-header-invite-address"
-                      placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
-                      aria-label="Invite members"
-                      disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                    />
-                    <div className="group-header-invite-ttl-wrap">
+                    <div className="group-header-section-heading">
+                      <span className="group-header-section-title">Invite members</span>
+                      <span className="group-header-section-subtitle">Wallets + TTL</span>
+                    </div>
+                    <div className="group-header-invite-row">
                       <input
-                        id="group-invite-ttl-hours"
-                        value={groupInviteTtlInput}
-                        onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
-                        className="group-header-invite-ttl"
-                        placeholder="8"
-                        aria-label="Invite and join code timeout in hours"
+                        value={groupInviteMembersInput}
+                        onChange={(event) => setGroupInviteMembersInput(event.target.value)}
+                        className="group-header-invite-address"
+                        placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
+                        aria-label="Invite members"
                         disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                       />
+                      <div className="group-header-invite-ttl-wrap">
+                        <input
+                          id="group-invite-ttl-hours"
+                          value={groupInviteTtlInput}
+                          onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
+                          className="group-header-invite-ttl"
+                          placeholder="8"
+                          aria-label="Invite and join code timeout in hours"
+                          disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
+                      >
+                        {processingGroupAction ? 'Sending...' : 'Invite'}
+                      </button>
                     </div>
-                    <button
-                      type="submit"
-                      disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                    >
-                      {processingGroupAction ? 'Sending...' : 'Invite'}
-                    </button>
                     <div className="group-join-code-settings">
                       <span className="group-join-code-label">Join Code</span>
                       <div className="group-join-code-main">
@@ -8867,20 +9200,30 @@ export default function App() {
                           }}
                           disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
                         >
-                          Invite code
+                          Create code
                         </button>
                       </div>
                     </div>
                     {generatedGroupInviteCode ? (
                       <div className="group-generated-code">
-                        <input value={generatedGroupInviteCode} readOnly aria-label="Generated join code" />
+                        <input
+                          className="group-generated-code-value"
+                          value={generatedGroupInviteCode}
+                          readOnly
+                          aria-label="Generated join code"
+                        />
                         <button
                           type="button"
+                          className={
+                            lastCopiedKey === `group-code:${generatedGroupInviteCode}`
+                              ? 'group-generated-code-copy copied'
+                              : 'group-generated-code-copy'
+                          }
                           onClick={() => {
-                            copyAddressToClipboard(generatedGroupInviteCode).catch(() => {});
+                            copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
                           }}
                         >
-                          Copy code
+                          {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
                         </button>
                       </div>
                     ) : null}
@@ -8889,31 +9232,51 @@ export default function App() {
               </div>
               {isMobileNav ? (
                 mobileGroupOptionsOpen ? (
-                  <div className="group-mobile-options-panel">
-                    <div className="group-header-invite group-header-invite-mobile-inline">
-                      <input
-                        value={groupInviteMembersInput}
-                        onChange={(event) => setGroupInviteMembersInput(event.target.value)}
-                        className="group-header-invite-address"
-                        placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
-                        aria-label="Invite members"
-                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                      />
-                      <div className="group-header-invite-ttl-wrap">
+                  <div id="group-mobile-tools-panel" className="group-mobile-options-panel">
+                    <div className="group-mobile-section">
+                      <div className="group-mobile-section-header">
+                        <span className="group-mobile-section-title">Invite members</span>
+                        <span className="group-mobile-section-subtitle">Wallets + TTL</span>
+                      </div>
+                      <div className="group-header-invite group-header-invite-mobile-inline">
                         <input
-                          id="group-invite-ttl-hours-mobile"
-                          value={groupInviteTtlInput}
-                          onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
-                          className="group-header-invite-ttl"
-                          placeholder="8"
-                          aria-label="Invite and join code timeout in hours"
+                          value={groupInviteMembersInput}
+                          onChange={(event) => setGroupInviteMembersInput(event.target.value)}
+                          className="group-header-invite-address"
+                          placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
+                          aria-label="Invite members"
                           disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                         />
+                        <div className="group-header-invite-ttl-wrap">
+                          <input
+                            id="group-invite-ttl-hours-mobile"
+                            value={groupInviteTtlInput}
+                            onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
+                            className="group-header-invite-ttl"
+                            placeholder="8"
+                            aria-label="Invite and join code timeout in hours"
+                            disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
+                          />
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        className="contact group-mobile-primary-action"
+                        onClick={() => {
+                          inviteMembersToActiveGroup().catch(() => {});
+                        }}
+                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
+                      >
+                        {processingGroupAction ? 'Sending...' : 'Send invites'}
+                      </button>
                     </div>
-                    <div className="group-mobile-options-actions">
+
+                    <div className="group-mobile-section">
+                      <div className="group-mobile-section-header">
+                        <span className="group-mobile-section-title">Join code</span>
+                        <span className="group-mobile-section-subtitle">Share access token</span>
+                      </div>
                       <div className="group-join-code-settings group-join-code-settings-mobile">
-                        <span className="group-join-code-label">Join Code</span>
                         <div className="group-join-code-main">
                           <div className="group-join-code-main-left">
                             <div className="group-join-code-mode">
@@ -8972,64 +9335,73 @@ export default function App() {
                             }}
                             disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
                           >
-                            Invite code
+                            Create code
                           </button>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        className="contact"
-                        onClick={() => {
-                          inviteMembersToActiveGroup().catch(() => {});
-                        }}
-                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                      >
-                        {processingGroupAction ? 'Sending...' : 'Invite'}
-                      </button>
-                      <button
-                        type="button"
-                        className="contact"
-                        onClick={() => {
-                          leaveActiveGroup().catch(() => {});
-                        }}
-                        disabled={processingGroupAction}
-                      >
-                        {processingGroupAction ? 'Working...' : 'Leave'}
-                      </button>
-                      {isActiveGroupAdmin ? (
-                        <button
-                          type="button"
-                          className="contact group-danger-button"
-                          onClick={() => {
-                            disbandActiveGroup().catch(() => {});
-                          }}
-                          disabled={processingGroupAction}
-                        >
-                          {processingGroupAction ? 'Working...' : 'Disband'}
-                        </button>
+                      {generatedGroupInviteCode ? (
+                        <div className="group-generated-code group-generated-code-mobile">
+                          <input
+                            className="group-generated-code-value"
+                            value={generatedGroupInviteCode}
+                            readOnly
+                            aria-label="Generated join code"
+                          />
+                          <button
+                            type="button"
+                            className={
+                              lastCopiedKey === `group-code:${generatedGroupInviteCode}`
+                                ? 'contact copied'
+                                : 'contact'
+                            }
+                            onClick={() => {
+                              copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
+                            }}
+                          >
+                            {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
+                          </button>
+                        </div>
                       ) : null}
                     </div>
-                    {generatedGroupInviteCode ? (
-                      <div className="group-generated-code">
-                        <input value={generatedGroupInviteCode} readOnly aria-label="Generated join code" />
+
+                    <div className="group-mobile-section group-mobile-section-actions">
+                      <div className="group-mobile-section-header">
+                        <span className="group-mobile-section-title">Group actions</span>
+                        <span className="group-mobile-section-subtitle">Leave or close group</span>
+                      </div>
+                      <div className="group-mobile-options-actions group-mobile-options-actions-secondary">
                         <button
                           type="button"
                           className="contact"
                           onClick={() => {
-                            copyAddressToClipboard(generatedGroupInviteCode).catch(() => {});
+                            leaveActiveGroup().catch(() => {});
                           }}
+                          disabled={processingGroupAction}
                         >
-                          Copy code
+                          {processingGroupAction ? 'Working...' : 'Leave'}
                         </button>
+                        {isActiveGroupAdmin ? (
+                          <button
+                            type="button"
+                            className="contact group-danger-button"
+                            onClick={() => {
+                              disbandActiveGroup().catch(() => {});
+                            }}
+                            disabled={processingGroupAction}
+                          >
+                            {processingGroupAction ? 'Working...' : 'Disband'}
+                          </button>
+                        ) : null}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
                 ) : null
-              ) : (
-                <div className="group-header-actions">
-                  <button
-                    type="button"
-                    className="contact"
+                ) : (
+                  <div className="group-header-actions">
+                    <span className="group-header-actions-label">Group actions</span>
+                    <button
+                      type="button"
+                      className="contact"
                     onClick={() => {
                       leaveActiveGroup().catch(() => {});
                     }}
@@ -9057,7 +9429,7 @@ export default function App() {
                     }}
                     disabled={syncingGroups}
                   >
-                    {syncingGroups ? 'Syncing...' : 'Sync'}
+                    {syncingGroups ? 'Refreshing...' : 'Refresh'}
                   </button>
                 </div>
               )}
@@ -9085,6 +9457,8 @@ export default function App() {
                     walletAddress.length > 0 &&
                     normalizedSender === walletAddress.trim().toLowerCase();
                   const canCopySenderAddress = Boolean(message.senderAddress && isWalletAddress(message.senderAddress));
+                  const senderCopyKey = `message-sender:${message.id}`;
+                  const isSenderCopied = lastCopiedKey === senderCopyKey;
                   const senderLabel = isSelfSender
                     ? 'You'
                     : findContactNameForWalletAddress(message.senderAddress) ??
@@ -9134,13 +9508,13 @@ export default function App() {
                           canCopySenderAddress ? (
                             <button
                               type="button"
-                              className="message-sender-copy"
+                              className={isSenderCopied ? 'message-sender-copy copied' : 'message-sender-copy'}
                               onClick={() => {
-                                copyAddressToClipboard(message.senderAddress as string).catch(() => {});
+                                copyWithFeedback(message.senderAddress as string, senderCopyKey).catch(() => {});
                               }}
-                              title={`Copy ${message.senderAddress as string}`}
+                              title={isSenderCopied ? 'Copied' : `Copy ${message.senderAddress as string}`}
                             >
-                              {senderLabel}
+                              {isSenderCopied ? `${senderLabel} (copied)` : senderLabel}
                             </button>
                           ) : (
                             <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
