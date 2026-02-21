@@ -63,6 +63,7 @@ type GroupSummary = {
   id: number;
   admin: string;
   title: string;
+  isPrivate: boolean;
   createdAt: number;
   memberCount: number;
   members: string[];
@@ -77,6 +78,7 @@ type GroupInvite = {
   expired: boolean;
   title?: string;
   admin?: string;
+  isPrivate?: boolean;
 };
 
 type LegacyGroupInviteCodePayload = {
@@ -411,6 +413,7 @@ const loadCotiReadProvider = async (preferWebSocket = true): Promise<CotiReadPro
 const shortenAddress = (address: string): string => `${address.slice(0, 6)}...${address.slice(-4)}`;
 const GROUP_JOIN_CODE_PREFIX = 'coti-group-code-v2:';
 const LEGACY_GROUP_INVITE_CODE_PREFIX = 'coti-group-code-v1:';
+const GROUP_TITLE_METADATA_PREFIX = '[[coti-group:v1]]';
 const GROUP_JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const encodeBase64Url = (value: string): string =>
   btoa(value)
@@ -529,6 +532,84 @@ const parseGroupJoinCodeFromPayload = (payload: GroupInviteCodePayload): GroupJo
   }
 
   return null;
+};
+const encodeStoredGroupTitle = (title: string, isPrivate: boolean): string => {
+  const normalizedTitle = normalizeContactName(title);
+  if (!normalizedTitle) {
+    return '';
+  }
+  if (!isPrivate) {
+    return normalizedTitle;
+  }
+
+  try {
+    const payload = JSON.stringify({
+      title: normalizedTitle,
+      private: isPrivate
+    });
+    return `${GROUP_TITLE_METADATA_PREFIX}${encodeBase64Url(payload)}`;
+  } catch {
+    return normalizedTitle;
+  }
+};
+const parseStoredGroupTitle = (rawTitle: string, groupId?: number): { title: string; isPrivate: boolean } => {
+  const normalizedRawTitle = normalizeContactName(rawTitle);
+  const fallbackTitle =
+    typeof groupId === 'number' && Number.isFinite(groupId) && groupId > 0 ? `Group ${Math.floor(groupId)}` : 'Group';
+  if (!normalizedRawTitle) {
+    return {
+      title: fallbackTitle,
+      isPrivate: false
+    };
+  }
+
+  if (!normalizedRawTitle.startsWith(GROUP_TITLE_METADATA_PREFIX)) {
+    return {
+      title: normalizedRawTitle,
+      isPrivate: false
+    };
+  }
+
+  const encodedPayload = normalizedRawTitle.slice(GROUP_TITLE_METADATA_PREFIX.length).trim();
+  if (!encodedPayload) {
+    return {
+      title: fallbackTitle,
+      isPrivate: false
+    };
+  }
+
+  try {
+    const decodedPayload = decodeBase64Url(encodedPayload);
+    const parsedPayload = JSON.parse(decodedPayload) as {
+      title?: unknown;
+      private?: unknown;
+    };
+    const parsedTitle = typeof parsedPayload.title === 'string' ? normalizeContactName(parsedPayload.title) : undefined;
+    if (!parsedTitle) {
+      return {
+        title: fallbackTitle,
+        isPrivate: false
+      };
+    }
+
+    return {
+      title: parsedTitle,
+      isPrivate: Boolean(parsedPayload.private)
+    };
+  } catch {
+    const legacyTitle = normalizeContactName(encodedPayload);
+    if (legacyTitle) {
+      return {
+        title: legacyTitle,
+        isPrivate: true
+      };
+    }
+
+    return {
+      title: normalizedRawTitle,
+      isPrivate: false
+    };
+  }
 };
 const formatGroupMembershipEventText = (
   event: 'added' | 'removed' | 'left',
@@ -1886,6 +1967,7 @@ export default function App() {
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
   const [newGroupTitle, setNewGroupTitle] = useState('');
+  const [newGroupIsPrivate, setNewGroupIsPrivate] = useState(false);
   const [newGroupMembersInput, setNewGroupMembersInput] = useState('');
   const [groupInviteMembersInput, setGroupInviteMembersInput] = useState('');
   const [groupInviteTtlInput, setGroupInviteTtlInput] = useState('8');
@@ -2181,6 +2263,15 @@ export default function App() {
 
     return activeGroupMeta.admin.trim().toLowerCase() === walletAddress.trim().toLowerCase();
   }, [activeGroupMeta, walletAddress]);
+  const canInviteToActiveGroup = useMemo(() => {
+    if (!activeGroupMeta) {
+      return false;
+    }
+    if (!activeGroupMeta.isPrivate) {
+      return true;
+    }
+    return isActiveGroupAdmin;
+  }, [activeGroupMeta, isActiveGroupAdmin]);
   const activeGroupMessages = useMemo(() => {
     if (activeGroupId === null) {
       return [];
@@ -5106,7 +5197,7 @@ export default function App() {
       pendingGroupSyncOptionsRef.current = {
         deep: Boolean(options?.deep || pending?.deep),
         background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
-        overviewOnly: Boolean(options?.overviewOnly && pending?.overviewOnly)
+        overviewOnly: pending ? Boolean(options?.overviewOnly && pending.overviewOnly) : Boolean(options?.overviewOnly)
       };
       return;
     }
@@ -5286,6 +5377,7 @@ export default function App() {
             : Array.isArray(infoRaw)
               ? String(infoRaw[3] ?? '')
               : '';
+          const parsedTitle = parseStoredGroupTitle(title, groupId);
           const lastBlock = infoRaw && typeof infoRaw === 'object'
             ? toSafeNumber((infoRaw as { lastBlock?: unknown }).lastBlock)
             : Array.isArray(infoRaw)
@@ -5308,7 +5400,8 @@ export default function App() {
             nextGroups.push({
               id: groupId,
               admin,
-              title: normalizeContactName(title) ?? `Group ${groupId}`,
+              title: parsedTitle.title,
+              isPrivate: parsedTitle.isPrivate,
               createdAt,
               memberCount: memberCount > 0 ? memberCount : members.length,
               members,
@@ -5323,8 +5416,9 @@ export default function App() {
               inviter: inviteInviter,
               expiresAt: inviteExpiresAt,
               expired: inviteExpired,
-              title: normalizeContactName(title) ?? `Group ${groupId}`,
-              admin
+              title: parsedTitle.title,
+              admin,
+              isPrivate: parsedTitle.isPrivate
             });
           }
         })
@@ -5823,7 +5917,8 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-      const tx = await contract.createGroup(title, initialMembers);
+      const encodedTitle = encodeStoredGroupTitle(title, newGroupIsPrivate);
+      const tx = await contract.createGroup(encodedTitle, initialMembers);
       await tx.wait();
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -5833,6 +5928,7 @@ export default function App() {
       }));
 
       setNewGroupTitle('');
+      setNewGroupIsPrivate(false);
       setNewGroupMembersInput('');
       await syncGroupData({ deep: true });
       setShowQuickActionsModal(false);
@@ -5849,6 +5945,10 @@ export default function App() {
 
     if (activeGroupId === null) {
       setError('Select a group first.');
+      return;
+    }
+    if (activeGroupMeta?.isPrivate && !isActiveGroupAdmin) {
+      setError('Private group: only the admin can invite new members.');
       return;
     }
 
@@ -7430,18 +7530,91 @@ export default function App() {
     }
 
     let cancelled = false;
-    let intervalId: number | null = null;
     let unsubscribe: (() => void) | null = null;
+    let pollIntervalId: number | null = null;
+    let wsReconnectIntervalId: number | null = null;
+    let wsReconnectInFlight = false;
+    let realtimeSyncTimerId: number | null = null;
+    let lastRealtimeSyncDispatchAt = 0;
+    let pendingRealtimeSyncOptions: SyncGroupOptions | null = null;
 
-    const runGroupSync = (options?: SyncGroupOptions) => {
+    const mergeRealtimeSyncOptions = (options?: SyncGroupOptions): void => {
+      const pending = pendingRealtimeSyncOptions;
+      pendingRealtimeSyncOptions = {
+        background: true,
+        deep: Boolean(options?.deep || pending?.deep),
+        overviewOnly: pending ? Boolean(options?.overviewOnly && pending.overviewOnly) : Boolean(options?.overviewOnly)
+      };
+    };
+
+    const dispatchRealtimeSync = () => {
       if (cancelled) {
         return;
       }
-      syncGroupDataRef.current({ background: true, ...options }).catch(() => {});
+
+      const nextOptions = pendingRealtimeSyncOptions;
+      pendingRealtimeSyncOptions = null;
+      lastRealtimeSyncDispatchAt = Date.now();
+      syncGroupDataRef.current({
+        background: true,
+        ...(nextOptions ?? {})
+      }).catch(() => {});
+    };
+
+    const scheduleRealtimeSync = (options?: SyncGroupOptions) => {
+      mergeRealtimeSyncOptions(options);
+      if (cancelled) {
+        return;
+      }
+
+      const now = Date.now();
+      const elapsedSinceLastDispatch = now - lastRealtimeSyncDispatchAt;
+      const canDispatchImmediately =
+        elapsedSinceLastDispatch >= REALTIME_SYNC_BURST_THROTTLE_MS &&
+        !syncGroupDataInFlightRef.current &&
+        realtimeSyncTimerId === null;
+      if (canDispatchImmediately) {
+        dispatchRealtimeSync();
+        return;
+      }
+
+      if (realtimeSyncTimerId !== null) {
+        return;
+      }
+
+      const nextDelay = Math.max(
+        REALTIME_SYNC_DEBOUNCE_MS,
+        REALTIME_SYNC_BURST_THROTTLE_MS - elapsedSinceLastDispatch
+      );
+      realtimeSyncTimerId = window.setTimeout(() => {
+        realtimeSyncTimerId = null;
+        dispatchRealtimeSync();
+      }, nextDelay);
+    };
+
+    const clearPollFallback = () => {
+      if (pollIntervalId !== null) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+
+      if (wsReconnectIntervalId !== null) {
+        window.clearInterval(wsReconnectIntervalId);
+        wsReconnectIntervalId = null;
+      }
+    };
+
+    const parseGroupIdFromEvent = (value: unknown): number => {
+      const parsed = toSafeNumber(value);
+      return parsed > 0 ? parsed : 0;
     };
 
     const setupGroupRealtimeSubscription = async () => {
       try {
+        if (cancelled) {
+          return;
+        }
+
         const cotiEthers = await loadCotiEthersModule();
         const wsProvider = await loadCotiWsProvider();
         if (Date.now() - cotiWsLastHealthyAt > WS_HEALTHCHECK_TTL_MS) {
@@ -7450,7 +7623,17 @@ export default function App() {
         cotiWsLastHealthyAt = Date.now();
 
         const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, wsProvider);
-        const handleGroupEvent = () => runGroupSync();
+        const handleOverviewEvent = () => scheduleRealtimeSync({ overviewOnly: true });
+        const handleMessageEvent = (groupIdValue: unknown) => {
+          const eventGroupId = parseGroupIdFromEvent(groupIdValue);
+          const selectedActiveGroupId = activeGroupIdRef.current;
+          if (eventGroupId > 0 && selectedActiveGroupId !== null && eventGroupId === selectedActiveGroupId) {
+            scheduleRealtimeSync();
+            return;
+          }
+
+          scheduleRealtimeSync({ overviewOnly: true });
+        };
 
         const createdFilter = contract.filters.GroupCreated(null, walletAddress);
         const memberAddedFilter = contract.filters.GroupMemberAdded(null, walletAddress);
@@ -7461,66 +7644,93 @@ export default function App() {
         const inviteDeclinedFilter = contract.filters.GroupInviteDeclined(null, walletAddress, null);
         const inviteRevokedFilter = contract.filters.GroupInviteRevoked(null, walletAddress, null);
         const joinedWithCodeFilter = contract.filters.GroupJoinedWithCode(null, walletAddress, null);
+        const joinCodeCreatedFilter = contract.filters.GroupJoinCodeCreated(null, null, walletAddress);
+        const joinCodeRevokedFilter = contract.filters.GroupJoinCodeRevoked(null, null, walletAddress);
         const submittedFilter = contract.filters.GroupMessageSubmitted(null, walletAddress);
         const deliveredFilter = contract.filters.GroupMessageDelivered(null, null, walletAddress);
 
-        contract.on(createdFilter, handleGroupEvent);
-        contract.on(memberAddedFilter, handleGroupEvent);
-        contract.on(memberRemovedFilter, handleGroupEvent);
-        contract.on(memberLeftFilter, handleGroupEvent);
-        contract.on(inviteCreatedFilter, handleGroupEvent);
-        contract.on(inviteAcceptedFilter, handleGroupEvent);
-        contract.on(inviteDeclinedFilter, handleGroupEvent);
-        contract.on(inviteRevokedFilter, handleGroupEvent);
-        contract.on(joinedWithCodeFilter, handleGroupEvent);
-        contract.on(submittedFilter, handleGroupEvent);
-        contract.on(deliveredFilter, handleGroupEvent);
+        contract.on(createdFilter, handleOverviewEvent);
+        contract.on(memberAddedFilter, handleOverviewEvent);
+        contract.on(memberRemovedFilter, handleOverviewEvent);
+        contract.on(memberLeftFilter, handleOverviewEvent);
+        contract.on(inviteCreatedFilter, handleOverviewEvent);
+        contract.on(inviteAcceptedFilter, handleOverviewEvent);
+        contract.on(inviteDeclinedFilter, handleOverviewEvent);
+        contract.on(inviteRevokedFilter, handleOverviewEvent);
+        contract.on(joinedWithCodeFilter, handleOverviewEvent);
+        contract.on(joinCodeCreatedFilter, handleOverviewEvent);
+        contract.on(joinCodeRevokedFilter, handleOverviewEvent);
+        contract.on(submittedFilter, handleMessageEvent);
+        contract.on(deliveredFilter, handleMessageEvent);
 
         if (cancelled) {
-          contract.off(createdFilter, handleGroupEvent);
-          contract.off(memberAddedFilter, handleGroupEvent);
-          contract.off(memberRemovedFilter, handleGroupEvent);
-          contract.off(memberLeftFilter, handleGroupEvent);
-          contract.off(inviteCreatedFilter, handleGroupEvent);
-          contract.off(inviteAcceptedFilter, handleGroupEvent);
-          contract.off(inviteDeclinedFilter, handleGroupEvent);
-          contract.off(inviteRevokedFilter, handleGroupEvent);
-          contract.off(joinedWithCodeFilter, handleGroupEvent);
-          contract.off(submittedFilter, handleGroupEvent);
-          contract.off(deliveredFilter, handleGroupEvent);
+          contract.off(createdFilter, handleOverviewEvent);
+          contract.off(memberAddedFilter, handleOverviewEvent);
+          contract.off(memberRemovedFilter, handleOverviewEvent);
+          contract.off(memberLeftFilter, handleOverviewEvent);
+          contract.off(inviteCreatedFilter, handleOverviewEvent);
+          contract.off(inviteAcceptedFilter, handleOverviewEvent);
+          contract.off(inviteDeclinedFilter, handleOverviewEvent);
+          contract.off(inviteRevokedFilter, handleOverviewEvent);
+          contract.off(joinedWithCodeFilter, handleOverviewEvent);
+          contract.off(joinCodeCreatedFilter, handleOverviewEvent);
+          contract.off(joinCodeRevokedFilter, handleOverviewEvent);
+          contract.off(submittedFilter, handleMessageEvent);
+          contract.off(deliveredFilter, handleMessageEvent);
           return;
         }
 
         unsubscribe = () => {
-          contract.off(createdFilter, handleGroupEvent);
-          contract.off(memberAddedFilter, handleGroupEvent);
-          contract.off(memberRemovedFilter, handleGroupEvent);
-          contract.off(memberLeftFilter, handleGroupEvent);
-          contract.off(inviteCreatedFilter, handleGroupEvent);
-          contract.off(inviteAcceptedFilter, handleGroupEvent);
-          contract.off(inviteDeclinedFilter, handleGroupEvent);
-          contract.off(inviteRevokedFilter, handleGroupEvent);
-          contract.off(joinedWithCodeFilter, handleGroupEvent);
-          contract.off(submittedFilter, handleGroupEvent);
-          contract.off(deliveredFilter, handleGroupEvent);
+          contract.off(createdFilter, handleOverviewEvent);
+          contract.off(memberAddedFilter, handleOverviewEvent);
+          contract.off(memberRemovedFilter, handleOverviewEvent);
+          contract.off(memberLeftFilter, handleOverviewEvent);
+          contract.off(inviteCreatedFilter, handleOverviewEvent);
+          contract.off(inviteAcceptedFilter, handleOverviewEvent);
+          contract.off(inviteDeclinedFilter, handleOverviewEvent);
+          contract.off(inviteRevokedFilter, handleOverviewEvent);
+          contract.off(joinedWithCodeFilter, handleOverviewEvent);
+          contract.off(joinCodeCreatedFilter, handleOverviewEvent);
+          contract.off(joinCodeRevokedFilter, handleOverviewEvent);
+          contract.off(submittedFilter, handleMessageEvent);
+          contract.off(deliveredFilter, handleMessageEvent);
         };
+        clearPollFallback();
       } catch {
-        // Fall back to polling if websocket subscription fails.
+        await resetCotiWsProvider();
+        if (!cancelled) {
+          if (pollIntervalId === null) {
+            pollIntervalId = window.setInterval(() => {
+              scheduleRealtimeSync();
+            }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
+          }
+
+          if (wsReconnectIntervalId === null) {
+            wsReconnectIntervalId = window.setInterval(() => {
+              if (wsReconnectInFlight || cancelled) {
+                return;
+              }
+
+              wsReconnectInFlight = true;
+              setupGroupRealtimeSubscription()
+                .catch(() => {})
+                .finally(() => {
+                  wsReconnectInFlight = false;
+                });
+            }, WS_RETRY_COOLDOWN_MS);
+          }
+        }
       }
     };
 
-    runGroupSync({ deep: true });
-
-    intervalId = window.setInterval(() => {
-      runGroupSync();
-    }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
-
+    syncGroupDataRef.current({ background: true, deep: true }).catch(() => {});
     setupGroupRealtimeSubscription().catch(() => {});
 
     return () => {
       cancelled = true;
-      if (intervalId !== null) {
-        window.clearInterval(intervalId);
+      clearPollFallback();
+      if (realtimeSyncTimerId !== null) {
+        window.clearTimeout(realtimeSyncTimerId);
       }
       unsubscribe?.();
     };
@@ -8151,13 +8361,13 @@ export default function App() {
             <>
               <span className="contact-section-label">Invites</span>
               <ul className="contacts-list">
-              {sortedGroupInvites.map((invite) => (
+            {sortedGroupInvites.map((invite) => (
                 <li key={`invite-${invite.groupId}`}>
                   <div className="contact-card">
                     <div className="contact-top">
                       <div className="contact-main">
                         <span className="contact-name-inline">
-                          {invite.title ?? `Group ${invite.groupId}`} (#{invite.groupId})
+                          {(invite.title ?? `Group ${invite.groupId}`) + ` (#${invite.groupId})` + (invite.isPrivate ? ' · Private' : '')}
                         </span>
                       </div>
                     </div>
@@ -8196,7 +8406,7 @@ export default function App() {
           <ul className="contacts-list">
             {sortedGroups.map((group) => {
               const isActive = activeGroupId === group.id;
-              const groupTitle = normalizeContactName(group.title) ?? `Group ${group.id}`;
+              const groupTitle = group.title || `Group ${group.id}`;
               const groupKey = String(group.id);
               const hasConversation = group.lastTimestamp > 0 || (messagesByGroup[groupKey]?.length ?? 0) > 0;
               return (
@@ -8216,7 +8426,7 @@ export default function App() {
                     <div className="contact-top">
                       <div className="contact-main">
                         <span className="contact-name-inline">
-                          {groupTitle} (#{group.id})
+                          {groupTitle} (#{group.id}){group.isPrivate ? ' · Private' : ''}
                         </span>
                       </div>
                       {hasConversation ? (
@@ -8253,7 +8463,9 @@ export default function App() {
           <div className="chat-shell">
             <div className="chat-header chat-header-group">
               <strong>
-                {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) + ` (#${activeGroupId})`}
+                {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) +
+                  ` (#${activeGroupId})` +
+                  (activeGroupMeta?.isPrivate ? ' · Private' : '')}
               </strong>
               <div className="group-header-controls">
                 <details className="group-members-dropdown">
@@ -8343,8 +8555,9 @@ export default function App() {
                       value={groupInviteMembersInput}
                       onChange={(event) => setGroupInviteMembersInput(event.target.value)}
                       className="group-header-invite-address"
-                      placeholder="Invite wallets (comma/space separated)"
+                      placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
                       aria-label="Invite members"
+                      disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                     />
                     <div className="group-header-invite-ttl-wrap">
                       <input
@@ -8354,9 +8567,13 @@ export default function App() {
                         className="group-header-invite-ttl"
                         placeholder="8"
                         aria-label="Invite and join code timeout in hours"
+                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                       />
                     </div>
-                    <button type="submit" disabled={processingGroupAction || !hasAesReady}>
+                    <button
+                      type="submit"
+                      disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
+                    >
                       {processingGroupAction ? 'Sending...' : 'Invite'}
                     </button>
                     <button
@@ -8392,8 +8609,9 @@ export default function App() {
                         value={groupInviteMembersInput}
                         onChange={(event) => setGroupInviteMembersInput(event.target.value)}
                         className="group-header-invite-address"
-                        placeholder="Invite wallets (comma/space separated)"
+                        placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
                         aria-label="Invite members"
+                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                       />
                       <div className="group-header-invite-ttl-wrap">
                         <input
@@ -8403,6 +8621,7 @@ export default function App() {
                           className="group-header-invite-ttl"
                           placeholder="8"
                           aria-label="Invite and join code timeout in hours"
+                          disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                         />
                       </div>
                     </div>
@@ -8413,7 +8632,7 @@ export default function App() {
                         onClick={() => {
                           inviteMembersToActiveGroup().catch(() => {});
                         }}
-                        disabled={processingGroupAction || !hasAesReady}
+                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                       >
                         {processingGroupAction ? 'Sending...' : 'Invite'}
                       </button>
@@ -8947,6 +9166,14 @@ export default function App() {
                   placeholder="Initial members (comma/space separated)"
                   aria-label="Initial group members"
                 />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={newGroupIsPrivate}
+                    onChange={(event) => setNewGroupIsPrivate(event.target.checked)}
+                  />
+                  Private group (only admin can invite)
+                </label>
                 <button type="submit" disabled={processingGroupAction || !hasAesReady}>
                   {processingGroupAction ? 'Creating...' : 'Create'}
                 </button>
