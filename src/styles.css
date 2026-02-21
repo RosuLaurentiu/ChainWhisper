@@ -389,9 +389,10 @@ body {
 .contact-section-label {
   font-size: 0.76rem;
   color: var(--muted);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  margin-left: 2px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  margin-left: 0;
 }
 
 .contact-profile-editor {
@@ -473,6 +474,18 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+}
+
+.contact-profile-card .contacts-list {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.contact-profile-card .contacts-list:empty {
+  display: none;
 }
 
 .contacts-list,

@@ -79,12 +79,22 @@ type GroupInvite = {
   admin?: string;
 };
 
-type GroupInviteCodePayload = {
+type LegacyGroupInviteCodePayload = {
   version: 1;
   groupId: number;
   expiresAt: number;
   inviter?: string;
 };
+
+type GroupJoinCodePayload = {
+  version: 2;
+  groupId: number;
+  code: string;
+  expiresAt: number;
+  inviter?: string;
+};
+
+type GroupInviteCodePayload = LegacyGroupInviteCodePayload | GroupJoinCodePayload;
 
 type GroupMessageEntry = {
   id: string;
@@ -122,6 +132,7 @@ const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
 const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
+const DEFAULT_GROUP_JOIN_CODE_MAX_USES = 1;
 const BURNER_ONBOARD_TIMEOUT_MS = 45000;
 const DEFAULT_NICKNAME_MAX_BYTES = 42;
 const NICKNAME_DELIMITER = '\u001f';
@@ -277,13 +288,18 @@ const CHAT_CONTRACT_ABI = [
   'event MessageSubmitted(address indexed recipient, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender)'
 ] as const;
 
-const GROUP_CHAT_CONTRACT_ADDRESS = '0xe468Fcd281D1F4f40C0C88Eeb3A66a56DE3CDa68';
+const GROUP_CHAT_CONTRACT_ADDRESS = '0xe9D356d11094E38B1F6529cd51cb995991F06E6F';
 const GROUP_CHAT_CONTRACT_ABI = [
   'function feeAmount() view returns (uint256)',
   'function INVITE_TTL_DEFAULT() view returns (uint64)',
+  'function JOIN_CODE_MAX_USES() view returns (uint32)',
   'function nextGroupId() view returns (uint256)',
   'function createGroup(string title, address[] initialMembers) returns (uint256 groupId)',
   'function inviteMembers(uint256 groupId, address[] accounts, uint64 inviteTtlSeconds)',
+  'function createJoinCode(uint256 groupId, bytes32 codeHash, uint64 ttlSeconds, uint32 maxUses)',
+  'function getJoinCode(uint256 groupId, bytes32 codeHash) view returns (bool active, address creator, uint64 expiresAt, uint32 usesLeft, bool expired)',
+  'function joinWithCode(uint256 groupId, string code)',
+  'function revokeJoinCode(uint256 groupId, bytes32 codeHash)',
   'function acceptInvite(uint256 groupId)',
   'function declineInvite(uint256 groupId)',
   'function leaveGroup(uint256 groupId)',
@@ -301,6 +317,9 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupInviteAccepted(uint256 indexed groupId, address indexed account, address indexed inviter)',
   'event GroupInviteDeclined(uint256 indexed groupId, address indexed account, address indexed inviter)',
   'event GroupInviteRevoked(uint256 indexed groupId, address indexed account, address indexed revokedBy)',
+  'event GroupJoinCodeCreated(uint256 indexed groupId, bytes32 indexed codeHash, address indexed creator, uint64 expiresAt, uint32 usesLeft)',
+  'event GroupJoinCodeRevoked(uint256 indexed groupId, bytes32 indexed codeHash, address indexed revokedBy)',
+  'event GroupJoinedWithCode(uint256 indexed groupId, address indexed account, bytes32 indexed codeHash, address creator)',
   'event GroupMessageSubmitted(uint256 indexed groupId, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender, uint256 valueSent, uint256 feeTaken)',
   'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
@@ -390,7 +409,9 @@ const loadCotiReadProvider = async (preferWebSocket = true): Promise<CotiReadPro
 };
 
 const shortenAddress = (address: string): string => `${address.slice(0, 6)}...${address.slice(-4)}`;
-const GROUP_INVITE_CODE_PREFIX = 'coti-group-code-v1:';
+const GROUP_JOIN_CODE_PREFIX = 'coti-group-code-v2:';
+const LEGACY_GROUP_INVITE_CODE_PREFIX = 'coti-group-code-v1:';
+const GROUP_JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const encodeBase64Url = (value: string): string =>
   btoa(value)
     .replace(/\+/g, '-')
@@ -401,9 +422,26 @@ const decodeBase64Url = (value: string): string => {
   const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
   return atob(`${normalized}${padding}`);
 };
+const generateRandomGroupJoinCode = (): string => {
+  const values = new Uint8Array(12);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(values);
+  } else {
+    for (let index = 0; index < values.length; index += 1) {
+      values[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  let compactCode = '';
+  for (let index = 0; index < values.length; index += 1) {
+    compactCode += GROUP_JOIN_CODE_ALPHABET[values[index] % GROUP_JOIN_CODE_ALPHABET.length];
+  }
+
+  return `${compactCode.slice(0, 4)}-${compactCode.slice(4, 8)}-${compactCode.slice(8, 12)}`;
+};
 const encodeGroupInviteCode = (payload: GroupInviteCodePayload): string => {
   const serialized = JSON.stringify(payload);
-  return `${GROUP_INVITE_CODE_PREFIX}${encodeBase64Url(serialized)}`;
+  return `${GROUP_JOIN_CODE_PREFIX}${encodeBase64Url(serialized)}`;
 };
 const parseGroupInviteCode = (input: string): GroupInviteCodePayload | null => {
   const raw = input.trim();
@@ -411,38 +449,86 @@ const parseGroupInviteCode = (input: string): GroupInviteCodePayload | null => {
     return null;
   }
 
-  const encodedPayload = raw.startsWith(GROUP_INVITE_CODE_PREFIX)
-    ? raw.slice(GROUP_INVITE_CODE_PREFIX.length)
-    : raw;
-  if (!encodedPayload) {
-    return null;
-  }
-
   try {
+    const encodedPayload = raw.startsWith(GROUP_JOIN_CODE_PREFIX)
+      ? raw.slice(GROUP_JOIN_CODE_PREFIX.length)
+      : raw.startsWith(LEGACY_GROUP_INVITE_CODE_PREFIX)
+        ? raw.slice(LEGACY_GROUP_INVITE_CODE_PREFIX.length)
+        : raw;
+    if (!encodedPayload) {
+      return null;
+    }
+
     const decoded = decodeBase64Url(encodedPayload);
     const parsed = JSON.parse(decoded) as {
       version?: unknown;
       groupId?: unknown;
+      code?: unknown;
       expiresAt?: unknown;
       inviter?: unknown;
     };
     const version = Number(parsed.version);
     const groupId = Number(parsed.groupId);
-    const expiresAt = Number(parsed.expiresAt);
+    const expiresAtRaw = Number(parsed.expiresAt);
+    const expiresAt = Number.isFinite(expiresAtRaw) && expiresAtRaw > 0 ? Math.floor(expiresAtRaw) : 0;
     const inviter = typeof parsed.inviter === 'string' ? parsed.inviter.trim() : undefined;
-    if (version !== 1 || !Number.isFinite(groupId) || groupId <= 0 || !Number.isFinite(expiresAt) || expiresAt <= 0) {
-      return null;
+    if (version === 2) {
+      const code = typeof parsed.code === 'string' ? parsed.code.trim() : '';
+      if (!Number.isFinite(groupId) || groupId <= 0 || !code) {
+        return null;
+      }
+
+      return {
+        version: 2,
+        groupId: Math.floor(groupId),
+        code,
+        expiresAt,
+        inviter: inviter && isWalletAddress(inviter) ? inviter : undefined
+      };
     }
 
-    return {
-      version: 1,
-      groupId: Math.floor(groupId),
-      expiresAt: Math.floor(expiresAt),
-      inviter: inviter && isWalletAddress(inviter) ? inviter : undefined
-    };
+    if (version === 1 && Number.isFinite(groupId) && groupId > 0 && expiresAt > 0) {
+      return {
+        version: 1,
+        groupId: Math.floor(groupId),
+        expiresAt,
+        inviter: inviter && isWalletAddress(inviter) ? inviter : undefined
+      };
+    }
   } catch {
+  }
+
+  const delimiterIndex = raw.indexOf(':');
+  if (delimiterIndex <= 0 || delimiterIndex >= raw.length - 1) {
     return null;
   }
+
+  const groupId = Number(raw.slice(0, delimiterIndex).trim());
+  const code = raw.slice(delimiterIndex + 1).trim();
+  if (!Number.isFinite(groupId) || groupId <= 0 || !code) {
+    return null;
+  }
+
+  return {
+    version: 2,
+    groupId: Math.floor(groupId),
+    code,
+    expiresAt: 0
+  };
+};
+
+const parseGroupJoinCodeFromPayload = (payload: GroupInviteCodePayload): GroupJoinCodePayload | null => {
+  if (payload.version === 2) {
+    return {
+      version: 2,
+      groupId: payload.groupId,
+      code: payload.code,
+      expiresAt: payload.expiresAt,
+      inviter: payload.inviter
+    };
+  }
+
+  return null;
 };
 const formatGroupMembershipEventText = (
   event: 'added' | 'removed' | 'left',
@@ -2835,6 +2921,7 @@ export default function App() {
       if (explicitName) {
         syncContactNameAliasFromInput(address, explicitName).catch(() => {});
       }
+      setShowQuickActionsModal(false);
       return;
     }
 
@@ -2847,6 +2934,7 @@ export default function App() {
     if (!activeContact) {
       setActiveContact(address);
     }
+    setShowQuickActionsModal(false);
   };
 
   const startRenameContact = (address: string, currentName?: string) => {
@@ -5071,7 +5159,8 @@ export default function App() {
           inviteAcceptedForMeLogs,
           inviteAcceptedByMeLogs,
           inviteDeclinedLogs,
-          inviteRevokedLogs
+          inviteRevokedLogs,
+          joinedWithCodeForMeLogs
         ] = await Promise.all([
           contract.queryFilter(contract.filters.GroupCreated(null, requestedWalletAddress), fromBlock, toBlock),
           contract.queryFilter(contract.filters.GroupMemberAdded(null, requestedWalletAddress), fromBlock, toBlock),
@@ -5081,7 +5170,8 @@ export default function App() {
           contract.queryFilter(contract.filters.GroupInviteAccepted(null, requestedWalletAddress, null), fromBlock, toBlock),
           contract.queryFilter(contract.filters.GroupInviteAccepted(null, null, requestedWalletAddress), fromBlock, toBlock),
           contract.queryFilter(contract.filters.GroupInviteDeclined(null, requestedWalletAddress, null), fromBlock, toBlock),
-          contract.queryFilter(contract.filters.GroupInviteRevoked(null, requestedWalletAddress, null), fromBlock, toBlock)
+          contract.queryFilter(contract.filters.GroupInviteRevoked(null, requestedWalletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupJoinedWithCode(null, requestedWalletAddress, null), fromBlock, toBlock)
         ]);
         if (currentWalletKeyRef.current !== requestedWalletKey) {
           return;
@@ -5109,7 +5199,8 @@ export default function App() {
           ...inviteAcceptedForMeLogs,
           ...inviteAcceptedByMeLogs,
           ...inviteDeclinedLogs,
-          ...inviteRevokedLogs
+          ...inviteRevokedLogs,
+          ...joinedWithCodeForMeLogs
         ]) {
           const args = (log as { args?: Record<string, unknown> }).args;
           const groupId = groupIdFromArgs(args?.groupId);
@@ -5744,6 +5835,7 @@ export default function App() {
       setNewGroupTitle('');
       setNewGroupMembersInput('');
       await syncGroupData({ deep: true });
+      setShowQuickActionsModal(false);
     } catch (createGroupError) {
       const message = createGroupError instanceof Error ? createGroupError.message : 'Failed to create group.';
       setError(message);
@@ -5805,11 +5897,15 @@ export default function App() {
     }
   };
 
-  const generateInviteCodeForActiveGroup = () => {
+  const generateJoinCodeForActiveGroup = async () => {
     setError('');
 
     if (activeGroupId === null) {
       setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can create join codes.');
       return;
     }
 
@@ -5818,17 +5914,58 @@ export default function App() {
       setError('Join code TTL must be a positive number of hours.');
       return;
     }
-    const ttlParsed = ttlHours * 60 * 60;
+    const ttlSeconds = ttlHours * 60 * 60;
 
-    const nowTs = Math.floor(Date.now() / 1000);
-    const inviterAddress = walletAddress.trim();
-    const payload: GroupInviteCodePayload = {
-      version: 1,
-      groupId: activeGroupId,
-      expiresAt: nowTs + ttlParsed,
-      inviter: isWalletAddress(inviterAddress) ? inviterAddress : undefined
-    };
-    setGeneratedGroupInviteCode(encodeGroupInviteCode(payload));
+    const code = generateRandomGroupJoinCode();
+    let expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const codeHash = cotiEthers.keccak256(cotiEthers.toUtf8Bytes(code));
+
+      const tx = await contract.createJoinCode(
+        activeGroupId,
+        codeHash,
+        ttlSeconds,
+        DEFAULT_GROUP_JOIN_CODE_MAX_USES
+      );
+      await tx.wait();
+
+      const joinCodeRaw = await contract.getJoinCode(activeGroupId, codeHash).catch(() => null);
+      const expiresAtFromChain = joinCodeRaw && typeof joinCodeRaw === 'object'
+        ? toSafeNumber((joinCodeRaw as { expiresAt?: unknown }).expiresAt)
+        : Array.isArray(joinCodeRaw)
+          ? toSafeNumber(joinCodeRaw[2])
+          : 0;
+      if (expiresAtFromChain > 0) {
+        expiresAt = expiresAtFromChain;
+      }
+
+      const inviterAddress = walletAddress.trim();
+      const payload: GroupJoinCodePayload = {
+        version: 2,
+        groupId: activeGroupId,
+        code,
+        expiresAt,
+        inviter: isWalletAddress(inviterAddress) ? inviterAddress : undefined
+      };
+      setGeneratedGroupInviteCode(encodeGroupInviteCode(payload));
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await syncGroupData({ background: true });
+    } catch (joinCodeError) {
+      const message = joinCodeError instanceof Error ? joinCodeError.message : 'Failed to create join code.';
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
   };
 
   const joinGroupWithCode = async () => {
@@ -5845,7 +5982,7 @@ export default function App() {
     }
 
     const nowTs = Math.floor(Date.now() / 1000);
-    if (parsedCode.expiresAt <= nowTs) {
+    if (parsedCode.expiresAt > 0 && parsedCode.expiresAt <= nowTs) {
       setError('This group code has expired.');
       return;
     }
@@ -5856,37 +5993,67 @@ export default function App() {
       return;
     }
 
-    try {
-      const cotiEthers = await loadCotiEthersModule();
-      const readProvider = await loadCotiReadProvider(true);
-      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
-      const inviteRaw = await contract.getInvite(parsedCode.groupId, requestedWalletAddress).catch(() => null);
+    const parsedJoinCode = parseGroupJoinCodeFromPayload(parsedCode);
+    if (!parsedJoinCode) {
+      try {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+        const inviteRaw = await contract.getInvite(parsedCode.groupId, requestedWalletAddress).catch(() => null);
 
-      const pending = Boolean(
-        inviteRaw && typeof inviteRaw === 'object' ? (inviteRaw as { pending?: unknown }).pending : null
-      ) ||
-        (Array.isArray(inviteRaw) ? Boolean(inviteRaw[0]) : false);
-      const inviteExpiresAt = inviteRaw && typeof inviteRaw === 'object'
-        ? toSafeNumber((inviteRaw as { expiresAt?: unknown }).expiresAt)
-        : Array.isArray(inviteRaw)
-          ? toSafeNumber(inviteRaw[2])
-          : 0;
-      const inviteExpired = inviteRaw && typeof inviteRaw === 'object'
-        ? Boolean((inviteRaw as { expired?: unknown }).expired)
-        : Array.isArray(inviteRaw)
-          ? Boolean(inviteRaw[3])
-          : inviteExpiresAt > 0 && inviteExpiresAt <= nowTs;
+        const pending = Boolean(
+          inviteRaw && typeof inviteRaw === 'object' ? (inviteRaw as { pending?: unknown }).pending : null
+        ) ||
+          (Array.isArray(inviteRaw) ? Boolean(inviteRaw[0]) : false);
+        const inviteExpiresAt = inviteRaw && typeof inviteRaw === 'object'
+          ? toSafeNumber((inviteRaw as { expiresAt?: unknown }).expiresAt)
+          : Array.isArray(inviteRaw)
+            ? toSafeNumber(inviteRaw[2])
+            : 0;
+        const inviteExpired = inviteRaw && typeof inviteRaw === 'object'
+          ? Boolean((inviteRaw as { expired?: unknown }).expired)
+          : Array.isArray(inviteRaw)
+            ? Boolean(inviteRaw[3])
+            : inviteExpiresAt > 0 && inviteExpiresAt <= nowTs;
 
-      if (!pending || inviteExpired) {
-        setError('No active on-chain invite found for this wallet. Ask the group admin to invite your address first.');
-        return;
+        if (!pending || inviteExpired) {
+          setError('Legacy group code detected, but no active on-chain invite exists for this wallet.');
+          return;
+        }
+
+        setGroupJoinCodeInput('');
+        await acceptGroupInvite(parsedCode.groupId);
+        setShowQuickActionsModal(false);
+      } catch (legacyJoinError) {
+        const message = legacyJoinError instanceof Error ? legacyJoinError.message : 'Failed to join group with legacy code.';
+        setError(message);
       }
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.joinWithCode(parsedJoinCode.groupId, parsedJoinCode.code);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
 
       setGroupJoinCodeInput('');
-      await acceptGroupInvite(parsedCode.groupId);
+      await syncGroupData({ deep: true });
+      activateGroup(parsedJoinCode.groupId);
+      setShowQuickActionsModal(false);
     } catch (joinError) {
       const message = joinError instanceof Error ? joinError.message : 'Failed to join group with code.';
       setError(message);
+    } finally {
+      setProcessingGroupAction(false);
     }
   };
 
@@ -7293,6 +7460,7 @@ export default function App() {
         const inviteAcceptedFilter = contract.filters.GroupInviteAccepted(null, walletAddress, null);
         const inviteDeclinedFilter = contract.filters.GroupInviteDeclined(null, walletAddress, null);
         const inviteRevokedFilter = contract.filters.GroupInviteRevoked(null, walletAddress, null);
+        const joinedWithCodeFilter = contract.filters.GroupJoinedWithCode(null, walletAddress, null);
         const submittedFilter = contract.filters.GroupMessageSubmitted(null, walletAddress);
         const deliveredFilter = contract.filters.GroupMessageDelivered(null, null, walletAddress);
 
@@ -7304,6 +7472,7 @@ export default function App() {
         contract.on(inviteAcceptedFilter, handleGroupEvent);
         contract.on(inviteDeclinedFilter, handleGroupEvent);
         contract.on(inviteRevokedFilter, handleGroupEvent);
+        contract.on(joinedWithCodeFilter, handleGroupEvent);
         contract.on(submittedFilter, handleGroupEvent);
         contract.on(deliveredFilter, handleGroupEvent);
 
@@ -7316,6 +7485,7 @@ export default function App() {
           contract.off(inviteAcceptedFilter, handleGroupEvent);
           contract.off(inviteDeclinedFilter, handleGroupEvent);
           contract.off(inviteRevokedFilter, handleGroupEvent);
+          contract.off(joinedWithCodeFilter, handleGroupEvent);
           contract.off(submittedFilter, handleGroupEvent);
           contract.off(deliveredFilter, handleGroupEvent);
           return;
@@ -7330,6 +7500,7 @@ export default function App() {
           contract.off(inviteAcceptedFilter, handleGroupEvent);
           contract.off(inviteDeclinedFilter, handleGroupEvent);
           contract.off(inviteRevokedFilter, handleGroupEvent);
+          contract.off(joinedWithCodeFilter, handleGroupEvent);
           contract.off(submittedFilter, handleGroupEvent);
           contract.off(deliveredFilter, handleGroupEvent);
         };
@@ -7839,13 +8010,14 @@ export default function App() {
                 setShowQuickActionsModal(true);
               }}
             >
-              Add a chat / group chat
+              New chat
             </button>
           </div>
         </div>
 
-        <span className="contact-section-label">Chats</span>
-        <ul className="contacts-list">
+        <div className="contact-profile-card">
+          <span className="contact-profile-label">Contacts</span>
+          <ul className="contacts-list">
           {sortedContacts.map((contact) => {
             const isActive = activeContact?.toLowerCase() === contact.address.toLowerCase();
             const isEditing = editingContactAddress?.toLowerCase() === contact.address.toLowerCase();
@@ -7969,15 +8141,16 @@ export default function App() {
               </li>
             );
           })}
-        </ul>
+          </ul>
+        </div>
 
         <div className="contact-profile-card">
-          <span className="contact-profile-label">Group chats</span>
+          <span className="contact-profile-label">Groups</span>
 
           {sortedGroupInvites.length > 0 ? (
             <>
-              <span className="contact-section-label">Pending invites</span>
-              <ul className="contacts-list" style={{ marginTop: '2px' }}>
+              <span className="contact-section-label">Invites</span>
+              <ul className="contacts-list">
               {sortedGroupInvites.map((invite) => (
                 <li key={`invite-${invite.groupId}`}>
                   <div className="contact-card">
@@ -7989,10 +8162,7 @@ export default function App() {
                       </div>
                     </div>
                     <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                      Inviter: {isWalletAddress(invite.inviter) ? shortenAddress(invite.inviter) : invite.inviter || 'Unknown'}
-                    </div>
-                    <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
-                      Expires: {invite.expiresAt > 0 ? formatMessageTimestamp(invite.expiresAt) : 'N/A'}
+                      From: {isWalletAddress(invite.inviter) ? shortenAddress(invite.inviter) : invite.inviter || 'Unknown'} | Exp: {invite.expiresAt > 0 ? formatMessageTimestamp(invite.expiresAt) : 'N/A'}
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <button
@@ -8023,8 +8193,7 @@ export default function App() {
             </>
           ) : null}
 
-          <span className="contact-section-label">Your groups</span>
-          <ul className="contacts-list" style={{ marginTop: '2px' }}>
+          <ul className="contacts-list">
             {sortedGroups.map((group) => {
               const isActive = activeGroupId === group.id;
               const groupTitle = normalizeContactName(group.title) ?? `Group ${group.id}`;
@@ -8064,10 +8233,7 @@ export default function App() {
                       ) : null}
                     </div>
                     <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                      Members: {group.memberCount}
-                    </div>
-                    <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
-                      Last activity: {group.lastTimestamp > 0 ? formatMessageTimestamp(group.lastTimestamp) : 'N/A'}
+                      M: {group.memberCount} | Last: {group.lastTimestamp > 0 ? formatMessageTimestamp(group.lastTimestamp) : 'N/A'}
                     </div>
                   </div>
                 </li>
@@ -8153,7 +8319,7 @@ export default function App() {
                       }}
                       disabled={syncingGroups}
                     >
-                      {syncingGroups ? 'Syncing...' : 'Sync Group'}
+                      {syncingGroups ? 'Syncing...' : 'Sync'}
                     </button>
                     <button
                       type="button"
@@ -8162,7 +8328,7 @@ export default function App() {
                         setMobileGroupOptionsOpen((previous) => !previous);
                       }}
                     >
-                      Group options
+                      Options
                     </button>
                   </>
                 ) : (
@@ -8191,16 +8357,16 @@ export default function App() {
                       />
                     </div>
                     <button type="submit" disabled={processingGroupAction || !hasAesReady}>
-                      {processingGroupAction ? 'Sending...' : 'Send invites'}
+                      {processingGroupAction ? 'Sending...' : 'Invite'}
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        generateInviteCodeForActiveGroup();
+                        generateJoinCodeForActiveGroup().catch(() => {});
                       }}
-                      disabled={processingGroupAction || !hasAesReady}
+                      disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
                     >
-                      Generate join code
+                      New code
                     </button>
                     {generatedGroupInviteCode ? (
                       <div className="group-generated-code">
@@ -8249,17 +8415,17 @@ export default function App() {
                         }}
                         disabled={processingGroupAction || !hasAesReady}
                       >
-                        {processingGroupAction ? 'Sending...' : 'Send invites'}
+                        {processingGroupAction ? 'Sending...' : 'Invite'}
                       </button>
                       <button
                         type="button"
                         className="contact"
                         onClick={() => {
-                          generateInviteCodeForActiveGroup();
+                          generateJoinCodeForActiveGroup().catch(() => {});
                         }}
-                        disabled={processingGroupAction || !hasAesReady}
+                        disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
                       >
-                        Generate join code
+                        New code
                       </button>
                       <button
                         type="button"
@@ -8269,7 +8435,7 @@ export default function App() {
                         }}
                         disabled={processingGroupAction}
                       >
-                        {processingGroupAction ? 'Working...' : 'Leave Group'}
+                        {processingGroupAction ? 'Working...' : 'Leave'}
                       </button>
                       {isActiveGroupAdmin ? (
                         <button
@@ -8280,7 +8446,7 @@ export default function App() {
                           }}
                           disabled={processingGroupAction}
                         >
-                          {processingGroupAction ? 'Working...' : 'Disband Group'}
+                          {processingGroupAction ? 'Working...' : 'Disband'}
                         </button>
                       ) : null}
                     </div>
@@ -8310,7 +8476,7 @@ export default function App() {
                     }}
                     disabled={processingGroupAction}
                   >
-                    {processingGroupAction ? 'Working...' : 'Leave Group'}
+                    {processingGroupAction ? 'Working...' : 'Leave'}
                   </button>
                   {isActiveGroupAdmin ? (
                     <button
@@ -8321,7 +8487,7 @@ export default function App() {
                       }}
                       disabled={processingGroupAction}
                     >
-                      {processingGroupAction ? 'Working...' : 'Disband Group'}
+                      {processingGroupAction ? 'Working...' : 'Disband'}
                     </button>
                   ) : null}
                   <button
@@ -8332,7 +8498,7 @@ export default function App() {
                     }}
                     disabled={syncingGroups}
                   >
-                    {syncingGroups ? 'Syncing...' : 'Sync Group'}
+                    {syncingGroups ? 'Syncing...' : 'Sync'}
                   </button>
                 </div>
               )}
@@ -8732,14 +8898,14 @@ export default function App() {
                 className={quickActionTab === 'create-group' ? 'active' : undefined}
                 onClick={() => setQuickActionTab('create-group')}
               >
-                Create group
+                Create
               </button>
               <button
                 type="button"
                 className={quickActionTab === 'join-group' ? 'active' : undefined}
                 onClick={() => setQuickActionTab('join-group')}
               >
-                Join group
+                Join
               </button>
             </div>
 
@@ -8782,7 +8948,7 @@ export default function App() {
                   aria-label="Initial group members"
                 />
                 <button type="submit" disabled={processingGroupAction || !hasAesReady}>
-                  {processingGroupAction ? 'Creating...' : 'Create group'}
+                  {processingGroupAction ? 'Creating...' : 'Create'}
                 </button>
               </form>
             ) : null}
@@ -8798,14 +8964,14 @@ export default function App() {
                 <input
                   value={groupJoinCodeInput}
                   onChange={(event) => setGroupJoinCodeInput(event.target.value)}
-                  placeholder="Paste temporary join code"
-                  aria-label="Temporary group join code"
+                  placeholder="Paste group join code"
+                  aria-label="Group join code"
                 />
                 <button type="submit" disabled={processingGroupAction || !hasAesReady || !groupJoinCodeInput.trim()}>
-                  {processingGroupAction ? 'Working...' : 'Join with code'}
+                  {processingGroupAction ? 'Working...' : 'Join'}
                 </button>
                 <div style={{ fontSize: 12, opacity: 0.82 }}>
-                  Code join still requires a pending on-chain invite for your wallet.
+                  Join codes are now enforced on-chain and can expire.
                 </div>
               </form>
             ) : null}
