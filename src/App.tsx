@@ -39,6 +39,8 @@ type ChatMessage = {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  reactionToTxHash?: string;
+  reactionEmoji?: string;
   timestamp?: number;
   blockNumber?: number;
   logIndex?: number;
@@ -54,6 +56,8 @@ type HistoryEntry = {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  reactionToTxHash?: string;
+  reactionEmoji?: string;
   txHash: string;
   blockNumber: number;
   logIndex: number;
@@ -109,6 +113,8 @@ type GroupMessageEntry = {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  reactionToTxHash?: string;
+  reactionEmoji?: string;
   txHash: string;
   blockNumber: number;
   logIndex: number;
@@ -144,6 +150,7 @@ const REPLY_DELIMITER = '\u001e';
 const PROFILE_METADATA_PREFIX = '\u2063';
 const REPLY_METADATA_PREFIX = '\u2064';
 const CONTACT_NAME_METADATA_PREFIX = '\u2065';
+const REACTION_METADATA_PREFIX = '\u2066';
 const CONTACT_NAME_ENCODING_ZERO = '\u200b';
 const CONTACT_NAME_ENCODING_ONE = '\u200c';
 const LEGACY_PROFILE_METADATA_PREFIX = '[nick:';
@@ -165,6 +172,7 @@ const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
 const EXTERNAL_REPLY_TXHASH_REGEX = /^\[r:(0x[a-fA-F0-9]{64})\]\s*/;
+const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🫡', '🤯', '🌭', '✍️', '🤷‍♂️', '🤪', '💯'] as const;
 const debugLog = (...args: unknown[]): void => {
   if (import.meta.env.DEV) {
     console.debug(...args);
@@ -264,6 +272,11 @@ type BackupLocalStateOptions = {
 type SubmitMemoPayload = {
   ciphertextValue: bigint[];
   signature: string[];
+};
+
+type MessageReactionPayload = {
+  targetTxHash: string;
+  emoji: string;
 };
 
 const COTI_NETWORK = {
@@ -2011,6 +2024,63 @@ const buildMessageWithReplyPayload = (plainText: string, replyToText?: string, r
   return `${externalReplyPrefix}${REPLY_METADATA_PREFIX}${preview}${REPLY_METADATA_PREFIX}<: ${plainText}`;
 };
 
+const normalizeReactionEmoji = (value: string): string | undefined => {
+  const compact = value.replace(/\s+/g, '');
+  if (!compact) {
+    return undefined;
+  }
+
+  const symbols = Array.from(compact);
+  if (symbols.length > 8) {
+    return undefined;
+  }
+
+  return symbols.join('');
+};
+
+const buildMessageWithReactionPayload = (targetTxHash: string, emoji: string, plainText = ''): string => {
+  const normalizedTxHash = targetTxHash.trim().toLowerCase();
+  const normalizedEmoji = normalizeReactionEmoji(emoji);
+  if (!/^0x[a-f0-9]{64}$/.test(normalizedTxHash) || !normalizedEmoji) {
+    return plainText;
+  }
+
+  return `${REACTION_METADATA_PREFIX}${normalizedTxHash}|${normalizedEmoji}${REACTION_METADATA_PREFIX}${plainText}`;
+};
+
+const parseMessageReactionPayload = (text: string): { cleanText: string; reaction?: MessageReactionPayload } => {
+  if (!text.startsWith(REACTION_METADATA_PREFIX)) {
+    return { cleanText: text };
+  }
+
+  const metadataEnd = text.indexOf(REACTION_METADATA_PREFIX, REACTION_METADATA_PREFIX.length);
+  if (metadataEnd <= REACTION_METADATA_PREFIX.length) {
+    return { cleanText: text };
+  }
+
+  const metadataChunk = text.slice(REACTION_METADATA_PREFIX.length, metadataEnd);
+  const separatorIndex = metadataChunk.indexOf('|');
+  if (separatorIndex <= 0) {
+    return { cleanText: text };
+  }
+
+  const targetTxHash = metadataChunk.slice(0, separatorIndex).trim().toLowerCase();
+  const emojiChunk = metadataChunk.slice(separatorIndex + 1);
+  const emoji = normalizeReactionEmoji(emojiChunk);
+  if (!/^0x[a-f0-9]{64}$/.test(targetTxHash) || !emoji) {
+    return { cleanText: text };
+  }
+
+  const remaining = text.slice(metadataEnd + REACTION_METADATA_PREFIX.length);
+  return {
+    cleanText: remaining,
+    reaction: {
+      targetTxHash,
+      emoji
+    }
+  };
+};
+
 const encodeHiddenContactName = (contactName: string): string => {
   const bytes = TEXT_ENCODER.encode(contactName);
   let encoded = '';
@@ -2239,10 +2309,12 @@ const parseChatMessagePayload = (text: string): {
   replyToTxHash?: string;
   embeddedNickname?: string;
   embeddedContactName?: string;
+  embeddedReaction?: MessageReactionPayload;
 } => {
   const contactNameParsed = parseContactNamePayload(text);
   const profileParsed = parseMessageProfilePayload(contactNameParsed.cleanText);
-  const replyParsed = parseMessageReplyPayload(profileParsed.cleanText);
+  const reactionParsed = parseMessageReactionPayload(profileParsed.cleanText);
+  const replyParsed = parseMessageReplyPayload(reactionParsed.cleanText);
 
   return {
     cleanText: replyParsed.cleanText,
@@ -2250,7 +2322,8 @@ const parseChatMessagePayload = (text: string): {
     replyToText: replyParsed.replyToText,
     replyToTxHash: replyParsed.replyToTxHash,
     embeddedNickname: profileParsed.nickname,
-    embeddedContactName: contactNameParsed.contactName
+    embeddedContactName: contactNameParsed.contactName,
+    embeddedReaction: reactionParsed.reaction
   };
 };
 
@@ -2407,9 +2480,11 @@ export default function App() {
     } catch {}
   };
   const [sending, setSending] = useState(false);
+  const [sendingReaction, setSendingReaction] = useState(false);
   const [syncingHistory, setSyncingHistory] = useState(false);
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
   const [requiredFeeWei, setRequiredFeeWei] = useState<bigint | null>(null);
@@ -2756,6 +2831,93 @@ export default function App() {
   const activeThreadMessages = useMemo(
     () => (activeGroupId !== null ? activeGroupMessages : activeMessages),
     [activeGroupId, activeGroupMessages, activeMessages]
+  );
+  const isReactionOnlyMessage = useCallback(
+    (message: ChatMessage): boolean =>
+      Boolean(
+        !message.isSystem &&
+          message.reactionToTxHash &&
+          message.reactionEmoji &&
+          (message.text ?? '').trim().length === 0
+      ),
+    []
+  );
+  const activeThreadReactions = useMemo(() => {
+    const ownAddress = walletAddress.trim().toLowerCase();
+    const peerAddress = activeContact?.trim().toLowerCase() ?? '';
+    const byTarget = new Map<string, Map<string, Set<string>>>();
+
+    for (const message of activeThreadMessages) {
+      if (message.deliveryState === 'failed') {
+        continue;
+      }
+
+      const targetTxHash = message.reactionToTxHash?.trim().toLowerCase() ?? '';
+      const normalizedEmoji = normalizeReactionEmoji(message.reactionEmoji ?? '');
+      if (!/^0x[a-f0-9]{64}$/.test(targetTxHash) || !normalizedEmoji) {
+        continue;
+      }
+
+      let reactorKey = '';
+      const senderAddress = message.senderAddress?.trim().toLowerCase() ?? '';
+      if (isWalletAddress(senderAddress)) {
+        reactorKey = senderAddress;
+      } else if (activeGroupId === null) {
+        const fallbackDirectSender = message.direction === 'outgoing' ? ownAddress : peerAddress;
+        if (isWalletAddress(fallbackDirectSender)) {
+          reactorKey = fallbackDirectSender;
+        }
+      }
+
+      if (!reactorKey) {
+        reactorKey = `${message.direction}:${message.id}`;
+      }
+
+      let byEmoji = byTarget.get(targetTxHash);
+      if (!byEmoji) {
+        byEmoji = new Map<string, Set<string>>();
+        byTarget.set(targetTxHash, byEmoji);
+      }
+
+      let reactors = byEmoji.get(normalizedEmoji);
+      if (!reactors) {
+        reactors = new Set<string>();
+        byEmoji.set(normalizedEmoji, reactors);
+      }
+
+      reactors.add(reactorKey);
+    }
+
+    const summarized = new Map<string, Array<{ emoji: string; count: number; reactedByMe: boolean }>>();
+    for (const [targetTxHash, byEmoji] of byTarget.entries()) {
+      const rows = Array.from(byEmoji.entries())
+        .map(([emoji, reactors]) => ({
+          emoji,
+          count: reactors.size,
+          reactedByMe: ownAddress.length > 0 && reactors.has(ownAddress)
+        }))
+        .sort((left, right) => {
+          if (left.count !== right.count) {
+            return right.count - left.count;
+          }
+          return left.emoji.localeCompare(right.emoji);
+        });
+
+      summarized.set(targetTxHash, rows);
+    }
+
+    return summarized;
+  }, [activeThreadMessages, activeContact, activeGroupId, walletAddress]);
+  const getReactionsForMessage = useCallback(
+    (message: ChatMessage): Array<{ emoji: string; count: number; reactedByMe: boolean }> => {
+      const txHash = message.txHash?.trim().toLowerCase() ?? '';
+      if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
+        return [];
+      }
+
+      return activeThreadReactions.get(txHash) ?? [];
+    },
+    [activeThreadReactions]
   );
   const sortedContacts = useMemo(() => {
     const persistedOrderIndex = new Map<string, number>();
@@ -4803,6 +4965,8 @@ export default function App() {
           let replyToMessageId: string | undefined;
           let replyToText: string | undefined;
           let replyToTxHash: string | undefined;
+          let reactionToTxHash: string | undefined;
+          let reactionEmoji: string | undefined;
           if (userCiphertext && userCiphertext.value.length > 0) {
             try {
               const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -4813,6 +4977,8 @@ export default function App() {
               replyToMessageId = parsedMessage.replyToMessageId;
               replyToText = parsedMessage.replyToText;
               replyToTxHash = parsedMessage.replyToTxHash;
+              reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+              reactionEmoji = parsedMessage.embeddedReaction?.emoji;
               if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
                 continue;
               }
@@ -4839,6 +5005,8 @@ export default function App() {
             replyToMessageId,
             replyToText,
             replyToTxHash,
+            reactionToTxHash,
+            reactionEmoji,
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
             logIndex: log.index,
@@ -4852,6 +5020,8 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let reactionToTxHash: string | undefined;
+        let reactionEmoji: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
             const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -4862,6 +5032,8 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
               continue;
             }
@@ -4888,6 +5060,8 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          reactionToTxHash,
+          reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
@@ -4955,6 +5129,8 @@ export default function App() {
           let replyToMessageId: string | undefined;
           let replyToText: string | undefined;
           let replyToTxHash: string | undefined;
+          let reactionToTxHash: string | undefined;
+          let reactionEmoji: string | undefined;
           if (userCiphertext && userCiphertext.value.length > 0) {
             try {
               const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -4965,6 +5141,8 @@ export default function App() {
               replyToMessageId = parsedMessage.replyToMessageId;
               replyToText = parsedMessage.replyToText;
               replyToTxHash = parsedMessage.replyToTxHash;
+              reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+              reactionEmoji = parsedMessage.embeddedReaction?.emoji;
               if (parsedMessage.embeddedContactName) {
                 discoveredNicknames.set(contactKey, parsedMessage.embeddedContactName);
               }
@@ -4984,6 +5162,8 @@ export default function App() {
             replyToMessageId,
             replyToText,
             replyToTxHash,
+            reactionToTxHash,
+            reactionEmoji,
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
             logIndex: log.index,
@@ -4997,6 +5177,8 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let reactionToTxHash: string | undefined;
+        let reactionEmoji: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
             const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -5007,6 +5189,8 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (parsedMessage.embeddedContactName) {
               discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
             }
@@ -5026,6 +5210,8 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          reactionToTxHash,
+          reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
@@ -5128,7 +5314,9 @@ export default function App() {
                   candidate.direction !== 'outgoing' ||
                   candidate.text !== entry.text ||
                   (candidate.replyToText ?? '') !== (entry.replyToText ?? '') ||
-                  (candidate.replyToTxHash ?? '') !== (entry.replyToTxHash ?? '')
+                  (candidate.replyToTxHash ?? '') !== (entry.replyToTxHash ?? '') ||
+                  (candidate.reactionToTxHash ?? '') !== (entry.reactionToTxHash ?? '') ||
+                  (candidate.reactionEmoji ?? '') !== (entry.reactionEmoji ?? '')
                 ) {
                   continue;
                 }
@@ -5186,9 +5374,12 @@ export default function App() {
                 id: entry.id,
                 direction: entry.direction,
                 text: entry.text,
+                senderAddress: entry.direction === 'outgoing' ? requestedWalletAddress : entry.contact,
                 replyToMessageId: entry.replyToMessageId,
                 replyToText: entry.replyToText,
                 replyToTxHash: entry.replyToTxHash,
+                reactionToTxHash: entry.reactionToTxHash,
+                reactionEmoji: entry.reactionEmoji,
                 timestamp: entry.timestamp,
                 blockNumber: entry.blockNumber,
                 logIndex: entry.logIndex,
@@ -5504,6 +5695,8 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let reactionToTxHash: string | undefined;
+        let reactionEmoji: string | undefined;
 
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
@@ -5522,6 +5715,8 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
               continue;
             }
@@ -5541,6 +5736,8 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          reactionToTxHash,
+          reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
@@ -5560,6 +5757,8 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let reactionToTxHash: string | undefined;
+        let reactionEmoji: string | undefined;
 
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
@@ -5580,6 +5779,8 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (parsedMessage.embeddedContactName) {
               discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
             }
@@ -5599,6 +5800,8 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          reactionToTxHash,
+          reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
           logIndex: log.index,
@@ -5629,9 +5832,12 @@ export default function App() {
               id: entry.id,
               direction: entry.direction,
               text: entry.text,
+              senderAddress: entry.direction === 'outgoing' ? requestedWalletAddress : entry.contact,
               replyToMessageId: entry.replyToMessageId,
               replyToText: entry.replyToText,
               replyToTxHash: entry.replyToTxHash,
+              reactionToTxHash: entry.reactionToTxHash,
+              reactionEmoji: entry.reactionEmoji,
               timestamp: entry.timestamp,
               blockNumber: entry.blockNumber,
               logIndex: entry.logIndex,
@@ -6095,6 +6301,8 @@ export default function App() {
             let replyToMessageId: string | undefined;
             let replyToText: string | undefined;
             let replyToTxHash: string | undefined;
+            let reactionToTxHash: string | undefined;
+            let reactionEmoji: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
                 const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -6105,6 +6313,8 @@ export default function App() {
                 replyToMessageId = parsedMessage.replyToMessageId;
                 replyToText = parsedMessage.replyToText;
                 replyToTxHash = parsedMessage.replyToTxHash;
+                reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+                reactionEmoji = parsedMessage.embeddedReaction?.emoji;
                 if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
                   continue;
                 }
@@ -6122,6 +6332,8 @@ export default function App() {
               replyToMessageId,
               replyToText,
               replyToTxHash,
+              reactionToTxHash,
+              reactionEmoji,
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
               logIndex: log.index,
@@ -6136,6 +6348,8 @@ export default function App() {
             let replyToMessageId: string | undefined;
             let replyToText: string | undefined;
             let replyToTxHash: string | undefined;
+            let reactionToTxHash: string | undefined;
+            let reactionEmoji: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
                 const decrypted = await signer.decryptValue(userCiphertext as never);
@@ -6146,6 +6360,8 @@ export default function App() {
                 replyToMessageId = parsedMessage.replyToMessageId;
                 replyToText = parsedMessage.replyToText;
                 replyToTxHash = parsedMessage.replyToTxHash;
+                reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+                reactionEmoji = parsedMessage.embeddedReaction?.emoji;
                 if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
                   continue;
                 }
@@ -6163,6 +6379,8 @@ export default function App() {
               replyToMessageId,
               replyToText,
               replyToTxHash,
+              reactionToTxHash,
+              reactionEmoji,
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
               logIndex: log.index,
@@ -6278,6 +6496,8 @@ export default function App() {
                   replyToMessageId: entry.replyToMessageId,
                   replyToText: entry.replyToText,
                   replyToTxHash: entry.replyToTxHash,
+                  reactionToTxHash: entry.reactionToTxHash,
+                  reactionEmoji: entry.reactionEmoji,
                   timestamp: entry.timestamp,
                   blockNumber: entry.blockNumber,
                   logIndex: entry.logIndex,
@@ -7230,6 +7450,214 @@ export default function App() {
     }
   };
 
+  const sendReactionToMessage = async (targetMessage: ChatMessage, emojiInput: string) => {
+    setError('');
+
+    if (sendingReaction) {
+      return;
+    }
+
+    const normalizedEmoji = normalizeReactionEmoji(emojiInput);
+    if (!normalizedEmoji) {
+      setError('Choose a valid emoji reaction.');
+      return;
+    }
+
+    const targetTxHash = targetMessage.txHash?.trim().toLowerCase() ?? '';
+    if (!/^0x[a-f0-9]{64}$/.test(targetTxHash)) {
+      setError('Wait for the message to confirm on-chain before adding a reaction.');
+      return;
+    }
+
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
+      setError('Connect a wallet first.');
+      return;
+    }
+
+    const threadGroupId = activeGroupId;
+    const threadContactAddress = activeContact;
+    if (threadGroupId === null && !threadContactAddress) {
+      setError('Open a chat first.');
+      return;
+    }
+
+    const localMessageId =
+      threadGroupId !== null
+        ? `local-group-reaction-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+        : `local-reaction-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const localMessageTimestamp = Math.floor(Date.now() / 1000);
+    const reactionMemoText = buildMessageWithReactionPayload(targetTxHash, normalizedEmoji);
+
+    try {
+      setSendingReaction(true);
+      setReactionPickerMessageId(null);
+
+      if (threadGroupId !== null) {
+        const groupKey = String(threadGroupId);
+        setMessagesByGroup((previous) => ({
+          ...previous,
+          [groupKey]: [
+            ...(previous[groupKey] ?? []),
+            {
+              id: localMessageId,
+              direction: 'outgoing',
+              text: '',
+              senderAddress: requestedWalletAddress,
+              reactionToTxHash: targetTxHash,
+              reactionEmoji: normalizedEmoji,
+              timestamp: localMessageTimestamp,
+              deliveryState: 'pending'
+            }
+          ]
+        }));
+
+        const { signer, cacheKey } = await getMemoSigner();
+        const cotiEthers = await loadCotiEthersModule();
+        const selector = await resolveGroupSubmitSelector();
+        const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+        const requiredFee = await resolveRequiredFeeForGroupSend();
+        const encodedMemo = encodeMemoPlaintext(reactionMemoText);
+        const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
+        const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+        const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
+        const tx = await contract.submitGroupMessage(threadGroupId, memoTuple, { value: requiredFee });
+        const submittedTxHash = typeof tx?.hash === 'string' ? tx.hash : '';
+
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
+
+        setMessagesByGroup((previous) => ({
+          ...previous,
+          [groupKey]: (previous[groupKey] ?? []).map((message) =>
+            message.id === localMessageId
+              ? {
+                  ...message,
+                  deliveryState: 'sent',
+                  txHash: submittedTxHash || undefined
+                }
+              : message
+          )
+        }));
+
+        const nextOnboardInfo = signer.getUserOnboardInfo();
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+        }));
+
+        await syncGroupData({ background: true });
+      } else if (threadContactAddress) {
+        const contactKey = threadContactAddress.toLowerCase();
+        setMessagesByContact((previous) => ({
+          ...previous,
+          [contactKey]: [
+            ...(previous[contactKey] ?? []),
+            {
+              id: localMessageId,
+              direction: 'outgoing',
+              text: '',
+              senderAddress: requestedWalletAddress,
+              reactionToTxHash: targetTxHash,
+              reactionEmoji: normalizedEmoji,
+              timestamp: localMessageTimestamp,
+              deliveryState: 'pending'
+            }
+          ]
+        }));
+
+        const { signer, cacheKey } = await getMemoSigner();
+        const cotiEthers = await loadCotiEthersModule();
+        const selector = await resolveSubmitSelector();
+        const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
+        const requiredFee = await resolveRequiredFeeForSend();
+        const encodedMemo = encodeMemoPlaintext(reactionMemoText);
+        const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
+        const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+        const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
+        const tx = await contract.submit(threadContactAddress, memoTuple, { value: requiredFee });
+        const submittedTxHash = typeof tx?.hash === 'string' ? tx.hash : '';
+
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
+
+        setMessagesByContact((previous) => ({
+          ...previous,
+          [contactKey]: (previous[contactKey] ?? []).map((message) =>
+            message.id === localMessageId
+              ? {
+                  ...message,
+                  deliveryState: 'sent',
+                  txHash: submittedTxHash || undefined
+                }
+              : message
+          )
+        }));
+
+        const nextOnboardInfo = signer.getUserOnboardInfo();
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+        }));
+
+        syncConversationHistory({ background: true }).catch(() => {});
+      }
+
+      if (activeSignerSource === 'burner') {
+        setTopUpMetricsNonce((previous) => previous + 1);
+      }
+    } catch (reactionError) {
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      const message = reactionError instanceof Error ? reactionError.message : 'Failed to send reaction.';
+      setError(message);
+
+      if (threadGroupId !== null) {
+        const groupKey = String(threadGroupId);
+        setMessagesByGroup((previous) => ({
+          ...previous,
+          [groupKey]: (previous[groupKey] ?? []).map((messageRecord) =>
+            messageRecord.id === localMessageId
+              ? {
+                  ...messageRecord,
+                  deliveryState: 'failed'
+                }
+              : messageRecord
+          )
+        }));
+      } else if (threadContactAddress) {
+        const contactKey = threadContactAddress.toLowerCase();
+        setMessagesByContact((previous) => ({
+          ...previous,
+          [contactKey]: (previous[contactKey] ?? []).map((messageRecord) =>
+            messageRecord.id === localMessageId
+              ? {
+                  ...messageRecord,
+                  deliveryState: 'failed'
+                }
+              : messageRecord
+          )
+        }));
+      }
+
+      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+        const shouldTopUp = window.confirm(
+          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+        );
+        if (shouldTopUp) {
+          await topUpBurnerWithMetaMask();
+        }
+      }
+    } finally {
+      setSendingReaction(false);
+    }
+  };
+
   const sendMessage = async (overrideMessageText?: string) => {
     setError('');
 
@@ -7910,6 +8338,10 @@ export default function App() {
 
     previousWalletAddressRef.current = nextWallet;
   }, [walletAddress]);
+
+  useEffect(() => {
+    setReactionPickerMessageId(null);
+  }, [activeThreadKey]);
 
   useEffect(() => {
     if (!isConnected || !activeThreadKey) {
@@ -9378,7 +9810,7 @@ export default function App() {
                               />
                             </label>
                           ) : (
-                            <span className="group-join-code-hint">One successful join per code.</span>
+                            <span className="group-join-code-hint">One join per code.</span>
                           )}
                         </div>
                         <button
@@ -9513,7 +9945,7 @@ export default function App() {
                                 />
                               </label>
                             ) : (
-                              <span className="group-join-code-hint">One successful join per code.</span>
+                              <span className="group-join-code-hint">One join per code.</span>
                             )}
                           </div>
                           <button
@@ -9747,13 +10179,17 @@ export default function App() {
             </div>
 
             <div className="chat-messages" ref={chatMessagesRef}>
-              {activeGroupMessages.length === 0 ? (
+              {!activeGroupMessages.some((message) => !isReactionOnlyMessage(message)) ? (
                 <p className="chat-empty">No group messages yet.</p>
               ) : (
                 activeGroupMessages.map((message) => {
                   const isGroupSystemMessage = Boolean(message.isSystem);
+                  if (isReactionOnlyMessage(message)) {
+                    return null;
+                  }
                   const messageDisplayText = getMessageDisplayText(message.text, message.direction);
                   const parsedImageTag = parseImageTag(message.text);
+                  const messageReactions = getReactionsForMessage(message);
                   const deliveryLabel =
                     message.deliveryState === 'pending'
                       ? 'Sending...'
@@ -9805,15 +10241,48 @@ export default function App() {
                         className={messageBubbleClassName}
                       >
                         {canReplyToGroupMessage ? (
-                          <button
-                            type="button"
-                            className="message-reply-action"
-                            onClick={() => setReplyingToMessage(message)}
-                            aria-label="Reply to this message"
-                            title="Reply"
-                          >
-                            ↩
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="message-react-action"
+                              onClick={() =>
+                                setReactionPickerMessageId((previous) =>
+                                  previous === message.id ? null : message.id
+                                )
+                              }
+                              aria-label="React to this message"
+                              title="React"
+                              disabled={!message.txHash || sendingReaction}
+                            >
+                              +
+                            </button>
+                            <button
+                              type="button"
+                              className="message-reply-action"
+                              onClick={() => setReplyingToMessage(message)}
+                              aria-label="Reply to this message"
+                              title="Reply"
+                            >
+                              R
+                            </button>
+                            {reactionPickerMessageId === message.id ? (
+                              <div className="message-reaction-picker" role="dialog" aria-label="Pick reaction">
+                                {DEFAULT_REACTION_EMOJIS.map((emoji) => (
+                                  <button
+                                    key={`${message.id}-${emoji}`}
+                                    type="button"
+                                    onClick={() => {
+                                      sendReactionToMessage(message, emoji).catch(() => {});
+                                    }}
+                                    disabled={sendingReaction}
+                                    title={`React with ${emoji}`}
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </>
                         ) : null}
                         {message.direction === 'incoming' && !isGroupSystemMessage ? (
                           canCopySenderAddress ? (
@@ -9844,6 +10313,24 @@ export default function App() {
                           </button>
                         ) : null}
                         {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                        {messageReactions.length > 0 ? (
+                          <div className="message-reactions">
+                            {messageReactions.map((reaction) => (
+                              <button
+                                key={`${message.id}-${reaction.emoji}`}
+                                type="button"
+                                className={reaction.reactedByMe ? 'message-reaction-chip active' : 'message-reaction-chip'}
+                                onClick={() => {
+                                  sendReactionToMessage(message, reaction.emoji).catch(() => {});
+                                }}
+                                disabled={!message.txHash || sendingReaction}
+                              >
+                                <span>{reaction.emoji}</span>
+                                <span>{reaction.count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                         {message.timestamp || deliveryLabel ? (
                           <div className="message-meta">
                             {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
@@ -9939,12 +10426,16 @@ export default function App() {
               onClick={() => markConversationAsRead(activeContact)}
             >
               {loadingOlderHistory ? <p className="chat-empty">Loading older messages...</p> : null}
-              {activeMessages.length === 0 ? (
+              {!activeMessages.some((message) => !isReactionOnlyMessage(message)) ? (
                 <p className="chat-empty">No messages yet.</p>
               ) : (
                 activeMessages.map((message) => {
+                  if (isReactionOnlyMessage(message)) {
+                    return null;
+                  }
                   const messageDisplayText = getMessageDisplayText(message.text, message.direction);
                   const parsedImageTag = parseImageTag(message.text);
+                  const messageReactions = getReactionsForMessage(message);
                   const deliveryLabel =
                     message.deliveryState === 'pending'
                       ? 'Sending...'
@@ -9971,15 +10462,48 @@ export default function App() {
                               : 'message-bubble'
                         }
                       >
-                        <button
-                          type="button"
-                          className="message-reply-action"
-                          onClick={() => setReplyingToMessage(message)}
-                          aria-label="Reply to this message"
-                          title="Reply"
-                        >
-                          ↩
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="message-react-action"
+                            onClick={() =>
+                              setReactionPickerMessageId((previous) =>
+                                previous === message.id ? null : message.id
+                              )
+                            }
+                            aria-label="React to this message"
+                            title="React"
+                            disabled={!message.txHash || sendingReaction}
+                          >
+                            +
+                          </button>
+                          <button
+                            type="button"
+                            className="message-reply-action"
+                            onClick={() => setReplyingToMessage(message)}
+                            aria-label="Reply to this message"
+                            title="Reply"
+                          >
+                            R
+                          </button>
+                          {reactionPickerMessageId === message.id ? (
+                            <div className="message-reaction-picker" role="dialog" aria-label="Pick reaction">
+                              {DEFAULT_REACTION_EMOJIS.map((emoji) => (
+                                <button
+                                  key={`${message.id}-${emoji}`}
+                                  type="button"
+                                  onClick={() => {
+                                    sendReactionToMessage(message, emoji).catch(() => {});
+                                  }}
+                                  disabled={sendingReaction}
+                                  title={`React with ${emoji}`}
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </>
                         {message.replyToText || message.replyToTxHash ? (
                           <button
                             type="button"
@@ -9993,6 +10517,24 @@ export default function App() {
                           </button>
                         ) : null}
                         {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                        {messageReactions.length > 0 ? (
+                          <div className="message-reactions">
+                            {messageReactions.map((reaction) => (
+                              <button
+                                key={`${message.id}-${reaction.emoji}`}
+                                type="button"
+                                className={reaction.reactedByMe ? 'message-reaction-chip active' : 'message-reaction-chip'}
+                                onClick={() => {
+                                  sendReactionToMessage(message, reaction.emoji).catch(() => {});
+                                }}
+                                disabled={!message.txHash || sendingReaction}
+                              >
+                                <span>{reaction.emoji}</span>
+                                <span>{reaction.count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                         {message.timestamp || deliveryLabel ? (
                           <div className="message-meta">
                             {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
@@ -10318,3 +10860,4 @@ export default function App() {
     </div>
   );
 }
+
