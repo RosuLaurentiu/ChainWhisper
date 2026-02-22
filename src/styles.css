@@ -1900,8 +1900,22 @@ body {
   background: var(--bg-elev-2);
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 36px));
   padding: 4px;
   z-index: 4;
+}
+
+.message-row.incoming .message-reaction-picker {
+  left: 8px;
+  right: auto;
+}
+
+.message-row.outgoing .message-reaction-picker {
+  left: auto;
+  right: 8px;
+  justify-content: flex-end;
 }
 
 .message-reaction-picker button {

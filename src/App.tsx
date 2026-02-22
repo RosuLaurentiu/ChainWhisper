@@ -173,6 +173,27 @@ const TEXT_DECODER = new TextDecoder();
 const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
 const EXTERNAL_REPLY_TXHASH_REGEX = /^\[r:(0x[a-fA-F0-9]{64})\]\s*/;
 const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🫡', '🤯', '🌭', '✍️', '🤷‍♂️', '🤪', '💯'] as const;
+const REACTION_HIDDEN_NIBBLE_SYMBOLS = [
+  '\uFE00',
+  '\uFE01',
+  '\uFE02',
+  '\uFE03',
+  '\uFE04',
+  '\uFE05',
+  '\uFE06',
+  '\uFE07',
+  '\uFE08',
+  '\uFE09',
+  '\uFE0A',
+  '\uFE0B',
+  '\uFE0C',
+  '\uFE0D',
+  '\uFE0E',
+  '\uFE0F'
+] as const;
+const REACTION_HIDDEN_NIBBLE_LOOKUP = new Map<string, number>(
+  REACTION_HIDDEN_NIBBLE_SYMBOLS.map((symbol, index) => [symbol, index] as const)
+);
 const debugLog = (...args: unknown[]): void => {
   if (import.meta.env.DEV) {
     console.debug(...args);
@@ -2038,51 +2059,44 @@ const normalizeReactionEmoji = (value: string): string | undefined => {
   return symbols.join('');
 };
 
-const buildMessageWithReactionPayload = (targetTxHash: string, emoji: string, plainText = ''): string => {
-  const normalizedTxHash = targetTxHash.trim().toLowerCase();
-  const normalizedEmoji = normalizeReactionEmoji(emoji);
-  if (!/^0x[a-f0-9]{64}$/.test(normalizedTxHash) || !normalizedEmoji) {
-    return plainText;
+const encodeCompactReactionTargetTxHash = (targetTxHash: string): string | undefined => {
+  const normalized = targetTxHash.trim().toLowerCase();
+  if (!/^0x[a-f0-9]{64}$/.test(normalized)) {
+    return undefined;
   }
 
-  return `${REACTION_METADATA_PREFIX}${normalizedTxHash}|${normalizedEmoji}${REACTION_METADATA_PREFIX}${plainText}`;
-};
-
-const parseMessageReactionPayload = (text: string): { cleanText: string; reaction?: MessageReactionPayload } => {
-  if (!text.startsWith(REACTION_METADATA_PREFIX)) {
-    return { cleanText: text };
-  }
-
-  const metadataEnd = text.indexOf(REACTION_METADATA_PREFIX, REACTION_METADATA_PREFIX.length);
-  if (metadataEnd <= REACTION_METADATA_PREFIX.length) {
-    return { cleanText: text };
-  }
-
-  const metadataChunk = text.slice(REACTION_METADATA_PREFIX.length, metadataEnd);
-  const separatorIndex = metadataChunk.indexOf('|');
-  if (separatorIndex <= 0) {
-    return { cleanText: text };
-  }
-
-  const targetTxHash = metadataChunk.slice(0, separatorIndex).trim().toLowerCase();
-  const emojiChunk = metadataChunk.slice(separatorIndex + 1);
-  const emoji = normalizeReactionEmoji(emojiChunk);
-  if (!/^0x[a-f0-9]{64}$/.test(targetTxHash) || !emoji) {
-    return { cleanText: text };
-  }
-
-  const remaining = text.slice(metadataEnd + REACTION_METADATA_PREFIX.length);
-  return {
-    cleanText: remaining,
-    reaction: {
-      targetTxHash,
-      emoji
+  let encoded = '';
+  for (const nibble of normalized.slice(2)) {
+    const nibbleValue = Number.parseInt(nibble, 16);
+    if (!Number.isFinite(nibbleValue) || nibbleValue < 0 || nibbleValue > 15) {
+      return undefined;
     }
-  };
+    encoded += REACTION_HIDDEN_NIBBLE_SYMBOLS[nibbleValue];
+  }
+
+  return encoded;
 };
 
-const encodeHiddenContactName = (contactName: string): string => {
-  const bytes = TEXT_ENCODER.encode(contactName);
+const decodeCompactReactionTargetTxHash = (encodedChunk: string): string | undefined => {
+  const symbols = Array.from(encodedChunk);
+  if (symbols.length !== 64) {
+    return undefined;
+  }
+
+  let hex = '';
+  for (const symbol of symbols) {
+    const nibbleValue = REACTION_HIDDEN_NIBBLE_LOOKUP.get(symbol);
+    if (nibbleValue === undefined) {
+      return undefined;
+    }
+    hex += nibbleValue.toString(16);
+  }
+
+  return `0x${hex}`;
+};
+
+const encodeHiddenMetadata = (value: string): string => {
+  const bytes = TEXT_ENCODER.encode(value);
   let encoded = '';
   for (const byte of bytes) {
     for (let bitIndex = 7; bitIndex >= 0; bitIndex -= 1) {
@@ -2092,7 +2106,7 @@ const encodeHiddenContactName = (contactName: string): string => {
   return encoded;
 };
 
-const decodeHiddenContactName = (encodedChunk: string): string | undefined => {
+const decodeHiddenMetadata = (encodedChunk: string): string | undefined => {
   if (!encodedChunk || encodedChunk.length % 8 !== 0) {
     return undefined;
   }
@@ -2112,7 +2126,84 @@ const decodeHiddenContactName = (encodedChunk: string): string | undefined => {
     bytes[byteIndex] = nextByte;
   }
 
-  const decoded = TEXT_DECODER.decode(bytes);
+  return TEXT_DECODER.decode(bytes);
+};
+
+const buildMessageWithReactionPayload = (targetTxHash: string, emoji: string, plainText = ''): string => {
+  const normalizedTxHash = targetTxHash.trim().toLowerCase();
+  const normalizedEmoji = normalizeReactionEmoji(emoji);
+  const encodedTargetTxHash = encodeCompactReactionTargetTxHash(normalizedTxHash);
+  if (!encodedTargetTxHash || !normalizedEmoji) {
+    return plainText;
+  }
+
+  const sanitizedFallbackText = plainText.split(REACTION_METADATA_PREFIX).join('').trim();
+  const visibleFallbackText = sanitizedFallbackText || normalizedEmoji;
+  return `${REACTION_METADATA_PREFIX}${encodedTargetTxHash}${REACTION_METADATA_PREFIX}${visibleFallbackText}`;
+};
+
+const parseMessageReactionPayload = (text: string): { cleanText: string; reaction?: MessageReactionPayload } => {
+  if (!text.startsWith(REACTION_METADATA_PREFIX)) {
+    return { cleanText: text };
+  }
+
+  const metadataEnd = text.indexOf(REACTION_METADATA_PREFIX, REACTION_METADATA_PREFIX.length);
+  if (metadataEnd <= REACTION_METADATA_PREFIX.length) {
+    return { cleanText: text };
+  }
+
+  const metadataChunk = text.slice(REACTION_METADATA_PREFIX.length, metadataEnd);
+  const remaining = text.slice(metadataEnd + REACTION_METADATA_PREFIX.length);
+  const compactTargetTxHash = decodeCompactReactionTargetTxHash(metadataChunk);
+  if (compactTargetTxHash) {
+    const remainingEmoji = normalizeReactionEmoji(remaining);
+    if (!remainingEmoji) {
+      return { cleanText: remaining };
+    }
+    return {
+      cleanText: '',
+      reaction: {
+        targetTxHash: compactTargetTxHash,
+        emoji: remainingEmoji
+      }
+    };
+  }
+
+  const decodedMetadataChunk = decodeHiddenMetadata(metadataChunk);
+  const metadataValue = decodedMetadataChunk ?? metadataChunk;
+  const separatorIndex = metadataValue.indexOf('|');
+  if (separatorIndex <= 0) {
+    return { cleanText: text };
+  }
+
+  const targetTxHash = metadataValue.slice(0, separatorIndex).trim().toLowerCase();
+  const emojiChunk = metadataValue.slice(separatorIndex + 1);
+  const emoji = normalizeReactionEmoji(emojiChunk);
+  if (!/^0x[a-f0-9]{64}$/.test(targetTxHash) || !emoji) {
+    return { cleanText: text };
+  }
+
+  const normalizedRemainingReaction = normalizeReactionEmoji(remaining);
+  const cleanText =
+    normalizedRemainingReaction && normalizedRemainingReaction === emoji ? '' : remaining;
+  return {
+    cleanText,
+    reaction: {
+      targetTxHash,
+      emoji
+    }
+  };
+};
+
+const encodeHiddenContactName = (contactName: string): string => {
+  return encodeHiddenMetadata(contactName);
+};
+
+const decodeHiddenContactName = (encodedChunk: string): string | undefined => {
+  const decoded = decodeHiddenMetadata(encodedChunk);
+  if (!decoded) {
+    return undefined;
+  }
   return normalizeContactName(decoded)?.slice(0, 42);
 };
 
@@ -9118,7 +9209,7 @@ export default function App() {
                 type="button"
                 disabled={initializingBurner || burnerStorageBlocked}
               >
-                Connect Wallet
+                Unlock Wallet
               </button>
             ) : (
               <p className="wallet-section-hint wallet-section-hint-note">
