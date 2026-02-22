@@ -7560,6 +7560,15 @@ export default function App() {
       return;
     }
 
+    const existingReactions = activeThreadReactions.get(targetTxHash) ?? [];
+    const alreadyReactedWithEmoji = existingReactions.some(
+      (reaction) => reaction.emoji === normalizedEmoji && reaction.reactedByMe
+    );
+    if (alreadyReactedWithEmoji) {
+      setError('You already sent this reaction.');
+      return;
+    }
+
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
@@ -10281,6 +10290,9 @@ export default function App() {
                   const messageDisplayText = getMessageDisplayText(message.text, message.direction);
                   const parsedImageTag = parseImageTag(message.text);
                   const messageReactions = getReactionsForMessage(message);
+                  const reactedEmojiSet = new Set(
+                    messageReactions.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)
+                  );
                   const deliveryLabel =
                     message.deliveryState === 'pending'
                       ? 'Sending...'
@@ -10365,8 +10377,8 @@ export default function App() {
                                     onClick={() => {
                                       sendReactionToMessage(message, emoji).catch(() => {});
                                     }}
-                                    disabled={sendingReaction}
-                                    title={`React with ${emoji}`}
+                                    disabled={sendingReaction || reactedEmojiSet.has(emoji)}
+                                    title={reactedEmojiSet.has(emoji) ? `Already reacted with ${emoji}` : `React with ${emoji}`}
                                   >
                                     {emoji}
                                   </button>
@@ -10414,7 +10426,7 @@ export default function App() {
                                 onClick={() => {
                                   sendReactionToMessage(message, reaction.emoji).catch(() => {});
                                 }}
-                                disabled={!message.txHash || sendingReaction}
+                                disabled={!message.txHash || sendingReaction || reaction.reactedByMe}
                               >
                                 <span>{reaction.emoji}</span>
                                 <span>{reaction.count}</span>
@@ -10527,6 +10539,9 @@ export default function App() {
                   const messageDisplayText = getMessageDisplayText(message.text, message.direction);
                   const parsedImageTag = parseImageTag(message.text);
                   const messageReactions = getReactionsForMessage(message);
+                  const reactedEmojiSet = new Set(
+                    messageReactions.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)
+                  );
                   const deliveryLabel =
                     message.deliveryState === 'pending'
                       ? 'Sending...'
@@ -10586,8 +10601,8 @@ export default function App() {
                                   onClick={() => {
                                     sendReactionToMessage(message, emoji).catch(() => {});
                                   }}
-                                  disabled={sendingReaction}
-                                  title={`React with ${emoji}`}
+                                  disabled={sendingReaction || reactedEmojiSet.has(emoji)}
+                                  title={reactedEmojiSet.has(emoji) ? `Already reacted with ${emoji}` : `React with ${emoji}`}
                                 >
                                   {emoji}
                                 </button>
@@ -10618,7 +10633,7 @@ export default function App() {
                                 onClick={() => {
                                   sendReactionToMessage(message, reaction.emoji).catch(() => {});
                                 }}
-                                disabled={!message.txHash || sendingReaction}
+                                disabled={!message.txHash || sendingReaction || reaction.reactedByMe}
                               >
                                 <span>{reaction.emoji}</span>
                                 <span>{reaction.count}</span>
