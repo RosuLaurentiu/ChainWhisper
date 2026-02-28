@@ -121,6 +121,10 @@ type GroupMessageEntry = {
   timestamp?: number;
 };
 
+type GroupFeeModeSelection = 'coti' | 'token';
+type SwapDirection = 'shield' | 'unshield';
+type SwapFeeModeSelection = 'token' | 'coti';
+
 const BURNER_WALLET_STORAGE_KEY = 'coti-chat-burner-wallet';
 const BURNER_WALLET_STORAGE_PROBE_KEY = 'coti-chat-burner-wallet-probe';
 const BURNER_WALLET_STORAGE_VERSION = 2;
@@ -141,6 +145,8 @@ const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
 const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
+const GROUP_SUBMIT_GAS_BUFFER = 700_000n;
+const GROUP_SUBMIT_GAS_LIMIT_MAX = 8_000_000n;
 const DEFAULT_GROUP_JOIN_CODE_MAX_USES = 1;
 const DEFAULT_GROUP_JOIN_CODE_MULTI_USES = 10;
 const BURNER_ONBOARD_TIMEOUT_MS = 45000;
@@ -166,6 +172,7 @@ const STATE_BACKUP_VERSION = 1;
 const MAX_REPLY_PREVIEW_LENGTH = 28;
 const MAX_MESSAGE_LENGTH = 2000;
 const COPY_FEEDBACK_DURATION_MS = 1400;
+const GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS = 9000;
 const COTI_WEI = 10n ** 18n;
 const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
 const TEXT_ENCODER = new TextEncoder();
@@ -316,6 +323,14 @@ const COTI_NETWORK = {
 
 const CHAT_CONTRACT_ADDRESS = '0x3b7151a7B7F1ccEB9b2325A27f99B24b6479d2D7';
 const GROUP_ADMIN_BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
+const REWARD_TOKEN_ADDRESS = '0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8';
+const PRIVATE_REWARD_TOKEN_ADDRESS = '0x922B39AC9FD4ccb5E5a9de0694C8189DC2D214E8';
+const SWAP_VAULT_CONTRACT_ADDRESS = '0x5C35CD3659991051F4Fb04F2C4120643739b7BdE';
+const FALLBACK_REWARD_TOKEN_SYMBOL = 'TOKEN';
+const FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL = 'PTOKEN';
+const FALLBACK_REWARD_TOKEN_DECIMALS = 6;
+const PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE = (1n << 64n) - 1n;
+const MAX_ERC20_APPROVAL = (1n << 256n) - 1n;
 const CHAT_CONTRACT_ABI = [
   'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
   'function setMyNickname(string name)',
@@ -328,11 +343,12 @@ const CHAT_CONTRACT_ABI = [
   'event MessageSubmitted(address indexed recipient, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender)'
 ] as const;
 
-const GROUP_CHAT_CONTRACT_ADDRESS = '0xe9D356d11094E38B1F6529cd51cb995991F06E6F';
+const GROUP_CHAT_CONTRACT_ADDRESS = '0x08955E365d460063D2b164505Ff585A168707a6D';
 const GROUP_CHAT_CONTRACT_ABI = [
   'error AlreadyGroupMember()',
   'error GroupPaused()',
   'error GroupTooLarge()',
+  'error InsufficientFee()',
   'error InvalidAddress()',
   'error InvalidGroup()',
   'error InvalidGroupTitle()',
@@ -343,7 +359,14 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'error JoinCodeExpired()',
   'error JoinCodeNotFound()',
   'function feeAmount() view returns (uint256)',
+  'function tokenFeeAmount() view returns (uint256)',
+  'function publicFeeToken() view returns (address)',
+  'function privateFeeToken() view returns (address)',
+  'function rewardsContract() view returns (address)',
+  'function rewardsPaused() view returns (bool)',
   'function INVITE_TTL_DEFAULT() view returns (uint64)',
+  'function INVITE_TTL_MAX() view returns (uint64)',
+  'function JOIN_CODE_TTL_MAX() view returns (uint64)',
   'function JOIN_CODE_MAX_USES() view returns (uint32)',
   'function nextGroupId() view returns (uint256)',
   'function createGroup(string title, address[] initialMembers) returns (uint256 groupId)',
@@ -358,12 +381,14 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'function setGroupAdmin(uint256 groupId, address newAdmin)',
   'function setGroupTitle(uint256 groupId, string nextTitle)',
   'function leaveGroup(uint256 groupId)',
+  'function disbandGroup(uint256 groupId)',
   'function removeMember(uint256 groupId, address account)',
   'function getInvite(uint256 groupId, address account) view returns (bool pending, address inviter, uint64 expiresAt, bool expired)',
   'function getGroupInfo(uint256 groupId) view returns (address admin, uint64 createdAt, uint32 memberCount, string title, uint256 lastBlock, uint256 lastTimestamp)',
   'function getGroupMembers(uint256 groupId) view returns (address[])',
   'function isMember(uint256 groupId, address account) view returns (bool)',
   'function submitGroupMessage(uint256 groupId, ((uint256[] value), bytes[] signature) encryptedMessage) payable',
+  'function submitGroupMessageWithMode(uint256 groupId, ((uint256[] value), bytes[] signature) encryptedMessage, uint8 paymentMode) payable',
   'event GroupCreated(uint256 indexed groupId, address indexed admin, string title)',
   'event GroupMemberAdded(uint256 indexed groupId, address indexed account)',
   'event GroupMemberRemoved(uint256 indexed groupId, address indexed account)',
@@ -379,10 +404,43 @@ const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
 
+const ERC20_TOKEN_ABI = [
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address account) view returns (uint256)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)'
+] as const;
+
+const PRIVATE_TOKEN_BALANCE_ABI = [
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address account) view returns (uint256)',
+  'function balanceOf() returns (uint256)'
+] as const;
+
+const SWAP_VAULT_CONTRACT_ABI = [
+  'function shieldWithMode(uint256 amount, uint8 paymentMode) payable',
+  'function unshieldWithMode(uint256 amount, uint8 paymentMode) payable',
+  'function swapFeeWei() view returns (uint256)',
+  'function getTokenFeeAmount() view returns (uint256)',
+  'event SwapFeePaid(address indexed payer, address indexed receiver, uint8 indexed method, uint256 amount)'
+] as const;
+
+const WHISPER_REWARDS_ABI = [
+  'function rewardInteraction(address user)',
+  'function paused() view returns (bool)',
+  'function allowedInteractionContracts(address) view returns (bool)',
+  'function publicRewardAmount() view returns (uint64)',
+  'function privateRewardAmount() view returns (uint64)'
+] as const;
+
 const GROUP_JOIN_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
   '0x569d6b43': 'You are already a member of this group.',
   '0xc377608f': 'Group actions are currently paused on-chain. Try again later.',
   '0x6ebf9e18': 'This group has reached its member limit.',
+  '0x5b5c465a': 'The invite or join-code TTL is above the contract limit.',
+  '0xcecadadb': 'Join code max uses exceeds the contract limit.',
   '0xdb140e40': 'This group no longer exists.',
   '0x873c1c39': 'Invalid group code format.',
   '0x5c47db1b': 'This group code has no remaining uses.',
@@ -396,8 +454,11 @@ const GROUP_ACTION_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
   '0x569d6b43': 'That wallet is already a member of this group.',
   '0xc377608f': 'Group actions are currently paused on-chain. Try again later.',
   '0x6ebf9e18': 'This group has reached its member limit.',
+  '0x025dbdd4': 'Insufficient group fee. In token mode, ensure you have PWISP or approve WISP.',
+  '0x5b5c465a': 'The invite or join-code TTL is above the contract limit.',
+  '0xcecadadb': 'Join code max uses exceeds the contract limit.',
   '0xe6c4247b': 'Invalid wallet address.',
-  '0x25114f49': 'Group admins cannot leave the group. Add another member and transfer admin first.',
+  '0x25114f49': 'Only the group admin can perform this action.',
   '0x27ce6509': 'You are not a member of this group.',
   '0xdb140e40': 'This group no longer exists.',
   '0x0e03abe4': 'Group title is too long after encryption. Use a shorter title and try again.'
@@ -919,7 +980,16 @@ const getProviderErrorMessage = (error: unknown, fallbackMessage: string): strin
 
   return rawMessage || fallbackMessage;
 };
+const isProviderActionRejected = (error: unknown): boolean => {
+  const codeCandidate = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  if (codeCandidate === 4001 || codeCandidate === 'ACTION_REJECTED') {
+    return true;
+  }
 
+  const rawMessage = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const normalized = rawMessage.toLowerCase();
+  return normalized.includes('user rejected') || normalized.includes('action rejected') || normalized.includes('denied');
+};
 const isHexDataString = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 10 && value.length % 2 === 0 && /^0x[a-fA-F0-9]+$/.test(value);
 
@@ -1108,6 +1178,57 @@ const formatCotiAmount = (weiAmount: bigint): string => {
   const whole = weiAmount / COTI_WEI;
   const fraction = (weiAmount % COTI_WEI).toString().padStart(18, '0').slice(0, 6).replace(/0+$/, '');
   return fraction ? `${whole.toString()}.${fraction}` : whole.toString();
+};
+
+const normalizeTokenDecimals = (decimals: number): number =>
+  Math.max(0, Math.min(30, Number.isFinite(decimals) ? Math.floor(decimals) : 0));
+
+const formatTokenAmount = (amount: bigint, decimals: number, precision = 6): string => {
+  const safeDecimals = normalizeTokenDecimals(decimals);
+  if (safeDecimals === 0) {
+    return amount.toString();
+  }
+
+  const base = 10n ** BigInt(safeDecimals);
+  const whole = amount / base;
+  const maxPrecision = Math.max(0, Math.min(18, Math.floor(precision)));
+  const fractionDigits = Math.min(safeDecimals, maxPrecision);
+  if (fractionDigits === 0) {
+    return whole.toString();
+  }
+
+  const fraction = (amount % base)
+    .toString()
+    .padStart(safeDecimals, '0')
+    .slice(0, fractionDigits)
+    .replace(/0+$/, '');
+  return fraction ? `${whole.toString()}.${fraction}` : whole.toString();
+};
+
+const parseTokenAmountInput = (raw: string, decimals: number): bigint | null => {
+  const normalized = raw.trim();
+  if (!normalized || normalized === '.') {
+    return null;
+  }
+  if (!/^\d+(\.\d+)?$/.test(normalized)) {
+    return null;
+  }
+
+  const safeDecimals = normalizeTokenDecimals(decimals);
+  const [wholeChunk, fractionChunk = ''] = normalized.split('.');
+  if (fractionChunk.length > safeDecimals) {
+    return null;
+  }
+
+  try {
+    const whole = BigInt(wholeChunk);
+    const scale = 10n ** BigInt(safeDecimals);
+    const paddedFraction = `${fractionChunk}${'0'.repeat(safeDecimals)}`.slice(0, safeDecimals);
+    const fraction = safeDecimals > 0 ? BigInt(paddedFraction || '0') : 0n;
+    return whole * scale + fraction;
+  } catch {
+    return null;
+  }
 };
 
 const parseTipNoticePayload = (text: string): { tipAmountWei: bigint; messageCount: number } | null => {
@@ -2497,6 +2618,7 @@ export default function App() {
     String(DEFAULT_GROUP_JOIN_CODE_MULTI_USES)
   );
   const [generatedGroupInviteCode, setGeneratedGroupInviteCode] = useState('');
+  const [generatedGroupJoinCodeHash, setGeneratedGroupJoinCodeHash] = useState('');
   const [groupJoinCodeInput, setGroupJoinCodeInput] = useState('');
   const [groupRenameOpen, setGroupRenameOpen] = useState(false);
   const [groupRenameInput, setGroupRenameInput] = useState('');
@@ -2511,6 +2633,7 @@ export default function App() {
   const unreadMapRef = useRef<Record<string, boolean>>({});
   const unreadGroupMapRef = useRef<Record<string, boolean>>({});
   const SOUND_ENABLED_STORAGE_KEY = 'coti-chat-sound-enabled';
+  const GROUP_REMOVAL_NOTICE_MARKERS_STORAGE_KEY = 'coti-chat-group-removal-notice-markers-v1';
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     try {
       const raw = typeof window !== 'undefined' ? localStorage.getItem(SOUND_ENABLED_STORAGE_KEY) : null;
@@ -2580,8 +2703,31 @@ export default function App() {
   const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
   const [requiredFeeWei, setRequiredFeeWei] = useState<bigint | null>(null);
   const [burnerBalanceWei, setBurnerBalanceWei] = useState<bigint | null>(null);
+  const [groupRequiredFeeWei, setGroupRequiredFeeWei] = useState<bigint | null>(null);
+  const [groupTokenFeeWei, setGroupTokenFeeWei] = useState<bigint | null>(null);
+  const [groupRewardsContractAddress, setGroupRewardsContractAddress] = useState('');
+  const [groupRewardsPaused, setGroupRewardsPaused] = useState<boolean | null>(null);
+  const [rewardsContractPaused, setRewardsContractPaused] = useState<boolean | null>(null);
+  const [rewardsCallerAllowed, setRewardsCallerAllowed] = useState<boolean | null>(null);
+  const [rewardsPublicPerInteractionWei, setRewardsPublicPerInteractionWei] = useState<bigint | null>(null);
+  const [rewardsPublicReserveWei, setRewardsPublicReserveWei] = useState<bigint | null>(null);
+  const [rewardTokenBalanceWei, setRewardTokenBalanceWei] = useState<bigint | null>(null);
+  const [privateRewardTokenBalanceWei, setPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
+  const [rewardTokenSymbol, setRewardTokenSymbol] = useState(FALLBACK_REWARD_TOKEN_SYMBOL);
+  const [privateRewardTokenSymbol, setPrivateRewardTokenSymbol] = useState(FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL);
+  const [rewardTokenDecimals, setRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
+  const [privateRewardTokenDecimals, setPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
+  const [swapFeeWei, setSwapFeeWei] = useState<bigint | null>(null);
+  const [swapTokenFeeAmount, setSwapTokenFeeAmount] = useState<bigint | null>(null);
+  const [groupFeeModeSelection, setGroupFeeModeSelection] = useState<GroupFeeModeSelection>('coti');
+  const [swapFeeModeSelection, setSwapFeeModeSelection] = useState<SwapFeeModeSelection>('coti');
+  const [swapDirection, setSwapDirection] = useState<SwapDirection>('shield');
+  const [swapAmountInput, setSwapAmountInput] = useState('');
+  const [swappingTokens, setSwappingTokens] = useState(false);
+  const [swapStatusMessage, setSwapStatusMessage] = useState('');
   const [topUpMultiplier, setTopUpMultiplier] = useState(0);
   const [loadingTopUpQuote, setLoadingTopUpQuote] = useState(false);
+  const [loadingRewardBalances, setLoadingRewardBalances] = useState(false);
   const [topUpMetricsNonce, setTopUpMetricsNonce] = useState(0);
   const [tipping, setTipping] = useState(false);
   const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
@@ -2614,6 +2760,7 @@ export default function App() {
   const chatComposerRef = useRef<HTMLDivElement | null>(null);
   const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const copyFeedbackTimeoutRef = useRef<number | null>(null);
+  const groupRemovalNoticeTimeoutRef = useRef<number | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const previousActiveContactForScrollRef = useRef<string | null>(null);
   const previousLastMessageIdForScrollRef = useRef<string | null>(null);
@@ -2772,6 +2919,8 @@ export default function App() {
   const requiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const groupRequiredFeeCacheRef = useRef<bigint | null>(null);
   const groupRequiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
+  const groupTokenFeeCacheRef = useRef<bigint | null>(null);
+  const groupTokenFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const nicknameMaxBytesRequestRef = useRef<Promise<number> | null>(null);
   const nicknameMaxBytesLoadedRef = useRef(false);
   const submitSelectorRef = useRef<string | null>(null);
@@ -2791,6 +2940,10 @@ export default function App() {
   const pendingGroupSyncOptionsRef = useRef<SyncGroupOptions | null>(null);
   const groupOverviewLastSyncedBlockRef = useRef<Record<string, number>>({});
   const groupMessageLastSyncedBlockRef = useRef<Record<string, number>>({});
+  const groupRemovalNoticeSeenRef = useRef<Record<string, Set<number>>>({});
+  const groupRemovalNoticeMarkersRef = useRef<Record<string, Record<string, string>>>({});
+  const groupRemovalNoticeMarkersLoadedRef = useRef(false);
+  const conversationDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const groupsRef = useRef<GroupSummary[]>([]);
   const groupInvitesRef = useRef<GroupInvite[]>([]);
   const activeGroupIdRef = useRef<number | null>(null);
@@ -2812,6 +2965,7 @@ export default function App() {
   }, [activeGroupId]);
   useEffect(() => {
     setGeneratedGroupInviteCode('');
+    setGeneratedGroupJoinCodeHash('');
   }, [activeGroupId, walletAddress]);
   useEffect(() => {
     setGroupRenameOpen(false);
@@ -3154,10 +3308,126 @@ export default function App() {
 
     return burnerBalanceWei / requiredFeeWei;
   }, [requiredFeeWei, burnerBalanceWei]);
+  const selectedGroupFeeLabel = useMemo(() => {
+    if (groupFeeModeSelection === 'token') {
+      if (groupTokenFeeWei === null) {
+        return `${rewardTokenSymbol} fee: --`;
+      }
+      return `${rewardTokenSymbol} fee: ${formatTokenAmount(groupTokenFeeWei, rewardTokenDecimals, 4)}`;
+    }
+
+    if (groupRequiredFeeWei === null) {
+      return 'COTI fee: --';
+    }
+    return `COTI fee: ${formatCotiAmount(groupRequiredFeeWei)}`;
+  }, [groupFeeModeSelection, groupTokenFeeWei, groupRequiredFeeWei, rewardTokenSymbol, rewardTokenDecimals]);
+  const parsedSwapAmount = useMemo(
+    () => parseTokenAmountInput(swapAmountInput, rewardTokenDecimals),
+    [swapAmountInput, rewardTokenDecimals]
+  );
+  const topUpAmountLabel = useMemo(() => {
+    if (loadingTopUpQuote) {
+      return 'Calculating...';
+    }
+    if (topUpAmountWei !== null) {
+      return `${formatCotiAmount(topUpAmountWei)} COTI`;
+    }
+    return '--';
+  }, [loadingTopUpQuote, topUpAmountWei]);
   const tipMessagesCount = Math.max(0, Math.floor(topUpMultiplier));
   const tipMessagesLabel = `${tipMessagesCount} ${tipMessagesCount === 1 ? 'msg' : 'msgs'}`;
   const isStatusConnected = useMemo(() => /^connected/i.test(status.trim()), [status]);
   const isAesConnected = useMemo(() => onboardStatus === 'AES key ready', [onboardStatus]);
+  const rewardPublicTokenCopyKey = `reward-token-address:${REWARD_TOKEN_ADDRESS.toLowerCase()}`;
+  const rewardPrivateTokenCopyKey = `reward-token-address:${PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()}`;
+  const rewardsConfigured = Boolean(groupRewardsContractAddress);
+  const rewardsEnabled =
+    groupRewardsPaused === false && rewardsContractPaused === false && rewardsCallerAllowed === true;
+  const rewardsIndicatorLabel = !rewardsConfigured
+    ? 'Rewards not configured on-chain.'
+    : groupRewardsPaused === true
+      ? 'Rewards paused by group contract.'
+      : rewardsContractPaused === true
+        ? 'Rewards paused by rewards contract.'
+        : rewardsCallerAllowed === false
+          ? 'Group contract is not allowed in rewards contract.'
+          : rewardsEnabled
+            ? 'Rewards enabled.'
+            : 'Rewards configured.';
+
+  const ensureGroupRemovalNoticeMarkersLoaded = (): void => {
+    if (groupRemovalNoticeMarkersLoadedRef.current) {
+      return;
+    }
+    groupRemovalNoticeMarkersLoadedRef.current = true;
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(GROUP_REMOVAL_NOTICE_MARKERS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return;
+      }
+
+      const normalized: Record<string, Record<string, string>> = {};
+      for (const [walletKey, markerMap] of Object.entries(parsed)) {
+        if (!isWalletAddress(walletKey) || !markerMap || typeof markerMap !== 'object' || Array.isArray(markerMap)) {
+          continue;
+        }
+        const nextMarkerMap: Record<string, string> = {};
+        for (const [groupId, marker] of Object.entries(markerMap)) {
+          if (!/^\d+$/.test(groupId) || typeof marker !== 'string' || marker.length === 0) {
+            continue;
+          }
+          nextMarkerMap[groupId] = marker;
+        }
+        if (Object.keys(nextMarkerMap).length > 0) {
+          normalized[walletKey] = nextMarkerMap;
+        }
+      }
+      groupRemovalNoticeMarkersRef.current = normalized;
+    } catch {
+    }
+  };
+
+  const getStoredGroupRemovalNoticeMarker = (walletKey: string, groupId: number): string | undefined => {
+    ensureGroupRemovalNoticeMarkersLoaded();
+    return groupRemovalNoticeMarkersRef.current[walletKey]?.[String(groupId)];
+  };
+
+  const setStoredGroupRemovalNoticeMarker = (walletKey: string, groupId: number, marker: string): void => {
+    ensureGroupRemovalNoticeMarkersLoaded();
+    const walletMarkers =
+      groupRemovalNoticeMarkersRef.current[walletKey] ??
+      (groupRemovalNoticeMarkersRef.current[walletKey] = {});
+    walletMarkers[String(groupId)] = marker;
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        GROUP_REMOVAL_NOTICE_MARKERS_STORAGE_KEY,
+        JSON.stringify(groupRemovalNoticeMarkersRef.current)
+      );
+    } catch {
+    }
+  };
+
+  const showGroupRemovalNotice = useCallback((message: string) => {
+    setError(message);
+    if (groupRemovalNoticeTimeoutRef.current !== null) {
+      window.clearTimeout(groupRemovalNoticeTimeoutRef.current);
+    }
+
+    groupRemovalNoticeTimeoutRef.current = window.setTimeout(() => {
+      groupRemovalNoticeTimeoutRef.current = null;
+      setError((previous) => (previous === message ? '' : previous));
+    }, GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS);
+  }, []);
 
   const setConnectedProvider = (provider: Eip1193Provider | null) => {
     activeProviderRef.current = provider;
@@ -3382,24 +3652,24 @@ export default function App() {
       setPendingSensitiveAction(null);
       setBurnerPinInput('');
       const connectedAddress = burnerWallet.address;
-      void (async () => {
-        try {
-          setMyNickname(await loadMyNicknameFromChain(connectedAddress));
-          await restoreStateFromChainSelfBackupWithRetry(connectedAddress, 4, 900);
-          await syncConversationHistoryRef.current({
-            contactsOnly: true,
-            previewPerContact: true,
-            updateHead: true,
-            background: true
-          });
-          await syncConversationHistoryRef.current({ deep: true, background: true });
-          await restoreStateFromChainSelfBackupWithRetry(connectedAddress, 4, 900);
-        } catch {
-          // Post-onboarding sync failures should not block a successful burner unlock.
-        } finally {
-          runPostConnectDataSyncUntilApplied(connectedAddress).catch(() => {});
-        }
-      })();
+      const connectedWalletKey = connectedAddress.toLowerCase();
+      window.setTimeout(() => {
+        void (async () => {
+          try {
+            const nickname = await loadMyNicknameFromChain(connectedAddress);
+            if (currentWalletKeyRef.current !== connectedWalletKey) {
+              return;
+            }
+            setMyNickname(nickname);
+          } catch {
+            // Post-onboarding sync failures should not block a successful burner unlock.
+          } finally {
+            if (currentWalletKeyRef.current === connectedWalletKey) {
+              runPostConnectDataSyncUntilApplied(connectedAddress).catch(() => {});
+            }
+          }
+        })();
+      }, 0);
       return 'connected';
     } catch (burnerError) {
       if (aesOnboardingComplete) {
@@ -3560,11 +3830,15 @@ export default function App() {
       }
 
       // Ensure UI updates (contacts/nicknames) after import/connect by
-      // performing a delayed re-sync. This avoids the need for a manual
-      // refresh in some environments where state updates race.
+      // performing a delayed lightweight refresh after wallet state settles.
       setTimeout(() => {
         try {
-          syncConversationHistoryRef.current({ deep: true }).catch(() => {});
+          syncConversationHistoryRef.current({
+            contactsOnly: true,
+            previewPerContact: true,
+            updateHead: true,
+            background: true
+          }).catch(() => {});
         } catch {}
       }, 300);
 
@@ -3664,6 +3938,218 @@ export default function App() {
       const message = getProviderErrorMessage(fundError, 'Failed to top up burner wallet.');
       setError(message);
       setStatus('Burner needs funding');
+    }
+  };
+
+  const swapRewardTokens = async () => {
+    setError('');
+    setSwapStatusMessage('');
+
+    const requestedWalletAddress = walletAddress.trim();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
+      setError('Connect a wallet first.');
+      return;
+    }
+    if (!onCotiNetwork) {
+      setError('Switch to the COTI network first.');
+      return;
+    }
+
+    const amount = parseTokenAmountInput(swapAmountInput, rewardTokenDecimals);
+    if (amount === null || amount <= 0n) {
+      setError(`Enter a valid ${rewardTokenSymbol} amount.`);
+      return;
+    }
+    const selectedSwapPaymentMode = swapFeeModeSelection === 'coti' ? 1 : 0;
+    if (swapDirection === 'unshield') {
+      if (privateRewardTokenBalanceWei === null) {
+        setError(`Unable to read ${privateRewardTokenSymbol} balance. Wait for balances to load and try again.`);
+        return;
+      }
+      if (privateRewardTokenBalanceWei < amount) {
+        setError(
+          `Insufficient ${privateRewardTokenSymbol} balance. Available ${formatTokenAmount(
+            privateRewardTokenBalanceWei,
+            privateRewardTokenDecimals,
+            6
+          )}, requested ${formatTokenAmount(amount, privateRewardTokenDecimals, 6)}.`
+        );
+        return;
+      }
+    }
+
+    try {
+      setSwappingTokens(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const swapContract = new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, signer);
+      const publicTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, signer);
+
+      const [resolvedSwapFeeWei, resolvedSwapTokenFee] = (await Promise.all([
+        swapFeeWei !== null ? Promise.resolve(swapFeeWei) : swapContract.swapFeeWei(),
+        swapTokenFeeAmount !== null ? Promise.resolve(swapTokenFeeAmount) : swapContract.getTokenFeeAmount()
+      ])) as [bigint, bigint];
+      setSwapFeeWei(resolvedSwapFeeWei);
+      setSwapTokenFeeAmount(resolvedSwapTokenFee);
+
+      let swapPaymentMode = selectedSwapPaymentMode;
+      let usedAutoCotiMode = false;
+      if (
+        swapDirection === 'unshield' &&
+        swapPaymentMode === 0 &&
+        privateRewardTokenBalanceWei !== null &&
+        resolvedSwapTokenFee > 0n
+      ) {
+        // If amount is greater than (private balance - token fee), switch to COTI mode
+        // so the swap can use native fee directly.
+        if (privateRewardTokenBalanceWei >= resolvedSwapTokenFee) {
+          const maxUnshieldAfterPrivateFee = privateRewardTokenBalanceWei - resolvedSwapTokenFee;
+          if (amount > maxUnshieldAfterPrivateFee) {
+            swapPaymentMode = 1;
+            usedAutoCotiMode = true;
+          }
+        }
+      }
+
+      let txReceipt:
+        | {
+            logs?: Array<{ topics?: string[]; data?: string }>;
+          }
+        | null
+        | undefined;
+      if (swapDirection === 'shield') {
+        // Token-preferred mode may collect a public fee fallback, while COTI mode only needs swap amount approval.
+        const requiredApproval = swapPaymentMode === 0 ? amount + resolvedSwapTokenFee : amount;
+        const allowance = (await publicTokenContract.allowance(
+          requestedWalletAddress,
+          SWAP_VAULT_CONTRACT_ADDRESS
+        )) as bigint;
+        if (allowance < requiredApproval) {
+          const approveTx = await publicTokenContract.approve(SWAP_VAULT_CONTRACT_ADDRESS, requiredApproval);
+          await approveTx.wait();
+        }
+      }
+
+      const canExecuteWithZeroValue =
+        swapPaymentMode === 0 &&
+        (await (async (): Promise<boolean> => {
+          try {
+            if (swapDirection === 'shield') {
+              await swapContract.shieldWithMode.estimateGas(amount, swapPaymentMode, { value: 0n });
+            } else {
+              await swapContract.unshieldWithMode.estimateGas(amount, swapPaymentMode, { value: 0n });
+            }
+            return true;
+          } catch {
+            return false;
+          }
+        })());
+
+      const executeSwapTx = async (value: bigint) => {
+        if (swapDirection === 'shield') {
+          const tx = await swapContract.shieldWithMode(amount, swapPaymentMode, { value });
+          return tx.wait();
+        }
+        const tx = await swapContract.unshieldWithMode(amount, swapPaymentMode, { value });
+        return tx.wait();
+      };
+
+      const initialTxValue =
+        swapPaymentMode === 1 ? resolvedSwapFeeWei : canExecuteWithZeroValue ? 0n : resolvedSwapFeeWei;
+      let usedNativeFallbackRetry = false;
+      try {
+        txReceipt = await executeSwapTx(initialTxValue);
+      } catch (initialSwapError) {
+        const canRetryWithNativeFee =
+          swapPaymentMode === 0 &&
+          initialTxValue === 0n &&
+          resolvedSwapFeeWei > 0n &&
+          !isProviderActionRejected(initialSwapError);
+        if (!canRetryWithNativeFee) {
+          throw initialSwapError;
+        }
+
+        usedNativeFallbackRetry = true;
+        txReceipt = await executeSwapTx(resolvedSwapFeeWei);
+      }
+
+      let feePaidMethod: 'native' | 'public' | 'private' | null = null;
+      let feePaidAmount: bigint | null = null;
+      if (txReceipt?.logs?.length) {
+        for (const receiptLog of txReceipt.logs) {
+          if (!Array.isArray(receiptLog.topics) || typeof receiptLog.data !== 'string') {
+            continue;
+          }
+          try {
+            const parsedLog = swapContract.interface.parseLog({
+              topics: receiptLog.topics,
+              data: receiptLog.data
+            });
+            if (!parsedLog || parsedLog.name !== 'SwapFeePaid') {
+              continue;
+            }
+            const rawMethod = parsedLog.args[2];
+            const rawAmount = parsedLog.args[3];
+            const methodValue =
+              typeof rawMethod === 'bigint'
+                ? Number(rawMethod)
+                : typeof rawMethod === 'number'
+                  ? rawMethod
+                  : Number(rawMethod);
+            feePaidMethod =
+              methodValue === 0
+                ? 'native'
+                : methodValue === 1
+                  ? 'public'
+                  : methodValue === 2
+                    ? 'private'
+                    : null;
+            feePaidAmount =
+              typeof rawAmount === 'bigint'
+                ? rawAmount
+                : /^\d+$/.test(String(rawAmount).trim())
+                  ? BigInt(String(rawAmount).trim())
+                  : null;
+            break;
+          } catch {
+          }
+        }
+      }
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      setSwapAmountInput('');
+      setTopUpMetricsNonce((previous) => previous + 1);
+      const swapDirectionStatus = swapDirection === 'shield' ? 'Swapped to private token.' : 'Swapped to public token.';
+      const feeStatus =
+        feePaidMethod === 'native'
+          ? feePaidAmount !== null
+            ? ` Fee paid with COTI (${formatCotiAmount(feePaidAmount)} COTI).`
+            : ' Fee paid with COTI.'
+          : feePaidMethod === 'public'
+            ? feePaidAmount !== null
+              ? ` Fee paid with ${rewardTokenSymbol} (${formatTokenAmount(feePaidAmount, rewardTokenDecimals, 6)} ${rewardTokenSymbol}).`
+              : ` Fee paid with ${rewardTokenSymbol}.`
+              : feePaidMethod === 'private'
+                ? feePaidAmount !== null
+                  ? ` Fee paid with ${privateRewardTokenSymbol} (${formatTokenAmount(feePaidAmount, privateRewardTokenDecimals, 6)} ${privateRewardTokenSymbol}).`
+                  : ` Fee paid with ${privateRewardTokenSymbol}.`
+                : '';
+      const fallbackStatus = usedNativeFallbackRetry ? ' Used COTI fee fallback after token/private fee attempt failed.' : '';
+      const autoModeStatus = usedAutoCotiMode
+        ? ` Auto-switched fee mode to COTI because amount exceeded ${privateRewardTokenSymbol} balance minus token fee.`
+        : '';
+      setSwapStatusMessage(`${swapDirectionStatus}${feeStatus}${fallbackStatus}${autoModeStatus}`);
+    } catch (swapError) {
+      const message = getProviderErrorMessage(swapError, 'Swap failed.');
+      setError(message);
+      setSwapStatusMessage('');
+    } finally {
+      setSwappingTokens(false);
     }
   };
 
@@ -4199,16 +4685,24 @@ export default function App() {
       const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
       setChainId(normalizeChainId(currentChain));
       setStatus('Connected (MetaMask)');
-      setMyNickname(await loadMyNicknameFromChain(selected));
-      await restoreStateFromChainSelfBackupWithRetry(selected, 4, 900);
-      await syncConversationHistory({
-        contactsOnly: true,
-        previewPerContact: true,
-        updateHead: true
-      });
-      await syncConversationHistory({ deep: true });
-      await restoreStateFromChainSelfBackupWithRetry(selected, 4, 900);
-      runPostConnectDataSyncUntilApplied(selected).catch(() => {});
+      const selectedWalletKey = selected.toLowerCase();
+      window.setTimeout(() => {
+        void (async () => {
+          try {
+            const nickname = await loadMyNicknameFromChain(selected);
+            if (currentWalletKeyRef.current !== selectedWalletKey) {
+              return;
+            }
+            setMyNickname(nickname);
+          } catch {
+            // Post-connect sync should not block successful connection.
+          } finally {
+            if (currentWalletKeyRef.current === selectedWalletKey) {
+              runPostConnectDataSyncUntilApplied(selected).catch(() => {});
+            }
+          }
+        })();
+      }, 0);
     } catch (connectionError) {
       const message = getProviderErrorMessage(connectionError, 'Failed to connect wallet.');
       setError(message);
@@ -4355,9 +4849,9 @@ export default function App() {
     }
 
     const cotiEthers = await loadCotiEthersModule();
-    const selector = new cotiEthers.Interface(GROUP_CHAT_CONTRACT_ABI).getFunction('submitGroupMessage')?.selector;
+    const selector = new cotiEthers.Interface(GROUP_CHAT_CONTRACT_ABI).getFunction('submitGroupMessageWithMode')?.selector;
     if (!selector) {
-      throw new Error('Unable to resolve group submit selector.');
+      throw new Error('Unable to resolve group submit selector for fee mode.');
     }
 
     groupSubmitSelectorRef.current = selector;
@@ -4395,6 +4889,7 @@ export default function App() {
 
   const resolveRequiredFeeForGroupSend = async (): Promise<bigint> => {
     if (groupRequiredFeeCacheRef.current !== null && groupRequiredFeeCacheRef.current > 0n) {
+      setGroupRequiredFeeWei(groupRequiredFeeCacheRef.current);
       return groupRequiredFeeCacheRef.current;
     }
 
@@ -4405,6 +4900,7 @@ export default function App() {
         const readContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
         const resolvedFee = (await readContract.feeAmount()) as bigint;
         groupRequiredFeeCacheRef.current = resolvedFee;
+        setGroupRequiredFeeWei(resolvedFee);
         return resolvedFee;
       })();
     }
@@ -4413,6 +4909,98 @@ export default function App() {
       return await groupRequiredFeeRequestRef.current;
     } finally {
       groupRequiredFeeRequestRef.current = null;
+    }
+  };
+
+  const resolveRequiredTokenFeeForGroupSend = async (): Promise<bigint> => {
+    if (groupTokenFeeCacheRef.current !== null) {
+      setGroupTokenFeeWei(groupTokenFeeCacheRef.current);
+      return groupTokenFeeCacheRef.current;
+    }
+
+    if (!groupTokenFeeRequestRef.current) {
+      groupTokenFeeRequestRef.current = (async () => {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const readContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+        const resolvedFee = (await readContract.tokenFeeAmount()) as bigint;
+        groupTokenFeeCacheRef.current = resolvedFee;
+        setGroupTokenFeeWei(resolvedFee);
+        return resolvedFee;
+      })();
+    }
+
+    try {
+      return await groupTokenFeeRequestRef.current;
+    } finally {
+      groupTokenFeeRequestRef.current = null;
+    }
+  };
+
+  const ensureGroupTokenFeeAllowance = async (
+    signer: Wallet | JsonRpcSigner,
+    ownerAddress: string,
+    tokenFeeAmount: bigint
+  ): Promise<void> => {
+    if (tokenFeeAmount <= 0n) {
+      return;
+    }
+
+    // If private balance can already cover fee, no public-token approval is needed.
+    if (privateRewardTokenBalanceWei !== null && privateRewardTokenBalanceWei >= tokenFeeAmount) {
+      return;
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+    const publicFeeTokenRaw = await groupContract.publicFeeToken().catch(() => null);
+    const publicFeeTokenAddress =
+      typeof publicFeeTokenRaw === 'string' && isWalletAddress(publicFeeTokenRaw)
+        ? publicFeeTokenRaw
+        : REWARD_TOKEN_ADDRESS;
+    const publicFeeTokenContract = new cotiEthers.Contract(publicFeeTokenAddress, ERC20_TOKEN_ABI, signer);
+    const allowanceRaw = await publicFeeTokenContract
+      .allowance(ownerAddress, GROUP_CHAT_CONTRACT_ADDRESS)
+      .catch(() => null);
+    const allowance = typeof allowanceRaw === 'bigint' ? allowanceRaw : 0n;
+    if (allowance >= tokenFeeAmount) {
+      return;
+    }
+
+    const approveTx = await publicFeeTokenContract.approve(GROUP_CHAT_CONTRACT_ADDRESS, MAX_ERC20_APPROVAL);
+    await approveTx.wait();
+  };
+
+  const resolveGroupSubmitGasLimit = async (
+    contract: unknown,
+    groupId: number,
+    memoTuple: unknown,
+    paymentMode: number,
+    requiredFee: bigint
+  ): Promise<bigint | null> => {
+    try {
+      const submitWithMode = (contract as { submitGroupMessageWithMode?: unknown }).submitGroupMessageWithMode as
+        | {
+            estimateGas?: (
+              groupIdArg: number,
+              memoTupleArg: unknown,
+              paymentModeArg: number,
+              overrides: { value: bigint }
+            ) => Promise<bigint>;
+          }
+        | undefined;
+      const estimated =
+        submitWithMode?.estimateGas &&
+        (await submitWithMode.estimateGas(groupId, memoTuple, paymentMode, {
+          value: requiredFee
+        }));
+      if (typeof estimated !== 'bigint' || estimated <= 0n) {
+        return null;
+      }
+      const padded = estimated + GROUP_SUBMIT_GAS_BUFFER;
+      return padded > GROUP_SUBMIT_GAS_LIMIT_MAX ? GROUP_SUBMIT_GAS_LIMIT_MAX : padded;
+    } catch {
+      return null;
     }
   };
 
@@ -4619,6 +5207,9 @@ export default function App() {
       const latestSelfConversationBlock = toSafeNumber(
         await contract.getLastBlockForConversation(targetAddress, targetAddress)
       );
+      if (latestSelfConversationBlock <= 0) {
+        return false;
+      }
 
       let latestPayload: StateBackupPayload | null = null;
       let latestPayloadBlockNumber: number | undefined;
@@ -4676,7 +5267,7 @@ export default function App() {
         await tryDecodeBackupLogs(headLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
       }
 
-      let windowEnd = latestBlock;
+      let windowEnd = Math.min(latestBlock, latestSelfConversationBlock);
       while (windowEnd >= 0 && !latestPayload) {
         const windowStart = Math.max(0, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
         const windowLogs = await contract.queryFilter(selfFilter, windowStart, windowEnd);
@@ -4706,26 +5297,6 @@ export default function App() {
     }
   };
 
-  const restoreStateFromChainSelfBackupWithRetry = async (
-    address?: string,
-    attempts = 3,
-    retryDelayMs = 800
-  ): Promise<boolean> => {
-    for (let attemptIndex = 0; attemptIndex < attempts; attemptIndex += 1) {
-      const restored = await restoreStateFromChainSelfBackup(address);
-      if (restored) {
-        return true;
-      }
-
-      if (attemptIndex < attempts - 1) {
-        await new Promise<void>((resolve) => {
-          window.setTimeout(resolve, retryDelayMs);
-        });
-      }
-    }
-    return false;
-  };
-
   const runPostConnectDataSyncUntilApplied = async (address: string): Promise<void> => {
     const targetAddress = address.trim().toLowerCase();
     if (!isWalletAddress(targetAddress)) {
@@ -4734,7 +5305,7 @@ export default function App() {
 
     const runId = ++postConnectDataSyncRunIdRef.current;
 
-    for (let attemptIndex = 0; attemptIndex < 10; attemptIndex += 1) {
+    for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
       if (runId !== postConnectDataSyncRunIdRef.current) {
         return;
       }
@@ -4743,13 +5314,17 @@ export default function App() {
         return;
       }
 
-      const restored = await restoreStateFromChainSelfBackupWithRetry(targetAddress, 3, 700);
+      if (normalizeLastReadAllTs(lastReadAllTsRef.current) > 0) {
+        return;
+      }
+
+      const restored = await restoreStateFromChainSelfBackup(targetAddress);
       if (restored) {
         return;
       }
 
       await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, 1200);
+        window.setTimeout(resolve, 1500);
       });
     }
   };
@@ -6037,12 +6612,15 @@ export default function App() {
 
       const overviewLastSyncedBlock = groupOverviewLastSyncedBlockRef.current[walletKey];
       const fromBlock = options?.deep
-        ? 0
+        ? knownGroupIds.size > 0
+          ? 0
+          : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS)
         : typeof overviewLastSyncedBlock === 'number'
           ? overviewLastSyncedBlock + 1
-          : 0;
+          : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
       const toBlock = latestBlock;
       const removedGroupIdsForWallet = new Set<number>();
+      const removedGroupEventById = new Map<number, { blockNumber: number; logIndex: number; marker: string }>();
 
       if (fromBlock <= toBlock) {
         const [
@@ -6082,6 +6660,19 @@ export default function App() {
           const groupId = groupIdFromArgs(args?.groupId);
           if (groupId > 0) {
             removedGroupIdsForWallet.add(groupId);
+            const nextEvent = {
+              blockNumber: log.blockNumber,
+              logIndex: log.index,
+              marker: `${log.blockNumber}:${log.index}:${log.transactionHash.toLowerCase()}`
+            };
+            const existingEvent = removedGroupEventById.get(groupId);
+            if (
+              !existingEvent ||
+              nextEvent.blockNumber > existingEvent.blockNumber ||
+              (nextEvent.blockNumber === existingEvent.blockNumber && nextEvent.logIndex > existingEvent.logIndex)
+            ) {
+              removedGroupEventById.set(groupId, nextEvent);
+            }
           }
         }
 
@@ -6267,15 +6858,36 @@ export default function App() {
       const previousGroups = groupsRef.current;
       const nextGroupIdSet = new Set(nextGroups.map((group) => group.id));
       const removedGroupsForWallet = previousGroups.filter((group) => !nextGroupIdSet.has(group.id));
-      const removedNowGroupIds = Array.from(removedGroupIdsForWallet).filter((groupId) => !nextGroupIdSet.has(groupId));
+      const removalNoticeSeenGroupIds =
+        groupRemovalNoticeSeenRef.current[walletKey] ??
+        (groupRemovalNoticeSeenRef.current[walletKey] = new Set<number>());
+      const removedNowGroupIds = Array.from(removedGroupIdsForWallet).filter(
+        (groupId) => {
+          if (nextGroupIdSet.has(groupId) || removalNoticeSeenGroupIds.has(groupId)) {
+            return false;
+          }
+          const eventMarker = removedGroupEventById.get(groupId)?.marker;
+          if (!eventMarker) {
+            return true;
+          }
+          return getStoredGroupRemovalNoticeMarker(walletKey, groupId) !== eventMarker;
+        }
+      );
       if (removedNowGroupIds.length > 0) {
+        for (const groupId of removedNowGroupIds) {
+          removalNoticeSeenGroupIds.add(groupId);
+          const eventMarker = removedGroupEventById.get(groupId)?.marker;
+          if (eventMarker) {
+            setStoredGroupRemovalNoticeMarker(walletKey, groupId, eventMarker);
+          }
+        }
         const removedGroupLabel = removedNowGroupIds
           .map((groupId) => {
             const previousGroup = previousGroups.find((group) => group.id === groupId);
             return previousGroup ? `${previousGroup.title} (#${previousGroup.id})` : `Group #${groupId}`;
           })
           .join(', ');
-        setError(
+        showGroupRemovalNotice(
           removedNowGroupIds.length === 1
             ? `You were removed from ${removedGroupLabel}.`
             : `You were removed from these groups: ${removedGroupLabel}.`
@@ -6627,17 +7239,25 @@ export default function App() {
         const groupKey = String(group.id);
         const localMessages = messagesByGroup[groupKey] ?? [];
         let latestIncomingFromLocal = latestIncomingByGroup.get(groupKey) ?? 0;
+        let latestOutgoingFromLocal = 0;
         for (const message of localMessages) {
-          if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
+          if (typeof message.timestamp !== 'number') {
             continue;
           }
           const ts = Number(message.timestamp);
-          if (ts > latestIncomingFromLocal) {
+          if (message.direction === 'incoming' && ts > latestIncomingFromLocal) {
             latestIncomingFromLocal = ts;
+          } else if (message.direction === 'outgoing' && ts > latestOutgoingFromLocal) {
+            latestOutgoingFromLocal = ts;
           }
         }
 
-        const latestMessageTs = Math.max(toSafeNumber(group.lastTimestamp), latestIncomingFromLocal);
+        // Group summary lastTimestamp advances for any activity (including my own outgoing messages).
+        // Treat it as incoming only when it is newer than known local outgoing timestamps.
+        const summaryLastTimestamp = toSafeNumber(group.lastTimestamp);
+        const latestIncomingFromSummary =
+          summaryLastTimestamp > latestOutgoingFromLocal ? summaryLastTimestamp : 0;
+        const latestMessageTs = Math.max(latestIncomingFromLocal, latestIncomingFromSummary);
         if (groupKey === activeGroupKey && pageVisible && latestMessageTs > 0) {
           const existingReadTs = nextReadByGroup[groupKey] ?? 0;
           if (latestMessageTs > existingReadTs) {
@@ -6796,6 +7416,12 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const inviteTtlMaxRaw = await contract.INVITE_TTL_MAX().catch(() => null);
+      const inviteTtlMax = toSafeNumber(inviteTtlMaxRaw);
+      if (inviteTtlMax > 0 && ttlParsed > inviteTtlMax) {
+        setError(`Invite TTL exceeds on-chain max (${Math.floor(inviteTtlMax / 3600)}h).`);
+        return;
+      }
       const tx = await contract.inviteMembers(activeGroupId, accounts, ttlParsed);
       await tx.wait();
 
@@ -6808,7 +7434,7 @@ export default function App() {
       setGroupInviteMembersInput('');
       await syncGroupData({ deep: true });
     } catch (inviteError) {
-      const message = inviteError instanceof Error ? inviteError.message : 'Failed to send invites.';
+      const message = getGroupActionErrorMessage(inviteError, 'Failed to send invites.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
@@ -6842,6 +7468,12 @@ export default function App() {
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
       const codeHash = cotiEthers.keccak256(cotiEthers.toUtf8Bytes(code));
+      const joinCodeTtlMaxRaw = await contract.JOIN_CODE_TTL_MAX().catch(() => null);
+      const joinCodeTtlMax = toSafeNumber(joinCodeTtlMaxRaw);
+      if (joinCodeTtlMax > 0 && ttlSeconds > joinCodeTtlMax) {
+        setError(`Join-code TTL exceeds on-chain max (${Math.floor(joinCodeTtlMax / 3600)}h).`);
+        return;
+      }
       let maxUses = DEFAULT_GROUP_JOIN_CODE_MAX_USES;
       if (groupJoinCodeMode === 'multi') {
         const requestedMultiUses = Math.floor(Number(groupJoinCodeMaxUsesInput));
@@ -6885,6 +7517,7 @@ export default function App() {
         inviter: isWalletAddress(inviterAddress) ? inviterAddress : undefined
       };
       setGeneratedGroupInviteCode(encodeGroupInviteCode(payload));
+      setGeneratedGroupJoinCodeHash(codeHash);
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -6894,7 +7527,53 @@ export default function App() {
 
       await syncGroupData({ background: true });
     } catch (joinCodeError) {
-      const message = joinCodeError instanceof Error ? joinCodeError.message : 'Failed to create join code.';
+      const message = getGroupActionErrorMessage(joinCodeError, 'Failed to create join code.');
+      setError(message);
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  };
+
+  const revokeGeneratedJoinCodeForActiveGroup = async () => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can revoke join codes.');
+      return;
+    }
+    if (!/^0x[a-fA-F0-9]{64}$/.test(generatedGroupJoinCodeHash)) {
+      setError('No generated join code is available to revoke in this session.');
+      return;
+    }
+
+    const confirmationMessage = 'Revoke the currently generated join code? Members will no longer be able to join with it.';
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    try {
+      setProcessingGroupAction(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.revokeJoinCode(activeGroupId, generatedGroupJoinCodeHash);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      setGeneratedGroupInviteCode('');
+      setGeneratedGroupJoinCodeHash('');
+      await syncGroupData({ deep: true });
+    } catch (revokeError) {
+      const message = getGroupActionErrorMessage(revokeError, 'Failed to revoke join code.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
@@ -7146,14 +7825,13 @@ export default function App() {
       setError('Select a group first.');
       return;
     }
-    if (isActiveGroupAdmin) {
-      setError('Group admins cannot leave directly. Use Burn & Leave to transfer admin and exit.');
-      return;
-    }
 
     const groupId = activeGroupId;
     const groupLabel = `${activeGroupMeta?.title ?? 'Group'} (#${groupId})`;
-    if (!window.confirm(`Leave ${groupLabel}?`)) {
+    const leaveMessage = isActiveGroupAdmin
+      ? `Leave ${groupLabel} as admin?\n\nIf you are the only member, the group will be disbanded. Otherwise admin rights transfer to another member automatically.`
+      : `Leave ${groupLabel}?`;
+    if (!window.confirm(leaveMessage)) {
       return;
     }
 
@@ -7252,19 +7930,8 @@ export default function App() {
     }
 
     const groupId = activeGroupId;
-    const normalizedSelf = walletAddress.trim().toLowerCase();
-    const removableMembers = Array.from(
-      new Set(
-        (activeGroupMeta?.members ?? [])
-          .map((member) => String(member ?? '').trim())
-          .filter((member) => isWalletAddress(member) && member.toLowerCase() !== normalizedSelf)
-      )
-    );
-    if (removableMembers.length === 0) {
-      setError('You are the only member. Use Burn & Leave to transfer admin to the burn wallet and exit.');
-      return;
-    }
-    const confirmationMessage = `Disband this group? This will remove ${removableMembers.length} member(s). You will stay as admin because admins cannot leave directly on this contract.`;
+    const currentMemberCount = Math.max(0, activeGroupMeta?.memberCount ?? activeGroupMeta?.members.length ?? 0);
+    const confirmationMessage = `Disband this group now? This will permanently remove the group and all ${currentMemberCount} member records.`;
     if (!window.confirm(confirmationMessage)) {
       return;
     }
@@ -7274,17 +7941,20 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-
-      for (const memberAddress of removableMembers) {
-        const removeTx = await contract.removeMember(groupId, memberAddress);
-        await removeTx.wait();
-      }
+      const tx = await contract.disbandGroup(groupId);
+      await tx.wait();
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
         ...previous,
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
+
+      setGeneratedGroupInviteCode('');
+      setGeneratedGroupJoinCodeHash('');
+      if (activeGroupIdRef.current === groupId) {
+        setActiveGroupId(null);
+      }
       await syncGroupData({ deep: true });
     } catch (disbandError) {
       const message = getGroupActionErrorMessage(disbandError, 'Failed to disband group.');
@@ -7406,7 +8076,12 @@ export default function App() {
       const cotiEthers = await loadCotiEthersModule();
       const selector = await resolveGroupSubmitSelector();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-      const requiredFee = await resolveRequiredFeeForGroupSend();
+      const paymentMode = groupFeeModeSelection === 'token' ? 1 : 0;
+      const requiredFee = paymentMode === 0 ? await resolveRequiredFeeForGroupSend() : 0n;
+      if (paymentMode === 1) {
+        const requiredTokenFee = await resolveRequiredTokenFeeForGroupSend();
+        await ensureGroupTokenFeeAllowance(signer, requestedWalletAddress, requiredTokenFee);
+      }
 
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
@@ -7417,8 +8092,24 @@ export default function App() {
       const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
       const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
       const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
-
-      const tx = await contract.submitGroupMessage(groupId, memoTuple, { value: requiredFee });
+      const gasLimitOverride = await resolveGroupSubmitGasLimit(
+        contract,
+        groupId,
+        memoTuple,
+        paymentMode,
+        requiredFee
+      );
+      const tx = await contract.submitGroupMessageWithMode(
+        groupId,
+        memoTuple,
+        paymentMode,
+        gasLimitOverride !== null
+          ? {
+              value: requiredFee,
+              gasLimit: gasLimitOverride
+            }
+          : { value: requiredFee }
+      );
       const submittedTxHash = typeof tx?.hash === 'string' ? tx.hash : '';
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -7446,14 +8137,12 @@ export default function App() {
       setMessageInput('');
       setReplyingToMessage(null);
       await syncGroupData({ background: true });
-      if (activeSignerSource === 'burner') {
-        setTopUpMetricsNonce((previous) => previous + 1);
-      }
+      setTopUpMetricsNonce((previous) => previous + 1);
     } catch (sendError) {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
-      const message = sendError instanceof Error ? sendError.message : 'Failed to send group message.';
+      const message = getGroupActionErrorMessage(sendError, 'Failed to send group message.');
       setError(message);
       setMessagesByGroup((previous) => ({
         ...previous,
@@ -7524,9 +8213,7 @@ export default function App() {
         previewPerContact: true,
         updateHead: true
       }).catch(() => {});
-      if (activeSignerSource === 'burner') {
-        setTopUpMetricsNonce((previous) => previous + 1);
-      }
+      setTopUpMetricsNonce((previous) => previous + 1);
     } catch (syncError) {
       const message = syncError instanceof Error ? syncError.message : 'Failed to sync contact name alias.';
       setError(`Saved locally, but alias sync failed: ${message}`);
@@ -7617,12 +8304,27 @@ export default function App() {
         const cotiEthers = await loadCotiEthersModule();
         const selector = await resolveGroupSubmitSelector();
         const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-        const requiredFee = await resolveRequiredFeeForGroupSend();
+        const paymentMode = groupFeeModeSelection === 'token' ? 1 : 0;
+        const requiredFee = paymentMode === 0 ? await resolveRequiredFeeForGroupSend() : 0n;
+        if (paymentMode === 1) {
+          const requiredTokenFee = await resolveRequiredTokenFeeForGroupSend();
+          await ensureGroupTokenFeeAllowance(signer, requestedWalletAddress, requiredTokenFee);
+        }
         const encodedMemo = encodeMemoPlaintext(reactionMemoText);
         const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
         const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
         const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
-        const tx = await contract.submitGroupMessage(threadGroupId, memoTuple, { value: requiredFee });
+        const gasLimitOverride = await resolveGroupSubmitGasLimit(
+          contract,
+          threadGroupId,
+          memoTuple,
+          paymentMode,
+          requiredFee
+        );
+        const tx = await contract.submitGroupMessageWithMode(threadGroupId, memoTuple, paymentMode, {
+          value: requiredFee,
+          ...(gasLimitOverride !== null ? { gasLimit: gasLimitOverride } : {})
+        });
         const submittedTxHash = typeof tx?.hash === 'string' ? tx.hash : '';
 
         if (currentWalletKeyRef.current !== requestedWalletKey) {
@@ -7714,7 +8416,12 @@ export default function App() {
         return;
       }
 
-      const message = reactionError instanceof Error ? reactionError.message : 'Failed to send reaction.';
+      const message =
+        threadGroupId !== null
+          ? getGroupActionErrorMessage(reactionError, 'Failed to send reaction.')
+          : reactionError instanceof Error
+            ? reactionError.message
+            : 'Failed to send reaction.';
       setError(message);
 
       if (threadGroupId !== null) {
@@ -7785,8 +8492,9 @@ export default function App() {
       setError('Select a contact first.');
       return;
     }
-    const requestedWalletKey = walletAddress.trim().toLowerCase();
-    if (!requestedWalletKey || !isWalletAddress(requestedWalletKey)) {
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
       setError('Connect a wallet first.');
       return;
     }
@@ -8095,6 +8803,7 @@ export default function App() {
     setActiveGroupId(null);
     setMessagesByGroup({});
     setGeneratedGroupInviteCode('');
+    setGeneratedGroupJoinCodeHash('');
     setGroupJoinCodeInput('');
     setGroupJoinCodeMode('single');
     setGroupJoinCodeMaxUsesInput(String(DEFAULT_GROUP_JOIN_CODE_MULTI_USES));
@@ -8103,9 +8812,27 @@ export default function App() {
     activeGroupIdRef.current = null;
     groupOverviewLastSyncedBlockRef.current = {};
     groupMessageLastSyncedBlockRef.current = {};
+    groupRemovalNoticeSeenRef.current = {};
+    conversationDeepBackfillDoneRef.current = {};
     groupRequiredFeeCacheRef.current = null;
     groupRequiredFeeRequestRef.current = null;
+    groupTokenFeeCacheRef.current = null;
+    groupTokenFeeRequestRef.current = null;
     groupSubmitSelectorRef.current = null;
+    setGroupRequiredFeeWei(null);
+    setGroupTokenFeeWei(null);
+    setGroupRewardsContractAddress('');
+    setGroupRewardsPaused(null);
+    setRewardsContractPaused(null);
+    setRewardsCallerAllowed(null);
+    setRewardsPublicPerInteractionWei(null);
+    setRewardsPublicReserveWei(null);
+    setRewardTokenBalanceWei(null);
+    setPrivateRewardTokenBalanceWei(null);
+    setSwapFeeWei(null);
+    setSwapTokenFeeAmount(null);
+    setSwapAmountInput('');
+    setGroupFeeModeSelection('coti');
   }, [walletAddress]);
 
   useEffect(() => {
@@ -8306,6 +9033,9 @@ export default function App() {
 
   useEffect(() => {
     return () => {
+      if (groupRemovalNoticeTimeoutRef.current !== null) {
+        window.clearTimeout(groupRemovalNoticeTimeoutRef.current);
+      }
       if (highlightTimeoutRef.current !== null) {
         window.clearTimeout(highlightTimeoutRef.current);
       }
@@ -8501,6 +9231,227 @@ export default function App() {
       cancelled = true;
     };
   }, [burnerAddress, topUpMultiplier, topUpMetricsNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestedWalletAddress = walletAddress.trim();
+
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress) || chainId !== COTI_NETWORK.chainIdDecimal) {
+      setRewardTokenBalanceWei(null);
+      setPrivateRewardTokenBalanceWei(null);
+      setGroupRequiredFeeWei(null);
+      setGroupTokenFeeWei(null);
+      setGroupRewardsContractAddress('');
+      setGroupRewardsPaused(null);
+      setRewardsContractPaused(null);
+      setRewardsCallerAllowed(null);
+      setRewardsPublicPerInteractionWei(null);
+      setRewardsPublicReserveWei(null);
+      setSwapFeeWei(null);
+      setSwapTokenFeeAmount(null);
+      setLoadingRewardBalances(false);
+      return;
+    }
+
+    const loadRewardBalances = async () => {
+      setLoadingRewardBalances(true);
+      try {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
+        const privateTokenContract = new cotiEthers.Contract(PRIVATE_REWARD_TOKEN_ADDRESS, PRIVATE_TOKEN_BALANCE_ABI, readProvider);
+        const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+        const swapVaultContract = new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, readProvider);
+        const privateTokenInterface = new cotiEthers.Interface(PRIVATE_TOKEN_BALANCE_ABI);
+
+        const [
+          rewardBalanceRaw,
+          rewardSymbolRaw,
+          rewardDecimalsRaw,
+          privateSymbolRaw,
+          privateDecimalsRaw,
+          groupNativeFeeRaw,
+          groupTokenFeeRaw,
+          rewardsContractRaw,
+          rewardsPausedRaw,
+          swapFeeRaw,
+          swapTokenFeeRaw
+        ] = await Promise.all([
+          rewardTokenContract.balanceOf(requestedWalletAddress).catch(() => null),
+          rewardTokenContract.symbol().catch(() => null),
+          rewardTokenContract.decimals().catch(() => null),
+          privateTokenContract.symbol().catch(() => null),
+          privateTokenContract.decimals().catch(() => null),
+          groupContract.feeAmount().catch(() => null),
+          groupContract.tokenFeeAmount().catch(() => null),
+          groupContract.rewardsContract().catch(() => null),
+          groupContract.rewardsPaused().catch(() => null),
+          swapVaultContract.swapFeeWei().catch(() => null),
+          swapVaultContract.getTokenFeeAmount().catch(() => null)
+        ]);
+
+        let privateBalanceWei: bigint | null = null;
+        if (hasAesReady) {
+          try {
+            const { signer, cacheKey } = await getMemoSigner();
+            let encryptedPrivateBalanceRaw: unknown = null;
+            try {
+              const privateBalanceByAddressCallData = privateTokenInterface.encodeFunctionData('balanceOf(address)', [
+                requestedWalletAddress
+              ]);
+              const privateBalanceByAddressRawResult = await readProvider.call({
+                to: PRIVATE_REWARD_TOKEN_ADDRESS,
+                from: requestedWalletAddress,
+                data: privateBalanceByAddressCallData
+              });
+              const decodedPrivateBalanceByAddress = privateTokenInterface.decodeFunctionResult(
+                'balanceOf(address)',
+                privateBalanceByAddressRawResult
+              );
+              encryptedPrivateBalanceRaw = decodedPrivateBalanceByAddress?.[0] ?? null;
+            } catch {
+              encryptedPrivateBalanceRaw = null;
+            }
+            if (encryptedPrivateBalanceRaw === null) {
+              // Fallback for older private token variants exposing user-bound balanceOf().
+              const privateBalanceCallData = privateTokenInterface.encodeFunctionData('balanceOf()', []);
+              const privateBalanceRawResult = await readProvider.call({
+                to: PRIVATE_REWARD_TOKEN_ADDRESS,
+                from: requestedWalletAddress,
+                data: privateBalanceCallData
+              });
+              const decodedPrivateBalance = privateTokenInterface.decodeFunctionResult('balanceOf()', privateBalanceRawResult);
+              encryptedPrivateBalanceRaw = decodedPrivateBalance?.[0] ?? null;
+            }
+            if (encryptedPrivateBalanceRaw !== null) {
+              const decrypted = await signer.decryptValue(encryptedPrivateBalanceRaw as never);
+              const decryptedAsBigint =
+                typeof decrypted === 'bigint'
+                  ? decrypted
+                  : /^\d+$/.test(String(decrypted).trim())
+                    ? BigInt(String(decrypted).trim())
+                    : null;
+              privateBalanceWei =
+                decryptedAsBigint !== null &&
+                decryptedAsBigint <= PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+                  ? decryptedAsBigint
+                  : null;
+            }
+
+            const nextOnboardInfo = signer.getUserOnboardInfo();
+            setSessionOnboardInfo((previous) => ({
+              ...previous,
+              [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+            }));
+          } catch {
+            privateBalanceWei = null;
+          }
+        }
+
+        const nextRewardBalance = typeof rewardBalanceRaw === 'bigint' ? rewardBalanceRaw : null;
+        const nextGroupNativeFee = typeof groupNativeFeeRaw === 'bigint' ? groupNativeFeeRaw : null;
+        const nextGroupTokenFee = typeof groupTokenFeeRaw === 'bigint' ? groupTokenFeeRaw : null;
+        const nextRewardsContractAddress =
+          typeof rewardsContractRaw === 'string' && isWalletAddress(rewardsContractRaw)
+            ? rewardsContractRaw
+            : '';
+        const nextRewardsPaused = typeof rewardsPausedRaw === 'boolean' ? rewardsPausedRaw : null;
+        let nextRewardsContractPaused: boolean | null = null;
+        let nextRewardsCallerAllowed: boolean | null = null;
+        let nextRewardsPublicPerInteractionWei: bigint | null = null;
+        let nextRewardsPublicReserveWei: bigint | null = null;
+        if (nextRewardsContractAddress) {
+          const rewardsContract = new cotiEthers.Contract(nextRewardsContractAddress, WHISPER_REWARDS_ABI, readProvider);
+          const [
+            rewardsContractPausedRaw,
+            rewardsCallerAllowedRaw,
+            rewardsPublicPerInteractionRaw,
+            rewardsPublicReserveRaw
+          ] = await Promise.all([
+            rewardsContract.paused().catch(() => null),
+            rewardsContract.allowedInteractionContracts(GROUP_CHAT_CONTRACT_ADDRESS).catch(() => null),
+            rewardsContract.publicRewardAmount().catch(() => null),
+            rewardTokenContract.balanceOf(nextRewardsContractAddress).catch(() => null)
+          ]);
+          nextRewardsContractPaused =
+            typeof rewardsContractPausedRaw === 'boolean' ? rewardsContractPausedRaw : null;
+          nextRewardsCallerAllowed =
+            typeof rewardsCallerAllowedRaw === 'boolean' ? rewardsCallerAllowedRaw : null;
+          nextRewardsPublicPerInteractionWei =
+            typeof rewardsPublicPerInteractionRaw === 'bigint' ? rewardsPublicPerInteractionRaw : null;
+          nextRewardsPublicReserveWei = typeof rewardsPublicReserveRaw === 'bigint' ? rewardsPublicReserveRaw : null;
+        }
+        const nextSwapFee = typeof swapFeeRaw === 'bigint' ? swapFeeRaw : null;
+        const nextSwapTokenFee = typeof swapTokenFeeRaw === 'bigint' ? swapTokenFeeRaw : null;
+        const resolvedRewardSymbol =
+          typeof rewardSymbolRaw === 'string' && rewardSymbolRaw.trim()
+            ? rewardSymbolRaw.trim().slice(0, 12)
+            : FALLBACK_REWARD_TOKEN_SYMBOL;
+        const resolvedPrivateSymbol =
+          typeof privateSymbolRaw === 'string' && privateSymbolRaw.trim()
+            ? privateSymbolRaw.trim().slice(0, 12)
+            : FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL;
+        const resolvedRewardDecimals =
+          typeof rewardDecimalsRaw === 'number' || typeof rewardDecimalsRaw === 'bigint'
+            ? normalizeTokenDecimals(Number(rewardDecimalsRaw))
+            : FALLBACK_REWARD_TOKEN_DECIMALS;
+        const resolvedPrivateDecimals =
+          typeof privateDecimalsRaw === 'number' || typeof privateDecimalsRaw === 'bigint'
+            ? normalizeTokenDecimals(Number(privateDecimalsRaw))
+            : FALLBACK_REWARD_TOKEN_DECIMALS;
+
+        if (!cancelled) {
+          setRewardTokenBalanceWei(nextRewardBalance);
+          setPrivateRewardTokenBalanceWei(privateBalanceWei);
+          setRewardTokenSymbol(resolvedRewardSymbol);
+          setPrivateRewardTokenSymbol(resolvedPrivateSymbol);
+          setRewardTokenDecimals(resolvedRewardDecimals);
+          setPrivateRewardTokenDecimals(resolvedPrivateDecimals);
+          setGroupRequiredFeeWei(nextGroupNativeFee);
+          setGroupTokenFeeWei(nextGroupTokenFee);
+          setGroupRewardsContractAddress(nextRewardsContractAddress);
+          setGroupRewardsPaused(nextRewardsPaused);
+          setRewardsContractPaused(nextRewardsContractPaused);
+          setRewardsCallerAllowed(nextRewardsCallerAllowed);
+          setRewardsPublicPerInteractionWei(nextRewardsPublicPerInteractionWei);
+          setRewardsPublicReserveWei(nextRewardsPublicReserveWei);
+          setSwapFeeWei(nextSwapFee);
+          setSwapTokenFeeAmount(nextSwapTokenFee);
+          if (nextGroupNativeFee !== null) {
+            groupRequiredFeeCacheRef.current = nextGroupNativeFee;
+          }
+          if (nextGroupTokenFee !== null) {
+            groupTokenFeeCacheRef.current = nextGroupTokenFee;
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setRewardTokenBalanceWei(null);
+          setPrivateRewardTokenBalanceWei(null);
+          setGroupRequiredFeeWei(null);
+          setGroupTokenFeeWei(null);
+          setGroupRewardsContractAddress('');
+          setGroupRewardsPaused(null);
+          setRewardsContractPaused(null);
+          setRewardsCallerAllowed(null);
+          setRewardsPublicPerInteractionWei(null);
+          setRewardsPublicReserveWei(null);
+          setSwapFeeWei(null);
+          setSwapTokenFeeAmount(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingRewardBalances(false);
+        }
+      }
+    };
+
+    loadRewardBalances().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, chainId, hasAesReady, topUpMetricsNonce]);
 
   useEffect(() => {
     requiredFeeCacheRef.current = requiredFeeWei;
@@ -8726,6 +9677,13 @@ export default function App() {
       previewPerContact: true,
       updateHead: true
     }).catch(() => {});
+    const walletKey = walletAddress.trim().toLowerCase();
+    if (isWalletAddress(walletKey) && !conversationDeepBackfillDoneRef.current[walletKey]) {
+      conversationDeepBackfillDoneRef.current[walletKey] = true;
+      syncConversationHistoryRef.current({ background: true, deep: true }).catch(() => {
+        delete conversationDeepBackfillDoneRef.current[walletKey];
+      });
+    }
     setupRealtimeSubscription().catch(() => {});
 
     return () => {
@@ -8949,7 +9907,10 @@ export default function App() {
       }
     };
 
-    syncGroupDataRef.current({ background: true, deep: true }).catch(() => {});
+    syncGroupDataRef.current({ background: true, overviewOnly: true }).catch(() => {});
+    if (groupsRef.current.length === 0 && groupInvitesRef.current.length === 0) {
+      syncGroupDataRef.current({ background: true, deep: true, overviewOnly: true }).catch(() => {});
+    }
     setupGroupRealtimeSubscription().catch(() => {});
 
     return () => {
@@ -9165,15 +10126,18 @@ export default function App() {
           </div>
           <div className="meta-row">
             <span>Status</span>
-            <strong className={isStatusConnected ? 'status-with-dot' : undefined}>
-              {status}
+            <strong className={isStatusConnected ? 'status-row-value status-with-dot' : 'status-row-value'} title={status}>
+              <span className="status-text">{status}</span>
               {isStatusConnected ? <span className="status-dot" aria-hidden="true" /> : null}
             </strong>
           </div>
           <div className="meta-row">
             <span>AES</span>
-            <strong className={isAesConnected ? 'status-with-dot' : undefined}>
-              {onboardStatus}
+            <strong
+              className={isAesConnected ? 'status-row-value status-with-dot' : 'status-row-value'}
+              title={onboardStatus}
+            >
+              <span className="status-text">{onboardStatus}</span>
               {isAesConnected ? <span className="status-dot" aria-hidden="true" /> : null}
             </strong>
           </div>
@@ -9209,61 +10173,63 @@ export default function App() {
           </div>
 
           <div className="wallet-section-group">
-            {hasSavedBurnerWallet ? (
+            {!hasSavedBurnerWallet ? (
+              <p className="wallet-section-hint wallet-section-hint-note">
+                Generate or import a wallet to enable quick connect.
+              </p>
+            ) : null}
+
+            <div className="wallet-action-grid">
+              {hasSavedBurnerWallet ? (
+                <button
+                  className="connect-btn wallet-primary-action wallet-action-span-2"
+                  onClick={() => {
+                    beginBurnerPinFlow('stored').catch(() => {});
+                  }}
+                  type="button"
+                  disabled={initializingBurner || burnerStorageBlocked}
+                >
+                  Unlock Wallet
+                </button>
+              ) : null}
+
+              {hasSavedBurnerWallet ? (
+                <button
+                  className="connect-btn"
+                  onClick={openChangeBurnerPin}
+                  type="button"
+                  disabled={initializingBurner || !burnerRecordRef.current}
+                >
+                  Change PIN
+                </button>
+              ) : null}
+
               <button
-                className="connect-btn wallet-primary-action"
+                className="connect-btn"
                 onClick={() => {
-                  beginBurnerPinFlow('stored').catch(() => {});
+                  beginBurnerPinFlow('generate').catch(() => {});
                 }}
                 type="button"
                 disabled={initializingBurner || burnerStorageBlocked}
               >
-                Unlock Wallet
+                {initializingBurner ? 'Initializing Wallet...' : 'Generate Wallet'}
               </button>
-            ) : (
-              <p className="wallet-section-hint wallet-section-hint-note">
-                Generate or import a wallet to enable quick connect.
-              </p>
-            )}
 
-            {hasSavedBurnerWallet ? (
               <button
                 className="connect-btn"
-                onClick={openChangeBurnerPin}
+                onClick={() => setShowBurnerImportModal(true)}
                 type="button"
-                disabled={initializingBurner || !burnerRecordRef.current}
+                disabled={initializingBurner || burnerStorageBlocked}
               >
-                Change PIN
+                Import Wallet
               </button>
-            ) : null}
-
-            <div className="wallet-section-divider" aria-hidden="true" />
-
-            <button
-              className="connect-btn"
-              onClick={() => {
-                beginBurnerPinFlow('generate').catch(() => {});
-              }}
-              type="button"
-              disabled={initializingBurner || burnerStorageBlocked}
-            >
-              {initializingBurner ? 'Initializing Wallet...' : 'Generate Wallet'}
-            </button>
-
-            <button
-              className="connect-btn"
-              onClick={() => setShowBurnerImportModal(true)}
-              type="button"
-              disabled={initializingBurner || burnerStorageBlocked}
-            >
-              Import Wallet
-            </button>
+            </div>
           </div>
 
-          <div className="wallet-section-group wallet-section-group-metamask">
+          <div className="wallet-inline-action">
             <span className="wallet-section-label wallet-section-label-inline">MetaMask</span>
             <button
-              className="connect-btn"
+              className="connect-btn wallet-inline-btn"
               onClick={connectAndOnboard}
               type="button"
               disabled={connectingMethod !== null}
@@ -9278,10 +10244,10 @@ export default function App() {
             </button>
           </div>
 
-          <div className="wallet-section-group wallet-section-group-session">
+          <div className="wallet-inline-action">
             <span className="wallet-section-label wallet-section-label-inline">Session</span>
             <button
-              className="connect-btn"
+              className="connect-btn wallet-inline-btn"
               onClick={disconnectWallet}
               type="button"
               disabled={!isConnected || connectingMethod !== null}
@@ -9290,41 +10256,40 @@ export default function App() {
               Disconnect current wallet
             </button>
           </div>
+          {burnerWallets.length > 0 ? (
+            <div className="wallet-inline-select">
+              <span className="wallet-section-label wallet-section-label-inline">Saved wallets</span>
+              <select
+                value={burnerWalletSelectionValue}
+                onChange={(event) => {
+                  switchActiveBurnerWallet(event.target.value).catch((switchError) => {
+                    const message = switchError instanceof Error ? switchError.message : 'Failed to switch burner wallet.';
+                    setError(message);
+                  });
+                }}
+                aria-label="Select burner wallet"
+                disabled={initializingBurner}
+              >
+                {burnerWallets.map((walletRecord, index) => {
+                  const optionAddress = walletRecord.address
+                    ? shortenAddress(walletRecord.address)
+                    : 'Unknown';
+                  const optionName = getBurnerWalletDisplayName(walletRecord);
+                  return (
+                    <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
+                      {`${optionName} (${optionAddress})`}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          ) : null}
           {burnerStorageBlocked ? (
             <p className="error">
               Browser storage is blocked. Disable private mode or storage restrictions to persist wallets.
             </p>
           ) : null}
         </div>
-
-        {burnerWallets.length > 0 ? (
-          <div className="wallet-meta wallet-selector-meta">
-            <span className="wallet-section-label">Saved wallets</span>
-            <select
-              value={burnerWalletSelectionValue}
-              onChange={(event) => {
-                switchActiveBurnerWallet(event.target.value).catch((switchError) => {
-                  const message = switchError instanceof Error ? switchError.message : 'Failed to switch burner wallet.';
-                  setError(message);
-                });
-              }}
-              aria-label="Select burner wallet"
-              disabled={initializingBurner}
-            >
-              {burnerWallets.map((walletRecord, index) => {
-                const optionAddress = walletRecord.address
-                  ? shortenAddress(walletRecord.address)
-                  : 'Unknown';
-                const optionName = getBurnerWalletDisplayName(walletRecord);
-                return (
-                  <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
-                    {`${optionName} (${optionAddress})`}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-        ) : null}
 
         <div className="wallet-meta topup-meta">
           <button
@@ -9336,7 +10301,7 @@ export default function App() {
             Top Up with MetaMask
           </button>
           <div className="meta-row">
-            <span>Topup/Tip</span>
+            <span>Messages per top up</span>
             <strong>x{topUpMultiplier}</strong>
           </div>
           <input
@@ -9349,37 +10314,196 @@ export default function App() {
             onChange={(event) => setTopUpMultiplier(Number(event.target.value))}
             aria-label="Top up multiplier"
           />
-          <p>Approx messages per top up: {topUpMultiplier}</p>
-          <div className="meta-row">
-            <span>Wallet balance</span>
+          <p className="topup-estimate-line">
+            Approx: <strong>{topUpMultiplier}</strong> msgs = <strong>{topUpAmountLabel}</strong>
+          </p>
+          <div className="topup-stats-grid">
+            <div className="topup-stat">
+              <span>Wallet balance</span>
+              <strong>
+                {loadingTopUpQuote
+                  ? 'Calculating...'
+                  : burnerBalanceWei !== null
+                    ? `${formatCotiAmount(burnerBalanceWei)} COTI`
+                    : '--'}
+              </strong>
+            </div>
+            <div className="topup-stat">
+              <span>Messages left</span>
+              <strong>
+                {loadingTopUpQuote
+                  ? 'Calculating...'
+                  : estimatedMessagesLeft !== null
+                    ? estimatedMessagesLeft.toString()
+                    : '--'}
+              </strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="wallet-meta swap-meta wallet-rewards-swap-card">
+          <div className="wallet-section-header">
+            <span className="wallet-section-label">Reward balances</span>
+            <span className="wallet-section-hint">
+              {walletAddress ? shortenAddress(walletAddress) : 'Connect wallet'}
+            </span>
+          </div>
+          <div className="reward-balances-inline">
+            <div className="reward-balance-chip">
+              <button
+                type="button"
+                className={lastCopiedKey === rewardPublicTokenCopyKey ? 'token-name-btn copied' : 'token-name-btn'}
+                onClick={() => {
+                  copyWithFeedback(REWARD_TOKEN_ADDRESS, rewardPublicTokenCopyKey).catch(() => {});
+                }}
+                title={`${rewardTokenSymbol}: click to copy token address`}
+              >
+                {lastCopiedKey === rewardPublicTokenCopyKey ? `${rewardTokenSymbol} copied` : rewardTokenSymbol}
+              </button>
+              <strong>
+                {loadingRewardBalances
+                  ? 'Loading...'
+                  : rewardTokenBalanceWei !== null
+                    ? formatTokenAmount(rewardTokenBalanceWei, rewardTokenDecimals, 6)
+                    : '--'}
+              </strong>
+            </div>
+            <div className="reward-balance-chip">
+              <button
+                type="button"
+                className={lastCopiedKey === rewardPrivateTokenCopyKey ? 'token-name-btn copied' : 'token-name-btn'}
+                onClick={() => {
+                  copyWithFeedback(PRIVATE_REWARD_TOKEN_ADDRESS, rewardPrivateTokenCopyKey).catch(() => {});
+                }}
+                title={`${privateRewardTokenSymbol}: click to copy token address`}
+              >
+                {lastCopiedKey === rewardPrivateTokenCopyKey ? `${privateRewardTokenSymbol} copied` : privateRewardTokenSymbol}
+              </button>
+              <strong>
+                {loadingRewardBalances
+                  ? 'Loading...'
+                  : privateRewardTokenBalanceWei !== null
+                    ? formatTokenAmount(privateRewardTokenBalanceWei, privateRewardTokenDecimals, 6)
+                    : hasAesReady
+                      ? '--'
+                      : 'AES required'}
+              </strong>
+            </div>
+          </div>
+          {groupRewardsContractAddress ? (
+            <div className="wallet-section-hint wallet-section-hint-note reward-summary">
+              <div className="reward-summary-row">
+                <span className="reward-line-label">
+                  Rewards
+                  <span
+                    className={rewardsEnabled ? 'reward-state-dot enabled' : 'reward-state-dot'}
+                    title={rewardsIndicatorLabel}
+                    aria-label={rewardsIndicatorLabel}
+                  />
+                </span>
+                <strong>
+                  {rewardsPublicReserveWei !== null
+                    ? `${formatTokenAmount(rewardsPublicReserveWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
+                    : '--'}
+                </strong>
+              </div>
+              <div className="reward-summary-row">
+                <span>Per message</span>
+                <strong>
+                  {rewardsPublicPerInteractionWei !== null
+                    ? `${formatTokenAmount(rewardsPublicPerInteractionWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
+                    : '--'}
+                </strong>
+              </div>
+            </div>
+          ) : null}
+          {groupRewardsContractAddress &&
+          rewardsPublicReserveWei !== null &&
+          rewardsPublicPerInteractionWei !== null &&
+          rewardsPublicPerInteractionWei > 0n &&
+          rewardsPublicReserveWei < rewardsPublicPerInteractionWei ? (
+            <p className="wallet-section-hint wallet-section-hint-note">
+              Rewards warning: insufficient public token rewards in rewards contract.
+            </p>
+          ) : null}
+          <div className="wallet-section-divider wallet-section-divider-tight" aria-hidden="true" />
+          <div className="wallet-section-header wallet-subsection-header">
+            <span className="wallet-section-label">Swap tokens</span>
+            <span className="wallet-section-hint">Shield / unshield</span>
+          </div>
+          <div className="swap-field">
+            <label className="swap-field-label" htmlFor="swap-direction-select">Direction</label>
+            <select
+              id="swap-direction-select"
+              value={swapDirection}
+              onChange={(event) => setSwapDirection(event.target.value as SwapDirection)}
+              disabled={swappingTokens}
+            >
+              <option value="shield">{`${rewardTokenSymbol} -> ${privateRewardTokenSymbol}`}</option>
+              <option value="unshield">{`${privateRewardTokenSymbol} -> ${rewardTokenSymbol}`}</option>
+            </select>
+          </div>
+          <div className="swap-field">
+            <label className="swap-field-label" htmlFor="swap-fee-mode-select">
+              Fee mode
+              <span
+                className="swap-info-tip"
+                title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
+                aria-label="Fee mode info"
+              >
+                i
+              </span>
+            </label>
+            <select
+              id="swap-fee-mode-select"
+              value={swapFeeModeSelection}
+              onChange={(event) => setSwapFeeModeSelection(event.target.value as SwapFeeModeSelection)}
+              disabled={swappingTokens}
+            >
+              <option value="token">{`${privateRewardTokenSymbol} -> ${rewardTokenSymbol} -> COTI`}</option>
+              <option value="coti">COTI only</option>
+            </select>
+          </div>
+          <div className="swap-field">
+            <label className="swap-field-label" htmlFor="swap-amount-input">Amount</label>
+            <input
+              id="swap-amount-input"
+              type="text"
+              inputMode="decimal"
+              value={swapAmountInput}
+              onChange={(event) => setSwapAmountInput(event.target.value.replace(/[^0-9.]/g, ''))}
+              placeholder={`0.0 ${rewardTokenSymbol}`}
+              disabled={swappingTokens}
+            />
+          </div>
+          <div className="swap-quote-row">
+            <span>Fee quote</span>
             <strong>
-              {loadingTopUpQuote
-                ? 'Calculating...'
-                : burnerBalanceWei !== null
-                  ? `${formatCotiAmount(burnerBalanceWei)} COTI`
-                  : '—'}
+              {loadingRewardBalances
+                ? 'Loading...'
+                : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
+                    swapTokenFeeAmount !== null
+                      ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6)
+                      : '--'
+                  }`}
             </strong>
           </div>
-          <div className="meta-row">
-            <span>Messages left</span>
-            <strong>
-              {loadingTopUpQuote
-                ? 'Calculating...'
-                : estimatedMessagesLeft !== null
-                  ? estimatedMessagesLeft.toString()
-                  : '—'}
-            </strong>
-          </div>
-          <div className="meta-row">
-            <span>Top up amount</span>
-            <strong>
-              {loadingTopUpQuote
-                ? 'Calculating...'
-                : topUpAmountWei !== null
-                  ? `${formatCotiAmount(topUpAmountWei)} COTI`
-                  : '—'}
-            </strong>
-          </div>
+          <button
+            className="connect-btn swap-action-btn"
+            type="button"
+            onClick={swapRewardTokens}
+            disabled={
+              swappingTokens ||
+              !walletAddress ||
+              !onCotiNetwork ||
+              !hasAesReady ||
+              parsedSwapAmount === null ||
+              parsedSwapAmount <= 0n
+            }
+          >
+            {swappingTokens ? 'Swapping...' : 'Swap'}
+          </button>
+          {swapStatusMessage ? <p className="wallet-section-hint wallet-section-hint-note swap-status-note">{swapStatusMessage}</p> : null}
         </div>
 
         {burnerNeedsFunding ? <p className="error">Burner needs funding before onboarding.</p> : null}
@@ -9396,7 +10520,7 @@ export default function App() {
               </button>
             </div>
             <p className="wallet-reminder">
-              Reminder: Save your seed phrase securely offline. You need it to recover this wallet.
+              Save your seed phrase offline for wallet recovery.
             </p>
             {showBurnerMnemonic ? <p>{burnerMnemonicBackup}</p> : null}
           </div>
@@ -9926,27 +11050,39 @@ export default function App() {
                       </div>
                     </div>
                     {generatedGroupInviteCode ? (
-                      <div className="group-generated-code">
-                        <input
-                          className="group-generated-code-value"
-                          value={generatedGroupInviteCode}
-                          readOnly
-                          aria-label="Generated join code"
-                        />
+                      <>
+                        <div className="group-generated-code">
+                          <input
+                            className="group-generated-code-value"
+                            value={generatedGroupInviteCode}
+                            readOnly
+                            aria-label="Generated join code"
+                          />
+                          <button
+                            type="button"
+                            className={
+                              lastCopiedKey === `group-code:${generatedGroupInviteCode}`
+                                ? 'group-generated-code-copy copied'
+                                : 'group-generated-code-copy'
+                            }
+                            onClick={() => {
+                              copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
+                            }}
+                          >
+                            {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
+                          </button>
+                        </div>
                         <button
                           type="button"
-                          className={
-                            lastCopiedKey === `group-code:${generatedGroupInviteCode}`
-                              ? 'group-generated-code-copy copied'
-                              : 'group-generated-code-copy'
-                          }
+                          className="contact"
                           onClick={() => {
-                            copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
+                            revokeGeneratedJoinCodeForActiveGroup().catch(() => {});
                           }}
+                          disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin || !generatedGroupJoinCodeHash}
                         >
-                          {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
+                          {processingGroupAction ? 'Working...' : 'Revoke code'}
                         </button>
-                      </div>
+                      </>
                     ) : null}
                   </form>
                 )}
@@ -10061,27 +11197,39 @@ export default function App() {
                         </div>
                       </div>
                       {generatedGroupInviteCode ? (
-                        <div className="group-generated-code group-generated-code-mobile">
-                          <input
-                            className="group-generated-code-value"
-                            value={generatedGroupInviteCode}
-                            readOnly
-                            aria-label="Generated join code"
-                          />
+                        <>
+                          <div className="group-generated-code group-generated-code-mobile">
+                            <input
+                              className="group-generated-code-value"
+                              value={generatedGroupInviteCode}
+                              readOnly
+                              aria-label="Generated join code"
+                            />
+                            <button
+                              type="button"
+                              className={
+                                lastCopiedKey === `group-code:${generatedGroupInviteCode}`
+                                  ? 'contact copied'
+                                  : 'contact'
+                              }
+                              onClick={() => {
+                                copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
+                              }}
+                            >
+                              {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
+                            </button>
+                          </div>
                           <button
                             type="button"
-                            className={
-                              lastCopiedKey === `group-code:${generatedGroupInviteCode}`
-                                ? 'contact copied'
-                                : 'contact'
-                            }
+                            className="contact"
                             onClick={() => {
-                              copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
+                              revokeGeneratedJoinCodeForActiveGroup().catch(() => {});
                             }}
+                            disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin || !generatedGroupJoinCodeHash}
                           >
-                            {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
+                            {processingGroupAction ? 'Working...' : 'Revoke code'}
                           </button>
-                        </div>
+                        </>
                       ) : null}
                     </div>
 
@@ -10459,7 +11607,7 @@ export default function App() {
               )}
             </div>
 
-            <div className="chat-compose">
+            <div className="chat-compose group-chat-compose">
               {replyingToMessage ? (
                 <div className="chat-replying">
                   <span>Replying to: {trimReplyPreview(getMessageDisplayText(replyingToMessage.text))}</span>
@@ -10468,41 +11616,65 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
-              <div
-                ref={chatComposerRef}
-                className="chat-compose-editor"
-                contentEditable
-                suppressContentEditableWarning
-                role="textbox"
-                aria-multiline={isMobileNav}
-                aria-label="Group message"
-                data-placeholder="Type a group message"
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
-                    event.preventDefault();
+              <div className="group-compose-main">
+                <button
+                  type="button"
+                  className={
+                    groupFeeModeSelection === 'token'
+                      ? 'group-fee-toggle group-fee-toggle-compact token'
+                      : 'group-fee-toggle group-fee-toggle-compact coti'
+                  }
+                  onClick={() => {
+                    setGroupFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
+                  }}
+                  disabled={sendingGroupMessage || processingGroupAction}
+                  aria-label="Toggle group fee mode"
+                  aria-pressed={groupFeeModeSelection === 'token'}
+                  title={
+                    groupFeeModeSelection === 'coti'
+                      ? `${selectedGroupFeeLabel}. Click to switch to ${rewardTokenSymbol} mode.`
+                      : `${selectedGroupFeeLabel}. Click to switch to COTI mode.`
+                  }
+                >
+                  {groupFeeModeSelection === 'token' ? rewardTokenSymbol : 'COTI'}
+                </button>
+                <div
+                  ref={chatComposerRef}
+                  className="chat-compose-editor"
+                  contentEditable
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-multiline={isMobileNav}
+                  aria-label="Group message"
+                  data-placeholder="Type a group message"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
+                      event.preventDefault();
+                      sendGroupMessage().catch(() => {});
+                    }
+                  }}
+                  onInput={(event) => {
+                    const raw = event.currentTarget.textContent ?? '';
+                    const normalized = raw.replace(/\r/g, '');
+                    const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
+                    const capped = nextValue.slice(0, MAX_MESSAGE_LENGTH);
+                    if (capped !== raw) {
+                      event.currentTarget.textContent = capped;
+                    }
+                    setMessageInput(capped);
+                  }}
+                />
+                <button
+                  className="group-compose-send"
+                  type="button"
+                  onClick={() => {
                     sendGroupMessage().catch(() => {});
-                  }
-                }}
-                onInput={(event) => {
-                  const raw = event.currentTarget.textContent ?? '';
-                  const normalized = raw.replace(/\r/g, '');
-                  const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
-                  const capped = nextValue.slice(0, MAX_MESSAGE_LENGTH);
-                  if (capped !== raw) {
-                    event.currentTarget.textContent = capped;
-                  }
-                  setMessageInput(capped);
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  sendGroupMessage().catch(() => {});
-                }}
-                disabled={sendingGroupMessage || processingGroupAction}
-              >
-                {sendingGroupMessage ? 'Sending...' : 'Send'}
-              </button>
+                  }}
+                  disabled={sendingGroupMessage || processingGroupAction}
+                >
+                  {sendingGroupMessage ? 'Sending...' : 'Send'}
+                </button>
+              </div>
             </div>
           </div>
         ) : activeContact ? (
