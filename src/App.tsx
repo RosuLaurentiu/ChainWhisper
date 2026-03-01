@@ -2740,6 +2740,8 @@ export default function App() {
     typeof window !== 'undefined' ? window.innerWidth <= MOBILE_NAV_BREAKPOINT_PX : false
   );
   const [mobileGroupOptionsOpen, setMobileGroupOptionsOpen] = useState(false);
+  const [showTokenTools, setShowTokenTools] = useState(false);
+  const [showBackupTools, setShowBackupTools] = useState(false);
   useEffect(() => {
     setGroupInviteTtlInput((previous) => {
       const normalized = previous.trim();
@@ -2976,6 +2978,18 @@ export default function App() {
     setMobileGroupOptionsOpen(false);
   }, [activeGroupId, walletAddress, isMobileNav]);
 
+  useEffect(() => {
+    if (swapStatusMessage) {
+      setShowTokenTools(true);
+    }
+  }, [swapStatusMessage]);
+
+  useEffect(() => {
+    if (showBurnerMnemonic) {
+      setShowBackupTools(true);
+    }
+  }, [showBurnerMnemonic]);
+
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
   const onCotiNetwork = useMemo(() => chainId === COTI_NETWORK.chainIdDecimal, [chainId]);
   const activeMessages = useMemo(() => {
@@ -3027,6 +3041,7 @@ export default function App() {
       };
     });
   }, [activeGroupMeta, walletAddress, myNickname, contacts]);
+  const activeGroupMemberCount = activeGroupParticipants.length > 0 ? activeGroupParticipants.length : activeGroupMeta?.memberCount ?? 0;
   const isActiveGroupAdmin = useMemo(() => {
     if (!activeGroupMeta || !walletAddress) {
       return false;
@@ -3301,6 +3316,29 @@ export default function App() {
 
     return getBurnerWalletDisplayName(burnerWallets[walletIndex]);
   };
+  const tokenToolsSummary = useMemo(() => {
+    if (loadingRewardBalances) {
+      return 'Loading balances...';
+    }
+    const publicBalance =
+      rewardTokenBalanceWei !== null ? formatTokenAmount(rewardTokenBalanceWei, rewardTokenDecimals, 4) : '--';
+    const privateBalance =
+      privateRewardTokenBalanceWei !== null
+        ? formatTokenAmount(privateRewardTokenBalanceWei, privateRewardTokenDecimals, 4)
+        : hasAesReady
+          ? '--'
+          : 'AES';
+    return `${rewardTokenSymbol} ${publicBalance} | ${privateRewardTokenSymbol} ${privateBalance}`;
+  }, [
+    loadingRewardBalances,
+    rewardTokenSymbol,
+    privateRewardTokenSymbol,
+    rewardTokenBalanceWei,
+    privateRewardTokenBalanceWei,
+    rewardTokenDecimals,
+    privateRewardTokenDecimals,
+    hasAesReady
+  ]);
   const estimatedMessagesLeft = useMemo(() => {
     if (requiredFeeWei === null || burnerBalanceWei === null || requiredFeeWei <= 0n) {
       return null;
@@ -3325,6 +3363,27 @@ export default function App() {
     () => parseTokenAmountInput(swapAmountInput, rewardTokenDecimals),
     [swapAmountInput, rewardTokenDecimals]
   );
+  const swapInputSymbol = swapDirection === 'shield' ? rewardTokenSymbol : privateRewardTokenSymbol;
+  const canSwapRewardTokens =
+    !swappingTokens &&
+    !!walletAddress &&
+    onCotiNetwork &&
+    hasAesReady &&
+    parsedSwapAmount !== null &&
+    parsedSwapAmount > 0n;
+  const swapButtonLabel = swappingTokens
+    ? 'Swapping...'
+    : !walletAddress
+      ? 'Connect wallet'
+      : !onCotiNetwork
+        ? 'Switch to COTI network'
+        : !hasAesReady
+          ? 'AES required'
+          : parsedSwapAmount === null || parsedSwapAmount <= 0n
+            ? `Enter ${swapInputSymbol} amount`
+            : swapDirection === 'shield'
+              ? `Shield to ${privateRewardTokenSymbol}`
+              : `Unshield to ${rewardTokenSymbol}`;
   const topUpAmountLabel = useMemo(() => {
     if (loadingTopUpQuote) {
       return 'Calculating...';
@@ -3338,11 +3397,16 @@ export default function App() {
   const tipMessagesLabel = `${tipMessagesCount} ${tipMessagesCount === 1 ? 'msg' : 'msgs'}`;
   const isStatusConnected = useMemo(() => /^connected/i.test(status.trim()), [status]);
   const isAesConnected = useMemo(() => onboardStatus === 'AES key ready', [onboardStatus]);
-  const rewardPublicTokenCopyKey = `reward-token-address:${REWARD_TOKEN_ADDRESS.toLowerCase()}`;
-  const rewardPrivateTokenCopyKey = `reward-token-address:${PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()}`;
   const rewardsConfigured = Boolean(groupRewardsContractAddress);
   const rewardsEnabled =
     groupRewardsPaused === false && rewardsContractPaused === false && rewardsCallerAllowed === true;
+  const rewardsLowReserve = Boolean(
+    groupRewardsContractAddress &&
+      rewardsPublicReserveWei !== null &&
+      rewardsPublicPerInteractionWei !== null &&
+      rewardsPublicPerInteractionWei > 0n &&
+      rewardsPublicReserveWei < rewardsPublicPerInteractionWei
+  );
   const rewardsIndicatorLabel = !rewardsConfigured
     ? 'Rewards not configured on-chain.'
     : groupRewardsPaused === true
@@ -10292,6 +10356,16 @@ export default function App() {
         </div>
 
         <div className="wallet-meta topup-meta">
+          <div className="wallet-section-header">
+            <span className="wallet-section-label">Funding/Tip</span>
+            <span className="wallet-section-hint">
+              {loadingTopUpQuote
+                ? 'Calculating...'
+                : `${burnerBalanceWei !== null ? formatTokenAmount(burnerBalanceWei, 18, 4) : '--'} COTI | ${
+                    estimatedMessagesLeft !== null ? estimatedMessagesLeft.toString() : '--'
+                  } msgs left`}
+            </span>
+          </div>
           <button
             className="connect-btn"
             onClick={topUpBurnerWithMetaMask}
@@ -10300,10 +10374,6 @@ export default function App() {
           >
             Top Up with MetaMask
           </button>
-          <div className="meta-row">
-            <span>Messages per top up</span>
-            <strong>x{topUpMultiplier}</strong>
-          </div>
           <input
             className="topup-slider"
             type="range"
@@ -10317,84 +10387,23 @@ export default function App() {
           <p className="topup-estimate-line">
             Approx: <strong>{topUpMultiplier}</strong> msgs = <strong>{topUpAmountLabel}</strong>
           </p>
-          <div className="topup-stats-grid">
-            <div className="topup-stat">
-              <span>Wallet balance</span>
-              <strong>
-                {loadingTopUpQuote
-                  ? 'Calculating...'
-                  : burnerBalanceWei !== null
-                    ? `${formatCotiAmount(burnerBalanceWei)} COTI`
-                    : '--'}
-              </strong>
-            </div>
-            <div className="topup-stat">
-              <span>Messages left</span>
-              <strong>
-                {loadingTopUpQuote
-                  ? 'Calculating...'
-                  : estimatedMessagesLeft !== null
-                    ? estimatedMessagesLeft.toString()
-                    : '--'}
-              </strong>
-            </div>
-          </div>
         </div>
 
-        <div className="wallet-meta swap-meta wallet-rewards-swap-card">
-          <div className="wallet-section-header">
-            <span className="wallet-section-label">Reward balances</span>
-            <span className="wallet-section-hint">
-              {walletAddress ? shortenAddress(walletAddress) : 'Connect wallet'}
-            </span>
-          </div>
-          <div className="reward-balances-inline">
-            <div className="reward-balance-chip">
-              <button
-                type="button"
-                className={lastCopiedKey === rewardPublicTokenCopyKey ? 'token-name-btn copied' : 'token-name-btn'}
-                onClick={() => {
-                  copyWithFeedback(REWARD_TOKEN_ADDRESS, rewardPublicTokenCopyKey).catch(() => {});
-                }}
-                title={`${rewardTokenSymbol}: click to copy token address`}
-              >
-                {lastCopiedKey === rewardPublicTokenCopyKey ? `${rewardTokenSymbol} copied` : rewardTokenSymbol}
-              </button>
-              <strong>
-                {loadingRewardBalances
-                  ? 'Loading...'
-                  : rewardTokenBalanceWei !== null
-                    ? formatTokenAmount(rewardTokenBalanceWei, rewardTokenDecimals, 6)
-                    : '--'}
-              </strong>
-            </div>
-            <div className="reward-balance-chip">
-              <button
-                type="button"
-                className={lastCopiedKey === rewardPrivateTokenCopyKey ? 'token-name-btn copied' : 'token-name-btn'}
-                onClick={() => {
-                  copyWithFeedback(PRIVATE_REWARD_TOKEN_ADDRESS, rewardPrivateTokenCopyKey).catch(() => {});
-                }}
-                title={`${privateRewardTokenSymbol}: click to copy token address`}
-              >
-                {lastCopiedKey === rewardPrivateTokenCopyKey ? `${privateRewardTokenSymbol} copied` : privateRewardTokenSymbol}
-              </button>
-              <strong>
-                {loadingRewardBalances
-                  ? 'Loading...'
-                  : privateRewardTokenBalanceWei !== null
-                    ? formatTokenAmount(privateRewardTokenBalanceWei, privateRewardTokenDecimals, 6)
-                    : hasAesReady
-                      ? '--'
-                      : 'AES required'}
-              </strong>
-            </div>
-          </div>
+        <details
+          className="wallet-meta wallet-disclosure wallet-rewards-swap-card"
+          open={showTokenTools}
+          onToggle={(event) => setShowTokenTools(event.currentTarget.open)}
+        >
+          <summary>
+            <span>Whisper rewards</span>
+            <span>{tokenToolsSummary}</span>
+          </summary>
+          <div className="swap-meta wallet-disclosure-body">
           {groupRewardsContractAddress ? (
             <div className="wallet-section-hint wallet-section-hint-note reward-summary">
               <div className="reward-summary-row">
                 <span className="reward-line-label">
-                  Rewards
+                  Contract status
                   <span
                     className={rewardsEnabled ? 'reward-state-dot enabled' : 'reward-state-dot'}
                     title={rewardsIndicatorLabel}
@@ -10417,22 +10426,23 @@ export default function App() {
               </div>
             </div>
           ) : null}
-          {groupRewardsContractAddress &&
-          rewardsPublicReserveWei !== null &&
-          rewardsPublicPerInteractionWei !== null &&
-          rewardsPublicPerInteractionWei > 0n &&
-          rewardsPublicReserveWei < rewardsPublicPerInteractionWei ? (
+          {!groupRewardsContractAddress ? (
+            <p className="wallet-section-hint wallet-section-hint-note">
+              Rewards contract info is not available for this session yet.
+            </p>
+          ) : null}
+          {rewardsLowReserve ? (
             <p className="wallet-section-hint wallet-section-hint-note">
               Rewards warning: insufficient public token rewards in rewards contract.
             </p>
           ) : null}
           <div className="wallet-section-divider wallet-section-divider-tight" aria-hidden="true" />
           <div className="wallet-section-header wallet-subsection-header">
-            <span className="wallet-section-label">Swap tokens</span>
-            <span className="wallet-section-hint">Shield / unshield</span>
+            <span className="wallet-section-label">Swap</span>
+            <span className="wallet-section-hint">{`${rewardTokenSymbol} <-> ${privateRewardTokenSymbol}`}</span>
           </div>
           <div className="swap-field">
-            <label className="swap-field-label" htmlFor="swap-direction-select">Direction</label>
+            <label className="swap-field-label" htmlFor="swap-direction-select">Swap direction</label>
             <select
               id="swap-direction-select"
               value={swapDirection}
@@ -10445,7 +10455,7 @@ export default function App() {
           </div>
           <div className="swap-field">
             <label className="swap-field-label" htmlFor="swap-fee-mode-select">
-              Fee mode
+              Fee payment
               <span
                 className="swap-info-tip"
                 title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
@@ -10472,7 +10482,7 @@ export default function App() {
               inputMode="decimal"
               value={swapAmountInput}
               onChange={(event) => setSwapAmountInput(event.target.value.replace(/[^0-9.]/g, ''))}
-              placeholder={`0.0 ${rewardTokenSymbol}`}
+              placeholder={`0.0 ${swapInputSymbol}`}
               disabled={swappingTokens}
             />
           </div>
@@ -10492,38 +10502,39 @@ export default function App() {
             className="connect-btn swap-action-btn"
             type="button"
             onClick={swapRewardTokens}
-            disabled={
-              swappingTokens ||
-              !walletAddress ||
-              !onCotiNetwork ||
-              !hasAesReady ||
-              parsedSwapAmount === null ||
-              parsedSwapAmount <= 0n
-            }
+            disabled={!canSwapRewardTokens}
           >
-            {swappingTokens ? 'Swapping...' : 'Swap'}
+            {swapButtonLabel}
           </button>
-          {swapStatusMessage ? <p className="wallet-section-hint wallet-section-hint-note swap-status-note">{swapStatusMessage}</p> : null}
-        </div>
+            {swapStatusMessage ? <p className="wallet-section-hint wallet-section-hint-note swap-status-note">{swapStatusMessage}</p> : null}
+          </div>
+        </details>
 
         {burnerNeedsFunding ? <p className="error">Burner needs funding before onboarding.</p> : null}
         {burnerMnemonicBackup ? (
-          <div className="wallet-meta">
-            <div className="meta-row">
+          <details
+            className="wallet-meta wallet-disclosure"
+            open={showBackupTools}
+            onToggle={(event) => setShowBackupTools(event.currentTarget.open)}
+          >
+            <summary>
               <span>Burner backup</span>
+              <span>{showBurnerMnemonic ? 'Phrase visible' : 'Phrase hidden'}</span>
+            </summary>
+            <div className="wallet-disclosure-body">
+              <p className="wallet-reminder">
+                Save your seed phrase offline for wallet recovery.
+              </p>
               <button
                 type="button"
-                className="burner-address-btn"
+                className="connect-btn wallet-backup-toggle"
                 onClick={beginRevealBurnerBackup}
               >
                 {showBurnerMnemonic ? 'Hide phrase' : 'Show phrase'}
               </button>
+              {showBurnerMnemonic ? <p className="wallet-secret-phrase">{burnerMnemonicBackup}</p> : null}
             </div>
-            <p className="wallet-reminder">
-              Save your seed phrase offline for wallet recovery.
-            </p>
-            {showBurnerMnemonic ? <p>{burnerMnemonicBackup}</p> : null}
-          </div>
+          </details>
         ) : null}
 
       </aside>
@@ -10858,18 +10869,19 @@ export default function App() {
           <div className="chat-shell">
             <div className="chat-header chat-header-group">
               <div className="group-header-meta">
-                <strong>
-                  {(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) +
-                  ` (#${activeGroupId})` +
-                  (activeGroupMeta?.isPrivate ? ' · Private' : '')}
-                </strong>
+                <div className="group-title-stack">
+                  <strong>{(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) + ` (#${activeGroupId})`}</strong>
+                  <span className="group-title-badges">
+                    <span className="group-title-badge">{activeGroupMeta?.isPrivate ? 'Private' : 'Public'}</span>
+                    <span className={isActiveGroupAdmin ? 'group-title-badge admin' : 'group-title-badge'}>
+                      {isActiveGroupAdmin ? 'Admin' : 'Member'}
+                    </span>
+                  </span>
+                </div>
                 <details className="group-members-dropdown">
                   <summary>
-                    Members (
-                    {activeGroupParticipants.length > 0
-                      ? activeGroupParticipants.length
-                      : activeGroupMeta?.memberCount ?? 0}
-                    )
+                    Members{' '}
+                    {activeGroupMemberCount}
                   </summary>
                   <ul className="group-members-list">
                     {activeGroupParticipants.length > 0 ? (
@@ -10926,7 +10938,7 @@ export default function App() {
                   <>
                     <button
                       type="button"
-                      className="contact group-mobile-refresh-btn"
+                      className="contact group-mobile-refresh-btn group-refresh-button"
                       onClick={() => {
                         syncGroupData({ deep: true }).catch(() => {});
                       }}
@@ -10956,7 +10968,7 @@ export default function App() {
                   >
                     <div className="group-header-section-heading">
                       <span className="group-header-section-title">Invite members</span>
-                      <span className="group-header-section-subtitle">Wallets + TTL</span>
+                      <span className="group-header-section-subtitle">Wallet addresses + expiry hours</span>
                     </div>
                     <div className="group-header-invite-row">
                       <input
@@ -10979,6 +10991,7 @@ export default function App() {
                         />
                       </div>
                       <button
+                        className="group-header-primary-btn"
                         type="submit"
                         disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
                       >
@@ -10986,7 +10999,12 @@ export default function App() {
                       </button>
                     </div>
                     <div className="group-join-code-settings">
-                      <span className="group-join-code-label">Join Code</span>
+                      <div className="group-join-code-header">
+                        <span className="group-join-code-label">Join code</span>
+                        <span className="group-join-code-helper">
+                          {groupJoinCodeMode === 'single' ? 'One join per code.' : 'Reusable code with max uses.'}
+                        </span>
+                      </div>
                       <div className="group-join-code-main">
                         <div className="group-join-code-main-left">
                           <div className="group-join-code-mode">
@@ -11039,7 +11057,7 @@ export default function App() {
                         </div>
                         <button
                           type="button"
-                          className="group-join-code-generate"
+                          className="group-join-code-generate group-header-primary-btn"
                           onClick={() => {
                             generateJoinCodeForActiveGroup().catch(() => {});
                           }}
@@ -11093,7 +11111,7 @@ export default function App() {
                     <div className="group-mobile-section">
                       <div className="group-mobile-section-header">
                         <span className="group-mobile-section-title">Invite members</span>
-                        <span className="group-mobile-section-subtitle">Wallets + TTL</span>
+                        <span className="group-mobile-section-subtitle">Wallet addresses + expiry hours</span>
                       </div>
                       <div className="group-header-invite group-header-invite-mobile-inline">
                         <input
@@ -11118,7 +11136,7 @@ export default function App() {
                       </div>
                       <button
                         type="button"
-                        className="contact group-mobile-primary-action"
+                        className="contact group-mobile-primary-action group-header-primary-btn"
                         onClick={() => {
                           inviteMembersToActiveGroup().catch(() => {});
                         }}
@@ -11186,7 +11204,7 @@ export default function App() {
                           </div>
                           <button
                             type="button"
-                            className="group-join-code-generate"
+                            className="group-join-code-generate group-header-primary-btn"
                             onClick={() => {
                               generateJoinCodeForActiveGroup().catch(() => {});
                             }}
@@ -11328,7 +11346,6 @@ export default function App() {
                 ) : null
                 ) : (
                   <div className="group-header-actions">
-                    <span className="group-header-actions-label">Group actions</span>
                     {isActiveGroupAdmin ? (
                       <>
                         {groupRenameOpen ? (
@@ -11414,7 +11431,7 @@ export default function App() {
                     )}
                   <button
                     type="button"
-                    className="contact"
+                    className="contact group-refresh-button"
                     onClick={() => {
                       syncGroupData({ deep: true }).catch(() => {});
                     }}
