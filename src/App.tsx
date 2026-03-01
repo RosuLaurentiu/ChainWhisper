@@ -10442,40 +10442,7 @@ export default function App() {
             <span className="wallet-section-hint">{`${rewardTokenSymbol} <-> ${privateRewardTokenSymbol}`}</span>
           </div>
           <div className="swap-field">
-            <label className="swap-field-label" htmlFor="swap-direction-select">Swap direction</label>
-            <select
-              id="swap-direction-select"
-              value={swapDirection}
-              onChange={(event) => setSwapDirection(event.target.value as SwapDirection)}
-              disabled={swappingTokens}
-            >
-              <option value="shield">{`${rewardTokenSymbol} -> ${privateRewardTokenSymbol}`}</option>
-              <option value="unshield">{`${privateRewardTokenSymbol} -> ${rewardTokenSymbol}`}</option>
-            </select>
-          </div>
-          <div className="swap-field">
-            <label className="swap-field-label" htmlFor="swap-fee-mode-select">
-              Fee payment
-              <span
-                className="swap-info-tip"
-                title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
-                aria-label="Fee mode info"
-              >
-                i
-              </span>
-            </label>
-            <select
-              id="swap-fee-mode-select"
-              value={swapFeeModeSelection}
-              onChange={(event) => setSwapFeeModeSelection(event.target.value as SwapFeeModeSelection)}
-              disabled={swappingTokens}
-            >
-              <option value="token">{`${privateRewardTokenSymbol} -> ${rewardTokenSymbol} -> COTI`}</option>
-              <option value="coti">COTI only</option>
-            </select>
-          </div>
-          <div className="swap-field">
-            <label className="swap-field-label" htmlFor="swap-amount-input">Amount</label>
+            <label className="swap-label-sr" htmlFor="swap-amount-input">Amount</label>
             <input
               id="swap-amount-input"
               type="text"
@@ -10485,6 +10452,65 @@ export default function App() {
               placeholder={`0.0 ${swapInputSymbol}`}
               disabled={swappingTokens}
             />
+          </div>
+          <div className="swap-field">
+            <span id="swap-direction-label" className="swap-label-sr">
+              Swap direction
+            </span>
+            <div className="swap-pill-switch" role="group" aria-labelledby="swap-direction-label">
+              <button
+                type="button"
+                className={swapDirection === 'shield' ? 'swap-pill-option active' : 'swap-pill-option'}
+                onClick={() => setSwapDirection('shield')}
+                disabled={swappingTokens}
+                aria-pressed={swapDirection === 'shield'}
+                title={`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
+              >
+                {`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
+              </button>
+              <button
+                type="button"
+                className={swapDirection === 'unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
+                onClick={() => setSwapDirection('unshield')}
+                disabled={swappingTokens}
+                aria-pressed={swapDirection === 'unshield'}
+                title={`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
+              >
+                {`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
+              </button>
+            </div>
+          </div>
+          <div className="swap-field">
+            <div className="swap-field-label">
+              Fee payment
+              <span
+                className="swap-info-tip"
+                title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
+                aria-label="Fee mode info"
+              >
+                i
+              </span>
+            </div>
+            <div className="swap-pill-switch" role="group" aria-label="Fee payment mode">
+              <button
+                type="button"
+                className={swapFeeModeSelection === 'token' ? 'swap-pill-option active' : 'swap-pill-option'}
+                onClick={() => setSwapFeeModeSelection('token')}
+                disabled={swappingTokens}
+                aria-pressed={swapFeeModeSelection === 'token'}
+              >
+                Token
+              </button>
+              <button
+                type="button"
+                className={swapFeeModeSelection === 'coti' ? 'swap-pill-option active' : 'swap-pill-option'}
+                onClick={() => setSwapFeeModeSelection('coti')}
+                disabled={swappingTokens}
+                aria-pressed={swapFeeModeSelection === 'coti'}
+              >
+                COTI
+              </button>
+            </div>
           </div>
           <div className="swap-quote-row">
             <span>Fee quote</span>
