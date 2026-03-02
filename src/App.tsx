@@ -10269,7 +10269,7 @@ export default function App() {
               ) : null}
 
               <button
-                className="connect-btn"
+                className={hasSavedBurnerWallet ? 'connect-btn' : 'connect-btn wallet-primary-action'}
                 onClick={() => {
                   beginBurnerPinFlow('generate').catch(() => {});
                 }}
@@ -10280,7 +10280,7 @@ export default function App() {
               </button>
 
               <button
-                className="connect-btn"
+                className={hasSavedBurnerWallet ? 'connect-btn' : 'connect-btn wallet-primary-action'}
                 onClick={() => setShowBurnerImportModal(true)}
                 type="button"
                 disabled={initializingBurner || burnerStorageBlocked}
@@ -10355,189 +10355,193 @@ export default function App() {
           ) : null}
         </div>
 
-        <div className="wallet-meta topup-meta">
-          <div className="wallet-section-header">
-            <span className="wallet-section-label">Funding/Tip</span>
-            <span className="wallet-section-hint">
-              {loadingTopUpQuote
-                ? 'Calculating...'
-                : `${burnerBalanceWei !== null ? formatTokenAmount(burnerBalanceWei, 18, 4) : '--'} COTI | ${
-                    estimatedMessagesLeft !== null ? estimatedMessagesLeft.toString() : '--'
-                  } msgs left`}
-            </span>
-          </div>
-          <button
-            className="connect-btn"
-            onClick={topUpBurnerWithMetaMask}
-            type="button"
-            disabled={initializingBurner || !burnerAddress || topUpAmountWei === null || topUpAmountWei <= 0n}
-          >
-            Top Up with MetaMask
-          </button>
-          <input
-            className="topup-slider"
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={topUpMultiplier}
-            onChange={(event) => setTopUpMultiplier(Number(event.target.value))}
-            aria-label="Top up multiplier"
-          />
-          <p className="topup-estimate-line">
-            Approx: <strong>{topUpMultiplier}</strong> msgs = <strong>{topUpAmountLabel}</strong>
-          </p>
-        </div>
-
-        <details
-          className="wallet-meta wallet-disclosure wallet-rewards-swap-card"
-          open={showTokenTools}
-          onToggle={(event) => setShowTokenTools(event.currentTarget.open)}
-        >
-          <summary>
-            <span>Whisper rewards</span>
-            <span>{tokenToolsSummary}</span>
-          </summary>
-          <div className="swap-meta wallet-disclosure-body">
-          {groupRewardsContractAddress ? (
-            <div className="wallet-section-hint wallet-section-hint-note reward-summary">
-              <div className="reward-summary-row">
-                <span className="reward-line-label">
-                  Contract status
-                  <span
-                    className={rewardsEnabled ? 'reward-state-dot enabled' : 'reward-state-dot'}
-                    title={rewardsIndicatorLabel}
-                    aria-label={rewardsIndicatorLabel}
-                  />
-                </span>
-                <strong>
-                  {rewardsPublicReserveWei !== null
-                    ? `${formatTokenAmount(rewardsPublicReserveWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
-                    : '--'}
-                </strong>
-              </div>
-              <div className="reward-summary-row">
-                <span>Per message</span>
-                <strong>
-                  {rewardsPublicPerInteractionWei !== null
-                    ? `${formatTokenAmount(rewardsPublicPerInteractionWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
-                    : '--'}
-                </strong>
-              </div>
-            </div>
-          ) : null}
-          {!groupRewardsContractAddress ? (
-            <p className="wallet-section-hint wallet-section-hint-note">
-              Rewards contract info is not available for this session yet.
-            </p>
-          ) : null}
-          {rewardsLowReserve ? (
-            <p className="wallet-section-hint wallet-section-hint-note">
-              Rewards warning: insufficient public token rewards in rewards contract.
-            </p>
-          ) : null}
-          <div className="wallet-section-divider wallet-section-divider-tight" aria-hidden="true" />
-          <div className="wallet-section-header wallet-subsection-header">
-            <span className="wallet-section-label">Swap</span>
-            <span className="wallet-section-hint">{`${rewardTokenSymbol} <-> ${privateRewardTokenSymbol}`}</span>
-          </div>
-          <div className="swap-field">
-            <label className="swap-label-sr" htmlFor="swap-amount-input">Amount</label>
-            <input
-              id="swap-amount-input"
-              type="text"
-              inputMode="decimal"
-              value={swapAmountInput}
-              onChange={(event) => setSwapAmountInput(event.target.value.replace(/[^0-9.]/g, ''))}
-              placeholder={`0.0 ${swapInputSymbol}`}
-              disabled={swappingTokens}
-            />
-          </div>
-          <div className="swap-field">
-            <span id="swap-direction-label" className="swap-label-sr">
-              Swap direction
-            </span>
-            <div className="swap-pill-switch" role="group" aria-labelledby="swap-direction-label">
-              <button
-                type="button"
-                className={swapDirection === 'shield' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => setSwapDirection('shield')}
-                disabled={swappingTokens}
-                aria-pressed={swapDirection === 'shield'}
-                title={`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
-              >
-                {`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
-              </button>
-              <button
-                type="button"
-                className={swapDirection === 'unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => setSwapDirection('unshield')}
-                disabled={swappingTokens}
-                aria-pressed={swapDirection === 'unshield'}
-                title={`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
-              >
-                {`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
-              </button>
-            </div>
-          </div>
-          <div className="swap-field">
-            <div className="swap-field-label">
-              Fee payment
-              <span
-                className="swap-info-tip"
-                title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
-                aria-label="Fee mode info"
-              >
-                i
+        {isConnected ? (
+          <div className="wallet-meta topup-meta">
+            <div className="wallet-section-header">
+              <span className="wallet-section-label">Funding/Tip</span>
+              <span className="wallet-section-hint">
+                {loadingTopUpQuote
+                  ? 'Calculating...'
+                  : `${burnerBalanceWei !== null ? formatTokenAmount(burnerBalanceWei, 18, 4) : '--'} COTI | ${
+                      estimatedMessagesLeft !== null ? estimatedMessagesLeft.toString() : '--'
+                    } msgs left`}
               </span>
             </div>
-            <div className="swap-pill-switch" role="group" aria-label="Fee payment mode">
-              <button
-                type="button"
-                className={swapFeeModeSelection === 'token' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => setSwapFeeModeSelection('token')}
-                disabled={swappingTokens}
-                aria-pressed={swapFeeModeSelection === 'token'}
-              >
-                Token
-              </button>
-              <button
-                type="button"
-                className={swapFeeModeSelection === 'coti' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => setSwapFeeModeSelection('coti')}
-                disabled={swappingTokens}
-                aria-pressed={swapFeeModeSelection === 'coti'}
-              >
-                COTI
-              </button>
-            </div>
+            <button
+              className="connect-btn"
+              onClick={topUpBurnerWithMetaMask}
+              type="button"
+              disabled={initializingBurner || !burnerAddress || topUpAmountWei === null || topUpAmountWei <= 0n}
+            >
+              Top Up with MetaMask
+            </button>
+            <input
+              className="topup-slider"
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={topUpMultiplier}
+              onChange={(event) => setTopUpMultiplier(Number(event.target.value))}
+              aria-label="Top up multiplier"
+            />
+            <p className="topup-estimate-line">
+              Approx: <strong>{topUpMultiplier}</strong> msgs = <strong>{topUpAmountLabel}</strong>
+            </p>
           </div>
-          <div className="swap-quote-row">
-            <span>Fee quote</span>
-            <strong>
-              {loadingRewardBalances
-                ? 'Loading...'
-                : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
-                    swapTokenFeeAmount !== null
-                      ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6)
-                      : '--'
-                  }`}
-            </strong>
-          </div>
-          <button
-            className="connect-btn swap-action-btn"
-            type="button"
-            onClick={swapRewardTokens}
-            disabled={!canSwapRewardTokens}
+        ) : null}
+
+        {isConnected ? (
+          <details
+            className="wallet-meta wallet-disclosure wallet-rewards-swap-card"
+            open={showTokenTools}
+            onToggle={(event) => setShowTokenTools(event.currentTarget.open)}
           >
-            {swapButtonLabel}
-          </button>
-            {swapStatusMessage ? <p className="wallet-section-hint wallet-section-hint-note swap-status-note">{swapStatusMessage}</p> : null}
-          </div>
-        </details>
+            <summary>
+              <span>Whisper rewards</span>
+              <span>{tokenToolsSummary}</span>
+            </summary>
+            <div className="swap-meta wallet-disclosure-body">
+            {groupRewardsContractAddress ? (
+              <div className="wallet-section-hint wallet-section-hint-note reward-summary">
+                <div className="reward-summary-row">
+                  <span className="reward-line-label">
+                    Contract status
+                    <span
+                      className={rewardsEnabled ? 'reward-state-dot enabled' : 'reward-state-dot'}
+                      title={rewardsIndicatorLabel}
+                      aria-label={rewardsIndicatorLabel}
+                    />
+                  </span>
+                  <strong>
+                    {rewardsPublicReserveWei !== null
+                      ? `${formatTokenAmount(rewardsPublicReserveWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
+                      : '--'}
+                  </strong>
+                </div>
+                <div className="reward-summary-row">
+                  <span>Per message</span>
+                  <strong>
+                    {rewardsPublicPerInteractionWei !== null
+                      ? `${formatTokenAmount(rewardsPublicPerInteractionWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
+                      : '--'}
+                  </strong>
+                </div>
+              </div>
+            ) : null}
+            {!groupRewardsContractAddress ? (
+              <p className="wallet-section-hint wallet-section-hint-note">
+                Rewards contract info is not available for this session yet.
+              </p>
+            ) : null}
+            {rewardsLowReserve ? (
+              <p className="wallet-section-hint wallet-section-hint-note">
+                Rewards warning: insufficient public token rewards in rewards contract.
+              </p>
+            ) : null}
+            <div className="wallet-section-divider wallet-section-divider-tight" aria-hidden="true" />
+            <div className="wallet-section-header wallet-subsection-header">
+              <span className="wallet-section-label">Swap</span>
+              <span className="wallet-section-hint">{`${rewardTokenSymbol} <-> ${privateRewardTokenSymbol}`}</span>
+            </div>
+            <div className="swap-field">
+              <label className="swap-label-sr" htmlFor="swap-amount-input">Amount</label>
+              <input
+                id="swap-amount-input"
+                type="text"
+                inputMode="decimal"
+                value={swapAmountInput}
+                onChange={(event) => setSwapAmountInput(event.target.value.replace(/[^0-9.]/g, ''))}
+                placeholder={`0.0 ${swapInputSymbol}`}
+                disabled={swappingTokens}
+              />
+            </div>
+            <div className="swap-field">
+              <span id="swap-direction-label" className="swap-label-sr">
+                Swap direction
+              </span>
+              <div className="swap-pill-switch" role="group" aria-labelledby="swap-direction-label">
+                <button
+                  type="button"
+                  className={swapDirection === 'shield' ? 'swap-pill-option active' : 'swap-pill-option'}
+                  onClick={() => setSwapDirection('shield')}
+                  disabled={swappingTokens}
+                  aria-pressed={swapDirection === 'shield'}
+                  title={`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
+                >
+                  {`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
+                </button>
+                <button
+                  type="button"
+                  className={swapDirection === 'unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
+                  onClick={() => setSwapDirection('unshield')}
+                  disabled={swappingTokens}
+                  aria-pressed={swapDirection === 'unshield'}
+                  title={`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
+                >
+                  {`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
+                </button>
+              </div>
+            </div>
+            <div className="swap-field">
+              <div className="swap-field-label">
+                Fee payment
+                <span
+                  className="swap-info-tip"
+                  title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
+                  aria-label="Fee mode info"
+                >
+                  i
+                </span>
+              </div>
+              <div className="swap-pill-switch" role="group" aria-label="Fee payment mode">
+                <button
+                  type="button"
+                  className={swapFeeModeSelection === 'token' ? 'swap-pill-option active' : 'swap-pill-option'}
+                  onClick={() => setSwapFeeModeSelection('token')}
+                  disabled={swappingTokens}
+                  aria-pressed={swapFeeModeSelection === 'token'}
+                >
+                  Token
+                </button>
+                <button
+                  type="button"
+                  className={swapFeeModeSelection === 'coti' ? 'swap-pill-option active' : 'swap-pill-option'}
+                  onClick={() => setSwapFeeModeSelection('coti')}
+                  disabled={swappingTokens}
+                  aria-pressed={swapFeeModeSelection === 'coti'}
+                >
+                  COTI
+                </button>
+              </div>
+            </div>
+            <div className="swap-quote-row">
+              <span>Fee quote</span>
+              <strong>
+                {loadingRewardBalances
+                  ? 'Loading...'
+                  : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
+                      swapTokenFeeAmount !== null
+                        ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6)
+                        : '--'
+                    }`}
+              </strong>
+            </div>
+            <button
+              className="connect-btn swap-action-btn"
+              type="button"
+              onClick={swapRewardTokens}
+              disabled={!canSwapRewardTokens}
+            >
+              {swapButtonLabel}
+            </button>
+              {swapStatusMessage ? <p className="wallet-section-hint wallet-section-hint-note swap-status-note">{swapStatusMessage}</p> : null}
+            </div>
+          </details>
+        ) : null}
 
         {burnerNeedsFunding ? <p className="error">Burner needs funding before onboarding.</p> : null}
-        {burnerMnemonicBackup ? (
+        {isConnected && burnerMnemonicBackup ? (
           <details
             className="wallet-meta wallet-disclosure"
             open={showBackupTools}
