@@ -2946,6 +2946,7 @@ export default function App() {
   const groupRemovalNoticeMarkersRef = useRef<Record<string, Record<string, string>>>({});
   const groupRemovalNoticeMarkersLoadedRef = useRef(false);
   const conversationDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
+  const groupDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const groupsRef = useRef<GroupSummary[]>([]);
   const groupInvitesRef = useRef<GroupInvite[]>([]);
   const activeGroupIdRef = useRef<number | null>(null);
@@ -8878,6 +8879,7 @@ export default function App() {
     groupMessageLastSyncedBlockRef.current = {};
     groupRemovalNoticeSeenRef.current = {};
     conversationDeepBackfillDoneRef.current = {};
+    groupDeepBackfillDoneRef.current = {};
     groupRequiredFeeCacheRef.current = null;
     groupRequiredFeeRequestRef.current = null;
     groupTokenFeeCacheRef.current = null;
@@ -9991,7 +9993,20 @@ export default function App() {
     if (activeGroupId === null || !walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
       return;
     }
+
+    const walletKey = walletAddress.trim().toLowerCase();
+    if (!isWalletAddress(walletKey)) {
+      return;
+    }
+
+    const groupBackfillKey = `${walletKey}:${activeGroupId}`;
     syncGroupDataRef.current({ background: true }).catch(() => {});
+    if (!groupDeepBackfillDoneRef.current[groupBackfillKey]) {
+      groupDeepBackfillDoneRef.current[groupBackfillKey] = true;
+      syncGroupDataRef.current({ background: true, deep: true }).catch(() => {
+        delete groupDeepBackfillDoneRef.current[groupBackfillKey];
+      });
+    }
   }, [activeGroupId, walletAddress, hasAesReady, chainId]);
 
   useEffect(() => {
