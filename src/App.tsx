@@ -64,6 +64,24 @@ type HistoryEntry = {
   timestamp?: number;
 };
 
+type ConversationLog = {
+  blockNumber: number;
+  index: number;
+  transactionHash: string;
+  args?: Record<string, unknown>;
+};
+
+type ConversationBlockRange = {
+  firstBlock: number;
+  lastBlock: number;
+};
+
+type RecentPeerMeta = {
+  address: string;
+  lastBlock: number;
+  lastTime: number;
+};
+
 type GroupSummary = {
   id: number;
   admin: string;
@@ -143,6 +161,8 @@ const READ_STATE_BACKUP_MIN_INTERVAL_MS = 45000;
 const INITIAL_SYNC_LOOKBACK_BLOCKS = 2500;
 const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
+const FAST_CONTACT_PREVIEW_BATCH_SIZE = 8;
+const FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK = 24;
 const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
 const GROUP_SUBMIT_GAS_BUFFER = 700_000n;
@@ -321,7 +341,7 @@ const COTI_NETWORK = {
   blockExplorerUrl: 'https://mainnet.cotiscan.io'
 };
 
-const CHAT_CONTRACT_ADDRESS = '0x3b7151a7B7F1ccEB9b2325A27f99B24b6479d2D7';
+const CHAT_CONTRACT_ADDRESS = '0xF4cab1599aafBBB68677682354B7c1760bCF6c48';
 const GROUP_ADMIN_BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 const REWARD_TOKEN_ADDRESS = '0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8';
 const PRIVATE_REWARD_TOKEN_ADDRESS = '0x922B39AC9FD4ccb5E5a9de0694C8189DC2D214E8';
@@ -335,7 +355,12 @@ const CHAT_CONTRACT_ABI = [
   'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
   'function setMyNickname(string name)',
   'function nicknames(address account) view returns (string)',
+  'function getConversationBlockRange(address me, address peer) view returns (uint256 firstBlock, uint256 lastBlock)',
+  'function getFirstBlockForConversation(address me, address peer) view returns (uint256)',
   'function getLastBlockForConversation(address me, address peer) view returns (uint256)',
+  'function getRecentPeers(address user) view returns (address[100])',
+  'function getRecentPeersWithMeta(address user) view returns (address[100] peers, uint256[100] lastBlocks, uint256[100] lastTimes)',
+  'function maxRecentPeers() view returns (uint256)',
   'function getLastMessageTime(address me, address peer) view returns (uint256)',
   'function NICKNAME_MAX_BYTES() view returns (uint256)',
   'function feeAmount() view returns (uint256)',
@@ -1344,6 +1369,91 @@ const toSafeNumber = (value: unknown): number => {
   }
 
   return 0;
+};
+
+const parseConversationBlockRange = (rangeRaw: unknown): ConversationBlockRange | null => {
+  if (!rangeRaw) {
+    return null;
+  }
+
+  let firstBlockRaw: unknown;
+  let lastBlockRaw: unknown;
+
+  if (Array.isArray(rangeRaw)) {
+    firstBlockRaw = rangeRaw[0];
+    lastBlockRaw = rangeRaw[1];
+  } else if (typeof rangeRaw === 'object') {
+    const parsed = rangeRaw as { firstBlock?: unknown; lastBlock?: unknown };
+    firstBlockRaw = parsed.firstBlock;
+    lastBlockRaw = parsed.lastBlock;
+  }
+
+  const lastBlock = toSafeNumber(lastBlockRaw);
+  if (lastBlock <= 0) {
+    return null;
+  }
+
+  const firstBlock = Math.max(0, Math.min(toSafeNumber(firstBlockRaw), lastBlock));
+  return {
+    firstBlock,
+    lastBlock
+  };
+};
+
+const parseRecentPeersWithMetaResult = (raw: unknown): RecentPeerMeta[] => {
+  if (!raw) {
+    return [];
+  }
+
+  let peersRaw: unknown;
+  let lastBlocksRaw: unknown;
+  let lastTimesRaw: unknown;
+
+  if (Array.isArray(raw)) {
+    peersRaw = raw[0];
+    lastBlocksRaw = raw[1];
+    lastTimesRaw = raw[2];
+  } else if (typeof raw === 'object') {
+    const parsed = raw as { peers?: unknown; lastBlocks?: unknown; lastTimes?: unknown };
+    peersRaw = parsed.peers;
+    lastBlocksRaw = parsed.lastBlocks;
+    lastTimesRaw = parsed.lastTimes;
+  }
+
+  const peers = Array.isArray(peersRaw) ? peersRaw : [];
+  const lastBlocks = Array.isArray(lastBlocksRaw) ? lastBlocksRaw : [];
+  const lastTimes = Array.isArray(lastTimesRaw) ? lastTimesRaw : [];
+
+  const seen = new Set<string>();
+  const result: RecentPeerMeta[] = [];
+  for (let index = 0; index < peers.length; index += 1) {
+    const address = String(peers[index] ?? '').trim();
+    if (!isWalletAddress(address)) {
+      continue;
+    }
+
+    const key = address.toLowerCase();
+    if (key === '0x0000000000000000000000000000000000000000' || seen.has(key)) {
+      continue;
+    }
+
+    const lastBlock = Math.max(0, toSafeNumber(lastBlocks[index]));
+    const lastTime = Math.max(0, toSafeNumber(lastTimes[index]));
+    if (lastBlock <= 0 && lastTime <= 0) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push({ address, lastBlock, lastTime });
+  }
+
+  result.sort((left, right) => {
+    if (left.lastBlock !== right.lastBlock) {
+      return right.lastBlock - left.lastBlock;
+    }
+    return right.lastTime - left.lastTime;
+  });
+  return result;
 };
 
 type ParsedGroupJoinCodeState = {
@@ -2915,6 +3025,7 @@ export default function App() {
 
   const oldestLoadedBlockByContactRef = useRef<Record<string, number>>({});
   const hasOlderHistoryByContactRef = useRef<Record<string, boolean>>({});
+  const conversationRangeByContactRef = useRef<Record<string, ConversationBlockRange>>({});
   const loadingOlderHistoryRef = useRef(false);
   const blockTimestampCacheRef = useRef<Map<number, number>>(new Map());
   const requiredFeeCacheRef = useRef<bigint | null>(null);
@@ -5212,6 +5323,75 @@ export default function App() {
     return normalizeContactName(fallbackNickname ?? '') ?? '';
   };
 
+  const resolveRecentPeersWithMeta = async (contract: unknown, user: string): Promise<RecentPeerMeta[]> => {
+    if (!isWalletAddress(user)) {
+      return [];
+    }
+
+    const getRecentPeersWithMetaFn = (contract as { getRecentPeersWithMeta?: (userArg: string) => Promise<unknown> })
+      .getRecentPeersWithMeta;
+    if (!getRecentPeersWithMetaFn) {
+      return [];
+    }
+
+    try {
+      const recentPeersRaw = await getRecentPeersWithMetaFn(user);
+      const userKey = user.toLowerCase();
+      return parseRecentPeersWithMetaResult(recentPeersRaw).filter((peer) => peer.address.toLowerCase() !== userKey);
+    } catch {
+      return [];
+    }
+  };
+
+  const resolveConversationBlockRange = async (
+    contract: unknown,
+    me: string,
+    peer: string
+  ): Promise<ConversationBlockRange | null> => {
+    if (!isWalletAddress(me) || !isWalletAddress(peer)) {
+      return null;
+    }
+
+    const getConversationBlockRangeFn = (contract as {
+      getConversationBlockRange?: (meArg: string, peerArg: string) => Promise<unknown>;
+    }).getConversationBlockRange;
+    if (getConversationBlockRangeFn) {
+      try {
+        const rangeRaw = await getConversationBlockRangeFn(me, peer);
+        const parsed = parseConversationBlockRange(rangeRaw);
+        if (parsed) {
+          return parsed;
+        }
+      } catch {
+      }
+    }
+
+    const getLastBlockForConversationFn = (contract as {
+      getLastBlockForConversation?: (meArg: string, peerArg: string) => Promise<unknown>;
+    }).getLastBlockForConversation;
+    if (!getLastBlockForConversationFn) {
+      return null;
+    }
+
+    try {
+      const lastBlock = toSafeNumber(await getLastBlockForConversationFn(me, peer));
+      if (lastBlock <= 0) {
+        return null;
+      }
+
+      const getFirstBlockForConversationFn = (contract as {
+        getFirstBlockForConversation?: (meArg: string, peerArg: string) => Promise<unknown>;
+      }).getFirstBlockForConversation;
+      const firstBlockRaw = getFirstBlockForConversationFn
+        ? await getFirstBlockForConversationFn(me, peer).catch(() => 0)
+        : 0;
+      const firstBlock = Math.max(0, Math.min(toSafeNumber(firstBlockRaw), lastBlock));
+      return { firstBlock, lastBlock };
+    } catch {
+      return null;
+    }
+  };
+
   const applyStateBackupPayload = (
     walletKey: string,
     payload: StateBackupPayload,
@@ -5269,12 +5449,15 @@ export default function App() {
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
       const latestBlock = await readProvider.getBlockNumber();
       const selfFilter = contract.filters.MessageSubmitted(targetAddress, targetAddress);
-      const latestSelfConversationBlock = toSafeNumber(
-        await contract.getLastBlockForConversation(targetAddress, targetAddress)
-      );
-      if (latestSelfConversationBlock <= 0) {
+      const selfConversationRange = await resolveConversationBlockRange(contract, targetAddress, targetAddress);
+      if (!selfConversationRange || selfConversationRange.lastBlock <= 0) {
         return false;
       }
+      const latestSelfConversationBlock = Math.min(latestBlock, selfConversationRange.lastBlock);
+      const earliestSelfConversationBlock = Math.max(
+        0,
+        Math.min(selfConversationRange.firstBlock, latestSelfConversationBlock)
+      );
 
       let latestPayload: StateBackupPayload | null = null;
       let latestPayloadBlockNumber: number | undefined;
@@ -5327,18 +5510,18 @@ export default function App() {
       };
 
       if (latestSelfConversationBlock > 0) {
-        const headBlock = Math.min(latestBlock, latestSelfConversationBlock);
+        const headBlock = latestSelfConversationBlock;
         const headLogs = await contract.queryFilter(selfFilter, headBlock, headBlock);
         await tryDecodeBackupLogs(headLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
       }
 
-      let windowEnd = Math.min(latestBlock, latestSelfConversationBlock);
-      while (windowEnd >= 0 && !latestPayload) {
-        const windowStart = Math.max(0, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
+      let windowEnd = latestSelfConversationBlock;
+      while (windowEnd >= earliestSelfConversationBlock && !latestPayload) {
+        const windowStart = Math.max(earliestSelfConversationBlock, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
         const windowLogs = await contract.queryFilter(selfFilter, windowStart, windowEnd);
         await tryDecodeBackupLogs(windowLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
 
-        if (windowStart === 0) {
+        if (windowStart <= earliestSelfConversationBlock) {
           break;
         }
 
@@ -5556,13 +5739,88 @@ export default function App() {
         return;
       }
 
-      const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, null);
-      const outgoingFilter = contract.filters.MessageSubmitted(null, requestedWalletAddress);
+      const discoveredContacts = new Set<string>();
+      const discoveredNicknames = new Map<string, string>();
+      const latestIncomingMessageTimeByContact = new Map<string, number>();
+      const entries: HistoryEntry[] = [];
+      const previewByContact = new Map<string, HistoryEntry>();
+      let latestStateBackup:
+        | {
+            payload: StateBackupPayload;
+            blockNumber: number;
+            logIndex: number;
+          }
+        | null = null;
 
-      const [incomingLogs, outgoingLogs] = await Promise.all([
-        contract.queryFilter(incomingFilter, fromBlock, toBlock),
-        contract.queryFilter(outgoingFilter, fromBlock, toBlock)
-      ]);
+      const recentPeersWithMeta = await resolveRecentPeersWithMeta(contract, requestedWalletAddress);
+      for (const peer of recentPeersWithMeta) {
+        discoveredContacts.add(peer.address);
+      }
+
+      let incomingLogs: ConversationLog[] = [];
+      let outgoingLogs: ConversationLog[] = [];
+      const useFastPreviewPath = shouldLoadContactPreviews && recentPeersWithMeta.length > 0;
+
+      if (useFastPreviewPath) {
+        const previewCandidates = recentPeersWithMeta.filter(
+          (peer) => peer.lastBlock > 0 && peer.lastBlock <= toBlock
+        );
+
+        for (
+          let batchStart = 0;
+          batchStart < previewCandidates.length;
+          batchStart += FAST_CONTACT_PREVIEW_BATCH_SIZE
+        ) {
+          const batch = previewCandidates.slice(batchStart, batchStart + FAST_CONTACT_PREVIEW_BATCH_SIZE);
+          const batchResults = await Promise.all(
+            batch.map(async (peer): Promise<{ incoming: ConversationLog[]; outgoing: ConversationLog[] }> => {
+              const headBlock = peer.lastBlock;
+              const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, peer.address);
+              const outgoingFilter = contract.filters.MessageSubmitted(peer.address, requestedWalletAddress);
+
+              try {
+                let [incomingPreviewLogs, outgoingPreviewLogs] = await Promise.all([
+                  contract.queryFilter(incomingFilter, headBlock, headBlock),
+                  contract.queryFilter(outgoingFilter, headBlock, headBlock)
+                ]);
+
+                if (incomingPreviewLogs.length === 0 && outgoingPreviewLogs.length === 0 && headBlock > 0) {
+                  const fallbackStart = Math.max(0, headBlock - FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK);
+                  [incomingPreviewLogs, outgoingPreviewLogs] = await Promise.all([
+                    contract.queryFilter(incomingFilter, fallbackStart, headBlock),
+                    contract.queryFilter(outgoingFilter, fallbackStart, headBlock)
+                  ]);
+                }
+
+                return {
+                  incoming: incomingPreviewLogs as ConversationLog[],
+                  outgoing: outgoingPreviewLogs as ConversationLog[]
+                };
+              } catch {
+                return { incoming: [], outgoing: [] };
+              }
+            })
+          );
+
+          if (currentWalletKeyRef.current !== requestedWalletKey) {
+            return;
+          }
+
+          for (const result of batchResults) {
+            incomingLogs.push(...result.incoming);
+            outgoingLogs.push(...result.outgoing);
+          }
+        }
+      } else {
+        const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, null);
+        const outgoingFilter = contract.filters.MessageSubmitted(null, requestedWalletAddress);
+        const [incomingLogsRaw, outgoingLogsRaw] = await Promise.all([
+          contract.queryFilter(incomingFilter, fromBlock, toBlock),
+          contract.queryFilter(outgoingFilter, fromBlock, toBlock)
+        ]);
+        incomingLogs = incomingLogsRaw as ConversationLog[];
+        outgoingLogs = outgoingLogsRaw as ConversationLog[];
+      }
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
@@ -5594,18 +5852,6 @@ export default function App() {
         })
       );
 
-      const discoveredContacts = new Set<string>();
-      const discoveredNicknames = new Map<string, string>();
-      const latestIncomingMessageTimeByContact = new Map<string, number>();
-      const entries: HistoryEntry[] = [];
-      const previewByContact = new Map<string, HistoryEntry>();
-      let latestStateBackup:
-        | {
-            payload: StateBackupPayload;
-            blockNumber: number;
-            logIndex: number;
-          }
-        | null = null;
       const updateLatestIncomingMessageTime = (address: string, blockNumber: number): void => {
         const normalizedAddress = address.trim().toLowerCase();
         if (!isWalletAddress(normalizedAddress)) {
@@ -5979,7 +6225,9 @@ export default function App() {
           if (typeof knownEarliest !== 'number' || earliestBlock < knownEarliest) {
             oldestLoadedBlockByContactRef.current[contactKey] = earliestBlock;
           }
-          hasOlderHistoryByContactRef.current[contactKey] = true;
+          const knownRange = conversationRangeByContactRef.current[contactKey];
+          hasOlderHistoryByContactRef.current[contactKey] =
+            typeof knownRange?.firstBlock === 'number' ? earliestBlock > knownRange.firstBlock : true;
         }
 
         setMessagesByContact((previous) => {
@@ -6328,14 +6576,21 @@ export default function App() {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
-      const conversationLastBlock = toSafeNumber(
-        await contract.getLastBlockForConversation(requestedWalletAddress, contactAddress)
-      );
-      if (conversationLastBlock <= 0) {
+      const cachedConversationRange = conversationRangeByContactRef.current[contactKey];
+      const resolvedConversationRange =
+        cachedConversationRange ??
+        (await resolveConversationBlockRange(contract, requestedWalletAddress, contactAddress));
+      if (!resolvedConversationRange || resolvedConversationRange.lastBlock <= 0) {
         hasOlderHistoryByContactRef.current[contactKey] = false;
         return;
       }
-      const cappedConversationLastBlock = Math.min(latestBlock, conversationLastBlock);
+      conversationRangeByContactRef.current[contactKey] = resolvedConversationRange;
+      const conversationFirstBlock = Math.max(0, resolvedConversationRange.firstBlock);
+      const cappedConversationLastBlock = Math.min(latestBlock, resolvedConversationRange.lastBlock);
+      if (cappedConversationLastBlock < conversationFirstBlock) {
+        hasOlderHistoryByContactRef.current[contactKey] = false;
+        return;
+      }
 
       const knownEarliest = oldestLoadedBlockByContactRef.current[contactKey];
       const knownMessages = messagesByContact[contactKey] ?? [];
@@ -6359,12 +6614,12 @@ export default function App() {
             : cappedConversationLastBlock + 1;
 
       const toBlock = upperExclusive - 1;
-      if (toBlock < 0) {
+      if (toBlock < conversationFirstBlock) {
         hasOlderHistoryByContactRef.current[contactKey] = false;
         return;
       }
 
-      const fromBlock = Math.max(0, toBlock - HISTORY_PAGINATION_BLOCK_WINDOW + 1);
+      const fromBlock = Math.max(conversationFirstBlock, toBlock - HISTORY_PAGINATION_BLOCK_WINDOW + 1);
 
       const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, contactAddress);
       const outgoingFilter = contract.filters.MessageSubmitted(contactAddress, requestedWalletAddress);
@@ -6377,7 +6632,7 @@ export default function App() {
       }
 
       oldestLoadedBlockByContactRef.current[contactKey] = fromBlock;
-      if (fromBlock === 0) {
+      if (fromBlock <= conversationFirstBlock) {
         hasOlderHistoryByContactRef.current[contactKey] = false;
       }
 
@@ -9229,6 +9484,7 @@ export default function App() {
       lastSyncedBlockRef.current = {};
       oldestLoadedBlockByContactRef.current = {};
       hasOlderHistoryByContactRef.current = {};
+      conversationRangeByContactRef.current = {};
       blockTimestampCacheRef.current = new Map();
     }
 
