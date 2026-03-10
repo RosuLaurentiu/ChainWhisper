@@ -3692,8 +3692,45 @@ body {
   }
 
   .group-compose-main {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "fee tip"
+      "input send";
+    gap: 7px;
+    align-items: center;
+  }
+
+  .group-compose-main > .group-fee-toggle-compact {
+    grid-area: fee;
+    min-width: 0;
+    width: fit-content;
+    justify-self: start;
+    align-self: center;
+    padding: 5px 10px;
+    border-radius: 10px;
+  }
+
+  .group-compose-main > .chat-compose-editor {
+    grid-area: input;
+    min-height: 44px;
+    width: 100%;
+  }
+
+  .group-compose-main > .group-compose-send {
+    grid-area: send;
+    width: auto;
+    min-width: 84px;
+    min-height: 40px;
+    padding-inline: 14px;
+  }
+
+  .group-compose-main > .group-compose-tip {
+    grid-area: tip;
+    width: auto;
+    min-width: 92px;
+    min-height: 40px;
+    justify-self: end;
+    padding-inline: 16px;
   }
 
   .chat-image-attach {

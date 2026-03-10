@@ -241,7 +241,7 @@ export default function GroupChatCompose({
         <button
           type="button"
           onClick={onToggleTipComposer}
-          className={tipComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+          className={tipComposerOpen ? 'chat-tip-toggle group-compose-tip active' : 'chat-tip-toggle group-compose-tip'}
           disabled={tipping || sendingGroupMessage || processingGroupAction || activeGroupTipRecipients.length === 0}
           title={
             activeGroupTipRecipients.length === 0
