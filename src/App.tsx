@@ -923,7 +923,7 @@ export default function App() {
   const visibleSortedContacts = useMemo(
     () =>
       sortedContacts.filter((contact) => {
-        return showHiddenContacts ? Boolean(contact.hidden) : !Boolean(contact.hidden);
+        return showHiddenContacts ? !!contact.hidden : !contact.hidden;
       }),
     [sortedContacts, showHiddenContacts]
   );
@@ -2288,8 +2288,8 @@ export default function App() {
       return;
     }
 
-    const nextMuted = !Boolean(targetContact.muted);
-    const nextHidden = Boolean(targetContact.hidden);
+    const nextMuted = !targetContact.muted;
+    const nextHidden = !!targetContact.hidden;
     setConversationStateSyncPending(normalizedAddress, true);
 
     const muteNoticeText = nextMuted ? 'Conversation was muted.' : 'Conversation was unmuted.';
@@ -2328,8 +2328,8 @@ export default function App() {
       return;
     }
 
-    const nextMuted = Boolean(targetContact.muted);
-    const nextHidden = !Boolean(targetContact.hidden);
+    const nextMuted = !!targetContact.muted;
+    const nextHidden = !targetContact.hidden;
     setConversationStateSyncPending(normalizedAddress, true);
     const hiddenNoticeText = nextHidden ? 'Conversation was muted.' : 'Conversation was unmuted.';
 
@@ -7593,8 +7593,8 @@ export default function App() {
     }
 
     const shouldBeVisibleInCurrentMode = showHiddenContacts
-      ? Boolean(activeContactRecord.hidden)
-      : !Boolean(activeContactRecord.hidden);
+      ? !!activeContactRecord.hidden
+      : !activeContactRecord.hidden;
     if (!shouldBeVisibleInCurrentMode) {
       setActiveContact(null);
     }
