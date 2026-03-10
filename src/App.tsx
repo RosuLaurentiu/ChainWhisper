@@ -28,6 +28,13 @@ type InjectedEthereumProvider = Eip1193Provider & {
 type Contact = {
   address: string;
   name?: string;
+  muted?: boolean;
+  hidden?: boolean;
+};
+
+type ConversationPreferenceState = {
+  muted?: boolean;
+  hidden?: boolean;
 };
 
 type ChatMessage = {
@@ -104,6 +111,15 @@ type GroupInvite = {
   isPrivate?: boolean;
 };
 
+type ActiveGroupJoinCode = {
+  groupId: number;
+  codeHash: string;
+  code?: string;
+  creator: string;
+  expiresAt: number;
+  usesLeft: number;
+};
+
 type LegacyGroupInviteCodePayload = {
   version: 1;
   groupId: number;
@@ -167,6 +183,7 @@ const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
 const GROUP_SUBMIT_GAS_BUFFER = 700_000n;
 const GROUP_SUBMIT_GAS_LIMIT_MAX = 8_000_000n;
+const GROUP_JOIN_CODE_CACHE_STORAGE_KEY = 'coti-group-join-code-cache-v1';
 const DEFAULT_GROUP_JOIN_CODE_MAX_USES = 1;
 const DEFAULT_GROUP_JOIN_CODE_MULTI_USES = 10;
 const BURNER_ONBOARD_TIMEOUT_MS = 45000;
@@ -177,6 +194,12 @@ const PROFILE_METADATA_PREFIX = '\u2063';
 const REPLY_METADATA_PREFIX = '\u2064';
 const CONTACT_NAME_METADATA_PREFIX = '\u2065';
 const REACTION_METADATA_PREFIX = '\u2066';
+const CONVERSATION_STATE_METADATA_PREFIX = '\u2062';
+const LEGACY_CONVERSATION_STATE_METADATA_PREFIX = '\u2067';
+const CONVERSATION_STATE_METADATA_PREFIXES = [
+  CONVERSATION_STATE_METADATA_PREFIX,
+  LEGACY_CONVERSATION_STATE_METADATA_PREFIX
+] as const;
 const CONTACT_NAME_ENCODING_ZERO = '\u200b';
 const CONTACT_NAME_ENCODING_ONE = '\u200c';
 const LEGACY_PROFILE_METADATA_PREFIX = '[nick:';
@@ -266,6 +289,7 @@ type BurnerPinMode = 'set' | 'unlock';
 type BurnerInitResult = 'connected' | 'needs-funding' | 'imported' | 'failed';
 type SensitiveAction = 'reveal-backup';
 type MobileView = 'wallets' | 'contacts' | 'chat';
+type TipTokenSelection = 'coti' | 'wisp' | 'pwisp';
 
 type PendingBurnerInit = {
   mode: BurnerInitMode;
@@ -340,6 +364,8 @@ const COTI_NETWORK = {
   },
   blockExplorerUrl: 'https://mainnet.cotiscan.io'
 };
+const TIP_NATIVE_TOKEN_SYMBOL = COTI_NETWORK.nativeCurrency.symbol;
+const TIP_NATIVE_TOKEN_DECIMALS = COTI_NETWORK.nativeCurrency.decimals;
 
 const CHAT_CONTRACT_ADDRESS = '0xF4cab1599aafBBB68677682354B7c1760bCF6c48';
 const GROUP_ADMIN_BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
@@ -434,7 +460,8 @@ const ERC20_TOKEN_ABI = [
   'function decimals() view returns (uint8)',
   'function balanceOf(address account) view returns (uint256)',
   'function allowance(address owner, address spender) view returns (uint256)',
-  'function approve(address spender, uint256 amount) returns (bool)'
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function transfer(address to, uint256 amount) returns (bool)'
 ] as const;
 
 const PRIVATE_TOKEN_BALANCE_ABI = [
@@ -581,6 +608,7 @@ const GROUP_TITLE_COMPACT_PREFIX = 'cg3:';
 const GROUP_TITLE_ENCRYPTION_VERSION = 3;
 const GROUP_TITLE_KEY_MATERIAL = 'chainwhisper-group-title-aes-v1';
 const GROUP_JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const GROUP_JOIN_CODE_LENGTH = 4;
 const encodeBase64Url = (value: string): string =>
   btoa(value)
     .replace(/\+/g, '-')
@@ -678,7 +706,7 @@ const decryptGroupTitle = async (ivRaw: string, ciphertextRaw: string): Promise<
   }
 };
 const generateRandomGroupJoinCode = (): string => {
-  const values = new Uint8Array(12);
+  const values = new Uint8Array(GROUP_JOIN_CODE_LENGTH);
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
     crypto.getRandomValues(values);
   } else {
@@ -692,7 +720,7 @@ const generateRandomGroupJoinCode = (): string => {
     compactCode += GROUP_JOIN_CODE_ALPHABET[values[index] % GROUP_JOIN_CODE_ALPHABET.length];
   }
 
-  return `${compactCode.slice(0, 4)}-${compactCode.slice(4, 8)}-${compactCode.slice(8, 12)}`;
+  return compactCode.slice(0, GROUP_JOIN_CODE_LENGTH);
 };
 const encodeGroupInviteCode = (payload: GroupInviteCodePayload): string => {
   if (payload.version === 2) {
@@ -1256,6 +1284,23 @@ const parseTokenAmountInput = (raw: string, decimals: number): bigint | null => 
   }
 };
 
+const sanitizeTokenAmountInput = (raw: string): string => {
+  const normalized = raw.replace(/[^0-9.]/g, '');
+  if (!normalized) {
+    return '';
+  }
+
+  const prefixed = normalized.startsWith('.') ? `0${normalized}` : normalized;
+  const separatorIndex = prefixed.indexOf('.');
+  if (separatorIndex < 0) {
+    return prefixed;
+  }
+
+  const wholeChunk = prefixed.slice(0, separatorIndex);
+  const fractionChunk = prefixed.slice(separatorIndex + 1).replace(/\./g, '');
+  return `${wholeChunk}.${fractionChunk}`;
+};
+
 const parseTipNoticePayload = (text: string): { tipAmountWei: bigint; messageCount: number } | null => {
   if (!text.startsWith(TIP_NOTICE_PREFIX)) {
     return null;
@@ -1283,6 +1328,24 @@ const parseTipNoticePayload = (text: string): { tipAmountWei: bigint; messageCou
   } catch {
     return null;
   }
+};
+
+const parseTokenTipNotice = (text: string): { amount: string; symbol: string } | null => {
+  const tokenTipMatch = text.match(/^\[TIP\]\s*You received\s+([0-9]+(?:\.[0-9]+)?)\s+([A-Za-z0-9._-]{1,24})\.?$/i);
+  if (!tokenTipMatch) {
+    return null;
+  }
+
+  const amount = tokenTipMatch[1];
+  const symbol = tokenTipMatch[2].trim().toUpperCase();
+  if (!amount || !symbol) {
+    return null;
+  }
+
+  return {
+    amount,
+    symbol
+  };
 };
 
 const formatTipNoticeText = (
@@ -1577,35 +1640,102 @@ const parseSubmitMemoPayload = (encryptedMemo: unknown): SubmitMemoPayload => {
   };
 };
 
+const normalizeConversationPreferenceState = (
+  state: ConversationPreferenceState | null | undefined
+): ConversationPreferenceState | undefined => {
+  if (!state) {
+    return undefined;
+  }
+
+  const normalized: ConversationPreferenceState = {};
+  if (typeof state.muted === 'boolean') {
+    normalized.muted = state.muted;
+  }
+  if (typeof state.hidden === 'boolean') {
+    normalized.hidden = state.hidden;
+  }
+
+  if (typeof normalized.muted !== 'boolean' && typeof normalized.hidden !== 'boolean') {
+    return undefined;
+  }
+
+  return normalized;
+};
+
+const applyConversationPreferenceStateToContact = (
+  contact: Contact,
+  state: ConversationPreferenceState | null | undefined
+): Contact => {
+  const normalizedState = normalizeConversationPreferenceState(state);
+  if (!normalizedState) {
+    return contact;
+  }
+
+  const nextMuted =
+    typeof normalizedState.muted === 'boolean' ? normalizedState.muted : contact.muted;
+  const nextHidden =
+    typeof normalizedState.hidden === 'boolean' ? normalizedState.hidden : contact.hidden;
+  if (contact.muted === nextMuted && contact.hidden === nextHidden) {
+    return contact;
+  }
+
+  const nextContact: Contact = { ...contact };
+  if (typeof nextMuted === 'boolean') {
+    nextContact.muted = nextMuted;
+  }
+  if (typeof nextHidden === 'boolean') {
+    nextContact.hidden = nextHidden;
+  }
+  return nextContact;
+};
+
 const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: string[]): Contact[] => {
   const fullByLower = new Map<string, Contact>();
 
-  const upsertFull = (addressValue: string, incomingName?: string): void => {
-    const address = addressValue.trim();
+  const upsertFull = (incomingContact: Contact): void => {
+    const address = incomingContact.address.trim();
     if (!isWalletAddress(address)) {
       return;
     }
 
     const key = address.toLowerCase();
-    const name = normalizeContactName(incomingName ?? '');
+    const normalizedName = normalizeContactName(incomingContact.name ?? '');
+    const normalizedState = normalizeConversationPreferenceState({
+      muted: incomingContact.muted,
+      hidden: incomingContact.hidden
+    });
     const existingContact = fullByLower.get(key);
     if (!existingContact) {
-      fullByLower.set(key, name ? { address, name } : { address });
+      const nextContact: Contact = normalizedName ? { address, name: normalizedName } : { address };
+      if (normalizedState && typeof normalizedState.muted === 'boolean') {
+        nextContact.muted = normalizedState.muted;
+      }
+      if (normalizedState && typeof normalizedState.hidden === 'boolean') {
+        nextContact.hidden = normalizedState.hidden;
+      }
+      fullByLower.set(key, nextContact);
       return;
     }
 
+    let nextContact = existingContact;
     const existingName = normalizeContactName(existingContact.name ?? '');
-    if (!existingName && name) {
-      fullByLower.set(key, { ...existingContact, name });
+    if (!existingName && normalizedName) {
+      nextContact = { ...nextContact, name: normalizedName };
+    }
+    if (normalizedState) {
+      nextContact = applyConversationPreferenceStateToContact(nextContact, normalizedState);
+    }
+    if (nextContact !== existingContact) {
+      fullByLower.set(key, nextContact);
     }
   };
 
   for (const contact of existing) {
-    upsertFull(contact.address, contact.name);
+    upsertFull(contact);
   }
 
   for (const address of discoveredAddresses) {
-    upsertFull(address);
+    upsertFull({ address });
   }
 
   const shortToFull = new Map<string, string | null>();
@@ -1620,23 +1750,41 @@ const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: string[])
   }
 
   const unresolvedByLower = new Map<string, Contact>();
-  const upsertUnresolved = (addressValue: string, incomingName?: string): void => {
-    const address = addressValue.trim();
+  const upsertUnresolved = (incomingContact: Contact): void => {
+    const address = incomingContact.address.trim();
     if (!address) {
       return;
     }
 
     const key = address.toLowerCase();
-    const name = normalizeContactName(incomingName ?? '');
+    const normalizedName = normalizeContactName(incomingContact.name ?? '');
+    const normalizedState = normalizeConversationPreferenceState({
+      muted: incomingContact.muted,
+      hidden: incomingContact.hidden
+    });
     const existingContact = unresolvedByLower.get(key);
     if (!existingContact) {
-      unresolvedByLower.set(key, name ? { address, name } : { address });
+      const nextContact: Contact = normalizedName ? { address, name: normalizedName } : { address };
+      if (normalizedState && typeof normalizedState.muted === 'boolean') {
+        nextContact.muted = normalizedState.muted;
+      }
+      if (normalizedState && typeof normalizedState.hidden === 'boolean') {
+        nextContact.hidden = normalizedState.hidden;
+      }
+      unresolvedByLower.set(key, nextContact);
       return;
     }
 
+    let nextContact = existingContact;
     const existingName = normalizeContactName(existingContact.name ?? '');
-    if (!existingName && name) {
-      unresolvedByLower.set(key, { ...existingContact, name });
+    if (!existingName && normalizedName) {
+      nextContact = { ...nextContact, name: normalizedName };
+    }
+    if (normalizedState) {
+      nextContact = applyConversationPreferenceStateToContact(nextContact, normalizedState);
+    }
+    if (nextContact !== existingContact) {
+      unresolvedByLower.set(key, nextContact);
     }
   };
 
@@ -1651,17 +1799,31 @@ const mergeUniqueContacts = (existing: Contact[], discoveredAddresses: string[])
       const resolvedFull = shortToFull.get(lowerAddress);
       if (resolvedFull && isWalletAddress(resolvedFull)) {
         const shortName = normalizeContactName(contact.name ?? '');
-        if (shortName) {
-          const resolvedContact = fullByLower.get(resolvedFull);
-          if (resolvedContact && !normalizeContactName(resolvedContact.name ?? '')) {
-            fullByLower.set(resolvedFull, { ...resolvedContact, name: shortName });
+        const shortState = normalizeConversationPreferenceState({
+          muted: contact.muted,
+          hidden: contact.hidden
+        });
+        const resolvedContact = fullByLower.get(resolvedFull);
+        if (resolvedContact) {
+          let nextResolvedContact = resolvedContact;
+          if (shortName && !normalizeContactName(resolvedContact.name ?? '')) {
+            nextResolvedContact = { ...nextResolvedContact, name: shortName };
+          }
+          if (shortState) {
+            nextResolvedContact = applyConversationPreferenceStateToContact(
+              nextResolvedContact,
+              shortState
+            );
+          }
+          if (nextResolvedContact !== resolvedContact) {
+            fullByLower.set(resolvedFull, nextResolvedContact);
           }
         }
         continue;
       }
     }
 
-    upsertUnresolved(rawAddress, contact.name);
+    upsertUnresolved(contact);
   }
 
   return [...fullByLower.values(), ...unresolvedByLower.values()];
@@ -2463,6 +2625,157 @@ const parseContactNamePayload = (text: string): { cleanText: string; contactName
   return { cleanText: remaining, contactName };
 };
 
+const parseBooleanFlag = (value: unknown): boolean | undefined => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+    return undefined;
+  }
+
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true;
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false;
+  }
+  return undefined;
+};
+
+const parseConversationPreferenceStateValue = (rawValue: string): ConversationPreferenceState | undefined => {
+  const normalizedValue = rawValue.trim();
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  // Compact v2 payload: one character encoding both flags.
+  if (/^[0-3]$/.test(normalizedValue)) {
+    const code = Number.parseInt(normalizedValue, 10);
+    return {
+      muted: (code & 0b10) === 0b10,
+      hidden: (code & 0b01) === 0b01
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(normalizedValue) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') {
+      return undefined;
+    }
+
+    const muted = parseBooleanFlag(parsed.m ?? parsed.muted);
+    const hidden = parseBooleanFlag(parsed.h ?? parsed.hidden);
+    if (typeof muted !== 'boolean' && typeof hidden !== 'boolean') {
+      return undefined;
+    }
+
+    // State payload is treated as a full snapshot.
+    return {
+      muted: muted ?? false,
+      hidden: hidden ?? false
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const buildMessageWithConversationStatePayload = (
+  plainText: string,
+  state: ConversationPreferenceState
+): string => {
+  const normalizedState = normalizeConversationPreferenceState(state);
+  if (!normalizedState) {
+    return plainText;
+  }
+
+  const muted = normalizedState.muted ?? false;
+  const hidden = normalizedState.hidden ?? false;
+
+  // Compact v2 payload: single character (0..3) instead of JSON.
+  const compactStateCode = String((muted ? 0b10 : 0) | (hidden ? 0b01 : 0));
+  const serializedPayload = compactStateCode;
+  const encodedPayload = encodeHiddenMetadata(serializedPayload);
+  const sanitizedPlainText = CONVERSATION_STATE_METADATA_PREFIXES.reduce(
+    (currentText, marker) => currentText.split(marker).join(''),
+    plainText
+  ).trim();
+  if (!sanitizedPlainText) {
+    return `${CONVERSATION_STATE_METADATA_PREFIX}${encodedPayload}${CONVERSATION_STATE_METADATA_PREFIX}`;
+  }
+  // Place visible text first for better compatibility with apps that don't parse metadata.
+  return `${sanitizedPlainText}${CONVERSATION_STATE_METADATA_PREFIX}${encodedPayload}${CONVERSATION_STATE_METADATA_PREFIX}`;
+};
+
+const parseConversationStatePayloadWithPrefix = (
+  text: string,
+  prefix: string
+): { cleanText: string; conversationState: ConversationPreferenceState } | undefined => {
+  // Legacy format: <prefix><metadata><prefix><visible-text>
+  if (text.startsWith(prefix)) {
+    const metadataEnd = text.indexOf(prefix, prefix.length);
+    if (metadataEnd > prefix.length) {
+      const metadataChunk = text.slice(prefix.length, metadataEnd);
+      const decodedChunk = decodeHiddenMetadata(metadataChunk) ?? metadataChunk;
+      const conversationState = parseConversationPreferenceStateValue(decodedChunk);
+      if (conversationState) {
+        const remaining = text.slice(metadataEnd + prefix.length);
+        return {
+          cleanText: remaining,
+          conversationState
+        };
+      }
+    }
+  }
+
+  // Current format: <visible-text><prefix><metadata><prefix>
+  const metadataEnd = text.lastIndexOf(prefix);
+  if (metadataEnd <= 0) {
+    return undefined;
+  }
+
+  const metadataStart = text.lastIndexOf(prefix, metadataEnd - 1);
+  if (metadataStart < 0 || metadataStart === metadataEnd) {
+    return undefined;
+  }
+
+  const metadataChunk = text.slice(metadataStart + prefix.length, metadataEnd);
+  const decodedChunk = decodeHiddenMetadata(metadataChunk) ?? metadataChunk;
+  const conversationState = parseConversationPreferenceStateValue(decodedChunk);
+  if (!conversationState) {
+    return undefined;
+  }
+
+  const cleanText = `${text.slice(0, metadataStart)}${text.slice(metadataEnd + prefix.length)}`.trim();
+  return {
+    cleanText,
+    conversationState
+  };
+};
+
+const parseConversationStatePayload = (
+  text: string
+): { cleanText: string; conversationState?: ConversationPreferenceState } => {
+  for (const prefix of CONVERSATION_STATE_METADATA_PREFIXES) {
+    const parsed = parseConversationStatePayloadWithPrefix(text, prefix);
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return { cleanText: text };
+};
+
 const parseMessageReplyPayload = (text: string): {
   cleanText: string;
   replyToText?: string;
@@ -2631,9 +2944,11 @@ const parseChatMessagePayload = (text: string): {
   replyToTxHash?: string;
   embeddedNickname?: string;
   embeddedContactName?: string;
+  embeddedConversationState?: ConversationPreferenceState;
   embeddedReaction?: MessageReactionPayload;
 } => {
-  const contactNameParsed = parseContactNamePayload(text);
+  const conversationStateParsed = parseConversationStatePayload(text);
+  const contactNameParsed = parseContactNamePayload(conversationStateParsed.cleanText);
   const profileParsed = parseMessageProfilePayload(contactNameParsed.cleanText);
   const reactionParsed = parseMessageReactionPayload(profileParsed.cleanText);
   const replyParsed = parseMessageReplyPayload(reactionParsed.cleanText);
@@ -2645,6 +2960,7 @@ const parseChatMessagePayload = (text: string): {
     replyToTxHash: replyParsed.replyToTxHash,
     embeddedNickname: profileParsed.nickname,
     embeddedContactName: contactNameParsed.contactName,
+    embeddedConversationState: conversationStateParsed.conversationState,
     embeddedReaction: reactionParsed.reaction
   };
 };
@@ -2661,6 +2977,14 @@ const getMessageDisplayText = (text: string, direction?: 'incoming' | 'outgoing'
       parsedTipPayload.messageCount,
       direction
     );
+  }
+
+  const parsedTokenTip = parseTokenTipNotice(text);
+  if (parsedTokenTip) {
+    if (direction === 'outgoing') {
+      return `You tipped ${parsedTokenTip.amount} ${parsedTokenTip.symbol}.`;
+    }
+    return `You received ${parsedTokenTip.amount} ${parsedTokenTip.symbol}.`;
   }
 
   const legacyTipMatch = text.match(/^\[TIP\]\s*You received\s+([0-9]+(?:\.[0-9]+)?)\s+COTI\s+\((\d+)\s+messages?\)\.?$/i);
@@ -2680,9 +3004,13 @@ export default function App() {
     // Telegram bot link
     const telegramBotLink = 'https://t.me/CipherTrade_bot';
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [conversationStateSyncPendingByContact, setConversationStateSyncPendingByContact] = useState<
+    Record<string, boolean>
+  >({});
   const [newContact, setNewContact] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [activeContact, setActiveContact] = useState<string | null>(null);
+  const [showHiddenContacts, setShowHiddenContacts] = useState(false);
   const [activeGroupId, setActiveGroupId] = useState<number | null>(null);
   const [editingContactAddress, setEditingContactAddress] = useState<string | null>(null);
   const [editingContactName, setEditingContactName] = useState('');
@@ -2729,6 +3057,9 @@ export default function App() {
   );
   const [generatedGroupInviteCode, setGeneratedGroupInviteCode] = useState('');
   const [generatedGroupJoinCodeHash, setGeneratedGroupJoinCodeHash] = useState('');
+  const [activeGroupJoinCodes, setActiveGroupJoinCodes] = useState<ActiveGroupJoinCode[]>([]);
+  const [loadingActiveGroupJoinCodes, setLoadingActiveGroupJoinCodes] = useState(false);
+  const [revokingGroupJoinCodeHash, setRevokingGroupJoinCodeHash] = useState('');
   const [groupJoinCodeInput, setGroupJoinCodeInput] = useState('');
   const [groupRenameOpen, setGroupRenameOpen] = useState(false);
   const [groupRenameInput, setGroupRenameInput] = useState('');
@@ -2813,6 +3144,7 @@ export default function App() {
   const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
   const [requiredFeeWei, setRequiredFeeWei] = useState<bigint | null>(null);
   const [burnerBalanceWei, setBurnerBalanceWei] = useState<bigint | null>(null);
+  const [tipNativeBalanceWei, setTipNativeBalanceWei] = useState<bigint | null>(null);
   const [groupRequiredFeeWei, setGroupRequiredFeeWei] = useState<bigint | null>(null);
   const [groupTokenFeeWei, setGroupTokenFeeWei] = useState<bigint | null>(null);
   const [groupRewardsContractAddress, setGroupRewardsContractAddress] = useState('');
@@ -2840,6 +3172,10 @@ export default function App() {
   const [loadingRewardBalances, setLoadingRewardBalances] = useState(false);
   const [topUpMetricsNonce, setTopUpMetricsNonce] = useState(0);
   const [tipping, setTipping] = useState(false);
+  const [tipComposerOpen, setTipComposerOpen] = useState(false);
+  const [tipTokenSelection, setTipTokenSelection] = useState<TipTokenSelection>('coti');
+  const [tipAmountInput, setTipAmountInput] = useState('');
+  const [groupTipRecipientAddress, setGroupTipRecipientAddress] = useState('');
   const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
   const [processingGroupAction, setProcessingGroupAction] = useState(false);
   const [syncingGroups, setSyncingGroups] = useState(false);
@@ -2970,6 +3306,16 @@ export default function App() {
 
   const prevUnreadRef = useRef<Record<string, boolean>>({});
   const prevUnreadGroupRef = useRef<Record<string, boolean>>({});
+  const notificationSuppressedContactAddressSet = useMemo(
+    () =>
+      new Set(
+        contacts
+          .filter((contact) => contact.muted || contact.hidden)
+          .map((contact) => contact.address.trim().toLowerCase())
+          .filter((address) => isWalletAddress(address))
+      ),
+    [contacts]
+  );
   useEffect(() => {
     unreadMapRef.current = unreadMap || {};
   }, [unreadMap]);
@@ -2978,12 +3324,47 @@ export default function App() {
   }, [unreadGroupMap]);
 
   useEffect(() => {
+    if (notificationSuppressedContactAddressSet.size === 0) {
+      return;
+    }
+
+    setUnreadMap((previous) => {
+      if (Object.keys(previous).length === 0) {
+        return previous;
+      }
+
+      let changed = false;
+      const nextUnread = { ...previous };
+      for (const address of Object.keys(nextUnread)) {
+        if (notificationSuppressedContactAddressSet.has(address.toLowerCase())) {
+          delete nextUnread[address];
+          changed = true;
+        }
+      }
+
+      if (!changed) {
+        return previous;
+      }
+
+      unreadMapRef.current = nextUnread;
+      return nextUnread;
+    });
+  }, [notificationSuppressedContactAddressSet]);
+
+  useEffect(() => {
     const prevContacts = prevUnreadRef.current || {};
     const nextContacts = unreadMap || {};
     const prevGroups = prevUnreadGroupRef.current || {};
     const nextGroups = unreadGroupMap || {};
-    const hasNewUnread = (next: Record<string, boolean>, previous: Record<string, boolean>) => {
+    const hasNewUnread = (
+      next: Record<string, boolean>,
+      previous: Record<string, boolean>,
+      suppressedKeys?: Set<string>
+    ) => {
       for (const key of Object.keys(next)) {
+        if (suppressedKeys?.has(key.toLowerCase())) {
+          continue;
+        }
         if (next[key] && !previous[key]) {
           return true;
         }
@@ -2992,14 +3373,15 @@ export default function App() {
     };
 
     const shouldPlaySound =
-      hasNewUnread(nextContacts, prevContacts) || hasNewUnread(nextGroups, prevGroups);
+      hasNewUnread(nextContacts, prevContacts, notificationSuppressedContactAddressSet) ||
+      hasNewUnread(nextGroups, prevGroups);
     if (shouldPlaySound && !suppressSoundOnConnectRef.current) {
       playNotificationSound();
     }
 
     prevUnreadRef.current = { ...nextContacts };
     prevUnreadGroupRef.current = { ...nextGroups };
-  }, [unreadMap, unreadGroupMap, soundEnabled]);
+  }, [unreadMap, unreadGroupMap, soundEnabled, notificationSuppressedContactAddressSet]);
 
   useEffect(() => {
     const prev = previousWalletAddressRef.current || '';
@@ -3056,6 +3438,8 @@ export default function App() {
   const groupRemovalNoticeSeenRef = useRef<Record<string, Set<number>>>({});
   const groupRemovalNoticeMarkersRef = useRef<Record<string, Record<string, string>>>({});
   const groupRemovalNoticeMarkersLoadedRef = useRef(false);
+  const groupJoinCodeCacheRef = useRef<Record<string, Record<string, Record<string, string>>>>({});
+  const groupJoinCodeCacheLoadedRef = useRef(false);
   const conversationDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const groupDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const groupsRef = useRef<GroupSummary[]>([]);
@@ -3154,6 +3538,38 @@ export default function App() {
     });
   }, [activeGroupMeta, walletAddress, myNickname, contacts]);
   const activeGroupMemberCount = activeGroupParticipants.length > 0 ? activeGroupParticipants.length : activeGroupMeta?.memberCount ?? 0;
+  const activeGroupTipRecipients = useMemo(
+    () =>
+      activeGroupParticipants.filter(
+        (participant) => !participant.isSelf && isWalletAddress(participant.address)
+      ),
+    [activeGroupParticipants]
+  );
+  useEffect(() => {
+    if (activeGroupId === null) {
+      setGroupTipRecipientAddress('');
+      return;
+    }
+
+    setGroupTipRecipientAddress((previous) => {
+      const normalizedPrevious = previous.trim().toLowerCase();
+      const existingRecipient = activeGroupTipRecipients.find(
+        (participant) => participant.address.toLowerCase() === normalizedPrevious
+      );
+      if (existingRecipient) {
+        return existingRecipient.address;
+      }
+      return activeGroupTipRecipients[0]?.address ?? '';
+    });
+  }, [activeGroupId, activeGroupTipRecipients]);
+  const selectedGroupTipRecipient = useMemo(
+    () =>
+      activeGroupTipRecipients.find(
+        (participant) =>
+          participant.address.toLowerCase() === groupTipRecipientAddress.trim().toLowerCase()
+      ) ?? null,
+    [activeGroupTipRecipients, groupTipRecipientAddress]
+  );
   const isActiveGroupAdmin = useMemo(() => {
     if (!activeGroupMeta || !walletAddress) {
       return false;
@@ -3339,6 +3755,23 @@ export default function App() {
 
     return withIndex.map((item) => item.contact);
   }, [contacts, messagesByContact, persistedContactOrder]);
+  const visibleSortedContacts = useMemo(
+    () =>
+      sortedContacts.filter((contact) => {
+        return showHiddenContacts ? Boolean(contact.hidden) : !Boolean(contact.hidden);
+      }),
+    [sortedContacts, showHiddenContacts]
+  );
+  const hiddenContactsCount = useMemo(
+    () => contacts.reduce((count, contact) => (contact.hidden ? count + 1 : count), 0),
+    [contacts]
+  );
+  const hiddenContactsLabel = hiddenContactsCount === 1 ? '1 hidden chat' : `${hiddenContactsCount} hidden chats`;
+  const contactsListEmptyMessage = showHiddenContacts
+    ? 'No hidden conversations yet.'
+    : contacts.length > 0 && hiddenContactsCount === contacts.length
+      ? 'All contacts are hidden. Open hidden chats to restore one.'
+      : 'No contacts yet.';
   const sortedGroups = useMemo(
     () =>
       [...groups].sort((left, right) => {
@@ -3354,7 +3787,7 @@ export default function App() {
     [groupInvites]
   );
   const contactGroupPanelRatio = useMemo(() => {
-    const contactCount = Math.max(sortedContacts.length, 1);
+    const contactCount = Math.max(visibleSortedContacts.length, 1);
     const groupCount = Math.max(sortedGroups.length + sortedGroupInvites.length, 1);
     const total = contactCount + groupCount;
 
@@ -3362,7 +3795,7 @@ export default function App() {
     const groupsPanelFlex = Math.max(0.9, Math.min(2.1, (groupCount / total) * 3));
 
     return { contactsPanelFlex, groupsPanelFlex };
-  }, [sortedContacts.length, sortedGroups.length, sortedGroupInvites.length]);
+  }, [visibleSortedContacts.length, sortedGroups.length, sortedGroupInvites.length]);
   const hasUnreadConversations = useMemo(
     () =>
       Object.values(unreadMap).some((isUnread) => Boolean(isUnread)) ||
@@ -3373,6 +3806,22 @@ export default function App() {
     () => contacts.find((contact) => contact.address.toLowerCase() === activeContact?.toLowerCase()),
     [contacts, activeContact]
   );
+  const isConversationStateSyncPending = useCallback(
+    (address?: string | null): boolean => {
+      const normalized = String(address ?? '').trim().toLowerCase();
+      if (!normalized) {
+        return false;
+      }
+      return Boolean(conversationStateSyncPendingByContact[normalized]);
+    },
+    [conversationStateSyncPendingByContact]
+  );
+  const activeConversationStateSyncPending = useMemo(
+    () => isConversationStateSyncPending(activeContact),
+    [activeContact, isConversationStateSyncPending]
+  );
+  const activeConversationMuted = Boolean(activeContactMeta?.muted);
+  const activeConversationHidden = Boolean(activeContactMeta?.hidden);
   const isSelfChat = useMemo(
     () => Boolean(activeContact && walletAddress && activeContact.toLowerCase() === walletAddress.toLowerCase()),
     [activeContact, walletAddress]
@@ -3505,8 +3954,57 @@ export default function App() {
     }
     return '--';
   }, [loadingTopUpQuote, topUpAmountWei]);
-  const tipMessagesCount = Math.max(0, Math.floor(topUpMultiplier));
-  const tipMessagesLabel = `${tipMessagesCount} ${tipMessagesCount === 1 ? 'msg' : 'msgs'}`;
+  const activeTipTokenSymbol =
+    tipTokenSelection === 'coti'
+      ? TIP_NATIVE_TOKEN_SYMBOL
+      : tipTokenSelection === 'wisp'
+        ? rewardTokenSymbol
+        : privateRewardTokenSymbol;
+  const activeTipTokenDecimals =
+    tipTokenSelection === 'coti'
+      ? TIP_NATIVE_TOKEN_DECIMALS
+      : tipTokenSelection === 'wisp'
+        ? rewardTokenDecimals
+        : privateRewardTokenDecimals;
+  const activeTipTokenBalanceWei =
+    tipTokenSelection === 'coti'
+      ? tipNativeBalanceWei
+      : tipTokenSelection === 'wisp'
+        ? rewardTokenBalanceWei
+        : privateRewardTokenBalanceWei;
+  const parsedTipAmountWei = useMemo(
+    () => parseTokenAmountInput(tipAmountInput, activeTipTokenDecimals),
+    [tipAmountInput, activeTipTokenDecimals]
+  );
+  const tipAmountWeiFromInput = parsedTipAmountWei !== null && parsedTipAmountWei > 0n ? parsedTipAmountWei : 0n;
+  const tipAmountExceedsBalance =
+    activeTipTokenBalanceWei !== null &&
+    tipAmountWeiFromInput > 0n &&
+    tipAmountWeiFromInput > activeTipTokenBalanceWei;
+  const tipAmountSummaryLabel =
+    tipAmountWeiFromInput > 0n
+      ? `${formatTokenAmount(tipAmountWeiFromInput, activeTipTokenDecimals, 6)} ${activeTipTokenSymbol}`
+      : `0 ${activeTipTokenSymbol}`;
+  const tipBalanceSummaryLabel =
+    activeTipTokenBalanceWei !== null
+      ? `${formatTokenAmount(activeTipTokenBalanceWei, activeTipTokenDecimals, 6)} ${activeTipTokenSymbol}`
+      : '--';
+  const canSendTipFromComposer =
+    !tipping &&
+    !sending &&
+    !!activeContact &&
+    !isSelfChat &&
+    tipAmountWeiFromInput > 0n &&
+    activeTipTokenBalanceWei !== null &&
+    !tipAmountExceedsBalance;
+  const canSendGroupTipFromComposer =
+    !tipping &&
+    !sendingGroupMessage &&
+    !!activeGroupId &&
+    !!selectedGroupTipRecipient &&
+    tipAmountWeiFromInput > 0n &&
+    activeTipTokenBalanceWei !== null &&
+    !tipAmountExceedsBalance;
   const isStatusConnected = useMemo(() => /^connected/i.test(status.trim()), [status]);
   const isAesConnected = useMemo(() => onboardStatus === 'AES key ready', [onboardStatus]);
   const rewardsConfigured = Boolean(groupRewardsContractAddress);
@@ -3591,6 +4089,137 @@ export default function App() {
       );
     } catch {
     }
+  };
+
+  const ensureGroupJoinCodeCacheLoaded = (): void => {
+    if (groupJoinCodeCacheLoadedRef.current) {
+      return;
+    }
+    groupJoinCodeCacheLoadedRef.current = true;
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(GROUP_JOIN_CODE_CACHE_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return;
+      }
+
+      const normalized: Record<string, Record<string, Record<string, string>>> = {};
+      for (const [walletKey, byGroupRaw] of Object.entries(parsed)) {
+        if (!isWalletAddress(walletKey) || !byGroupRaw || typeof byGroupRaw !== 'object' || Array.isArray(byGroupRaw)) {
+          continue;
+        }
+
+        const nextByGroup: Record<string, Record<string, string>> = {};
+        for (const [groupIdKey, byHashRaw] of Object.entries(byGroupRaw)) {
+          if (!/^\d+$/.test(groupIdKey) || !byHashRaw || typeof byHashRaw !== 'object' || Array.isArray(byHashRaw)) {
+            continue;
+          }
+
+          const nextByHash: Record<string, string> = {};
+          for (const [codeHashKey, codeRaw] of Object.entries(byHashRaw)) {
+            if (!/^0x[a-fA-F0-9]{64}$/.test(codeHashKey) || typeof codeRaw !== 'string') {
+              continue;
+            }
+            const normalizedCode = codeRaw.trim().toUpperCase();
+            if (!normalizedCode) {
+              continue;
+            }
+            nextByHash[codeHashKey.toLowerCase()] = normalizedCode;
+          }
+
+          if (Object.keys(nextByHash).length > 0) {
+            nextByGroup[groupIdKey] = nextByHash;
+          }
+        }
+
+        if (Object.keys(nextByGroup).length > 0) {
+          normalized[walletKey] = nextByGroup;
+        }
+      }
+
+      groupJoinCodeCacheRef.current = normalized;
+    } catch {
+    }
+  };
+
+  const persistGroupJoinCodeCache = (): void => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        GROUP_JOIN_CODE_CACHE_STORAGE_KEY,
+        JSON.stringify(groupJoinCodeCacheRef.current)
+      );
+    } catch {
+    }
+  };
+
+  const getStoredGroupJoinCodeForHash = (
+    walletKey: string,
+    groupId: number,
+    codeHash: string
+  ): string | undefined => {
+    ensureGroupJoinCodeCacheLoaded();
+    return groupJoinCodeCacheRef.current[walletKey]?.[String(groupId)]?.[codeHash.toLowerCase()];
+  };
+
+  const setStoredGroupJoinCodeForHash = (
+    walletKey: string,
+    groupId: number,
+    codeHash: string,
+    code: string
+  ): void => {
+    if (!isWalletAddress(walletKey) || !Number.isFinite(groupId) || groupId <= 0 || !/^0x[a-fA-F0-9]{64}$/.test(codeHash)) {
+      return;
+    }
+    const normalizedCode = code.trim().toUpperCase();
+    if (!normalizedCode) {
+      return;
+    }
+
+    ensureGroupJoinCodeCacheLoaded();
+    const byGroup =
+      groupJoinCodeCacheRef.current[walletKey] ?? (groupJoinCodeCacheRef.current[walletKey] = {});
+    const byHash = byGroup[String(groupId)] ?? (byGroup[String(groupId)] = {});
+    byHash[codeHash.toLowerCase()] = normalizedCode;
+    persistGroupJoinCodeCache();
+  };
+
+  const deleteStoredGroupJoinCodeForHash = (
+    walletKey: string,
+    groupId: number,
+    codeHash: string
+  ): void => {
+    if (!isWalletAddress(walletKey) || !Number.isFinite(groupId) || groupId <= 0 || !/^0x[a-fA-F0-9]{64}$/.test(codeHash)) {
+      return;
+    }
+
+    ensureGroupJoinCodeCacheLoaded();
+    const byGroup = groupJoinCodeCacheRef.current[walletKey];
+    if (!byGroup) {
+      return;
+    }
+    const byHash = byGroup[String(groupId)];
+    if (!byHash || !byHash[codeHash.toLowerCase()]) {
+      return;
+    }
+
+    delete byHash[codeHash.toLowerCase()];
+    if (Object.keys(byHash).length === 0) {
+      delete byGroup[String(groupId)];
+    }
+    if (Object.keys(byGroup).length === 0) {
+      delete groupJoinCodeCacheRef.current[walletKey];
+    }
+    persistGroupJoinCodeCache();
   };
 
   const showGroupRemovalNotice = useCallback((message: string) => {
@@ -4454,28 +5083,117 @@ export default function App() {
   };
 
   const removeContact = (address: string) => {
-    const normalizedAddress = address.toLowerCase();
-    const hasConversationHistory = (messagesByContact[normalizedAddress]?.length ?? 0) > 0;
+    toggleConversationHiddenForContact(address).catch(() => {});
+  };
 
-    if (hasConversationHistory) {
-      const confirmed = window.confirm(
-        'This contact has conversation history. Remove it from contacts anyway? Messages will stay in local history.'
+  const setConversationStateSyncPending = (address: string, pending: boolean) => {
+    const normalizedAddress = address.trim().toLowerCase();
+    if (!isWalletAddress(normalizedAddress)) {
+      return;
+    }
+
+    setConversationStateSyncPendingByContact((previous) => {
+      if (pending) {
+        return {
+          ...previous,
+          [normalizedAddress]: true
+        };
+      }
+
+      if (!previous[normalizedAddress]) {
+        return previous;
+      }
+
+      const next = { ...previous };
+      delete next[normalizedAddress];
+      return next;
+    });
+  };
+
+  const toggleConversationMuteForContact = async (address: string) => {
+    const normalizedAddress = address.trim().toLowerCase();
+    if (isConversationStateSyncPending(normalizedAddress)) {
+      return;
+    }
+
+    const targetContact = contacts.find(
+      (contact) => contact.address.trim().toLowerCase() === normalizedAddress
+    );
+    if (!targetContact) {
+      return;
+    }
+
+    const nextMuted = !Boolean(targetContact.muted);
+    const nextHidden = Boolean(targetContact.hidden);
+    setConversationStateSyncPending(normalizedAddress, true);
+
+    const muteNoticeText = nextMuted ? 'Conversation was muted.' : 'Conversation was unmuted.';
+    try {
+      const synced = await syncConversationStateFromInput(
+        address,
+        { muted: nextMuted, hidden: nextHidden },
+        muteNoticeText
       );
-      if (!confirmed) {
+      if (!synced) {
         return;
       }
+
+      setContacts((previous) =>
+        previous.map((contact) =>
+          contact.address.trim().toLowerCase() === normalizedAddress
+            ? { ...contact, muted: nextMuted, hidden: nextHidden }
+            : contact
+        )
+      );
+    } finally {
+      setConversationStateSyncPending(normalizedAddress, false);
+    }
+  };
+
+  const toggleConversationHiddenForContact = async (address: string) => {
+    const normalizedAddress = address.trim().toLowerCase();
+    if (isConversationStateSyncPending(normalizedAddress)) {
+      return;
     }
 
-    setContacts((previous) =>
-      previous.filter((contact) => contact.address.toLowerCase() !== normalizedAddress)
+    const targetContact = contacts.find(
+      (contact) => contact.address.trim().toLowerCase() === normalizedAddress
     );
-
-    if (activeContact?.toLowerCase() === normalizedAddress) {
-      setActiveContact(null);
+    if (!targetContact) {
+      return;
     }
 
-    if (editingContactAddress?.toLowerCase() === normalizedAddress) {
-      cancelRenameContact();
+    const nextMuted = Boolean(targetContact.muted);
+    const nextHidden = !Boolean(targetContact.hidden);
+    setConversationStateSyncPending(normalizedAddress, true);
+    const hiddenNoticeText = nextHidden ? 'Conversation was muted.' : 'Conversation was unmuted.';
+
+    try {
+      const synced = await syncConversationStateFromInput(
+        address,
+        {
+          muted: nextMuted,
+          hidden: nextHidden
+        },
+        hiddenNoticeText
+      );
+      if (!synced) {
+        return;
+      }
+
+      setContacts((previous) =>
+        previous.map((contact) =>
+          contact.address.trim().toLowerCase() === normalizedAddress
+            ? { ...contact, muted: nextMuted, hidden: nextHidden }
+            : contact
+        )
+      );
+
+      if (nextHidden && !showHiddenContacts && activeContact?.trim().toLowerCase() === normalizedAddress) {
+        setActiveContact(null);
+      }
+    } finally {
+      setConversationStateSyncPending(normalizedAddress, false);
     }
   };
 
@@ -5741,6 +6459,10 @@ export default function App() {
 
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
+      const discoveredConversationStates = new Map<
+        string,
+        { state: ConversationPreferenceState; blockNumber: number; logIndex: number }
+      >();
       const latestIncomingMessageTimeByContact = new Map<string, number>();
       const entries: HistoryEntry[] = [];
       const previewByContact = new Map<string, HistoryEntry>();
@@ -5751,6 +6473,36 @@ export default function App() {
             logIndex: number;
           }
         | null = null;
+
+      const trackDiscoveredConversationState = (
+        address: string,
+        state: ConversationPreferenceState | undefined,
+        blockNumber: number,
+        logIndex: number
+      ) => {
+        const normalizedAddress = address.trim().toLowerCase();
+        if (!isWalletAddress(normalizedAddress)) {
+          return;
+        }
+
+        const normalizedState = normalizeConversationPreferenceState(state);
+        if (!normalizedState) {
+          return;
+        }
+
+        const existingState = discoveredConversationStates.get(normalizedAddress);
+        const shouldReplace =
+          !existingState ||
+          blockNumber > existingState.blockNumber ||
+          (blockNumber === existingState.blockNumber && logIndex > existingState.logIndex);
+        if (shouldReplace) {
+          discoveredConversationStates.set(normalizedAddress, {
+            state: normalizedState,
+            blockNumber,
+            logIndex
+          });
+        }
+      };
 
       const recentPeersWithMeta = await resolveRecentPeersWithMeta(contract, requestedWalletAddress);
       for (const peer of recentPeersWithMeta) {
@@ -5956,7 +6708,10 @@ export default function App() {
               replyToTxHash = parsedMessage.replyToTxHash;
               reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
               reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-              if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+              if (
+                messageText.trim().length === 0 &&
+                (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+              ) {
                 continue;
               }
               if (parsedMessage.embeddedNickname) {
@@ -6011,7 +6766,10 @@ export default function App() {
             replyToTxHash = parsedMessage.replyToTxHash;
             reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
             reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+            if (
+              messageText.trim().length === 0 &&
+              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+            ) {
               continue;
             }
             if (parsedMessage.embeddedNickname) {
@@ -6123,7 +6881,16 @@ export default function App() {
               if (parsedMessage.embeddedContactName) {
                 discoveredNicknames.set(contactKey, parsedMessage.embeddedContactName);
               }
-              if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+              trackDiscoveredConversationState(
+                contactKey,
+                parsedMessage.embeddedConversationState,
+                log.blockNumber,
+                log.index
+              );
+              if (
+                messageText.trim().length === 0 &&
+                (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+              ) {
                 continue;
               }
             } catch {
@@ -6171,7 +6938,16 @@ export default function App() {
             if (parsedMessage.embeddedContactName) {
               discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
             }
-            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+            trackDiscoveredConversationState(
+              recipient.toLowerCase(),
+              parsedMessage.embeddedConversationState,
+              log.blockNumber,
+              log.index
+            );
+            if (
+              messageText.trim().length === 0 &&
+              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+            ) {
               continue;
             }
           } catch {
@@ -6388,11 +7164,20 @@ export default function App() {
         return mergedContacts.map((contact) => {
           const key = contact.address.toLowerCase();
           const nickname = discoveredNicknames.get(key) ?? onChainNicknames.get(key);
-          if (!nickname || contact.name === nickname) {
-            return contact;
+          const discoveredConversationState = discoveredConversationStates.get(key)?.state;
+
+          let nextContact = contact;
+          if (nickname && contact.name !== nickname) {
+            nextContact = { ...nextContact, name: nickname };
           }
 
-          return { ...contact, name: nickname };
+          if (discoveredConversationState) {
+            nextContact = applyConversationPreferenceStateToContact(
+              nextContact,
+              discoveredConversationState
+            );
+          }
+          return nextContact;
         });
       });
       if (currentWalletKeyRef.current !== requestedWalletKey) {
@@ -6454,7 +7239,12 @@ export default function App() {
 
           const contactReadTs = nextReadByContact[address] ?? 0;
           const effectiveReadTs = Math.max(globalReadTs, contactReadTs);
-          const shouldUnread = latestMessageTime > effectiveReadTs && !(address === activeKey && pageVisible);
+          const shouldSuppressNotificationsForContact =
+            notificationSuppressedContactAddressSet.has(address);
+          const shouldUnread =
+            !shouldSuppressNotificationsForContact &&
+            latestMessageTime > effectiveReadTs &&
+            !(address === activeKey && pageVisible);
           if (shouldUnread) {
             if (!nextUnread[address]) {
               nextUnread[address] = true;
@@ -6703,7 +7493,10 @@ export default function App() {
             replyToTxHash = parsedMessage.replyToTxHash;
             reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
             reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+            if (
+              messageText.trim().length === 0 &&
+              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+            ) {
               continue;
             }
             if (parsedMessage.embeddedNickname) {
@@ -6770,7 +7563,10 @@ export default function App() {
             if (parsedMessage.embeddedContactName) {
               discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
             }
-            if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+            if (
+              messageText.trim().length === 0 &&
+              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+            ) {
               continue;
             }
           } catch {
@@ -7338,7 +8134,10 @@ export default function App() {
                 replyToTxHash = parsedMessage.replyToTxHash;
                 reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
                 reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-                if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+                if (
+                  messageText.trim().length === 0 &&
+                  (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+                ) {
                   continue;
                 }
               } catch {
@@ -7385,7 +8184,10 @@ export default function App() {
                 replyToTxHash = parsedMessage.replyToTxHash;
                 reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
                 reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-                if (messageText.trim().length === 0 && parsedMessage.embeddedContactName) {
+                if (
+                  messageText.trim().length === 0 &&
+                  (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+                ) {
                   continue;
                 }
               } catch {
@@ -7657,6 +8459,240 @@ export default function App() {
     }
   }, [isMobileNav, markGroupConversationAsRead]);
 
+  const loadActiveJoinCodesForGroup = useCallback(
+    async (groupId: number, options?: { silent?: boolean }) => {
+      const requestedWalletAddress = walletAddress.trim();
+      const requestedWalletKey = requestedWalletAddress.toLowerCase();
+      if (
+        !Number.isFinite(groupId) ||
+        groupId <= 0 ||
+        !requestedWalletAddress ||
+        !isWalletAddress(requestedWalletAddress) ||
+        chainId !== COTI_NETWORK.chainIdDecimal
+      ) {
+        setActiveGroupJoinCodes([]);
+        setLoadingActiveGroupJoinCodes(false);
+        return;
+      }
+
+      try {
+        setLoadingActiveGroupJoinCodes(true);
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const contract = new cotiEthers.Contract(
+          GROUP_CHAT_CONTRACT_ADDRESS,
+          GROUP_CHAT_CONTRACT_ABI,
+          readProvider
+        );
+        const latestBlock = await readProvider.getBlockNumber();
+        if (
+          currentWalletKeyRef.current !== requestedWalletKey ||
+          activeGroupIdRef.current !== groupId
+        ) {
+          return;
+        }
+
+        const [createdLogs, revokedLogs] = await Promise.all([
+          contract.queryFilter(contract.filters.GroupJoinCodeCreated(groupId, null, null), 0, latestBlock),
+          contract.queryFilter(contract.filters.GroupJoinCodeRevoked(groupId, null, null), 0, latestBlock)
+        ]);
+        if (
+          currentWalletKeyRef.current !== requestedWalletKey ||
+          activeGroupIdRef.current !== groupId
+        ) {
+          return;
+        }
+
+        type JoinCodeLifecycleEvent = {
+          kind: 'created' | 'revoked';
+          codeHash: string;
+          creator?: string;
+          blockNumber: number;
+          logIndex: number;
+        };
+
+        const lifecycleEvents: JoinCodeLifecycleEvent[] = [];
+        for (const log of createdLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const codeHash = String(args?.codeHash ?? '').trim().toLowerCase();
+          if (!/^0x[a-f0-9]{64}$/.test(codeHash)) {
+            continue;
+          }
+          const creatorCandidate = String(args?.creator ?? '').trim();
+          lifecycleEvents.push({
+            kind: 'created',
+            codeHash,
+            creator: isWalletAddress(creatorCandidate) ? creatorCandidate : undefined,
+            blockNumber: log.blockNumber,
+            logIndex: log.index
+          });
+        }
+
+        for (const log of revokedLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const codeHash = String(args?.codeHash ?? '').trim().toLowerCase();
+          if (!/^0x[a-f0-9]{64}$/.test(codeHash)) {
+            continue;
+          }
+          lifecycleEvents.push({
+            kind: 'revoked',
+            codeHash,
+            blockNumber: log.blockNumber,
+            logIndex: log.index
+          });
+        }
+
+        lifecycleEvents.sort((left, right) => {
+          if (left.blockNumber !== right.blockNumber) {
+            return left.blockNumber - right.blockNumber;
+          }
+          return left.logIndex - right.logIndex;
+        });
+
+        const activeByHash = new Map<string, { creator?: string }>();
+        for (const event of lifecycleEvents) {
+          if (event.kind === 'created') {
+            activeByHash.set(event.codeHash, { creator: event.creator });
+            continue;
+          }
+          activeByHash.delete(event.codeHash);
+        }
+
+        const nowTs = Math.floor(Date.now() / 1000);
+        const nextActiveCodes: ActiveGroupJoinCode[] = [];
+        await Promise.all(
+          Array.from(activeByHash.entries()).map(async ([codeHash, metadata]) => {
+            const joinCodeRaw = await contract.getJoinCode(groupId, codeHash).catch(() => null);
+            const joinCodeState = parseGroupJoinCodeState(joinCodeRaw);
+            if (!joinCodeState || !joinCodeState.active) {
+              return;
+            }
+
+            const expiresAt = toSafeNumber(joinCodeState.expiresAt);
+            const isExpired = joinCodeState.expired || (expiresAt > 0 && expiresAt <= nowTs);
+            const usesLeft = Math.max(0, toSafeNumber(joinCodeState.usesLeft));
+            if (isExpired || usesLeft <= 0) {
+              return;
+            }
+
+            const creator =
+              isWalletAddress(joinCodeState.creator) ? joinCodeState.creator : metadata.creator ?? '';
+            nextActiveCodes.push({
+              groupId,
+              codeHash,
+              code: getStoredGroupJoinCodeForHash(requestedWalletKey, groupId, codeHash),
+              creator,
+              expiresAt,
+              usesLeft
+            });
+          })
+        );
+        if (
+          currentWalletKeyRef.current !== requestedWalletKey ||
+          activeGroupIdRef.current !== groupId
+        ) {
+          return;
+        }
+
+        nextActiveCodes.sort((left, right) => {
+          const leftExpiry = left.expiresAt > 0 ? left.expiresAt : Number.MAX_SAFE_INTEGER;
+          const rightExpiry = right.expiresAt > 0 ? right.expiresAt : Number.MAX_SAFE_INTEGER;
+          if (leftExpiry !== rightExpiry) {
+            return leftExpiry - rightExpiry;
+          }
+          if (left.usesLeft !== right.usesLeft) {
+            return right.usesLeft - left.usesLeft;
+          }
+          return left.codeHash.localeCompare(right.codeHash);
+        });
+
+        setActiveGroupJoinCodes(nextActiveCodes);
+      } catch (loadError) {
+        setActiveGroupJoinCodes([]);
+        if (!options?.silent) {
+          const message = loadError instanceof Error ? loadError.message : 'Failed to load active join codes.';
+          setError(message);
+        }
+      } finally {
+        if (
+          currentWalletKeyRef.current === requestedWalletKey &&
+          activeGroupIdRef.current === groupId
+        ) {
+          setLoadingActiveGroupJoinCodes(false);
+        }
+      }
+    },
+    [walletAddress, chainId]
+  );
+
+  const revokeJoinCodeForActiveGroup = async (
+    codeHashInput: string,
+    displayCode?: string
+  ) => {
+    setError('');
+
+    if (activeGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+    if (!isActiveGroupAdmin) {
+      setError('Only the group admin can revoke join codes.');
+      return;
+    }
+
+    const normalizedCodeHash = codeHashInput.trim().toLowerCase();
+    if (!/^0x[a-f0-9]{64}$/.test(normalizedCodeHash)) {
+      setError('Invalid join code hash.');
+      return;
+    }
+
+    if (processingGroupAction) {
+      return;
+    }
+
+    const confirmationTarget = displayCode?.trim() ? `code ${displayCode.trim()}` : `hash ${normalizedCodeHash}`;
+    const confirmationMessage = `Revoke ${confirmationTarget}? Members will no longer be able to join with it.`;
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    try {
+      setProcessingGroupAction(true);
+      setRevokingGroupJoinCodeHash(normalizedCodeHash);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const tx = await contract.revokeJoinCode(activeGroupId, normalizedCodeHash);
+      await tx.wait();
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      if (generatedGroupJoinCodeHash.trim().toLowerCase() === normalizedCodeHash) {
+        setGeneratedGroupInviteCode('');
+        setGeneratedGroupJoinCodeHash('');
+      }
+
+      if (isWalletAddress(requestedWalletAddress)) {
+        deleteStoredGroupJoinCodeForHash(requestedWalletKey, activeGroupId, normalizedCodeHash);
+      }
+
+      await loadActiveJoinCodesForGroup(activeGroupId, { silent: true });
+      await syncGroupData({ background: true, overviewOnly: true });
+    } catch (revokeError) {
+      const message = getGroupActionErrorMessage(revokeError, 'Failed to revoke join code.');
+      setError(message);
+    } finally {
+      setRevokingGroupJoinCodeHash('');
+      setProcessingGroupAction(false);
+    }
+  };
+
   const createGroup = async () => {
     setError('');
 
@@ -7779,6 +8815,8 @@ export default function App() {
       return;
     }
     const ttlSeconds = ttlHours * 60 * 60;
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
 
     const code = generateRandomGroupJoinCode();
     let expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
@@ -7828,7 +8866,7 @@ export default function App() {
         expiresAt = joinCodeState.expiresAt;
       }
 
-      const inviterAddress = walletAddress.trim();
+      const inviterAddress = requestedWalletAddress;
       const payload: GroupJoinCodePayload = {
         version: 2,
         groupId: activeGroupId,
@@ -7838,6 +8876,9 @@ export default function App() {
       };
       setGeneratedGroupInviteCode(encodeGroupInviteCode(payload));
       setGeneratedGroupJoinCodeHash(codeHash);
+      if (isWalletAddress(requestedWalletAddress)) {
+        setStoredGroupJoinCodeForHash(requestedWalletKey, activeGroupId, codeHash, code);
+      }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -7845,6 +8886,7 @@ export default function App() {
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
 
+      loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
       await syncGroupData({ background: true });
     } catch (joinCodeError) {
       const message = getGroupActionErrorMessage(joinCodeError, 'Failed to create join code.');
@@ -7857,47 +8899,14 @@ export default function App() {
   const revokeGeneratedJoinCodeForActiveGroup = async () => {
     setError('');
 
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can revoke join codes.');
-      return;
-    }
     if (!/^0x[a-fA-F0-9]{64}$/.test(generatedGroupJoinCodeHash)) {
       setError('No generated join code is available to revoke in this session.');
       return;
     }
 
-    const confirmationMessage = 'Revoke the currently generated join code? Members will no longer be able to join with it.';
-    if (!window.confirm(confirmationMessage)) {
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      const cotiEthers = await loadCotiEthersModule();
-      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-      const tx = await contract.revokeJoinCode(activeGroupId, generatedGroupJoinCodeHash);
-      await tx.wait();
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      setGeneratedGroupInviteCode('');
-      setGeneratedGroupJoinCodeHash('');
-      await syncGroupData({ deep: true });
-    } catch (revokeError) {
-      const message = getGroupActionErrorMessage(revokeError, 'Failed to revoke join code.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
+    const generatedJoinCode = parseGroupInviteCode(generatedGroupInviteCode);
+    const displayCode = generatedJoinCode && generatedJoinCode.version === 2 ? generatedJoinCode.code : undefined;
+    await revokeJoinCodeForActiveGroup(generatedGroupJoinCodeHash, displayCode);
   };
 
   const joinGroupWithCode = async () => {
@@ -8548,6 +9557,88 @@ export default function App() {
     }
   };
 
+  const sendHiddenConversationStateToContact = async (
+    contactAddress: string,
+    state: ConversationPreferenceState,
+    visibleNotice = ''
+  ): Promise<string> => {
+    const normalizedAddress = contactAddress.trim();
+    const normalizedState = normalizeConversationPreferenceState(state);
+    if (!isWalletAddress(normalizedAddress)) {
+      throw new Error('Invalid contact address.');
+    }
+    if (!normalizedState) {
+      throw new Error('Conversation state is empty.');
+    }
+
+    const { signer, cacheKey } = await getMemoSigner();
+    const cotiEthers = await loadCotiEthersModule();
+    const selector = await resolveSubmitSelector();
+    const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
+    const requiredFee = await resolveRequiredFeeForSend();
+    const normalizedVisibleNotice = visibleNotice.replace(/\r?\n/g, ' ').trim().slice(0, MAX_MESSAGE_LENGTH);
+    const hiddenStatePayload = buildMessageWithConversationStatePayload(normalizedVisibleNotice, normalizedState);
+    const encodedMemo = encodeMemoPlaintext(hiddenStatePayload);
+    const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
+    const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+    const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
+    const tx = await contract.submit(normalizedAddress, memoTuple, { value: requiredFee });
+    const waitableTx = tx as { hash?: unknown; wait?: () => Promise<unknown> };
+    const txHash = typeof waitableTx.hash === 'string' ? waitableTx.hash : '';
+
+    const nextOnboardInfo = signer.getUserOnboardInfo();
+    setSessionOnboardInfo((previous) => ({
+      ...previous,
+      [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+    }));
+
+    if (typeof waitableTx.wait === 'function') {
+      await waitableTx.wait();
+    }
+
+    return txHash;
+  };
+
+  const syncConversationStateFromInput = async (
+    contactAddress: string,
+    state: ConversationPreferenceState,
+    visibleNotice = ''
+  ): Promise<boolean> => {
+    const normalizedAddress = contactAddress.trim();
+    const normalizedState = normalizeConversationPreferenceState(state);
+    if (!isWalletAddress(normalizedAddress) || !normalizedState) {
+      return false;
+    }
+
+    if (!walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
+      return false;
+    }
+
+    if (normalizedAddress.toLowerCase() === walletAddress.toLowerCase()) {
+      return false;
+    }
+
+    try {
+      const normalizedVisibleNotice = visibleNotice.replace(/\r?\n/g, ' ').trim().slice(0, MAX_MESSAGE_LENGTH);
+      await sendHiddenConversationStateToContact(normalizedAddress, normalizedState, normalizedVisibleNotice);
+      syncConversationHistory({ updateHead: true }).catch(() => {});
+      setTopUpMetricsNonce((previous) => previous + 1);
+      return true;
+    } catch (syncError) {
+      const message = syncError instanceof Error ? syncError.message : 'Failed to sync conversation state.';
+      setError(`Conversation state sync failed. No local change was applied: ${message}`);
+      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+        const shouldTopUp = window.confirm(
+          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+        );
+        if (shouldTopUp) {
+          await topUpBurnerWithMetaMask();
+        }
+      }
+      return false;
+    }
+  };
+
   const sendReactionToMessage = async (targetMessage: ChatMessage, emojiInput: string) => {
     setError('');
 
@@ -8964,21 +10055,29 @@ export default function App() {
     }
   };
 
-  const sendTipToActiveContact = async () => {
+  const sendTipToRecipient = async (
+    recipientInput: string,
+    tipToken: TipTokenSelection,
+    tipAmount: bigint,
+    options?: {
+      missingRecipientMessage?: string;
+      invalidRecipientMessage?: string;
+    }
+  ) => {
     setError('');
 
     if (sendingRef.current || tipping) {
       return;
     }
 
-    if (!activeContact) {
-      setError('Select a contact first.');
+    const recipient = recipientInput.trim();
+    if (!recipient) {
+      setError(options?.missingRecipientMessage ?? 'Select a recipient first.');
       return;
     }
 
-    const recipient = activeContact.trim();
     if (!isWalletAddress(recipient)) {
-      setError('Invalid contact address.');
+      setError(options?.invalidRecipientMessage ?? 'Invalid recipient address.');
       return;
     }
 
@@ -8987,15 +10086,36 @@ export default function App() {
       return;
     }
 
-    const tipMessageCount = Math.max(0, Math.floor(topUpMultiplier));
-    let tipAmount = topUpAmountWei;
-    if (tipAmount === null) {
-      const requiredFee = await resolveRequiredFeeForSend();
-      tipAmount = calculateTopUpAmount(requiredFee, topUpMultiplier);
+    if (tipAmount <= 0n) {
+      setError('Enter a tip amount above zero.');
+      return;
     }
 
-    if (tipAmount <= 0n) {
-      setError('Move the top-up slider above zero to set a tip amount.');
+    const tokenAddress = tipToken === 'wisp' ? REWARD_TOKEN_ADDRESS : PRIVATE_REWARD_TOKEN_ADDRESS;
+    const tokenSymbol =
+      tipToken === 'coti'
+        ? TIP_NATIVE_TOKEN_SYMBOL
+        : tipToken === 'wisp'
+          ? rewardTokenSymbol
+          : privateRewardTokenSymbol;
+    const tokenDecimals =
+      tipToken === 'coti'
+        ? TIP_NATIVE_TOKEN_DECIMALS
+        : tipToken === 'wisp'
+          ? rewardTokenDecimals
+          : privateRewardTokenDecimals;
+    const tokenBalanceWei =
+      tipToken === 'coti' ? tipNativeBalanceWei : tipToken === 'wisp' ? rewardTokenBalanceWei : privateRewardTokenBalanceWei;
+
+    if (tokenBalanceWei === null) {
+      setError(`Unable to read ${tokenSymbol} balance. Wait for balances to load and try again.`);
+      return;
+    }
+
+    if (tipAmount > tokenBalanceWei) {
+      setError(
+        `Insufficient ${tokenSymbol} balance. Available ${formatTokenAmount(tokenBalanceWei, tokenDecimals, 6)} ${tokenSymbol}.`
+      );
       return;
     }
 
@@ -9003,38 +10123,58 @@ export default function App() {
     try {
       setTipping(true);
       const { signer, cacheKey } = await getMemoSigner();
-      const tx = await signer.sendTransaction({
-        to: recipient,
-        value: tipAmount
-      });
-      await tx.wait();
+      const cotiEthers = await loadCotiEthersModule();
+      let requiredFeeForTipNotice: bigint | null = null;
+
+      if (tipToken === 'coti') {
+        requiredFeeForTipNotice = await resolveRequiredFeeForSend();
+        if (tokenBalanceWei < tipAmount + requiredFeeForTipNotice) {
+          throw new Error(
+            `Insufficient COTI balance. Keep at least ${formatTokenAmount(requiredFeeForTipNotice, TIP_NATIVE_TOKEN_DECIMALS, 6)} COTI for the tip note fee.`
+          );
+        }
+        const tx = await signer.sendTransaction({
+          to: recipient,
+          value: tipAmount
+        });
+        await tx.wait();
+      } else {
+        const tipTokenContract = new cotiEthers.Contract(tokenAddress, ERC20_TOKEN_ABI, signer);
+        const tx = await tipTokenContract.transfer(recipient, tipAmount);
+        await tx.wait();
+      }
       transferSucceeded = true;
 
-      if (activeSignerSource === 'burner') {
-        setBurnerBalanceWei((previous) => {
-          if (previous === null) {
-            return previous;
-          }
-          return previous > tipAmount ? previous - tipAmount : 0n;
-        });
-        setTopUpMetricsNonce((previous) => previous + 1);
+      setTopUpMetricsNonce((previous) => previous + 1);
+      if (tipToken === 'coti') {
+        setTipNativeBalanceWei((previous) =>
+          previous === null ? previous : previous > tipAmount ? previous - tipAmount : 0n
+        );
+      } else if (tipToken === 'wisp') {
+        setRewardTokenBalanceWei((previous) =>
+          previous === null ? previous : previous > tipAmount ? previous - tipAmount : 0n
+        );
+      } else {
+        setPrivateRewardTokenBalanceWei((previous) =>
+          previous === null ? previous : previous > tipAmount ? previous - tipAmount : 0n
+        );
       }
-      setTopUpMultiplier(0);
-      setTopUpAmountWei(0n);
 
-      const cotiEthers = await loadCotiEthersModule();
       const selector = await resolveSubmitSelector();
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-      const requiredFee = await resolveRequiredFeeForSend();
-      const tipNoticeText = `[TIP] You received ${formatCotiAmount(tipAmount)} COTI (${tipMessageCount} ${
-        tipMessageCount === 1 ? 'message' : 'messages'
-      }).`;
+      const requiredFee = requiredFeeForTipNotice ?? (await resolveRequiredFeeForSend());
+      const tipNoticeText = `[TIP] You received ${formatTokenAmount(tipAmount, tokenDecimals, 6)} ${tokenSymbol}.`;
       const encodedTipMemo = encodeMemoPlaintext(tipNoticeText);
       const encryptedTipMemo = await signer.encryptValue(encodedTipMemo, CHAT_CONTRACT_ADDRESS, selector);
       const submitTipMemoPayload = parseSubmitMemoPayload(encryptedTipMemo);
       const tipMemoTuple = [[submitTipMemoPayload.ciphertextValue], submitTipMemoPayload.signature] as const;
       const tipMemoTx = await contract.submit(recipient, tipMemoTuple, { value: requiredFee });
       await tipMemoTx.wait();
+      if (tipToken === 'coti') {
+        setTipNativeBalanceWei((previous) =>
+          previous === null ? previous : previous > requiredFee ? previous - requiredFee : 0n
+        );
+      }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -9042,6 +10182,7 @@ export default function App() {
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
       syncConversationHistory().catch(() => {});
+      setTipAmountInput('');
     } catch (tipError) {
       const rawMessage = tipError instanceof Error ? tipError.message : '';
       const message = rawMessage || (transferSucceeded ? 'Tip sent, but notification message failed.' : 'Failed to send tip.');
@@ -9057,6 +10198,26 @@ export default function App() {
     } finally {
       setTipping(false);
     }
+  };
+
+  const sendTipToActiveContact = async (
+    tipToken: TipTokenSelection,
+    tipAmount: bigint
+  ) => {
+    await sendTipToRecipient(activeContact ?? '', tipToken, tipAmount, {
+      missingRecipientMessage: 'Select a contact first.',
+      invalidRecipientMessage: 'Invalid contact address.'
+    });
+  };
+
+  const sendTipToActiveGroupMember = async (
+    tipToken: TipTokenSelection,
+    tipAmount: bigint
+  ) => {
+    await sendTipToRecipient(groupTipRecipientAddress, tipToken, tipAmount, {
+      missingRecipientMessage: 'Select a group member first.',
+      invalidRecipientMessage: 'Invalid group member address.'
+    });
   };
 
   const loadFullConversationHistory = async () => {
@@ -9113,14 +10274,19 @@ export default function App() {
 
   useEffect(() => {
     setContacts([]);
+    setConversationStateSyncPendingByContact({});
     setPersistedContactOrder([]);
     setActiveContact(null);
+    setShowHiddenContacts(false);
   }, [walletAddress]);
 
   useEffect(() => {
     setGroups([]);
     setGroupInvites([]);
     setActiveGroupId(null);
+    setActiveGroupJoinCodes([]);
+    setLoadingActiveGroupJoinCodes(false);
+    setRevokingGroupJoinCodeHash('');
     setMessagesByGroup({});
     setGeneratedGroupInviteCode('');
     setGeneratedGroupJoinCodeHash('');
@@ -9155,6 +10321,17 @@ export default function App() {
     setSwapAmountInput('');
     setGroupFeeModeSelection('coti');
   }, [walletAddress]);
+
+  useEffect(() => {
+    if (activeGroupId === null || !walletAddress || chainId !== COTI_NETWORK.chainIdDecimal) {
+      setActiveGroupJoinCodes([]);
+      setLoadingActiveGroupJoinCodes(false);
+      setRevokingGroupJoinCodeHash('');
+      return;
+    }
+
+    loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
+  }, [activeGroupId, walletAddress, chainId, activeGroupMeta?.lastBlock, loadActiveJoinCodesForGroup]);
 
   useEffect(() => {
     setUnreadMap({});
@@ -9242,11 +10419,21 @@ export default function App() {
       return;
     }
 
-    const exists = contacts.some((contact) => contact.address.toLowerCase() === activeContact.toLowerCase());
-    if (!exists) {
+    const activeContactRecord = contacts.find(
+      (contact) => contact.address.toLowerCase() === activeContact.toLowerCase()
+    );
+    if (!activeContactRecord) {
+      setActiveContact(null);
+      return;
+    }
+
+    const shouldBeVisibleInCurrentMode = showHiddenContacts
+      ? Boolean(activeContactRecord.hidden)
+      : !Boolean(activeContactRecord.hidden);
+    if (!shouldBeVisibleInCurrentMode) {
       setActiveContact(null);
     }
-  }, [contacts, activeContact]);
+  }, [contacts, activeContact, showHiddenContacts]);
 
   useEffect(() => {
     if (!walletAddress) {
@@ -9493,6 +10680,8 @@ export default function App() {
 
   useEffect(() => {
     setReactionPickerMessageId(null);
+    setTipComposerOpen(false);
+    setTipAmountInput('');
   }, [activeThreadKey]);
 
   useEffect(() => {
@@ -9553,6 +10742,36 @@ export default function App() {
       cancelled = true;
     };
   }, [burnerAddress, topUpMultiplier, topUpMetricsNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const signerAddress = (activeSignerSource === 'burner' ? burnerAddress : walletAddress).trim();
+
+    if (!signerAddress || !isWalletAddress(signerAddress) || chainId !== COTI_NETWORK.chainIdDecimal) {
+      setTipNativeBalanceWei(null);
+      return;
+    }
+
+    const loadTipNativeBalance = async () => {
+      try {
+        const readProvider = await loadCotiReadProvider(true);
+        const nativeBalance = (await readProvider.getBalance(signerAddress)) as bigint;
+        if (!cancelled) {
+          setTipNativeBalanceWei(nativeBalance);
+        }
+      } catch {
+        if (!cancelled) {
+          setTipNativeBalanceWei(null);
+        }
+      }
+    };
+
+    loadTipNativeBalance().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSignerSource, burnerAddress, walletAddress, chainId, topUpMetricsNonce, tipComposerOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -10301,6 +11520,96 @@ export default function App() {
     };
   }, [activeProvider, connectionMethod]);
 
+  const renderActiveJoinCodeList = (mobile = false) => {
+    const dropdownClassName = mobile
+      ? 'group-active-codes-dropdown group-active-codes-dropdown-mobile'
+      : 'group-active-codes-dropdown';
+    const summaryLabel = loadingActiveGroupJoinCodes
+      ? 'Active codes (loading...)'
+      : `Active codes ${activeGroupJoinCodes.length}`;
+
+    return (
+      <details className={dropdownClassName}>
+        <summary>{summaryLabel}</summary>
+        {loadingActiveGroupJoinCodes ? (
+          <ul className="group-active-codes-list">
+            <li className="group-active-code-empty">Loading active codes...</li>
+          </ul>
+        ) : activeGroupJoinCodes.length === 0 ? (
+          <ul className="group-active-codes-list">
+            <li className="group-active-code-empty">No active codes found for this group.</li>
+          </ul>
+        ) : (
+          <ul className="group-active-codes-list">
+            {activeGroupJoinCodes.map((entry) => {
+              const copyValue = entry.code
+                ? encodeGroupInviteCode({
+                    version: 2,
+                    groupId: entry.groupId,
+                    code: entry.code,
+                    expiresAt: entry.expiresAt,
+                    inviter: isWalletAddress(entry.creator) ? entry.creator : undefined
+                  })
+                : entry.codeHash;
+              const copyKey = `group-active-code:${entry.groupId}:${entry.codeHash}`;
+              const isRevokingThisCode = revokingGroupJoinCodeHash.toLowerCase() === entry.codeHash.toLowerCase();
+              return (
+                <li key={`active-join-code:${entry.groupId}:${entry.codeHash}`} className="group-active-code-item">
+                  <div className="group-active-code-row">
+                    <input
+                      className="group-generated-code-value"
+                      value={copyValue}
+                      readOnly
+                      aria-label={entry.code ? 'Active join code' : 'Active join code hash'}
+                    />
+                    <button
+                      type="button"
+                      className={
+                        lastCopiedKey === copyKey
+                          ? 'group-generated-code-copy copied'
+                          : 'group-generated-code-copy'
+                      }
+                      onClick={(event) => {
+                        copyWithFeedback(copyValue, copyKey).catch(() => {});
+                        const detailsElement = event.currentTarget.closest('details');
+                        if (detailsElement instanceof HTMLDetailsElement) {
+                          detailsElement.open = false;
+                        }
+                      }}
+                    >
+                      {lastCopiedKey === copyKey ? 'Copied' : entry.code ? 'Copy code' : 'Copy hash'}
+                    </button>
+                    <button
+                      type="button"
+                      className="contact group-active-code-revoke"
+                      onClick={() => {
+                        revokeJoinCodeForActiveGroup(entry.codeHash, entry.code).catch(() => {});
+                      }}
+                      disabled={!isActiveGroupAdmin || processingGroupAction}
+                    >
+                      {isRevokingThisCode ? 'Revoking...' : 'Revoke'}
+                    </button>
+                  </div>
+                  <div className="group-active-code-meta">
+                    <span>
+                      {entry.code ? `Uses left: ${entry.usesLeft}` : 'Hash only (code text unavailable).'}
+                    </span>
+                    <span>
+                      {entry.expiresAt > 0 ? `Expires: ${formatMessageTimestamp(entry.expiresAt)}` : 'No expiry set.'}
+                    </span>
+                    {isWalletAddress(entry.creator) ? (
+                      <span>{`Creator: ${shortenAddress(entry.creator)}`}</span>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </details>
+    );
+  };
+
   return (
     <div className={`app-shell mobile-view-${activeMobileView}`}>
       <header className="top-header" ref={topHeaderRef}>
@@ -10629,7 +11938,7 @@ export default function App() {
         {isConnected ? (
           <div className="wallet-meta topup-meta">
             <div className="wallet-section-header">
-              <span className="wallet-section-label">Funding/Tip</span>
+              <span className="wallet-section-label">Funding</span>
               <span className="wallet-section-hint">
                 {loadingTopUpQuote
                   ? 'Calculating...'
@@ -10722,7 +12031,7 @@ export default function App() {
                 type="text"
                 inputMode="decimal"
                 value={swapAmountInput}
-                onChange={(event) => setSwapAmountInput(event.target.value.replace(/[^0-9.]/g, ''))}
+                onChange={(event) => setSwapAmountInput(sanitizeTokenAmountInput(event.target.value))}
                 placeholder={`0.0 ${swapInputSymbol}`}
                 disabled={swappingTokens}
               />
@@ -10890,37 +12199,61 @@ export default function App() {
               Save
             </button>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              type="button"
-              className="contact mark-read-button"
-              onClick={markAllConversationsAsRead}
-              disabled={!hasUnreadConversations}
-            >
-              Mark all as read
-            </button>
-            <button
-              type="button"
-              className="contact mark-read-button"
-              onClick={() => {
-                forceSyncAllData().catch(() => {});
-              }}
-              disabled={syncingHistory || syncingGroups || !hasAesReady}
-            >
-              {syncingHistory || syncingGroups ? 'Syncing...' : 'Force sync'}
-            </button>
-          </div>
-          <div style={{ display: 'flex', marginTop: '8px' }}>
-            <button
-              type="button"
-              className="contact"
-              onClick={() => {
-                setQuickActionTab('contact');
-                setShowQuickActionsModal(true);
-              }}
-            >
-              New chat
-            </button>
+          <div className="contact-actions-panel">
+            <div className="contact-actions-grid">
+              <button
+                type="button"
+                className="contact mark-read-button contact-action-btn"
+                onClick={markAllConversationsAsRead}
+                disabled={!hasUnreadConversations}
+              >
+                Mark all as read
+              </button>
+              <button
+                type="button"
+                className="contact mark-read-button contact-action-btn"
+                onClick={() => {
+                  forceSyncAllData().catch(() => {});
+                }}
+                disabled={syncingHistory || syncingGroups || !hasAesReady}
+              >
+                {syncingHistory || syncingGroups ? 'Syncing...' : 'Force sync'}
+              </button>
+              <button
+                type="button"
+                className="contact mark-read-button contact-action-btn contact-action-btn-primary"
+                onClick={() => {
+                  setQuickActionTab('contact');
+                  setShowQuickActionsModal(true);
+                }}
+              >
+                New chat
+              </button>
+              <button
+                type="button"
+                className={
+                  showHiddenContacts
+                    ? 'contact mark-read-button contact-action-btn contact-action-btn-toggle active'
+                    : 'contact mark-read-button contact-action-btn contact-action-btn-toggle'
+                }
+                onClick={() => setShowHiddenContacts((previous) => !previous)}
+                aria-pressed={showHiddenContacts}
+                title={
+                  showHiddenContacts
+                    ? 'Return to your main conversations'
+                    : hiddenContactsCount > 0
+                      ? `Show ${hiddenContactsLabel}`
+                      : 'No hidden chats yet'
+                }
+                disabled={!showHiddenContacts && hiddenContactsCount === 0}
+              >
+                {showHiddenContacts
+                  ? 'Back to main chats'
+                  : hiddenContactsCount > 0
+                    ? `Show hidden chats (${hiddenContactsCount})`
+                    : 'No hidden chats'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -10928,19 +12261,42 @@ export default function App() {
           className="contact-profile-card contact-profile-card-scroll contact-profile-card-contacts"
           style={{ flexGrow: contactGroupPanelRatio.contactsPanelFlex }}
         >
-          <span className="contact-profile-label">Contacts</span>
+          <div className="contacts-panel-header">
+            <span className="contact-profile-label">Contacts</span>
+            {showHiddenContacts ? (
+              <span className="contact-view-badge hidden">Hidden view</span>
+            ) : hiddenContactsCount > 0 ? (
+              <span className="contact-view-badge">{hiddenContactsLabel}</span>
+            ) : null}
+          </div>
           <ul className="contacts-list contacts-list-scroll contacts-main-list">
-          {sortedContacts.map((contact) => {
+          {visibleSortedContacts.length === 0 ? (
+            <li className="contacts-empty-state">{contactsListEmptyMessage}</li>
+          ) : (
+            visibleSortedContacts.map((contact) => {
             const isActive = activeContact?.toLowerCase() === contact.address.toLowerCase();
             const isEditing = editingContactAddress?.toLowerCase() === contact.address.toLowerCase();
+            const conversationStatePending = isConversationStateSyncPending(contact.address);
             const hasName = Boolean(contact.name?.trim());
             const hasConversation = (messagesByContact[contact.address.toLowerCase()]?.length ?? 0) > 0;
             const contactCopyKey = `contact:${contact.address.toLowerCase()}`;
             const isContactCopied = lastCopiedKey === contactCopyKey;
-            return (
-              <li key={contact.address}>
+              return (
+                <li key={contact.address}>
                 <div
-                  className={isActive ? 'contact-card active' : 'contact-card'}
+                  className={
+                    conversationStatePending
+                      ? isActive
+                        ? 'contact-card active syncing'
+                        : contact.hidden
+                          ? 'contact-card hidden syncing'
+                          : 'contact-card syncing'
+                      : isActive
+                        ? 'contact-card active'
+                        : contact.hidden
+                          ? 'contact-card hidden'
+                          : 'contact-card'
+                  }
                   role="button"
                   tabIndex={0}
                   onClick={() => activateContact(contact.address)}
@@ -10981,6 +12337,13 @@ export default function App() {
                           {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
                         </button>
                       )}
+                      {contact.muted || contact.hidden ? (
+                        <span className="contact-state-inline">
+                          {contact.muted ? 'Muted' : null}
+                          {contact.muted && contact.hidden ? ' | ' : null}
+                          {contact.hidden ? 'Hidden' : null}
+                        </span>
+                      ) : null}
                     </div>
                     {hasConversation ? (
                       <span
@@ -11003,22 +12366,41 @@ export default function App() {
                             event.stopPropagation();
                             startRenameContact(contact.address, contact.name);
                           }}
+                          disabled={conversationStatePending}
                           aria-label="Rename contact"
-                          title="Rename"
+                          title={conversationStatePending ? 'Wait for sync to finish' : 'Rename'}
                         >
-                          ✎
+                          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm17.71-10.04a1 1 0 0 0 0-1.42l-2.5-2.5a1 1 0 0 0-1.42 0l-1.96 1.96 3.75 3.75 2.13-2.09z"/></svg>
                         </button>
                         <button
                           type="button"
-                          className="contact-icon"
+                          className={conversationStatePending ? 'contact-icon loading' : 'contact-icon'}
                           onClick={(event) => {
                             event.stopPropagation();
                             removeContact(contact.address);
                           }}
-                          aria-label="Remove contact"
-                          title="Remove"
+                          disabled={conversationStatePending}
+                          aria-label={
+                            conversationStatePending
+                              ? 'Conversation update in progress'
+                              : contact.hidden
+                                ? 'Unhide conversation'
+                                : 'Hide conversation'
+                          }
+                          title={
+                            conversationStatePending
+                              ? 'Waiting for confirmation...'
+                              : contact.hidden
+                                ? 'Unhide'
+                                : 'Hide'
+                          }
                         >
-                          🗑
+                          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M3 6h18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                            <path d="M8 6V4h8v2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            <path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            <path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                          </svg>
                         </button>
                       </>
                     ) : null}
@@ -11052,9 +12434,10 @@ export default function App() {
                     </button>
                   </div>
                 ) : null}
-              </li>
-            );
-          })}
+                </li>
+              );
+            })
+          )}
           </ul>
         </div>
 
@@ -11179,60 +12562,63 @@ export default function App() {
                     </span>
                   </span>
                 </div>
-                <details className="group-members-dropdown">
-                  <summary>
-                    Members{' '}
-                    {activeGroupMemberCount}
-                  </summary>
-                  <ul className="group-members-list">
-                    {activeGroupParticipants.length > 0 ? (
-                      activeGroupParticipants.map((participant) => {
-                        const participantCopyKey = `group-member:${participant.address.toLowerCase()}`;
-                        const isParticipantCopied = lastCopiedKey === participantCopyKey;
-                        return (
-                          <li key={participant.key}>
-                            <div className="group-member-row">
-                              <button
-                                type="button"
-                                className={isParticipantCopied ? 'group-member-copy copied' : 'group-member-copy'}
-                                onClick={(event) => {
-                                  copyWithFeedback(participant.address, participantCopyKey).catch(() => {});
-                                  const detailsElement = event.currentTarget.closest('details');
-                                  if (detailsElement instanceof HTMLDetailsElement) {
-                                    detailsElement.open = false;
-                                  }
-                                }}
-                                title={isParticipantCopied ? 'Copied' : `Copy ${participant.address}`}
-                              >
-                                <span className="group-member-name">
-                                  {participant.name ?? participant.shortAddress}
-                                  {participant.isSelf ? <span className="group-member-badge">You</span> : null}
-                                  {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
-                                </span>
-                                <span className="group-member-address">{isParticipantCopied ? 'Copied' : participant.shortAddress}</span>
-                              </button>
-                              {isActiveGroupAdmin && !participant.isSelf ? (
+                <div className="group-meta-dropdowns">
+                  <details className="group-members-dropdown">
+                    <summary>
+                      Members{' '}
+                      {activeGroupMemberCount}
+                    </summary>
+                    <ul className="group-members-list">
+                      {activeGroupParticipants.length > 0 ? (
+                        activeGroupParticipants.map((participant) => {
+                          const participantCopyKey = `group-member:${participant.address.toLowerCase()}`;
+                          const isParticipantCopied = lastCopiedKey === participantCopyKey;
+                          return (
+                            <li key={participant.key}>
+                              <div className="group-member-row">
                                 <button
                                   type="button"
-                                  className="group-member-remove"
-                                  onClick={() => {
-                                    removeMemberFromActiveGroup(participant.address).catch(() => {});
+                                  className={isParticipantCopied ? 'group-member-copy copied' : 'group-member-copy'}
+                                  onClick={(event) => {
+                                    copyWithFeedback(participant.address, participantCopyKey).catch(() => {});
+                                    const detailsElement = event.currentTarget.closest('details');
+                                    if (detailsElement instanceof HTMLDetailsElement) {
+                                      detailsElement.open = false;
+                                    }
                                   }}
-                                  disabled={processingGroupAction}
-                                  title={`Remove ${participant.address}`}
+                                  title={isParticipantCopied ? 'Copied' : `Copy ${participant.address}`}
                                 >
-                                  Remove
+                                  <span className="group-member-name">
+                                    {participant.name ?? participant.shortAddress}
+                                    {participant.isSelf ? <span className="group-member-badge">You</span> : null}
+                                    {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
+                                  </span>
+                                  <span className="group-member-address">{isParticipantCopied ? 'Copied' : participant.shortAddress}</span>
                                 </button>
-                              ) : null}
-                            </div>
-                          </li>
-                        );
-                      })
-                    ) : (
-                      <li className="group-members-empty">No members loaded yet.</li>
-                    )}
-                  </ul>
-                </details>
+                                {isActiveGroupAdmin && !participant.isSelf ? (
+                                  <button
+                                    type="button"
+                                    className="group-member-remove"
+                                    onClick={() => {
+                                      removeMemberFromActiveGroup(participant.address).catch(() => {});
+                                    }}
+                                    disabled={processingGroupAction}
+                                    title={`Remove ${participant.address}`}
+                                  >
+                                    Remove
+                                  </button>
+                                ) : null}
+                              </div>
+                            </li>
+                          );
+                        })
+                      ) : (
+                        <li className="group-members-empty">No members loaded yet.</li>
+                      )}
+                    </ul>
+                  </details>
+                  {!isMobileNav ? renderActiveJoinCodeList(false) : null}
+                </div>
               </div>
               <div className="group-header-controls">
                 {isMobileNav ? (
@@ -11550,6 +12936,7 @@ export default function App() {
                           </button>
                         </>
                       ) : null}
+                      {renderActiveJoinCodeList(true)}
                     </div>
 
                     <div className="group-mobile-section group-mobile-section-actions">
@@ -11934,6 +13321,105 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
+              {tipComposerOpen ? (
+                <div className="chat-tip-panel group-tip-panel" role="group" aria-label="Group tip settings">
+                  <div className="group-tip-recipient-row">
+                    <label className="group-tip-recipient-label" htmlFor="group-tip-recipient">
+                      Member
+                    </label>
+                    <select
+                      id="group-tip-recipient"
+                      className="group-tip-recipient-select"
+                      value={groupTipRecipientAddress}
+                      onChange={(event) => {
+                        setGroupTipRecipientAddress(event.target.value);
+                      }}
+                      disabled={tipping || activeGroupTipRecipients.length === 0}
+                    >
+                      {activeGroupTipRecipients.length === 0 ? (
+                        <option value="">No members available</option>
+                      ) : (
+                        activeGroupTipRecipients.map((participant) => (
+                          <option key={`group-tip-recipient:${participant.key}`} value={participant.address}>
+                            {participant.name ? `${participant.name} (${participant.shortAddress})` : participant.shortAddress}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                  <div className="chat-tip-input-row">
+                    <div className="chat-tip-token-switch" role="group" aria-label="Tip token">
+                      <button
+                        type="button"
+                        className={tipTokenSelection === 'coti' ? 'active' : undefined}
+                        onClick={() => setTipTokenSelection('coti')}
+                        disabled={tipping}
+                        aria-pressed={tipTokenSelection === 'coti'}
+                      >
+                        {TIP_NATIVE_TOKEN_SYMBOL}
+                      </button>
+                      <button
+                        type="button"
+                        className={tipTokenSelection === 'wisp' ? 'active' : undefined}
+                        onClick={() => setTipTokenSelection('wisp')}
+                        disabled={tipping}
+                        aria-pressed={tipTokenSelection === 'wisp'}
+                      >
+                        {rewardTokenSymbol}
+                      </button>
+                      <button
+                        type="button"
+                        className={tipTokenSelection === 'pwisp' ? 'active' : undefined}
+                        onClick={() => setTipTokenSelection('pwisp')}
+                        disabled={tipping}
+                        aria-pressed={tipTokenSelection === 'pwisp'}
+                      >
+                        {privateRewardTokenSymbol}
+                      </button>
+                    </div>
+                    <input
+                      className="chat-tip-amount-input"
+                      type="text"
+                      inputMode="decimal"
+                      value={tipAmountInput}
+                      onChange={(event) => setTipAmountInput(sanitizeTokenAmountInput(event.target.value))}
+                      placeholder={`0 ${activeTipTokenSymbol}`}
+                      aria-label={`Tip amount in ${activeTipTokenSymbol}`}
+                      disabled={tipping}
+                    />
+                    <button
+                      className="chat-tip-send"
+                      type="button"
+                      onClick={() => {
+                        sendTipToActiveGroupMember(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
+                      }}
+                      disabled={!canSendGroupTipFromComposer}
+                      title={
+                        !selectedGroupTipRecipient
+                          ? 'Select a member'
+                          : tipAmountWeiFromInput <= 0n
+                            ? 'Enter a tip amount'
+                            : tipAmountExceedsBalance
+                              ? `Amount exceeds your ${activeTipTokenSymbol} balance`
+                              : `Send ${tipAmountSummaryLabel}`
+                      }
+                    >
+                      {tipping ? 'Sending tip...' : `Send ${activeTipTokenSymbol}`}
+                    </button>
+                  </div>
+                  <div className="chat-tip-meta">
+                    <span>{tipAmountSummaryLabel}</span>
+                    <span>
+                      {selectedGroupTipRecipient
+                        ? `To: ${selectedGroupTipRecipient.name ?? selectedGroupTipRecipient.shortAddress} | Balance: ${tipBalanceSummaryLabel}`
+                        : `Balance: ${tipBalanceSummaryLabel}`}
+                    </span>
+                  </div>
+                  {tipAmountExceedsBalance ? (
+                    <p className="chat-tip-warning">Amount exceeds available balance.</p>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="group-compose-main">
                 <button
                   type="button"
@@ -11992,6 +13478,23 @@ export default function App() {
                 >
                   {sendingGroupMessage ? 'Sending...' : 'Send'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTipComposerOpen((previous) => !previous);
+                  }}
+                  className={tipComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+                  disabled={tipping || sendingGroupMessage || processingGroupAction || activeGroupTipRecipients.length === 0}
+                  title={
+                    activeGroupTipRecipients.length === 0
+                      ? 'No other group members available to tip'
+                      : tipComposerOpen
+                        ? 'Hide tip options'
+                        : 'Open tip options'
+                  }
+                >
+                  Tip
+                </button>
               </div>
             </div>
           </div>
@@ -12003,14 +13506,51 @@ export default function App() {
                   ? `${activeContactMeta?.name ? `${activeContactMeta.name} (${shortenAddress(activeContact)})` : shortenAddress(activeContact)} (self)`
                   : `${activeContactMeta?.name ? `${activeContactMeta.name} (${shortenAddress(activeContact)})` : shortenAddress(activeContact)}`}
               </strong>
-              <button
-                type="button"
-                className="contact"
-                onClick={loadFullConversationHistory}
-                disabled={syncingHistory}
-              >
-                {syncingHistory ? 'Syncing...' : 'Sync History'}
-              </button>
+              <div className="chat-header-actions">
+                {activeConversationMuted || activeConversationHidden ? (
+                  <span className="chat-header-state">
+                    {activeConversationMuted ? 'Muted' : null}
+                    {activeConversationMuted && activeConversationHidden ? ' | ' : null}
+                    {activeConversationHidden ? 'Hidden' : null}
+                  </span>
+                ) : null}
+                {activeConversationStateSyncPending ? (
+                  <span className="chat-header-sync" role="status" aria-live="polite" aria-label="Saving conversation">
+                    <span className="inline-spinner" aria-hidden="true" />
+                  </span>
+                ) : null}
+                {!isSelfChat ? (
+                  <button
+                    type="button"
+                    className="contact"
+                    onClick={() => {
+                      toggleConversationMuteForContact(activeContact).catch(() => {});
+                    }}
+                    disabled={activeConversationStateSyncPending}
+                    title={
+                      activeConversationStateSyncPending
+                        ? 'Waiting for confirmation...'
+                        : activeConversationMuted
+                          ? 'Unmute conversation'
+                          : 'Mute conversation'
+                    }
+                  >
+                    {activeConversationStateSyncPending
+                      ? 'Saving...'
+                      : activeConversationMuted
+                        ? 'Unmute'
+                        : 'Mute'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="contact"
+                  onClick={loadFullConversationHistory}
+                  disabled={syncingHistory}
+                >
+                  {syncingHistory ? 'Syncing...' : 'Sync History'}
+                </button>
+              </div>
             </div>
 
             <div
@@ -12165,6 +13705,75 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
+              {tipComposerOpen ? (
+                <div className="chat-tip-panel" role="group" aria-label="Tip settings">
+                  <div className="chat-tip-input-row">
+                    <div className="chat-tip-token-switch" role="group" aria-label="Tip token">
+                      <button
+                        type="button"
+                        className={tipTokenSelection === 'coti' ? 'active' : undefined}
+                        onClick={() => setTipTokenSelection('coti')}
+                        disabled={tipping}
+                        aria-pressed={tipTokenSelection === 'coti'}
+                      >
+                        {TIP_NATIVE_TOKEN_SYMBOL}
+                      </button>
+                      <button
+                        type="button"
+                        className={tipTokenSelection === 'wisp' ? 'active' : undefined}
+                        onClick={() => setTipTokenSelection('wisp')}
+                        disabled={tipping}
+                        aria-pressed={tipTokenSelection === 'wisp'}
+                      >
+                        {rewardTokenSymbol}
+                      </button>
+                      <button
+                        type="button"
+                        className={tipTokenSelection === 'pwisp' ? 'active' : undefined}
+                        onClick={() => setTipTokenSelection('pwisp')}
+                        disabled={tipping}
+                        aria-pressed={tipTokenSelection === 'pwisp'}
+                      >
+                        {privateRewardTokenSymbol}
+                      </button>
+                    </div>
+                    <input
+                      className="chat-tip-amount-input"
+                      type="text"
+                      inputMode="decimal"
+                      value={tipAmountInput}
+                      onChange={(event) => setTipAmountInput(sanitizeTokenAmountInput(event.target.value))}
+                      placeholder={`0 ${activeTipTokenSymbol}`}
+                      aria-label={`Tip amount in ${activeTipTokenSymbol}`}
+                      disabled={tipping}
+                    />
+                    <button
+                      className="chat-tip-send"
+                      type="button"
+                      onClick={() => {
+                        sendTipToActiveContact(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
+                      }}
+                      disabled={!canSendTipFromComposer}
+                      title={
+                        tipAmountWeiFromInput <= 0n
+                          ? 'Enter a tip amount'
+                          : tipAmountExceedsBalance
+                            ? `Amount exceeds your ${activeTipTokenSymbol} balance`
+                            : `Send ${tipAmountSummaryLabel}`
+                      }
+                    >
+                      {tipping ? 'Sending tip...' : `Send ${activeTipTokenSymbol}`}
+                    </button>
+                  </div>
+                  <div className="chat-tip-meta">
+                    <span>{tipAmountSummaryLabel}</span>
+                    <span>Balance: {tipBalanceSummaryLabel}</span>
+                  </div>
+                  {tipAmountExceedsBalance ? (
+                    <p className="chat-tip-warning">Amount exceeds available balance.</p>
+                  ) : null}
+                </div>
+              ) : null}
               <div
                 ref={chatComposerRef}
                 className="chat-compose-editor"
@@ -12203,23 +13812,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  sendTipToActiveContact().catch(() => {});
+                  setTipComposerOpen((previous) => !previous);
                 }}
-                disabled={
-                  tipping ||
-                  sending ||
-                  !activeContact ||
-                  isSelfChat ||
-                  topUpAmountWei === null ||
-                  topUpAmountWei <= 0n
-                }
-                title={
-                  topUpAmountWei !== null && topUpAmountWei > 0n
-                    ? `Tip ${formatCotiAmount(topUpAmountWei)} COTI (${tipMessagesLabel})`
-                    : 'Set a tip amount above zero in the top-up slider'
-                }
+                className={tipComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+                disabled={tipping || sending || !activeContact || isSelfChat}
+                title={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
               >
-                {tipping ? `Tipping ${tipMessagesLabel}...` : `Tip ${tipMessagesLabel}`}
+                Tip
               </button>
             </div>
           </div>
