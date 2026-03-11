@@ -1074,8 +1074,11 @@ export const trimReplyPreview = (text: string): string => {
 
 const EXTERNAL_REPLY_REFERENCE_REGEX = /^\[r2:([A-Za-z0-9\-_]+)\]\s*/;
 const COMPACT_MESSAGE_REFERENCE_REGEX = /^([0-9a-z]+)-([0-9a-z]+)$/i;
-const SHARED_TX_REFERENCE_PREFIX_BYTES = 6;
-const SHARED_TX_REFERENCE_REGEX = /^x([0-9a-z]+)-([0-9a-f]{12})$/;
+const SHARED_TX_REFERENCE_PREFIX_BYTES = 4;
+const SHARED_TX_REFERENCE_PREFIX_BASE64_LENGTH = 6;
+const SHARED_TX_REFERENCE_REGEX = new RegExp(
+  `^x([0-9a-z]+)-([A-Za-z0-9\\-_]{${SHARED_TX_REFERENCE_PREFIX_BASE64_LENGTH}})$`
+);
 
 const isSafeMessageReferencePart = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -1115,7 +1118,17 @@ export const encodeCompactSharedTxReference = (txHash?: string, blockNumber?: nu
   }
 
   const prefixHexLength = SHARED_TX_REFERENCE_PREFIX_BYTES * 2;
-  return `x${blockNumber.toString(36)}-${normalizedTxHash.slice(2, 2 + prefixHexLength)}`;
+  const prefixHex = normalizedTxHash.slice(2, 2 + prefixHexLength);
+  const prefixBytes = new Uint8Array(SHARED_TX_REFERENCE_PREFIX_BYTES);
+  for (let index = 0; index < prefixHex.length; index += 2) {
+    const nextByte = Number.parseInt(prefixHex.slice(index, index + 2), 16);
+    if (!Number.isFinite(nextByte) || nextByte < 0 || nextByte > 255) {
+      return undefined;
+    }
+    prefixBytes[index / 2] = nextByte;
+  }
+
+  return `x${blockNumber.toString(36)}-${bytesToBase64Url(prefixBytes)}`;
 };
 
 export const decodeCompactSharedTxReference = (
@@ -1144,14 +1157,16 @@ export const buildMessageWithReplyPayload = (
   replyToText?: string,
   replyToTxHash?: string,
   replyToBlockNumber?: number,
-  replyToLogIndex?: number
+  replyToLogIndex?: number,
+  preferSharedReference = false
 ): string => {
   const sharedTxReference = encodeCompactSharedTxReference(replyToTxHash, replyToBlockNumber);
   const compactReference = encodeCompactMessageReference(replyToBlockNumber, replyToLogIndex);
-  const externalReplyPrefix = sharedTxReference
-    ? `[r2:${sharedTxReference}] `
-    : compactReference
-      ? `[r2:${compactReference}] `
+  const preferredReference = preferSharedReference
+    ? sharedTxReference ?? compactReference
+    : compactReference ?? sharedTxReference;
+  const externalReplyPrefix = preferredReference
+    ? `[r2:${preferredReference}] `
     : /^0x[a-fA-F0-9]{64}$/.test(replyToTxHash ?? '')
       ? `[r:${replyToTxHash}] `
       : '';
@@ -1375,11 +1390,18 @@ export const buildMessageWithReactionPayload = (
   emoji: string,
   plainText = '',
   targetBlockNumber?: number,
-  targetLogIndex?: number
+  targetLogIndex?: number,
+  preferSharedReference = false
 ): string => {
   const normalizedTxHash = targetTxHash.trim().toLowerCase();
   const normalizedEmoji = normalizeReactionEmoji(emoji);
-  const encodedTargetReference = encodeCompactReactionTargetReference(normalizedTxHash, targetBlockNumber, targetLogIndex);
+  const encodedTargetReference = preferSharedReference
+    ? encodeCompactSharedTxReference(normalizedTxHash, targetBlockNumber)
+      ? `@${encodeCompactSharedTxReference(normalizedTxHash, targetBlockNumber)}`
+      : encodeCompactReactionTargetReference(normalizedTxHash, targetBlockNumber, targetLogIndex)
+    : encodeCompactMessageReference(targetBlockNumber, targetLogIndex)
+      ? `@${encodeCompactMessageReference(targetBlockNumber, targetLogIndex)}`
+      : encodeCompactReactionTargetReference(normalizedTxHash, targetBlockNumber, targetLogIndex);
   const encodedEmoji = normalizedEmoji ? encodeCompactReactionEmoji(normalizedEmoji) : undefined;
   if (!encodedTargetReference || !normalizedEmoji) {
     return plainText;

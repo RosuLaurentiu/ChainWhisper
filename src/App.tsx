@@ -174,8 +174,11 @@ type MessageReferenceCandidate = {
   logIndex?: number;
 };
 
-const SHARED_TX_REFERENCE_PREFIX_BYTES = 6;
-const SHARED_TX_REFERENCE_REGEX = /^x([0-9a-z]+)-([0-9a-f]{12})$/;
+const SHARED_TX_REFERENCE_PREFIX_BYTES = 4;
+const SHARED_TX_REFERENCE_PREFIX_BASE64_LENGTH = 6;
+const SHARED_TX_REFERENCE_REGEX = new RegExp(
+  `^x([0-9a-z]+)-([A-Za-z0-9\\-_]{${SHARED_TX_REFERENCE_PREFIX_BASE64_LENGTH}})$`
+);
 
 const isSafeReferencePart = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -187,7 +190,17 @@ const buildSharedTxReference = (txHash?: string, blockNumber?: number): string =
   }
 
   const prefixHexLength = SHARED_TX_REFERENCE_PREFIX_BYTES * 2;
-  return `x${blockNumber.toString(36)}-${normalizedTxHash.slice(2, 2 + prefixHexLength)}`;
+  const prefixHex = normalizedTxHash.slice(2, 2 + prefixHexLength);
+  let binary = '';
+  for (let index = 0; index < prefixHex.length; index += 2) {
+    const nextByte = Number.parseInt(prefixHex.slice(index, index + 2), 16);
+    if (!Number.isFinite(nextByte) || nextByte < 0 || nextByte > 255) {
+      return '';
+    }
+    binary += String.fromCharCode(nextByte);
+  }
+
+  return `x${blockNumber.toString(36)}-${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`;
 };
 
 const parseSharedTxReference = (
@@ -7137,7 +7150,8 @@ export default function App() {
         replyingPreviewText,
         replyingToMessage?.txHash,
         replyingToMessage?.blockNumber,
-        replyingToMessage?.logIndex
+        replyingToMessage?.logIndex,
+        true
       );
       const encodedMemo = encodeMemoForActiveSigner(plainTextWithReply);
       const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
@@ -7422,7 +7436,8 @@ export default function App() {
       normalizedEmoji,
       '',
       targetMessage.blockNumber,
-      targetMessage.logIndex
+      targetMessage.logIndex,
+      threadGroupId !== null
     );
 
     try {
@@ -7689,7 +7704,8 @@ export default function App() {
         replyingPreviewText,
         replyingToMessage?.txHash,
         replyingToMessage?.blockNumber,
-        replyingToMessage?.logIndex
+        replyingToMessage?.logIndex,
+        false
       );
       const sendEncryptedMemo = async (textToSend: string): Promise<string> => {
         const encodedMemo = encodeMemoForActiveSigner(textToSend);
