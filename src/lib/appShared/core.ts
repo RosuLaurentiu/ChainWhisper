@@ -42,7 +42,11 @@ export type ChatMessage = {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  replyToBlockNumber?: number;
+  replyToLogIndex?: number;
   reactionToTxHash?: string;
+  reactionToBlockNumber?: number;
+  reactionToLogIndex?: number;
   reactionEmoji?: string;
   timestamp?: number;
   blockNumber?: number;
@@ -59,7 +63,11 @@ export type HistoryEntry = {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  replyToBlockNumber?: number;
+  replyToLogIndex?: number;
   reactionToTxHash?: string;
+  reactionToBlockNumber?: number;
+  reactionToLogIndex?: number;
   reactionEmoji?: string;
   txHash: string;
   blockNumber: number;
@@ -143,7 +151,11 @@ export type GroupMessageEntry = {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  replyToBlockNumber?: number;
+  replyToLogIndex?: number;
   reactionToTxHash?: string;
+  reactionToBlockNumber?: number;
+  reactionToLogIndex?: number;
   reactionEmoji?: string;
   txHash: string;
   blockNumber: number;
@@ -397,7 +409,9 @@ export type SubmitMemoPayload = {
 };
 
 export type MessageReactionPayload = {
-  targetTxHash: string;
+  targetTxHash?: string;
+  targetBlockNumber?: number;
+  targetLogIndex?: number;
   emoji: string;
 };
 

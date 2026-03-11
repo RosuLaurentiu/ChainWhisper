@@ -1072,8 +1072,53 @@ export const trimReplyPreview = (text: string): string => {
   return `${singleLine.slice(0, MAX_REPLY_PREVIEW_LENGTH - 1)}…`;
 };
 
-export const buildMessageWithReplyPayload = (plainText: string, replyToText?: string, replyToTxHash?: string): string => {
-  const externalReplyPrefix = /^0x[a-fA-F0-9]{64}$/.test(replyToTxHash ?? '') ? `[r:${replyToTxHash}] ` : '';
+const EXTERNAL_REPLY_REFERENCE_REGEX = /^\[r2:([0-9a-z]+-[0-9a-z]+)\]\s*/i;
+const COMPACT_MESSAGE_REFERENCE_REGEX = /^([0-9a-z]+)-([0-9a-z]+)$/i;
+
+const isSafeMessageReferencePart = (value: number | undefined): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+export const encodeCompactMessageReference = (
+  blockNumber?: number,
+  logIndex?: number
+): string | undefined => {
+  if (!isSafeMessageReferencePart(blockNumber) || !isSafeMessageReferencePart(logIndex)) {
+    return undefined;
+  }
+
+  return `${blockNumber.toString(36)}-${logIndex.toString(36)}`;
+};
+
+export const decodeCompactMessageReference = (
+  encodedChunk: string
+): { blockNumber: number; logIndex: number } | undefined => {
+  const match = encodedChunk.trim().match(COMPACT_MESSAGE_REFERENCE_REGEX);
+  if (!match) {
+    return undefined;
+  }
+
+  const blockNumber = Number.parseInt(match[1], 36);
+  const logIndex = Number.parseInt(match[2], 36);
+  if (!isSafeMessageReferencePart(blockNumber) || !isSafeMessageReferencePart(logIndex)) {
+    return undefined;
+  }
+
+  return { blockNumber, logIndex };
+};
+
+export const buildMessageWithReplyPayload = (
+  plainText: string,
+  replyToText?: string,
+  replyToTxHash?: string,
+  replyToBlockNumber?: number,
+  replyToLogIndex?: number
+): string => {
+  const compactReference = encodeCompactMessageReference(replyToBlockNumber, replyToLogIndex);
+  const externalReplyPrefix = compactReference
+    ? `[r2:${compactReference}] `
+    : /^0x[a-fA-F0-9]{64}$/.test(replyToTxHash ?? '')
+      ? `[r:${replyToTxHash}] `
+      : '';
   const preview = trimReplyPreview((replyToText ?? '').replace(REPLY_METADATA_PREFIX_REGEX, '').replace(/\]/g, ''));
   if (!preview) {
     return `${externalReplyPrefix}${plainText}`;
@@ -1171,6 +1216,42 @@ export const decodeCompactReactionTargetTxHash = (encodedChunk: string): string 
   return `0x${hex}`;
 };
 
+export const encodeCompactReactionTargetReference = (
+  targetTxHash: string,
+  targetBlockNumber?: number,
+  targetLogIndex?: number
+): string | undefined => {
+  const compactReference = encodeCompactMessageReference(targetBlockNumber, targetLogIndex);
+  if (compactReference) {
+    return `@${compactReference}`;
+  }
+
+  return encodeCompactReactionTargetTxHash(targetTxHash);
+};
+
+export const decodeCompactReactionTargetReference = (
+  encodedChunk: string
+): { targetTxHash?: string; targetBlockNumber?: number; targetLogIndex?: number } | undefined => {
+  if (encodedChunk.startsWith('@')) {
+    const decodedReference = decodeCompactMessageReference(encodedChunk.slice(1));
+    if (!decodedReference) {
+      return undefined;
+    }
+
+    return {
+      targetBlockNumber: decodedReference.blockNumber,
+      targetLogIndex: decodedReference.logIndex
+    };
+  }
+
+  const targetTxHash = decodeCompactReactionTargetTxHash(encodedChunk);
+  if (!targetTxHash) {
+    return undefined;
+  }
+
+  return { targetTxHash };
+};
+
 export const encodeCompactReactionEmoji = (emoji: string): string | undefined => {
   const normalizedEmoji = normalizeReactionEmoji(emoji);
   if (!normalizedEmoji) {
@@ -1240,22 +1321,28 @@ export const decodeHiddenMetadata = (encodedChunk: string): string | undefined =
   return TEXT_DECODER.decode(bytes);
 };
 
-export const buildMessageWithReactionPayload = (targetTxHash: string, emoji: string, plainText = ''): string => {
+export const buildMessageWithReactionPayload = (
+  targetTxHash: string,
+  emoji: string,
+  plainText = '',
+  targetBlockNumber?: number,
+  targetLogIndex?: number
+): string => {
   const normalizedTxHash = targetTxHash.trim().toLowerCase();
   const normalizedEmoji = normalizeReactionEmoji(emoji);
-  const encodedTargetTxHash = encodeCompactReactionTargetTxHash(normalizedTxHash);
+  const encodedTargetReference = encodeCompactReactionTargetReference(normalizedTxHash, targetBlockNumber, targetLogIndex);
   const encodedEmoji = normalizedEmoji ? encodeCompactReactionEmoji(normalizedEmoji) : undefined;
-  if (!encodedTargetTxHash || !normalizedEmoji) {
+  if (!encodedTargetReference || !normalizedEmoji) {
     return plainText;
   }
 
   const sanitizedFallbackText = plainText.split(REACTION_METADATA_PREFIX).join('').trim();
   if (encodedEmoji) {
-    return `${REACTION_METADATA_PREFIX}${encodedTargetTxHash}.${encodedEmoji}${REACTION_METADATA_PREFIX}${sanitizedFallbackText}`;
+    return `${REACTION_METADATA_PREFIX}${encodedTargetReference}.${encodedEmoji}${REACTION_METADATA_PREFIX}${sanitizedFallbackText}`;
   }
 
   const visibleFallbackText = sanitizedFallbackText || normalizedEmoji;
-  return `${REACTION_METADATA_PREFIX}${encodedTargetTxHash}${REACTION_METADATA_PREFIX}${visibleFallbackText}`;
+  return `${REACTION_METADATA_PREFIX}${encodedTargetReference}${REACTION_METADATA_PREFIX}${visibleFallbackText}`;
 };
 
 export const parseMessageReactionPayload = (text: string): { cleanText: string; reaction?: MessageReactionPayload } => {
@@ -1272,21 +1359,23 @@ export const parseMessageReactionPayload = (text: string): { cleanText: string; 
   const remaining = text.slice(metadataEnd + REACTION_METADATA_PREFIX.length);
   const compactMetadataSeparatorIndex = metadataChunk.indexOf('.');
   if (compactMetadataSeparatorIndex > 0) {
-    const compactTargetTxHash = decodeCompactReactionTargetTxHash(metadataChunk.slice(0, compactMetadataSeparatorIndex));
+    const compactTarget = decodeCompactReactionTargetReference(metadataChunk.slice(0, compactMetadataSeparatorIndex));
     const compactEmoji = decodeCompactReactionEmoji(metadataChunk.slice(compactMetadataSeparatorIndex + 1));
-    if (compactTargetTxHash && compactEmoji) {
+    if (compactTarget && compactEmoji) {
       return {
         cleanText: remaining,
         reaction: {
-          targetTxHash: compactTargetTxHash,
+          targetTxHash: compactTarget.targetTxHash,
+          targetBlockNumber: compactTarget.targetBlockNumber,
+          targetLogIndex: compactTarget.targetLogIndex,
           emoji: compactEmoji
         }
       };
     }
   }
 
-  const compactTargetTxHash = decodeCompactReactionTargetTxHash(metadataChunk);
-  if (compactTargetTxHash) {
+  const compactTarget = decodeCompactReactionTargetReference(metadataChunk);
+  if (compactTarget) {
     const remainingEmoji = normalizeReactionEmoji(remaining);
     if (!remainingEmoji) {
       return { cleanText: remaining };
@@ -1294,7 +1383,9 @@ export const parseMessageReactionPayload = (text: string): { cleanText: string; 
     return {
       cleanText: '',
       reaction: {
-        targetTxHash: compactTargetTxHash,
+        targetTxHash: compactTarget.targetTxHash,
+        targetBlockNumber: compactTarget.targetBlockNumber,
+        targetLogIndex: compactTarget.targetLogIndex,
         emoji: remainingEmoji
       }
     };
@@ -1519,9 +1610,23 @@ export const parseMessageReplyPayload = (text: string): {
   replyToText?: string;
   replyToMessageId?: string;
   replyToTxHash?: string;
+  replyToBlockNumber?: number;
+  replyToLogIndex?: number;
 } => {
   let workingText = text;
   let replyToTxHash: string | undefined;
+  let replyToBlockNumber: number | undefined;
+  let replyToLogIndex: number | undefined;
+  const compactReferenceMatch = workingText.match(EXTERNAL_REPLY_REFERENCE_REGEX);
+  if (compactReferenceMatch) {
+    const decodedReference = decodeCompactMessageReference(compactReferenceMatch[1]);
+    if (decodedReference) {
+      replyToBlockNumber = decodedReference.blockNumber;
+      replyToLogIndex = decodedReference.logIndex;
+      workingText = workingText.slice(compactReferenceMatch[0].length);
+    }
+  }
+
   const externalMatch = workingText.match(EXTERNAL_REPLY_TXHASH_REGEX);
   if (externalMatch) {
     replyToTxHash = externalMatch[1];
@@ -1542,7 +1647,9 @@ export const parseMessageReplyPayload = (text: string): {
       return {
         cleanText: remaining,
         replyToText: previewChunk || undefined,
-        replyToTxHash
+        replyToTxHash,
+        replyToBlockNumber,
+        replyToLogIndex
       };
     }
   }
@@ -1564,18 +1671,20 @@ export const parseMessageReplyPayload = (text: string): {
         cleanText: remaining,
         replyToText: previewChunk || undefined,
         replyToMessageId,
-        replyToTxHash
+        replyToTxHash,
+        replyToBlockNumber,
+        replyToLogIndex
       };
     }
   }
 
   if (!workingText.startsWith(REPLY_DELIMITER)) {
-    return { cleanText: workingText, replyToTxHash };
+    return { cleanText: workingText, replyToTxHash, replyToBlockNumber, replyToLogIndex };
   }
 
   const delimiterEnd = workingText.indexOf(REPLY_DELIMITER, REPLY_DELIMITER.length);
   if (delimiterEnd < 0) {
-    return { cleanText: workingText, replyToTxHash };
+    return { cleanText: workingText, replyToTxHash, replyToBlockNumber, replyToLogIndex };
   }
 
   const previewChunk = trimReplyPreview(workingText.slice(REPLY_DELIMITER.length, delimiterEnd));
@@ -1589,7 +1698,9 @@ export const parseMessageReplyPayload = (text: string): {
   return {
     cleanText: remaining,
     replyToText: previewChunk || undefined,
-    replyToTxHash
+    replyToTxHash,
+    replyToBlockNumber,
+    replyToLogIndex
   };
 };
 
@@ -1680,6 +1791,8 @@ export const parseChatMessagePayload = (text: string): {
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
+  replyToBlockNumber?: number;
+  replyToLogIndex?: number;
   embeddedNickname?: string;
   embeddedContactName?: string;
   embeddedConversationState?: ConversationPreferenceState;
@@ -1696,6 +1809,8 @@ export const parseChatMessagePayload = (text: string): {
     replyToMessageId: replyParsed.replyToMessageId,
     replyToText: replyParsed.replyToText,
     replyToTxHash: replyParsed.replyToTxHash,
+    replyToBlockNumber: replyParsed.replyToBlockNumber,
+    replyToLogIndex: replyParsed.replyToLogIndex,
     embeddedNickname: profileParsed.nickname,
     embeddedContactName: contactNameParsed.contactName,
     embeddedConversationState: conversationStateParsed.conversationState,

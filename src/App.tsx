@@ -168,6 +168,34 @@ import {
   WS_RETRY_COOLDOWN_MS,
 } from './lib/appShared';
 
+type MessageReferenceCandidate = {
+  txHash?: string;
+  blockNumber?: number;
+  logIndex?: number;
+};
+
+const buildMessageReferenceKey = ({ txHash, blockNumber, logIndex }: MessageReferenceCandidate): string => {
+  if (
+    typeof blockNumber === 'number' &&
+    Number.isSafeInteger(blockNumber) &&
+    blockNumber >= 0 &&
+    typeof logIndex === 'number' &&
+    Number.isSafeInteger(logIndex) &&
+    logIndex >= 0
+  ) {
+    return `b:${blockNumber}:${logIndex}`;
+  }
+
+  const normalizedTxHash = txHash?.trim().toLowerCase() ?? '';
+  return /^0x[a-f0-9]{64}$/.test(normalizedTxHash) ? `t:${normalizedTxHash}` : '';
+};
+
+const messageReferencesMatch = (left: MessageReferenceCandidate, right: MessageReferenceCandidate): boolean => {
+  const leftKey = buildMessageReferenceKey(left);
+  const rightKey = buildMessageReferenceKey(right);
+  return leftKey === rightKey;
+};
+
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
     // Telegram bot link
@@ -824,7 +852,11 @@ export default function App() {
     (message: ChatMessage): boolean =>
       Boolean(
         !message.isSystem &&
-          message.reactionToTxHash &&
+          buildMessageReferenceKey({
+            txHash: message.reactionToTxHash,
+            blockNumber: message.reactionToBlockNumber,
+            logIndex: message.reactionToLogIndex
+          }) &&
           message.reactionEmoji &&
           (message.text ?? '').trim().length === 0
       ),
@@ -840,9 +872,13 @@ export default function App() {
         continue;
       }
 
-      const targetTxHash = message.reactionToTxHash?.trim().toLowerCase() ?? '';
+      const targetReferenceKey = buildMessageReferenceKey({
+        txHash: message.reactionToTxHash,
+        blockNumber: message.reactionToBlockNumber,
+        logIndex: message.reactionToLogIndex
+      });
       const normalizedEmoji = normalizeReactionEmoji(message.reactionEmoji ?? '');
-      if (!/^0x[a-f0-9]{64}$/.test(targetTxHash) || !normalizedEmoji) {
+      if (!targetReferenceKey || !normalizedEmoji) {
         continue;
       }
 
@@ -861,10 +897,10 @@ export default function App() {
         reactorKey = `${message.direction}:${message.id}`;
       }
 
-      let byEmoji = byTarget.get(targetTxHash);
+      let byEmoji = byTarget.get(targetReferenceKey);
       if (!byEmoji) {
         byEmoji = new Map<string, Set<string>>();
-        byTarget.set(targetTxHash, byEmoji);
+        byTarget.set(targetReferenceKey, byEmoji);
       }
 
       let reactors = byEmoji.get(normalizedEmoji);
@@ -898,12 +934,16 @@ export default function App() {
   }, [activeThreadMessages, activeContact, activeGroupId, walletAddress]);
   const getReactionsForMessage = useCallback(
     (message: ChatMessage): Array<{ emoji: string; count: number; reactedByMe: boolean }> => {
-      const txHash = message.txHash?.trim().toLowerCase() ?? '';
-      if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
+      const messageReferenceKey = buildMessageReferenceKey({
+        txHash: message.txHash,
+        blockNumber: message.blockNumber,
+        logIndex: message.logIndex
+      });
+      if (!messageReferenceKey) {
         return [];
       }
 
-      return activeThreadReactions.get(txHash) ?? [];
+      return activeThreadReactions.get(messageReferenceKey) ?? [];
     },
     [activeThreadReactions]
   );
@@ -2053,13 +2093,26 @@ export default function App() {
   const isNearBottom = (container: HTMLDivElement): boolean =>
     container.scrollHeight - (container.scrollTop + container.clientHeight) <= 140;
 
-  const jumpToReferencedMessage = (replyToMessageId?: string, replyToText?: string, replyToTxHash?: string) => {
+  const jumpToReferencedMessage = (
+    replyToMessageId?: string,
+    replyToText?: string,
+    replyToTxHash?: string,
+    replyToBlockNumber?: number,
+    replyToLogIndex?: number
+  ) => {
     const referencePool = activeGroupId !== null ? activeGroupMessages : activeMessages;
     if (referencePool.length === 0) {
       return;
     }
 
     let targetId = replyToMessageId;
+    if (!targetId && typeof replyToBlockNumber === 'number' && typeof replyToLogIndex === 'number') {
+      const matchedByLogPosition = referencePool.find(
+        (message) => message.blockNumber === replyToBlockNumber && message.logIndex === replyToLogIndex
+      );
+      targetId = matchedByLogPosition?.id;
+    }
+
     if (!targetId && replyToTxHash) {
       const normalizedReplyTxHash = replyToTxHash.toLowerCase();
       const matchedByTxHash = referencePool.find((message) => message.txHash?.toLowerCase() === normalizedReplyTxHash);
@@ -2092,6 +2145,22 @@ export default function App() {
       setHighlightedMessageId((previous) => (previous === targetId ? null : previous));
       highlightTimeoutRef.current = null;
     }, 1800);
+  };
+
+  const getReplyReferenceFallbackLabel = (message: ChatMessage): string => {
+    if (message.replyToText) {
+      return message.replyToText;
+    }
+
+    if (typeof message.replyToBlockNumber === 'number' && typeof message.replyToLogIndex === 'number') {
+      return `Ref ${message.replyToBlockNumber.toString(36)}:${message.replyToLogIndex.toString(36)}`;
+    }
+
+    if (message.replyToTxHash) {
+      return `Tx ${shortenAddress(message.replyToTxHash)}`;
+    }
+
+    return 'Reply';
   };
 
   const handleAddContact = (event: FormEvent) => {
@@ -3788,7 +3857,11 @@ export default function App() {
           let replyToMessageId: string | undefined;
           let replyToText: string | undefined;
           let replyToTxHash: string | undefined;
+          let replyToBlockNumber: number | undefined;
+          let replyToLogIndex: number | undefined;
           let reactionToTxHash: string | undefined;
+          let reactionToBlockNumber: number | undefined;
+          let reactionToLogIndex: number | undefined;
           let reactionEmoji: string | undefined;
           if (userCiphertext && userCiphertext.value.length > 0) {
             try {
@@ -3800,7 +3873,11 @@ export default function App() {
               replyToMessageId = parsedMessage.replyToMessageId;
               replyToText = parsedMessage.replyToText;
               replyToTxHash = parsedMessage.replyToTxHash;
+              replyToBlockNumber = parsedMessage.replyToBlockNumber;
+              replyToLogIndex = parsedMessage.replyToLogIndex;
               reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+              reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+              reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
               reactionEmoji = parsedMessage.embeddedReaction?.emoji;
               if (
                 messageText.trim().length === 0 &&
@@ -3831,7 +3908,11 @@ export default function App() {
             replyToMessageId,
             replyToText,
             replyToTxHash,
+            replyToBlockNumber,
+            replyToLogIndex,
             reactionToTxHash,
+            reactionToBlockNumber,
+            reactionToLogIndex,
             reactionEmoji,
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
@@ -3846,7 +3927,11 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let replyToBlockNumber: number | undefined;
+        let replyToLogIndex: number | undefined;
         let reactionToTxHash: string | undefined;
+        let reactionToBlockNumber: number | undefined;
+        let reactionToLogIndex: number | undefined;
         let reactionEmoji: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
@@ -3858,7 +3943,11 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            replyToBlockNumber = parsedMessage.replyToBlockNumber;
+            replyToLogIndex = parsedMessage.replyToLogIndex;
             reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
             reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (
               messageText.trim().length === 0 &&
@@ -3889,7 +3978,11 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          replyToBlockNumber,
+          replyToLogIndex,
           reactionToTxHash,
+          reactionToBlockNumber,
+          reactionToLogIndex,
           reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
@@ -3958,7 +4051,11 @@ export default function App() {
           let replyToMessageId: string | undefined;
           let replyToText: string | undefined;
           let replyToTxHash: string | undefined;
+          let replyToBlockNumber: number | undefined;
+          let replyToLogIndex: number | undefined;
           let reactionToTxHash: string | undefined;
+          let reactionToBlockNumber: number | undefined;
+          let reactionToLogIndex: number | undefined;
           let reactionEmoji: string | undefined;
           if (userCiphertext && userCiphertext.value.length > 0) {
             try {
@@ -3970,7 +4067,11 @@ export default function App() {
               replyToMessageId = parsedMessage.replyToMessageId;
               replyToText = parsedMessage.replyToText;
               replyToTxHash = parsedMessage.replyToTxHash;
+              replyToBlockNumber = parsedMessage.replyToBlockNumber;
+              replyToLogIndex = parsedMessage.replyToLogIndex;
               reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+              reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+              reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
               reactionEmoji = parsedMessage.embeddedReaction?.emoji;
               if (parsedMessage.embeddedContactName) {
                 discoveredNicknames.set(contactKey, parsedMessage.embeddedContactName);
@@ -4000,7 +4101,11 @@ export default function App() {
             replyToMessageId,
             replyToText,
             replyToTxHash,
+            replyToBlockNumber,
+            replyToLogIndex,
             reactionToTxHash,
+            reactionToBlockNumber,
+            reactionToLogIndex,
             reactionEmoji,
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
@@ -4015,7 +4120,11 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let replyToBlockNumber: number | undefined;
+        let replyToLogIndex: number | undefined;
         let reactionToTxHash: string | undefined;
+        let reactionToBlockNumber: number | undefined;
+        let reactionToLogIndex: number | undefined;
         let reactionEmoji: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
@@ -4027,7 +4136,11 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            replyToBlockNumber = parsedMessage.replyToBlockNumber;
+            replyToLogIndex = parsedMessage.replyToLogIndex;
             reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
             reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (parsedMessage.embeddedContactName) {
               discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
@@ -4057,7 +4170,11 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          replyToBlockNumber,
+          replyToLogIndex,
           reactionToTxHash,
+          reactionToBlockNumber,
+          reactionToLogIndex,
           reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
@@ -4163,8 +4280,30 @@ export default function App() {
                   candidate.direction !== 'outgoing' ||
                   candidate.text !== entry.text ||
                   (candidate.replyToText ?? '') !== (entry.replyToText ?? '') ||
-                  (candidate.replyToTxHash ?? '') !== (entry.replyToTxHash ?? '') ||
-                  (candidate.reactionToTxHash ?? '') !== (entry.reactionToTxHash ?? '') ||
+                  !messageReferencesMatch(
+                    {
+                      txHash: candidate.replyToTxHash,
+                      blockNumber: candidate.replyToBlockNumber,
+                      logIndex: candidate.replyToLogIndex
+                    },
+                    {
+                      txHash: entry.replyToTxHash,
+                      blockNumber: entry.replyToBlockNumber,
+                      logIndex: entry.replyToLogIndex
+                    }
+                  ) ||
+                  !messageReferencesMatch(
+                    {
+                      txHash: candidate.reactionToTxHash,
+                      blockNumber: candidate.reactionToBlockNumber,
+                      logIndex: candidate.reactionToLogIndex
+                    },
+                    {
+                      txHash: entry.reactionToTxHash,
+                      blockNumber: entry.reactionToBlockNumber,
+                      logIndex: entry.reactionToLogIndex
+                    }
+                  ) ||
                   (candidate.reactionEmoji ?? '') !== (entry.reactionEmoji ?? '')
                 ) {
                   continue;
@@ -4227,7 +4366,11 @@ export default function App() {
                 replyToMessageId: entry.replyToMessageId,
                 replyToText: entry.replyToText,
                 replyToTxHash: entry.replyToTxHash,
+                replyToBlockNumber: entry.replyToBlockNumber,
+                replyToLogIndex: entry.replyToLogIndex,
                 reactionToTxHash: entry.reactionToTxHash,
+                reactionToBlockNumber: entry.reactionToBlockNumber,
+                reactionToLogIndex: entry.reactionToLogIndex,
                 reactionEmoji: entry.reactionEmoji,
                 timestamp: entry.timestamp,
                 blockNumber: entry.blockNumber,
@@ -4565,7 +4708,11 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let replyToBlockNumber: number | undefined;
+        let replyToLogIndex: number | undefined;
         let reactionToTxHash: string | undefined;
+        let reactionToBlockNumber: number | undefined;
+        let reactionToLogIndex: number | undefined;
         let reactionEmoji: string | undefined;
 
         if (userCiphertext && userCiphertext.value.length > 0) {
@@ -4585,7 +4732,11 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            replyToBlockNumber = parsedMessage.replyToBlockNumber;
+            replyToLogIndex = parsedMessage.replyToLogIndex;
             reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
             reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (
               messageText.trim().length === 0 &&
@@ -4609,7 +4760,11 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          replyToBlockNumber,
+          replyToLogIndex,
           reactionToTxHash,
+          reactionToBlockNumber,
+          reactionToLogIndex,
           reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
@@ -4630,7 +4785,11 @@ export default function App() {
         let replyToMessageId: string | undefined;
         let replyToText: string | undefined;
         let replyToTxHash: string | undefined;
+        let replyToBlockNumber: number | undefined;
+        let replyToLogIndex: number | undefined;
         let reactionToTxHash: string | undefined;
+        let reactionToBlockNumber: number | undefined;
+        let reactionToLogIndex: number | undefined;
         let reactionEmoji: string | undefined;
 
         if (userCiphertext && userCiphertext.value.length > 0) {
@@ -4652,7 +4811,11 @@ export default function App() {
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
             replyToTxHash = parsedMessage.replyToTxHash;
+            replyToBlockNumber = parsedMessage.replyToBlockNumber;
+            replyToLogIndex = parsedMessage.replyToLogIndex;
             reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
             reactionEmoji = parsedMessage.embeddedReaction?.emoji;
             if (parsedMessage.embeddedContactName) {
               discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
@@ -4676,7 +4839,11 @@ export default function App() {
           replyToMessageId,
           replyToText,
           replyToTxHash,
+          replyToBlockNumber,
+          replyToLogIndex,
           reactionToTxHash,
+          reactionToBlockNumber,
+          reactionToLogIndex,
           reactionEmoji,
           txHash: log.transactionHash,
           blockNumber: log.blockNumber,
@@ -4712,7 +4879,11 @@ export default function App() {
               replyToMessageId: entry.replyToMessageId,
               replyToText: entry.replyToText,
               replyToTxHash: entry.replyToTxHash,
+              replyToBlockNumber: entry.replyToBlockNumber,
+              replyToLogIndex: entry.replyToLogIndex,
               reactionToTxHash: entry.reactionToTxHash,
+              reactionToBlockNumber: entry.reactionToBlockNumber,
+              reactionToLogIndex: entry.reactionToLogIndex,
               reactionEmoji: entry.reactionEmoji,
               timestamp: entry.timestamp,
               blockNumber: entry.blockNumber,
@@ -5345,7 +5516,11 @@ export default function App() {
             let replyToMessageId: string | undefined;
             let replyToText: string | undefined;
             let replyToTxHash: string | undefined;
+            let replyToBlockNumber: number | undefined;
+            let replyToLogIndex: number | undefined;
             let reactionToTxHash: string | undefined;
+            let reactionToBlockNumber: number | undefined;
+            let reactionToLogIndex: number | undefined;
             let reactionEmoji: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
@@ -5357,7 +5532,11 @@ export default function App() {
                 replyToMessageId = parsedMessage.replyToMessageId;
                 replyToText = parsedMessage.replyToText;
                 replyToTxHash = parsedMessage.replyToTxHash;
+                replyToBlockNumber = parsedMessage.replyToBlockNumber;
+                replyToLogIndex = parsedMessage.replyToLogIndex;
                 reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+                reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+                reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
                 reactionEmoji = parsedMessage.embeddedReaction?.emoji;
                 if (
                   messageText.trim().length === 0 &&
@@ -5379,7 +5558,11 @@ export default function App() {
               replyToMessageId,
               replyToText,
               replyToTxHash,
+              replyToBlockNumber,
+              replyToLogIndex,
               reactionToTxHash,
+              reactionToBlockNumber,
+              reactionToLogIndex,
               reactionEmoji,
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
@@ -5395,7 +5578,11 @@ export default function App() {
             let replyToMessageId: string | undefined;
             let replyToText: string | undefined;
             let replyToTxHash: string | undefined;
+            let replyToBlockNumber: number | undefined;
+            let replyToLogIndex: number | undefined;
             let reactionToTxHash: string | undefined;
+            let reactionToBlockNumber: number | undefined;
+            let reactionToLogIndex: number | undefined;
             let reactionEmoji: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
@@ -5407,7 +5594,11 @@ export default function App() {
                 replyToMessageId = parsedMessage.replyToMessageId;
                 replyToText = parsedMessage.replyToText;
                 replyToTxHash = parsedMessage.replyToTxHash;
+                replyToBlockNumber = parsedMessage.replyToBlockNumber;
+                replyToLogIndex = parsedMessage.replyToLogIndex;
                 reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+                reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+                reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
                 reactionEmoji = parsedMessage.embeddedReaction?.emoji;
                 if (
                   messageText.trim().length === 0 &&
@@ -5429,7 +5620,11 @@ export default function App() {
               replyToMessageId,
               replyToText,
               replyToTxHash,
+              replyToBlockNumber,
+              replyToLogIndex,
               reactionToTxHash,
+              reactionToBlockNumber,
+              reactionToLogIndex,
               reactionEmoji,
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
@@ -5546,7 +5741,11 @@ export default function App() {
                   replyToMessageId: entry.replyToMessageId,
                   replyToText: entry.replyToText,
                   replyToTxHash: entry.replyToTxHash,
+                  replyToBlockNumber: entry.replyToBlockNumber,
+                  replyToLogIndex: entry.replyToLogIndex,
                   reactionToTxHash: entry.reactionToTxHash,
+                  reactionToBlockNumber: entry.reactionToBlockNumber,
+                  reactionToLogIndex: entry.reactionToLogIndex,
                   reactionEmoji: entry.reactionEmoji,
                   timestamp: entry.timestamp,
                   blockNumber: entry.blockNumber,
@@ -6819,6 +7018,8 @@ export default function App() {
             replyToMessageId: replyingToMessage?.id,
             replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
             replyToTxHash: replyingToMessage?.txHash,
+            replyToBlockNumber: replyingToMessage?.blockNumber,
+            replyToLogIndex: replyingToMessage?.logIndex,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
@@ -6839,7 +7040,9 @@ export default function App() {
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
         replyingPreviewText,
-        replyingToMessage?.txHash
+        replyingToMessage?.txHash,
+        replyingToMessage?.blockNumber,
+        replyingToMessage?.logIndex
       );
       const encodedMemo = encodeMemoForActiveSigner(plainTextWithReply);
       const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
@@ -7082,7 +7285,12 @@ export default function App() {
       return;
     }
 
-    const existingReactions = activeThreadReactions.get(targetTxHash) ?? [];
+    const targetReferenceKey = buildMessageReferenceKey({
+      txHash: targetMessage.txHash,
+      blockNumber: targetMessage.blockNumber,
+      logIndex: targetMessage.logIndex
+    });
+    const existingReactions = targetReferenceKey ? activeThreadReactions.get(targetReferenceKey) ?? [] : [];
     const alreadyReactedWithEmoji = existingReactions.some(
       (reaction) => reaction.emoji === normalizedEmoji && reaction.reactedByMe
     );
@@ -7110,7 +7318,13 @@ export default function App() {
         ? `local-group-reaction-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
         : `local-reaction-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
-    const reactionMemoText = buildMessageWithReactionPayload(targetTxHash, normalizedEmoji);
+    const reactionMemoText = buildMessageWithReactionPayload(
+      targetTxHash,
+      normalizedEmoji,
+      '',
+      targetMessage.blockNumber,
+      targetMessage.logIndex
+    );
 
     try {
       setSendingReaction(true);
@@ -7128,6 +7342,8 @@ export default function App() {
               text: '',
               senderAddress: requestedWalletAddress,
               reactionToTxHash: targetTxHash,
+              reactionToBlockNumber: targetMessage.blockNumber,
+              reactionToLogIndex: targetMessage.logIndex,
               reactionEmoji: normalizedEmoji,
               timestamp: localMessageTimestamp,
               deliveryState: 'pending'
@@ -7198,6 +7414,8 @@ export default function App() {
               text: '',
               senderAddress: requestedWalletAddress,
               reactionToTxHash: targetTxHash,
+              reactionToBlockNumber: targetMessage.blockNumber,
+              reactionToLogIndex: targetMessage.logIndex,
               reactionEmoji: normalizedEmoji,
               timestamp: localMessageTimestamp,
               deliveryState: 'pending'
@@ -7354,6 +7572,8 @@ export default function App() {
             replyToMessageId: replyingToMessage?.id,
             replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
             replyToTxHash: replyingToMessage?.txHash,
+            replyToBlockNumber: replyingToMessage?.blockNumber,
+            replyToLogIndex: replyingToMessage?.logIndex,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
@@ -7368,7 +7588,9 @@ export default function App() {
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
         replyingPreviewText,
-        replyingToMessage?.txHash
+        replyingToMessage?.txHash,
+        replyingToMessage?.blockNumber,
+        replyingToMessage?.logIndex
       );
       const sendEncryptedMemo = async (textToSend: string): Promise<string> => {
         const encodedMemo = encodeMemoForActiveSigner(textToSend);
@@ -7409,7 +7631,18 @@ export default function App() {
                 return (
                   message.text === localMessageRecord.text &&
                   (message.replyToText ?? '') === (localMessageRecord.replyToText ?? '') &&
-                  (message.replyToTxHash ?? '') === (localMessageRecord.replyToTxHash ?? '')
+                  messageReferencesMatch(
+                    {
+                      txHash: message.replyToTxHash,
+                      blockNumber: message.replyToBlockNumber,
+                      logIndex: message.replyToLogIndex
+                    },
+                    {
+                      txHash: localMessageRecord.replyToTxHash,
+                      blockNumber: localMessageRecord.replyToBlockNumber,
+                      logIndex: localMessageRecord.replyToLogIndex
+                    }
+                  )
                 );
               })
           );
@@ -10586,16 +10819,22 @@ export default function App() {
                             <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
                           )
                         ) : null}
-                        {message.replyToText || message.replyToTxHash ? (
+                        {message.replyToText || message.replyToTxHash || typeof message.replyToBlockNumber === 'number' ? (
                           <button
                             type="button"
                             className="message-reply"
                             onClick={() =>
-                              jumpToReferencedMessage(message.replyToMessageId, message.replyToText, message.replyToTxHash)
+                              jumpToReferencedMessage(
+                                message.replyToMessageId,
+                                message.replyToText,
+                                message.replyToTxHash,
+                                message.replyToBlockNumber,
+                                message.replyToLogIndex
+                              )
                             }
                             title="Go to replied message"
                           >
-                            ↪ {message.replyToText ?? `Tx ${shortenAddress(message.replyToTxHash as string)}`}
+                            ↪ {getReplyReferenceFallbackLabel(message)}
                           </button>
                         ) : null}
                         {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
@@ -10825,16 +11064,22 @@ export default function App() {
                             </div>
                           ) : null}
                         </>
-                        {message.replyToText || message.replyToTxHash ? (
+                        {message.replyToText || message.replyToTxHash || typeof message.replyToBlockNumber === 'number' ? (
                           <button
                             type="button"
                             className="message-reply"
                             onClick={() =>
-                              jumpToReferencedMessage(message.replyToMessageId, message.replyToText, message.replyToTxHash)
+                              jumpToReferencedMessage(
+                                message.replyToMessageId,
+                                message.replyToText,
+                                message.replyToTxHash,
+                                message.replyToBlockNumber,
+                                message.replyToLogIndex
+                              )
                             }
                             title="Go to replied message"
                           >
-                            ↪ {message.replyToText ?? `Tx ${shortenAddress(message.replyToTxHash as string)}`}
+                            ↪ {getReplyReferenceFallbackLabel(message)}
                           </button>
                         ) : null}
                         {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
