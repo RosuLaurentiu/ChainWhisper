@@ -1072,8 +1072,10 @@ export const trimReplyPreview = (text: string): string => {
   return `${singleLine.slice(0, MAX_REPLY_PREVIEW_LENGTH - 1)}…`;
 };
 
-const EXTERNAL_REPLY_REFERENCE_REGEX = /^\[r2:([0-9a-z]+-[0-9a-z]+)\]\s*/i;
+const EXTERNAL_REPLY_REFERENCE_REGEX = /^\[r2:([A-Za-z0-9\-_]+)\]\s*/;
 const COMPACT_MESSAGE_REFERENCE_REGEX = /^([0-9a-z]+)-([0-9a-z]+)$/i;
+const SHARED_TX_REFERENCE_PREFIX_BYTES = 6;
+const SHARED_TX_REFERENCE_REGEX = /^x([0-9a-z]+)-([0-9a-f]{12})$/;
 
 const isSafeMessageReferencePart = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -1106,6 +1108,37 @@ export const decodeCompactMessageReference = (
   return { blockNumber, logIndex };
 };
 
+export const encodeCompactSharedTxReference = (txHash?: string, blockNumber?: number): string | undefined => {
+  const normalizedTxHash = txHash?.trim().toLowerCase() ?? '';
+  if (!/^0x[a-f0-9]{64}$/.test(normalizedTxHash) || !isSafeMessageReferencePart(blockNumber)) {
+    return undefined;
+  }
+
+  const prefixHexLength = SHARED_TX_REFERENCE_PREFIX_BYTES * 2;
+  return `x${blockNumber.toString(36)}-${normalizedTxHash.slice(2, 2 + prefixHexLength)}`;
+};
+
+export const decodeCompactSharedTxReference = (
+  encodedChunk: string
+): { blockNumber: number; txHashPrefix: string; normalizedReference: string } | undefined => {
+  const match = encodedChunk.trim().match(SHARED_TX_REFERENCE_REGEX);
+  if (!match) {
+    return undefined;
+  }
+
+  const blockNumber = Number.parseInt(match[1], 36);
+  if (!isSafeMessageReferencePart(blockNumber)) {
+    return undefined;
+  }
+
+  const txHashPrefix = match[2].toLowerCase();
+  return {
+    blockNumber,
+    txHashPrefix,
+    normalizedReference: `x${match[1].toLowerCase()}-${txHashPrefix}`
+  };
+};
+
 export const buildMessageWithReplyPayload = (
   plainText: string,
   replyToText?: string,
@@ -1113,9 +1146,12 @@ export const buildMessageWithReplyPayload = (
   replyToBlockNumber?: number,
   replyToLogIndex?: number
 ): string => {
+  const sharedTxReference = encodeCompactSharedTxReference(replyToTxHash, replyToBlockNumber);
   const compactReference = encodeCompactMessageReference(replyToBlockNumber, replyToLogIndex);
-  const externalReplyPrefix = compactReference
-    ? `[r2:${compactReference}] `
+  const externalReplyPrefix = sharedTxReference
+    ? `[r2:${sharedTxReference}] `
+    : compactReference
+      ? `[r2:${compactReference}] `
     : /^0x[a-fA-F0-9]{64}$/.test(replyToTxHash ?? '')
       ? `[r:${replyToTxHash}] `
       : '';
@@ -1221,6 +1257,11 @@ export const encodeCompactReactionTargetReference = (
   targetBlockNumber?: number,
   targetLogIndex?: number
 ): string | undefined => {
+  const sharedTxReference = encodeCompactSharedTxReference(targetTxHash, targetBlockNumber);
+  if (sharedTxReference) {
+    return `@${sharedTxReference}`;
+  }
+
   const compactReference = encodeCompactMessageReference(targetBlockNumber, targetLogIndex);
   if (compactReference) {
     return `@${compactReference}`;
@@ -1233,6 +1274,14 @@ export const decodeCompactReactionTargetReference = (
   encodedChunk: string
 ): { targetTxHash?: string; targetBlockNumber?: number; targetLogIndex?: number } | undefined => {
   if (encodedChunk.startsWith('@')) {
+    const sharedTxReference = decodeCompactSharedTxReference(encodedChunk.slice(1));
+    if (sharedTxReference) {
+      return {
+        targetTxHash: sharedTxReference.normalizedReference,
+        targetBlockNumber: sharedTxReference.blockNumber
+      };
+    }
+
     const decodedReference = decodeCompactMessageReference(encodedChunk.slice(1));
     if (!decodedReference) {
       return undefined;
@@ -1619,11 +1668,18 @@ export const parseMessageReplyPayload = (text: string): {
   let replyToLogIndex: number | undefined;
   const compactReferenceMatch = workingText.match(EXTERNAL_REPLY_REFERENCE_REGEX);
   if (compactReferenceMatch) {
-    const decodedReference = decodeCompactMessageReference(compactReferenceMatch[1]);
-    if (decodedReference) {
-      replyToBlockNumber = decodedReference.blockNumber;
-      replyToLogIndex = decodedReference.logIndex;
+    const sharedTxReference = decodeCompactSharedTxReference(compactReferenceMatch[1]);
+    if (sharedTxReference) {
+      replyToTxHash = sharedTxReference.normalizedReference;
+      replyToBlockNumber = sharedTxReference.blockNumber;
       workingText = workingText.slice(compactReferenceMatch[0].length);
+    } else {
+      const decodedReference = decodeCompactMessageReference(compactReferenceMatch[1]);
+      if (decodedReference) {
+        replyToBlockNumber = decodedReference.blockNumber;
+        replyToLogIndex = decodedReference.logIndex;
+        workingText = workingText.slice(compactReferenceMatch[0].length);
+      }
     }
   }
 

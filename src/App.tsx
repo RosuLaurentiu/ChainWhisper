@@ -174,26 +174,77 @@ type MessageReferenceCandidate = {
   logIndex?: number;
 };
 
-const buildMessageReferenceKey = ({ txHash, blockNumber, logIndex }: MessageReferenceCandidate): string => {
-  if (
-    typeof blockNumber === 'number' &&
-    Number.isSafeInteger(blockNumber) &&
-    blockNumber >= 0 &&
-    typeof logIndex === 'number' &&
-    Number.isSafeInteger(logIndex) &&
-    logIndex >= 0
-  ) {
-    return `b:${blockNumber}:${logIndex}`;
+const SHARED_TX_REFERENCE_PREFIX_BYTES = 6;
+const SHARED_TX_REFERENCE_REGEX = /^x([0-9a-z]+)-([0-9a-f]{12})$/;
+
+const isSafeReferencePart = (value: number | undefined): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+const buildSharedTxReference = (txHash?: string, blockNumber?: number): string => {
+  const normalizedTxHash = txHash?.trim().toLowerCase() ?? '';
+  if (!/^0x[a-f0-9]{64}$/.test(normalizedTxHash) || !isSafeReferencePart(blockNumber)) {
+    return '';
+  }
+
+  const prefixHexLength = SHARED_TX_REFERENCE_PREFIX_BYTES * 2;
+  return `x${blockNumber.toString(36)}-${normalizedTxHash.slice(2, 2 + prefixHexLength)}`;
+};
+
+const parseSharedTxReference = (
+  value?: string
+): { normalizedReference: string; blockNumber: number; txHashPrefix: string } | null => {
+  const trimmedValue = value?.trim() ?? '';
+  const match = trimmedValue.match(SHARED_TX_REFERENCE_REGEX);
+  if (!match) {
+    return null;
+  }
+
+  const blockNumber = Number.parseInt(match[1], 36);
+  if (!isSafeReferencePart(blockNumber)) {
+    return null;
+  }
+
+  const txHashPrefix = match[2].toLowerCase();
+  return {
+    normalizedReference: `x${match[1].toLowerCase()}-${txHashPrefix}`,
+    blockNumber,
+    txHashPrefix
+  };
+};
+
+const buildMessageReferenceKeys = ({ txHash, blockNumber, logIndex }: MessageReferenceCandidate): string[] => {
+  const keys = new Set<string>();
+  const sharedReference = parseSharedTxReference(txHash);
+  if (sharedReference) {
+    keys.add(`s:${sharedReference.normalizedReference}`);
   }
 
   const normalizedTxHash = txHash?.trim().toLowerCase() ?? '';
-  return /^0x[a-f0-9]{64}$/.test(normalizedTxHash) ? `t:${normalizedTxHash}` : '';
+  if (/^0x[a-f0-9]{64}$/.test(normalizedTxHash)) {
+    keys.add(`t:${normalizedTxHash}`);
+    const compactSharedReference = buildSharedTxReference(normalizedTxHash, blockNumber);
+    if (compactSharedReference) {
+      keys.add(`s:${compactSharedReference}`);
+    }
+  }
+
+  if (isSafeReferencePart(blockNumber) && isSafeReferencePart(logIndex)) {
+    keys.add(`b:${blockNumber}:${logIndex}`);
+  }
+
+  return Array.from(keys);
 };
 
+const buildMessageReferenceKey = (candidate: MessageReferenceCandidate): string => buildMessageReferenceKeys(candidate)[0] ?? '';
+
 const messageReferencesMatch = (left: MessageReferenceCandidate, right: MessageReferenceCandidate): boolean => {
-  const leftKey = buildMessageReferenceKey(left);
-  const rightKey = buildMessageReferenceKey(right);
-  return leftKey === rightKey;
+  const leftKeys = buildMessageReferenceKeys(left);
+  if (leftKeys.length === 0) {
+    return false;
+  }
+
+  const rightKeys = new Set(buildMessageReferenceKeys(right));
+  return leftKeys.some((key) => rightKeys.has(key));
 };
 
 export default function App() {
@@ -848,6 +899,32 @@ export default function App() {
     () => (activeGroupId !== null ? activeGroupMessages : activeMessages),
     [activeGroupId, activeGroupMessages, activeMessages]
   );
+  const activeThreadMessageReferenceLookup = useMemo(() => {
+    const lookup = new Map<string, string>();
+
+    for (const message of activeThreadMessages) {
+      const canonicalKey = buildMessageReferenceKey({
+        txHash: message.txHash,
+        blockNumber: message.blockNumber,
+        logIndex: message.logIndex
+      });
+      if (!canonicalKey) {
+        continue;
+      }
+
+      for (const key of buildMessageReferenceKeys({
+        txHash: message.txHash,
+        blockNumber: message.blockNumber,
+        logIndex: message.logIndex
+      })) {
+        if (!lookup.has(key)) {
+          lookup.set(key, canonicalKey);
+        }
+      }
+    }
+
+    return lookup;
+  }, [activeThreadMessages]);
   const isReactionOnlyMessage = useCallback(
     (message: ChatMessage): boolean =>
       Boolean(
@@ -872,11 +949,15 @@ export default function App() {
         continue;
       }
 
-      const targetReferenceKey = buildMessageReferenceKey({
+      const targetReferenceKeyCandidates = buildMessageReferenceKeys({
         txHash: message.reactionToTxHash,
         blockNumber: message.reactionToBlockNumber,
         logIndex: message.reactionToLogIndex
       });
+      const targetReferenceKey =
+        targetReferenceKeyCandidates.map((key) => activeThreadMessageReferenceLookup.get(key)).find(Boolean) ??
+        targetReferenceKeyCandidates[0] ??
+        '';
       const normalizedEmoji = normalizeReactionEmoji(message.reactionEmoji ?? '');
       if (!targetReferenceKey || !normalizedEmoji) {
         continue;
@@ -931,21 +1012,25 @@ export default function App() {
     }
 
     return summarized;
-  }, [activeThreadMessages, activeContact, activeGroupId, walletAddress]);
+  }, [activeThreadMessages, activeContact, activeGroupId, activeThreadMessageReferenceLookup, walletAddress]);
   const getReactionsForMessage = useCallback(
     (message: ChatMessage): Array<{ emoji: string; count: number; reactedByMe: boolean }> => {
-      const messageReferenceKey = buildMessageReferenceKey({
+      const messageReferenceKeyCandidates = buildMessageReferenceKeys({
         txHash: message.txHash,
         blockNumber: message.blockNumber,
         logIndex: message.logIndex
       });
+      const messageReferenceKey =
+        messageReferenceKeyCandidates.map((key) => activeThreadMessageReferenceLookup.get(key)).find(Boolean) ??
+        messageReferenceKeyCandidates[0] ??
+        '';
       if (!messageReferenceKey) {
         return [];
       }
 
       return activeThreadReactions.get(messageReferenceKey) ?? [];
     },
-    [activeThreadReactions]
+    [activeThreadMessageReferenceLookup, activeThreadReactions]
   );
   const sortedContacts = useMemo(() => {
     const persistedOrderIndex = new Map<string, number>();
@@ -2106,17 +2191,22 @@ export default function App() {
     }
 
     let targetId = replyToMessageId;
-    if (!targetId && typeof replyToBlockNumber === 'number' && typeof replyToLogIndex === 'number') {
-      const matchedByLogPosition = referencePool.find(
-        (message) => message.blockNumber === replyToBlockNumber && message.logIndex === replyToLogIndex
+    if (!targetId) {
+      const matchedByReference = referencePool.find((message) =>
+        messageReferencesMatch(
+          {
+            txHash: message.txHash,
+            blockNumber: message.blockNumber,
+            logIndex: message.logIndex
+          },
+          {
+            txHash: replyToTxHash,
+            blockNumber: replyToBlockNumber,
+            logIndex: replyToLogIndex
+          }
+        )
       );
-      targetId = matchedByLogPosition?.id;
-    }
-
-    if (!targetId && replyToTxHash) {
-      const normalizedReplyTxHash = replyToTxHash.toLowerCase();
-      const matchedByTxHash = referencePool.find((message) => message.txHash?.toLowerCase() === normalizedReplyTxHash);
-      targetId = matchedByTxHash?.id;
+      targetId = matchedByReference?.id;
     }
 
     if (!targetId && replyToText) {
@@ -2154,6 +2244,11 @@ export default function App() {
 
     if (typeof message.replyToBlockNumber === 'number' && typeof message.replyToLogIndex === 'number') {
       return `Ref ${message.replyToBlockNumber.toString(36)}:${message.replyToLogIndex.toString(36)}`;
+    }
+
+    const sharedReference = parseSharedTxReference(message.replyToTxHash);
+    if (sharedReference) {
+      return `Ref ${sharedReference.blockNumber.toString(36)}:${sharedReference.txHashPrefix.slice(0, 6)}`;
     }
 
     if (message.replyToTxHash) {
@@ -7285,11 +7380,15 @@ export default function App() {
       return;
     }
 
-    const targetReferenceKey = buildMessageReferenceKey({
+    const targetReferenceKeyCandidates = buildMessageReferenceKeys({
       txHash: targetMessage.txHash,
       blockNumber: targetMessage.blockNumber,
       logIndex: targetMessage.logIndex
     });
+    const targetReferenceKey =
+      targetReferenceKeyCandidates.map((key) => activeThreadMessageReferenceLookup.get(key)).find(Boolean) ??
+      targetReferenceKeyCandidates[0] ??
+      '';
     const existingReactions = targetReferenceKey ? activeThreadReactions.get(targetReferenceKey) ?? [] : [];
     const alreadyReactedWithEmoji = existingReactions.some(
       (reaction) => reaction.emoji === normalizedEmoji && reaction.reactedByMe
