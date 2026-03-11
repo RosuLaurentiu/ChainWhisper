@@ -1,4 +1,5 @@
 import type { BrowserProvider, OnboardInfo } from '@coti-io/coti-ethers';
+import { unzlibSync, zlibSync } from 'fflate';
 
 declare global {
   interface Window {
@@ -214,7 +215,62 @@ export const COTI_WEI = 10n ** 18n;
 export const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
 export const TEXT_ENCODER = new TextEncoder();
 export const TEXT_DECODER = new TextDecoder();
+const MEMO_RAW_PREFIX = '[[coti-memo-raw:v1]]';
+const MEMO_COMPRESSED_PREFIX = '[[coti-memo-z:v1]]';
 export const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
+const UTF8_FATAL_DECODER = new TextDecoder('utf-8', { fatal: true });
+
+const isAsciiOnly = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) > 0x7f) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const repairUtf8MojibakeSegments = (value: string): string => {
+  let repaired = '';
+  let changed = false;
+  let index = 0;
+
+  while (index < value.length) {
+    const nextCodeUnit = value.charCodeAt(index);
+    if (nextCodeUnit > 0xff) {
+      repaired += value[index];
+      index += 1;
+      continue;
+    }
+
+    let rawSegment = '';
+    const rawBytes: number[] = [];
+    while (index < value.length) {
+      const segmentCodeUnit = value.charCodeAt(index);
+      if (segmentCodeUnit > 0xff) {
+        break;
+      }
+      rawSegment += value[index];
+      rawBytes.push(segmentCodeUnit);
+      index += 1;
+    }
+
+    if (rawBytes.some((byte) => byte >= 0x80)) {
+      try {
+        const repairedSegment = UTF8_FATAL_DECODER.decode(new Uint8Array(rawBytes));
+        if (repairedSegment && repairedSegment !== rawSegment) {
+          repaired += repairedSegment;
+          changed = true;
+          continue;
+        }
+      } catch {
+      }
+    }
+
+    repaired += rawSegment;
+  }
+
+  return changed ? repaired : value;
+};
 export const EXTERNAL_REPLY_TXHASH_REGEX = /^\[r:(0x[a-fA-F0-9]{64})\]\s*/;
 export const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🫡', '🤯', '🌭', '✍️', '🤷‍♂️', '🤪', '💯'] as const;
 export const REACTION_HIDDEN_NIBBLE_SYMBOLS = [
@@ -1203,7 +1259,61 @@ export const encodeMemoPlaintext = (plain: string): string => {
   return btoa(binary);
 };
 
+const bytesToBase64 = (value: Uint8Array): string => {
+  let binary = '';
+  for (let index = 0; index < value.length; index += 1) {
+    binary += String.fromCharCode(value[index]);
+  }
+  return btoa(binary);
+};
+
+const base64ToBytes = (value: string): Uint8Array => {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
+
+export const encodeCompactMemoPlaintext = (plain: string): string => {
+  const candidates = [encodeMemoPlaintext(plain)];
+
+  if (isAsciiOnly(plain)) {
+    candidates.push(`${MEMO_RAW_PREFIX}${plain}`);
+  }
+
+  try {
+    const compressedBytes = zlibSync(TEXT_ENCODER.encode(plain), { level: 9 });
+    candidates.push(`${MEMO_COMPRESSED_PREFIX}${bytesToBase64(compressedBytes)}`);
+  } catch {
+  }
+
+  let shortest = candidates[0];
+  for (const candidate of candidates) {
+    if (candidate.length < shortest.length) {
+      shortest = candidate;
+    }
+  }
+  return shortest;
+};
+
 export const decodeMemoPlaintext = (raw: string): string => {
+  if (raw.startsWith(MEMO_RAW_PREFIX)) {
+    return repairUtf8MojibakeSegments(raw.slice(MEMO_RAW_PREFIX.length));
+  }
+
+  if (raw.startsWith(MEMO_COMPRESSED_PREFIX)) {
+    try {
+      const encodedCompressed = raw.slice(MEMO_COMPRESSED_PREFIX.length);
+      const compressedBytes = base64ToBytes(encodedCompressed);
+      const inflatedBytes = unzlibSync(compressedBytes);
+      return TEXT_DECODER.decode(inflatedBytes);
+    } catch {
+      return raw;
+    }
+  }
+
   try {
     const binary = atob(raw);
     const bytes = new Uint8Array(binary.length);

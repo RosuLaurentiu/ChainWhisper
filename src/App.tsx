@@ -43,6 +43,7 @@ import {
   createStateBackupFingerprint,
   debugLog,
   decodeMemoPlaintext,
+  encodeCompactMemoPlaintext,
   DEFAULT_GROUP_JOIN_CODE_MAX_USES,
   DEFAULT_GROUP_JOIN_CODE_MULTI_USES,
   DEFAULT_NICKNAME_MAX_BYTES,
@@ -2804,6 +2805,10 @@ export default function App() {
     return { signer, cacheKey };
   };
 
+  const encodeMemoForActiveSigner = (plain: string): string => {
+    return activeSignerSource === 'metamask' ? encodeCompactMemoPlaintext(plain) : encodeMemoPlaintext(plain);
+  };
+
   const resolveSubmitSelector = async (): Promise<string> => {
     if (submitSelectorRef.current) {
       return submitSelectorRef.current;
@@ -3408,7 +3413,7 @@ export default function App() {
         return;
       }
       const backupText = buildStateBackupText(payload);
-      const encodedMemo = encodeMemoPlaintext(backupText);
+      const encodedMemo = encodeMemoForActiveSigner(backupText);
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = await resolveRequiredFeeForSend();
@@ -6836,7 +6841,7 @@ export default function App() {
         replyingPreviewText,
         replyingToMessage?.txHash
       );
-      const encodedMemo = encodeMemoPlaintext(plainTextWithReply);
+      const encodedMemo = encodeMemoForActiveSigner(plainTextWithReply);
       const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
       const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
       const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
@@ -6924,7 +6929,7 @@ export default function App() {
     const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
     const requiredFee = await resolveRequiredFeeForSend();
     const hiddenAliasPayload = buildMessageWithContactNamePayload('', normalizedContactName);
-    const encodedMemo = encodeMemoPlaintext(hiddenAliasPayload);
+    const encodedMemo = encodeMemoForActiveSigner(hiddenAliasPayload);
     const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
     const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
     const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
@@ -6997,7 +7002,7 @@ export default function App() {
     const requiredFee = await resolveRequiredFeeForSend();
     const normalizedVisibleNotice = visibleNotice.replace(/\r?\n/g, ' ').trim().slice(0, MAX_MESSAGE_LENGTH);
     const hiddenStatePayload = buildMessageWithConversationStatePayload(normalizedVisibleNotice, normalizedState);
-    const encodedMemo = encodeMemoPlaintext(hiddenStatePayload);
+    const encodedMemo = encodeMemoForActiveSigner(hiddenStatePayload);
     const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
     const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
     const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
@@ -7140,7 +7145,7 @@ export default function App() {
           const requiredTokenFee = await resolveRequiredTokenFeeForGroupSend();
           await ensureGroupTokenFeeAllowance(signer, requestedWalletAddress, requiredTokenFee);
         }
-        const encodedMemo = encodeMemoPlaintext(reactionMemoText);
+        const encodedMemo = encodeMemoForActiveSigner(reactionMemoText);
         const encryptedMemo = await signer.encryptValue(encodedMemo, GROUP_CHAT_CONTRACT_ADDRESS, selector);
         const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
         const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
@@ -7205,7 +7210,7 @@ export default function App() {
         const selector = await resolveSubmitSelector();
         const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
         const requiredFee = await resolveRequiredFeeForSend();
-        const encodedMemo = encodeMemoPlaintext(reactionMemoText);
+        const encodedMemo = encodeMemoForActiveSigner(reactionMemoText);
         const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
         const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
         const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
@@ -7366,7 +7371,7 @@ export default function App() {
         replyingToMessage?.txHash
       );
       const sendEncryptedMemo = async (textToSend: string): Promise<string> => {
-        const encodedMemo = encodeMemoPlaintext(textToSend);
+        const encodedMemo = encodeMemoForActiveSigner(textToSend);
         const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
         const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
         const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
@@ -7583,7 +7588,7 @@ export default function App() {
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
       const requiredFee = requiredFeeForTipNotice ?? (await resolveRequiredFeeForSend());
       const tipNoticeText = `[TIP] You received ${formatTokenAmount(tipAmount, tokenDecimals, 6)} ${tokenSymbol}.`;
-      const encodedTipMemo = encodeMemoPlaintext(tipNoticeText);
+      const encodedTipMemo = encodeMemoForActiveSigner(tipNoticeText);
       const encryptedTipMemo = await signer.encryptValue(encodedTipMemo, CHAT_CONTRACT_ADDRESS, selector);
       const submitTipMemoPayload = parseSubmitMemoPayload(encryptedTipMemo);
       const tipMemoTuple = [[submitTipMemoPayload.ciphertextValue], submitTipMemoPayload.signature] as const;

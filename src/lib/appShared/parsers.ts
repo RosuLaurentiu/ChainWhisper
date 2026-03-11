@@ -38,7 +38,6 @@ import {
   parseTokenTipNotice,
   PROFILE_METADATA_PREFIX,
   REACTION_HIDDEN_NIBBLE_LOOKUP,
-  REACTION_HIDDEN_NIBBLE_SYMBOLS,
   REACTION_METADATA_PREFIX,
   READ_CURSOR_PREFIX,
   ReadCursorPayload,
@@ -1102,19 +1101,47 @@ export const encodeCompactReactionTargetTxHash = (targetTxHash: string): string 
     return undefined;
   }
 
-  let encoded = '';
-  for (const nibble of normalized.slice(2)) {
-    const nibbleValue = Number.parseInt(nibble, 16);
-    if (!Number.isFinite(nibbleValue) || nibbleValue < 0 || nibbleValue > 15) {
+  const hex = normalized.slice(2);
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < hex.length; index += 2) {
+    const nextByte = Number.parseInt(hex.slice(index, index + 2), 16);
+    if (!Number.isFinite(nextByte) || nextByte < 0 || nextByte > 255) {
       return undefined;
     }
-    encoded += REACTION_HIDDEN_NIBBLE_SYMBOLS[nibbleValue];
+    bytes[index / 2] = nextByte;
   }
 
-  return encoded;
+  const base64 = bytesToBase64(bytes)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+  return `~${base64}`;
 };
 
 export const decodeCompactReactionTargetTxHash = (encodedChunk: string): string | undefined => {
+  if (encodedChunk.startsWith('~')) {
+    try {
+      const base64Url = encodedChunk.slice(1);
+      if (!/^[A-Za-z0-9\-_]+$/.test(base64Url)) {
+        return undefined;
+      }
+      const paddingLength = (4 - (base64Url.length % 4)) % 4;
+      const paddedBase64 = `${base64Url.replace(/-/g, '+').replace(/_/g, '/')}${'='.repeat(paddingLength)}`;
+      const bytes = base64ToBytes(paddedBase64);
+      if (bytes.length !== 32) {
+        return undefined;
+      }
+
+      let hex = '';
+      for (const nextByte of bytes) {
+        hex += nextByte.toString(16).padStart(2, '0');
+      }
+      return `0x${hex}`;
+    } catch {
+      return undefined;
+    }
+  }
+
   const symbols = Array.from(encodedChunk);
   if (symbols.length !== 64) {
     return undefined;
