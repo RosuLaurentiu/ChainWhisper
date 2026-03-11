@@ -33,6 +33,10 @@ import {
   CHAT_CONTRACT_ADDRESS,
   ChatMessage,
   Contact,
+  CONTACT_NAME_ENCODING_ONE,
+  CONTACT_NAME_ENCODING_ZERO,
+  CONTACT_NAME_METADATA_PREFIX,
+  CONVERSATION_STATE_METADATA_PREFIX,
   ConversationBlockRange,
   ConversationLog,
   ConversationPreferenceState,
@@ -116,6 +120,7 @@ import {
   normalizePrivateKeyInput,
   normalizeReactionEmoji,
   normalizeTokenDecimals,
+  NICKNAME_DELIMITER,
   parseBurnerWalletStorageState,
   parseChatMessagePayload,
   parseConversationBlockRange,
@@ -133,14 +138,19 @@ import {
   PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_TOKEN_BALANCE_ABI,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+  PROFILE_METADATA_PREFIX,
   READ_STATE_BACKUP_DEBOUNCE_MS,
   READ_STATE_BACKUP_MIN_INTERVAL_MS,
+  REACTION_METADATA_PREFIX,
+  REPLY_DELIMITER,
+  REPLY_METADATA_PREFIX,
   REALTIME_SYNC_BURST_THROTTLE_MS,
   REALTIME_SYNC_DEBOUNCE_MS,
   REALTIME_SYNC_FALLBACK_INTERVAL_MS,
   RecentPeerMeta,
   resetCotiWsProvider,
   REWARD_TOKEN_ADDRESS,
+  LEGACY_CONVERSATION_STATE_METADATA_PREFIX,
   sanitizeTokenAmountInput,
   saveEncryptedBurnerWalletVault,
   SELF_BACKUP_RESTORE_BLOCK_WINDOW,
@@ -258,6 +268,45 @@ const messageReferencesMatch = (left: MessageReferenceCandidate, right: MessageR
 
   const rightKeys = new Set(buildMessageReferenceKeys(right));
   return leftKeys.some((key) => rightKeys.has(key));
+};
+
+const OUTGOING_HIDDEN_METADATA_CHARACTERS_REGEX = new RegExp(
+  `[${[
+    CONVERSATION_STATE_METADATA_PREFIX,
+    PROFILE_METADATA_PREFIX,
+    REPLY_METADATA_PREFIX,
+    CONTACT_NAME_METADATA_PREFIX,
+    REACTION_METADATA_PREFIX,
+    LEGACY_CONVERSATION_STATE_METADATA_PREFIX,
+    CONTACT_NAME_ENCODING_ZERO,
+    CONTACT_NAME_ENCODING_ONE,
+    REPLY_DELIMITER,
+    NICKNAME_DELIMITER
+  ].join('')}]`,
+  'g'
+);
+
+const sanitizeOutgoingMessagePlainText = (value: string): string =>
+  value.replace(/\r/g, '').replace(OUTGOING_HIDDEN_METADATA_CHARACTERS_REGEX, '');
+
+const isLikelyOutOfGasFailure = (error: unknown): boolean => {
+  const receipt = (error as { receipt?: { gasUsed?: bigint; gasLimit?: bigint } } | null)?.receipt;
+  const transaction = (error as { transaction?: { gasLimit?: bigint } } | null)?.transaction;
+  const gasUsed = receipt?.gasUsed;
+  const gasLimit = receipt?.gasLimit ?? transaction?.gasLimit;
+  if (typeof gasUsed !== 'bigint' || typeof gasLimit !== 'bigint' || gasLimit <= 0n) {
+    return false;
+  }
+
+  return gasUsed >= gasLimit - 5_000n;
+};
+
+const getOnChainFailureMessage = (error: unknown, fallbackMessage: string): string => {
+  if (isLikelyOutOfGasFailure(error)) {
+    return 'Transaction ran out of gas on-chain. Try a shorter message, clear any reply, or use a smaller group.';
+  }
+
+  return fallbackMessage;
 };
 
 export default function App() {
@@ -2270,6 +2319,10 @@ export default function App() {
 
     return 'Reply';
   };
+
+  const handleMessageInputChange = useCallback((value: string) => {
+    setMessageInput(sanitizeOutgoingMessagePlainText(value).slice(0, MAX_MESSAGE_LENGTH));
+  }, []);
 
   const handleAddContact = (event: FormEvent) => {
     event.preventDefault();
@@ -7086,7 +7139,7 @@ export default function App() {
       return;
     }
 
-    const plainText = (overrideMessageText ?? messageInput).trim();
+    const plainText = sanitizeOutgoingMessagePlainText(overrideMessageText ?? messageInput).trim();
     if (!plainText) {
       setError('Enter a message first.');
       return;
@@ -7186,6 +7239,27 @@ export default function App() {
           message.id === localMessageId
             ? {
                 ...message,
+                txHash: submittedTxHash || undefined
+              }
+            : message
+        )
+      }));
+
+      const receipt = await tx.wait();
+      if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
+        throw new Error('Transaction failed on-chain.');
+      }
+
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      setMessagesByGroup((previous) => ({
+        ...previous,
+        [groupKey]: (previous[groupKey] ?? []).map((message) =>
+          message.id === localMessageId
+            ? {
+                ...message,
                 deliveryState: 'sent',
                 txHash: submittedTxHash || undefined
               }
@@ -7207,7 +7281,7 @@ export default function App() {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
-      const message = getGroupActionErrorMessage(sendError, 'Failed to send group message.');
+      const message = getGroupActionErrorMessage(sendError, getOnChainFailureMessage(sendError, 'Failed to send group message.'));
       setError(message);
       setMessagesByGroup((previous) => ({
         ...previous,
@@ -7501,6 +7575,27 @@ export default function App() {
           [groupKey]: (previous[groupKey] ?? []).map((message) =>
             message.id === localMessageId
               ? {
+                ...message,
+                txHash: submittedTxHash || undefined
+              }
+              : message
+          )
+        }));
+
+        const receipt = await tx.wait();
+        if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
+          throw new Error('Transaction failed on-chain.');
+        }
+
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
+
+        setMessagesByGroup((previous) => ({
+          ...previous,
+          [groupKey]: (previous[groupKey] ?? []).map((message) =>
+            message.id === localMessageId
+              ? {
                   ...message,
                   deliveryState: 'sent',
                   txHash: submittedTxHash || undefined
@@ -7558,6 +7653,27 @@ export default function App() {
           [contactKey]: (previous[contactKey] ?? []).map((message) =>
             message.id === localMessageId
               ? {
+                ...message,
+                txHash: submittedTxHash || undefined
+              }
+              : message
+          )
+        }));
+
+        const receipt = await tx.wait();
+        if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
+          throw new Error('Transaction failed on-chain.');
+        }
+
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
+
+        setMessagesByContact((previous) => ({
+          ...previous,
+          [contactKey]: (previous[contactKey] ?? []).map((message) =>
+            message.id === localMessageId
+              ? {
                   ...message,
                   deliveryState: 'sent',
                   txHash: submittedTxHash || undefined
@@ -7585,10 +7701,10 @@ export default function App() {
 
       const message =
         threadGroupId !== null
-          ? getGroupActionErrorMessage(reactionError, 'Failed to send reaction.')
+          ? getGroupActionErrorMessage(reactionError, getOnChainFailureMessage(reactionError, 'Failed to send reaction.'))
           : reactionError instanceof Error
-            ? reactionError.message
-            : 'Failed to send reaction.';
+            ? getOnChainFailureMessage(reactionError, reactionError.message)
+            : getOnChainFailureMessage(reactionError, 'Failed to send reaction.');
       setError(message);
 
       if (threadGroupId !== null) {
@@ -7639,7 +7755,7 @@ export default function App() {
       return;
     }
 
-    const plainText = (overrideMessageText ?? messageInput).trim();
+    const plainText = sanitizeOutgoingMessagePlainText(overrideMessageText ?? messageInput).trim();
     if (!plainText) {
       setError('Enter a message first.');
       return;
@@ -7707,16 +7823,20 @@ export default function App() {
         replyingToMessage?.logIndex,
         false
       );
-      const sendEncryptedMemo = async (textToSend: string): Promise<string> => {
+      const sendEncryptedMemo = async (textToSend: string): Promise<{ txHash: string; wait: () => Promise<unknown> }> => {
         const encodedMemo = encodeMemoForActiveSigner(textToSend);
         const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
         const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
         const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
         const tx = await contract.submit(contactAddress, memoTuple, { value: requiredFee });
-        return typeof tx?.hash === 'string' ? tx.hash : '';
+        return {
+          txHash: typeof tx?.hash === 'string' ? tx.hash : '',
+          wait: () => tx.wait()
+        };
       };
 
-      const submittedTxHash = await sendEncryptedMemo(plainTextWithReply);
+      const submittedTx = await sendEncryptedMemo(plainTextWithReply);
+      const submittedTxHash = submittedTx.txHash;
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
@@ -7775,13 +7895,37 @@ export default function App() {
             message.id === localMessageId
               ? {
                   ...message,
-                  deliveryState: 'sent',
                   txHash: submittedTxHash || undefined
                 }
               : message
           )
         };
       });
+
+      const receipt = await submittedTx.wait();
+      if (
+        !receipt ||
+        Number((receipt as { status?: number | bigint }).status ?? 0) !== 1
+      ) {
+        throw new Error('Transaction failed on-chain.');
+      }
+
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      setMessagesByContact((previous) => ({
+        ...previous,
+        [contactKey]: (previous[contactKey] ?? []).map((message) =>
+          message.id === localMessageId
+            ? {
+                ...message,
+                deliveryState: 'sent',
+                txHash: submittedTxHash || undefined
+              }
+            : message
+        )
+      }));
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -7799,7 +7943,10 @@ export default function App() {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
-      const message = sendError instanceof Error ? sendError.message : 'Failed to send message.';
+      const message =
+        sendError instanceof Error
+          ? getOnChainFailureMessage(sendError, sendError.message)
+          : getOnChainFailureMessage(sendError, 'Failed to send message.');
       setError(message);
       setMessagesByContact((previous) => ({
         ...previous,
@@ -11034,7 +11181,7 @@ export default function App() {
                 sendGroupMessage().catch(() => {});
               }}
               maxMessageLength={MAX_MESSAGE_LENGTH}
-              onMessageInputChange={setMessageInput}
+              onMessageInputChange={handleMessageInputChange}
             />
           </div>
         ) : activeContact ? (
@@ -11268,7 +11415,7 @@ export default function App() {
                 sendMessage().catch(() => {});
               }}
               maxMessageLength={MAX_MESSAGE_LENGTH}
-              onMessageInputChange={setMessageInput}
+              onMessageInputChange={handleMessageInputChange}
               sending={sending}
               tipToggleDisabled={tipping || sending || !activeContact || isSelfChat}
               tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
