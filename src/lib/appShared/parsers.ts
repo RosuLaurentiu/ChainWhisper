@@ -145,6 +145,7 @@ export const parseRecentPeersWithMetaResult = (raw: unknown): RecentPeerMeta[] =
 export type ParsedGroupJoinCodeState = {
   active: boolean;
   creator: string;
+  signer?: string;
   expiresAt: number;
   usesLeft: number;
   expired: boolean;
@@ -159,6 +160,7 @@ export const parseGroupJoinCodeState = (joinCodeRaw: unknown): ParsedGroupJoinCo
     const parsed = joinCodeRaw as {
       active?: unknown;
       creator?: unknown;
+      signer?: unknown;
       expiresAt?: unknown;
       usesLeft?: unknown;
       expired?: unknown;
@@ -166,6 +168,7 @@ export const parseGroupJoinCodeState = (joinCodeRaw: unknown): ParsedGroupJoinCo
     return {
       active: Boolean(parsed.active),
       creator: typeof parsed.creator === 'string' ? parsed.creator : '',
+      signer: typeof parsed.signer === 'string' ? parsed.signer : '',
       expiresAt: toSafeNumber(parsed.expiresAt),
       usesLeft: toSafeNumber(parsed.usesLeft),
       expired: Boolean(parsed.expired)
@@ -173,12 +176,17 @@ export const parseGroupJoinCodeState = (joinCodeRaw: unknown): ParsedGroupJoinCo
   }
 
   if (Array.isArray(joinCodeRaw)) {
+    const hasSignerField = joinCodeRaw.length >= 6 && typeof joinCodeRaw[2] === 'string';
+    const expiresAtIndex = hasSignerField ? 3 : 2;
+    const usesLeftIndex = hasSignerField ? 4 : 3;
+    const expiredIndex = hasSignerField ? 5 : 4;
     return {
       active: Boolean(joinCodeRaw[0]),
       creator: typeof joinCodeRaw[1] === 'string' ? joinCodeRaw[1] : '',
-      expiresAt: toSafeNumber(joinCodeRaw[2]),
-      usesLeft: toSafeNumber(joinCodeRaw[3]),
-      expired: Boolean(joinCodeRaw[4])
+      signer: hasSignerField && typeof joinCodeRaw[2] === 'string' ? joinCodeRaw[2] : '',
+      expiresAt: toSafeNumber(joinCodeRaw[expiresAtIndex]),
+      usesLeft: toSafeNumber(joinCodeRaw[usesLeftIndex]),
+      expired: Boolean(joinCodeRaw[expiredIndex])
     };
   }
 
@@ -226,12 +234,25 @@ export const extractUserCiphertext = (memo: unknown): { value: bigint[] } | null
     return null;
   }
 
-  if (Array.isArray(memo) && memo.length > 1) {
-    return { value: toBigIntArray(memo[1]) };
+  if (Array.isArray(memo)) {
+    if (memo.length > 1) {
+      return { value: toBigIntArray(memo[1]) };
+    }
+    if (memo.length === 1) {
+      return extractUserCiphertext(memo[0]);
+    }
   }
 
   if (memo && typeof memo === 'object' && 'userCiphertext' in memo) {
     return { value: toBigIntArray((memo as { userCiphertext: unknown }).userCiphertext) };
+  }
+
+  // Some providers/ABI decoders wrap single tuple returns as { outputName: tuple } or { 0: tuple }.
+  if (memo && typeof memo === 'object' && 'codeForAdmin' in memo) {
+    return extractUserCiphertext((memo as { codeForAdmin: unknown }).codeForAdmin);
+  }
+  if (memo && typeof memo === 'object' && 0 in memo) {
+    return extractUserCiphertext((memo as { 0: unknown })[0]);
   }
 
   return null;

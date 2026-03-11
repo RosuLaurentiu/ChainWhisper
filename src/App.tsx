@@ -73,7 +73,10 @@ import {
   GROUP_ADMIN_BURN_ADDRESS,
   GROUP_CHAT_CONTRACT_ABI,
   GROUP_CHAT_CONTRACT_ADDRESS,
-  GROUP_JOIN_CODE_CACHE_STORAGE_KEY,
+  GROUP_JOIN_CODE_ALPHABET,
+  GROUP_JOIN_CODE_PROOF_DOMAIN,
+  GROUP_JOIN_CODE_SIGNATURE_WINDOW_SECONDS,
+  GROUP_JOIN_CODE_SIGNER_KEY_PREFIX,
   GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS,
   GROUP_SUBMIT_GAS_BUFFER,
   GROUP_SUBMIT_GAS_LIMIT_MAX,
@@ -225,6 +228,7 @@ export default function App() {
   const [activeGroupJoinCodes, setActiveGroupJoinCodes] = useState<ActiveGroupJoinCode[]>([]);
   const [loadingActiveGroupJoinCodes, setLoadingActiveGroupJoinCodes] = useState(false);
   const [revokingGroupJoinCodeHash, setRevokingGroupJoinCodeHash] = useState('');
+  const [groupInviteMenuView, setGroupInviteMenuView] = useState<'invite' | 'code'>('invite');
   const [groupJoinCodeInput, setGroupJoinCodeInput] = useState('');
   const [groupRenameOpen, setGroupRenameOpen] = useState(false);
   const [groupRenameInput, setGroupRenameInput] = useState('');
@@ -274,6 +278,8 @@ export default function App() {
   };
 
   const suppressSoundOnConnectRef = useRef<boolean>(false);
+  const suppressSoundReleaseTimerRef = useRef<number | null>(null);
+  const connectSoundSuppressionTokenRef = useRef(0);
 
   const playNotificationSound = () => {
     if (!soundEnabled) return;
@@ -298,6 +304,31 @@ export default function App() {
         });
       }
     } catch {}
+  };
+  const beginConnectSoundSuppression = (fallbackMs = 9000): number => {
+    const nextToken = connectSoundSuppressionTokenRef.current + 1;
+    connectSoundSuppressionTokenRef.current = nextToken;
+    suppressSoundOnConnectRef.current = true;
+    if (suppressSoundReleaseTimerRef.current !== null) {
+      window.clearTimeout(suppressSoundReleaseTimerRef.current);
+    }
+    suppressSoundReleaseTimerRef.current = window.setTimeout(() => {
+      if (connectSoundSuppressionTokenRef.current === nextToken) {
+        suppressSoundOnConnectRef.current = false;
+      }
+      suppressSoundReleaseTimerRef.current = null;
+    }, fallbackMs);
+    return nextToken;
+  };
+  const endConnectSoundSuppression = (token?: number) => {
+    if (typeof token === 'number' && token !== connectSoundSuppressionTokenRef.current) {
+      return;
+    }
+    suppressSoundOnConnectRef.current = false;
+    if (suppressSoundReleaseTimerRef.current !== null) {
+      window.clearTimeout(suppressSoundReleaseTimerRef.current);
+      suppressSoundReleaseTimerRef.current = null;
+    }
   };
   const [sending, setSending] = useState(false);
   const [sendingReaction, setSendingReaction] = useState(false);
@@ -551,18 +582,22 @@ export default function App() {
   useEffect(() => {
     const prev = previousWalletAddressRef.current || '';
     const next = (walletAddress || '').trim();
-    if (!prev && next) {
-      // user just connected a wallet; suppress immediate notification sound briefly
-      suppressSoundOnConnectRef.current = true;
-      setTimeout(() => {
-        suppressSoundOnConnectRef.current = false;
-      }, 1200);
+    const prevKey = prev.toLowerCase();
+    const nextKey = next.toLowerCase();
+    const didConnect = !prev && Boolean(next);
+    const didSwitchWallet = Boolean(prev) && Boolean(next) && prevKey !== nextKey;
+    if (didConnect || didSwitchWallet) {
+      beginConnectSoundSuppression();
+    }
+    if (prev && !next) {
+      endConnectSoundSuppression();
     }
     previousWalletAddressRef.current = next;
   }, [walletAddress]);
 
   useEffect(() => {
     return () => {
+      endConnectSoundSuppression();
       if (copyFeedbackTimeoutRef.current !== null) {
         window.clearTimeout(copyFeedbackTimeoutRef.current);
         copyFeedbackTimeoutRef.current = null;
@@ -603,8 +638,6 @@ export default function App() {
   const groupRemovalNoticeSeenRef = useRef<Record<string, Set<number>>>({});
   const groupRemovalNoticeMarkersRef = useRef<Record<string, Record<string, string>>>({});
   const groupRemovalNoticeMarkersLoadedRef = useRef(false);
-  const groupJoinCodeCacheRef = useRef<Record<string, Record<string, Record<string, string>>>>({});
-  const groupJoinCodeCacheLoadedRef = useRef(false);
   const conversationDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const groupDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const groupsRef = useRef<GroupSummary[]>([]);
@@ -637,6 +670,7 @@ export default function App() {
 
   useEffect(() => {
     setMobileGroupOptionsOpen(false);
+    setGroupInviteMenuView('invite');
   }, [activeGroupId, walletAddress, isMobileNav]);
 
   useEffect(() => {
@@ -995,6 +1029,20 @@ export default function App() {
     () => (walletAddress ? Boolean(sessionOnboardInfo[walletAddress.toLowerCase()]?.aesKey) : false),
     [walletAddress, sessionOnboardInfo]
   );
+  const canManageActiveGroupJoinCodes = useMemo(() => {
+    if (activeGroupId === null) {
+      return false;
+    }
+    if (!isActiveGroupAdmin || !hasAesReady) {
+      return false;
+    }
+    return chainId === COTI_NETWORK.chainIdDecimal;
+  }, [activeGroupId, isActiveGroupAdmin, hasAesReady, chainId]);
+  useEffect(() => {
+    if (!canManageActiveGroupJoinCodes && groupInviteMenuView !== 'invite') {
+      setGroupInviteMenuView('invite');
+    }
+  }, [canManageActiveGroupJoinCodes, groupInviteMenuView]);
   const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
   const burnerWalletSelectionValue = activeBurnerWalletId || burnerRecordRef.current?.id || '';
   const hasSavedBurnerWallet = savedBurnerWalletCount > 0;
@@ -1254,137 +1302,6 @@ export default function App() {
       );
     } catch {
     }
-  };
-
-  const ensureGroupJoinCodeCacheLoaded = (): void => {
-    if (groupJoinCodeCacheLoadedRef.current) {
-      return;
-    }
-    groupJoinCodeCacheLoadedRef.current = true;
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    try {
-      const raw = window.localStorage.getItem(GROUP_JOIN_CODE_CACHE_STORAGE_KEY);
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return;
-      }
-
-      const normalized: Record<string, Record<string, Record<string, string>>> = {};
-      for (const [walletKey, byGroupRaw] of Object.entries(parsed)) {
-        if (!isWalletAddress(walletKey) || !byGroupRaw || typeof byGroupRaw !== 'object' || Array.isArray(byGroupRaw)) {
-          continue;
-        }
-
-        const nextByGroup: Record<string, Record<string, string>> = {};
-        for (const [groupIdKey, byHashRaw] of Object.entries(byGroupRaw)) {
-          if (!/^\d+$/.test(groupIdKey) || !byHashRaw || typeof byHashRaw !== 'object' || Array.isArray(byHashRaw)) {
-            continue;
-          }
-
-          const nextByHash: Record<string, string> = {};
-          for (const [codeHashKey, codeRaw] of Object.entries(byHashRaw)) {
-            if (!/^0x[a-fA-F0-9]{64}$/.test(codeHashKey) || typeof codeRaw !== 'string') {
-              continue;
-            }
-            const normalizedCode = codeRaw.trim().toUpperCase();
-            if (!normalizedCode) {
-              continue;
-            }
-            nextByHash[codeHashKey.toLowerCase()] = normalizedCode;
-          }
-
-          if (Object.keys(nextByHash).length > 0) {
-            nextByGroup[groupIdKey] = nextByHash;
-          }
-        }
-
-        if (Object.keys(nextByGroup).length > 0) {
-          normalized[walletKey] = nextByGroup;
-        }
-      }
-
-      groupJoinCodeCacheRef.current = normalized;
-    } catch {
-    }
-  };
-
-  const persistGroupJoinCodeCache = (): void => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    try {
-      window.localStorage.setItem(
-        GROUP_JOIN_CODE_CACHE_STORAGE_KEY,
-        JSON.stringify(groupJoinCodeCacheRef.current)
-      );
-    } catch {
-    }
-  };
-
-  const getStoredGroupJoinCodeForHash = (
-    walletKey: string,
-    groupId: number,
-    codeHash: string
-  ): string | undefined => {
-    ensureGroupJoinCodeCacheLoaded();
-    return groupJoinCodeCacheRef.current[walletKey]?.[String(groupId)]?.[codeHash.toLowerCase()];
-  };
-
-  const setStoredGroupJoinCodeForHash = (
-    walletKey: string,
-    groupId: number,
-    codeHash: string,
-    code: string
-  ): void => {
-    if (!isWalletAddress(walletKey) || !Number.isFinite(groupId) || groupId <= 0 || !/^0x[a-fA-F0-9]{64}$/.test(codeHash)) {
-      return;
-    }
-    const normalizedCode = code.trim().toUpperCase();
-    if (!normalizedCode) {
-      return;
-    }
-
-    ensureGroupJoinCodeCacheLoaded();
-    const byGroup =
-      groupJoinCodeCacheRef.current[walletKey] ?? (groupJoinCodeCacheRef.current[walletKey] = {});
-    const byHash = byGroup[String(groupId)] ?? (byGroup[String(groupId)] = {});
-    byHash[codeHash.toLowerCase()] = normalizedCode;
-    persistGroupJoinCodeCache();
-  };
-
-  const deleteStoredGroupJoinCodeForHash = (
-    walletKey: string,
-    groupId: number,
-    codeHash: string
-  ): void => {
-    if (!isWalletAddress(walletKey) || !Number.isFinite(groupId) || groupId <= 0 || !/^0x[a-fA-F0-9]{64}$/.test(codeHash)) {
-      return;
-    }
-
-    ensureGroupJoinCodeCacheLoaded();
-    const byGroup = groupJoinCodeCacheRef.current[walletKey];
-    if (!byGroup) {
-      return;
-    }
-    const byHash = byGroup[String(groupId)];
-    if (!byHash || !byHash[codeHash.toLowerCase()]) {
-      return;
-    }
-
-    delete byHash[codeHash.toLowerCase()];
-    if (Object.keys(byHash).length === 0) {
-      delete byGroup[String(groupId)];
-    }
-    if (Object.keys(byGroup).length === 0) {
-      delete groupJoinCodeCacheRef.current[walletKey];
-    }
-    persistGroupJoinCodeCache();
   };
 
   const showGroupRemovalNotice = useCallback((message: string) => {
@@ -3434,29 +3351,36 @@ export default function App() {
       return;
     }
 
+    const soundSuppressionToken = beginConnectSoundSuppression();
     const runId = ++postConnectDataSyncRunIdRef.current;
 
-    for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
-      if (runId !== postConnectDataSyncRunIdRef.current) {
-        return;
-      }
+    try {
+      for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
+        if (runId !== postConnectDataSyncRunIdRef.current) {
+          return;
+        }
 
-      if (currentWalletKeyRef.current !== targetAddress) {
-        return;
-      }
+        if (currentWalletKeyRef.current !== targetAddress) {
+          return;
+        }
 
-      if (normalizeLastReadAllTs(lastReadAllTsRef.current) > 0) {
-        return;
-      }
+        if (normalizeLastReadAllTs(lastReadAllTsRef.current) > 0) {
+          return;
+        }
 
-      const restored = await restoreStateFromChainSelfBackup(targetAddress);
-      if (restored) {
-        return;
-      }
+        const restored = await restoreStateFromChainSelfBackup(targetAddress);
+        if (restored) {
+          return;
+        }
 
-      await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, 1500);
-      });
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 1500);
+        });
+      }
+    } finally {
+      if (runId === postConnectDataSyncRunIdRef.current) {
+        endConnectSoundSuppression(soundSuppressionToken);
+      }
     }
   };
 
@@ -4891,6 +4815,64 @@ export default function App() {
         knownGroupIds.add(selectedActiveGroupId);
       }
 
+      const memberGroupIds: number[] = [];
+      let hasMemberGroupIndex = false;
+      let memberGroupCursor = 0;
+      const memberGroupPageLimit = 128;
+      const memberGroupPageMax = 256;
+      for (let page = 0; page < memberGroupPageMax; page += 1) {
+        const pageRaw = await contract
+          .getGroupsForMemberPage(requestedWalletAddress, memberGroupCursor, memberGroupPageLimit)
+          .catch(() => null);
+        if (!pageRaw) {
+          break;
+        }
+        hasMemberGroupIndex = true;
+
+        const pageGroupIdsRaw =
+          pageRaw && typeof pageRaw === 'object'
+            ? (
+              (pageRaw as { groupIds?: unknown }).groupIds ??
+              (pageRaw as { 0?: unknown })[0]
+            )
+            : null;
+        const nextCursorRaw =
+          pageRaw && typeof pageRaw === 'object'
+            ? (
+              (pageRaw as { nextCursor?: unknown }).nextCursor ??
+              (pageRaw as { 1?: unknown })[1]
+            )
+            : null;
+
+        if (Array.isArray(pageGroupIdsRaw)) {
+          for (const groupIdRaw of pageGroupIdsRaw) {
+            const groupId = toSafeNumber(groupIdRaw);
+            if (groupId > 0) {
+              memberGroupIds.push(groupId);
+            }
+          }
+        }
+
+        const nextCursor = toSafeNumber(nextCursorRaw);
+        if (nextCursor <= memberGroupCursor) {
+          break;
+        }
+        memberGroupCursor = nextCursor;
+      }
+
+      if (hasMemberGroupIndex) {
+        knownGroupIds.clear();
+        for (const groupId of memberGroupIds) {
+          knownGroupIds.add(groupId);
+        }
+        for (const invite of groupInvitesRef.current) {
+          knownGroupIds.add(invite.groupId);
+        }
+        if (selectedActiveGroupId !== null) {
+          knownGroupIds.add(selectedActiveGroupId);
+        }
+      }
+
       const overviewLastSyncedBlock = groupOverviewLastSyncedBlockRef.current[walletKey];
       const fromBlock = options?.deep
         ? knownGroupIds.size > 0
@@ -4902,8 +4884,40 @@ export default function App() {
       const toBlock = latestBlock;
       const removedGroupIdsForWallet = new Set<number>();
       const removedGroupEventById = new Map<number, { blockNumber: number; logIndex: number; marker: string }>();
+      const groupIdFromArgs = (value: unknown): number => {
+        const parsed = toSafeNumber(value);
+        return parsed > 0 ? parsed : 0;
+      };
 
-      if (fromBlock <= toBlock) {
+      if (hasMemberGroupIndex && fromBlock <= toBlock) {
+        const [
+          inviteCreatedLogs,
+          inviteAcceptedForMeLogs,
+          inviteDeclinedLogs,
+          inviteRevokedLogs
+        ] = await Promise.all([
+          contract.queryFilter(contract.filters.GroupInviteCreated(null, requestedWalletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteAccepted(null, requestedWalletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteDeclined(null, requestedWalletAddress, null), fromBlock, toBlock),
+          contract.queryFilter(contract.filters.GroupInviteRevoked(null, requestedWalletAddress, null), fromBlock, toBlock)
+        ]);
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
+
+        for (const log of [
+          ...inviteCreatedLogs,
+          ...inviteAcceptedForMeLogs,
+          ...inviteDeclinedLogs,
+          ...inviteRevokedLogs
+        ]) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const groupId = groupIdFromArgs(args?.groupId);
+          if (groupId > 0) {
+            knownGroupIds.add(groupId);
+          }
+        }
+      } else if (fromBlock <= toBlock) {
         const [
           createdByMeLogs,
           memberAddedLogs,
@@ -4930,11 +4944,6 @@ export default function App() {
         if (currentWalletKeyRef.current !== requestedWalletKey) {
           return;
         }
-
-        const groupIdFromArgs = (value: unknown): number => {
-          const parsed = toSafeNumber(value);
-          return parsed > 0 ? parsed : 0;
-        };
 
         for (const log of memberRemovedLogs) {
           const args = (log as { args?: Record<string, unknown> }).args;
@@ -4977,7 +4986,7 @@ export default function App() {
         }
       }
 
-      if (knownGroupIds.size === 0 && options?.deep) {
+      if (knownGroupIds.size === 0 && options?.deep && !hasMemberGroupIndex) {
         const nextGroupId = toSafeNumber(await contract.nextGroupId());
         const cappedGroupId = Math.min(nextGroupId, 250);
         for (let groupId = 1; groupId < cappedGroupId; groupId += 1) {
@@ -4989,6 +4998,11 @@ export default function App() {
         return;
       }
 
+      const memberGroupIdSet = new Set<number>(memberGroupIds);
+      const previousGroups = groupsRef.current;
+      const previousGroupById = new Map<number, GroupSummary>(
+        previousGroups.map((group) => [group.id, group])
+      );
       const nowTs = Math.floor(Date.now() / 1000);
       const nextGroups: GroupSummary[] = [];
       const nextInvites: GroupInvite[] = [];
@@ -4998,31 +5012,40 @@ export default function App() {
             return;
           }
 
-          const [memberRaw, inviteRaw] = await Promise.all([
-            contract.isMember(groupId, requestedWalletAddress).catch(() => false),
-            contract.getInvite(groupId, requestedWalletAddress).catch(() => null)
-          ]);
+          const isIndexedMemberGroup = hasMemberGroupIndex && memberGroupIdSet.has(groupId);
+          let isMember = isIndexedMemberGroup;
+          let invitePending = false;
+          let inviteInviter = '';
+          let inviteExpiresAt = 0;
+          let inviteExpired = false;
 
-          const isMember = Boolean(memberRaw);
-          const invitePending = Boolean(
-            inviteRaw && typeof inviteRaw === 'object' ? (inviteRaw as { pending?: unknown }).pending : null
-          ) ||
-            (Array.isArray(inviteRaw) ? Boolean(inviteRaw[0]) : false);
-          const inviteInviter = inviteRaw && typeof inviteRaw === 'object'
-            ? String((inviteRaw as { inviter?: unknown }).inviter ?? '')
-            : Array.isArray(inviteRaw)
-              ? String(inviteRaw[1] ?? '')
-              : '';
-          const inviteExpiresAt = inviteRaw && typeof inviteRaw === 'object'
-            ? toSafeNumber((inviteRaw as { expiresAt?: unknown }).expiresAt)
-            : Array.isArray(inviteRaw)
-              ? toSafeNumber(inviteRaw[2])
-              : 0;
-          const inviteExpired = inviteRaw && typeof inviteRaw === 'object'
-            ? Boolean((inviteRaw as { expired?: unknown }).expired)
-            : Array.isArray(inviteRaw)
-              ? Boolean(inviteRaw[3])
-              : inviteExpiresAt > 0 && inviteExpiresAt <= nowTs;
+          if (!isIndexedMemberGroup) {
+            const [memberRaw, inviteRaw] = await Promise.all([
+              contract.isMember(groupId, requestedWalletAddress).catch(() => false),
+              contract.getInvite(groupId, requestedWalletAddress).catch(() => null)
+            ]);
+
+            isMember = Boolean(memberRaw);
+            invitePending = Boolean(
+              inviteRaw && typeof inviteRaw === 'object' ? (inviteRaw as { pending?: unknown }).pending : null
+            ) ||
+              (Array.isArray(inviteRaw) ? Boolean(inviteRaw[0]) : false);
+            inviteInviter = inviteRaw && typeof inviteRaw === 'object'
+              ? String((inviteRaw as { inviter?: unknown }).inviter ?? '')
+              : Array.isArray(inviteRaw)
+                ? String(inviteRaw[1] ?? '')
+                : '';
+            inviteExpiresAt = inviteRaw && typeof inviteRaw === 'object'
+              ? toSafeNumber((inviteRaw as { expiresAt?: unknown }).expiresAt)
+              : Array.isArray(inviteRaw)
+                ? toSafeNumber(inviteRaw[2])
+                : 0;
+            inviteExpired = inviteRaw && typeof inviteRaw === 'object'
+              ? Boolean((inviteRaw as { expired?: unknown }).expired)
+              : Array.isArray(inviteRaw)
+                ? Boolean(inviteRaw[3])
+                : inviteExpiresAt > 0 && inviteExpiresAt <= nowTs;
+          }
 
           if (!isMember && !invitePending) {
             return;
@@ -5066,12 +5089,23 @@ export default function App() {
               : 0;
 
           if (isMember) {
-            const membersRaw = await contract.getGroupMembers(groupId).catch(() => []);
-            const members = Array.isArray(membersRaw)
-              ? membersRaw
-                  .map((addressValue) => String(addressValue ?? '').trim())
-                  .filter((addressValue) => isWalletAddress(addressValue))
-              : [];
+            const previousGroup = previousGroupById.get(groupId);
+            const shouldFetchMembers =
+              Boolean(options?.deep) ||
+              groupId === selectedActiveGroupId ||
+              !previousGroup ||
+              previousGroup.lastBlock !== lastBlock ||
+              previousGroup.memberCount !== memberCount ||
+              previousGroup.members.length === 0;
+            let members = previousGroup?.members ?? [];
+            if (shouldFetchMembers) {
+              const membersRaw = await contract.getGroupMembers(groupId).catch(() => []);
+              members = Array.isArray(membersRaw)
+                ? membersRaw
+                    .map((addressValue) => String(addressValue ?? '').trim())
+                    .filter((addressValue) => isWalletAddress(addressValue))
+                : [];
+            }
 
             nextGroups.push({
               id: groupId,
@@ -5136,13 +5170,15 @@ export default function App() {
         return;
       }
 
-      const previousGroups = groupsRef.current;
       const nextGroupIdSet = new Set(nextGroups.map((group) => group.id));
       const removedGroupsForWallet = previousGroups.filter((group) => !nextGroupIdSet.has(group.id));
+      const removedGroupIdsForNoticeSource = hasMemberGroupIndex
+        ? removedGroupsForWallet.map((group) => group.id)
+        : Array.from(removedGroupIdsForWallet);
       const removalNoticeSeenGroupIds =
         groupRemovalNoticeSeenRef.current[walletKey] ??
         (groupRemovalNoticeSeenRef.current[walletKey] = new Set<number>());
-      const removedNowGroupIds = Array.from(removedGroupIdsForWallet).filter(
+      const removedNowGroupIds = removedGroupIdsForNoticeSource.filter(
         (groupId) => {
           if (nextGroupIdSet.has(groupId) || removalNoticeSeenGroupIds.has(groupId)) {
             return false;
@@ -5215,13 +5251,32 @@ export default function App() {
         const groupId = selectedActiveGroupId;
         const groupMessageSyncKey = `${walletKey}:${groupId}`;
         const previousGroupMessageBlock = groupMessageLastSyncedBlockRef.current[groupMessageSyncKey];
+        const activeGroupLastMessageBlock = toSafeNumber(
+          await contract.lastMessageBlockForGroup(groupId).catch(() => null)
+        );
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return;
+        }
+        const hasNewGroupActivity =
+          Boolean(options?.deep) ||
+          typeof previousGroupMessageBlock !== 'number' ||
+          activeGroupLastMessageBlock <= 0 ||
+          activeGroupLastMessageBlock > previousGroupMessageBlock;
+
+        if (!hasNewGroupActivity) {
+          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = latestBlock;
+          if (currentWalletKeyRef.current !== requestedWalletKey) {
+            return;
+          }
+        }
+
         const groupFromBlock = options?.deep
           ? 0
           : typeof previousGroupMessageBlock === 'number'
             ? previousGroupMessageBlock + 1
             : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
 
-        if (groupFromBlock <= latestBlock) {
+        if (hasNewGroupActivity && groupFromBlock <= latestBlock) {
           const [incomingLogs, outgoingLogs, memberAddedLogs, memberRemovedLogsForGroup, memberLeftLogs] = await Promise.all([
             contract.queryFilter(contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress), groupFromBlock, latestBlock),
             contract.queryFilter(contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress), groupFromBlock, latestBlock),
@@ -5633,6 +5688,8 @@ export default function App() {
         groupId <= 0 ||
         !requestedWalletAddress ||
         !isWalletAddress(requestedWalletAddress) ||
+        !hasAesReady ||
+        !isActiveGroupAdmin ||
         chainId !== COTI_NETWORK.chainIdDecimal
       ) {
         setActiveGroupJoinCodes([]);
@@ -5642,14 +5699,51 @@ export default function App() {
 
       try {
         setLoadingActiveGroupJoinCodes(true);
+        const { signer, cacheKey } = await getMemoSigner();
         const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
+        const readProvider = await loadCotiReadProvider(true).catch(() => null);
         const contract = new cotiEthers.Contract(
           GROUP_CHAT_CONTRACT_ADDRESS,
           GROUP_CHAT_CONTRACT_ABI,
-          readProvider
+          signer
         );
-        const latestBlock = await readProvider.getBlockNumber();
+        const activeJoinCodeHashesRaw: unknown[] = [];
+        let activeJoinCodeOffset = 0;
+        const activeJoinCodePageLimit = 128;
+        const activeJoinCodePageMax = 256;
+        for (let page = 0; page < activeJoinCodePageMax; page += 1) {
+          const pageRaw = await contract
+            .getActiveJoinCodeHashesPage(groupId, activeJoinCodeOffset, activeJoinCodePageLimit)
+            .catch(() => null);
+          if (!pageRaw) {
+            break;
+          }
+
+          const pageHashesRaw =
+            pageRaw && typeof pageRaw === 'object'
+              ? (
+                (pageRaw as { hashes?: unknown }).hashes ??
+                (pageRaw as { 0?: unknown })[0]
+              )
+              : null;
+          const nextOffsetRaw =
+            pageRaw && typeof pageRaw === 'object'
+              ? (
+                (pageRaw as { nextOffset?: unknown }).nextOffset ??
+                (pageRaw as { 1?: unknown })[1]
+              )
+              : null;
+
+          if (Array.isArray(pageHashesRaw)) {
+            activeJoinCodeHashesRaw.push(...pageHashesRaw);
+          }
+
+          const nextOffset = toSafeNumber(nextOffsetRaw);
+          if (nextOffset <= activeJoinCodeOffset) {
+            break;
+          }
+          activeJoinCodeOffset = nextOffset;
+        }
         if (
           currentWalletKeyRef.current !== requestedWalletKey ||
           activeGroupIdRef.current !== groupId
@@ -5657,77 +5751,149 @@ export default function App() {
           return;
         }
 
-        const [createdLogs, revokedLogs] = await Promise.all([
-          contract.queryFilter(contract.filters.GroupJoinCodeCreated(groupId, null, null), 0, latestBlock),
-          contract.queryFilter(contract.filters.GroupJoinCodeRevoked(groupId, null, null), 0, latestBlock)
-        ]);
-        if (
-          currentWalletKeyRef.current !== requestedWalletKey ||
-          activeGroupIdRef.current !== groupId
-        ) {
-          return;
-        }
-
-        type JoinCodeLifecycleEvent = {
-          kind: 'created' | 'revoked';
-          codeHash: string;
-          creator?: string;
-          blockNumber: number;
-          logIndex: number;
-        };
-
-        const lifecycleEvents: JoinCodeLifecycleEvent[] = [];
-        for (const log of createdLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const codeHash = String(args?.codeHash ?? '').trim().toLowerCase();
-          if (!/^0x[a-f0-9]{64}$/.test(codeHash)) {
+        const activeJoinCodeHashes = activeJoinCodeHashesRaw;
+        const activeCodeHashes: string[] = [];
+        for (const codeHashRaw of activeJoinCodeHashes) {
+          const normalizedCodeHash = String(codeHashRaw ?? '').trim().toLowerCase();
+          if (!/^0x[a-f0-9]{64}$/.test(normalizedCodeHash)) {
             continue;
           }
-          const creatorCandidate = String(args?.creator ?? '').trim();
-          lifecycleEvents.push({
-            kind: 'created',
-            codeHash,
-            creator: isWalletAddress(creatorCandidate) ? creatorCandidate : undefined,
-            blockNumber: log.blockNumber,
-            logIndex: log.index
-          });
-        }
-
-        for (const log of revokedLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const codeHash = String(args?.codeHash ?? '').trim().toLowerCase();
-          if (!/^0x[a-f0-9]{64}$/.test(codeHash)) {
-            continue;
-          }
-          lifecycleEvents.push({
-            kind: 'revoked',
-            codeHash,
-            blockNumber: log.blockNumber,
-            logIndex: log.index
-          });
-        }
-
-        lifecycleEvents.sort((left, right) => {
-          if (left.blockNumber !== right.blockNumber) {
-            return left.blockNumber - right.blockNumber;
-          }
-          return left.logIndex - right.logIndex;
-        });
-
-        const activeByHash = new Map<string, { creator?: string }>();
-        for (const event of lifecycleEvents) {
-          if (event.kind === 'created') {
-            activeByHash.set(event.codeHash, { creator: event.creator });
-            continue;
-          }
-          activeByHash.delete(event.codeHash);
+          activeCodeHashes.push(normalizedCodeHash);
         }
 
         const nowTs = Math.floor(Date.now() / 1000);
         const nextActiveCodes: ActiveGroupJoinCode[] = [];
+        const getJoinCodeForAdminFunction = contract.getFunction('getJoinCodeForAdmin');
+        const groupContractInterface = new cotiEthers.Interface(GROUP_CHAT_CONTRACT_ABI);
+        const signerProvider = (signer as { provider?: { call?: (tx: Record<string, unknown>) => Promise<string> } }).provider;
+        const joinCodePattern = new RegExp(`^[${GROUP_JOIN_CODE_ALPHABET}]{4,12}$`);
+        const normalizeDecryptedJoinCode = (value: unknown): string => {
+          const normalized = String(value ?? '').replace(/\0/g, '').trim().toUpperCase();
+          if (!normalized) {
+            return '';
+          }
+          if (joinCodePattern.test(normalized)) {
+            return normalized;
+          }
+
+          const separatorIndex = normalized.indexOf(':');
+          if (separatorIndex > 0 && separatorIndex < normalized.length - 1) {
+            const suffix = normalized.slice(separatorIndex + 1).trim();
+            if (joinCodePattern.test(suffix)) {
+              return suffix;
+            }
+          }
+
+          return '';
+        };
+        const joinCodeCipherFromCreateTxCache = new Map<string, { value: bigint[] } | null>();
+        const readJoinCodeCiphertextFromCreateTx = async (codeHash: string): Promise<{ value: bigint[] } | null> => {
+          if (!readProvider?.getTransaction || joinCodeCipherFromCreateTxCache.has(codeHash)) {
+            return joinCodeCipherFromCreateTxCache.get(codeHash) ?? null;
+          }
+
+          try {
+            const createdLogs = await contract
+              .queryFilter(contract.filters.GroupJoinCodeCreated(groupId, codeHash, null), 0, 'latest')
+              .catch(() => []);
+            if (!Array.isArray(createdLogs) || createdLogs.length === 0) {
+              joinCodeCipherFromCreateTxCache.set(codeHash, null);
+              return null;
+            }
+
+            let latestCreatedLog = createdLogs[0];
+            for (const log of createdLogs) {
+              if (
+                log.blockNumber > latestCreatedLog.blockNumber ||
+                (log.blockNumber === latestCreatedLog.blockNumber && log.index > latestCreatedLog.index)
+              ) {
+                latestCreatedLog = log;
+              }
+            }
+
+            const creationTx = await readProvider.getTransaction(latestCreatedLog.transactionHash).catch(() => null);
+            if (!creationTx?.data) {
+              joinCodeCipherFromCreateTxCache.set(codeHash, null);
+              return null;
+            }
+
+            const parsedCreationTx = groupContractInterface.parseTransaction({
+              data: creationTx.data,
+              value: creationTx.value ?? 0n
+            });
+            if (!parsedCreationTx || parsedCreationTx.name !== 'createJoinCode' || parsedCreationTx.args.length < 6) {
+              joinCodeCipherFromCreateTxCache.set(codeHash, null);
+              return null;
+            }
+
+            const encryptedCodeArg = parsedCreationTx.args[5] as unknown;
+            const encryptedCiphertext =
+              encryptedCodeArg && typeof encryptedCodeArg === 'object'
+                ? (
+                  (encryptedCodeArg as { ciphertext?: unknown }).ciphertext ??
+                  (encryptedCodeArg as { 0?: unknown })[0]
+                )
+                : null;
+            const encryptedCiphertextValuesRaw =
+              encryptedCiphertext && typeof encryptedCiphertext === 'object'
+                ? (
+                  (encryptedCiphertext as { value?: unknown }).value ??
+                  (encryptedCiphertext as { 0?: unknown })[0]
+                )
+                : null;
+            if (!Array.isArray(encryptedCiphertextValuesRaw) || encryptedCiphertextValuesRaw.length === 0) {
+              joinCodeCipherFromCreateTxCache.set(codeHash, null);
+              return null;
+            }
+
+            const encryptedCiphertextValues = encryptedCiphertextValuesRaw.map((item) => BigInt(item));
+            const nextCiphertext = { value: encryptedCiphertextValues };
+            joinCodeCipherFromCreateTxCache.set(codeHash, nextCiphertext);
+            return nextCiphertext;
+          } catch {
+            joinCodeCipherFromCreateTxCache.set(codeHash, null);
+            return null;
+          }
+        };
         await Promise.all(
-          Array.from(activeByHash.entries()).map(async ([codeHash, metadata]) => {
-            const joinCodeRaw = await contract.getJoinCode(groupId, codeHash).catch(() => null);
+          activeCodeHashes.map(async (codeHash) => {
+            const [joinCodeRaw, encryptedCodeRaw] = await Promise.all([
+              contract.getJoinCode(groupId, codeHash).catch(() => null),
+              (async () => {
+                const directStaticCall = (contract as {
+                  getJoinCodeForAdmin?: {
+                    staticCall?: (targetGroupId: number, targetCodeHash: string) => Promise<unknown>;
+                  };
+                }).getJoinCodeForAdmin?.staticCall;
+                if (directStaticCall) {
+                  const directResult = await directStaticCall(groupId, codeHash).catch(() => null);
+                  if (directResult) {
+                    return directResult;
+                  }
+                }
+                const fallbackResult = await getJoinCodeForAdminFunction.staticCall(groupId, codeHash).catch(() => null);
+                if (fallbackResult) {
+                  return fallbackResult;
+                }
+
+                if (!signerProvider?.call) {
+                  return null;
+                }
+                const encodedCall = groupContractInterface.encodeFunctionData('getJoinCodeForAdmin', [groupId, codeHash]);
+                const lowLevelRaw = await signerProvider
+                  .call({
+                    to: GROUP_CHAT_CONTRACT_ADDRESS,
+                    from: requestedWalletAddress,
+                    data: encodedCall
+                  })
+                  .catch(() => null);
+                if (!lowLevelRaw || lowLevelRaw === '0x') {
+                  return null;
+                }
+                const decoded = groupContractInterface.decodeFunctionResult('getJoinCodeForAdmin', lowLevelRaw);
+                return decoded?.[0] ?? decoded;
+              })()
+            ]);
             const joinCodeState = parseGroupJoinCodeState(joinCodeRaw);
             if (!joinCodeState || !joinCodeState.active) {
               return;
@@ -5740,12 +5906,31 @@ export default function App() {
               return;
             }
 
-            const creator =
-              isWalletAddress(joinCodeState.creator) ? joinCodeState.creator : metadata.creator ?? '';
+            let decryptedCode = '';
+            const codeCiphertext = extractUserCiphertext(encryptedCodeRaw);
+            if (codeCiphertext) {
+              try {
+                const decrypted = await signer.decryptValue(codeCiphertext as never);
+                decryptedCode = normalizeDecryptedJoinCode(decrypted);
+              } catch {
+              }
+            }
+            if (!decryptedCode) {
+              const fallbackCiphertext = await readJoinCodeCiphertextFromCreateTx(codeHash);
+              if (fallbackCiphertext) {
+                try {
+                  const decrypted = await signer.decryptValue(fallbackCiphertext as never);
+                  decryptedCode = normalizeDecryptedJoinCode(decrypted);
+                } catch {
+                }
+              }
+            }
+
+            const creator = isWalletAddress(joinCodeState.creator) ? joinCodeState.creator : '';
             nextActiveCodes.push({
               groupId,
               codeHash,
-              code: getStoredGroupJoinCodeForHash(requestedWalletKey, groupId, codeHash),
+              code: decryptedCode || undefined,
               creator,
               expiresAt,
               usesLeft
@@ -5772,6 +5957,11 @@ export default function App() {
         });
 
         setActiveGroupJoinCodes(nextActiveCodes);
+        const nextOnboardInfo = signer.getUserOnboardInfo();
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+        }));
       } catch (loadError) {
         setActiveGroupJoinCodes([]);
         if (!options?.silent) {
@@ -5787,7 +5977,7 @@ export default function App() {
         }
       }
     },
-    [walletAddress, chainId]
+    [walletAddress, hasAesReady, isActiveGroupAdmin, chainId]
   );
 
   const revokeJoinCodeForActiveGroup = async (
@@ -5821,8 +6011,6 @@ export default function App() {
       return;
     }
 
-    const requestedWalletAddress = walletAddress.trim();
-    const requestedWalletKey = requestedWalletAddress.toLowerCase();
     try {
       setProcessingGroupAction(true);
       setRevokingGroupJoinCodeHash(normalizedCodeHash);
@@ -5841,10 +6029,6 @@ export default function App() {
       if (generatedGroupJoinCodeHash.trim().toLowerCase() === normalizedCodeHash) {
         setGeneratedGroupInviteCode('');
         setGeneratedGroupJoinCodeHash('');
-      }
-
-      if (isWalletAddress(requestedWalletAddress)) {
-        deleteStoredGroupJoinCodeForHash(requestedWalletKey, activeGroupId, normalizedCodeHash);
       }
 
       await loadActiveJoinCodesForGroup(activeGroupId, { silent: true });
@@ -5874,6 +6058,11 @@ export default function App() {
     try {
       setProcessingGroupAction(true);
       const { signer, cacheKey } = await getMemoSigner();
+      const signerAddress = (await signer.getAddress()).trim();
+      if (!isWalletAddress(signerAddress)) {
+        setError('Signer address is invalid.');
+        return;
+      }
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
       const encodedTitle = await encodeStoredGroupTitle(title, newGroupIsPrivate);
@@ -5935,6 +6124,11 @@ export default function App() {
     try {
       setProcessingGroupAction(true);
       const { signer, cacheKey } = await getMemoSigner();
+      const signerAddress = (await signer.getAddress()).trim();
+      if (!isWalletAddress(signerAddress)) {
+        setError('Signer address is invalid.');
+        return;
+      }
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
       const inviteTtlMaxRaw = await contract.INVITE_TTL_MAX().catch(() => null);
@@ -5981,16 +6175,25 @@ export default function App() {
     }
     const ttlSeconds = ttlHours * 60 * 60;
     const requestedWalletAddress = walletAddress.trim();
-    const requestedWalletKey = requestedWalletAddress.toLowerCase();
 
     const code = generateRandomGroupJoinCode();
     let expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
     try {
       setProcessingGroupAction(true);
       const { signer, cacheKey } = await getMemoSigner();
+      const signerAddress = (await signer.getAddress()).trim();
+      if (!isWalletAddress(signerAddress)) {
+        setError('Signer address is invalid.');
+        return;
+      }
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-      const codeHash = cotiEthers.keccak256(cotiEthers.toUtf8Bytes(code));
+      const normalizedCode = code.trim().toUpperCase();
+      const codeHash = cotiEthers.keccak256(cotiEthers.toUtf8Bytes(normalizedCode));
+      const codeSignerPrivateKey = cotiEthers.keccak256(
+        cotiEthers.toUtf8Bytes(`${GROUP_JOIN_CODE_SIGNER_KEY_PREFIX}${normalizedCode}`)
+      );
+      const codeSigner = new cotiEthers.Wallet(codeSignerPrivateKey).address;
       const joinCodeTtlMaxRaw = await contract.JOIN_CODE_TTL_MAX().catch(() => null);
       const joinCodeTtlMax = toSafeNumber(joinCodeTtlMaxRaw);
       if (joinCodeTtlMax > 0 && ttlSeconds > joinCodeTtlMax) {
@@ -6017,11 +6220,26 @@ export default function App() {
         maxUses = requestedMultiUses;
       }
 
+      const createJoinCodeSelector = new cotiEthers.Interface(GROUP_CHAT_CONTRACT_ABI).getFunction('createJoinCode')?.selector;
+      if (!createJoinCodeSelector) {
+        setError('Unable to resolve createJoinCode selector.');
+        return;
+      }
+      const encryptedCodeMemo = await signer.encryptValue(
+        normalizedCode,
+        GROUP_CHAT_CONTRACT_ADDRESS,
+        createJoinCodeSelector
+      );
+      const encryptedCodePayload = parseSubmitMemoPayload(encryptedCodeMemo);
+      const encryptedCodeTuple = [[encryptedCodePayload.ciphertextValue], encryptedCodePayload.signature] as const;
+
       const tx = await contract.createJoinCode(
         activeGroupId,
         codeHash,
+        codeSigner,
         ttlSeconds,
-        maxUses
+        maxUses,
+        encryptedCodeTuple
       );
       await tx.wait();
 
@@ -6035,15 +6253,12 @@ export default function App() {
       const payload: GroupJoinCodePayload = {
         version: 2,
         groupId: activeGroupId,
-        code,
+        code: normalizedCode,
         expiresAt,
         inviter: isWalletAddress(inviterAddress) ? inviterAddress : undefined
       };
       setGeneratedGroupInviteCode(encodeGroupInviteCode(payload));
       setGeneratedGroupJoinCodeHash(codeHash);
-      if (isWalletAddress(requestedWalletAddress)) {
-        setStoredGroupJoinCodeForHash(requestedWalletKey, activeGroupId, codeHash, code);
-      }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
       setSessionOnboardInfo((previous) => ({
@@ -6142,6 +6357,11 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
+      const signerAddress = (await signer.getAddress()).trim();
+      if (!isWalletAddress(signerAddress)) {
+        setError('Signer address is invalid.');
+        return;
+      }
       const normalizedCode = parsedJoinCode.code.trim().toUpperCase();
       if (!normalizedCode) {
         setError('Invalid group code.');
@@ -6149,8 +6369,13 @@ export default function App() {
       }
 
       const codeHash = cotiEthers.keccak256(cotiEthers.toUtf8Bytes(normalizedCode));
+      const codeSignerPrivateKey = cotiEthers.keccak256(
+        cotiEthers.toUtf8Bytes(`${GROUP_JOIN_CODE_SIGNER_KEY_PREFIX}${normalizedCode}`)
+      );
+      const codeProofSigner = new cotiEthers.Wallet(codeSignerPrivateKey);
+      const derivedCodeSigner = codeProofSigner.address.toLowerCase();
       const [isAlreadyMemberRaw, joinCodeRaw] = await Promise.all([
-        contract.isMember(parsedJoinCode.groupId, requestedWalletAddress).catch(() => false),
+        contract.isMember(parsedJoinCode.groupId, signerAddress).catch(() => false),
         contract.getJoinCode(parsedJoinCode.groupId, codeHash).catch(() => null)
       ]);
 
@@ -6172,8 +6397,37 @@ export default function App() {
         setError('This group code has no remaining uses.');
         return;
       }
+      if (joinCodeState.signer && joinCodeState.signer.toLowerCase() !== derivedCodeSigner) {
+        setError('This group code is invalid. Ask for a fresh code from the admin.');
+        return;
+      }
 
-      const tx = await contract.joinWithCode(parsedJoinCode.groupId, normalizedCode);
+      const signatureDeadline = nowTs + GROUP_JOIN_CODE_SIGNATURE_WINDOW_SECONDS;
+      const proofDomainHash = cotiEthers.keccak256(
+        cotiEthers.toUtf8Bytes(GROUP_JOIN_CODE_PROOF_DOMAIN)
+      );
+      const proofDigest = cotiEthers.keccak256(
+        cotiEthers.AbiCoder.defaultAbiCoder().encode(
+          ['bytes32', 'uint256', 'address', 'uint256', 'bytes32', 'address', 'uint64'],
+          [
+            proofDomainHash,
+            BigInt(chainId ?? COTI_NETWORK.chainIdDecimal),
+            GROUP_CHAT_CONTRACT_ADDRESS,
+            BigInt(parsedJoinCode.groupId),
+            codeHash,
+            signerAddress,
+            BigInt(signatureDeadline)
+          ]
+        )
+      );
+      const proofSignature = await codeProofSigner.signMessage(cotiEthers.getBytes(proofDigest));
+
+      const tx = await contract.joinWithCode(
+        parsedJoinCode.groupId,
+        codeHash,
+        signatureDeadline,
+        proofSignature
+      );
       await tx.wait();
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -7488,7 +7742,13 @@ export default function App() {
   }, [walletAddress]);
 
   useEffect(() => {
-    if (activeGroupId === null || !walletAddress || chainId !== COTI_NETWORK.chainIdDecimal) {
+    if (
+      activeGroupId === null ||
+      !walletAddress ||
+      !hasAesReady ||
+      !isActiveGroupAdmin ||
+      chainId !== COTI_NETWORK.chainIdDecimal
+    ) {
       setActiveGroupJoinCodes([]);
       setLoadingActiveGroupJoinCodes(false);
       setRevokingGroupJoinCodeHash('');
@@ -7496,7 +7756,7 @@ export default function App() {
     }
 
     loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
-  }, [activeGroupId, walletAddress, chainId, activeGroupMeta?.lastBlock, loadActiveJoinCodesForGroup]);
+  }, [activeGroupId, walletAddress, hasAesReady, isActiveGroupAdmin, chainId, activeGroupMeta?.lastBlock, loadActiveJoinCodesForGroup]);
 
   useEffect(() => {
     setUnreadMap({});
@@ -8685,6 +8945,185 @@ export default function App() {
     };
   }, [activeProvider, connectionMethod]);
 
+  const renderGroupGeneratedInviteCode = () => {
+    if (!generatedGroupInviteCode) {
+      return null;
+    }
+
+    const generatedCodeCopyKey = `group-code:${generatedGroupInviteCode}`;
+    return (
+      <div className="group-generated-code-stack">
+        <div className="group-generated-code group-generated-code-compact">
+          <input className="group-generated-code-value" value={generatedGroupInviteCode} readOnly aria-label="Generated join code" />
+          <button
+            type="button"
+            className={lastCopiedKey === generatedCodeCopyKey ? 'contact group-generated-code-copy copied' : 'contact group-generated-code-copy'}
+            onClick={() => {
+              copyWithFeedback(generatedGroupInviteCode, generatedCodeCopyKey).catch(() => {});
+            }}
+          >
+            {lastCopiedKey === generatedCodeCopyKey ? 'Copied' : 'Copy code'}
+          </button>
+        </div>
+        <button
+          type="button"
+          className="contact group-generated-code-revoke-btn"
+          onClick={() => {
+            revokeGeneratedJoinCodeForActiveGroup().catch(() => {});
+          }}
+          disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin || !generatedGroupJoinCodeHash}
+        >
+          {processingGroupAction ? 'Working...' : 'Revoke code'}
+        </button>
+      </div>
+    );
+  };
+
+  const renderGroupInviteMembersPanel = () => (
+    <form
+      className="group-header-invite group-header-invite-compact"
+      onSubmit={(event) => {
+        event.preventDefault();
+        inviteMembersToActiveGroup().catch(() => {});
+      }}
+    >
+      <div className="group-header-invite-row">
+        <input
+          value={groupInviteMembersInput}
+          onChange={(event) => setGroupInviteMembersInput(event.target.value)}
+          className="group-header-invite-address"
+          placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
+          aria-label="Invite members"
+          disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
+        />
+        <div className="group-header-invite-ttl-wrap">
+          <input
+            value={groupInviteTtlInput}
+            onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
+            className="group-header-invite-ttl"
+            placeholder="8"
+            aria-label="Invite and join code timeout in hours"
+            disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
+          />
+        </div>
+        <button className="group-header-primary-btn" type="submit" disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}>
+          {processingGroupAction ? 'Sending...' : 'Invite'}
+        </button>
+      </div>
+    </form>
+  );
+
+  const renderGroupJoinCodePanel = (mobile = false) => {
+    const modeInputName = mobile ? 'group-join-code-mode-mobile' : 'group-join-code-mode-desktop';
+    return (
+      <div className="group-invite-code-panel">
+        <div className="group-join-code-settings group-join-code-settings-compact">
+          <div className="group-join-code-header">
+            <span className="group-join-code-label">Join code</span>
+            <span className="group-join-code-helper">
+              {groupJoinCodeMode === 'single' ? 'One join per code.' : 'Reusable code with max uses.'}
+            </span>
+          </div>
+          <div className="group-join-code-main">
+            <div className="group-join-code-main-left">
+              <div className="group-join-code-mode">
+                <label className={groupJoinCodeMode === 'single' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'}>
+                  <input
+                    type="radio"
+                    name={modeInputName}
+                    checked={groupJoinCodeMode === 'single'}
+                    onChange={() => setGroupJoinCodeMode('single')}
+                    disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                  />
+                  Single-use
+                </label>
+                <label className={groupJoinCodeMode === 'multi' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'}>
+                  <input
+                    type="radio"
+                    name={modeInputName}
+                    checked={groupJoinCodeMode === 'multi'}
+                    onChange={() => setGroupJoinCodeMode('multi')}
+                    disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                  />
+                  Multi-use
+                </label>
+              </div>
+              {groupJoinCodeMode === 'multi' ? (
+                <label className="group-join-code-max">
+                  <span>Max uses</span>
+                  <input
+                    type="number"
+                    min={2}
+                    step={1}
+                    value={groupJoinCodeMaxUsesInput}
+                    onChange={(event) => setGroupJoinCodeMaxUsesInput(event.target.value.replace(/[^\d]/g, ''))}
+                    aria-label="Join code max uses"
+                    className="group-join-code-max-input"
+                    disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+                  />
+                </label>
+              ) : (
+                <span className="group-join-code-hint">One join per code.</span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="group-join-code-generate group-header-primary-btn"
+              onClick={() => {
+                generateJoinCodeForActiveGroup().catch(() => {});
+              }}
+              disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
+            >
+              {processingGroupAction ? 'Working...' : 'Create code'}
+            </button>
+          </div>
+        </div>
+        {renderGroupGeneratedInviteCode()}
+      </div>
+    );
+  };
+
+  const renderGroupInviteMenu = (mobile = false) => {
+    const menuClassName = mobile ? 'group-invite-menu group-invite-menu-mobile' : 'group-invite-menu';
+    return (
+      <details
+        className={menuClassName}
+        key={`group-invite-menu:${mobile ? 'mobile' : 'desktop'}:${activeGroupId ?? 'none'}:${walletAddress.trim().toLowerCase()}`}
+      >
+        <summary>Invite</summary>
+        <div className="group-invite-menu-panel">
+          {canManageActiveGroupJoinCodes ? (
+            <>
+              <div className="group-invite-menu-switch" role="tablist" aria-label="Group invite options">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={groupInviteMenuView === 'invite'}
+                  className={groupInviteMenuView === 'invite' ? 'group-invite-menu-switch-btn active' : 'group-invite-menu-switch-btn'}
+                  onClick={() => setGroupInviteMenuView('invite')}
+                >
+                  Invite
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={groupInviteMenuView === 'code'}
+                  className={groupInviteMenuView === 'code' ? 'group-invite-menu-switch-btn active' : 'group-invite-menu-switch-btn'}
+                  onClick={() => setGroupInviteMenuView('code')}
+                >
+                  Invite code
+                </button>
+              </div>
+              {groupInviteMenuView === 'invite' ? renderGroupInviteMembersPanel() : renderGroupJoinCodePanel(mobile)}
+            </>
+          ) : (
+            renderGroupInviteMembersPanel()
+          )}
+        </div>
+      </details>
+    );
+  };
+
   const renderActiveJoinCodeList = (mobile = false) => {
     const dropdownClassName = mobile
       ? 'group-active-codes-dropdown group-active-codes-dropdown-mobile'
@@ -8721,18 +9160,15 @@ export default function App() {
               return (
                 <li key={`active-join-code:${entry.groupId}:${entry.codeHash}`} className="group-active-code-item">
                   <div className="group-active-code-row">
-                    <input
-                      className="group-generated-code-value"
-                      value={copyValue}
-                      readOnly
-                      aria-label={entry.code ? 'Active join code' : 'Active join code hash'}
-                    />
+                    <div className="group-active-code-value" title={copyValue}>
+                      {copyValue}
+                    </div>
                     <button
                       type="button"
                       className={
                         lastCopiedKey === copyKey
-                          ? 'group-generated-code-copy copied'
-                          : 'group-generated-code-copy'
+                          ? 'contact group-generated-code-copy copied'
+                          : 'contact group-generated-code-copy'
                       }
                       onClick={(event) => {
                         copyWithFeedback(copyValue, copyKey).catch(() => {});
@@ -9784,7 +10220,7 @@ export default function App() {
                       )}
                     </ul>
                   </details>
-                  {!isMobileNav ? renderActiveJoinCodeList(false) : null}
+                  {!isMobileNav && canManageActiveGroupJoinCodes ? renderActiveJoinCodeList(false) : null}
                 </div>
               </div>
               <div className="group-header-controls">
@@ -9813,150 +10249,7 @@ export default function App() {
                     </button>
                   </>
                 ) : (
-                  <form
-                    className="group-header-invite"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      inviteMembersToActiveGroup().catch(() => {});
-                    }}
-                  >
-                    <div className="group-header-section-heading">
-                      <span className="group-header-section-title">Invite members</span>
-                      <span className="group-header-section-subtitle">Wallet addresses + expiry hours</span>
-                    </div>
-                    <div className="group-header-invite-row">
-                      <input
-                        value={groupInviteMembersInput}
-                        onChange={(event) => setGroupInviteMembersInput(event.target.value)}
-                        className="group-header-invite-address"
-                        placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
-                        aria-label="Invite members"
-                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                      />
-                      <div className="group-header-invite-ttl-wrap">
-                        <input
-                          id="group-invite-ttl-hours"
-                          value={groupInviteTtlInput}
-                          onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
-                          className="group-header-invite-ttl"
-                          placeholder="8"
-                          aria-label="Invite and join code timeout in hours"
-                          disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                        />
-                      </div>
-                      <button
-                        className="group-header-primary-btn"
-                        type="submit"
-                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                      >
-                        {processingGroupAction ? 'Sending...' : 'Invite'}
-                      </button>
-                    </div>
-                    <div className="group-join-code-settings">
-                      <div className="group-join-code-header">
-                        <span className="group-join-code-label">Join code</span>
-                        <span className="group-join-code-helper">
-                          {groupJoinCodeMode === 'single' ? 'One join per code.' : 'Reusable code with max uses.'}
-                        </span>
-                      </div>
-                      <div className="group-join-code-main">
-                        <div className="group-join-code-main-left">
-                          <div className="group-join-code-mode">
-                            <label
-                              className={
-                                groupJoinCodeMode === 'single' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
-                              }
-                            >
-                              <input
-                                type="radio"
-                                name="group-join-code-mode-desktop"
-                                checked={groupJoinCodeMode === 'single'}
-                                onChange={() => setGroupJoinCodeMode('single')}
-                                disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                              />
-                              Single-use
-                            </label>
-                            <label
-                              className={
-                                groupJoinCodeMode === 'multi' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
-                              }
-                            >
-                              <input
-                                type="radio"
-                                name="group-join-code-mode-desktop"
-                                checked={groupJoinCodeMode === 'multi'}
-                                onChange={() => setGroupJoinCodeMode('multi')}
-                                disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                              />
-                              Multi-use
-                            </label>
-                          </div>
-                          {groupJoinCodeMode === 'multi' ? (
-                            <label className="group-join-code-max">
-                              <span>Max uses</span>
-                              <input
-                                type="number"
-                                min={2}
-                                step={1}
-                                value={groupJoinCodeMaxUsesInput}
-                                onChange={(event) => setGroupJoinCodeMaxUsesInput(event.target.value.replace(/[^\d]/g, ''))}
-                                aria-label="Join code max uses"
-                                className="group-join-code-max-input"
-                                disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                              />
-                            </label>
-                          ) : (
-                            <span className="group-join-code-hint">One join per code.</span>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          className="group-join-code-generate group-header-primary-btn"
-                          onClick={() => {
-                            generateJoinCodeForActiveGroup().catch(() => {});
-                          }}
-                          disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                        >
-                          Create code
-                        </button>
-                      </div>
-                    </div>
-                    {generatedGroupInviteCode ? (
-                      <>
-                        <div className="group-generated-code">
-                          <input
-                            className="group-generated-code-value"
-                            value={generatedGroupInviteCode}
-                            readOnly
-                            aria-label="Generated join code"
-                          />
-                          <button
-                            type="button"
-                            className={
-                              lastCopiedKey === `group-code:${generatedGroupInviteCode}`
-                                ? 'group-generated-code-copy copied'
-                                : 'group-generated-code-copy'
-                            }
-                            onClick={() => {
-                              copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
-                            }}
-                          >
-                            {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          className="contact"
-                          onClick={() => {
-                            revokeGeneratedJoinCodeForActiveGroup().catch(() => {});
-                          }}
-                          disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin || !generatedGroupJoinCodeHash}
-                        >
-                          {processingGroupAction ? 'Working...' : 'Revoke code'}
-                        </button>
-                      </>
-                    ) : null}
-                  </form>
+                  renderGroupInviteMenu(false)
                 )}
               </div>
               {isMobileNav ? (
@@ -9964,146 +10257,11 @@ export default function App() {
                   <div id="group-mobile-tools-panel" className="group-mobile-options-panel">
                     <div className="group-mobile-section">
                       <div className="group-mobile-section-header">
-                        <span className="group-mobile-section-title">Invite members</span>
-                        <span className="group-mobile-section-subtitle">Wallet addresses + expiry hours</span>
+                        <span className="group-mobile-section-title">Invite tools</span>
+                        <span className="group-mobile-section-subtitle">Members and join codes</span>
                       </div>
-                      <div className="group-header-invite group-header-invite-mobile-inline">
-                        <input
-                          value={groupInviteMembersInput}
-                          onChange={(event) => setGroupInviteMembersInput(event.target.value)}
-                          className="group-header-invite-address"
-                          placeholder={canInviteToActiveGroup ? 'Invite wallets (comma/space separated)' : 'Private group: only admin can invite'}
-                          aria-label="Invite members"
-                          disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                        />
-                        <div className="group-header-invite-ttl-wrap">
-                          <input
-                            id="group-invite-ttl-hours-mobile"
-                            value={groupInviteTtlInput}
-                            onChange={(event) => setGroupInviteTtlInput(event.target.value.replace(/[^\d]/g, ''))}
-                            className="group-header-invite-ttl"
-                            placeholder="8"
-                            aria-label="Invite and join code timeout in hours"
-                            disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                          />
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="contact group-mobile-primary-action group-header-primary-btn"
-                        onClick={() => {
-                          inviteMembersToActiveGroup().catch(() => {});
-                        }}
-                        disabled={processingGroupAction || !hasAesReady || !canInviteToActiveGroup}
-                      >
-                        {processingGroupAction ? 'Sending...' : 'Send invites'}
-                      </button>
-                    </div>
-
-                    <div className="group-mobile-section">
-                      <div className="group-mobile-section-header">
-                        <span className="group-mobile-section-title">Join code</span>
-                        <span className="group-mobile-section-subtitle">Share access token</span>
-                      </div>
-                      <div className="group-join-code-settings group-join-code-settings-mobile">
-                        <div className="group-join-code-main">
-                          <div className="group-join-code-main-left">
-                            <div className="group-join-code-mode">
-                              <label
-                                className={
-                                  groupJoinCodeMode === 'single' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
-                                }
-                              >
-                                <input
-                                  type="radio"
-                                  name="group-join-code-mode-mobile"
-                                  checked={groupJoinCodeMode === 'single'}
-                                  onChange={() => setGroupJoinCodeMode('single')}
-                                  disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                                />
-                                Single-use
-                              </label>
-                              <label
-                                className={
-                                  groupJoinCodeMode === 'multi' ? 'group-join-code-mode-option active' : 'group-join-code-mode-option'
-                                }
-                              >
-                                <input
-                                  type="radio"
-                                  name="group-join-code-mode-mobile"
-                                  checked={groupJoinCodeMode === 'multi'}
-                                  onChange={() => setGroupJoinCodeMode('multi')}
-                                  disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                                />
-                                Multi-use
-                              </label>
-                            </div>
-                            {groupJoinCodeMode === 'multi' ? (
-                              <label className="group-join-code-max">
-                                <span>Max uses</span>
-                                <input
-                                  type="number"
-                                  min={2}
-                                  step={1}
-                                  value={groupJoinCodeMaxUsesInput}
-                                  onChange={(event) => setGroupJoinCodeMaxUsesInput(event.target.value.replace(/[^\d]/g, ''))}
-                                  aria-label="Join code max uses mobile"
-                                  className="group-join-code-max-input"
-                                  disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                                />
-                              </label>
-                            ) : (
-                              <span className="group-join-code-hint">One join per code.</span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            className="group-join-code-generate group-header-primary-btn"
-                            onClick={() => {
-                              generateJoinCodeForActiveGroup().catch(() => {});
-                            }}
-                            disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin}
-                          >
-                            Create code
-                          </button>
-                        </div>
-                      </div>
-                      {generatedGroupInviteCode ? (
-                        <>
-                          <div className="group-generated-code group-generated-code-mobile">
-                            <input
-                              className="group-generated-code-value"
-                              value={generatedGroupInviteCode}
-                              readOnly
-                              aria-label="Generated join code"
-                            />
-                            <button
-                              type="button"
-                              className={
-                                lastCopiedKey === `group-code:${generatedGroupInviteCode}`
-                                  ? 'contact copied'
-                                  : 'contact'
-                              }
-                              onClick={() => {
-                                copyWithFeedback(generatedGroupInviteCode, `group-code:${generatedGroupInviteCode}`).catch(() => {});
-                              }}
-                            >
-                              {lastCopiedKey === `group-code:${generatedGroupInviteCode}` ? 'Copied' : 'Copy code'}
-                            </button>
-                          </div>
-                          <button
-                            type="button"
-                            className="contact"
-                            onClick={() => {
-                              revokeGeneratedJoinCodeForActiveGroup().catch(() => {});
-                            }}
-                            disabled={processingGroupAction || !hasAesReady || !isActiveGroupAdmin || !generatedGroupJoinCodeHash}
-                          >
-                            {processingGroupAction ? 'Working...' : 'Revoke code'}
-                          </button>
-                        </>
-                      ) : null}
-                      {renderActiveJoinCodeList(true)}
+                      {renderGroupInviteMenu(true)}
+                      {canManageActiveGroupJoinCodes ? renderActiveJoinCodeList(true) : null}
                     </div>
 
                     <div className="group-mobile-section group-mobile-section-actions">

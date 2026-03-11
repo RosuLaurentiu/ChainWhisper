@@ -178,7 +178,6 @@ export const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
 export const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
 export const GROUP_SUBMIT_GAS_BUFFER = 700_000n;
 export const GROUP_SUBMIT_GAS_LIMIT_MAX = 8_000_000n;
-export const GROUP_JOIN_CODE_CACHE_STORAGE_KEY = 'coti-group-join-code-cache-v1';
 export const DEFAULT_GROUP_JOIN_CODE_MAX_USES = 1;
 export const DEFAULT_GROUP_JOIN_CODE_MULTI_USES = 10;
 export const BURNER_ONBOARD_TIMEOUT_MS = 45000;
@@ -389,7 +388,7 @@ export const CHAT_CONTRACT_ABI = [
   'event MessageSubmitted(address indexed recipient, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender)'
 ] as const;
 
-export const GROUP_CHAT_CONTRACT_ADDRESS = '0x08955E365d460063D2b164505Ff585A168707a6D';
+export const GROUP_CHAT_CONTRACT_ADDRESS = '0xE175ec590CE13FB6349f1CAd8b7e9D5d21eaa32b';
 export const GROUP_CHAT_CONTRACT_ABI = [
   'error AlreadyGroupMember()',
   'error GroupPaused()',
@@ -404,6 +403,8 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'error JoinCodeExhausted()',
   'error JoinCodeExpired()',
   'error JoinCodeNotFound()',
+  'error JoinCodeProofExpired()',
+  'error InvalidJoinCodeProof()',
   'function feeAmount() view returns (uint256)',
   'function tokenFeeAmount() view returns (uint256)',
   'function publicFeeToken() view returns (address)',
@@ -418,9 +419,11 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'function createGroup(string title, address[] initialMembers) returns (uint256 groupId)',
   'function addMembers(uint256 groupId, address[] accounts)',
   'function inviteMembers(uint256 groupId, address[] accounts, uint64 inviteTtlSeconds)',
-  'function createJoinCode(uint256 groupId, bytes32 codeHash, uint64 ttlSeconds, uint32 maxUses)',
-  'function getJoinCode(uint256 groupId, bytes32 codeHash) view returns (bool active, address creator, uint64 expiresAt, uint32 usesLeft, bool expired)',
-  'function joinWithCode(uint256 groupId, string code)',
+  'function createJoinCode(uint256 groupId, bytes32 codeHash, address codeSigner, uint64 ttlSeconds, uint32 maxUses, ((uint256[] value), bytes[] signature) encryptedCode)',
+  'function getJoinCode(uint256 groupId, bytes32 codeHash) view returns (bool active, address creator, address signer, uint64 expiresAt, uint32 usesLeft, bool expired)',
+  'function getJoinCodeForAdmin(uint256 groupId, bytes32 codeHash) returns (((uint256[] value) ciphertext, (uint256[] value) userCiphertext) codeForAdmin)',
+  'function getActiveJoinCodeHashesPage(uint256 groupId, uint256 offset, uint256 limit) view returns (bytes32[] hashes, uint256 nextOffset)',
+  'function joinWithCode(uint256 groupId, bytes32 codeHash, uint64 signatureDeadline, bytes signature)',
   'function revokeJoinCode(uint256 groupId, bytes32 codeHash)',
   'function acceptInvite(uint256 groupId)',
   'function declineInvite(uint256 groupId)',
@@ -431,7 +434,9 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'function removeMember(uint256 groupId, address account)',
   'function getInvite(uint256 groupId, address account) view returns (bool pending, address inviter, uint64 expiresAt, bool expired)',
   'function getGroupInfo(uint256 groupId) view returns (address admin, uint64 createdAt, uint32 memberCount, string title, uint256 lastBlock, uint256 lastTimestamp)',
+  'function lastMessageBlockForGroup(uint256 groupId) view returns (uint256)',
   'function getGroupMembers(uint256 groupId) view returns (address[])',
+  'function getGroupsForMemberPage(address account, uint256 cursor, uint256 limit) view returns (uint256[] groupIds, uint256 nextCursor)',
   'function isMember(uint256 groupId, address account) view returns (bool)',
   'function submitGroupMessage(uint256 groupId, ((uint256[] value), bytes[] signature) encryptedMessage) payable',
   'function submitGroupMessageWithMode(uint256 groupId, ((uint256[] value), bytes[] signature) encryptedMessage, uint8 paymentMode) payable',
@@ -443,7 +448,7 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupInviteAccepted(uint256 indexed groupId, address indexed account, address indexed inviter)',
   'event GroupInviteDeclined(uint256 indexed groupId, address indexed account, address indexed inviter)',
   'event GroupInviteRevoked(uint256 indexed groupId, address indexed account, address indexed revokedBy)',
-  'event GroupJoinCodeCreated(uint256 indexed groupId, bytes32 indexed codeHash, address indexed creator, uint64 expiresAt, uint32 usesLeft)',
+  'event GroupJoinCodeCreated(uint256 indexed groupId, bytes32 indexed codeHash, address indexed creator, address signer, uint64 expiresAt, uint32 usesLeft)',
   'event GroupJoinCodeRevoked(uint256 indexed groupId, bytes32 indexed codeHash, address indexed revokedBy)',
   'event GroupJoinedWithCode(uint256 indexed groupId, address indexed account, bytes32 indexed codeHash, address creator)',
   'event GroupMessageSubmitted(uint256 indexed groupId, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender, uint256 valueSent, uint256 feeTaken)',
@@ -608,7 +613,10 @@ export const GROUP_TITLE_COMPACT_PREFIX = 'cg3:';
 export const GROUP_TITLE_ENCRYPTION_VERSION = 3;
 export const GROUP_TITLE_KEY_MATERIAL = 'chainwhisper-group-title-aes-v1';
 export const GROUP_JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const GROUP_JOIN_CODE_LENGTH = 4;
+export const GROUP_JOIN_CODE_LENGTH = 5;
+export const GROUP_JOIN_CODE_SIGNER_KEY_PREFIX = 'coti-group-join-key-v1:';
+export const GROUP_JOIN_CODE_PROOF_DOMAIN = 'COTI_GROUP_JOIN_CODE_PROOF_V1';
+export const GROUP_JOIN_CODE_SIGNATURE_WINDOW_SECONDS = 15 * 60;
 export const encodeBase64Url = (value: string): string =>
   btoa(value)
     .replace(/\+/g, '-')
