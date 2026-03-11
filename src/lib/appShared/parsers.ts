@@ -17,6 +17,7 @@ import {
   CONVERSATION_STATE_METADATA_PREFIXES,
   ConversationBlockRange,
   ConversationPreferenceState,
+  DEFAULT_REACTION_EMOJIS,
   EncryptedBurnerWalletRecord,
   EXTERNAL_REPLY_TXHASH_REGEX,
   formatCotiAmount,
@@ -1088,11 +1089,36 @@ export const normalizeReactionEmoji = (value: string): string | undefined => {
   }
 
   const symbols = Array.from(compact);
-  if (symbols.length > 8) {
+  if (symbols.length > 16) {
     return undefined;
   }
 
   return symbols.join('');
+};
+
+const bytesToBase64Url = (value: Uint8Array): string => {
+  return bytesToBase64(value)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+};
+
+const DEFAULT_REACTION_EMOJI_INDEX = new Map<string, number>(
+  DEFAULT_REACTION_EMOJIS.map((emoji, index) => [emoji, index] as const)
+);
+
+const base64UrlToBytes = (value: string): Uint8Array | undefined => {
+  if (!/^[A-Za-z0-9\-_]+$/.test(value)) {
+    return undefined;
+  }
+
+  try {
+    const paddingLength = (4 - (value.length % 4)) % 4;
+    const paddedBase64 = `${value.replace(/-/g, '+').replace(/_/g, '/')}${'='.repeat(paddingLength)}`;
+    return base64ToBytes(paddedBase64);
+  } catch {
+    return undefined;
+  }
 };
 
 export const encodeCompactReactionTargetTxHash = (targetTxHash: string): string | undefined => {
@@ -1111,35 +1137,21 @@ export const encodeCompactReactionTargetTxHash = (targetTxHash: string): string 
     bytes[index / 2] = nextByte;
   }
 
-  const base64 = bytesToBase64(bytes)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-  return `~${base64}`;
+  return `~${bytesToBase64Url(bytes)}`;
 };
 
 export const decodeCompactReactionTargetTxHash = (encodedChunk: string): string | undefined => {
   if (encodedChunk.startsWith('~')) {
-    try {
-      const base64Url = encodedChunk.slice(1);
-      if (!/^[A-Za-z0-9\-_]+$/.test(base64Url)) {
-        return undefined;
-      }
-      const paddingLength = (4 - (base64Url.length % 4)) % 4;
-      const paddedBase64 = `${base64Url.replace(/-/g, '+').replace(/_/g, '/')}${'='.repeat(paddingLength)}`;
-      const bytes = base64ToBytes(paddedBase64);
-      if (bytes.length !== 32) {
-        return undefined;
-      }
-
-      let hex = '';
-      for (const nextByte of bytes) {
-        hex += nextByte.toString(16).padStart(2, '0');
-      }
-      return `0x${hex}`;
-    } catch {
+    const bytes = base64UrlToBytes(encodedChunk.slice(1));
+    if (!bytes || bytes.length !== 32) {
       return undefined;
     }
+
+    let hex = '';
+    for (const nextByte of bytes) {
+      hex += nextByte.toString(16).padStart(2, '0');
+    }
+    return `0x${hex}`;
   }
 
   const symbols = Array.from(encodedChunk);
@@ -1157,6 +1169,41 @@ export const decodeCompactReactionTargetTxHash = (encodedChunk: string): string 
   }
 
   return `0x${hex}`;
+};
+
+export const encodeCompactReactionEmoji = (emoji: string): string | undefined => {
+  const normalizedEmoji = normalizeReactionEmoji(emoji);
+  if (!normalizedEmoji) {
+    return undefined;
+  }
+
+  const defaultEmojiIndex = DEFAULT_REACTION_EMOJI_INDEX.get(normalizedEmoji);
+  if (defaultEmojiIndex !== undefined) {
+    return `!${defaultEmojiIndex.toString(36)}`;
+  }
+
+  return bytesToBase64Url(TEXT_ENCODER.encode(normalizedEmoji));
+};
+
+export const decodeCompactReactionEmoji = (encodedChunk: string): string | undefined => {
+  if (encodedChunk.startsWith('!')) {
+    const defaultEmojiIndex = Number.parseInt(encodedChunk.slice(1), 36);
+    if (!Number.isFinite(defaultEmojiIndex) || defaultEmojiIndex < 0 || defaultEmojiIndex >= DEFAULT_REACTION_EMOJIS.length) {
+      return undefined;
+    }
+    return DEFAULT_REACTION_EMOJIS[defaultEmojiIndex];
+  }
+
+  const bytes = base64UrlToBytes(encodedChunk);
+  if (!bytes || bytes.length === 0) {
+    return undefined;
+  }
+
+  try {
+    return normalizeReactionEmoji(TEXT_DECODER.decode(bytes));
+  } catch {
+    return undefined;
+  }
 };
 
 export const encodeHiddenMetadata = (value: string): string => {
@@ -1197,11 +1244,16 @@ export const buildMessageWithReactionPayload = (targetTxHash: string, emoji: str
   const normalizedTxHash = targetTxHash.trim().toLowerCase();
   const normalizedEmoji = normalizeReactionEmoji(emoji);
   const encodedTargetTxHash = encodeCompactReactionTargetTxHash(normalizedTxHash);
+  const encodedEmoji = normalizedEmoji ? encodeCompactReactionEmoji(normalizedEmoji) : undefined;
   if (!encodedTargetTxHash || !normalizedEmoji) {
     return plainText;
   }
 
   const sanitizedFallbackText = plainText.split(REACTION_METADATA_PREFIX).join('').trim();
+  if (encodedEmoji) {
+    return `${REACTION_METADATA_PREFIX}${encodedTargetTxHash}.${encodedEmoji}${REACTION_METADATA_PREFIX}${sanitizedFallbackText}`;
+  }
+
   const visibleFallbackText = sanitizedFallbackText || normalizedEmoji;
   return `${REACTION_METADATA_PREFIX}${encodedTargetTxHash}${REACTION_METADATA_PREFIX}${visibleFallbackText}`;
 };
@@ -1218,6 +1270,21 @@ export const parseMessageReactionPayload = (text: string): { cleanText: string; 
 
   const metadataChunk = text.slice(REACTION_METADATA_PREFIX.length, metadataEnd);
   const remaining = text.slice(metadataEnd + REACTION_METADATA_PREFIX.length);
+  const compactMetadataSeparatorIndex = metadataChunk.indexOf('.');
+  if (compactMetadataSeparatorIndex > 0) {
+    const compactTargetTxHash = decodeCompactReactionTargetTxHash(metadataChunk.slice(0, compactMetadataSeparatorIndex));
+    const compactEmoji = decodeCompactReactionEmoji(metadataChunk.slice(compactMetadataSeparatorIndex + 1));
+    if (compactTargetTxHash && compactEmoji) {
+      return {
+        cleanText: remaining,
+        reaction: {
+          targetTxHash: compactTargetTxHash,
+          emoji: compactEmoji
+        }
+      };
+    }
+  }
+
   const compactTargetTxHash = decodeCompactReactionTargetTxHash(metadataChunk);
   if (compactTargetTxHash) {
     const remainingEmoji = normalizeReactionEmoji(remaining);
