@@ -18,7 +18,22 @@ export type Eip1193Provider = {
 export type InjectedEthereumProvider = Eip1193Provider & {
   isMetaMask?: boolean;
   isBraveWallet?: boolean;
+  isCoinbaseWallet?: boolean;
+  isRabby?: boolean;
+  isTrust?: boolean;
+  isTrustWallet?: boolean;
+  isFrame?: boolean;
+  isPhantom?: boolean;
+  isBackpack?: boolean;
+  isOKXWallet?: boolean;
+  isTally?: boolean;
   providers?: InjectedEthereumProvider[];
+};
+
+export type InjectedWalletOption = {
+  id: string;
+  label: string;
+  provider: InjectedEthereumProvider;
 };
 
 export type Contact = {
@@ -1147,29 +1162,137 @@ export const normalizeChainId = (chainId: string | number): number => {
   return chainId.startsWith('0x') ? parseInt(chainId, 16) : Number(chainId);
 };
 
-export const getMetaMaskProvider = (): InjectedEthereumProvider | null => {
+const getInjectedWalletProviderId = (provider: InjectedEthereumProvider): string => {
+  if (provider.isRabby) {
+    return 'rabby';
+  }
+  if (provider.isCoinbaseWallet) {
+    return 'coinbase-wallet';
+  }
+  if (provider.isTrust || provider.isTrustWallet) {
+    return 'trust-wallet';
+  }
+  if (provider.isFrame) {
+    return 'frame';
+  }
+  if (provider.isPhantom) {
+    return 'phantom';
+  }
+  if (provider.isBackpack) {
+    return 'backpack';
+  }
+  if (provider.isOKXWallet) {
+    return 'okx-wallet';
+  }
+  if (provider.isTally) {
+    return 'tally';
+  }
+  if (provider.isMetaMask && provider.isBraveWallet) {
+    return 'brave-wallet';
+  }
+  if (provider.isMetaMask) {
+    return 'metamask';
+  }
+  return 'browser-wallet';
+};
+
+export const getInjectedWalletLabel = (provider: InjectedEthereumProvider): string => {
+  if (provider.isRabby) {
+    return 'Rabby';
+  }
+  if (provider.isCoinbaseWallet) {
+    return 'Coinbase Wallet';
+  }
+  if (provider.isTrust || provider.isTrustWallet) {
+    return 'Trust Wallet';
+  }
+  if (provider.isFrame) {
+    return 'Frame';
+  }
+  if (provider.isPhantom) {
+    return 'Phantom';
+  }
+  if (provider.isBackpack) {
+    return 'Backpack';
+  }
+  if (provider.isOKXWallet) {
+    return 'OKX Wallet';
+  }
+  if (provider.isTally) {
+    return 'Taho';
+  }
+  if (provider.isMetaMask && provider.isBraveWallet) {
+    return 'Brave Wallet';
+  }
+  if (provider.isMetaMask) {
+    return 'MetaMask';
+  }
+  return 'Browser Wallet';
+};
+
+export const getInjectedWalletOptions = (): InjectedWalletOption[] => {
   if (typeof window === 'undefined') {
-    return null;
+    return [];
   }
 
   const injected = window.ethereum;
   if (!injected) {
-    return null;
+    return [];
   }
 
   const candidates =
     Array.isArray(injected.providers) && injected.providers.length > 0 ? injected.providers : [injected];
+  const uniqueProviders: InjectedEthereumProvider[] = [];
+  const seenProviders = new Set<InjectedEthereumProvider>();
 
-  const explicitMetaMask = candidates.find((candidate) => candidate.isMetaMask && !candidate.isBraveWallet);
-  if (explicitMetaMask) {
-    return explicitMetaMask;
+  for (const candidate of candidates) {
+    if (!candidate || seenProviders.has(candidate)) {
+      continue;
+    }
+    seenProviders.add(candidate);
+    uniqueProviders.push(candidate);
   }
 
-  if (injected.isMetaMask && !injected.isBraveWallet) {
-    return injected;
+  const optionCounts = new Map<string, number>();
+  return uniqueProviders.map((provider) => {
+    const baseId = getInjectedWalletProviderId(provider);
+    const duplicateCount = optionCounts.get(baseId) ?? 0;
+    optionCounts.set(baseId, duplicateCount + 1);
+    const label = getInjectedWalletLabel(provider);
+    const suffix = duplicateCount > 0 ? ` ${duplicateCount + 1}` : '';
+
+    return {
+      id: duplicateCount > 0 ? `${baseId}-${duplicateCount + 1}` : baseId,
+      label: `${label}${suffix}`,
+      provider
+    };
+  });
+};
+
+export const getDefaultInjectedWalletOption = (): InjectedWalletOption | null => {
+  const options = getInjectedWalletOptions();
+  if (options.length === 0) {
+    return null;
   }
 
-  return candidates.find((candidate) => candidate.isMetaMask) ?? (injected.isMetaMask ? injected : null);
+  return options.find((option) => option.provider.isMetaMask && !option.provider.isBraveWallet) ?? options[0];
+};
+
+export const getInjectedWalletProvider = (walletId: string): InjectedEthereumProvider | null => {
+  if (!walletId) {
+    return null;
+  }
+
+  return getInjectedWalletOptions().find((option) => option.id === walletId)?.provider ?? null;
+};
+
+export const getMetaMaskProvider = (): InjectedEthereumProvider | null => {
+  const walletOptions = getInjectedWalletOptions();
+  return (
+    walletOptions.find((option) => option.provider.isMetaMask && !option.provider.isBraveWallet)?.provider ??
+    walletOptions.find((option) => option.provider.isMetaMask)?.provider ??
+    null
+  );
 };
 
 export const getProviderErrorMessage = (error: unknown, fallbackMessage: string): string => {
@@ -1179,11 +1302,11 @@ export const getProviderErrorMessage = (error: unknown, fallbackMessage: string)
   const code = typeof codeCandidate === 'number' ? codeCandidate : null;
 
   if (code === -32002 || normalized.includes('already pending')) {
-    return 'A MetaMask request is already pending. Open MetaMask and approve or reject it first.';
+    return 'A wallet request is already pending. Open your wallet and approve or reject it first.';
   }
 
   if (code === 4001) {
-    return 'The MetaMask request was rejected.';
+    return 'The wallet request was rejected.';
   }
 
   return rawMessage || fallbackMessage;

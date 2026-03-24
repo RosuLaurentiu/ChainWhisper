@@ -73,11 +73,12 @@ import {
   formatTokenAmount,
   generateRandomGroupJoinCode,
   getCotiWsLastHealthyAt,
+  getDefaultInjectedWalletOption,
   getGroupActionErrorMessage,
   getGroupCreateErrorMessage,
   getGroupJoinErrorMessage,
+  getInjectedWalletOptions,
   getMessageDisplayText,
-  getMetaMaskProvider,
   getProviderErrorMessage,
   GROUP_ADMIN_BURN_ADDRESS,
   GROUP_CHAT_CONTRACT_ABI,
@@ -424,6 +425,9 @@ export default function App() {
   const [activeSignerSource, setActiveSignerSource] = useState<SignerSource>('burner');
   const [connectionMethod, setConnectionMethod] = useState<'metamask' | null>(null);
   const [connectingMethod, setConnectingMethod] = useState<'metamask' | null>(null);
+  const [connectingWalletLabel, setConnectingWalletLabel] = useState('');
+  const [selectedInjectedWalletId, setSelectedInjectedWalletId] = useState('');
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
   const [onboardStatus, setOnboardStatus] = useState<string>('Not onboarded');
   const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [messageInput, setMessageInput] = useState('');
@@ -629,6 +633,7 @@ export default function App() {
   const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
   const topHeaderRef = useRef<HTMLElement | null>(null);
   const activeProviderRef = useRef<Eip1193Provider | null>(null);
+  const walletPickerRef = useRef<HTMLDivElement | null>(null);
   const burnerWalletRef = useRef<Wallet | null>(null);
   const burnerRecordRef = useRef<BurnerWalletRecord | null>(null);
   const burnerPinRef = useRef<string>('');
@@ -921,6 +926,33 @@ export default function App() {
       setShowBackupTools(true);
     }
   }, [showBurnerMnemonic]);
+
+  useEffect(() => {
+    if (!walletPickerOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const targetNode = event.target;
+      if (targetNode instanceof Node && !walletPickerRef.current?.contains(targetNode)) {
+        setWalletPickerOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setWalletPickerOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [walletPickerOpen]);
 
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
   const onCotiNetwork = useMemo(() => chainId === COTI_NETWORK.chainIdDecimal, [chainId]);
@@ -1329,6 +1361,30 @@ export default function App() {
   const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
   const burnerWalletSelectionValue = activeBurnerWalletId || burnerRecordRef.current?.id || '';
   const hasSavedBurnerWallet = savedBurnerWalletCount > 0;
+  const injectedWalletOptions = getInjectedWalletOptions();
+  const preferredInjectedWalletOption =
+    injectedWalletOptions.find((option) => option.id === selectedInjectedWalletId) ??
+    injectedWalletOptions.find((option) => option.provider.isMetaMask && !option.provider.isBraveWallet) ??
+    injectedWalletOptions[0] ??
+    null;
+  const currentInjectedWalletOption =
+    (activeProvider ? injectedWalletOptions.find((option) => option.provider === activeProvider) ?? null : null) ??
+    injectedWalletOptions.find((option) => option.id === selectedInjectedWalletId) ??
+    null;
+  const hasConnectedWallet = walletAddress.length > 0;
+  const activeInjectedWalletLabel = currentInjectedWalletOption?.label ?? preferredInjectedWalletOption?.label ?? 'Wallet';
+  const shouldHighlightWalletPicker = !hasConnectedWallet && !hasSavedBurnerWallet;
+  const walletPrimaryButtonClass = shouldHighlightWalletPicker
+    ? 'connect-btn wallet-inline-btn wallet-primary-action'
+    : 'connect-btn wallet-inline-btn';
+  const walletPickerButtonLabel =
+    connectingMethod === 'metamask'
+      ? `Connecting ${connectingWalletLabel || preferredInjectedWalletOption?.label || 'Wallet'}...`
+      : !hasConnectedWallet || connectionMethod !== 'metamask'
+        ? 'Connect with Wallet'
+        : onboardStatus === 'AES key ready'
+          ? `${activeInjectedWalletLabel} + AES Ready`
+          : 'Sign AES Key';
   const findContactNameForWalletAddress = (address?: string): string | undefined => {
     if (!address) {
       return undefined;
@@ -2220,7 +2276,7 @@ export default function App() {
 
   const getConnectedProvider = (): Eip1193Provider | null => {
     if (connectionMethod === 'metamask') {
-      return activeProviderRef.current ?? activeProvider ?? getMetaMaskProvider();
+      return activeProviderRef.current ?? activeProvider ?? getDefaultInjectedWalletOption()?.provider ?? null;
     }
 
     return activeProviderRef.current ?? activeProvider ?? null;
@@ -2668,7 +2724,7 @@ export default function App() {
     await initializeBurnerWallet('stored', undefined, burnerPinRef.current, walletId);
   };
 
-  const topUpBurnerWithMetaMask = async () => {
+  const topUpBurnerWithWallet = async () => {
     setError('');
 
     const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
@@ -2678,14 +2734,18 @@ export default function App() {
       return;
     }
 
-    const provider = getMetaMaskProvider();
+    const walletOption = preferredInjectedWalletOption ?? getDefaultInjectedWalletOption();
+    const provider = walletOption?.provider ?? null;
     if (!provider) {
-      setError('MetaMask not detected. Please install MetaMask to top up burner wallet.');
+      setError('No browser wallet detected. Install a compatible wallet to top up the burner wallet.');
       return;
     }
 
     try {
       setStatus('Top up in progress...');
+      if (walletOption?.id) {
+        setSelectedInjectedWalletId(walletOption.id);
+      }
       await provider.request({ method: 'eth_requestAccounts' });
       await ensureCotiNetwork(provider);
 
@@ -3572,19 +3632,26 @@ export default function App() {
     return onboardInfo;
   };
 
-  const connectAndOnboard = async () => {
+  const connectAndOnboard = async (walletId?: string) => {
     setError('');
+    setWalletPickerOpen(false);
     setConnectingMethod('metamask');
 
-    const provider = getMetaMaskProvider();
+    const walletOption =
+      (walletId ? injectedWalletOptions.find((option) => option.id === walletId) ?? null : preferredInjectedWalletOption) ??
+      preferredInjectedWalletOption;
+    const provider = walletOption?.provider ?? null;
+    const walletLabel = walletOption?.label ?? 'Wallet';
+    setConnectingWalletLabel(walletLabel);
     if (!provider) {
-      setError('MetaMask not detected. Please install MetaMask.');
+      setError('No browser wallet detected. Install a compatible wallet to continue.');
       setConnectingMethod(null);
+      setConnectingWalletLabel('');
       return;
     }
 
     try {
-      setStatus('Connecting...');
+      setStatus(`Connecting ${walletLabel}...`);
       const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
       const selected = accounts[0] ?? '';
 
@@ -3592,6 +3659,9 @@ export default function App() {
         throw new Error('No wallet account selected.');
       }
 
+      if (walletOption?.id) {
+        setSelectedInjectedWalletId(walletOption.id);
+      }
       setConnectedProvider(provider);
       setConnectionMethod('metamask');
       setActiveSignerSource('metamask');
@@ -3600,7 +3670,7 @@ export default function App() {
       await onboardAddressAes(selected, provider);
       const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
       setChainId(normalizeChainId(currentChain));
-      setStatus('Connected (MetaMask)');
+      setStatus(`Connected (${walletLabel})`);
       const selectedWalletKey = selected.toLowerCase();
       window.setTimeout(() => {
         void (async () => {
@@ -3626,11 +3696,14 @@ export default function App() {
       setOnboardStatus('Not onboarded');
     } finally {
       setConnectingMethod(null);
+      setConnectingWalletLabel('');
     }
   };
 
   const disconnectWallet = async () => {
     setError('');
+    setWalletPickerOpen(false);
+    setConnectingWalletLabel('');
 
     burnerWalletRef.current = null;
     burnerRecordRef.current = null;
@@ -8408,10 +8481,10 @@ export default function App() {
       setError(`Saved locally, but alias sync failed: ${message}`);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
         const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
         );
         if (shouldTopUp) {
-          await topUpBurnerWithMetaMask();
+          await topUpBurnerWithWallet();
         }
       }
     }
@@ -8489,10 +8562,10 @@ export default function App() {
       setError(`Conversation state sync failed. No local change was applied: ${message}`);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
         const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
         );
         if (shouldTopUp) {
-          await topUpBurnerWithMetaMask();
+          await topUpBurnerWithWallet();
         }
       }
       return false;
@@ -8787,10 +8860,10 @@ export default function App() {
 
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
         const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
         );
         if (shouldTopUp) {
-          await topUpBurnerWithMetaMask();
+          await topUpBurnerWithWallet();
         }
       }
     } finally {
@@ -9013,10 +9086,10 @@ export default function App() {
 
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
         const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
         );
         if (shouldTopUp) {
-          await topUpBurnerWithMetaMask();
+          await topUpBurnerWithWallet();
         }
       }
     } finally {
@@ -9191,10 +9264,10 @@ export default function App() {
       setError(message);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
         const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
         );
         if (shouldTopUp) {
-          await topUpBurnerWithMetaMask();
+          await topUpBurnerWithWallet();
         }
       }
     } finally {
@@ -9559,10 +9632,10 @@ export default function App() {
       setError(transferSucceeded ? `Tip sent, but notification failed: ${message}` : message);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
         const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
         );
         if (shouldTopUp) {
-          await topUpBurnerWithMetaMask();
+          await topUpBurnerWithWallet();
         }
       }
     } finally {
@@ -11425,21 +11498,152 @@ export default function App() {
           </div>
 
           <div className="wallet-inline-action">
-            <span className="wallet-section-label wallet-section-label-inline">MetaMask</span>
-            <button
-              className="connect-btn wallet-inline-btn"
-              onClick={connectAndOnboard}
-              type="button"
-              disabled={connectingMethod !== null}
-            >
-              {connectingMethod === 'metamask'
-                ? 'Connecting MetaMask...'
-                : !isConnected || connectionMethod !== 'metamask'
-                ? 'Connect with MetaMask'
-                : onboardStatus === 'AES key ready'
-                  ? 'MetaMask + AES Ready'
-                  : 'Sign AES Key'}
-            </button>
+            <span className="wallet-section-label wallet-section-label-inline">Wallet</span>
+            <div className="wallet-inline-control" ref={walletPickerRef}>
+              <div className="wallet-split-control">
+                <button
+                  className={walletPrimaryButtonClass}
+                  onClick={() => {
+                    if (preferredInjectedWalletOption) {
+                      connectAndOnboard(preferredInjectedWalletOption.id).catch(() => {});
+                      return;
+                    }
+                    if (hasSavedBurnerWallet) {
+                      beginBurnerPinFlow('stored').catch(() => {});
+                      return;
+                    }
+                    setWalletPickerOpen((previous) => !previous);
+                  }}
+                  type="button"
+                  disabled={connectingMethod !== null}
+                >
+                  {walletPickerButtonLabel}
+                </button>
+                <button
+                  className="connect-btn wallet-split-toggle"
+                  onClick={() => {
+                    setWalletPickerOpen((previous) => !previous);
+                  }}
+                  type="button"
+                  aria-expanded={walletPickerOpen}
+                  aria-haspopup="menu"
+                  aria-label="Choose a different wallet"
+                  title="Choose a different wallet"
+                  disabled={connectingMethod !== null}
+                >
+                  v
+                </button>
+              </div>
+              {walletPickerOpen ? (
+                <div className="wallet-picker-menu" role="menu" aria-label="Wallet options">
+                  <div className="wallet-picker-section">
+                    <p className="wallet-picker-heading">Browser wallets</p>
+                    {injectedWalletOptions.length > 0 ? (
+                      injectedWalletOptions.map((option) => {
+                        const isCurrentWallet =
+                          activeSignerSource === 'metamask' &&
+                          connectionMethod === 'metamask' &&
+                          currentInjectedWalletOption?.id === option.id &&
+                          isConnected;
+                        return (
+                          <button
+                            key={option.id}
+                            className="connect-btn wallet-picker-option"
+                            onClick={() => {
+                              connectAndOnboard(option.id).catch(() => {});
+                            }}
+                            type="button"
+                            disabled={connectingMethod !== null}
+                            role="menuitem"
+                          >
+                            <span className="wallet-picker-option-label">{option.label}</span>
+                            <span className="wallet-picker-option-meta">{isCurrentWallet ? 'Current' : 'Detected'}</span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <p className="wallet-picker-empty">No browser wallet detected yet.</p>
+                    )}
+                  </div>
+                  <div className="wallet-picker-section">
+                    <p className="wallet-picker-heading">Chat wallets</p>
+                    {hasSavedBurnerWallet ? (
+                      <button
+                        className="connect-btn wallet-picker-option"
+                        onClick={() => {
+                          setWalletPickerOpen(false);
+                          beginBurnerPinFlow('stored').catch(() => {});
+                        }}
+                        type="button"
+                        disabled={initializingBurner || burnerStorageBlocked}
+                        role="menuitem"
+                      >
+                        <span className="wallet-picker-option-label">Unlock saved wallet</span>
+                        <span className="wallet-picker-option-meta">{savedBurnerWalletCount} saved</span>
+                      </button>
+                    ) : (
+                      <p className="wallet-picker-empty">No saved chat wallet yet.</p>
+                    )}
+                    {burnerWallets.map((walletRecord, index) => {
+                      const optionName = getBurnerWalletDisplayName(walletRecord);
+                      const optionAddress = walletRecord.address ? shortenAddress(walletRecord.address) : 'Unknown';
+                      const isCurrentWallet =
+                        activeSignerSource === 'burner' &&
+                        walletRecord.id &&
+                        burnerRecordRef.current?.id === walletRecord.id &&
+                        isConnected;
+                      return (
+                        <button
+                          key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`}
+                          className="connect-btn wallet-picker-option"
+                          onClick={() => {
+                            setWalletPickerOpen(false);
+                            switchActiveBurnerWallet(walletRecord.id ?? '').catch((switchError) => {
+                              const message =
+                                switchError instanceof Error ? switchError.message : 'Failed to switch burner wallet.';
+                              setError(message);
+                            });
+                          }}
+                          type="button"
+                          disabled={initializingBurner || !walletRecord.id}
+                          role="menuitem"
+                        >
+                          <span className="wallet-picker-option-label">{`${optionName} (${optionAddress})`}</span>
+                          <span className="wallet-picker-option-meta">{isCurrentWallet ? 'Current' : 'Saved'}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="wallet-picker-section">
+                    <p className="wallet-picker-heading">New wallet</p>
+                    <button
+                      className="connect-btn wallet-picker-option"
+                      onClick={() => {
+                        setWalletPickerOpen(false);
+                        beginBurnerPinFlow('generate').catch(() => {});
+                      }}
+                      type="button"
+                      disabled={initializingBurner || burnerStorageBlocked}
+                      role="menuitem"
+                    >
+                      <span className="wallet-picker-option-label">Generate wallet</span>
+                    </button>
+                    <button
+                      className="connect-btn wallet-picker-option"
+                      onClick={() => {
+                        setWalletPickerOpen(false);
+                        setShowBurnerImportModal(true);
+                      }}
+                      type="button"
+                      disabled={initializingBurner || burnerStorageBlocked}
+                      role="menuitem"
+                    >
+                      <span className="wallet-picker-option-label">Import wallet</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="wallet-inline-action">
@@ -11503,11 +11707,11 @@ export default function App() {
             </div>
             <button
               className="connect-btn"
-              onClick={topUpBurnerWithMetaMask}
+              onClick={topUpBurnerWithWallet}
               type="button"
               disabled={initializingBurner || !burnerAddress || topUpAmountWei === null || topUpAmountWei <= 0n}
             >
-              Top Up with MetaMask
+              Top Up with Wallet
             </button>
             <input
               className="topup-slider"
