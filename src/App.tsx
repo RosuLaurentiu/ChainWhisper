@@ -1,37 +1,32 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ChatImage from './components/ChatImage';
+import AppHeader from './components/AppHeader';
 import BurnerImportModal from './components/BurnerImportModal';
 import BurnerPinModal from './components/BurnerPinModal';
-import DirectChatCompose from './components/DirectChatCompose';
-import GroupChatCompose from './components/GroupChatCompose';
+import ContactsSidebar from './components/ContactsSidebar';
+import DirectChatPanel from './components/DirectChatPanel';
+import GroupChatPanel from './components/GroupChatPanel';
+import MobileBottomNav from './components/MobileBottomNav';
 import QuickActionsModal from './components/QuickActionsModal';
 import TradeComposerPanel, { type TradeComposerTokenOption } from './components/TradeComposerPanel';
-import TradeOfferCard from './components/TradeOfferCard';
-import { parseImageTag } from './lib/imagePull';
-import AppFavicon from './assets/favicon.png';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import WalletSidebar from './components/WalletSidebar';
+import { useBurnerWallet } from './hooks/useBurnerWallet';
+import { useStateBackupSync } from './hooks/useStateBackupSync';
+import { useWalletOnboarding } from './hooks/useWalletOnboarding';
+import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
   ActiveGroupJoinCode,
   applyConversationPreferenceStateToContact,
   AUTO_STATE_BACKUP_BLOCK_DISTANCE,
   AUTO_STATE_BACKUP_RETRY_BLOCKS,
   AUTO_SYNC_INTERVAL_MS,
-  BackupLocalStateOptions,
   buildMessageWithContactNamePayload,
   buildMessageWithConversationStatePayload,
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
   buildTradeOfferMessagePayload,
   buildTradeResponseMessagePayload,
-  buildStateBackupPayload,
-  buildStateBackupText,
-  BURNER_ONBOARD_TIMEOUT_MS,
   BURNER_PIN_MIN_LENGTH,
-  BurnerInitMode,
-  BurnerInitResult,
-  BurnerPinMode,
   BurnerWalletRecord,
-  BurnerWalletVault,
   calculateTopUpAmount,
   CHAT_CONTRACT_ABI,
   CHAT_CONTRACT_ADDRESS,
@@ -46,17 +41,13 @@ import {
   ConversationPreferenceState,
   COPY_FEEDBACK_DURATION_MS,
   COTI_NETWORK,
-  createBurnerWalletVault,
   createCotiBrowserProvider,
-  createStateBackupFingerprint,
   debugLog,
   decodeMemoPlaintext,
   encodeCompactMemoPlaintext,
   DEFAULT_GROUP_JOIN_CODE_MAX_USES,
   DEFAULT_GROUP_JOIN_CODE_MULTI_USES,
   DEFAULT_NICKNAME_MAX_BYTES,
-  DEFAULT_REACTION_EMOJIS,
-  Eip1193Provider,
   encodeGroupInviteCode,
   encodeMemoPlaintext,
   encodeStoredGroupTitle,
@@ -73,11 +64,9 @@ import {
   formatTokenAmount,
   generateRandomGroupJoinCode,
   getCotiWsLastHealthyAt,
-  getDefaultInjectedWalletOption,
   getGroupActionErrorMessage,
   getGroupCreateErrorMessage,
   getGroupJoinErrorMessage,
-  getInjectedWalletOptions,
   getMessageDisplayText,
   getProviderErrorMessage,
   GROUP_ADMIN_BURN_ADDRESS,
@@ -100,33 +89,24 @@ import {
   HistoryEntry,
   IMAGE_MESSAGE_PREFIX,
   INITIAL_SYNC_LOOKBACK_BLOCKS,
-  isBurnerStorageAvailable,
   isProviderActionRejected,
   isWalletAddress,
-  LEGACY_BURNER_PIN_MIN_LENGTH,
-  loadBurnerWalletVaultFromStorage,
   loadCotiEthersModule,
   loadCotiReadProvider,
   loadCotiWsProvider,
-  looksLikePrivateKeyInput,
   MAX_ERC20_APPROVAL,
   MAX_MESSAGE_LENGTH,
   mergeOnboardInfo,
   markCotiWsHealthyNow,
   mergeUniqueContacts,
   MobileView,
-  normalizeChainId,
   normalizeContactName,
   normalizeConversationPreferenceState,
-  normalizeImportInput,
   normalizeLastReadAllTs,
   normalizeMessagesByContact,
-  normalizeMnemonicInput,
-  normalizePrivateKeyInput,
   normalizeReactionEmoji,
   normalizeTokenDecimals,
   NICKNAME_DELIMITER,
-  parseBurnerWalletStorageState,
   parseChatMessagePayload,
   parseConversationBlockRange,
   parseGroupInviteCode,
@@ -140,14 +120,11 @@ import {
   parseSubmitMemoPayload,
   parseTokenAmountInput,
   parseWalletAddressListInput,
-  PendingBurnerInit,
   PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_ERC20_TOKEN_ABI,
   PRIVATE_TOKEN_BALANCE_ABI,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   PROFILE_METADATA_PREFIX,
-  READ_STATE_BACKUP_DEBOUNCE_MS,
-  READ_STATE_BACKUP_MIN_INTERVAL_MS,
   REACTION_METADATA_PREFIX,
   REPLY_DELIMITER,
   REPLY_METADATA_PREFIX,
@@ -159,14 +136,9 @@ import {
   REWARD_TOKEN_ADDRESS,
   LEGACY_CONVERSATION_STATE_METADATA_PREFIX,
   sanitizeTokenAmountInput,
-  saveEncryptedBurnerWalletVault,
-  SELF_BACKUP_RESTORE_BLOCK_WINDOW,
-  SensitiveAction,
   shortenAddress,
-  SignerSource,
   sortMessagesChronologically,
   StateBackupPayload,
-  SubmitMemoPayload,
   SWAP_VAULT_CONTRACT_ABI,
   SWAP_VAULT_CONTRACT_ADDRESS,
   SwapDirection,
@@ -184,8 +156,6 @@ import {
   TradeSnapshot,
   toSafeNumber,
   trimReplyPreview,
-  upsertBurnerWalletInVault,
-  withTimeout,
   WHISPER_REWARDS_ABI,
   WS_HEALTHCHECK_TTL_MS,
   WS_RETRY_COOLDOWN_MS,
@@ -387,8 +357,6 @@ const getOnChainFailureMessage = (error: unknown, fallbackMessage: string): stri
 
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
-    // Telegram bot link
-    const telegramBotLink = 'https://t.me/CipherTrade_bot';
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [conversationStateSyncPendingByContact, setConversationStateSyncPendingByContact] = useState<
     Record<string, boolean>
@@ -400,36 +368,10 @@ export default function App() {
   const [activeGroupId, setActiveGroupId] = useState<number | null>(null);
   const [editingContactAddress, setEditingContactAddress] = useState<string | null>(null);
   const [editingContactName, setEditingContactName] = useState('');
-  const [walletAddress, setWalletAddress] = useState<string>('');
-  const [chainId, setChainId] = useState<number | null>(null);
-  const [status, setStatus] = useState<string>('Disconnected');
-  const [burnerMnemonicBackup, setBurnerMnemonicBackup] = useState('');
-  const [showBurnerMnemonic, setShowBurnerMnemonic] = useState(false);
-  const [burnerImportInput, setBurnerImportInput] = useState('');
-  const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>([]);
-  const [savedBurnerWalletCount, setSavedBurnerWalletCount] = useState(0);
-  const [activeBurnerWalletId, setActiveBurnerWalletId] = useState('');
-  const [showBurnerImportModal, setShowBurnerImportModal] = useState(false);
-  const [burnerStorageBlocked, setBurnerStorageBlocked] = useState<boolean>(() => !isBurnerStorageAvailable());
-  const [showBurnerPinModal, setShowBurnerPinModal] = useState(false);
   const [showQuickActionsModal, setShowQuickActionsModal] = useState(false);
   const [quickActionTab, setQuickActionTab] = useState<'contact' | 'create-group' | 'join-group'>('contact');
-  const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
-  const [burnerPinInput, setBurnerPinInput] = useState('');
-  const [pendingBurnerInit, setPendingBurnerInit] = useState<PendingBurnerInit | null>(null);
-  const [pendingSensitiveAction, setPendingSensitiveAction] = useState<SensitiveAction | null>(null);
-  const [initializingBurner, setInitializingBurner] = useState(false);
-  const [burnerNeedsFunding, setBurnerNeedsFunding] = useState(false);
   const [myNickname, setMyNickname] = useState('');
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
-  const [activeSignerSource, setActiveSignerSource] = useState<SignerSource>('burner');
-  const [connectionMethod, setConnectionMethod] = useState<'metamask' | null>(null);
-  const [connectingMethod, setConnectingMethod] = useState<'metamask' | null>(null);
-  const [connectingWalletLabel, setConnectingWalletLabel] = useState('');
-  const [selectedInjectedWalletId, setSelectedInjectedWalletId] = useState('');
-  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
-  const [onboardStatus, setOnboardStatus] = useState<string>('Not onboarded');
-  const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [messageInput, setMessageInput] = useState('');
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const [messagesByGroup, setMessagesByGroup] = useState<Record<string, ChatMessage[]>>({});
@@ -560,7 +502,6 @@ export default function App() {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
   const [requiredFeeWei, setRequiredFeeWei] = useState<bigint | null>(null);
-  const [burnerBalanceWei, setBurnerBalanceWei] = useState<bigint | null>(null);
   const [tipNativeBalanceWei, setTipNativeBalanceWei] = useState<bigint | null>(null);
   const [groupRequiredFeeWei, setGroupRequiredFeeWei] = useState<bigint | null>(null);
   const [groupTokenFeeWei, setGroupTokenFeeWei] = useState<bigint | null>(null);
@@ -584,10 +525,8 @@ export default function App() {
   const [swapAmountInput, setSwapAmountInput] = useState('');
   const [swappingTokens, setSwappingTokens] = useState(false);
   const [swapStatusMessage, setSwapStatusMessage] = useState('');
-  const [topUpMultiplier, setTopUpMultiplier] = useState(0);
   const [loadingTopUpQuote, setLoadingTopUpQuote] = useState(false);
   const [loadingRewardBalances, setLoadingRewardBalances] = useState(false);
-  const [topUpMetricsNonce, setTopUpMetricsNonce] = useState(0);
   const [tipping, setTipping] = useState(false);
   const [tipComposerOpen, setTipComposerOpen] = useState(false);
   const [tipTokenSelection, setTipTokenSelection] = useState<TipTokenSelection>('coti');
@@ -619,8 +558,6 @@ export default function App() {
     typeof window !== 'undefined' ? window.innerWidth <= MOBILE_NAV_BREAKPOINT_PX : false
   );
   const [mobileGroupOptionsOpen, setMobileGroupOptionsOpen] = useState(false);
-  const [showTokenTools, setShowTokenTools] = useState(false);
-  const [showBackupTools, setShowBackupTools] = useState(false);
   useEffect(() => {
     setGroupInviteTtlInput((previous) => {
       const normalized = previous.trim();
@@ -630,13 +567,7 @@ export default function App() {
       return previous;
     });
   }, []);
-  const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
   const topHeaderRef = useRef<HTMLElement | null>(null);
-  const activeProviderRef = useRef<Eip1193Provider | null>(null);
-  const walletPickerRef = useRef<HTMLDivElement | null>(null);
-  const burnerWalletRef = useRef<Wallet | null>(null);
-  const burnerRecordRef = useRef<BurnerWalletRecord | null>(null);
-  const burnerPinRef = useRef<string>('');
   const nicknameEditorRef = useRef<HTMLDivElement | null>(null);
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const chatComposerRef = useRef<HTMLDivElement | null>(null);
@@ -648,99 +579,19 @@ export default function App() {
   const previousLastMessageIdForScrollRef = useRef<string | null>(null);
   const lastObservedScrollHeightRef = useRef<number>(0);
   const stickToBottomRef = useRef(true);
-  const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
   const sendingRef = useRef(false);
   const syncingHistoryRef = useRef(false);
   const pendingSyncOptionsRef = useRef<SyncConversationOptions | null>(null);
   const previousWalletAddressRef = useRef<string>('');
-  const currentWalletKeyRef = useRef<string>('');
   const postConnectDataSyncRunIdRef = useRef(0);
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
   const tradeRequiredFeeCacheRef = useRef<bigint | null>(null);
   const tradeRequiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const tradeTokenFeeCacheRef = useRef<bigint | null>(null);
   const tradeTokenFeeRequestRef = useRef<Promise<bigint> | null>(null);
-  const refreshBurnerStorageStatus = useCallback(() => {
-    setBurnerStorageBlocked(!isBurnerStorageAvailable());
-  }, []);
-
   useEffect(() => {
     lastReadAllTsRef.current = normalizeLastReadAllTs(lastReadAllTs);
   }, [lastReadAllTs]);
-
-  useEffect(() => {
-    refreshBurnerStorageStatus();
-    const onVisibilityOrFocus = () => {
-      refreshBurnerStorageStatus();
-    };
-    window.addEventListener('focus', onVisibilityOrFocus);
-    document.addEventListener('visibilitychange', onVisibilityOrFocus);
-    return () => {
-      window.removeEventListener('focus', onVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
-    };
-  }, [refreshBurnerStorageStatus]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const syncSavedBurnerWalletCount = async () => {
-      if (burnerStorageBlocked) {
-        if (!cancelled) {
-          setSavedBurnerWalletCount(0);
-        }
-        return;
-      }
-
-      const storageState = parseBurnerWalletStorageState();
-      if (storageState.kind === 'none') {
-        if (!cancelled) {
-          setSavedBurnerWalletCount(0);
-        }
-        return;
-      }
-
-      if (storageState.kind === 'legacy') {
-        if (!cancelled) {
-          setSavedBurnerWalletCount(1);
-        }
-        return;
-      }
-
-      if (storageState.kind === 'legacy-vault') {
-        if (!cancelled) {
-          setSavedBurnerWalletCount(storageState.record.wallets.length);
-        }
-        return;
-      }
-
-      const currentPin = burnerPinRef.current.trim();
-      if (currentPin.length >= LEGACY_BURNER_PIN_MIN_LENGTH) {
-        try {
-          const vault = await loadBurnerWalletVaultFromStorage(currentPin);
-          if (!cancelled) {
-            setSavedBurnerWalletCount(vault.wallets.length);
-          }
-          return;
-        } catch {
-        }
-      }
-
-      if (!cancelled) {
-        setSavedBurnerWalletCount(Math.max(burnerWallets.length, 1));
-      }
-    };
-
-    syncSavedBurnerWalletCount().catch(() => {
-      if (!cancelled) {
-        setSavedBurnerWalletCount(burnerWallets.length);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [burnerStorageBlocked, burnerWallets, walletAddress]);
 
   const prevUnreadRef = useRef<Record<string, boolean>>({});
   const prevUnreadGroupRef = useRef<Record<string, boolean>>({});
@@ -822,22 +673,6 @@ export default function App() {
   }, [unreadMap, unreadGroupMap, soundEnabled, notificationSuppressedContactAddressSet]);
 
   useEffect(() => {
-    const prev = previousWalletAddressRef.current || '';
-    const next = (walletAddress || '').trim();
-    const prevKey = prev.toLowerCase();
-    const nextKey = next.toLowerCase();
-    const didConnect = !prev && Boolean(next);
-    const didSwitchWallet = Boolean(prev) && Boolean(next) && prevKey !== nextKey;
-    if (didConnect || didSwitchWallet) {
-      beginConnectSoundSuppression();
-    }
-    if (prev && !next) {
-      endConnectSoundSuppression();
-    }
-    previousWalletAddressRef.current = next;
-  }, [walletAddress]);
-
-  useEffect(() => {
     return () => {
       endConnectSoundSuppression();
       if (copyFeedbackTimeoutRef.current !== null) {
@@ -862,15 +697,7 @@ export default function App() {
   const nicknameMaxBytesLoadedRef = useRef(false);
   const submitSelectorRef = useRef<string | null>(null);
   const groupSubmitSelectorRef = useRef<string | null>(null);
-  const backupInFlightRef = useRef(false);
   const onChainNicknameCacheRef = useRef<Record<string, string | null>>({});
-  const lastAppliedStateBackupTsRef = useRef<Record<string, number>>({});
-  const lastBackedUpStateFingerprintRef = useRef<Record<string, string>>({});
-  const cachedStateBackupMemoRef = useRef<Record<string, { fingerprint: string; memo: SubmitMemoPayload }>>({});
-  const lastStateBackupBlockRef = useRef<Record<string, number>>({});
-  const lastAutoBackupAttemptBlockRef = useRef<Record<string, number>>({});
-  const readStateBackupTimerRef = useRef<number | null>(null);
-  const lastReadStateBackupSubmittedAtRef = useRef(0);
   const syncConversationHistoryRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
   const syncGroupDataRef = useRef<(options?: SyncGroupOptions) => Promise<void>>(async () => {});
   const syncGroupDataInFlightRef = useRef(false);
@@ -885,9 +712,150 @@ export default function App() {
   const groupsRef = useRef<GroupSummary[]>([]);
   const groupInvitesRef = useRef<GroupInvite[]>([]);
   const activeGroupIdRef = useRef<number | null>(null);
+  const clearCachedStateBackupMemoRef = useRef<() => void>(() => {});
+  const getMemoSignerRef = useRef<() => Promise<{ signer: Wallet | JsonRpcSigner; cacheKey: string }>>(async () => {
+    throw new Error('Memo signer is not ready yet.');
+  });
+  const resolveConversationBlockRangeRef = useRef<
+    (contract: unknown, me: string, peer: string) => Promise<ConversationBlockRange | null>
+  >(async () => null);
+  const resolveSubmitSelectorRef = useRef<() => Promise<string>>(async () => {
+    throw new Error('Submit selector is not ready yet.');
+  });
+  const encodeMemoForActiveSignerRef = useRef<(plain: string) => string>((plain) => plain);
+  const clearCachedStateBackupMemo = useCallback(() => {
+    clearCachedStateBackupMemoRef.current();
+  }, []);
+  const loadMyNicknameFromChainRef = useRef<(address: string) => Promise<string>>(async () => '');
+  const runPostConnectDataSyncUntilAppliedRef = useRef<(address: string) => Promise<void>>(async () => {});
+  const resolveRequiredFeeForSendRef = useRef<() => Promise<bigint>>(async () => {
+    throw new Error('Fee quote is not ready yet.');
+  });
+  const resetBurnerSessionRef = useRef<() => void>(() => {});
+  const schedulePostUnlockRefresh = useCallback(() => {
+    window.setTimeout(() => {
+      try {
+        syncConversationHistoryRef.current({
+          contactsOnly: true,
+          previewPerContact: true,
+          updateHead: true,
+          background: true
+        }).catch(() => {});
+      } catch {}
+    }, 300);
+  }, []);
+  const {
+    activeSignerSource,
+    chainId,
+    connectAndOnboard,
+    connectingMethod,
+    connectingWalletLabel,
+    connectionMethod,
+    currentInjectedWalletOption,
+    currentWalletKeyRef,
+    disconnectWallet,
+    ensureCotiNetwork,
+    getConnectedProvider,
+    injectedWalletOptions,
+    onboardStatus,
+    preferredInjectedWalletOption,
+    sessionOnboardInfo,
+    setActiveSignerSource,
+    setChainId,
+    setConnectedProvider,
+    setConnectionMethod,
+    setOnboardStatus,
+    setSelectedInjectedWalletId,
+    setSessionOnboardInfo,
+    setStatus,
+    setWalletAddress,
+    signerCacheRef,
+    status,
+    walletAddress
+  } = useWalletOnboarding({
+    clearCachedStateBackupMemo,
+    loadMyNicknameFromChainRef,
+    resetBurnerSessionRef,
+    runPostConnectDataSyncUntilAppliedRef,
+    setError,
+    setMyNickname
+  });
+  const {
+    activeBurnerWalletId,
+    beginBurnerPinFlow,
+    beginRevealBurnerBackup,
+    burnerAddress,
+    burnerBalanceWei,
+    burnerImportInput,
+    burnerMnemonicBackup,
+    burnerNeedsFunding,
+    burnerPinInput,
+    burnerPinMode,
+    burnerRecordRef,
+    burnerStorageBlocked,
+    burnerWalletRef,
+    burnerWalletSelectionValue,
+    burnerWallets,
+    closeBurnerPinModal,
+    importBurnerWallet,
+    initializingBurner,
+    openChangeBurnerPin,
+    resetBurnerSession,
+    savedBurnerWalletCount,
+    setBurnerBalanceWei,
+    setBurnerImportInput,
+    setBurnerPinInput,
+    setShowBurnerImportModal,
+    setTopUpMetricsNonce,
+    setTopUpMultiplier,
+    showBurnerImportModal,
+    showBurnerMnemonic,
+    showBurnerPinModal,
+    submitBurnerPinAndInitialize,
+    switchActiveBurnerWallet,
+    topUpBurnerWithWallet,
+    topUpMetricsNonce,
+    topUpMultiplier
+  } = useBurnerWallet({
+    activeSignerSource,
+    currentWalletKeyRef,
+    ensureCotiNetwork,
+    loadMyNicknameFromChainRef,
+    preferredInjectedWalletOption,
+    resolveRequiredFeeForSendRef,
+    runPostConnectDataSyncUntilAppliedRef,
+    schedulePostUnlockRefresh,
+    sessionOnboardInfo,
+    setActiveSignerSource,
+    setChainId,
+    setConnectedProvider,
+    setConnectionMethod,
+    setError,
+    setMyNickname,
+    setOnboardStatus,
+    setSelectedInjectedWalletId,
+    setSessionOnboardInfo,
+    setStatus,
+    setWalletAddress,
+    topUpAmountWei,
+    walletAddress
+  });
+  resetBurnerSessionRef.current = resetBurnerSession;
 
   useEffect(() => {
-    currentWalletKeyRef.current = walletAddress.trim().toLowerCase();
+    const prev = previousWalletAddressRef.current || '';
+    const next = (walletAddress || '').trim();
+    const prevKey = prev.toLowerCase();
+    const nextKey = next.toLowerCase();
+    const didConnect = !prev && Boolean(next);
+    const didSwitchWallet = Boolean(prev) && Boolean(next) && prevKey !== nextKey;
+    if (didConnect || didSwitchWallet) {
+      beginConnectSoundSuppression();
+    }
+    if (prev && !next) {
+      endConnectSoundSuppression();
+    }
+    previousWalletAddressRef.current = next;
   }, [walletAddress]);
 
   useEffect(() => {
@@ -914,45 +882,6 @@ export default function App() {
     setMobileGroupOptionsOpen(false);
     setGroupInviteMenuView('invite');
   }, [activeGroupId, walletAddress, isMobileNav]);
-
-  useEffect(() => {
-    if (swapStatusMessage) {
-      setShowTokenTools(true);
-    }
-  }, [swapStatusMessage]);
-
-  useEffect(() => {
-    if (showBurnerMnemonic) {
-      setShowBackupTools(true);
-    }
-  }, [showBurnerMnemonic]);
-
-  useEffect(() => {
-    if (!walletPickerOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const targetNode = event.target;
-      if (targetNode instanceof Node && !walletPickerRef.current?.contains(targetNode)) {
-        setWalletPickerOpen(false);
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setWalletPickerOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [walletPickerOpen]);
 
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
   const onCotiNetwork = useMemo(() => chainId === COTI_NETWORK.chainIdDecimal, [chainId]);
@@ -1358,55 +1287,7 @@ export default function App() {
       setGroupInviteMenuView('invite');
     }
   }, [canManageActiveGroupJoinCodes, groupInviteMenuView]);
-  const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
-  const burnerWalletSelectionValue = activeBurnerWalletId || burnerRecordRef.current?.id || '';
   const hasSavedBurnerWallet = savedBurnerWalletCount > 0;
-  const injectedWalletOptions = getInjectedWalletOptions();
-  const preferredInjectedWalletOption =
-    injectedWalletOptions.find((option) => option.id === selectedInjectedWalletId) ??
-    injectedWalletOptions.find((option) => option.provider.isMetaMask && !option.provider.isBraveWallet) ??
-    injectedWalletOptions[0] ??
-    null;
-  const currentInjectedWalletOption =
-    (activeProvider ? injectedWalletOptions.find((option) => option.provider === activeProvider) ?? null : null) ??
-    injectedWalletOptions.find((option) => option.id === selectedInjectedWalletId) ??
-    null;
-  const hasConnectedWallet = walletAddress.length > 0;
-  const activeInjectedWalletLabel = currentInjectedWalletOption?.label ?? preferredInjectedWalletOption?.label ?? 'Wallet';
-  const shouldHighlightWalletPicker = !hasConnectedWallet && !hasSavedBurnerWallet;
-  const walletPrimaryButtonClass = shouldHighlightWalletPicker
-    ? 'connect-btn wallet-inline-btn wallet-primary-action'
-    : 'connect-btn wallet-inline-btn';
-  const shouldOpenWalletPickerFromPrimary =
-    hasConnectedWallet ||
-    injectedWalletOptions.length > 1 ||
-    savedBurnerWalletCount > 1 ||
-    (Boolean(preferredInjectedWalletOption) && hasSavedBurnerWallet);
-  const walletPrimaryOpensPicker =
-    shouldOpenWalletPickerFromPrimary || (!preferredInjectedWalletOption && !hasSavedBurnerWallet);
-  const walletPickerButtonLabel =
-    connectingMethod === 'metamask'
-      ? `Connecting ${connectingWalletLabel || preferredInjectedWalletOption?.label || 'Wallet'}...`
-      : !hasConnectedWallet || connectionMethod !== 'metamask'
-        ? 'Connect with Wallet'
-        : onboardStatus === 'AES key ready'
-          ? `${activeInjectedWalletLabel} + AES Ready`
-          : 'Sign AES Key';
-  const handleWalletPrimaryAction = () => {
-    if (walletPrimaryOpensPicker) {
-      setWalletPickerOpen((previous) => !previous);
-      return;
-    }
-
-    if (preferredInjectedWalletOption) {
-      connectAndOnboard(preferredInjectedWalletOption.id).catch(() => {});
-      return;
-    }
-
-    if (hasSavedBurnerWallet) {
-      beginBurnerPinFlow('stored').catch(() => {});
-    }
-  };
   const findContactNameForWalletAddress = (address?: string): string | undefined => {
     if (!address) {
       return undefined;
@@ -1903,7 +1784,7 @@ export default function App() {
         : tradeCustomOfferTokenInfo?.error
           ? tradeCustomOfferTokenInfo.error
           : tradeCustomOfferTokenInfo
-            ? `${tradeCustomOfferTokenInfo.symbol} • ${tradeCustomOfferTokenInfo.decimals} decimals`
+            ? `${tradeCustomOfferTokenInfo.symbol} \u2022 ${tradeCustomOfferTokenInfo.decimals} decimals`
             : 'Loading token metadata...';
   const tradeRequestCustomMetaLabel = !normalizedTradeRequestCustomTokenAddress
     ? 'Paste a token contract address.'
@@ -1914,7 +1795,7 @@ export default function App() {
         : tradeCustomRequestTokenInfo?.error
           ? tradeCustomRequestTokenInfo.error
           : tradeCustomRequestTokenInfo
-            ? `${tradeCustomRequestTokenInfo.symbol} • ${tradeCustomRequestTokenInfo.decimals} decimals`
+            ? `${tradeCustomRequestTokenInfo.symbol} \u2022 ${tradeCustomRequestTokenInfo.decimals} decimals`
             : 'Loading token metadata...';
   const activeTradeOffers = useMemo(
     () =>
@@ -2290,522 +2171,6 @@ export default function App() {
       setError((previous) => (previous === message ? '' : previous));
     }, GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS);
   }, []);
-
-  const setConnectedProvider = (provider: Eip1193Provider | null) => {
-    activeProviderRef.current = provider;
-    setActiveProvider(provider);
-  };
-
-  const getConnectedProvider = (): Eip1193Provider | null => {
-    if (connectionMethod === 'metamask') {
-      return activeProviderRef.current ?? activeProvider ?? getDefaultInjectedWalletOption()?.provider ?? null;
-    }
-
-    return activeProviderRef.current ?? activeProvider ?? null;
-  };
-
-  const createCotiRpcProvider = async () => {
-    const cotiEthers = await loadCotiEthersModule();
-    return new cotiEthers.JsonRpcProvider(COTI_NETWORK.rpcUrl, {
-      name: COTI_NETWORK.chainName,
-      chainId: COTI_NETWORK.chainIdDecimal
-    });
-  };
-
-  const buildBurnerRecord = async (
-    mode: BurnerInitMode,
-    seedOrPrivateKey?: string,
-    pin?: string,
-    preferredWalletId?: string
-  ): Promise<{ record: BurnerWalletRecord; vault?: BurnerWalletVault }> => {
-    const normalizedSeed = normalizeImportInput(seedOrPrivateKey ?? '');
-    const cotiEthers = await loadCotiEthersModule();
-
-    if (mode === 'import') {
-      if (normalizedSeed.length === 0) {
-        throw new Error('Enter a mnemonic phrase or private key.');
-      }
-
-      const normalizedPrivateKey = normalizePrivateKeyInput(normalizedSeed);
-      if (normalizedPrivateKey) {
-        return { record: { privateKey: normalizedPrivateKey } };
-      }
-
-      if (looksLikePrivateKeyInput(normalizedSeed)) {
-        throw new Error('Invalid private key. Use exactly 64 hex characters (optionally prefixed with 0x).');
-      }
-
-      const normalizedMnemonic = normalizeMnemonicInput(normalizedSeed);
-      let importedWallet: { privateKey: string };
-      try {
-        importedWallet = cotiEthers.Wallet.fromPhrase(normalizedMnemonic);
-      } catch {
-        throw new Error('Invalid mnemonic phrase.');
-      }
-      return {
-        record: {
-          privateKey: importedWallet.privateKey,
-          mnemonic: normalizedMnemonic
-        }
-      };
-    }
-
-    if (mode === 'stored') {
-      const vault = await loadBurnerWalletVaultFromStorage(pin?.trim() ?? '');
-      const selectedWallet =
-        vault.wallets.find((walletRecord) => walletRecord.id === preferredWalletId) ??
-        vault.wallets.find((walletRecord) => walletRecord.id === vault.activeWalletId) ??
-        vault.wallets[0];
-
-      if (!selectedWallet) {
-        throw new Error('No saved burner wallet found. Generate or import one first.');
-      }
-
-      return {
-        record: selectedWallet,
-        vault: {
-          ...vault,
-          activeWalletId: selectedWallet.id as string
-        }
-      };
-    }
-
-    const createdWallet = cotiEthers.Wallet.createRandom();
-    return {
-      record: {
-        privateKey: createdWallet.privateKey,
-        mnemonic: createdWallet.mnemonic?.phrase
-      }
-    };
-  };
-
-  const initializeBurnerWallet = async (
-    mode: BurnerInitMode,
-    seedOrPrivateKey?: string,
-    pin?: string,
-    preferredWalletId?: string
-  ): Promise<BurnerInitResult> => {
-    setError('');
-    setInitializingBurner(true);
-    setBurnerNeedsFunding(false);
-    let aesOnboardingComplete = false;
-    let walletPersisted = false;
-
-    try {
-      const storageState = parseBurnerWalletStorageState();
-      const sessionPin = pin?.trim() ?? burnerPinRef.current;
-
-      const buildResult = await buildBurnerRecord(mode, seedOrPrivateKey, sessionPin, preferredWalletId);
-      let burnerRecord = buildResult.record;
-      let burnerVault: BurnerWalletVault;
-
-      if (mode === 'stored') {
-        if (!buildResult.vault) {
-          throw new Error('No saved burner wallet found. Generate or import one first.');
-        }
-        burnerVault = buildResult.vault;
-      } else if (storageState.kind === 'none') {
-        burnerVault = await createBurnerWalletVault([burnerRecord]);
-      } else {
-        const existingVault = await loadBurnerWalletVaultFromStorage(sessionPin);
-        burnerVault = await upsertBurnerWalletInVault(existingVault, burnerRecord);
-      }
-
-      if (sessionPin.length < BURNER_PIN_MIN_LENGTH) {
-        throw new Error(`PIN must be at least ${BURNER_PIN_MIN_LENGTH} digits.`);
-      }
-
-      await saveEncryptedBurnerWalletVault(burnerVault, sessionPin);
-      walletPersisted = true;
-      if (mode === 'import') {
-        const normalizedImportedPrivateKey = buildResult.record.privateKey.trim().toLowerCase();
-        const persistedVault = await loadBurnerWalletVaultFromStorage(sessionPin);
-        const importedWalletPersisted = persistedVault.wallets.some(
-          (walletRecord) => walletRecord.privateKey.trim().toLowerCase() === normalizedImportedPrivateKey
-        );
-        if (!importedWalletPersisted) {
-          throw new Error('Imported wallet was not found in persistent storage after saving.');
-        }
-      }
-
-      const activeWalletRecord =
-        burnerVault.wallets.find((walletRecord) => walletRecord.id === burnerVault.activeWalletId) ??
-        burnerVault.wallets[0];
-      if (!activeWalletRecord) {
-        throw new Error('No valid burner wallet was found after unlock.');
-      }
-
-      burnerRecord = activeWalletRecord;
-      setBurnerWallets(burnerVault.wallets);
-      setActiveBurnerWalletId(burnerVault.activeWalletId);
-
-      if (sessionPin.length >= BURNER_PIN_MIN_LENGTH) {
-        burnerPinRef.current = sessionPin;
-      }
-
-      const cotiEthers = await loadCotiEthersModule();
-      const rpcProvider = await createCotiRpcProvider();
-      const burnerWallet = new cotiEthers.Wallet(burnerRecord.privateKey, rpcProvider);
-
-      burnerWalletRef.current = burnerWallet;
-      burnerRecordRef.current = {
-        ...burnerRecord,
-        address: burnerWallet.address
-      };
-      setWalletAddress(burnerWallet.address);
-      setChainId(COTI_NETWORK.chainIdDecimal);
-      setStatus('Connecting burner wallet...');
-      setActiveSignerSource('burner');
-      setConnectionMethod(null);
-      setConnectedProvider(null);
-      setBurnerImportInput('');
-
-      if (burnerRecord.mnemonic) {
-        setBurnerMnemonicBackup(burnerRecord.mnemonic);
-        setShowBurnerMnemonic(false);
-      } else {
-        setBurnerMnemonicBackup('');
-        setShowBurnerMnemonic(false);
-      }
-
-      const burnerBalance = (await withTimeout(
-        rpcProvider.getBalance(burnerWallet.address) as Promise<bigint>,
-        BURNER_ONBOARD_TIMEOUT_MS,
-        'Timed out while reading burner wallet balance.'
-      )) as bigint;
-      if (burnerBalance <= 0n) {
-        setBurnerNeedsFunding(true);
-        setStatus('Burner wallet created. Fund it, then connect burner wallet.');
-        setOnboardStatus('Funding required');
-        setShowBurnerPinModal(false);
-        setPendingBurnerInit(null);
-        setPendingSensitiveAction(null);
-        setBurnerPinInput('');
-        return 'needs-funding';
-      }
-
-      const cacheKey = burnerWallet.address.toLowerCase();
-      const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
-      if (cachedOnboardInfo) {
-        burnerWallet.setUserOnboardInfo(cachedOnboardInfo);
-      }
-
-      setOnboardStatus('Onboarding...');
-      await withTimeout(
-        burnerWallet.generateOrRecoverAes(),
-        BURNER_ONBOARD_TIMEOUT_MS,
-        'Timed out while preparing burner wallet encryption keys. Try again.'
-      );
-      const onboardInfo = burnerWallet.getUserOnboardInfo();
-
-      if (!onboardInfo?.aesKey) {
-        throw new Error('AES key unavailable for burner wallet.');
-      }
-
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
-      }));
-      aesOnboardingComplete = true;
-      setOnboardStatus('AES key ready');
-      setStatus('Connected');
-      setShowBurnerPinModal(false);
-      setPendingBurnerInit(null);
-      setPendingSensitiveAction(null);
-      setBurnerPinInput('');
-      const connectedAddress = burnerWallet.address;
-      const connectedWalletKey = connectedAddress.toLowerCase();
-      window.setTimeout(() => {
-        void (async () => {
-          try {
-            const nickname = await loadMyNicknameFromChain(connectedAddress);
-            if (currentWalletKeyRef.current !== connectedWalletKey) {
-              return;
-            }
-            setMyNickname(nickname);
-          } catch {
-            // Post-onboarding sync failures should not block a successful burner unlock.
-          } finally {
-            if (currentWalletKeyRef.current === connectedWalletKey) {
-              runPostConnectDataSyncUntilApplied(connectedAddress).catch(() => {});
-            }
-          }
-        })();
-      }, 0);
-      return 'connected';
-    } catch (burnerError) {
-      if (aesOnboardingComplete) {
-        setOnboardStatus('AES key ready');
-        setStatus('Connected');
-        setShowBurnerPinModal(false);
-        setPendingBurnerInit(null);
-        setPendingSensitiveAction(null);
-        setBurnerPinInput('');
-        return 'connected';
-      }
-
-      const message = burnerError instanceof Error ? burnerError.message : 'Failed to initialize burner wallet.';
-      if (message.includes('Account balance is 0 so user cannot be onboarded')) {
-        setBurnerNeedsFunding(true);
-        setStatus('Burner needs funding');
-        return 'needs-funding';
-      }
-      if (mode === 'import' && walletPersisted) {
-        setStatus('Wallet imported. Connect saved wallet to finish setup.');
-        setError(message);
-        setOnboardStatus('Not onboarded');
-        return 'imported';
-      }
-      setStatus('Disconnected');
-      setError(message);
-      setOnboardStatus('Not onboarded');
-      return 'failed';
-    } finally {
-      setInitializingBurner(false);
-    }
-  };
-
-  const closeBurnerPinModal = () => {
-    if (initializingBurner) {
-      return;
-    }
-
-    setShowBurnerPinModal(false);
-    setPendingBurnerInit(null);
-    setPendingSensitiveAction(null);
-    setBurnerPinInput('');
-  };
-
-  const beginRevealBurnerBackup = () => {
-    if (!burnerMnemonicBackup) {
-      return;
-    }
-
-    if (showBurnerMnemonic) {
-      setShowBurnerMnemonic(false);
-      return;
-    }
-
-    setError('');
-    setPendingBurnerInit(null);
-    setPendingSensitiveAction('reveal-backup');
-    setBurnerPinMode('unlock');
-    setBurnerPinInput('');
-    setShowBurnerPinModal(true);
-  };
-
-  const beginBurnerPinFlow = async (mode: BurnerInitMode, seedOrPrivateKey?: string) => {
-    setError('');
-    refreshBurnerStorageStatus();
-    if (!isBurnerStorageAvailable()) {
-      setError('Browser storage is unavailable. Wallet persistence requires local storage access.');
-      return;
-    }
-
-    const storageState = parseBurnerWalletStorageState();
-    if (mode === 'stored' && storageState.kind === 'none') {
-      setError('No saved burner wallet found. Generate or import one first.');
-      return;
-    }
-
-    if (mode === 'stored' && storageState.kind === 'encrypted' && burnerPinRef.current) {
-      await initializeBurnerWallet('stored', undefined, burnerPinRef.current, activeBurnerWalletId || undefined);
-      return;
-    }
-
-    const nextPinMode: BurnerPinMode = storageState.kind === 'encrypted' ? 'unlock' : 'set';
-
-    setPendingBurnerInit({ mode, seedOrPrivateKey, walletId: activeBurnerWalletId || undefined });
-    setBurnerPinMode(nextPinMode);
-    setBurnerPinInput('');
-    setShowBurnerPinModal(true);
-  };
-
-  const submitBurnerPinAndInitialize = async () => {
-    setError('');
-
-    const pending = pendingBurnerInit;
-    if (!pending) {
-      if (pendingSensitiveAction === 'reveal-backup') {
-        const pinForReveal = burnerPinInput.trim();
-        if (pinForReveal.length < LEGACY_BURNER_PIN_MIN_LENGTH) {
-          setError(`PIN must be at least ${LEGACY_BURNER_PIN_MIN_LENGTH} digits.`);
-          return;
-        }
-
-        try {
-          await loadBurnerWalletVaultFromStorage(pinForReveal);
-          burnerPinRef.current = pinForReveal;
-          setShowBurnerMnemonic(true);
-          setShowBurnerPinModal(false);
-          setPendingSensitiveAction(null);
-          setBurnerPinInput('');
-        } catch {
-          setError('Invalid PIN. Unable to reveal burner backup.');
-        }
-        return;
-      }
-
-      if (burnerPinMode !== 'set') {
-        return;
-      }
-
-      const pinForUpdate = burnerPinInput.trim();
-      if (pinForUpdate.length < BURNER_PIN_MIN_LENGTH) {
-        setError(`PIN must be at least ${BURNER_PIN_MIN_LENGTH} digits.`);
-        return;
-      }
-
-      if (!burnerRecordRef.current || burnerWallets.length === 0) {
-        setError('Connect burner wallet first, then change PIN.');
-        return;
-      }
-
-      const vaultForPinUpdate = await createBurnerWalletVault(
-        burnerWallets,
-        activeBurnerWalletId || burnerRecordRef.current.id || burnerWallets[0]?.id
-      );
-      await saveEncryptedBurnerWalletVault(vaultForPinUpdate, pinForUpdate);
-      burnerPinRef.current = pinForUpdate;
-      setShowBurnerPinModal(false);
-      setBurnerPinInput('');
-      setStatus('Burner PIN updated.');
-      return;
-    }
-
-    const pin = burnerPinInput.trim();
-    const minimumPinLength = burnerPinMode === 'unlock' ? LEGACY_BURNER_PIN_MIN_LENGTH : BURNER_PIN_MIN_LENGTH;
-    if (pin.length < minimumPinLength) {
-      setError(`PIN must be at least ${minimumPinLength} digits.`);
-      return;
-    }
-
-    const initResult = await initializeBurnerWallet(pending.mode, pending.seedOrPrivateKey, pin, pending.walletId);
-    if (initResult === 'connected' || initResult === 'needs-funding' || initResult === 'imported') {
-      setShowBurnerPinModal(false);
-      setPendingBurnerInit(null);
-      setPendingSensitiveAction(null);
-      setBurnerPinInput('');
-
-      if (pending.mode === 'import') {
-        setShowBurnerImportModal(false);
-      }
-
-      // Ensure UI updates (contacts/nicknames) after import/connect by
-      // performing a delayed lightweight refresh after wallet state settles.
-      setTimeout(() => {
-        try {
-          syncConversationHistoryRef.current({
-            contactsOnly: true,
-            previewPerContact: true,
-            updateHead: true,
-            background: true
-          }).catch(() => {});
-        } catch {}
-      }, 300);
-
-      if (initResult === 'connected' && burnerPinMode === 'unlock' && pin.length < BURNER_PIN_MIN_LENGTH) {
-        setStatus(`Connected. PIN is legacy; update it to ${BURNER_PIN_MIN_LENGTH}+ digits from Change PIN.`);
-      }
-    }
-  };
-
-  const openChangeBurnerPin = () => {
-    if (!burnerRecordRef.current) {
-      setError('Connect burner wallet first, then change PIN.');
-      return;
-    }
-
-    setError('');
-    setPendingBurnerInit(null);
-    setBurnerPinMode('set');
-    setBurnerPinInput('');
-    setShowBurnerPinModal(true);
-  };
-
-  const importBurnerWallet = async () => {
-    await beginBurnerPinFlow('import', burnerImportInput);
-  };
-
-  const switchActiveBurnerWallet = async (walletId: string) => {
-    setError('');
-    setActiveBurnerWalletId(walletId);
-
-    if (!walletId) {
-      return;
-    }
-
-    if (!burnerPinRef.current) {
-      setPendingBurnerInit({ mode: 'stored', walletId });
-      setBurnerPinMode('unlock');
-      setBurnerPinInput('');
-      setShowBurnerPinModal(true);
-      return;
-    }
-
-    await initializeBurnerWallet('stored', undefined, burnerPinRef.current, walletId);
-  };
-
-  const topUpBurnerWithWallet = async () => {
-    setError('');
-
-    const burnerAddress = burnerWalletRef.current?.address ?? (activeSignerSource === 'burner' ? walletAddress : '');
-
-    if (!burnerAddress || !isWalletAddress(burnerAddress)) {
-      setError('Initialize burner wallet first.');
-      return;
-    }
-
-    const walletOption = preferredInjectedWalletOption ?? getDefaultInjectedWalletOption();
-    const provider = walletOption?.provider ?? null;
-    if (!provider) {
-      setError('No browser wallet detected. Install a compatible wallet to top up the burner wallet.');
-      return;
-    }
-
-    try {
-      setStatus('Top up in progress...');
-      if (walletOption?.id) {
-        setSelectedInjectedWalletId(walletOption.id);
-      }
-      await provider.request({ method: 'eth_requestAccounts' });
-      await ensureCotiNetwork(provider);
-
-      const browserProvider = await createCotiBrowserProvider(provider);
-      const funderSigner = await browserProvider.getSigner();
-      let topUpAmount = topUpAmountWei;
-      if (topUpAmount === null) {
-        const requiredFee = await resolveRequiredFeeForSend();
-        topUpAmount = calculateTopUpAmount(requiredFee, topUpMultiplier);
-      }
-
-      if (topUpAmount === null) {
-        throw new Error('Unable to calculate top-up amount.');
-      }
-      if (topUpAmount <= 0n) {
-        throw new Error('Choose a top-up amount greater than zero.');
-      }
-
-      const tx = await funderSigner.sendTransaction({
-        to: burnerAddress,
-        value: topUpAmount
-      });
-      await tx.wait();
-
-      setBurnerBalanceWei((previous) => (previous !== null ? previous + topUpAmount : previous));
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      if (burnerPinRef.current) {
-        await initializeBurnerWallet('stored', undefined, burnerPinRef.current);
-      } else {
-        setStatus('Burner topped up. Unlock burner wallet to continue.');
-      }
-    } catch (fundError) {
-      const message = getProviderErrorMessage(fundError, 'Failed to top up burner wallet.');
-      setError(message);
-      setStatus('Burner needs funding');
-    }
-  };
 
   const swapRewardTokens = async () => {
     setError('');
@@ -3565,199 +2930,6 @@ export default function App() {
     }
   }, [isMobileNav, markConversationAsRead]);
 
-  const ensureCotiNetwork = async (provider: Eip1193Provider) => {
-    if (!provider) {
-      throw new Error('Wallet provider is not available.');
-    }
-
-    try {
-      await provider.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: COTI_NETWORK.chainIdHex }]
-      });
-    } catch (switchError) {
-      const errorWithCode = switchError as { code?: number; message?: string };
-
-      if (errorWithCode.code === 4902) {
-        await provider.request({
-          method: 'wallet_addEthereumChain',
-          params: [
-            {
-              chainId: COTI_NETWORK.chainIdHex,
-              chainName: COTI_NETWORK.chainName,
-              rpcUrls: [COTI_NETWORK.rpcUrl],
-              blockExplorerUrls: [COTI_NETWORK.blockExplorerUrl],
-              nativeCurrency: COTI_NETWORK.nativeCurrency
-            }
-          ]
-        });
-        await provider.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: COTI_NETWORK.chainIdHex }]
-        });
-      } else {
-        throw new Error(errorWithCode.message ?? 'Could not switch to the COTI network.');
-      }
-    }
-  };
-
-  const refreshWalletState = async (providerOverride?: Eip1193Provider | null) => {
-    const provider = providerOverride ?? getConnectedProvider();
-    if (!provider) {
-      return;
-    }
-
-    const accounts = (await provider.request({ method: 'eth_accounts' })) as string[];
-    const selected = accounts[0] ?? '';
-    setWalletAddress(selected);
-
-    if (selected) {
-      const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
-      setChainId(normalizeChainId(currentChain));
-      setStatus('Connected');
-    } else {
-      setChainId(null);
-      setStatus('Disconnected');
-    }
-  };
-
-  const onboardAddressAes = async (address: string, provider: Eip1193Provider): Promise<OnboardInfo> => {
-    if (!provider) {
-      throw new Error('Wallet provider is not available.');
-    }
-
-    setOnboardStatus('Onboarding...');
-    await ensureCotiNetwork(provider);
-
-    const browserProvider = await createCotiBrowserProvider(provider);
-
-    const cacheKey = address.toLowerCase();
-    const signer = await browserProvider.getSigner(address, sessionOnboardInfo[cacheKey]);
-    signer.disableAutoOnboard();
-    signerCacheRef.current[cacheKey] = signer;
-
-    await signer.generateOrRecoverAes();
-
-    const rawOnboardInfo = signer.getUserOnboardInfo();
-    const onboardInfo = mergeOnboardInfo(undefined, rawOnboardInfo);
-    const aesKey = onboardInfo.aesKey ?? '';
-    if (!aesKey) {
-      throw new Error('AES key was not returned during onboarding.');
-    }
-
-    setSessionOnboardInfo((previous) => ({
-      ...previous,
-      [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
-    }));
-
-    setOnboardStatus('AES key ready');
-    return onboardInfo;
-  };
-
-  const connectAndOnboard = async (walletId?: string) => {
-    setError('');
-    setWalletPickerOpen(false);
-    setConnectingMethod('metamask');
-
-    const walletOption =
-      (walletId ? injectedWalletOptions.find((option) => option.id === walletId) ?? null : preferredInjectedWalletOption) ??
-      preferredInjectedWalletOption;
-    const provider = walletOption?.provider ?? null;
-    const walletLabel = walletOption?.label ?? 'Wallet';
-    setConnectingWalletLabel(walletLabel);
-    if (!provider) {
-      setError('No browser wallet detected. Install a compatible wallet to continue.');
-      setConnectingMethod(null);
-      setConnectingWalletLabel('');
-      return;
-    }
-
-    try {
-      setStatus(`Connecting ${walletLabel}...`);
-      const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
-      const selected = accounts[0] ?? '';
-
-      if (!selected) {
-        throw new Error('No wallet account selected.');
-      }
-
-      if (walletOption?.id) {
-        setSelectedInjectedWalletId(walletOption.id);
-      }
-      setConnectedProvider(provider);
-      setConnectionMethod('metamask');
-      setActiveSignerSource('metamask');
-      setWalletAddress(selected);
-
-      await onboardAddressAes(selected, provider);
-      const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
-      setChainId(normalizeChainId(currentChain));
-      setStatus(`Connected (${walletLabel})`);
-      const selectedWalletKey = selected.toLowerCase();
-      window.setTimeout(() => {
-        void (async () => {
-          try {
-            const nickname = await loadMyNicknameFromChain(selected);
-            if (currentWalletKeyRef.current !== selectedWalletKey) {
-              return;
-            }
-            setMyNickname(nickname);
-          } catch {
-            // Post-connect sync should not block successful connection.
-          } finally {
-            if (currentWalletKeyRef.current === selectedWalletKey) {
-              runPostConnectDataSyncUntilApplied(selected).catch(() => {});
-            }
-          }
-        })();
-      }, 0);
-    } catch (connectionError) {
-      const message = getProviderErrorMessage(connectionError, 'Failed to connect wallet.');
-      setError(message);
-      setStatus('Disconnected');
-      setOnboardStatus('Not onboarded');
-    } finally {
-      setConnectingMethod(null);
-      setConnectingWalletLabel('');
-    }
-  };
-
-  const disconnectWallet = async () => {
-    setError('');
-    setWalletPickerOpen(false);
-    setConnectingWalletLabel('');
-
-    burnerWalletRef.current = null;
-    burnerRecordRef.current = null;
-    setBurnerNeedsFunding(false);
-    setBurnerWallets([]);
-    setActiveBurnerWalletId('');
-
-    const provider = getConnectedProvider();
-
-    try {
-      if (connectionMethod === 'metamask' && provider) {
-        await provider.request({
-          method: 'wallet_revokePermissions',
-          params: [{ eth_accounts: {} }]
-        });
-      }
-    } catch {
-    }
-
-    setWalletAddress('');
-    setChainId(null);
-    setStatus('Disconnected');
-    setActiveSignerSource('burner');
-    setConnectionMethod(null);
-    setOnboardStatus('Not onboarded');
-    setSessionOnboardInfo({});
-    setConnectedProvider(null);
-    burnerPinRef.current = '';
-    signerCacheRef.current = {};
-    cachedStateBackupMemoRef.current = {};
-  };
-
   const getMemoSigner = async () => {
     if (activeSignerSource === 'metamask') {
       const provider = getConnectedProvider();
@@ -3838,10 +3010,12 @@ export default function App() {
 
     return { signer, cacheKey };
   };
+  getMemoSignerRef.current = getMemoSigner;
 
   const encodeMemoForActiveSigner = (plain: string): string => {
     return activeSignerSource === 'metamask' ? encodeCompactMemoPlaintext(plain) : encodeMemoPlaintext(plain);
   };
+  encodeMemoForActiveSignerRef.current = encodeMemoForActiveSigner;
 
   const resolveSubmitSelector = async (): Promise<string> => {
     if (submitSelectorRef.current) {
@@ -3857,6 +3031,7 @@ export default function App() {
     submitSelectorRef.current = selector;
     return selector;
   };
+  resolveSubmitSelectorRef.current = resolveSubmitSelector;
 
   const resolveGroupSubmitSelector = async (): Promise<string> => {
     if (groupSubmitSelectorRef.current) {
@@ -3901,6 +3076,7 @@ export default function App() {
       requiredFeeRequestRef.current = null;
     }
   };
+  resolveRequiredFeeForSendRef.current = resolveRequiredFeeForSend;
 
   const resolveRequiredFeeForGroupSend = async (): Promise<bigint> => {
     if (groupRequiredFeeCacheRef.current !== null && groupRequiredFeeCacheRef.current > 0n) {
@@ -4502,6 +3678,7 @@ export default function App() {
 
     return normalizeContactName(fallbackNickname ?? '') ?? '';
   };
+  loadMyNicknameFromChainRef.current = loadMyNicknameFromChain;
 
   const resolveRecentPeersWithMeta = async (contract: unknown, user: string): Promise<RecentPeerMeta[]> => {
     if (!isWalletAddress(user)) {
@@ -4571,275 +3748,38 @@ export default function App() {
       return null;
     }
   };
-
-  const applyStateBackupPayload = (
-    walletKey: string,
-    payload: StateBackupPayload,
-    backupBlockNumber?: number
-  ) => {
-    const currentBackupTs = lastAppliedStateBackupTsRef.current[walletKey] ?? 0;
-    if (payload.updatedAt < currentBackupTs) {
-      return;
-    }
-
-    const snapshotLastReadAllTs = normalizeLastReadAllTs(payload.lastReadAllTs);
-
-    if (snapshotLastReadAllTs > lastReadAllTsRef.current) {
-      lastReadAllTsRef.current = snapshotLastReadAllTs;
-      setLastReadAllTs((previous) => (snapshotLastReadAllTs > previous ? snapshotLastReadAllTs : previous));
-      setUnreadMap((previous) => {
-        if (Object.keys(previous).length === 0) {
-          return previous;
-        }
-        unreadMapRef.current = {};
-        return {};
-      });
-      setUnreadGroupMap((previous) => {
-        if (Object.keys(previous).length === 0) {
-          return previous;
-        }
-        unreadGroupMapRef.current = {};
-        return {};
-      });
-    }
-
-    lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
-    lastBackedUpStateFingerprintRef.current[walletKey] = createStateBackupFingerprint(snapshotLastReadAllTs);
-    if (typeof backupBlockNumber === 'number' && Number.isFinite(backupBlockNumber)) {
-      lastStateBackupBlockRef.current[walletKey] = backupBlockNumber;
-      lastAutoBackupAttemptBlockRef.current[walletKey] = backupBlockNumber;
-    }
-    debugLog('[apply] applied state backup', {
-      walletKey,
-      updatedAt: payload.updatedAt,
-      lastReadAllTs: snapshotLastReadAllTs
-    });
-  };
-
-  const restoreStateFromChainSelfBackup = async (address?: string): Promise<boolean> => {
-    const targetAddress = (address ?? walletAddress).trim();
-    if (!isWalletAddress(targetAddress)) {
-      return false;
-    }
-
-    try {
-      const { signer, cacheKey } = await getMemoSigner();
-      const cotiEthers = await loadCotiEthersModule();
-      const readProvider = await loadCotiReadProvider(true);
-      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
-      const latestBlock = await readProvider.getBlockNumber();
-      const selfFilter = contract.filters.MessageSubmitted(targetAddress, targetAddress);
-      const selfConversationRange = await resolveConversationBlockRange(contract, targetAddress, targetAddress);
-      if (!selfConversationRange || selfConversationRange.lastBlock <= 0) {
-        return false;
-      }
-      const latestSelfConversationBlock = Math.min(latestBlock, selfConversationRange.lastBlock);
-      const earliestSelfConversationBlock = Math.max(
-        0,
-        Math.min(selfConversationRange.firstBlock, latestSelfConversationBlock)
-      );
-
-      let latestPayload: StateBackupPayload | null = null;
-      let latestPayloadBlockNumber: number | undefined;
-
-      const tryDecodeBackupLogs = async (
-        logs: Array<{
-          blockNumber: number;
-          index: number;
-          args?: Record<string, unknown>;
-        }>
-      ) => {
-        if (logs.length === 0 || latestPayload) {
-          return;
-        }
-
-        const sortedLogs = [...logs].sort((left, right) => {
-          if (left.blockNumber !== right.blockNumber) {
-            return right.blockNumber - left.blockNumber;
-          }
-
-          return right.index - left.index;
-        });
-
-        for (const log of sortedLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const ciphertextCandidates = [
-            extractUserCiphertext(args?.messageForSender),
-            extractUserCiphertext(args?.messageForRecipient)
-          ];
-
-          for (const candidate of ciphertextCandidates) {
-            if (!candidate || candidate.value.length === 0) {
-              continue;
-            }
-
-            try {
-              const decrypted = await signer.decryptValue(candidate as never);
-              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const plain = decodeMemoPlaintext(raw);
-              const parsed = parseStateBackupText(plain);
-              if (parsed) {
-                latestPayload = parsed;
-                latestPayloadBlockNumber = log.blockNumber;
-                return;
-              }
-            } catch {
-            }
-          }
-        }
-      };
-
-      if (latestSelfConversationBlock > 0) {
-        const headBlock = latestSelfConversationBlock;
-        const headLogs = await contract.queryFilter(selfFilter, headBlock, headBlock);
-        await tryDecodeBackupLogs(headLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
-      }
-
-      let windowEnd = latestSelfConversationBlock;
-      while (windowEnd >= earliestSelfConversationBlock && !latestPayload) {
-        const windowStart = Math.max(earliestSelfConversationBlock, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
-        const windowLogs = await contract.queryFilter(selfFilter, windowStart, windowEnd);
-        await tryDecodeBackupLogs(windowLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
-
-        if (windowStart <= earliestSelfConversationBlock) {
-          break;
-        }
-
-        windowEnd = windowStart - 1;
-      }
-
-      const resolvedLatestPayload = latestPayload as StateBackupPayload | null;
-      if (!resolvedLatestPayload) {
-        return false;
-      }
-      applyStateBackupPayload(targetAddress.toLowerCase(), resolvedLatestPayload, latestPayloadBlockNumber);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const runPostConnectDataSyncUntilApplied = async (address: string): Promise<void> => {
-    const targetAddress = address.trim().toLowerCase();
-    if (!isWalletAddress(targetAddress)) {
-      return;
-    }
-
-    const soundSuppressionToken = beginConnectSoundSuppression();
-    const runId = ++postConnectDataSyncRunIdRef.current;
-
-    try {
-      for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
-        if (runId !== postConnectDataSyncRunIdRef.current) {
-          return;
-        }
-
-        if (currentWalletKeyRef.current !== targetAddress) {
-          return;
-        }
-
-        if (normalizeLastReadAllTs(lastReadAllTsRef.current) > 0) {
-          return;
-        }
-
-        const restored = await restoreStateFromChainSelfBackup(targetAddress);
-        if (restored) {
-          return;
-        }
-
-        await new Promise<void>((resolve) => {
-          window.setTimeout(resolve, 1500);
-        });
-      }
-    } finally {
-      if (runId === postConnectDataSyncRunIdRef.current) {
-        endConnectSoundSuppression(soundSuppressionToken);
-      }
-    }
-  };
-
-  const backupLocalStateToSelf = async (options?: BackupLocalStateOptions) => {
-    if (backupInFlightRef.current) {
-      return;
-    }
-
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-
-    const walletKey = walletAddress.toLowerCase();
-
-    try {
-      backupInFlightRef.current = true;
-
-      const { signer, cacheKey } = await getMemoSigner();
-      const selector = await resolveSubmitSelector();
-
-      const snapshotLastReadAllTs = normalizeLastReadAllTs(lastReadAllTsRef.current);
-      const payload = buildStateBackupPayload(snapshotLastReadAllTs);
-      const nextFingerprint = createStateBackupFingerprint(snapshotLastReadAllTs);
-      if (!options?.force && lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
-        return;
-      }
-      const backupText = buildStateBackupText(payload);
-      const encodedMemo = encodeMemoForActiveSigner(backupText);
-      const cotiEthers = await loadCotiEthersModule();
-      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-      const requiredFee = await resolveRequiredFeeForSend();
-      const cachedMemoEntry = cachedStateBackupMemoRef.current[walletKey];
-      const hasReusableMemo = cachedMemoEntry?.fingerprint === nextFingerprint;
-
-      const buildMemoPayload = async (): Promise<SubmitMemoPayload> => {
-        const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
-        return parseSubmitMemoPayload(encryptedMemo);
-      };
-
-      let memoPayload = hasReusableMemo ? cachedMemoEntry.memo : await buildMemoPayload();
-      if (!hasReusableMemo) {
-        cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
-      }
-
-      const submitWithMemoPayload = async (payloadToSubmit: SubmitMemoPayload): Promise<void> => {
-        const memoTuple = [[payloadToSubmit.ciphertextValue], payloadToSubmit.signature] as const;
-        await contract.submit(walletAddress, memoTuple, { value: requiredFee });
-      };
-
-      try {
-        await submitWithMemoPayload(memoPayload);
-      } catch (submitError) {
-        if (!hasReusableMemo) {
-          throw submitError;
-        }
-
-        memoPayload = await buildMemoPayload();
-        cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
-        await submitWithMemoPayload(memoPayload);
-      }
-
-      // Apply the backup payload locally so local state and localStorage update immediately
-      try {
-        applyStateBackupPayload(walletKey, payload);
-      } catch (e) {}
-
-      lastBackedUpStateFingerprintRef.current[walletKey] = nextFingerprint;
-      lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-    } catch {
-    } finally {
-      backupInFlightRef.current = false;
-    }
-  };
+  resolveConversationBlockRangeRef.current = resolveConversationBlockRange;
+  const {
+    applyStateBackupPayload,
+    backupLocalStateToSelf,
+    clearCachedStateBackupMemo: clearCachedStateBackupMemoImpl,
+    lastAutoBackupAttemptBlockRef,
+    lastStateBackupBlockRef,
+    runPostConnectDataSyncUntilApplied
+  } = useStateBackupSync({
+    beginConnectSoundSuppression,
+    chainId,
+    currentWalletKeyRef,
+    encodeMemoForActiveSignerRef,
+    endConnectSoundSuppression,
+    getMemoSignerRef,
+    hasAesReady,
+    lastReadAllTs,
+    lastReadAllTsRef,
+    postConnectDataSyncRunIdRef,
+    resolveConversationBlockRangeRef,
+    resolveRequiredFeeForSendRef,
+    resolveSubmitSelectorRef,
+    setLastReadAllTs,
+    setSessionOnboardInfo,
+    setUnreadGroupMap,
+    setUnreadMap,
+    unreadGroupMapRef,
+    unreadMapRef,
+    walletAddress
+  });
+  clearCachedStateBackupMemoRef.current = clearCachedStateBackupMemoImpl;
+  runPostConnectDataSyncUntilAppliedRef.current = runPostConnectDataSyncUntilApplied;
 
   const syncConversationHistory = async (options?: SyncConversationOptions) => {
     setError('');
@@ -9703,41 +8643,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    const normalizedWalletAddress = walletAddress.trim();
-    const hasReadableState = normalizeLastReadAllTs(lastReadAllTs) > 0;
-    const canAutoBackupReadState =
-      isWalletAddress(normalizedWalletAddress) &&
-      hasAesReady &&
-      chainId === COTI_NETWORK.chainIdDecimal &&
-      hasReadableState;
-
-    if (!canAutoBackupReadState) {
-      if (readStateBackupTimerRef.current !== null) {
-        window.clearTimeout(readStateBackupTimerRef.current);
-        readStateBackupTimerRef.current = null;
-      }
-      return;
-    }
-
-    if (readStateBackupTimerRef.current !== null) {
-      return;
-    }
-
-    const now = Date.now();
-    const dueAt = Math.max(
-      now + READ_STATE_BACKUP_DEBOUNCE_MS,
-      lastReadStateBackupSubmittedAtRef.current + READ_STATE_BACKUP_MIN_INTERVAL_MS
-    );
-    const delay = Math.max(0, dueAt - now);
-
-    readStateBackupTimerRef.current = window.setTimeout(() => {
-      readStateBackupTimerRef.current = null;
-      lastReadStateBackupSubmittedAtRef.current = Date.now();
-      backupLocalStateToSelf({ background: true }).catch(() => {});
-    }, delay);
-  }, [walletAddress, hasAesReady, chainId, lastReadAllTs]);
-
-  useEffect(() => {
     setContacts([]);
     setConversationStateSyncPendingByContact({});
     setPersistedContactOrder([]);
@@ -9815,11 +8720,6 @@ export default function App() {
     lastReadAllTsRef.current = 0;
     lastReadByContactRef.current = {};
     lastReadByGroupRef.current = {};
-    lastReadStateBackupSubmittedAtRef.current = 0;
-    if (readStateBackupTimerRef.current !== null) {
-      window.clearTimeout(readStateBackupTimerRef.current);
-      readStateBackupTimerRef.current = null;
-    }
   }, [walletAddress]);
 
   useEffect(() => {
@@ -10017,9 +8917,6 @@ export default function App() {
       }
       if (highlightTimeoutRef.current !== null) {
         window.clearTimeout(highlightTimeoutRef.current);
-      }
-      if (readStateBackupTimerRef.current !== null) {
-        window.clearTimeout(readStateBackupTimerRef.current);
       }
     };
   }, []);
@@ -10955,42 +9852,6 @@ export default function App() {
     }
   }, [activeGroupId, walletAddress, hasAesReady, chainId]);
 
-  useEffect(() => {
-    const provider = getConnectedProvider();
-
-    refreshWalletState(provider).catch(() => {
-      setError('Unable to read wallet state.');
-    });
-
-    if (!provider?.on || !provider?.removeListener) {
-      return;
-    }
-
-    const handleAccountsChanged = (accounts: unknown) => {
-      const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
-      const selected = nextAccounts[0] ?? '';
-      setWalletAddress(selected);
-      if (!selected) {
-        setStatus('Disconnected');
-        setChainId(null);
-      }
-    };
-
-    const handleChainChanged = (newChainId: unknown) => {
-      if (typeof newChainId === 'string' || typeof newChainId === 'number') {
-        setChainId(normalizeChainId(newChainId));
-      }
-    };
-
-    provider.on('accountsChanged', handleAccountsChanged);
-    provider.on('chainChanged', handleChainChanged);
-
-    return () => {
-      provider.removeListener?.('accountsChanged', handleAccountsChanged);
-      provider.removeListener?.('chainChanged', handleChainChanged);
-    };
-  }, [activeProvider, connectionMethod]);
-
   const renderGroupGeneratedInviteCode = () => {
     if (!generatedGroupInviteCode) {
       return null;
@@ -11258,1906 +10119,520 @@ export default function App() {
   };
   const replyingPreviewText =
     replyingToMessage ? trimReplyPreview(getMessageDisplayText(replyingToMessage.text)) : '';
+  const handleToggleSound = () => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, String(next));
+      } catch {}
+      if (next) {
+        try {
+          initPersistentAudio();
+        } catch {}
+      } else {
+        try {
+          if (audioUrlRef.current) {
+            try {
+              if (audioUrlRef.current.startsWith('blob:')) {
+                URL.revokeObjectURL(audioUrlRef.current);
+              }
+            } catch {}
+            audioUrlRef.current = null;
+          }
+          if (audioElRef.current) {
+            audioElRef.current.pause();
+            audioElRef.current.src = '';
+            audioElRef.current = null;
+          }
+        } catch {}
+      }
+      return next;
+    });
+  };
+  const debugControl =
+    typeof window !== 'undefined' && window.location.search.includes('debug') ? (
+      <button
+        type="button"
+        className="sound-toggle-btn"
+        onClick={() => {
+          const contactsList = contacts.length ? contacts : [];
+          const target = contactsList[0]?.address ?? activeContact ?? '0x' + Math.random().toString(16).slice(2, 10);
+          const key = target.toLowerCase();
+          const nowId = `sim-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+          const msg: ChatMessage = {
+            id: nowId,
+            direction: 'incoming',
+            text: 'Simulated incoming',
+            timestamp: Math.floor(Date.now() / 1000)
+          };
+          setMessagesByContact((prev) => {
+            const copy = { ...prev };
+            const arr = (copy[key] ?? []).slice();
+            arr.push(msg);
+            copy[key] = arr;
+            return copy;
+          });
+        }}
+        title="Simulate incoming message (debug)"
+        style={{ marginLeft: 6 }}
+      >
+        {'\uD83E\uDDEA'}
+      </button>
+    ) : null;
+  const renderGroupRenameForm = () => (
+    <form
+      className="group-rename-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        renameActiveGroup().catch(() => {});
+      }}
+    >
+      <input
+        value={groupRenameInput}
+        onChange={(event) => setGroupRenameInput(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            cancelRenameActiveGroup();
+          }
+        }}
+        placeholder="Group name"
+        aria-label="Rename group"
+        autoFocus
+        disabled={processingGroupAction}
+      />
+      <button type="submit" className="contact" disabled={processingGroupAction || !canSubmitGroupRename}>
+        {processingGroupAction ? 'Saving...' : 'Save'}
+      </button>
+      <button type="button" className="contact" onClick={cancelRenameActiveGroup} disabled={processingGroupAction}>
+        Cancel
+      </button>
+    </form>
+  );
+  const mobileGroupActions = isActiveGroupAdmin ? (
+    <>
+      {groupRenameOpen ? (
+        renderGroupRenameForm()
+      ) : (
+        <button type="button" className="contact" onClick={beginRenameActiveGroup} disabled={processingGroupAction}>
+          Rename
+        </button>
+      )}
+      <button
+        type="button"
+        className="contact group-danger-button"
+        onClick={() => {
+          handoffAdminAndLeaveActiveGroup().catch(() => {});
+        }}
+        disabled={processingGroupAction}
+      >
+        {processingGroupAction ? 'Working...' : 'Burn & Leave'}
+      </button>
+      <button
+        type="button"
+        className="contact group-danger-button"
+        onClick={() => {
+          disbandActiveGroup().catch(() => {});
+        }}
+        disabled={processingGroupAction}
+      >
+        {processingGroupAction ? 'Working...' : 'Disband'}
+      </button>
+    </>
+  ) : (
+    <button
+      type="button"
+      className="contact"
+      onClick={() => {
+        leaveActiveGroup().catch(() => {});
+      }}
+      disabled={processingGroupAction}
+    >
+      {processingGroupAction ? 'Working...' : 'Leave'}
+    </button>
+  );
+  const desktopGroupActions = (
+    <>
+      {mobileGroupActions}
+      <button
+        type="button"
+        className="contact group-refresh-button"
+        onClick={() => {
+          syncGroupData({ deep: true }).catch(() => {});
+        }}
+        disabled={syncingGroups}
+      >
+        {syncingGroups ? 'Refreshing...' : 'Refresh'}
+      </button>
+    </>
+  );
+  const tradeComposerContent = (
+    <TradeComposerPanel
+      feeMode={tradeFeeModeSelection}
+      onToggleFeeMode={() => {
+        setTradeFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
+      }}
+      feeSummaryLabel={tradeFeeSummaryLabel}
+      offerTokenOptions={tradeTokenOptions}
+      requestTokenOptions={tradeTokenOptions}
+      offerTokenSelection={tradeOfferTokenSelection}
+      onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
+      requestTokenSelection={tradeRequestTokenSelection}
+      onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
+      offerCustomAddress={tradeOfferCustomTokenAddress}
+      onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
+      requestCustomAddress={tradeRequestCustomTokenAddress}
+      onRequestCustomAddressChange={setTradeRequestCustomTokenAddress}
+      offerCustomMetaLabel={tradeOfferCustomMetaLabel}
+      requestCustomMetaLabel={tradeRequestCustomMetaLabel}
+      offerVerifyUrl={tradeOfferVerifyUrl}
+      requestVerifyUrl={tradeRequestVerifyUrl}
+      offerAmountInput={tradeOfferAmountInput}
+      onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
+      requestAmountInput={tradeRequestAmountInput}
+      onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
+      offerAmountSummaryLabel={tradeOfferAmountSummaryLabel}
+      requestAmountSummaryLabel={tradeRequestAmountSummaryLabel}
+      offerBalanceSummaryLabel={tradeOfferBalanceSummaryLabel}
+      expiresHoursInput={tradeExpiryHoursInput}
+      onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
+      sending={creatingTrade}
+      canSend={canSendTradeOffer}
+      onSendTradeOffer={() => {
+        createTradeOffer().catch(() => {});
+      }}
+      validationMessage={tradeComposerValidationMessage || undefined}
+    />
+  );
 
   return (
     <div className={`app-shell mobile-view-${activeMobileView}`}>
-      <header className="top-header" ref={topHeaderRef}>
-        <div className="top-header-brand">
-          <div className="top-header-section top-header-branding">
-            <span className="top-header-brand-logo-shell" aria-hidden="true">
-              <img className="top-header-brand-logo" src={AppFavicon} alt="" />
-            </span>
-            <div className="top-header-brand-copy">
-              <span className="top-header-brand-title">ChainWhisper</span>
-              <span className="top-header-brand-subtitle">powered by COTI</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="top-header-menu-btn"
-            aria-expanded={mobileLinksOpen}
-            aria-controls="top-navigation-links-mobile"
-            onClick={() => setMobileLinksOpen((previous) => !previous)}
-            aria-label="Open links menu"
-            style={
-              isMobileNav
-                ? { display: 'inline-grid', position: 'fixed', top: '8px', right: '20px', zIndex: 120 }
-                : { display: 'none' }
-            }
-          >
-            ☰
-          </button>
-          <button
-            type="button"
-            className="sound-toggle-btn"
-            onClick={() => {
-              setSoundEnabled((prev) => {
-                const next = !prev;
-                try {
-                  localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, String(next));
-                } catch {}
-                if (next) {
-                  // user gesture: initialize persistent audio and play once to unlock
-                  try {
-                    initPersistentAudio();
-                  } catch {}
-                } else {
-                  // disable: revoke any persistent audio URL
-                  try {
-                    if (audioUrlRef.current) {
-                      try {
-                        if (audioUrlRef.current.startsWith('blob:')) {
-                          URL.revokeObjectURL(audioUrlRef.current);
-                        }
-                      } catch {}
-                      audioUrlRef.current = null;
-                    }
-                    if (audioElRef.current) {
-                      audioElRef.current.pause();
-                      audioElRef.current.src = '';
-                      audioElRef.current = null;
-                    }
-                  } catch {}
-                }
-                return next;
-              });
-            }}
-            title={soundEnabled ? 'Disable sound' : 'Enable sound'}
-            aria-pressed={soundEnabled}
-            style={
-              isMobileNav
-                ? { display: 'inline-grid', position: 'fixed', top: '8px', right: '64px', zIndex: 120 }
-                : { marginLeft: 8 }
-            }
-          >
-            {soundEnabled ? (
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
-                <path fill="currentColor" d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h16v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
-                <path fill="currentColor" d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h9.17l3.7 3.7 1.41-1.41L7.41 4 6 5.41 16.59 16H18v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z" />
-              </svg>
-            )}
-          </button>
-          {typeof window !== 'undefined' && window.location.search.includes('debug') ? (
-            <button
-              type="button"
-              className="sound-toggle-btn"
-              onClick={() => {
-                // simulate an incoming message for testing
-                const contactsList = contacts.length ? contacts : [];
-                const target = contactsList[0]?.address ?? activeContact ?? '0x' + Math.random().toString(16).slice(2, 10);
-                const key = target.toLowerCase();
-                const nowId = `sim-${Date.now()}-${Math.random().toString(16).slice(2,6)}`;
-                const msg: ChatMessage = { id: nowId, direction: 'incoming', text: 'Simulated incoming', timestamp: Math.floor(Date.now() / 1000) };
-                setMessagesByContact((prev) => {
-                  const copy = { ...prev };
-                  const arr = (copy[key] ?? []).slice();
-                  arr.push(msg);
-                  copy[key] = arr;
-                  return copy;
-                });
-              }}
-              title="Simulate incoming message (debug)"
-              style={{ marginLeft: 6 }}
-            >
-              🧪
-            </button>
-          ) : null}
-          
-        </div>
-        <nav
-          id="top-navigation-links-desktop"
-          className="top-header-links top-header-links-desktop"
-          aria-label="Top navigation"
-          style={{ display: isMobileNav ? 'none' : 'flex' }}
-        >
-          <a href={telegramBotLink} target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
-          <a href="https://pengodefi.app/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>PengoDeFi</a>
-          <a href="https://bridge.coti.io/bridge" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
-          <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
-          <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
-          <a href="https://app.houdiniswap.com/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Houdini Swap</a>
-          <a href="https://app.chainport.io/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>ChainPort</a>
-        </nav>
-        <nav
-          id="top-navigation-links-mobile"
-          className={mobileLinksOpen ? 'top-header-links top-header-links-mobile open' : 'top-header-links top-header-links-mobile'}
-          aria-label="Top navigation mobile"
-          style={
-            isMobileNav && mobileLinksOpen
-              ? {
-                  display: 'grid',
-                  gridTemplateColumns: '1fr',
-                  gap: '6px',
-                  position: 'fixed',
-                  top: '50px',
-                  right: '20px',
-                  width: 'min(240px, calc(100vw - 40px))',
-                  zIndex: 130
-                }
-              : { display: 'none' }
-          }
-        >
-          <a href={telegramBotLink} target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>@CipherTrade_bot</a>
-          <a href="https://pengodefi.app/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>PengoDeFi</a>
-          <a href="https://bridge.coti.io/bridge" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>COTI Bridge</a>
-          <a href="https://coti.carbondefi.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>CarbonDeFi</a>
-          <a href="https://nexus.hyperlane.xyz/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Hyperlane Bridge</a>
-          <a href="https://app.houdiniswap.com/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>Houdini Swap</a>
-          <a href="https://app.chainport.io/" target="_blank" rel="noopener noreferrer" onClick={() => setMobileLinksOpen(false)}>ChainPort</a>
-        </nav>
-      </header>
+      <AppHeader
+        headerRef={topHeaderRef}
+        mobileLinksOpen={mobileLinksOpen}
+        isMobileNav={isMobileNav}
+        soundEnabled={soundEnabled}
+        onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+        onToggleSound={handleToggleSound}
+        onCloseMobileLinks={() => setMobileLinksOpen(false)}
+        debugControl={debugControl}
+      />
 
       <div className="app-root">
-      <aside className="sidebar">
-        <div className="wallet-meta">
-          <div className="meta-row">
-            <span>Network</span>
-            <strong>{onCotiNetwork ? 'COTI' : chainId ? `Chain ${chainId}` : '—'}</strong>
-          </div>
-          <div className="meta-row">
-            <span>Status</span>
-            <strong className={isStatusConnected ? 'status-row-value status-with-dot' : 'status-row-value'} title={status}>
-              <span className="status-text">{status}</span>
-              {isStatusConnected ? <span className="status-dot" aria-hidden="true" /> : null}
-            </strong>
-          </div>
-          <div className="meta-row">
-            <span>AES</span>
-            <strong
-              className={isAesConnected ? 'status-row-value status-with-dot' : 'status-row-value'}
-              title={onboardStatus}
-            >
-              <span className="status-text">{onboardStatus}</span>
-              {isAesConnected ? <span className="status-dot" aria-hidden="true" /> : null}
-            </strong>
-          </div>
-          <div className="meta-row">
-            <span>Address</span>
-            {walletAddress ? (
-              <button
-                type="button"
-                className={
-                  lastCopiedKey === `wallet-address:${walletAddress.toLowerCase()}`
-                    ? 'burner-address-btn copied'
-                    : 'burner-address-btn'
-                }
-                onClick={() => {
-                  copyWithFeedback(walletAddress, `wallet-address:${walletAddress.toLowerCase()}`).catch(() => {});
-                }}
-                title={walletAddress}
-              >
-                {lastCopiedKey === `wallet-address:${walletAddress.toLowerCase()}` ? 'Copied' : shortenAddress(walletAddress)}
-              </button>
-            ) : (
-              <strong>—</strong>
-            )}
-          </div>
-        </div>
-
-        <div className="wallet-meta wallet-actions-card">
-          <div className="wallet-section-header">
-            <span className="wallet-section-label">Chat wallet</span>
-            <span className="wallet-section-hint">
-              {hasSavedBurnerWallet ? 'Wallet saved' : 'No wallet saved'}
-            </span>
-          </div>
-
-          <div className="wallet-section-group">
-            {!hasSavedBurnerWallet ? (
-              <p className="wallet-section-hint wallet-section-hint-note">
-                Generate or import a wallet to enable quick connect.
-              </p>
-            ) : null}
-
-            <div className="wallet-action-grid">
-              {hasSavedBurnerWallet ? (
-                <button
-                  className="connect-btn wallet-primary-action wallet-action-span-2"
-                  onClick={() => {
-                    beginBurnerPinFlow('stored').catch(() => {});
-                  }}
-                  type="button"
-                  disabled={initializingBurner || burnerStorageBlocked}
-                >
-                  Unlock Wallet
-                </button>
-              ) : null}
-
-              {hasSavedBurnerWallet ? (
-                <button
-                  className="connect-btn"
-                  onClick={openChangeBurnerPin}
-                  type="button"
-                  disabled={initializingBurner || !burnerRecordRef.current}
-                >
-                  Change PIN
-                </button>
-              ) : null}
-
-              <button
-                className={hasSavedBurnerWallet ? 'connect-btn' : 'connect-btn wallet-primary-action'}
-                onClick={() => {
-                  beginBurnerPinFlow('generate').catch(() => {});
-                }}
-                type="button"
-                disabled={initializingBurner || burnerStorageBlocked}
-              >
-                {initializingBurner ? 'Initializing Wallet...' : 'Generate Wallet'}
-              </button>
-
-              <button
-                className={hasSavedBurnerWallet ? 'connect-btn' : 'connect-btn wallet-primary-action'}
-                onClick={() => setShowBurnerImportModal(true)}
-                type="button"
-                disabled={initializingBurner || burnerStorageBlocked}
-              >
-                Import Wallet
-              </button>
-            </div>
-          </div>
-
-          <div className="wallet-inline-action">
-            <span className="wallet-section-label wallet-section-label-inline">Wallet</span>
-            <div className="wallet-inline-control" ref={walletPickerRef}>
-              <button
-                className={walletPrimaryButtonClass}
-                onClick={handleWalletPrimaryAction}
-                type="button"
-                disabled={connectingMethod !== null}
-                aria-expanded={walletPrimaryOpensPicker ? walletPickerOpen : undefined}
-                aria-haspopup={walletPrimaryOpensPicker ? 'menu' : undefined}
-                title={walletPrimaryOpensPicker ? 'Choose or switch wallet' : undefined}
-              >
-                {walletPickerButtonLabel}
-              </button>
-              {walletPickerOpen ? (
-                <div className="wallet-picker-menu" role="menu" aria-label="Wallet options">
-                  <div className="wallet-picker-section">
-                    <p className="wallet-picker-heading">Browser wallets</p>
-                    {injectedWalletOptions.length > 0 ? (
-                      injectedWalletOptions.map((option) => {
-                        const isCurrentWallet =
-                          activeSignerSource === 'metamask' &&
-                          connectionMethod === 'metamask' &&
-                          currentInjectedWalletOption?.id === option.id &&
-                          isConnected;
-                        return (
-                          <button
-                            key={option.id}
-                            className="connect-btn wallet-picker-option"
-                            onClick={() => {
-                              connectAndOnboard(option.id).catch(() => {});
-                            }}
-                            type="button"
-                            disabled={connectingMethod !== null}
-                            role="menuitem"
-                          >
-                            <span className="wallet-picker-option-label">{option.label}</span>
-                            <span className="wallet-picker-option-meta">{isCurrentWallet ? 'Current' : 'Detected'}</span>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <p className="wallet-picker-empty">No browser wallet detected yet.</p>
-                    )}
-                  </div>
-                  <div className="wallet-picker-section">
-                    <p className="wallet-picker-heading">Chat wallets</p>
-                    {hasSavedBurnerWallet ? (
-                      <button
-                        className="connect-btn wallet-picker-option"
-                        onClick={() => {
-                          setWalletPickerOpen(false);
-                          beginBurnerPinFlow('stored').catch(() => {});
-                        }}
-                        type="button"
-                        disabled={initializingBurner || burnerStorageBlocked}
-                        role="menuitem"
-                      >
-                        <span className="wallet-picker-option-label">Unlock saved wallet</span>
-                        <span className="wallet-picker-option-meta">{savedBurnerWalletCount} saved</span>
-                      </button>
-                    ) : (
-                      <p className="wallet-picker-empty">No saved chat wallet yet.</p>
-                    )}
-                    {burnerWallets.map((walletRecord, index) => {
-                      const optionName = getBurnerWalletDisplayName(walletRecord);
-                      const optionAddress = walletRecord.address ? shortenAddress(walletRecord.address) : 'Unknown';
-                      const isCurrentWallet =
-                        activeSignerSource === 'burner' &&
-                        walletRecord.id &&
-                        burnerRecordRef.current?.id === walletRecord.id &&
-                        isConnected;
-                      return (
-                        <button
-                          key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`}
-                          className="connect-btn wallet-picker-option"
-                          onClick={() => {
-                            setWalletPickerOpen(false);
-                            switchActiveBurnerWallet(walletRecord.id ?? '').catch((switchError) => {
-                              const message =
-                                switchError instanceof Error ? switchError.message : 'Failed to switch burner wallet.';
-                              setError(message);
-                            });
-                          }}
-                          type="button"
-                          disabled={initializingBurner || !walletRecord.id}
-                          role="menuitem"
-                        >
-                          <span className="wallet-picker-option-label">{`${optionName} (${optionAddress})`}</span>
-                          <span className="wallet-picker-option-meta">{isCurrentWallet ? 'Current' : 'Saved'}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="wallet-picker-section">
-                    <p className="wallet-picker-heading">New wallet</p>
-                    <button
-                      className="connect-btn wallet-picker-option"
-                      onClick={() => {
-                        setWalletPickerOpen(false);
-                        beginBurnerPinFlow('generate').catch(() => {});
-                      }}
-                      type="button"
-                      disabled={initializingBurner || burnerStorageBlocked}
-                      role="menuitem"
-                    >
-                      <span className="wallet-picker-option-label">Generate wallet</span>
-                    </button>
-                    <button
-                      className="connect-btn wallet-picker-option"
-                      onClick={() => {
-                        setWalletPickerOpen(false);
-                        setShowBurnerImportModal(true);
-                      }}
-                      type="button"
-                      disabled={initializingBurner || burnerStorageBlocked}
-                      role="menuitem"
-                    >
-                      <span className="wallet-picker-option-label">Import wallet</span>
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="wallet-inline-action">
-            <span className="wallet-section-label wallet-section-label-inline">Session</span>
-            <button
-              className="connect-btn wallet-inline-btn"
-              onClick={disconnectWallet}
-              type="button"
-              disabled={!isConnected || connectingMethod !== null}
-              title="Disconnects the currently active wallet session."
-            >
-              Disconnect current wallet
-            </button>
-          </div>
-          {burnerWallets.length > 0 ? (
-            <div className="wallet-inline-select">
-              <span className="wallet-section-label wallet-section-label-inline">Saved wallets</span>
-              <select
-                value={burnerWalletSelectionValue}
-                onChange={(event) => {
-                  switchActiveBurnerWallet(event.target.value).catch((switchError) => {
-                    const message = switchError instanceof Error ? switchError.message : 'Failed to switch burner wallet.';
-                    setError(message);
-                  });
-                }}
-                aria-label="Select burner wallet"
-                disabled={initializingBurner}
-              >
-                {burnerWallets.map((walletRecord, index) => {
-                  const optionAddress = walletRecord.address
-                    ? shortenAddress(walletRecord.address)
-                    : 'Unknown';
-                  const optionName = getBurnerWalletDisplayName(walletRecord);
-                  return (
-                    <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
-                      {`${optionName} (${optionAddress})`}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          ) : null}
-          {burnerStorageBlocked ? (
-            <p className="error">
-              Browser storage is blocked. Disable private mode or storage restrictions to persist wallets.
-            </p>
-          ) : null}
-        </div>
-
-        {isConnected ? (
-          <div className="wallet-meta topup-meta">
-            <div className="wallet-section-header">
-              <span className="wallet-section-label">Funding</span>
-              <span className="wallet-section-hint">
-                {loadingTopUpQuote
-                  ? 'Calculating...'
-                  : `${burnerBalanceWei !== null ? formatTokenAmount(burnerBalanceWei, 18, 4) : '--'} COTI | ${
-                      estimatedMessagesLeft !== null ? estimatedMessagesLeft.toString() : '--'
-                    } msgs left`}
-              </span>
-            </div>
-            <button
-              className="connect-btn"
-              onClick={topUpBurnerWithWallet}
-              type="button"
-              disabled={initializingBurner || !burnerAddress || topUpAmountWei === null || topUpAmountWei <= 0n}
-            >
-              Top Up with Wallet
-            </button>
-            <input
-              className="topup-slider"
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={topUpMultiplier}
-              onChange={(event) => setTopUpMultiplier(Number(event.target.value))}
-              aria-label="Top up multiplier"
-            />
-            <p className="topup-estimate-line">
-              Approx: <strong>{topUpMultiplier}</strong> msgs = <strong>{topUpAmountLabel}</strong>
-            </p>
-          </div>
-        ) : null}
-
-        {isConnected ? (
-          <details
-            className="wallet-meta wallet-disclosure wallet-rewards-swap-card"
-            open={showTokenTools}
-            onToggle={(event) => setShowTokenTools(event.currentTarget.open)}
-          >
-            <summary>
-              <span>Whisper rewards</span>
-              <span>{tokenToolsSummary}</span>
-            </summary>
-            <div className="swap-meta wallet-disclosure-body">
-            {groupRewardsContractAddress ? (
-              <div className="wallet-section-hint wallet-section-hint-note reward-summary">
-                <div className="reward-summary-row">
-                  <span className="reward-line-label">
-                    Contract status
-                    <span
-                      className={rewardsEnabled ? 'reward-state-dot enabled' : 'reward-state-dot'}
-                      title={rewardsIndicatorLabel}
-                      aria-label={rewardsIndicatorLabel}
-                    />
-                  </span>
-                  <strong>
-                    {rewardsPublicReserveWei !== null
-                      ? `${formatTokenAmount(rewardsPublicReserveWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
-                      : '--'}
-                  </strong>
-                </div>
-                <div className="reward-summary-row">
-                  <span>Per message</span>
-                  <strong>
-                    {rewardsPublicPerInteractionWei !== null
-                      ? `${formatTokenAmount(rewardsPublicPerInteractionWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
-                      : '--'}
-                  </strong>
-                </div>
-              </div>
-            ) : null}
-            {!groupRewardsContractAddress ? (
-              <p className="wallet-section-hint wallet-section-hint-note">
-                Rewards contract info is not available for this session yet.
-              </p>
-            ) : null}
-            {rewardsLowReserve ? (
-              <p className="wallet-section-hint wallet-section-hint-note">
-                Rewards warning: insufficient public token rewards in rewards contract.
-              </p>
-            ) : null}
-            <div className="wallet-section-divider wallet-section-divider-tight" aria-hidden="true" />
-            <div className="wallet-section-header wallet-subsection-header">
-              <span className="wallet-section-label">Swap</span>
-              <span className="wallet-section-hint">{`${rewardTokenSymbol} <-> ${privateRewardTokenSymbol}`}</span>
-            </div>
-            <div className="swap-field">
-              <label className="swap-label-sr" htmlFor="swap-amount-input">Amount</label>
-              <input
-                id="swap-amount-input"
-                type="text"
-                inputMode="decimal"
-                value={swapAmountInput}
-                onChange={(event) => setSwapAmountInput(sanitizeTokenAmountInput(event.target.value))}
-                placeholder={`0.0 ${swapInputSymbol}`}
-                disabled={swappingTokens}
-              />
-            </div>
-            <div className="swap-field">
-              <span id="swap-direction-label" className="swap-label-sr">
-                Swap direction
-              </span>
-              <div className="swap-pill-switch" role="group" aria-labelledby="swap-direction-label">
-                <button
-                  type="button"
-                  className={swapDirection === 'shield' ? 'swap-pill-option active' : 'swap-pill-option'}
-                  onClick={() => setSwapDirection('shield')}
-                  disabled={swappingTokens}
-                  aria-pressed={swapDirection === 'shield'}
-                  title={`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
-                >
-                  {`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
-                </button>
-                <button
-                  type="button"
-                  className={swapDirection === 'unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
-                  onClick={() => setSwapDirection('unshield')}
-                  disabled={swappingTokens}
-                  aria-pressed={swapDirection === 'unshield'}
-                  title={`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
-                >
-                  {`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
-                </button>
-              </div>
-            </div>
-            <div className="swap-field">
-              <div className="swap-field-label">
-                Fee payment
-                <span
-                  className="swap-info-tip"
-                  title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
-                  aria-label="Fee mode info"
-                >
-                  i
-                </span>
-              </div>
-              <div className="swap-pill-switch" role="group" aria-label="Fee payment mode">
-                <button
-                  type="button"
-                  className={swapFeeModeSelection === 'token' ? 'swap-pill-option active' : 'swap-pill-option'}
-                  onClick={() => setSwapFeeModeSelection('token')}
-                  disabled={swappingTokens}
-                  aria-pressed={swapFeeModeSelection === 'token'}
-                >
-                  Token
-                </button>
-                <button
-                  type="button"
-                  className={swapFeeModeSelection === 'coti' ? 'swap-pill-option active' : 'swap-pill-option'}
-                  onClick={() => setSwapFeeModeSelection('coti')}
-                  disabled={swappingTokens}
-                  aria-pressed={swapFeeModeSelection === 'coti'}
-                >
-                  COTI
-                </button>
-              </div>
-            </div>
-            <div className="swap-quote-row">
-              <span>Fee quote</span>
-              <strong>
-                {loadingRewardBalances
-                  ? 'Loading...'
-                  : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
-                      swapTokenFeeAmount !== null
-                        ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6)
-                        : '--'
-                    }`}
-              </strong>
-            </div>
-            <button
-              className="connect-btn swap-action-btn"
-              type="button"
-              onClick={swapRewardTokens}
-              disabled={!canSwapRewardTokens}
-            >
-              {swapButtonLabel}
-            </button>
-              {swapStatusMessage ? <p className="wallet-section-hint wallet-section-hint-note swap-status-note">{swapStatusMessage}</p> : null}
-            </div>
-          </details>
-        ) : null}
-
-        {burnerNeedsFunding ? <p className="error">Burner needs funding before onboarding.</p> : null}
-        {isConnected && burnerMnemonicBackup ? (
-          <details
-            className="wallet-meta wallet-disclosure"
-            open={showBackupTools}
-            onToggle={(event) => setShowBackupTools(event.currentTarget.open)}
-          >
-            <summary>
-              <span>Burner backup</span>
-              <span>{showBurnerMnemonic ? 'Phrase visible' : 'Phrase hidden'}</span>
-            </summary>
-            <div className="wallet-disclosure-body">
-              <p className="wallet-reminder">
-                Save your seed phrase offline for wallet recovery.
-              </p>
-              <button
-                type="button"
-                className="connect-btn wallet-backup-toggle"
-                onClick={beginRevealBurnerBackup}
-              >
-                {showBurnerMnemonic ? 'Hide phrase' : 'Show phrase'}
-              </button>
-              {showBurnerMnemonic ? <p className="wallet-secret-phrase">{burnerMnemonicBackup}</p> : null}
-            </div>
-          </details>
-        ) : null}
-
-      </aside>
+        <WalletSidebar
+          isConnected={isConnected}
+          onCotiNetwork={onCotiNetwork}
+          chainId={chainId}
+          status={status}
+          isStatusConnected={isStatusConnected}
+          onboardStatus={onboardStatus}
+          isAesConnected={isAesConnected}
+          walletAddress={walletAddress}
+          lastCopiedKey={lastCopiedKey}
+          onCopyWithFeedback={copyWithFeedback}
+          hasSavedBurnerWallet={hasSavedBurnerWallet}
+          initializingBurner={initializingBurner}
+          burnerStorageBlocked={burnerStorageBlocked}
+          hasActiveBurnerRecord={Boolean(burnerRecordRef.current)}
+          onUnlockBurnerWallet={() => {
+            beginBurnerPinFlow('stored').catch(() => {});
+          }}
+          onChangeBurnerPin={openChangeBurnerPin}
+          onGenerateBurnerWallet={() => {
+            beginBurnerPinFlow('generate').catch(() => {});
+          }}
+          onOpenBurnerImportModal={() => setShowBurnerImportModal(true)}
+          injectedWalletOptions={injectedWalletOptions}
+          preferredInjectedWalletOption={preferredInjectedWalletOption}
+          currentInjectedWalletOption={currentInjectedWalletOption}
+          activeSignerSource={activeSignerSource}
+          connectionMethod={connectionMethod}
+          connectingMethod={connectingMethod}
+          connectingWalletLabel={connectingWalletLabel}
+          savedBurnerWalletCount={savedBurnerWalletCount}
+          burnerWallets={burnerWallets}
+          currentBurnerWalletId={activeBurnerWalletId}
+          getBurnerWalletDisplayName={getBurnerWalletDisplayName}
+          onConnectInjectedWallet={connectAndOnboard}
+          onSwitchBurnerWallet={switchActiveBurnerWallet}
+          onDisconnectWallet={disconnectWallet}
+          burnerWalletSelectionValue={burnerWalletSelectionValue}
+          burnerAddress={burnerAddress}
+          topUpAmountWei={topUpAmountWei}
+          topUpMultiplier={topUpMultiplier}
+          onTopUpMultiplierChange={setTopUpMultiplier}
+          loadingTopUpQuote={loadingTopUpQuote}
+          burnerBalanceWei={burnerBalanceWei}
+          estimatedMessagesLeft={estimatedMessagesLeft}
+          topUpAmountLabel={topUpAmountLabel}
+          onTopUpBurnerWithWallet={topUpBurnerWithWallet}
+          tokenToolsSummary={tokenToolsSummary}
+          groupRewardsContractAddress={groupRewardsContractAddress}
+          rewardsEnabled={rewardsEnabled}
+          rewardsIndicatorLabel={rewardsIndicatorLabel}
+          rewardsPublicReserveWei={rewardsPublicReserveWei}
+          rewardsPublicPerInteractionWei={rewardsPublicPerInteractionWei}
+          rewardTokenDecimals={rewardTokenDecimals}
+          rewardTokenSymbol={rewardTokenSymbol}
+          privateRewardTokenSymbol={privateRewardTokenSymbol}
+          rewardsLowReserve={rewardsLowReserve}
+          swapAmountInput={swapAmountInput}
+          onSwapAmountInputChange={(value) => setSwapAmountInput(sanitizeTokenAmountInput(value))}
+          swappingTokens={swappingTokens}
+          swapInputSymbol={swapInputSymbol}
+          swapDirection={swapDirection}
+          onSwapDirectionChange={setSwapDirection}
+          swapFeeModeSelection={swapFeeModeSelection}
+          onSwapFeeModeChange={setSwapFeeModeSelection}
+          loadingRewardBalances={loadingRewardBalances}
+          swapFeeWei={swapFeeWei}
+          swapTokenFeeAmount={swapTokenFeeAmount}
+          canSwapRewardTokens={canSwapRewardTokens}
+          swapButtonLabel={swapButtonLabel}
+          onSwapRewardTokens={swapRewardTokens}
+          swapStatusMessage={swapStatusMessage}
+          burnerNeedsFunding={burnerNeedsFunding}
+          burnerMnemonicBackup={burnerMnemonicBackup}
+          showBurnerMnemonic={showBurnerMnemonic}
+          onBeginRevealBurnerBackup={beginRevealBurnerBackup}
+        />
 
       {isConnected ? (
-      <aside className="contacts-sidebar">
-        <div className="contact-profile-card contact-profile-card-fixed">
-          <span className="contact-profile-label">Name</span>
-          <div className="contact-profile-editor-wrap">
-            <div
-              ref={nicknameEditorRef}
-              className="contact-profile-editor"
-              contentEditable
-              suppressContentEditableWarning
-              role="textbox"
-              aria-multiline="false"
-              aria-label="Name"
-              data-placeholder="Choose name"
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  event.currentTarget.blur();
-                }
-              }}
-              onInput={(event) => {
-                const raw = event.currentTarget.textContent ?? '';
-                const singleLine = raw.replace(/\r?\n/g, '').slice(0, nicknameMaxBytes);
-                if (singleLine !== raw) {
-                  event.currentTarget.textContent = singleLine;
-                }
-                setMyNickname(singleLine);
-              }}
-              onBlur={() => {
-                if (!hasAesReady || !walletAddress) {
-                  return;
-                }
-
-                saveMyNicknameOnChain().catch(() => {});
-              }}
-            />
-            <button
-              type="button"
-              className="contact-profile-editor-action"
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                saveMyNicknameOnChain().catch(() => {});
-              }}
-              disabled={!hasAesReady || !walletAddress}
-            >
-              Save
-            </button>
-          </div>
-          <div className="contact-actions-panel">
-            <div className="contact-actions-grid">
-              <button
-                type="button"
-                className="contact mark-read-button contact-action-btn"
-                onClick={markAllConversationsAsRead}
-                disabled={!hasUnreadConversations}
-              >
-                Mark all as read
-              </button>
-              <button
-                type="button"
-                className="contact mark-read-button contact-action-btn"
-                onClick={() => {
-                  forceSyncAllData().catch(() => {});
-                }}
-                disabled={syncingHistory || syncingGroups || !hasAesReady}
-              >
-                {syncingHistory || syncingGroups ? 'Syncing...' : 'Force sync'}
-              </button>
-              <button
-                type="button"
-                className="contact mark-read-button contact-action-btn contact-action-btn-primary"
-                onClick={() => {
-                  setQuickActionTab('contact');
-                  setShowQuickActionsModal(true);
-                }}
-              >
-                New chat
-              </button>
-              <button
-                type="button"
-                className={
-                  showHiddenContacts
-                    ? 'contact mark-read-button contact-action-btn contact-action-btn-toggle active'
-                    : 'contact mark-read-button contact-action-btn contact-action-btn-toggle'
-                }
-                onClick={() => setShowHiddenContacts((previous) => !previous)}
-                aria-pressed={showHiddenContacts}
-                title={
-                  showHiddenContacts
-                    ? 'Return to your main conversations'
-                    : hiddenContactsCount > 0
-                      ? `Show ${hiddenContactsLabel}`
-                      : 'No hidden chats yet'
-                }
-                disabled={!showHiddenContacts && hiddenContactsCount === 0}
-              >
-                {showHiddenContacts
-                  ? 'Back to main chats'
-                  : hiddenContactsCount > 0
-                    ? `Show hidden chats (${hiddenContactsCount})`
-                    : 'No hidden chats'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div
-          className="contact-profile-card contact-profile-card-scroll contact-profile-card-contacts"
-          style={{ flexGrow: contactGroupPanelRatio.contactsPanelFlex }}
-        >
-          <div className="contacts-panel-header">
-            <span className="contact-profile-label">Contacts</span>
-            {showHiddenContacts ? (
-              <span className="contact-view-badge hidden">Hidden view</span>
-            ) : hiddenContactsCount > 0 ? (
-              <span className="contact-view-badge">{hiddenContactsLabel}</span>
-            ) : null}
-          </div>
-          <ul className="contacts-list contacts-list-scroll contacts-main-list">
-          {visibleSortedContacts.length === 0 ? (
-            <li className="contacts-empty-state">{contactsListEmptyMessage}</li>
-          ) : (
-            visibleSortedContacts.map((contact) => {
-            const isActive = activeContact?.toLowerCase() === contact.address.toLowerCase();
-            const isEditing = editingContactAddress?.toLowerCase() === contact.address.toLowerCase();
-            const conversationStatePending = isConversationStateSyncPending(contact.address);
-            const hasName = Boolean(contact.name?.trim());
-            const hasConversation = (messagesByContact[contact.address.toLowerCase()]?.length ?? 0) > 0;
-            const contactCopyKey = `contact:${contact.address.toLowerCase()}`;
-            const isContactCopied = lastCopiedKey === contactCopyKey;
-              return (
-                <li key={contact.address}>
-                <div
-                  className={
-                    conversationStatePending
-                      ? isActive
-                        ? 'contact-card active syncing'
-                        : contact.hidden
-                          ? 'contact-card hidden syncing'
-                          : 'contact-card syncing'
-                      : isActive
-                        ? 'contact-card active'
-                        : contact.hidden
-                          ? 'contact-card hidden'
-                          : 'contact-card'
-                  }
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => activateContact(contact.address)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      activateContact(contact.address);
-                    }
-                  }}
-                >
-                  <div className="contact-top">
-                    <div className="contact-main" title={contact.address}>
-                      {hasName ? (
-                        <>
-                          <span className="contact-name-inline">{contact.name}</span>
-                          <button
-                            type="button"
-                            className={isContactCopied ? 'contact-copy contact-copy-secondary copied' : 'contact-copy contact-copy-secondary'}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              copyWithFeedback(contact.address, contactCopyKey).catch(() => {});
-                            }}
-                            title={isContactCopied ? 'Copied' : 'Copy address'}
-                          >
-                            {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className={isContactCopied ? 'contact-copy copied' : 'contact-copy'}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            copyWithFeedback(contact.address, contactCopyKey).catch(() => {});
-                          }}
-                          title={isContactCopied ? 'Copied' : 'Copy address'}
-                        >
-                          {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
-                        </button>
-                      )}
-                      {contact.muted || contact.hidden ? (
-                        <span className="contact-state-inline">
-                          {contact.muted ? 'Muted' : null}
-                          {contact.muted && contact.hidden ? ' | ' : null}
-                          {contact.hidden ? 'Hidden' : null}
-                        </span>
-                      ) : null}
-                    </div>
-                    {hasConversation ? (
-                      <span
-                        className="contact-chat-icon"
-                        aria-label={unreadMap[contact.address.toLowerCase()] ? 'Unread messages' : 'Has conversation'}
-                        title={unreadMap[contact.address.toLowerCase()] ? 'Unread messages' : 'Has conversation'}
-                        style={{ marginRight: 6, color: unreadMap[contact.address.toLowerCase()] ? '#e33' : undefined }}
-                      >
-                        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
-                          <path fill="currentColor" d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z" />
-                        </svg>
-                      </span>
-                    ) : null}
-                    {!isEditing ? (
-                      <>
-                        <button
-                          type="button"
-                          className="contact-icon"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            startRenameContact(contact.address, contact.name);
-                          }}
-                          disabled={conversationStatePending}
-                          aria-label="Rename contact"
-                          title={conversationStatePending ? 'Wait for sync to finish' : 'Rename'}
-                        >
-                          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm17.71-10.04a1 1 0 0 0 0-1.42l-2.5-2.5a1 1 0 0 0-1.42 0l-1.96 1.96 3.75 3.75 2.13-2.09z"/></svg>
-                        </button>
-                        <button
-                          type="button"
-                          className={conversationStatePending ? 'contact-icon loading' : 'contact-icon'}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            removeContact(contact.address);
-                          }}
-                          disabled={conversationStatePending}
-                          aria-label={
-                            conversationStatePending
-                              ? 'Conversation update in progress'
-                              : contact.hidden
-                                ? 'Unhide conversation'
-                                : 'Hide conversation'
-                          }
-                          title={
-                            conversationStatePending
-                              ? 'Waiting for confirmation...'
-                              : contact.hidden
-                                ? 'Unhide'
-                                : 'Hide'
-                          }
-                        >
-                          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M3 6h18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                            <path d="M8 6V4h8v2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                            <path d="M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                            <path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                          </svg>
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-                {isEditing ? (
-                  <div className="contact-rename">
-                    <input
-                      value={editingContactName}
-                      onChange={(event) => setEditingContactName(event.target.value)}
-                      placeholder="Enter name"
-                      aria-label="Rename contact"
-                    />
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        saveRenamedContact(contact.address);
-                      }}
-                    >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        cancelRenameContact();
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : null}
-                </li>
-              );
-            })
-          )}
-          </ul>
-        </div>
-
-        <div
-          className="contact-profile-card contact-profile-card-scroll contact-profile-card-groups"
-          style={{ flexGrow: contactGroupPanelRatio.groupsPanelFlex }}
-        >
-          <span className="contact-profile-label">Groups</span>
-
-          {sortedGroupInvites.length > 0 ? (
-            <>
-              <span className="contact-section-label">Invites</span>
-              <ul className="contacts-list contacts-list-scroll groups-invites-list">
-            {sortedGroupInvites.map((invite) => (
-                <li key={`invite-${invite.groupId}`}>
-                  <div className="contact-card">
-                    <div className="contact-top">
-                      <div className="contact-main">
-                        <span className="contact-name-inline">
-                          {(invite.title ?? `Group ${invite.groupId}`) + ` (#${invite.groupId})` + (invite.isPrivate ? ' · Private' : '')}
-                        </span>
-                      </div>
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                      From: {isWalletAddress(invite.inviter) ? shortenAddress(invite.inviter) : invite.inviter || 'Unknown'} | Exp: {invite.expiresAt > 0 ? formatMessageTimestamp(invite.expiresAt) : 'N/A'}
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                      <button
-                        type="button"
-                        className="contact"
-                        onClick={() => {
-                          acceptGroupInvite(invite.groupId).catch(() => {});
-                        }}
-                        disabled={processingGroupAction}
-                      >
-                        Accept
-                      </button>
-                      <button
-                        type="button"
-                        className="contact"
-                        onClick={() => {
-                          declineGroupInvite(invite.groupId).catch(() => {});
-                        }}
-                        disabled={processingGroupAction}
-                      >
-                        Decline
-                      </button>
-                    </div>
-                  </div>
-                </li>
-              ))}
-              </ul>
-            </>
-          ) : null}
-
-          <ul className="contacts-list contacts-list-scroll groups-main-list">
-            {sortedGroups.map((group) => {
-              const isActive = activeGroupId === group.id;
-              const groupTitle = group.title || `Group ${group.id}`;
-              const groupKey = String(group.id);
-              const hasConversation = group.lastTimestamp > 0 || (messagesByGroup[groupKey]?.length ?? 0) > 0;
-              return (
-                <li key={`group-${group.id}`}>
-                  <div
-                    className={isActive ? 'contact-card active' : 'contact-card'}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => activateGroup(group.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        activateGroup(group.id);
-                      }
-                    }}
-                  >
-                    <div className="contact-top">
-                      <div className="contact-main">
-                        <span className="contact-name-inline">
-                          {groupTitle} (#{group.id}){group.isPrivate ? ' · Private' : ''}
-                        </span>
-                      </div>
-                      {hasConversation ? (
-                        <span
-                          className="contact-chat-icon"
-                          aria-label={unreadGroupMap[groupKey] ? 'Unread group messages' : 'Has group messages'}
-                          title={unreadGroupMap[groupKey] ? 'Unread group messages' : 'Has group messages'}
-                          style={{ marginRight: 6, color: unreadGroupMap[groupKey] ? '#e33' : undefined }}
-                        >
-                          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
-                            <path fill="currentColor" d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z" />
-                          </svg>
-                        </span>
-                      ) : null}
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                      M: {group.memberCount} | Last: {group.lastTimestamp > 0 ? formatMessageTimestamp(group.lastTimestamp) : 'N/A'}
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        {error ? <p className="error">{error}</p> : null}
-      </aside>
+        <ContactsSidebar
+          nicknameEditorRef={nicknameEditorRef}
+          nicknameMaxBytes={nicknameMaxBytes}
+          hasAesReady={hasAesReady}
+          walletAddress={walletAddress}
+          onNicknameInputChange={setMyNickname}
+          onSaveNickname={() => {
+            saveMyNicknameOnChain().catch(() => {});
+          }}
+          hasUnreadConversations={hasUnreadConversations}
+          onMarkAllConversationsAsRead={markAllConversationsAsRead}
+          onForceSync={() => {
+            forceSyncAllData().catch(() => {});
+          }}
+          syncingHistory={syncingHistory}
+          syncingGroups={syncingGroups}
+          onOpenNewChat={() => {
+            setQuickActionTab('contact');
+            setShowQuickActionsModal(true);
+          }}
+          showHiddenContacts={showHiddenContacts}
+          onToggleShowHiddenContacts={() => setShowHiddenContacts((previous) => !previous)}
+          hiddenContactsCount={hiddenContactsCount}
+          hiddenContactsLabel={hiddenContactsLabel}
+          contactGroupPanelRatio={contactGroupPanelRatio}
+          visibleSortedContacts={visibleSortedContacts}
+          contactsListEmptyMessage={contactsListEmptyMessage}
+          activeContact={activeContact}
+          editingContactAddress={editingContactAddress}
+          editingContactName={editingContactName}
+          onEditingContactNameChange={setEditingContactName}
+          isConversationStateSyncPending={isConversationStateSyncPending}
+          messagesByContact={messagesByContact}
+          lastCopiedKey={lastCopiedKey}
+          unreadMap={unreadMap}
+          onCopyWithFeedback={copyWithFeedback}
+          onActivateContact={activateContact}
+          onStartRenameContact={startRenameContact}
+          onRemoveContact={removeContact}
+          onSaveRenamedContact={saveRenamedContact}
+          onCancelRenameContact={cancelRenameContact}
+          sortedGroupInvites={sortedGroupInvites}
+          onAcceptGroupInvite={(groupId) => {
+            acceptGroupInvite(groupId).catch(() => {});
+          }}
+          onDeclineGroupInvite={(groupId) => {
+            declineGroupInvite(groupId).catch(() => {});
+          }}
+          processingGroupAction={processingGroupAction}
+          sortedGroups={sortedGroups}
+          activeGroupId={activeGroupId}
+          messagesByGroup={messagesByGroup}
+          unreadGroupMap={unreadGroupMap}
+          onActivateGroup={activateGroup}
+          error={error}
+        />
       ) : null}
 
       <main className="chat-panel">
         {!isConnected ? (
           <div className="chat-placeholder">Connect a wallet to view contacts and start messaging.</div>
         ) : activeGroupId !== null ? (
-          <div className="chat-shell">
-            <div className="chat-header chat-header-group">
-              <div className="group-header-meta">
-                <div className="group-title-stack">
-                  <strong>{(activeGroupMeta?.title ? activeGroupMeta.title : `Group ${activeGroupId}`) + ` (#${activeGroupId})`}</strong>
-                  <span className="group-title-badges">
-                    <span className="group-title-badge">{activeGroupMeta?.isPrivate ? 'Private' : 'Public'}</span>
-                    <span className={isActiveGroupAdmin ? 'group-title-badge admin' : 'group-title-badge'}>
-                      {isActiveGroupAdmin ? 'Admin' : 'Member'}
-                    </span>
-                  </span>
-                </div>
-                <div className="group-meta-dropdowns">
-                  <details className="group-members-dropdown">
-                    <summary>
-                      Members{' '}
-                      {activeGroupMemberCount}
-                    </summary>
-                    <ul className="group-members-list">
-                      {activeGroupParticipants.length > 0 ? (
-                        activeGroupParticipants.map((participant) => {
-                          const participantCopyKey = `group-member:${participant.address.toLowerCase()}`;
-                          const isParticipantCopied = lastCopiedKey === participantCopyKey;
-                          return (
-                            <li key={participant.key}>
-                              <div className="group-member-row">
-                                <button
-                                  type="button"
-                                  className={isParticipantCopied ? 'group-member-copy copied' : 'group-member-copy'}
-                                  onClick={(event) => {
-                                    copyWithFeedback(participant.address, participantCopyKey).catch(() => {});
-                                    const detailsElement = event.currentTarget.closest('details');
-                                    if (detailsElement instanceof HTMLDetailsElement) {
-                                      detailsElement.open = false;
-                                    }
-                                  }}
-                                  title={isParticipantCopied ? 'Copied' : `Copy ${participant.address}`}
-                                >
-                                  <span className="group-member-name">
-                                    {participant.name ?? participant.shortAddress}
-                                    {participant.isSelf ? <span className="group-member-badge">You</span> : null}
-                                    {participant.isAdmin ? <span className="group-member-badge">Admin</span> : null}
-                                  </span>
-                                  <span className="group-member-address">{isParticipantCopied ? 'Copied' : participant.shortAddress}</span>
-                                </button>
-                                {isActiveGroupAdmin && !participant.isSelf ? (
-                                  <button
-                                    type="button"
-                                    className="group-member-remove"
-                                    onClick={() => {
-                                      removeMemberFromActiveGroup(participant.address).catch(() => {});
-                                    }}
-                                    disabled={processingGroupAction}
-                                    title={`Remove ${participant.address}`}
-                                  >
-                                    Remove
-                                  </button>
-                                ) : null}
-                              </div>
-                            </li>
-                          );
-                        })
-                      ) : (
-                        <li className="group-members-empty">No members loaded yet.</li>
-                      )}
-                    </ul>
-                  </details>
-                  {!isMobileNav && canManageActiveGroupJoinCodes ? renderActiveJoinCodeList(false) : null}
-                </div>
-              </div>
-              <div className="group-header-controls">
-                {isMobileNav ? (
-                  <>
-                    <button
-                      type="button"
-                      className="contact group-mobile-refresh-btn group-refresh-button"
-                      onClick={() => {
-                        syncGroupData({ deep: true }).catch(() => {});
-                      }}
-                      disabled={syncingGroups}
-                    >
-                      {syncingGroups ? 'Refreshing...' : 'Refresh'}
-                    </button>
-                    <button
-                      type="button"
-                      className={mobileGroupOptionsOpen ? 'contact active group-mobile-tools-toggle' : 'contact group-mobile-tools-toggle'}
-                      aria-expanded={mobileGroupOptionsOpen}
-                      aria-controls="group-mobile-tools-panel"
-                      onClick={() => {
-                        setMobileGroupOptionsOpen((previous) => !previous);
-                      }}
-                    >
-                      {mobileGroupOptionsOpen ? 'Hide tools' : 'Group tools'}
-                    </button>
-                  </>
-                ) : (
-                  renderGroupInviteMenu(false)
-                )}
-              </div>
-              {isMobileNav ? (
-                mobileGroupOptionsOpen ? (
-                  <div id="group-mobile-tools-panel" className="group-mobile-options-panel">
-                    <div className="group-mobile-section">
-                      <div className="group-mobile-section-header">
-                        <span className="group-mobile-section-title">Invite tools</span>
-                        <span className="group-mobile-section-subtitle">Members and join codes</span>
-                      </div>
-                      {renderGroupInviteMenu(true)}
-                      {canManageActiveGroupJoinCodes ? renderActiveJoinCodeList(true) : null}
-                    </div>
-
-                    <div className="group-mobile-section group-mobile-section-actions">
-                      <div className="group-mobile-section-header">
-                        <span className="group-mobile-section-title">Group actions</span>
-                        <span className="group-mobile-section-subtitle">Rename, leave, or close group</span>
-                      </div>
-                      <div className="group-mobile-options-actions group-mobile-options-actions-secondary">
-                        {isActiveGroupAdmin ? (
-                          <>
-                            {groupRenameOpen ? (
-                              <form
-                                className="group-rename-form"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  renameActiveGroup().catch(() => {});
-                                }}
-                              >
-                                <input
-                                  value={groupRenameInput}
-                                  onChange={(event) => setGroupRenameInput(event.target.value)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Escape') {
-                                      event.preventDefault();
-                                      cancelRenameActiveGroup();
-                                    }
-                                  }}
-                                  placeholder="Group name"
-                                  aria-label="Rename group"
-                                  autoFocus
-                                  disabled={processingGroupAction}
-                                />
-                                <button
-                                  type="submit"
-                                  className="contact"
-                                  disabled={processingGroupAction || !canSubmitGroupRename}
-                                >
-                                  {processingGroupAction ? 'Saving...' : 'Save'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="contact"
-                                  onClick={cancelRenameActiveGroup}
-                                  disabled={processingGroupAction}
-                                >
-                                  Cancel
-                                </button>
-                              </form>
-                            ) : (
-                              <button
-                                type="button"
-                                className="contact"
-                                onClick={beginRenameActiveGroup}
-                                disabled={processingGroupAction}
-                              >
-                                Rename
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="contact group-danger-button"
-                              onClick={() => {
-                                handoffAdminAndLeaveActiveGroup().catch(() => {});
-                              }}
-                              disabled={processingGroupAction}
-                            >
-                              {processingGroupAction ? 'Working...' : 'Burn & Leave'}
-                            </button>
-                            <button
-                              type="button"
-                              className="contact group-danger-button"
-                              onClick={() => {
-                                disbandActiveGroup().catch(() => {});
-                              }}
-                              disabled={processingGroupAction}
-                            >
-                              {processingGroupAction ? 'Working...' : 'Disband'}
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            className="contact"
-                            onClick={() => {
-                              leaveActiveGroup().catch(() => {});
-                            }}
-                            disabled={processingGroupAction}
-                          >
-                            {processingGroupAction ? 'Working...' : 'Leave'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : null
-                ) : (
-                  <div className="group-header-actions">
-                    {isActiveGroupAdmin ? (
-                      <>
-                        {groupRenameOpen ? (
-                          <form
-                            className="group-rename-form"
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              renameActiveGroup().catch(() => {});
-                            }}
-                          >
-                            <input
-                              value={groupRenameInput}
-                              onChange={(event) => setGroupRenameInput(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Escape') {
-                                  event.preventDefault();
-                                  cancelRenameActiveGroup();
-                                }
-                              }}
-                              placeholder="Group name"
-                              aria-label="Rename group"
-                              autoFocus
-                              disabled={processingGroupAction}
-                            />
-                            <button
-                              type="submit"
-                              className="contact"
-                              disabled={processingGroupAction || !canSubmitGroupRename}
-                            >
-                              {processingGroupAction ? 'Saving...' : 'Save'}
-                            </button>
-                            <button
-                              type="button"
-                              className="contact"
-                              onClick={cancelRenameActiveGroup}
-                              disabled={processingGroupAction}
-                            >
-                              Cancel
-                            </button>
-                          </form>
-                        ) : (
-                          <button
-                            type="button"
-                            className="contact"
-                            onClick={beginRenameActiveGroup}
-                            disabled={processingGroupAction}
-                          >
-                            Rename
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="contact group-danger-button"
-                          onClick={() => {
-                            handoffAdminAndLeaveActiveGroup().catch(() => {});
-                          }}
-                          disabled={processingGroupAction}
-                        >
-                          {processingGroupAction ? 'Working...' : 'Burn & Leave'}
-                        </button>
-                        <button
-                          type="button"
-                          className="contact group-danger-button"
-                          onClick={() => {
-                            disbandActiveGroup().catch(() => {});
-                          }}
-                          disabled={processingGroupAction}
-                        >
-                          {processingGroupAction ? 'Working...' : 'Disband'}
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        className="contact"
-                        onClick={() => {
-                          leaveActiveGroup().catch(() => {});
-                        }}
-                        disabled={processingGroupAction}
-                      >
-                        {processingGroupAction ? 'Working...' : 'Leave'}
-                      </button>
-                    )}
-                  <button
-                    type="button"
-                    className="contact group-refresh-button"
-                    onClick={() => {
-                      syncGroupData({ deep: true }).catch(() => {});
-                    }}
-                    disabled={syncingGroups}
-                  >
-                    {syncingGroups ? 'Refreshing...' : 'Refresh'}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="chat-messages" ref={chatMessagesRef}>
-              {!activeGroupMessages.some((message) => !isReactionOnlyMessage(message)) ? (
-                <p className="chat-empty">No group messages yet.</p>
-              ) : (
-                activeGroupMessages.map((message) => {
-                  const isGroupSystemMessage = Boolean(message.isSystem);
-                  if (isReactionOnlyMessage(message)) {
-                    return null;
-                  }
-                  const messageDisplayText = getMessageDisplayText(message.text, message.direction);
-                  const parsedImageTag = parseImageTag(message.text);
-                  const messageReactions = getReactionsForMessage(message);
-                  const reactedEmojiSet = new Set(
-                    messageReactions.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)
-                  );
-                  const deliveryLabel =
-                    message.deliveryState === 'pending'
-                      ? 'Sending...'
-                      : message.deliveryState === 'sent'
-                        ? 'Sent'
-                        : message.deliveryState === 'failed'
-                          ? 'Failed'
-                          : '';
-                  const normalizedSender = message.senderAddress?.trim().toLowerCase() ?? '';
-                  const isSelfSender =
-                    normalizedSender.length > 0 &&
-                    walletAddress.length > 0 &&
-                    normalizedSender === walletAddress.trim().toLowerCase();
-                  const canCopySenderAddress = Boolean(message.senderAddress && isWalletAddress(message.senderAddress));
-                  const senderCopyKey = `message-sender:${message.id}`;
-                  const isSenderCopied = lastCopiedKey === senderCopyKey;
-                  const senderLabel = isSelfSender
-                    ? 'You'
-                    : findContactNameForWalletAddress(message.senderAddress) ??
-                      (message.senderAddress && isWalletAddress(message.senderAddress)
-                        ? shortenAddress(message.senderAddress)
-                        : 'Member');
-                  const canReplyToGroupMessage = !isGroupSystemMessage;
-                  const messageRowClassName = isGroupSystemMessage
-                    ? 'message-row system'
-                    : message.direction === 'outgoing'
-                      ? 'message-row outgoing'
-                      : 'message-row incoming';
-                  const messageBubbleClassName = [
-                    isGroupSystemMessage ? 'message-bubble system' : 'message-bubble',
-                    highlightedMessageId === message.id
-                      ? 'highlighted'
-                      : canReplyToGroupMessage && replyingToMessage?.id === message.id
-                        ? 'replying'
-                        : ''
-                  ]
-                    .filter((className) => className.length > 0)
-                    .join(' ');
-
-                  return (
-                    <div
-                      key={message.id}
-                      className={messageRowClassName}
-                    >
-                      <div
-                        ref={(node) => {
-                          messageElementRefs.current[message.id] = node;
-                        }}
-                        className={messageBubbleClassName}
-                      >
-                        {canReplyToGroupMessage ? (
-                          <>
-                            <button
-                              type="button"
-                              className="message-react-action"
-                              onClick={() =>
-                                setReactionPickerMessageId((previous) =>
-                                  previous === message.id ? null : message.id
-                                )
-                              }
-                              aria-label="React to this message"
-                              title="React"
-                              disabled={!message.txHash || sendingReaction}
-                            >
-                              +
-                            </button>
-                            <button
-                              type="button"
-                              className="message-reply-action"
-                              onClick={() => setReplyingToMessage(message)}
-                              aria-label="Reply to this message"
-                              title="Reply"
-                            >
-                              R
-                            </button>
-                            {reactionPickerMessageId === message.id ? (
-                              <div className="message-reaction-picker" role="dialog" aria-label="Pick reaction">
-                                {DEFAULT_REACTION_EMOJIS.map((emoji) => (
-                                  <button
-                                    key={`${message.id}-${emoji}`}
-                                    type="button"
-                                    onClick={() => {
-                                      sendReactionToMessage(message, emoji).catch(() => {});
-                                    }}
-                                    disabled={sendingReaction || reactedEmojiSet.has(emoji)}
-                                    title={reactedEmojiSet.has(emoji) ? `Already reacted with ${emoji}` : `React with ${emoji}`}
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
-                            ) : null}
-                          </>
-                        ) : null}
-                        {message.direction === 'incoming' && !isGroupSystemMessage ? (
-                          canCopySenderAddress ? (
-                            <button
-                              type="button"
-                              className={isSenderCopied ? 'message-sender-copy copied' : 'message-sender-copy'}
-                              onClick={() => {
-                                copyWithFeedback(message.senderAddress as string, senderCopyKey).catch(() => {});
-                              }}
-                              title={isSenderCopied ? 'Copied' : `Copy ${message.senderAddress as string}`}
-                            >
-                              {isSenderCopied ? `${senderLabel} (copied)` : senderLabel}
-                            </button>
-                          ) : (
-                            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{senderLabel}</div>
-                          )
-                        ) : null}
-                        {message.replyToText || message.replyToTxHash || typeof message.replyToBlockNumber === 'number' ? (
-                          <button
-                            type="button"
-                            className="message-reply"
-                            onClick={() =>
-                              jumpToReferencedMessage(
-                                message.replyToMessageId,
-                                message.replyToText,
-                                message.replyToTxHash,
-                                message.replyToBlockNumber,
-                                message.replyToLogIndex
-                              )
-                            }
-                            title="Go to replied message"
-                          >
-                            ↪ {getReplyReferenceFallbackLabel(message)}
-                          </button>
-                        ) : null}
-                        {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
-                        {messageReactions.length > 0 ? (
-                          <div className="message-reactions">
-                            {messageReactions.map((reaction) => (
-                              <button
-                                key={`${message.id}-${reaction.emoji}`}
-                                type="button"
-                                className={reaction.reactedByMe ? 'message-reaction-chip active' : 'message-reaction-chip'}
-                                onClick={() => {
-                                  sendReactionToMessage(message, reaction.emoji).catch(() => {});
-                                }}
-                                disabled={!message.txHash || sendingReaction || reaction.reactedByMe}
-                              >
-                                <span>{reaction.emoji}</span>
-                                <span>{reaction.count}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                        {message.timestamp || deliveryLabel ? (
-                          <div className="message-meta">
-                            {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
-                            {deliveryLabel ? (
-                              <span
-                                className={
-                                  message.deliveryState === 'failed'
-                                    ? 'message-delivery failed'
-                                    : message.deliveryState === 'pending'
-                                      ? 'message-delivery pending'
-                                      : 'message-delivery sent'
-                                }
-                              >
-                                {deliveryLabel}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <GroupChatCompose
-              replyPreviewText={replyingPreviewText}
-              onCancelReply={() => setReplyingToMessage(null)}
-              tipComposerOpen={tipComposerOpen}
-              onToggleTipComposer={() => setTipComposerOpen((previous) => !previous)}
-              tipping={tipping}
-              tipTokenSelection={tipTokenSelection}
-              onTipTokenSelectionChange={setTipTokenSelection}
-              rewardTokenSymbol={rewardTokenSymbol}
-              privateRewardTokenSymbol={privateRewardTokenSymbol}
-              tipAmountInput={tipAmountInput}
-              onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
-              activeTipTokenSymbol={activeTipTokenSymbol}
-              tipAmountWeiFromInput={tipAmountWeiFromInput}
-              canSendGroupTipFromComposer={canSendGroupTipFromComposer}
-              tipAmountExceedsBalance={tipAmountExceedsBalance}
-              tipAmountSummaryLabel={tipAmountSummaryLabel}
-              tipBalanceSummaryLabel={tipBalanceSummaryLabel}
-              onSendTip={() => {
-                sendTipToActiveGroupMember(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
-              }}
-              groupTipRecipientAddress={groupTipRecipientAddress}
-              onGroupTipRecipientChange={setGroupTipRecipientAddress}
-              activeGroupTipRecipients={activeGroupTipRecipients}
-              selectedGroupTipRecipient={selectedGroupTipRecipient}
-              groupFeeModeSelection={groupFeeModeSelection}
-              onToggleGroupFeeMode={() => {
-                setGroupFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
-              }}
-              selectedGroupFeeLabel={selectedGroupFeeLabel}
-              sendingGroupMessage={sendingGroupMessage}
-              processingGroupAction={processingGroupAction}
-              composerRef={chatComposerRef}
-              isMobileNav={isMobileNav}
-              onSendMessage={() => {
-                sendGroupMessage().catch(() => {});
-              }}
-              maxMessageLength={MAX_MESSAGE_LENGTH}
-              onMessageInputChange={handleMessageInputChange}
-            />
-          </div>
+          <GroupChatPanel
+            activeGroupId={activeGroupId}
+            activeGroupMeta={activeGroupMeta}
+            isActiveGroupAdmin={isActiveGroupAdmin}
+            activeGroupMemberCount={activeGroupMemberCount}
+            activeGroupParticipants={activeGroupParticipants}
+            lastCopiedKey={lastCopiedKey}
+            onCopyWithFeedback={copyWithFeedback}
+            processingGroupAction={processingGroupAction}
+            onRemoveMember={removeMemberFromActiveGroup}
+            desktopJoinCodeList={!isMobileNav && canManageActiveGroupJoinCodes ? renderActiveJoinCodeList(false) : null}
+            desktopInviteMenu={renderGroupInviteMenu(false)}
+            mobileInviteTools={
+              <>
+                {renderGroupInviteMenu(true)}
+                {canManageActiveGroupJoinCodes ? renderActiveJoinCodeList(true) : null}
+              </>
+            }
+            desktopGroupActions={desktopGroupActions}
+            mobileGroupActions={mobileGroupActions}
+            isMobileNav={isMobileNav}
+            syncingGroups={syncingGroups}
+            mobileGroupOptionsOpen={mobileGroupOptionsOpen}
+            onToggleMobileGroupOptions={() => setMobileGroupOptionsOpen((previous) => !previous)}
+            onRefreshGroup={() => {
+              syncGroupData({ deep: true }).catch(() => {});
+            }}
+            chatMessagesRef={chatMessagesRef}
+            activeGroupMessages={activeGroupMessages}
+            isReactionOnlyMessage={isReactionOnlyMessage}
+            getReactionsForMessage={getReactionsForMessage}
+            reactionPickerMessageId={reactionPickerMessageId}
+            onToggleReactionPicker={(messageId) =>
+              setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
+            }
+            sendingReaction={sendingReaction}
+            onSendReaction={sendReactionToMessage}
+            replyingToMessage={replyingToMessage}
+            onReplyToMessage={setReplyingToMessage}
+            highlightedMessageId={highlightedMessageId}
+            messageElementRefs={messageElementRefs}
+            onJumpToReferencedMessage={jumpToReferencedMessage}
+            getReplyReferenceFallbackLabel={getReplyReferenceFallbackLabel}
+            walletAddress={walletAddress}
+            findContactNameForWalletAddress={findContactNameForWalletAddress}
+            replyingPreviewText={replyingPreviewText}
+            onCancelReply={() => setReplyingToMessage(null)}
+            tipComposerOpen={tipComposerOpen}
+            onToggleTipComposer={() => setTipComposerOpen((previous) => !previous)}
+            tipping={tipping}
+            tipTokenSelection={tipTokenSelection}
+            onTipTokenSelectionChange={setTipTokenSelection}
+            rewardTokenSymbol={rewardTokenSymbol}
+            privateRewardTokenSymbol={privateRewardTokenSymbol}
+            tipAmountInput={tipAmountInput}
+            onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
+            activeTipTokenSymbol={activeTipTokenSymbol}
+            tipAmountWeiFromInput={tipAmountWeiFromInput}
+            canSendGroupTipFromComposer={canSendGroupTipFromComposer}
+            tipAmountExceedsBalance={tipAmountExceedsBalance}
+            tipAmountSummaryLabel={tipAmountSummaryLabel}
+            tipBalanceSummaryLabel={tipBalanceSummaryLabel}
+            onSendTip={() => {
+              sendTipToActiveGroupMember(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
+            }}
+            groupTipRecipientAddress={groupTipRecipientAddress}
+            onGroupTipRecipientChange={setGroupTipRecipientAddress}
+            activeGroupTipRecipients={activeGroupTipRecipients}
+            selectedGroupTipRecipient={selectedGroupTipRecipient}
+            groupFeeModeSelection={groupFeeModeSelection}
+            onToggleGroupFeeMode={() => {
+              setGroupFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
+            }}
+            selectedGroupFeeLabel={selectedGroupFeeLabel}
+            sendingGroupMessage={sendingGroupMessage}
+            composerRef={chatComposerRef}
+            onSendMessage={() => {
+              sendGroupMessage().catch(() => {});
+            }}
+            maxMessageLength={MAX_MESSAGE_LENGTH}
+            onMessageInputChange={handleMessageInputChange}
+          />
         ) : activeContact ? (
-          <div className="chat-shell">
-            <div className="chat-header">
-              <strong>
-                {isSelfChat
-                  ? `${activeContactMeta?.name ? `${activeContactMeta.name} (${shortenAddress(activeContact)})` : shortenAddress(activeContact)} (self)`
-                  : `${activeContactMeta?.name ? `${activeContactMeta.name} (${shortenAddress(activeContact)})` : shortenAddress(activeContact)}`}
-              </strong>
-              <div className="chat-header-actions">
-                {activeConversationMuted || activeConversationHidden ? (
-                  <span className="chat-header-state">
-                    {activeConversationMuted ? 'Muted' : null}
-                    {activeConversationMuted && activeConversationHidden ? ' | ' : null}
-                    {activeConversationHidden ? 'Hidden' : null}
-                  </span>
-                ) : null}
-                {activeConversationStateSyncPending ? (
-                  <span className="chat-header-sync" role="status" aria-live="polite" aria-label="Saving conversation">
-                    <span className="inline-spinner" aria-hidden="true" />
-                  </span>
-                ) : null}
-                {!isSelfChat ? (
-                  <button
-                    type="button"
-                    className="contact"
-                    onClick={() => {
-                      toggleConversationMuteForContact(activeContact).catch(() => {});
-                    }}
-                    disabled={activeConversationStateSyncPending}
-                    title={
-                      activeConversationStateSyncPending
-                        ? 'Waiting for confirmation...'
-                        : activeConversationMuted
-                          ? 'Unmute conversation'
-                          : 'Mute conversation'
-                    }
-                  >
-                    {activeConversationStateSyncPending
-                      ? 'Saving...'
-                      : activeConversationMuted
-                        ? 'Unmute'
-                        : 'Mute'}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="contact"
-                  onClick={loadFullConversationHistory}
-                  disabled={syncingHistory}
-                >
-                  {syncingHistory ? 'Syncing...' : 'Sync History'}
-                </button>
-              </div>
-            </div>
-
-            <div
-              className="chat-messages"
-              ref={chatMessagesRef}
-              onClick={() => markConversationAsRead(activeContact)}
-            >
-              {loadingOlderHistory ? <p className="chat-empty">Loading older messages...</p> : null}
-              {!activeMessages.some((message) => !isReactionOnlyMessage(message)) ? (
-                <p className="chat-empty">No messages yet.</p>
-              ) : (
-                activeMessages.map((message) => {
-                  if (isReactionOnlyMessage(message)) {
-                    return null;
-                  }
-                  const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
-                  const messageDisplayText = getMessageDisplayText(message.text, message.direction);
-                  const parsedImageTag = parseImageTag(message.text);
-                  const messageReactions = getReactionsForMessage(message);
-                  const reactedEmojiSet = new Set(
-                    messageReactions.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)
-                  );
-                  const deliveryLabel =
-                    message.deliveryState === 'pending'
-                      ? 'Sending...'
-                      : message.deliveryState === 'sent'
-                        ? 'Sent'
-                        : message.deliveryState === 'failed'
-                          ? 'Failed'
-                          : '';
-
-                  return (
-                    <div
-                      key={message.id}
-                      className={message.direction === 'outgoing' ? 'message-row outgoing' : 'message-row incoming'}
-                    >
-                      <div
-                        ref={(node) => {
-                          messageElementRefs.current[message.id] = node;
-                        }}
-                        className={
-                          highlightedMessageId === message.id
-                            ? 'message-bubble highlighted'
-                            : replyingToMessage?.id === message.id
-                              ? 'message-bubble replying'
-                              : 'message-bubble'
-                        }
-                      >
-                        <>
-                          <button
-                            type="button"
-                            className="message-react-action"
-                            onClick={() =>
-                              setReactionPickerMessageId((previous) =>
-                                previous === message.id ? null : message.id
-                              )
-                            }
-                            aria-label="React to this message"
-                            title="React"
-                            disabled={!message.txHash || sendingReaction}
-                          >
-                            +
-                          </button>
-                          <button
-                            type="button"
-                            className="message-reply-action"
-                            onClick={() => setReplyingToMessage(message)}
-                            aria-label="Reply to this message"
-                            title="Reply"
-                          >
-                            R
-                          </button>
-                          {reactionPickerMessageId === message.id ? (
-                            <div className="message-reaction-picker" role="dialog" aria-label="Pick reaction">
-                              {DEFAULT_REACTION_EMOJIS.map((emoji) => (
-                                <button
-                                  key={`${message.id}-${emoji}`}
-                                  type="button"
-                                  onClick={() => {
-                                    sendReactionToMessage(message, emoji).catch(() => {});
-                                  }}
-                                  disabled={sendingReaction || reactedEmojiSet.has(emoji)}
-                                  title={reactedEmojiSet.has(emoji) ? `Already reacted with ${emoji}` : `React with ${emoji}`}
-                                >
-                                  {emoji}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </>
-                        {message.replyToText || message.replyToTxHash || typeof message.replyToBlockNumber === 'number' ? (
-                          <button
-                            type="button"
-                            className="message-reply"
-                            onClick={() =>
-                              jumpToReferencedMessage(
-                                message.replyToMessageId,
-                                message.replyToText,
-                                message.replyToTxHash,
-                                message.replyToBlockNumber,
-                                message.replyToLogIndex
-                              )
-                            }
-                            title="Go to replied message"
-                          >
-                            ↪ {getReplyReferenceFallbackLabel(message)}
-                          </button>
-                        ) : null}
-                        {parsedTradeOffer ? (
-                          <TradeOfferCard
-                            offer={parsedTradeOffer}
-                            snapshot={tradeSnapshotsById[String(parsedTradeOffer.tradeId)] ?? null}
-                            currentWalletAddress={walletAddress}
-                            actionPending={processingTradeActionId === String(parsedTradeOffer.tradeId)}
-                            onAccept={() => {
-                              acceptTradeOffer(parsedTradeOffer, message).catch(() => {});
-                            }}
-                            onDecline={() => {
-                              declineTradeOffer(parsedTradeOffer, message).catch(() => {});
-                            }}
-                            onCounter={() => {
-                              prepareCounterTrade(parsedTradeOffer, message).catch(() => {});
-                            }}
-                            onCancel={() => {
-                              cancelTradeOffer(parsedTradeOffer, message).catch(() => {});
-                            }}
-                          />
-                        ) : parsedImageTag ? (
-                          <ChatImage tag={message.text} parsed={parsedImageTag} />
-                        ) : messageDisplayText ? (
-                          <div>{messageDisplayText}</div>
-                        ) : null}
-                        {messageReactions.length > 0 ? (
-                          <div className="message-reactions">
-                            {messageReactions.map((reaction) => (
-                              <button
-                                key={`${message.id}-${reaction.emoji}`}
-                                type="button"
-                                className={reaction.reactedByMe ? 'message-reaction-chip active' : 'message-reaction-chip'}
-                                onClick={() => {
-                                  sendReactionToMessage(message, reaction.emoji).catch(() => {});
-                                }}
-                                disabled={!message.txHash || sendingReaction || reaction.reactedByMe}
-                              >
-                                <span>{reaction.emoji}</span>
-                                <span>{reaction.count}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                        {message.timestamp || deliveryLabel ? (
-                          <div className="message-meta">
-                            {message.timestamp ? <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span> : null}
-                            {deliveryLabel ? (
-                              <span
-                                className={
-                                  message.deliveryState === 'failed'
-                                    ? 'message-delivery failed'
-                                    : message.deliveryState === 'pending'
-                                      ? 'message-delivery pending'
-                                      : 'message-delivery sent'
-                                }
-                              >
-                                {deliveryLabel}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <DirectChatCompose
-              replyPreviewText={replyingPreviewText}
-              onCancelReply={() => setReplyingToMessage(null)}
-              tipComposerOpen={tipComposerOpen}
-              onToggleTipComposer={() => {
-                setTradeComposerOpen(false);
-                setTipComposerOpen((previous) => !previous);
-              }}
-              tipping={tipping}
-              tipTokenSelection={tipTokenSelection}
-              onTipTokenSelectionChange={setTipTokenSelection}
-              rewardTokenSymbol={rewardTokenSymbol}
-              privateRewardTokenSymbol={privateRewardTokenSymbol}
-              tipAmountInput={tipAmountInput}
-              onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
-              activeTipTokenSymbol={activeTipTokenSymbol}
-              tipAmountWeiFromInput={tipAmountWeiFromInput}
-              canSendTipFromComposer={canSendTipFromComposer}
-              tipAmountExceedsBalance={tipAmountExceedsBalance}
-              tipAmountSummaryLabel={tipAmountSummaryLabel}
-              tipBalanceSummaryLabel={tipBalanceSummaryLabel}
-              onSendTip={() => {
-                sendTipToActiveContact(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
-              }}
-              tradeComposerOpen={tradeComposerOpen}
-              tradeComposerContent={
-                <TradeComposerPanel
-                  feeMode={tradeFeeModeSelection}
-                  onToggleFeeMode={() => {
-                    setTradeFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
-                  }}
-                  feeSummaryLabel={tradeFeeSummaryLabel}
-                  offerTokenOptions={tradeTokenOptions}
-                  requestTokenOptions={tradeTokenOptions}
-                  offerTokenSelection={tradeOfferTokenSelection}
-                  onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
-                  requestTokenSelection={tradeRequestTokenSelection}
-                  onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
-                  offerCustomAddress={tradeOfferCustomTokenAddress}
-                  onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
-                  requestCustomAddress={tradeRequestCustomTokenAddress}
-                  onRequestCustomAddressChange={setTradeRequestCustomTokenAddress}
-                  offerCustomMetaLabel={tradeOfferCustomMetaLabel}
-                  requestCustomMetaLabel={tradeRequestCustomMetaLabel}
-                  offerVerifyUrl={tradeOfferVerifyUrl}
-                  requestVerifyUrl={tradeRequestVerifyUrl}
-                  offerAmountInput={tradeOfferAmountInput}
-                  onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
-                  requestAmountInput={tradeRequestAmountInput}
-                  onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
-                  offerAmountSummaryLabel={tradeOfferAmountSummaryLabel}
-                  requestAmountSummaryLabel={tradeRequestAmountSummaryLabel}
-                  offerBalanceSummaryLabel={tradeOfferBalanceSummaryLabel}
-                  expiresHoursInput={tradeExpiryHoursInput}
-                  onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
-                  sending={creatingTrade}
-                  canSend={canSendTradeOffer}
-                  onSendTradeOffer={() => {
-                    createTradeOffer().catch(() => {});
-                  }}
-                  validationMessage={tradeComposerValidationMessage || undefined}
-                />
-              }
-              onToggleTradeComposer={() => {
-                setTipComposerOpen(false);
-                setTradeComposerOpen((previous) => {
-                  const nextOpen = !previous;
-                  if (nextOpen && tradeCounterParentId === null) {
-                    setTradeOfferAmountInput('');
-                    setTradeRequestAmountInput('');
-                    setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-                  }
-                  if (!nextOpen) {
-                    setTradeCounterParentId(null);
-                  }
-                  return nextOpen;
-                });
-              }}
-              composerRef={chatComposerRef}
-              isMobileNav={isMobileNav}
-              onSendMessage={() => {
-                sendMessage().catch(() => {});
-              }}
-              maxMessageLength={MAX_MESSAGE_LENGTH}
-              onMessageInputChange={handleMessageInputChange}
-              sending={sending}
-              tipToggleDisabled={tipping || sending || !activeContact || isSelfChat}
-              tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
-              tradeToggleDisabled={creatingTrade || tipping || sending || !activeContact || isSelfChat}
-              tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
-            />
-          </div>
+          <DirectChatPanel
+            activeContact={activeContact}
+            activeContactMeta={activeContactMeta}
+            isSelfChat={isSelfChat}
+            activeConversationMuted={activeConversationMuted}
+            activeConversationHidden={activeConversationHidden}
+            activeConversationStateSyncPending={activeConversationStateSyncPending}
+            onToggleConversationMute={() => {
+              toggleConversationMuteForContact(activeContact).catch(() => {});
+            }}
+            onLoadFullConversationHistory={loadFullConversationHistory}
+            syncingHistory={syncingHistory}
+            chatMessagesRef={chatMessagesRef}
+            markConversationAsRead={markConversationAsRead}
+            loadingOlderHistory={loadingOlderHistory}
+            activeMessages={activeMessages}
+            isReactionOnlyMessage={isReactionOnlyMessage}
+            reactionPickerMessageId={reactionPickerMessageId}
+            onToggleReactionPicker={(messageId) =>
+              setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
+            }
+            sendingReaction={sendingReaction}
+            onSendReaction={sendReactionToMessage}
+            onReplyToMessage={setReplyingToMessage}
+            replyingToMessage={replyingToMessage}
+            highlightedMessageId={highlightedMessageId}
+            messageElementRefs={messageElementRefs}
+            getReactionsForMessage={getReactionsForMessage}
+            onJumpToReferencedMessage={jumpToReferencedMessage}
+            getReplyReferenceFallbackLabel={getReplyReferenceFallbackLabel}
+            tradeSnapshotsById={tradeSnapshotsById}
+            walletAddress={walletAddress}
+            processingTradeActionId={processingTradeActionId}
+            onAcceptTrade={acceptTradeOffer}
+            onDeclineTrade={declineTradeOffer}
+            onCounterTrade={prepareCounterTrade}
+            onCancelTrade={cancelTradeOffer}
+            replyingPreviewText={replyingPreviewText}
+            onCancelReply={() => setReplyingToMessage(null)}
+            tipComposerOpen={tipComposerOpen}
+            onToggleTipComposer={() => {
+              setTradeComposerOpen(false);
+              setTipComposerOpen((previous) => !previous);
+            }}
+            tipping={tipping}
+            tipTokenSelection={tipTokenSelection}
+            onTipTokenSelectionChange={setTipTokenSelection}
+            rewardTokenSymbol={rewardTokenSymbol}
+            privateRewardTokenSymbol={privateRewardTokenSymbol}
+            tipAmountInput={tipAmountInput}
+            onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
+            activeTipTokenSymbol={activeTipTokenSymbol}
+            tipAmountWeiFromInput={tipAmountWeiFromInput}
+            canSendTipFromComposer={canSendTipFromComposer}
+            tipAmountExceedsBalance={tipAmountExceedsBalance}
+            tipAmountSummaryLabel={tipAmountSummaryLabel}
+            tipBalanceSummaryLabel={tipBalanceSummaryLabel}
+            onSendTip={() => {
+              sendTipToActiveContact(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
+            }}
+            tradeComposerOpen={tradeComposerOpen}
+            tradeComposerContent={tradeComposerContent}
+            onToggleTradeComposer={() => {
+              setTipComposerOpen(false);
+              setTradeComposerOpen((previous) => {
+                const nextOpen = !previous;
+                if (nextOpen && tradeCounterParentId === null) {
+                  setTradeOfferAmountInput('');
+                  setTradeRequestAmountInput('');
+                  setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+                }
+                if (!nextOpen) {
+                  setTradeCounterParentId(null);
+                }
+                return nextOpen;
+              });
+            }}
+            composerRef={chatComposerRef}
+            isMobileNav={isMobileNav}
+            onSendMessage={() => {
+              sendMessage().catch(() => {});
+            }}
+            maxMessageLength={MAX_MESSAGE_LENGTH}
+            onMessageInputChange={handleMessageInputChange}
+            sending={sending}
+            tipToggleDisabled={tipping || sending || !activeContact || isSelfChat}
+            tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
+            tradeToggleDisabled={creatingTrade || tipping || sending || !activeContact || isSelfChat}
+            tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
+          />
         ) : (
           <div className="chat-placeholder">Select a contact or group to start messaging.</div>
         )}
@@ -13165,33 +10640,11 @@ export default function App() {
 
       </div>
 
-      <nav className="mobile-bottom-nav" aria-label="Mobile sections">
-        <button
-          type="button"
-          className={activeMobileView === 'wallets' ? 'active' : undefined}
-          onClick={() => setActiveMobileView('wallets')}
-        >
-          Wallet
-        </button>
-        {isConnected ? (
-          <>
-            <button
-              type="button"
-              className={activeMobileView === 'contacts' ? 'active' : undefined}
-              onClick={() => setActiveMobileView('contacts')}
-            >
-              Contacts
-            </button>
-            <button
-              type="button"
-              className={activeMobileView === 'chat' ? 'active' : undefined}
-              onClick={() => setActiveMobileView('chat')}
-            >
-              Chat
-            </button>
-          </>
-        ) : null}
-      </nav>
+      <MobileBottomNav
+        activeMobileView={activeMobileView}
+        isConnected={isConnected}
+        onSelectView={setActiveMobileView}
+      />
 
       <QuickActionsModal
         isOpen={showQuickActionsModal}
