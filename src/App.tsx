@@ -1377,6 +1377,13 @@ export default function App() {
   const walletPrimaryButtonClass = shouldHighlightWalletPicker
     ? 'connect-btn wallet-inline-btn wallet-primary-action'
     : 'connect-btn wallet-inline-btn';
+  const shouldOpenWalletPickerFromPrimary =
+    hasConnectedWallet ||
+    injectedWalletOptions.length > 1 ||
+    savedBurnerWalletCount > 1 ||
+    (Boolean(preferredInjectedWalletOption) && hasSavedBurnerWallet);
+  const walletPrimaryOpensPicker =
+    shouldOpenWalletPickerFromPrimary || (!preferredInjectedWalletOption && !hasSavedBurnerWallet);
   const walletPickerButtonLabel =
     connectingMethod === 'metamask'
       ? `Connecting ${connectingWalletLabel || preferredInjectedWalletOption?.label || 'Wallet'}...`
@@ -1385,6 +1392,21 @@ export default function App() {
         : onboardStatus === 'AES key ready'
           ? `${activeInjectedWalletLabel} + AES Ready`
           : 'Sign AES Key';
+  const handleWalletPrimaryAction = () => {
+    if (walletPrimaryOpensPicker) {
+      setWalletPickerOpen((previous) => !previous);
+      return;
+    }
+
+    if (preferredInjectedWalletOption) {
+      connectAndOnboard(preferredInjectedWalletOption.id).catch(() => {});
+      return;
+    }
+
+    if (hasSavedBurnerWallet) {
+      beginBurnerPinFlow('stored').catch(() => {});
+    }
+  };
   const findContactNameForWalletAddress = (address?: string): string | undefined => {
     if (!address) {
       return undefined;
@@ -11500,40 +11522,17 @@ export default function App() {
           <div className="wallet-inline-action">
             <span className="wallet-section-label wallet-section-label-inline">Wallet</span>
             <div className="wallet-inline-control" ref={walletPickerRef}>
-              <div className="wallet-split-control">
-                <button
-                  className={walletPrimaryButtonClass}
-                  onClick={() => {
-                    if (preferredInjectedWalletOption) {
-                      connectAndOnboard(preferredInjectedWalletOption.id).catch(() => {});
-                      return;
-                    }
-                    if (hasSavedBurnerWallet) {
-                      beginBurnerPinFlow('stored').catch(() => {});
-                      return;
-                    }
-                    setWalletPickerOpen((previous) => !previous);
-                  }}
-                  type="button"
-                  disabled={connectingMethod !== null}
-                >
-                  {walletPickerButtonLabel}
-                </button>
-                <button
-                  className="connect-btn wallet-split-toggle"
-                  onClick={() => {
-                    setWalletPickerOpen((previous) => !previous);
-                  }}
-                  type="button"
-                  aria-expanded={walletPickerOpen}
-                  aria-haspopup="menu"
-                  aria-label="Choose a different wallet"
-                  title="Choose a different wallet"
-                  disabled={connectingMethod !== null}
-                >
-                  v
-                </button>
-              </div>
+              <button
+                className={walletPrimaryButtonClass}
+                onClick={handleWalletPrimaryAction}
+                type="button"
+                disabled={connectingMethod !== null}
+                aria-expanded={walletPrimaryOpensPicker ? walletPickerOpen : undefined}
+                aria-haspopup={walletPrimaryOpensPicker ? 'menu' : undefined}
+                title={walletPrimaryOpensPicker ? 'Choose or switch wallet' : undefined}
+              >
+                {walletPickerButtonLabel}
+              </button>
               {walletPickerOpen ? (
                 <div className="wallet-picker-menu" role="menu" aria-label="Wallet options">
                   <div className="wallet-picker-section">

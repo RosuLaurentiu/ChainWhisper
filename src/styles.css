@@ -376,24 +376,6 @@ body {
   min-width: 0;
 }
 
-.wallet-split-control {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
-  gap: 6px;
-  align-items: stretch;
-}
-
-.wallet-split-toggle {
-  padding-left: 0;
-  padding-right: 0;
-  font-size: 0.92rem;
-}
-
-.wallet-split-toggle[aria-expanded='true'] {
-  border-color: var(--border-strong);
-  background: rgba(139, 92, 246, 0.12);
-}
-
 .wallet-picker-menu {
   position: absolute;
   top: calc(100% + 8px);
