@@ -215,6 +215,8 @@ export const LEGACY_PROFILE_PREFIX = '[[coti-profile:v1]]';
 export const LEGACY_PROFILE_PLAIN_PREFIX = '[[coti-nick:v1]]';
 export const IMAGE_MESSAGE_PREFIX = '[[coti-image:v1]]';
 export const TIP_NOTICE_PREFIX = '[[coti-tip:v1]]';
+export const TRADE_OFFER_MESSAGE_PREFIX = '[[coti-trade-offer:v1]]';
+export const TRADE_RESPONSE_MESSAGE_PREFIX = '[[coti-trade-response:v1]]';
 export const STATE_BACKUP_PREFIX = '[[coti-state:v1]]';
 export const STATE_BACKUP_COMPRESSED_PREFIX = 'z:';
 export const READ_CURSOR_PREFIX = '[[coti-read:v1]]';
@@ -352,6 +354,52 @@ export type BurnerInitResult = 'connected' | 'needs-funding' | 'imported' | 'fai
 export type SensitiveAction = 'reveal-backup';
 export type MobileView = 'wallets' | 'contacts' | 'chat';
 export type TipTokenSelection = 'coti' | 'wisp' | 'pwisp';
+export type TradeAssetKind = 'native' | 'erc20' | 'private-erc20';
+export type TradeFeeModeSelection = 'coti' | 'token';
+export type TradeMessageAction = 'accepted' | 'declined' | 'cancelled' | 'countered';
+export type TradeOnChainStatus = 'open' | 'accepted' | 'cancelled' | 'declined' | 'expired' | 'unknown';
+
+export type TradeAssetPayload = {
+  kind: TradeAssetKind;
+  tokenAddress?: string;
+  symbol: string;
+  decimals: number;
+  amount: string;
+  custom?: boolean;
+};
+
+export type TradeOfferMessagePayload = {
+  version: 1 | 2;
+  tradeId: number;
+  escrowContract: string;
+  maker: string;
+  taker: string;
+  offer?: TradeAssetPayload;
+  request?: TradeAssetPayload;
+  createdAt: number;
+  expiresAt: number;
+  parentTradeId?: number;
+};
+
+export type TradeResponseMessagePayload = {
+  version: 1;
+  tradeId: number;
+  action: TradeMessageAction;
+  actor: string;
+  createdAt: number;
+  counterTradeId?: number;
+};
+
+export type TradeSnapshot = {
+  tradeId: number;
+  maker: string;
+  taker: string;
+  offer: TradeAssetPayload;
+  request: TradeAssetPayload;
+  createdAt: number;
+  expiresAt: number;
+  status: TradeOnChainStatus;
+};
 
 export type PendingBurnerInit = {
   mode: BurnerInitMode;
@@ -525,6 +573,25 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
 
+export const TRADE_ESCROW_CONTRACT_ADDRESS = '0x57D00e9B8689bDA8E1BD0524bE05d0869D20F899';
+export const TRADE_ESCROW_CONTRACT_ABI = [
+  'function feeRecipient() view returns (address)',
+  'function feeAmount() view returns (uint256)',
+  'function tokenFeeAmount() view returns (uint256)',
+  'function publicFeeToken() view returns (address)',
+  'function privateFeeToken() view returns (address)',
+  'function nextTradeId() view returns (uint256)',
+  'function createTrade((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, uint8 feeMode) payable returns (uint256 tradeId)',
+  'function acceptTrade(uint256 tradeId) payable',
+  'function cancelTrade(uint256 tradeId)',
+  'function declineTrade(uint256 tradeId)',
+  'function getTrade(uint256 tradeId) view returns (address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt)',
+  'event TradeOpened(uint256 indexed tradeId, address indexed maker, address indexed taker, uint8 offerAssetType, address offerToken, uint256 offerAmount, uint8 requestAssetType, address requestToken, uint256 requestAmount, uint64 createdAt, uint64 expiresAt)',
+  'event TradeAccepted(uint256 indexed tradeId, address indexed taker)',
+  'event TradeCancelled(uint256 indexed tradeId, address indexed maker)',
+  'event TradeDeclined(uint256 indexed tradeId, address indexed taker)'
+] as const;
+
 export const ERC20_TOKEN_ABI = [
   'function symbol() view returns (string)',
   'function decimals() view returns (uint8)',
@@ -539,6 +606,16 @@ export const PRIVATE_TOKEN_BALANCE_ABI = [
   'function decimals() view returns (uint8)',
   'function balanceOf(address account) view returns (uint256)',
   'function balanceOf() returns (uint256)'
+] as const;
+
+export const PRIVATE_ERC20_TOKEN_ABI = [
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address account) view returns (uint256)',
+  'function balanceOf() returns (uint256)',
+  'function allowance(address account, bool isSpender) returns (uint256)',
+  'function approve(address spender, (uint256 ciphertext, bytes signature) value) returns (bool)',
+  'function transfer(address to, (uint256 ciphertext, bytes signature) value) returns (uint256)'
 ] as const;
 
 export const SWAP_VAULT_CONTRACT_ABI = [

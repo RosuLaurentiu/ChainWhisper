@@ -17,10 +17,13 @@ import {
   CONVERSATION_STATE_METADATA_PREFIXES,
   ConversationBlockRange,
   ConversationPreferenceState,
+  decodeBase64Url,
   DEFAULT_REACTION_EMOJIS,
+  encodeBase64Url,
   EncryptedBurnerWalletRecord,
   EXTERNAL_REPLY_TXHASH_REGEX,
   formatCotiAmount,
+  formatTokenAmount,
   formatTipNoticeText,
   IMAGE_MESSAGE_PREFIX,
   isBurnerStorageAvailable,
@@ -54,6 +57,11 @@ import {
   SubmitMemoPayload,
   TEXT_DECODER,
   TEXT_ENCODER,
+  TRADE_OFFER_MESSAGE_PREFIX,
+  TRADE_RESPONSE_MESSAGE_PREFIX,
+  TradeAssetPayload,
+  TradeOfferMessagePayload,
+  TradeResponseMessagePayload,
   toSafeNumber
 } from './core';
 
@@ -1864,6 +1872,221 @@ export const parseMessageProfilePayload = (text: string): { cleanText: string; n
   }
 };
 
+const decodeStructuredChatPayload = <TPayload extends object>(text: string, prefix: string): TPayload | null => {
+  if (!text.startsWith(prefix)) {
+    return null;
+  }
+
+  const encodedPayload = text.slice(prefix.length).trim();
+  if (!encodedPayload) {
+    return null;
+  }
+
+  try {
+    const decodedPayload = decodeBase64Url(encodedPayload);
+    const parsedPayload = JSON.parse(decodedPayload) as TPayload;
+    return parsedPayload && typeof parsedPayload === 'object' ? parsedPayload : null;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeTradeAmountValue = (value: unknown): string | undefined => {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return /^\d+$/.test(normalized) ? normalized : undefined;
+  }
+  if (typeof value === 'bigint') {
+    return value >= 0n ? value.toString() : undefined;
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+    return String(value);
+  }
+  return undefined;
+};
+
+const normalizeTradeSymbol = (value: unknown): string | undefined => {
+  const normalized = typeof value === 'string' ? value.trim().slice(0, 24) : '';
+  return normalized || undefined;
+};
+
+const normalizeTradeAssetPayload = (value: unknown): TradeAssetPayload | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const parsed = value as Partial<TradeAssetPayload>;
+  const kind =
+    parsed.kind === 'native' || parsed.kind === 'erc20' || parsed.kind === 'private-erc20'
+      ? parsed.kind
+      : undefined;
+  const symbol = normalizeTradeSymbol(parsed.symbol);
+  const amount = normalizeTradeAmountValue(parsed.amount);
+  const decimalsRaw = typeof parsed.decimals === 'number' ? parsed.decimals : Number(parsed.decimals);
+  const decimals =
+    Number.isFinite(decimalsRaw) && decimalsRaw >= 0 ? Math.min(30, Math.floor(decimalsRaw)) : Number.NaN;
+  const tokenAddress =
+    typeof parsed.tokenAddress === 'string' && isWalletAddress(parsed.tokenAddress) ? parsed.tokenAddress : undefined;
+
+  if (!kind || !symbol || !amount || !Number.isFinite(decimals)) {
+    return null;
+  }
+
+  if (kind === 'native') {
+    return {
+      kind,
+      symbol,
+      decimals,
+      amount,
+      custom: Boolean(parsed.custom)
+    };
+  }
+
+  if (!tokenAddress) {
+    return null;
+  }
+
+  return {
+    kind,
+    tokenAddress,
+    symbol,
+    decimals,
+    amount,
+    custom: Boolean(parsed.custom)
+  };
+};
+
+export const formatTradeAssetDisplayText = (asset: TradeAssetPayload): string => {
+  try {
+    return `${formatTokenAmount(BigInt(asset.amount), asset.decimals, 6)} ${asset.symbol}`;
+  } catch {
+    return `0 ${asset.symbol}`;
+  }
+};
+
+export const buildTradeOfferMessagePayload = (payload: TradeOfferMessagePayload): string =>
+  `${TRADE_OFFER_MESSAGE_PREFIX}${encodeBase64Url(JSON.stringify(payload))}`;
+
+export const parseTradeOfferMessagePayload = (text: string): TradeOfferMessagePayload | null => {
+  const parsed = decodeStructuredChatPayload<Partial<TradeOfferMessagePayload>>(text, TRADE_OFFER_MESSAGE_PREFIX);
+  if (!parsed) {
+    return null;
+  }
+
+  const tradeId = toSafeNumber(parsed.tradeId);
+  const createdAt = toSafeNumber(parsed.createdAt);
+  const expiresAt = toSafeNumber(parsed.expiresAt);
+  const parentTradeId = toSafeNumber(parsed.parentTradeId);
+  const escrowContract =
+    typeof parsed.escrowContract === 'string' && isWalletAddress(parsed.escrowContract)
+      ? parsed.escrowContract
+      : undefined;
+  const maker = typeof parsed.maker === 'string' && isWalletAddress(parsed.maker) ? parsed.maker : undefined;
+  const taker = typeof parsed.taker === 'string' && isWalletAddress(parsed.taker) ? parsed.taker : undefined;
+  const offer = normalizeTradeAssetPayload(parsed.offer);
+  const request = normalizeTradeAssetPayload(parsed.request);
+
+  if (
+    (parsed.version !== 1 && parsed.version !== 2) ||
+    tradeId <= 0 ||
+    createdAt <= 0 ||
+    expiresAt <= 0 ||
+    !escrowContract ||
+    !maker ||
+    !taker
+  ) {
+    return null;
+  }
+
+  if (parsed.version === 1 && (!offer || !request)) {
+    return null;
+  }
+
+  return {
+    version: parsed.version,
+    tradeId,
+    escrowContract,
+    maker,
+    taker,
+    offer: offer ?? undefined,
+    request: request ?? undefined,
+    createdAt,
+    expiresAt,
+    parentTradeId: parentTradeId > 0 ? parentTradeId : undefined
+  };
+};
+
+export const buildTradeResponseMessagePayload = (payload: TradeResponseMessagePayload): string =>
+  `${TRADE_RESPONSE_MESSAGE_PREFIX}${encodeBase64Url(JSON.stringify(payload))}`;
+
+export const parseTradeResponseMessagePayload = (text: string): TradeResponseMessagePayload | null => {
+  const parsed = decodeStructuredChatPayload<Partial<TradeResponseMessagePayload>>(text, TRADE_RESPONSE_MESSAGE_PREFIX);
+  if (!parsed) {
+    return null;
+  }
+
+  const tradeId = toSafeNumber(parsed.tradeId);
+  const createdAt = toSafeNumber(parsed.createdAt);
+  const counterTradeId = toSafeNumber(parsed.counterTradeId);
+  const actor = typeof parsed.actor === 'string' && isWalletAddress(parsed.actor) ? parsed.actor : undefined;
+  const action =
+    parsed.action === 'accepted' ||
+    parsed.action === 'declined' ||
+    parsed.action === 'cancelled' ||
+    parsed.action === 'countered'
+      ? parsed.action
+      : undefined;
+
+  if (parsed.version !== 1 || tradeId <= 0 || createdAt <= 0 || !actor || !action) {
+    return null;
+  }
+
+  return {
+    version: 1,
+    tradeId,
+    action,
+    actor,
+    createdAt,
+    counterTradeId: counterTradeId > 0 ? counterTradeId : undefined
+  };
+};
+
+export const formatTradeOfferDisplayText = (
+  payload: TradeOfferMessagePayload,
+  direction?: 'incoming' | 'outgoing'
+): string => {
+  if (!payload.offer || !payload.request) {
+    return `${direction === 'outgoing' ? 'Trade offer sent' : 'Trade offer'}: Escrow trade #${payload.tradeId}.`;
+  }
+
+  const offerLabel = formatTradeAssetDisplayText(payload.offer);
+  const requestLabel = formatTradeAssetDisplayText(payload.request);
+  const prefix = direction === 'outgoing' ? 'Trade offer sent' : 'Trade offer';
+  return `${prefix}: ${offerLabel} for ${requestLabel}.`;
+};
+
+export const formatTradeResponseDisplayText = (
+  payload: TradeResponseMessagePayload,
+  direction?: 'incoming' | 'outgoing'
+): string => {
+  const actorLabel = direction === 'outgoing'
+    ? 'You'
+    : isWalletAddress(payload.actor)
+      ? shortenAddress(payload.actor)
+      : 'Counterparty';
+  if (payload.action === 'accepted') {
+    return `${actorLabel} accepted trade #${payload.tradeId}.`;
+  }
+  if (payload.action === 'declined') {
+    return `${actorLabel} declined trade #${payload.tradeId}.`;
+  }
+  if (payload.action === 'cancelled') {
+    return `${actorLabel} cancelled trade #${payload.tradeId}.`;
+  }
+  const counterSuffix = payload.counterTradeId ? ` New trade #${payload.counterTradeId}.` : '';
+  return `${actorLabel} countered trade #${payload.tradeId}.${counterSuffix}`;
+};
+
 export const parseChatMessagePayload = (text: string): {
   cleanText: string;
   replyToMessageId?: string;
@@ -1899,6 +2122,16 @@ export const parseChatMessagePayload = (text: string): {
 export const getMessageDisplayText = (text: string, direction?: 'incoming' | 'outgoing'): string => {
   if (text.startsWith(IMAGE_MESSAGE_PREFIX)) {
     return '[Image disabled for security]';
+  }
+
+  const parsedTradeOffer = parseTradeOfferMessagePayload(text);
+  if (parsedTradeOffer) {
+    return formatTradeOfferDisplayText(parsedTradeOffer, direction);
+  }
+
+  const parsedTradeResponse = parseTradeResponseMessagePayload(text);
+  if (parsedTradeResponse) {
+    return formatTradeResponseDisplayText(parsedTradeResponse, direction);
   }
 
   const parsedTipPayload = parseTipNoticePayload(text);

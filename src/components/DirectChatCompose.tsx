@@ -1,4 +1,4 @@
-import type { Ref } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
 
 type DirectChatComposeProps = {
@@ -20,6 +20,9 @@ type DirectChatComposeProps = {
   tipAmountSummaryLabel: string;
   tipBalanceSummaryLabel: string;
   onSendTip: () => void;
+  tradeComposerOpen: boolean;
+  tradeComposerContent?: ReactNode;
+  onToggleTradeComposer: () => void;
   composerRef: Ref<HTMLDivElement>;
   isMobileNav: boolean;
   onSendMessage: () => void;
@@ -28,6 +31,8 @@ type DirectChatComposeProps = {
   sending: boolean;
   tipToggleDisabled: boolean;
   tipToggleTitle: string;
+  tradeToggleDisabled: boolean;
+  tradeToggleTitle: string;
 };
 
 export default function DirectChatCompose({
@@ -49,6 +54,9 @@ export default function DirectChatCompose({
   tipAmountSummaryLabel,
   tipBalanceSummaryLabel,
   onSendTip,
+  tradeComposerOpen,
+  tradeComposerContent,
+  onToggleTradeComposer,
   composerRef,
   isMobileNav,
   onSendMessage,
@@ -56,7 +64,9 @@ export default function DirectChatCompose({
   onMessageInputChange,
   sending,
   tipToggleDisabled,
-  tipToggleTitle
+  tipToggleTitle,
+  tradeToggleDisabled,
+  tradeToggleTitle
 }: DirectChatComposeProps) {
   return (
     <div className="chat-compose">
@@ -135,6 +145,7 @@ export default function DirectChatCompose({
           ) : null}
         </div>
       ) : null}
+      {tradeComposerOpen ? tradeComposerContent : null}
       <div
         ref={composerRef}
         className="chat-compose-editor"
@@ -176,6 +187,15 @@ export default function DirectChatCompose({
         title={tipToggleTitle}
       >
         Tip
+      </button>
+      <button
+        type="button"
+        onClick={onToggleTradeComposer}
+        className={tradeComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+        disabled={tradeToggleDisabled}
+        title={tradeToggleTitle}
+      >
+        Trade
       </button>
     </div>
   );

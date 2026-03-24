@@ -5,6 +5,8 @@ import BurnerPinModal from './components/BurnerPinModal';
 import DirectChatCompose from './components/DirectChatCompose';
 import GroupChatCompose from './components/GroupChatCompose';
 import QuickActionsModal from './components/QuickActionsModal';
+import TradeComposerPanel, { type TradeComposerTokenOption } from './components/TradeComposerPanel';
+import TradeOfferCard from './components/TradeOfferCard';
 import { parseImageTag } from './lib/imagePull';
 import AppFavicon from './assets/favicon.png';
 import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
@@ -19,6 +21,8 @@ import {
   buildMessageWithConversationStatePayload,
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
+  buildTradeOfferMessagePayload,
+  buildTradeResponseMessagePayload,
   buildStateBackupPayload,
   buildStateBackupText,
   BURNER_ONBOARD_TIMEOUT_MS,
@@ -129,6 +133,7 @@ import {
   parseGroupJoinCodeState,
   parseReadCursorText,
   parseRecentPeersWithMetaResult,
+  parseTradeOfferMessagePayload,
   parseStateBackupText,
   parseStoredGroupTitle,
   parseSubmitMemoPayload,
@@ -136,6 +141,7 @@ import {
   parseWalletAddressListInput,
   PendingBurnerInit,
   PRIVATE_REWARD_TOKEN_ADDRESS,
+  PRIVATE_ERC20_TOKEN_ABI,
   PRIVATE_TOKEN_BALANCE_ABI,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   PROFILE_METADATA_PREFIX,
@@ -169,6 +175,12 @@ import {
   TIP_NATIVE_TOKEN_DECIMALS,
   TIP_NATIVE_TOKEN_SYMBOL,
   TipTokenSelection,
+  TRADE_ESCROW_CONTRACT_ABI,
+  TRADE_ESCROW_CONTRACT_ADDRESS,
+  TradeAssetPayload,
+  TradeFeeModeSelection,
+  TradeOfferMessagePayload,
+  TradeSnapshot,
   toSafeNumber,
   trimReplyPreview,
   upsertBurnerWalletInVault,
@@ -182,6 +194,69 @@ type MessageReferenceCandidate = {
   txHash?: string;
   blockNumber?: number;
   logIndex?: number;
+};
+
+type TradeTokenPresetKey = 'coti' | 'wisp' | 'pwisp' | 'custom-public' | 'custom-private';
+
+type ResolvedTradeToken = Omit<TradeAssetPayload, 'amount'>;
+
+type TradeCustomTokenInfo = {
+  kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
+  address: string;
+  symbol: string;
+  decimals: number;
+  balanceWei: bigint | null;
+  loading: boolean;
+  error?: string;
+  walletKey?: string;
+};
+
+const DEFAULT_TRADE_EXPIRY_HOURS = '24';
+const TRADE_STATUS_OPEN = 1;
+const TRADE_STATUS_ACCEPTED = 2;
+const TRADE_STATUS_CANCELLED = 3;
+const TRADE_STATUS_DECLINED = 4;
+const TRADE_ASSET_TYPE_NATIVE = 0;
+const TRADE_ASSET_TYPE_ERC20 = 1;
+const TRADE_ASSET_TYPE_PRIVATE_ERC20 = 2;
+
+const resolveTradeSnapshotStatus = (statusRaw: unknown, expiresAt: number): TradeSnapshot['status'] => {
+  const status = Number(statusRaw);
+  if (status === TRADE_STATUS_OPEN) {
+    return expiresAt > 0 && expiresAt <= Math.floor(Date.now() / 1000) ? 'expired' : 'open';
+  }
+  if (status === TRADE_STATUS_ACCEPTED) {
+    return 'accepted';
+  }
+  if (status === TRADE_STATUS_CANCELLED) {
+    return 'cancelled';
+  }
+  if (status === TRADE_STATUS_DECLINED) {
+    return 'declined';
+  }
+  return 'unknown';
+};
+
+const isCustomTradeTokenSelection = (selection: TradeTokenPresetKey): boolean =>
+  selection === 'custom-public' || selection === 'custom-private';
+
+const resolveTradePresetKind = (selection: TradeTokenPresetKey): TradeAssetPayload['kind'] => {
+  if (selection === 'coti') {
+    return 'native';
+  }
+  return selection === 'pwisp' || selection === 'custom-private' ? 'private-erc20' : 'erc20';
+};
+
+const buildTradeCustomTokenInfoKey = (
+  kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>,
+  address: string
+): string => `${kind}:${address.trim().toLowerCase()}`;
+
+const resolveTradeAssetTypeValue = (kind: TradeAssetPayload['kind']): number => {
+  if (kind === 'native') {
+    return TRADE_ASSET_TYPE_NATIVE;
+  }
+  return kind === 'private-erc20' ? TRADE_ASSET_TYPE_PRIVATE_ERC20 : TRADE_ASSET_TYPE_ERC20;
 };
 
 const SHARED_TX_REFERENCE_PREFIX_BYTES = 4;
@@ -513,6 +588,22 @@ export default function App() {
   const [tipComposerOpen, setTipComposerOpen] = useState(false);
   const [tipTokenSelection, setTipTokenSelection] = useState<TipTokenSelection>('coti');
   const [tipAmountInput, setTipAmountInput] = useState('');
+  const [tradeComposerOpen, setTradeComposerOpen] = useState(false);
+  const [creatingTrade, setCreatingTrade] = useState(false);
+  const [processingTradeActionId, setProcessingTradeActionId] = useState('');
+  const [tradeFeeModeSelection, setTradeFeeModeSelection] = useState<TradeFeeModeSelection>('coti');
+  const [tradeRequiredFeeWei, setTradeRequiredFeeWei] = useState<bigint | null>(null);
+  const [tradeTokenFeeWei, setTradeTokenFeeWei] = useState<bigint | null>(null);
+  const [tradeOfferTokenSelection, setTradeOfferTokenSelection] = useState<TradeTokenPresetKey>('coti');
+  const [tradeRequestTokenSelection, setTradeRequestTokenSelection] = useState<TradeTokenPresetKey>('wisp');
+  const [tradeOfferCustomTokenAddress, setTradeOfferCustomTokenAddress] = useState('');
+  const [tradeRequestCustomTokenAddress, setTradeRequestCustomTokenAddress] = useState('');
+  const [customTradeTokenInfoByAddress, setCustomTradeTokenInfoByAddress] = useState<Record<string, TradeCustomTokenInfo>>({});
+  const [tradeOfferAmountInput, setTradeOfferAmountInput] = useState('');
+  const [tradeRequestAmountInput, setTradeRequestAmountInput] = useState('');
+  const [tradeExpiryHoursInput, setTradeExpiryHoursInput] = useState(DEFAULT_TRADE_EXPIRY_HOURS);
+  const [tradeCounterParentId, setTradeCounterParentId] = useState<number | null>(null);
+  const [tradeSnapshotsById, setTradeSnapshotsById] = useState<Record<string, TradeSnapshot>>({});
   const [groupTipRecipientAddress, setGroupTipRecipientAddress] = useState('');
   const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
   const [processingGroupAction, setProcessingGroupAction] = useState(false);
@@ -560,6 +651,10 @@ export default function App() {
   const currentWalletKeyRef = useRef<string>('');
   const postConnectDataSyncRunIdRef = useRef(0);
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
+  const tradeRequiredFeeCacheRef = useRef<bigint | null>(null);
+  const tradeRequiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
+  const tradeTokenFeeCacheRef = useRef<bigint | null>(null);
+  const tradeTokenFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const refreshBurnerStorageStatus = useCallback(() => {
     setBurnerStorageBlocked(!isBurnerStorageAvailable());
   }, []);
@@ -1406,6 +1501,620 @@ export default function App() {
     tipAmountWeiFromInput > 0n &&
     activeTipTokenBalanceWei !== null &&
     !tipAmountExceedsBalance;
+  const tradeTokenOptions = useMemo<TradeComposerTokenOption[]>(
+    () => [
+      { value: 'coti', label: `${TIP_NATIVE_TOKEN_SYMBOL} (native)` },
+      { value: 'wisp', label: `${rewardTokenSymbol} (public)` },
+      { value: 'pwisp', label: `${privateRewardTokenSymbol} (private)` },
+      { value: 'custom-public', label: 'Custom public token / CA' },
+      { value: 'custom-private', label: 'Custom private token / CA' }
+    ],
+    [privateRewardTokenSymbol, rewardTokenSymbol]
+  );
+  const normalizedTradeOfferCustomTokenAddress = tradeOfferCustomTokenAddress.trim();
+  const normalizedTradeRequestCustomTokenAddress = tradeRequestCustomTokenAddress.trim();
+  const tradeCustomOfferTokenKind =
+    resolveTradePresetKind(tradeOfferTokenSelection) === 'private-erc20' ? 'private-erc20' : 'erc20';
+  const tradeCustomRequestTokenKind =
+    resolveTradePresetKind(tradeRequestTokenSelection) === 'private-erc20' ? 'private-erc20' : 'erc20';
+  const tradeCustomOfferTokenKey =
+    normalizedTradeOfferCustomTokenAddress && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
+      ? buildTradeCustomTokenInfoKey(tradeCustomOfferTokenKind, normalizedTradeOfferCustomTokenAddress)
+      : '';
+  const tradeCustomRequestTokenKey =
+    normalizedTradeRequestCustomTokenAddress && isWalletAddress(normalizedTradeRequestCustomTokenAddress)
+      ? buildTradeCustomTokenInfoKey(tradeCustomRequestTokenKind, normalizedTradeRequestCustomTokenAddress)
+      : '';
+  const tradeCustomOfferTokenInfo =
+    tradeCustomOfferTokenKey ? customTradeTokenInfoByAddress[tradeCustomOfferTokenKey] : undefined;
+  const tradeCustomRequestTokenInfo =
+    tradeCustomRequestTokenKey ? customTradeTokenInfoByAddress[tradeCustomRequestTokenKey] : undefined;
+  const selectedTradeOfferToken = useMemo<ResolvedTradeToken | null>(() => {
+    if (tradeOfferTokenSelection === 'coti') {
+      return {
+        kind: 'native',
+        symbol: TIP_NATIVE_TOKEN_SYMBOL,
+        decimals: TIP_NATIVE_TOKEN_DECIMALS
+      };
+    }
+
+    if (tradeOfferTokenSelection === 'wisp') {
+      return {
+        kind: 'erc20',
+        tokenAddress: REWARD_TOKEN_ADDRESS,
+        symbol: rewardTokenSymbol,
+        decimals: rewardTokenDecimals
+      };
+    }
+
+    if (tradeOfferTokenSelection === 'pwisp') {
+      return {
+        kind: 'private-erc20',
+        tokenAddress: PRIVATE_REWARD_TOKEN_ADDRESS,
+        symbol: privateRewardTokenSymbol,
+        decimals: privateRewardTokenDecimals
+      };
+    }
+
+    if (!tradeCustomOfferTokenInfo || tradeCustomOfferTokenInfo.error || tradeCustomOfferTokenInfo.loading) {
+      return null;
+    }
+
+    return {
+      kind: tradeCustomOfferTokenInfo.kind,
+      tokenAddress: tradeCustomOfferTokenInfo.address,
+      symbol: tradeCustomOfferTokenInfo.symbol,
+      decimals: tradeCustomOfferTokenInfo.decimals,
+      custom: true
+    };
+  }, [
+    tradeOfferTokenSelection,
+    tradeCustomOfferTokenInfo,
+    privateRewardTokenDecimals,
+    privateRewardTokenSymbol,
+    rewardTokenSymbol,
+    rewardTokenDecimals
+  ]);
+  const selectedTradeRequestToken = useMemo<ResolvedTradeToken | null>(() => {
+    if (tradeRequestTokenSelection === 'coti') {
+      return {
+        kind: 'native',
+        symbol: TIP_NATIVE_TOKEN_SYMBOL,
+        decimals: TIP_NATIVE_TOKEN_DECIMALS
+      };
+    }
+
+    if (tradeRequestTokenSelection === 'wisp') {
+      return {
+        kind: 'erc20',
+        tokenAddress: REWARD_TOKEN_ADDRESS,
+        symbol: rewardTokenSymbol,
+        decimals: rewardTokenDecimals
+      };
+    }
+
+    if (tradeRequestTokenSelection === 'pwisp') {
+      return {
+        kind: 'private-erc20',
+        tokenAddress: PRIVATE_REWARD_TOKEN_ADDRESS,
+        symbol: privateRewardTokenSymbol,
+        decimals: privateRewardTokenDecimals
+      };
+    }
+
+    if (!tradeCustomRequestTokenInfo || tradeCustomRequestTokenInfo.error || tradeCustomRequestTokenInfo.loading) {
+      return null;
+    }
+
+    return {
+      kind: tradeCustomRequestTokenInfo.kind,
+      tokenAddress: tradeCustomRequestTokenInfo.address,
+      symbol: tradeCustomRequestTokenInfo.symbol,
+      decimals: tradeCustomRequestTokenInfo.decimals,
+      custom: true
+    };
+  }, [
+    tradeRequestTokenSelection,
+    tradeCustomRequestTokenInfo,
+    privateRewardTokenDecimals,
+    privateRewardTokenSymbol,
+    rewardTokenSymbol,
+    rewardTokenDecimals
+  ]);
+  const selectedTradeOfferBalanceWei = useMemo(() => {
+    if (!selectedTradeOfferToken) {
+      return null;
+    }
+
+    if (selectedTradeOfferToken.kind === 'native') {
+      return tipNativeBalanceWei;
+    }
+
+    const tokenKey = selectedTradeOfferToken.tokenAddress?.toLowerCase();
+    if (!tokenKey) {
+      return null;
+    }
+
+    if (tokenKey === REWARD_TOKEN_ADDRESS.toLowerCase()) {
+      return rewardTokenBalanceWei;
+    }
+
+    if (tokenKey === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
+      return privateRewardTokenBalanceWei;
+    }
+
+    return customTradeTokenInfoByAddress[buildTradeCustomTokenInfoKey(
+      selectedTradeOfferToken.kind === 'private-erc20' ? 'private-erc20' : 'erc20',
+      tokenKey
+    )]?.balanceWei ?? null;
+  }, [
+    customTradeTokenInfoByAddress,
+    privateRewardTokenBalanceWei,
+    rewardTokenBalanceWei,
+    selectedTradeOfferToken,
+    tipNativeBalanceWei
+  ]);
+  const parsedTradeOfferAmountWei = useMemo(
+    () =>
+      selectedTradeOfferToken
+        ? parseTokenAmountInput(tradeOfferAmountInput, selectedTradeOfferToken.decimals)
+        : null,
+    [tradeOfferAmountInput, selectedTradeOfferToken]
+  );
+  const parsedTradeRequestAmountWei = useMemo(
+    () =>
+      selectedTradeRequestToken
+        ? parseTokenAmountInput(tradeRequestAmountInput, selectedTradeRequestToken.decimals)
+        : null,
+    [tradeRequestAmountInput, selectedTradeRequestToken]
+  );
+  const tradeOfferAmountSummaryLabel =
+    parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n && selectedTradeOfferToken
+      ? `${formatTokenAmount(parsedTradeOfferAmountWei, selectedTradeOfferToken.decimals, 6)} ${selectedTradeOfferToken.symbol}`
+      : `0 ${selectedTradeOfferToken?.symbol ?? 'TOKEN'}`;
+  const tradeRequestAmountSummaryLabel =
+    parsedTradeRequestAmountWei !== null && parsedTradeRequestAmountWei > 0n && selectedTradeRequestToken
+      ? `${formatTokenAmount(parsedTradeRequestAmountWei, selectedTradeRequestToken.decimals, 6)} ${selectedTradeRequestToken.symbol}`
+      : `0 ${selectedTradeRequestToken?.symbol ?? 'TOKEN'}`;
+  const tradeOfferBalanceSummaryLabel =
+    selectedTradeOfferToken && selectedTradeOfferBalanceWei !== null
+      ? `${formatTokenAmount(selectedTradeOfferBalanceWei, selectedTradeOfferToken.decimals, 6)} ${selectedTradeOfferToken.symbol}`
+      : '--';
+  const tradeOfferVerifyUrl = selectedTradeOfferToken?.tokenAddress
+    ? `${COTI_NETWORK.blockExplorerUrl}/token/${selectedTradeOfferToken.tokenAddress}`
+    : undefined;
+  const tradeRequestVerifyUrl = selectedTradeRequestToken?.tokenAddress
+    ? `${COTI_NETWORK.blockExplorerUrl}/token/${selectedTradeRequestToken.tokenAddress}`
+    : undefined;
+  const parsedTradeExpiryHours = useMemo(() => {
+    const normalized = tradeExpiryHoursInput.trim();
+    if (!/^\d+$/.test(normalized)) {
+      return 0;
+    }
+    const parsed = Number.parseInt(normalized, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }, [tradeExpiryHoursInput]);
+  const tradeComposerValidationMessage = useMemo(() => {
+    if (!activeContact) {
+      return 'Select a contact first.';
+    }
+    if (!walletAddress || !isWalletAddress(walletAddress)) {
+      return 'Connect your wallet first.';
+    }
+    if (isSelfChat) {
+      return 'P2P trades are only available in private chats with another wallet.';
+    }
+    if (!onCotiNetwork) {
+      return 'Switch to COTI network first.';
+    }
+    if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS)) {
+      return 'Trade escrow contract is not configured yet.';
+    }
+    if (!selectedTradeOfferToken) {
+      return isCustomTradeTokenSelection(tradeOfferTokenSelection) ? 'Load a valid token to lock.' : 'Select a token to lock.';
+    }
+    if (!selectedTradeRequestToken) {
+      return isCustomTradeTokenSelection(tradeRequestTokenSelection)
+        ? 'Load a valid token to request.'
+        : 'Select a token to request.';
+    }
+    if (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n) {
+      return `Enter a valid ${selectedTradeOfferToken.symbol} amount to lock.`;
+    }
+    if (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n) {
+      return `Enter a valid ${selectedTradeRequestToken.symbol} amount to request.`;
+    }
+    if (selectedTradeOfferToken.kind === 'private-erc20' && parsedTradeOfferAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
+      return `${selectedTradeOfferToken.symbol} private trades are capped at ${formatTokenAmount(
+        PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+        selectedTradeOfferToken.decimals,
+        6
+      )} ${selectedTradeOfferToken.symbol}.`;
+    }
+    if (selectedTradeRequestToken.kind === 'private-erc20' && parsedTradeRequestAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
+      return `${selectedTradeRequestToken.symbol} private trades are capped at ${formatTokenAmount(
+        PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+        selectedTradeRequestToken.decimals,
+        6
+      )} ${selectedTradeRequestToken.symbol}.`;
+    }
+    if (selectedTradeOfferToken.kind === 'native') {
+      if (tipNativeBalanceWei === null) {
+        return 'Unable to read your COTI balance yet.';
+      }
+      const requiredNativeBalance =
+        parsedTradeOfferAmountWei + (tradeFeeModeSelection === 'coti' ? tradeRequiredFeeWei ?? 0n : 0n);
+      if (requiredNativeBalance > tipNativeBalanceWei) {
+        return `Need ${formatTokenAmount(requiredNativeBalance, TIP_NATIVE_TOKEN_DECIMALS, 6)} ${TIP_NATIVE_TOKEN_SYMBOL} to cover the escrow and fee.`;
+      }
+    } else {
+      if (selectedTradeOfferBalanceWei === null) {
+        return `Unable to read ${selectedTradeOfferToken.symbol} balance yet.`;
+      }
+      if (parsedTradeOfferAmountWei > selectedTradeOfferBalanceWei) {
+        return `Insufficient ${selectedTradeOfferToken.symbol} balance for this offer.`;
+      }
+      if (tradeFeeModeSelection === 'coti') {
+        if (tradeRequiredFeeWei === null) {
+          return 'Loading trade fee...';
+        }
+        if (tipNativeBalanceWei === null || tipNativeBalanceWei < tradeRequiredFeeWei) {
+          return `Need ${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL} for the trade fee.`;
+        }
+      }
+    }
+    if (tradeFeeModeSelection === 'token' && tradeTokenFeeWei === null) {
+      return `Loading ${rewardTokenSymbol} trade fee...`;
+    }
+    if (tradeFeeModeSelection === 'coti' && tradeRequiredFeeWei === null) {
+      return 'Loading trade fee...';
+    }
+    if (parsedTradeExpiryHours < 1 || parsedTradeExpiryHours > 720) {
+      return 'Set an expiry between 1 and 720 hours.';
+    }
+
+    const offerTokenKey = selectedTradeOfferToken.tokenAddress?.toLowerCase() ?? 'native';
+    const requestTokenKey = selectedTradeRequestToken.tokenAddress?.toLowerCase() ?? 'native';
+    if (
+      selectedTradeOfferToken.kind === selectedTradeRequestToken.kind &&
+      offerTokenKey === requestTokenKey &&
+      parsedTradeOfferAmountWei === parsedTradeRequestAmountWei
+    ) {
+      return 'Choose different offer and request terms.';
+    }
+
+    return '';
+  }, [
+    activeContact,
+    walletAddress,
+    isSelfChat,
+    onCotiNetwork,
+    selectedTradeOfferToken,
+    selectedTradeRequestToken,
+    tradeOfferTokenSelection,
+    tradeRequestTokenSelection,
+    parsedTradeOfferAmountWei,
+    parsedTradeRequestAmountWei,
+    selectedTradeOfferBalanceWei,
+    tradeFeeModeSelection,
+    tradeRequiredFeeWei,
+    tradeTokenFeeWei,
+    rewardTokenSymbol,
+    parsedTradeExpiryHours,
+    tipNativeBalanceWei
+  ]);
+  const canSendTradeOffer =
+    !creatingTrade &&
+    !sending &&
+    !tipping &&
+    tradeComposerValidationMessage.length === 0;
+  const tradeFeeSummaryLabel =
+    tradeFeeModeSelection === 'coti'
+      ? `Fee: ${tradeRequiredFeeWei !== null ? `${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL}` : '--'}`
+      : `Fee: ${
+          tradeTokenFeeWei !== null
+            ? `${formatTokenAmount(tradeTokenFeeWei, rewardTokenDecimals, 6)} ${rewardTokenSymbol}`
+            : `-- ${rewardTokenSymbol}`
+        }`;
+  const tradeOfferCustomMetaLabel = !normalizedTradeOfferCustomTokenAddress
+    ? 'Paste a token contract address.'
+    : !isWalletAddress(normalizedTradeOfferCustomTokenAddress)
+      ? 'Enter a valid token contract address.'
+      : tradeCustomOfferTokenInfo?.loading
+        ? 'Loading token metadata...'
+        : tradeCustomOfferTokenInfo?.error
+          ? tradeCustomOfferTokenInfo.error
+          : tradeCustomOfferTokenInfo
+            ? `${tradeCustomOfferTokenInfo.symbol} • ${tradeCustomOfferTokenInfo.decimals} decimals`
+            : 'Loading token metadata...';
+  const tradeRequestCustomMetaLabel = !normalizedTradeRequestCustomTokenAddress
+    ? 'Paste a token contract address.'
+    : !isWalletAddress(normalizedTradeRequestCustomTokenAddress)
+      ? 'Enter a valid token contract address.'
+      : tradeCustomRequestTokenInfo?.loading
+        ? 'Loading token metadata...'
+        : tradeCustomRequestTokenInfo?.error
+          ? tradeCustomRequestTokenInfo.error
+          : tradeCustomRequestTokenInfo
+            ? `${tradeCustomRequestTokenInfo.symbol} • ${tradeCustomRequestTokenInfo.decimals} decimals`
+            : 'Loading token metadata...';
+  const activeTradeOffers = useMemo(
+    () =>
+      activeMessages
+        .map((message) => parseTradeOfferMessagePayload(message.text))
+        .filter((message): message is TradeOfferMessagePayload => message !== null),
+    [activeMessages]
+  );
+  useEffect(() => {
+    setTradeComposerOpen(false);
+    setTradeOfferAmountInput('');
+    setTradeRequestAmountInput('');
+    setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+    setTradeCounterParentId(null);
+  }, [activeContact]);
+  useEffect(() => {
+    const customTokenRequests = Array.from(
+      new Map(
+        [
+          isCustomTradeTokenSelection(tradeOfferTokenSelection) && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
+            ? {
+                key: buildTradeCustomTokenInfoKey(tradeCustomOfferTokenKind, normalizedTradeOfferCustomTokenAddress),
+                address: normalizedTradeOfferCustomTokenAddress.trim().toLowerCase(),
+                kind: tradeCustomOfferTokenKind
+              }
+            : null,
+          isCustomTradeTokenSelection(tradeRequestTokenSelection) && isWalletAddress(normalizedTradeRequestCustomTokenAddress)
+            ? {
+                key: buildTradeCustomTokenInfoKey(tradeCustomRequestTokenKind, normalizedTradeRequestCustomTokenAddress),
+                address: normalizedTradeRequestCustomTokenAddress.trim().toLowerCase(),
+                kind: tradeCustomRequestTokenKind
+              }
+            : null
+        ]
+          .filter(
+            (
+              entry
+            ): entry is {
+              key: string;
+              address: string;
+              kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
+            } => entry !== null
+          )
+          .map((entry) => [entry.key, entry] as const)
+      ).values()
+    );
+
+    if (customTokenRequests.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setCustomTradeTokenInfoByAddress((previous) => {
+      const next = { ...previous };
+      const walletKey = walletAddress.trim().toLowerCase();
+      for (const request of customTokenRequests) {
+        const previousEntry = previous[request.key];
+        next[request.key] = {
+          kind: request.kind,
+          address: request.address,
+          symbol: previousEntry?.symbol ?? shortenAddress(request.address),
+          decimals: previousEntry?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
+          balanceWei: previousEntry?.balanceWei ?? null,
+          loading: true,
+          walletKey,
+          error: undefined
+        };
+      }
+      return next;
+    });
+
+    const loadCustomTokens = async () => {
+      const cotiEthers = await loadCotiEthersModule();
+      const readProvider = await loadCotiReadProvider(true);
+      const walletKey = walletAddress.trim().toLowerCase();
+      const signerBundle =
+        walletKey && customTokenRequests.some((request) => request.kind === 'private-erc20')
+          ? await getMemoSigner()
+              .then((result) => result)
+              .catch(() => null)
+          : null;
+      const nextEntries = await Promise.all(
+        customTokenRequests.map(async (request) => {
+          try {
+            const tokenAbi = request.kind === 'private-erc20' ? PRIVATE_TOKEN_BALANCE_ABI : ERC20_TOKEN_ABI;
+            const tokenContract = new cotiEthers.Contract(request.address, tokenAbi, readProvider);
+            const [symbolRaw, decimalsRaw] = await Promise.all([
+              tokenContract.symbol().catch(() => null),
+              tokenContract.decimals().catch(() => null)
+            ]);
+            let balanceWei: bigint | null = null;
+            let error: string | undefined;
+
+            if (walletKey) {
+              if (request.kind === 'private-erc20') {
+                if (!signerBundle) {
+                  error = 'Unlock your AES key to read this private token balance.';
+                } else {
+                  balanceWei = await readPrivateTokenBalanceWei(request.address, walletAddress, signerBundle.signer).catch(
+                    () => null
+                  );
+                }
+              } else {
+                balanceWei = await tokenContract.balanceOf(walletAddress).catch(() => null);
+              }
+            }
+
+            return {
+              kind: request.kind,
+              address: request.address,
+              symbol:
+                typeof symbolRaw === 'string' && symbolRaw.trim().length > 0
+                  ? symbolRaw.trim().slice(0, 24)
+                  : shortenAddress(request.address),
+              decimals: normalizeTokenDecimals(Number(decimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS)),
+              balanceWei: typeof balanceWei === 'bigint' ? balanceWei : null,
+              loading: false,
+              walletKey,
+              error
+            } satisfies TradeCustomTokenInfo;
+          } catch {
+            return {
+              kind: request.kind,
+              address: request.address,
+              symbol: shortenAddress(request.address),
+              decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
+              balanceWei: null,
+              loading: false,
+              walletKey,
+              error: 'Unable to load token metadata.'
+            } satisfies TradeCustomTokenInfo;
+          }
+        })
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setCustomTradeTokenInfoByAddress((previous) => {
+        const next = { ...previous };
+        for (const entry of nextEntries) {
+          next[buildTradeCustomTokenInfoKey(entry.kind, entry.address)] = entry;
+        }
+        return next;
+      });
+
+      if (signerBundle) {
+        const nextOnboardInfo = signerBundle.signer.getUserOnboardInfo();
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [signerBundle.cacheKey]: mergeOnboardInfo(previous[signerBundle.cacheKey], nextOnboardInfo)
+        }));
+      }
+    };
+
+    loadCustomTokens().catch(() => {
+      if (cancelled) {
+        return;
+      }
+      setCustomTradeTokenInfoByAddress((previous) => {
+        const next = { ...previous };
+        const walletKey = walletAddress.trim().toLowerCase();
+        for (const request of customTokenRequests) {
+          next[request.key] = {
+            kind: request.kind,
+            address: request.address,
+            symbol: shortenAddress(request.address),
+            decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
+            balanceWei: null,
+            loading: false,
+            walletKey,
+            error: 'Unable to load token metadata.'
+          };
+        }
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    normalizedTradeOfferCustomTokenAddress,
+    normalizedTradeRequestCustomTokenAddress,
+    tradeCustomOfferTokenKind,
+    tradeCustomRequestTokenKind,
+    tradeOfferTokenSelection,
+    tradeRequestTokenSelection,
+    walletAddress,
+    topUpMetricsNonce
+  ]);
+  useEffect(() => {
+    if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS)) {
+      tradeRequiredFeeCacheRef.current = null;
+      tradeRequiredFeeRequestRef.current = null;
+      tradeTokenFeeCacheRef.current = null;
+      tradeTokenFeeRequestRef.current = null;
+      setTradeRequiredFeeWei(null);
+      setTradeTokenFeeWei(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadTradeFees = async () => {
+      const cotiEthers = await loadCotiEthersModule();
+      const readProvider = await loadCotiReadProvider(true);
+      const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+      const [nativeFeeRaw, tokenFeeRaw] = await Promise.all([
+        contract.feeAmount().catch(() => null),
+        contract.tokenFeeAmount().catch(() => null)
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      const nativeFee = typeof nativeFeeRaw === 'bigint' ? nativeFeeRaw : null;
+      const tokenFee = typeof tokenFeeRaw === 'bigint' ? tokenFeeRaw : null;
+      tradeRequiredFeeCacheRef.current = nativeFee;
+      tradeTokenFeeCacheRef.current = tokenFee;
+      setTradeRequiredFeeWei(nativeFee);
+      setTradeTokenFeeWei(tokenFee);
+    };
+
+    loadTradeFees().catch(() => {
+      if (!cancelled) {
+        setTradeRequiredFeeWei(null);
+        setTradeTokenFeeWei(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS) || activeTradeOffers.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadTradeSnapshots = async () => {
+      const nextSnapshots = await Promise.all(
+        Array.from(new Set(activeTradeOffers.map((offer) => offer.tradeId))).map(async (tradeId) => {
+          try {
+            return await fetchTradeSnapshotById(tradeId);
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setTradeSnapshotsById((previous) => {
+        const next = { ...previous };
+        for (const snapshot of nextSnapshots) {
+          if (!snapshot) {
+            continue;
+          }
+          next[String(snapshot.tradeId)] = snapshot;
+        }
+        return next;
+      });
+    };
+
+    loadTradeSnapshots().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTradeOffers, privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
   const isStatusConnected = useMemo(() => /^connected/i.test(status.trim()), [status]);
   const isAesConnected = useMemo(() => onboardStatus === 'AES key ready', [onboardStatus]);
   const rewardsConfigured = Boolean(groupRewardsContractAddress);
@@ -3146,6 +3855,347 @@ export default function App() {
     } finally {
       groupTokenFeeRequestRef.current = null;
     }
+  };
+
+  const resolveRequiredFeeForTradeCreate = async (): Promise<bigint> => {
+    if (tradeRequiredFeeCacheRef.current !== null) {
+      setTradeRequiredFeeWei(tradeRequiredFeeCacheRef.current);
+      return tradeRequiredFeeCacheRef.current;
+    }
+
+    if (!tradeRequiredFeeRequestRef.current) {
+      tradeRequiredFeeRequestRef.current = (async () => {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const readContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+        const resolvedFee = (await readContract.feeAmount()) as bigint;
+        tradeRequiredFeeCacheRef.current = resolvedFee;
+        setTradeRequiredFeeWei(resolvedFee);
+        return resolvedFee;
+      })();
+    }
+
+    try {
+      return await tradeRequiredFeeRequestRef.current;
+    } finally {
+      tradeRequiredFeeRequestRef.current = null;
+    }
+  };
+
+  const resolveRequiredTokenFeeForTradeCreate = async (): Promise<bigint> => {
+    if (tradeTokenFeeCacheRef.current !== null) {
+      setTradeTokenFeeWei(tradeTokenFeeCacheRef.current);
+      return tradeTokenFeeCacheRef.current;
+    }
+
+    if (!tradeTokenFeeRequestRef.current) {
+      tradeTokenFeeRequestRef.current = (async () => {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const readContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+        const resolvedFee = (await readContract.tokenFeeAmount()) as bigint;
+        tradeTokenFeeCacheRef.current = resolvedFee;
+        setTradeTokenFeeWei(resolvedFee);
+        return resolvedFee;
+      })();
+    }
+
+    try {
+      return await tradeTokenFeeRequestRef.current;
+    } finally {
+      tradeTokenFeeRequestRef.current = null;
+    }
+  };
+
+  const decryptPrivateUintValue = async (
+    encryptedValue: unknown,
+    signer: Wallet | JsonRpcSigner
+  ): Promise<bigint | null> => {
+    if (encryptedValue === null || encryptedValue === undefined) {
+      return null;
+    }
+
+    try {
+      const decrypted = await signer.decryptValue(encryptedValue as never);
+      if (typeof decrypted === 'bigint') {
+        return decrypted <= PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE ? decrypted : null;
+      }
+      if (typeof decrypted === 'string' && /^\d+$/.test(decrypted.trim())) {
+        const parsed = BigInt(decrypted.trim());
+        return parsed <= PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE ? parsed : null;
+      }
+    } catch {
+    }
+
+    return null;
+  };
+
+  const readPrivateTokenBalanceWei = async (
+    tokenAddress: string,
+    ownerAddress: string,
+    signer: Wallet | JsonRpcSigner
+  ): Promise<bigint | null> => {
+    const cotiEthers = await loadCotiEthersModule();
+    const readProvider = await loadCotiReadProvider(true);
+    const privateTokenInterface = new cotiEthers.Interface(PRIVATE_TOKEN_BALANCE_ABI);
+
+    let encryptedBalanceRaw: unknown = null;
+    try {
+      const balanceByAddressCallData = privateTokenInterface.encodeFunctionData('balanceOf(address)', [ownerAddress]);
+      const balanceByAddressRawResult = await readProvider.call({
+        from: ownerAddress,
+        to: tokenAddress,
+        data: balanceByAddressCallData
+      });
+      const decodedByAddress = privateTokenInterface.decodeFunctionResult(
+        'balanceOf(address)',
+        balanceByAddressRawResult
+      );
+      encryptedBalanceRaw = decodedByAddress?.[0] ?? null;
+    } catch {
+      encryptedBalanceRaw = null;
+    }
+
+    if (encryptedBalanceRaw === null) {
+      try {
+        const balanceCallData = privateTokenInterface.encodeFunctionData('balanceOf()', []);
+        const balanceRawResult = await readProvider.call({
+          from: ownerAddress,
+          to: tokenAddress,
+          data: balanceCallData
+        });
+        const decodedBalance = privateTokenInterface.decodeFunctionResult('balanceOf()', balanceRawResult);
+        encryptedBalanceRaw = decodedBalance?.[0] ?? null;
+      } catch {
+        encryptedBalanceRaw = null;
+      }
+    }
+
+    return decryptPrivateUintValue(encryptedBalanceRaw, signer);
+  };
+
+  const readPrivateTokenAllowanceWei = async (
+    tokenAddress: string,
+    ownerAddress: string,
+    spenderAddress: string,
+    signer: Wallet | JsonRpcSigner
+  ): Promise<bigint | null> => {
+    const cotiEthers = await loadCotiEthersModule();
+    const readProvider = await loadCotiReadProvider(true);
+    const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
+    const allowanceCallData = privateTokenInterface.encodeFunctionData('allowance', [spenderAddress, true]);
+    const allowanceRawResult = await readProvider.call({
+      from: ownerAddress,
+      to: tokenAddress,
+      data: allowanceCallData
+    });
+    const decodedAllowance = privateTokenInterface.decodeFunctionResult('allowance', allowanceRawResult);
+    return decryptPrivateUintValue(decodedAllowance?.[0] ?? null, signer);
+  };
+
+  const resolveTradeAssetSnapshot = async (
+    assetTypeRaw: unknown,
+    tokenAddressRaw: unknown,
+    amountRaw: unknown
+  ): Promise<TradeAssetPayload> => {
+    const assetType = Number(assetTypeRaw);
+    const amount = typeof amountRaw === 'bigint' ? amountRaw.toString() : String(amountRaw ?? '0');
+
+    if (assetType === TRADE_ASSET_TYPE_NATIVE) {
+      return {
+        kind: 'native',
+        symbol: TIP_NATIVE_TOKEN_SYMBOL,
+        decimals: TIP_NATIVE_TOKEN_DECIMALS,
+        amount
+      };
+    }
+
+    const tokenAddress = String(tokenAddressRaw ?? '').trim();
+    const normalizedTokenAddress = isWalletAddress(tokenAddress) ? tokenAddress : '0x0000000000000000000000000000000000000000';
+    const lowerTokenAddress = normalizedTokenAddress.toLowerCase();
+
+    if (lowerTokenAddress === REWARD_TOKEN_ADDRESS.toLowerCase()) {
+      return {
+        kind: 'erc20',
+        tokenAddress: normalizedTokenAddress,
+        symbol: rewardTokenSymbol,
+        decimals: rewardTokenDecimals,
+        amount
+      };
+    }
+
+    if (lowerTokenAddress === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
+      return {
+        kind: 'private-erc20',
+        tokenAddress: normalizedTokenAddress,
+        symbol: privateRewardTokenSymbol,
+        decimals: privateRewardTokenDecimals,
+        amount
+      };
+    }
+
+    const kind: TradeAssetPayload['kind'] =
+      assetType === TRADE_ASSET_TYPE_PRIVATE_ERC20 ? 'private-erc20' : 'erc20';
+
+    try {
+      const cotiEthers = await loadCotiEthersModule();
+      const readProvider = await loadCotiReadProvider(true);
+      const tokenContract = new cotiEthers.Contract(
+        normalizedTokenAddress,
+        kind === 'private-erc20' ? PRIVATE_TOKEN_BALANCE_ABI : ERC20_TOKEN_ABI,
+        readProvider
+      );
+      const [symbolRaw, decimalsRaw] = await Promise.all([
+        tokenContract.symbol().catch(() => null),
+        tokenContract.decimals().catch(() => null)
+      ]);
+
+      return {
+        kind,
+        tokenAddress: normalizedTokenAddress,
+        symbol:
+          typeof symbolRaw === 'string' && symbolRaw.trim().length > 0
+            ? symbolRaw.trim().slice(0, 24)
+            : shortenAddress(normalizedTokenAddress),
+        decimals: normalizeTokenDecimals(Number(decimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS)),
+        amount,
+        custom: true
+      };
+    } catch {
+      return {
+        kind,
+        tokenAddress: normalizedTokenAddress,
+        symbol: shortenAddress(normalizedTokenAddress),
+        decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
+        amount,
+        custom: true
+      };
+    }
+  };
+
+  const fetchTradeSnapshotById = async (tradeId: number): Promise<TradeSnapshot> => {
+    const cotiEthers = await loadCotiEthersModule();
+    const readProvider = await loadCotiReadProvider(true);
+    const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+    const tradeRaw = await contract.getTrade(tradeId);
+    const maker = String((tradeRaw as { maker?: unknown }).maker ?? tradeRaw?.[0] ?? '').trim();
+    const taker = String((tradeRaw as { taker?: unknown }).taker ?? tradeRaw?.[1] ?? '').trim();
+    const statusRaw = (tradeRaw as { status?: unknown }).status ?? tradeRaw?.[2];
+    const offerAssetRaw = (tradeRaw as { offerAsset?: unknown }).offerAsset ?? tradeRaw?.[3];
+    const requestAssetRaw = (tradeRaw as { requestAsset?: unknown }).requestAsset ?? tradeRaw?.[4];
+    const createdAt = toSafeNumber((tradeRaw as { createdAt?: unknown }).createdAt ?? tradeRaw?.[5]);
+    const expiresAt = toSafeNumber((tradeRaw as { expiresAt?: unknown }).expiresAt ?? tradeRaw?.[6]);
+    const offerAssetType = (offerAssetRaw as { assetType?: unknown })?.assetType ?? offerAssetRaw?.[0] ?? 0;
+    const offerToken = (offerAssetRaw as { token?: unknown })?.token ?? offerAssetRaw?.[1] ?? '';
+    const offerAmount = (offerAssetRaw as { amount?: unknown })?.amount ?? offerAssetRaw?.[2] ?? 0n;
+    const requestAssetType = (requestAssetRaw as { assetType?: unknown })?.assetType ?? requestAssetRaw?.[0] ?? 0;
+    const requestToken = (requestAssetRaw as { token?: unknown })?.token ?? requestAssetRaw?.[1] ?? '';
+    const requestAmount = (requestAssetRaw as { amount?: unknown })?.amount ?? requestAssetRaw?.[2] ?? 0n;
+
+    const [offer, request] = await Promise.all([
+      resolveTradeAssetSnapshot(offerAssetType, offerToken, offerAmount),
+      resolveTradeAssetSnapshot(requestAssetType, requestToken, requestAmount)
+    ]);
+
+    return {
+      tradeId,
+      maker,
+      taker,
+      offer,
+      request,
+      createdAt,
+      expiresAt,
+      status: resolveTradeSnapshotStatus(statusRaw, expiresAt)
+    };
+  };
+
+  const resolveTradeSnapshotForOffer = async (offerMessage: TradeOfferMessagePayload): Promise<TradeSnapshot> => {
+    const existingSnapshot = tradeSnapshotsById[String(offerMessage.tradeId)];
+    if (existingSnapshot) {
+      return existingSnapshot;
+    }
+
+    const nextSnapshot = await fetchTradeSnapshotById(offerMessage.tradeId);
+    setTradeSnapshotsById((previous) => ({
+      ...previous,
+      [String(offerMessage.tradeId)]: nextSnapshot
+    }));
+    return nextSnapshot;
+  };
+
+  const ensureTradeTokenAllowance = async (
+    signer: Wallet | JsonRpcSigner,
+    ownerAddress: string,
+    tokenAddress: string,
+    requiredAmount: bigint,
+    kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'> = 'erc20'
+  ): Promise<void> => {
+    if (requiredAmount <= 0n || !isWalletAddress(tokenAddress)) {
+      return;
+    }
+
+    if (kind === 'private-erc20') {
+      if (requiredAmount > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
+        throw new Error('Private token amount exceeds the maximum plaintext size supported by COTI private ERC-20.');
+      }
+
+      const allowance = await readPrivateTokenAllowanceWei(
+        tokenAddress,
+        ownerAddress,
+        TRADE_ESCROW_CONTRACT_ADDRESS,
+        signer
+      ).catch(() => null);
+      if (allowance !== null && allowance >= requiredAmount) {
+        return;
+      }
+
+      const cotiEthers = await loadCotiEthersModule();
+      const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
+      const approveSelector = privateTokenInterface.getFunction('approve')?.selector;
+      if (!approveSelector) {
+        throw new Error('Unable to prepare private token approval.');
+      }
+
+      const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_ABI, signer);
+      const encryptedApproval = await signer.encryptValue(
+        PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+        tokenAddress,
+        approveSelector
+      );
+      const approveTx = await privateTokenContract.approve(TRADE_ESCROW_CONTRACT_ADDRESS, encryptedApproval);
+      await approveTx.wait();
+      return;
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const tokenContract = new cotiEthers.Contract(tokenAddress, ERC20_TOKEN_ABI, signer);
+    const allowanceRaw = await tokenContract.allowance(ownerAddress, TRADE_ESCROW_CONTRACT_ADDRESS).catch(() => null);
+    const allowance = typeof allowanceRaw === 'bigint' ? allowanceRaw : 0n;
+    if (allowance >= requiredAmount) {
+      return;
+    }
+
+    const approveTx = await tokenContract.approve(TRADE_ESCROW_CONTRACT_ADDRESS, MAX_ERC20_APPROVAL);
+    await approveTx.wait();
+  };
+
+  const ensureTradeFeeTokenAllowance = async (
+    signer: Wallet | JsonRpcSigner,
+    ownerAddress: string,
+    requiredAmount: bigint
+  ): Promise<void> => {
+    if (requiredAmount <= 0n) {
+      return;
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const tradeContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, signer);
+    const publicFeeTokenRaw = await tradeContract.publicFeeToken().catch(() => null);
+    const publicFeeTokenAddress =
+      typeof publicFeeTokenRaw === 'string' && isWalletAddress(publicFeeTokenRaw)
+        ? publicFeeTokenRaw
+        : REWARD_TOKEN_ADDRESS;
+    await ensureTradeTokenAllowance(signer, ownerAddress, publicFeeTokenAddress, requiredAmount);
   };
 
   const ensureGroupTokenFeeAllowance = async (
@@ -7748,7 +8798,7 @@ export default function App() {
     }
   };
 
-  const sendMessage = async (overrideMessageText?: string) => {
+  const sendMessage = async (overrideMessageText?: string, overrideReplyTarget?: ChatMessage | null) => {
     setError('');
 
     if (sendingRef.current) {
@@ -7784,7 +8834,8 @@ export default function App() {
 
     const contactAddress = activeContact;
     const contactKey = contactAddress.toLowerCase();
-    const replyingPreviewText = replyingToMessage ? getMessageDisplayText(replyingToMessage.text) : undefined;
+    const replyTarget = overrideReplyTarget ?? replyingToMessage;
+    const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
     const localMessageId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
 
@@ -7799,11 +8850,11 @@ export default function App() {
             id: localMessageId,
             direction: 'outgoing',
             text: plainText,
-            replyToMessageId: replyingToMessage?.id,
+            replyToMessageId: replyTarget?.id,
             replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
-            replyToTxHash: replyingToMessage?.txHash,
-            replyToBlockNumber: replyingToMessage?.blockNumber,
-            replyToLogIndex: replyingToMessage?.logIndex,
+            replyToTxHash: replyTarget?.txHash,
+            replyToBlockNumber: replyTarget?.blockNumber,
+            replyToLogIndex: replyTarget?.logIndex,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
@@ -7818,9 +8869,9 @@ export default function App() {
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
         replyingPreviewText,
-        replyingToMessage?.txHash,
-        replyingToMessage?.blockNumber,
-        replyingToMessage?.logIndex,
+        replyTarget?.txHash,
+        replyTarget?.blockNumber,
+        replyTarget?.logIndex,
         false
       );
       const sendEncryptedMemo = async (textToSend: string): Promise<{ txHash: string; wait: () => Promise<unknown> }> => {
@@ -7972,6 +9023,406 @@ export default function App() {
       sendingRef.current = false;
       setSending(false);
     }
+  };
+
+  const createTradeOffer = async (overrideReplyTarget?: ChatMessage | null) => {
+    setError('');
+
+    if (sendingRef.current || tipping || creatingTrade) {
+      return;
+    }
+
+    if (tradeComposerValidationMessage) {
+      setError(tradeComposerValidationMessage);
+      return;
+    }
+
+    if (!activeContact || !selectedTradeOfferToken || !selectedTradeRequestToken) {
+      setError('Select a contact and valid trade tokens first.');
+      return;
+    }
+
+    if (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n) {
+      setError(`Enter a valid ${selectedTradeOfferToken.symbol} amount to lock.`);
+      return;
+    }
+
+    if (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n) {
+      setError(`Enter a valid ${selectedTradeRequestToken.symbol} amount to request.`);
+      return;
+    }
+
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
+      setError('Connect a wallet first.');
+      return;
+    }
+
+    try {
+      setCreatingTrade(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const tradeContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, signer);
+      const interfaceInstance = new cotiEthers.Interface(TRADE_ESCROW_CONTRACT_ABI);
+      const nativeFeeWei =
+        tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
+      const tokenFeeAmount =
+        tradeFeeModeSelection === 'token' ? await resolveRequiredTokenFeeForTradeCreate() : 0n;
+
+      if (selectedTradeOfferToken.kind !== 'native' && selectedTradeOfferToken.tokenAddress) {
+        await ensureTradeTokenAllowance(
+          signer,
+          requestedWalletAddress,
+          selectedTradeOfferToken.tokenAddress,
+          parsedTradeOfferAmountWei,
+          selectedTradeOfferToken.kind
+        );
+      }
+
+      if (tradeFeeModeSelection === 'token') {
+        await ensureTradeFeeTokenAllowance(signer, requestedWalletAddress, tokenFeeAmount);
+      }
+
+      const offerAssetTuple = [
+        resolveTradeAssetTypeValue(selectedTradeOfferToken.kind),
+        selectedTradeOfferToken.tokenAddress ?? '0x0000000000000000000000000000000000000000',
+        parsedTradeOfferAmountWei
+      ] as const;
+      const requestAssetTuple = [
+        resolveTradeAssetTypeValue(selectedTradeRequestToken.kind),
+        selectedTradeRequestToken.tokenAddress ?? '0x0000000000000000000000000000000000000000',
+        parsedTradeRequestAmountWei
+      ] as const;
+      const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
+      const valueToSend =
+        (selectedTradeOfferToken.kind === 'native' ? parsedTradeOfferAmountWei : 0n) + nativeFeeWei;
+      const createTx = await tradeContract.createTrade(
+        offerAssetTuple,
+        requestAssetTuple,
+        activeContact,
+        expiresAt,
+        tradeFeeModeSelection === 'coti' ? 0 : 1,
+        { value: valueToSend }
+      );
+      const createReceipt = await createTx.wait();
+      if (!createReceipt || Number((createReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
+        throw new Error('Trade creation failed on-chain.');
+      }
+
+      let tradeId = 0;
+      for (const log of (createReceipt as { logs?: unknown[] }).logs ?? []) {
+        try {
+          const parsedLog = interfaceInstance.parseLog(log as never);
+          if (parsedLog?.name === 'TradeOpened') {
+            tradeId = toSafeNumber(parsedLog.args?.tradeId ?? parsedLog.args?.[0]);
+            break;
+          }
+        } catch {
+        }
+      }
+      if (tradeId <= 0) {
+        const nextTradeIdRaw = await tradeContract.nextTradeId().catch(() => null);
+        if (typeof nextTradeIdRaw === 'bigint' && nextTradeIdRaw > 0n) {
+          tradeId = Number(nextTradeIdRaw - 1n);
+        }
+      }
+      if (tradeId <= 0) {
+        throw new Error('Trade was created, but the trade id could not be resolved.');
+      }
+
+      const createdAt = Math.floor(Date.now() / 1000);
+      const tradeMessagePayload: TradeOfferMessagePayload = {
+        version: 2,
+        tradeId,
+        escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+        maker: requestedWalletAddress,
+        taker: activeContact,
+        createdAt,
+        expiresAt,
+        parentTradeId: tradeCounterParentId ?? undefined
+      };
+
+      setTradeSnapshotsById((previous) => ({
+        ...previous,
+        [String(tradeId)]: {
+          tradeId,
+          maker: requestedWalletAddress,
+          taker: activeContact,
+          offer: {
+            ...selectedTradeOfferToken,
+            amount: parsedTradeOfferAmountWei.toString()
+          },
+          request: {
+            ...selectedTradeRequestToken,
+            amount: parsedTradeRequestAmountWei.toString()
+          },
+          createdAt,
+          expiresAt,
+          status: 'open'
+        }
+      }));
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      setTopUpMetricsNonce((previous) => previous + 1);
+      setTradeOfferAmountInput('');
+      setTradeRequestAmountInput('');
+      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeCounterParentId(null);
+      setTradeComposerOpen(false);
+      await sendMessage(buildTradeOfferMessagePayload(tradeMessagePayload), overrideReplyTarget ?? replyingToMessage);
+    } catch (tradeError) {
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to create trade offer.');
+      setError(message);
+      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+        const shouldTopUp = window.confirm(
+          'Burner wallet has insufficient funds. Do you want to top up now with MetaMask?'
+        );
+        if (shouldTopUp) {
+          await topUpBurnerWithMetaMask();
+        }
+      }
+    } finally {
+      setCreatingTrade(false);
+    }
+  };
+
+  const acceptTradeOffer = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
+    setError('');
+
+    if (processingTradeActionId || !walletAddress || !isWalletAddress(walletAddress)) {
+      return;
+    }
+
+    try {
+      setProcessingTradeActionId(String(offer.tradeId));
+      const snapshot = await resolveTradeSnapshotForOffer(offer);
+      const requestAsset = snapshot.request;
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const tradeContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, signer);
+      const requestAmountWei = BigInt(requestAsset.amount);
+
+      if (requestAsset.kind !== 'native' && requestAsset.tokenAddress) {
+        await ensureTradeTokenAllowance(signer, walletAddress, requestAsset.tokenAddress, requestAmountWei, requestAsset.kind);
+      }
+
+      const acceptTx = await tradeContract.acceptTrade(offer.tradeId, {
+        value: requestAsset.kind === 'native' ? requestAmountWei : 0n
+      });
+      const acceptReceipt = await acceptTx.wait();
+      if (!acceptReceipt || Number((acceptReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
+        throw new Error('Trade acceptance failed on-chain.');
+      }
+
+      setTradeSnapshotsById((previous) => ({
+        ...previous,
+        [String(offer.tradeId)]: {
+          ...(previous[String(offer.tradeId)] ?? snapshot),
+          status: 'accepted'
+        }
+      }));
+      setTopUpMetricsNonce((previous) => previous + 1);
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await sendMessage(
+        buildTradeResponseMessagePayload({
+          version: 1,
+          tradeId: offer.tradeId,
+          action: 'accepted',
+          actor: walletAddress,
+          createdAt: Math.floor(Date.now() / 1000)
+        }),
+        sourceMessage
+      );
+    } catch (tradeError) {
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to accept trade.');
+      setError(message);
+    } finally {
+      setProcessingTradeActionId('');
+    }
+  };
+
+  const declineTradeOffer = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
+    setError('');
+
+    if (processingTradeActionId) {
+      return;
+    }
+
+    try {
+      setProcessingTradeActionId(String(offer.tradeId));
+      const snapshot = await resolveTradeSnapshotForOffer(offer);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const tradeContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, signer);
+      const declineTx = await tradeContract.declineTrade(offer.tradeId);
+      const declineReceipt = await declineTx.wait();
+      if (!declineReceipt || Number((declineReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
+        throw new Error('Trade refusal failed on-chain.');
+      }
+
+      setTradeSnapshotsById((previous) => ({
+        ...previous,
+        [String(offer.tradeId)]: {
+          ...(previous[String(offer.tradeId)] ?? snapshot),
+          status: 'declined'
+        }
+      }));
+      setTopUpMetricsNonce((previous) => previous + 1);
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await sendMessage(
+        buildTradeResponseMessagePayload({
+          version: 1,
+          tradeId: offer.tradeId,
+          action: 'declined',
+          actor: walletAddress,
+          createdAt: Math.floor(Date.now() / 1000)
+        }),
+        sourceMessage
+      );
+    } catch (tradeError) {
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to refuse trade.');
+      setError(message);
+    } finally {
+      setProcessingTradeActionId('');
+    }
+  };
+
+  const cancelTradeOffer = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
+    setError('');
+
+    if (processingTradeActionId) {
+      return;
+    }
+
+    try {
+      setProcessingTradeActionId(String(offer.tradeId));
+      const snapshot = await resolveTradeSnapshotForOffer(offer);
+      const { signer, cacheKey } = await getMemoSigner();
+      const cotiEthers = await loadCotiEthersModule();
+      const tradeContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, signer);
+      const cancelTx = await tradeContract.cancelTrade(offer.tradeId);
+      const cancelReceipt = await cancelTx.wait();
+      if (!cancelReceipt || Number((cancelReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
+        throw new Error('Trade cancellation failed on-chain.');
+      }
+
+      setTradeSnapshotsById((previous) => ({
+        ...previous,
+        [String(offer.tradeId)]: {
+          ...(previous[String(offer.tradeId)] ?? snapshot),
+          status: 'cancelled'
+        }
+      }));
+      setTopUpMetricsNonce((previous) => previous + 1);
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await sendMessage(
+        buildTradeResponseMessagePayload({
+          version: 1,
+          tradeId: offer.tradeId,
+          action: 'cancelled',
+          actor: walletAddress,
+          createdAt: Math.floor(Date.now() / 1000)
+        }),
+        sourceMessage
+      );
+    } catch (tradeError) {
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to cancel trade.');
+      setError(message);
+    } finally {
+      setProcessingTradeActionId('');
+    }
+  };
+
+  const prepareCounterTrade = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
+    const applyAssetSelection = (
+      asset: TradeAssetPayload,
+      onSelectionChange: (value: TradeTokenPresetKey) => void,
+      onCustomAddressChange: (value: string) => void,
+      onAmountInputChange: (value: string) => void
+    ) => {
+      if (asset.kind === 'native') {
+        onSelectionChange('coti');
+        onCustomAddressChange('');
+      } else if (asset.kind === 'private-erc20' && asset.tokenAddress?.toLowerCase() === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
+        onSelectionChange('pwisp');
+        onCustomAddressChange('');
+      } else if (asset.tokenAddress?.toLowerCase() === REWARD_TOKEN_ADDRESS.toLowerCase()) {
+        onSelectionChange('wisp');
+        onCustomAddressChange('');
+      } else {
+        onSelectionChange(asset.kind === 'private-erc20' ? 'custom-private' : 'custom-public');
+        onCustomAddressChange(asset.tokenAddress ?? '');
+      }
+
+      try {
+        onAmountInputChange(formatTokenAmount(BigInt(asset.amount), asset.decimals, 6));
+      } catch {
+        onAmountInputChange('');
+      }
+    };
+
+    const snapshot = await resolveTradeSnapshotForOffer(offer);
+
+    applyAssetSelection(
+      snapshot.request,
+      setTradeOfferTokenSelection,
+      setTradeOfferCustomTokenAddress,
+      setTradeOfferAmountInput
+    );
+    applyAssetSelection(
+      snapshot.offer,
+      setTradeRequestTokenSelection,
+      setTradeRequestCustomTokenAddress,
+      setTradeRequestAmountInput
+    );
+    setTradeCounterParentId(offer.tradeId);
+    setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+    setReplyingToMessage(sourceMessage);
+    setTipComposerOpen(false);
+    setTradeComposerOpen(true);
   };
 
   const sendTipToRecipient = async (
@@ -11252,6 +12703,7 @@ export default function App() {
                   if (isReactionOnlyMessage(message)) {
                     return null;
                   }
+                  const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
                   const messageDisplayText = getMessageDisplayText(message.text, message.direction);
                   const parsedImageTag = parseImageTag(message.text);
                   const messageReactions = getReactionsForMessage(message);
@@ -11344,7 +12796,30 @@ export default function App() {
                             ↪ {getReplyReferenceFallbackLabel(message)}
                           </button>
                         ) : null}
-                        {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                        {parsedTradeOffer ? (
+                          <TradeOfferCard
+                            offer={parsedTradeOffer}
+                            snapshot={tradeSnapshotsById[String(parsedTradeOffer.tradeId)] ?? null}
+                            currentWalletAddress={walletAddress}
+                            actionPending={processingTradeActionId === String(parsedTradeOffer.tradeId)}
+                            onAccept={() => {
+                              acceptTradeOffer(parsedTradeOffer, message).catch(() => {});
+                            }}
+                            onDecline={() => {
+                              declineTradeOffer(parsedTradeOffer, message).catch(() => {});
+                            }}
+                            onCounter={() => {
+                              prepareCounterTrade(parsedTradeOffer, message).catch(() => {});
+                            }}
+                            onCancel={() => {
+                              cancelTradeOffer(parsedTradeOffer, message).catch(() => {});
+                            }}
+                          />
+                        ) : parsedImageTag ? (
+                          <ChatImage tag={message.text} parsed={parsedImageTag} />
+                        ) : messageDisplayText ? (
+                          <div>{messageDisplayText}</div>
+                        ) : null}
                         {messageReactions.length > 0 ? (
                           <div className="message-reactions">
                             {messageReactions.map((reaction) => (
@@ -11392,7 +12867,10 @@ export default function App() {
               replyPreviewText={replyingPreviewText}
               onCancelReply={() => setReplyingToMessage(null)}
               tipComposerOpen={tipComposerOpen}
-              onToggleTipComposer={() => setTipComposerOpen((previous) => !previous)}
+              onToggleTipComposer={() => {
+                setTradeComposerOpen(false);
+                setTipComposerOpen((previous) => !previous);
+              }}
               tipping={tipping}
               tipTokenSelection={tipTokenSelection}
               onTipTokenSelectionChange={setTipTokenSelection}
@@ -11409,6 +12887,60 @@ export default function App() {
               onSendTip={() => {
                 sendTipToActiveContact(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
               }}
+              tradeComposerOpen={tradeComposerOpen}
+              tradeComposerContent={
+                <TradeComposerPanel
+                  feeMode={tradeFeeModeSelection}
+                  onToggleFeeMode={() => {
+                    setTradeFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
+                  }}
+                  feeSummaryLabel={tradeFeeSummaryLabel}
+                  offerTokenOptions={tradeTokenOptions}
+                  requestTokenOptions={tradeTokenOptions}
+                  offerTokenSelection={tradeOfferTokenSelection}
+                  onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
+                  requestTokenSelection={tradeRequestTokenSelection}
+                  onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
+                  offerCustomAddress={tradeOfferCustomTokenAddress}
+                  onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
+                  requestCustomAddress={tradeRequestCustomTokenAddress}
+                  onRequestCustomAddressChange={setTradeRequestCustomTokenAddress}
+                  offerCustomMetaLabel={tradeOfferCustomMetaLabel}
+                  requestCustomMetaLabel={tradeRequestCustomMetaLabel}
+                  offerVerifyUrl={tradeOfferVerifyUrl}
+                  requestVerifyUrl={tradeRequestVerifyUrl}
+                  offerAmountInput={tradeOfferAmountInput}
+                  onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
+                  requestAmountInput={tradeRequestAmountInput}
+                  onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
+                  offerAmountSummaryLabel={tradeOfferAmountSummaryLabel}
+                  requestAmountSummaryLabel={tradeRequestAmountSummaryLabel}
+                  offerBalanceSummaryLabel={tradeOfferBalanceSummaryLabel}
+                  expiresHoursInput={tradeExpiryHoursInput}
+                  onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
+                  sending={creatingTrade}
+                  canSend={canSendTradeOffer}
+                  onSendTradeOffer={() => {
+                    createTradeOffer().catch(() => {});
+                  }}
+                  validationMessage={tradeComposerValidationMessage || undefined}
+                />
+              }
+              onToggleTradeComposer={() => {
+                setTipComposerOpen(false);
+                setTradeComposerOpen((previous) => {
+                  const nextOpen = !previous;
+                  if (nextOpen && tradeCounterParentId === null) {
+                    setTradeOfferAmountInput('');
+                    setTradeRequestAmountInput('');
+                    setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+                  }
+                  if (!nextOpen) {
+                    setTradeCounterParentId(null);
+                  }
+                  return nextOpen;
+                });
+              }}
               composerRef={chatComposerRef}
               isMobileNav={isMobileNav}
               onSendMessage={() => {
@@ -11419,6 +12951,8 @@ export default function App() {
               sending={sending}
               tipToggleDisabled={tipping || sending || !activeContact || isSelfChat}
               tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
+              tradeToggleDisabled={creatingTrade || tipping || sending || !activeContact || isSelfChat}
+              tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
             />
           </div>
         ) : (
