@@ -4044,10 +4044,10 @@ body {
 
 .trade-compose-swap-indicator {
   grid-column: 2;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
   border-radius: 999px;
   border: 1px solid rgba(167, 139, 250, 0.46);
   background:
@@ -4074,8 +4074,18 @@ body {
 }
 
 .trade-compose-swap-indicator svg {
-  width: 18px;
-  height: 18px;
+  display: block;
+  width: 20px;
+  height: 20px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+}
+
+.chat-compose .trade-compose-swap-indicator {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
 }
 
 .trade-compose-bottom {
@@ -4955,6 +4965,7 @@ body {
   .chat-compose .trade-compose-max,
   .chat-compose .trade-compose-swap-indicator {
     width: auto;
+    padding: 0;
   }
 
   .trade-compose-expiry,

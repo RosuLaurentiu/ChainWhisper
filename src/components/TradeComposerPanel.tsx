@@ -88,10 +88,18 @@ function TradeSwapIcon() {
       <path
         d="M3 8.5h12.5l-2.8-2.8 1.45-1.45L19.55 9l-5.4 4.75-1.45-1.45 2.8-2.8H3z"
         fill="currentColor"
+        stroke="rgba(10, 10, 16, 0.9)"
+        strokeWidth="0.8"
+        strokeLinejoin="round"
+        paintOrder="stroke"
       />
       <path
         d="M21 15.5H8.5l2.8 2.8-1.45 1.45L4.45 15l5.4-4.75 1.45 1.45-2.8 2.8H21z"
         fill="currentColor"
+        stroke="rgba(10, 10, 16, 0.9)"
+        strokeWidth="0.8"
+        strokeLinejoin="round"
+        paintOrder="stroke"
       />
     </svg>
   );
