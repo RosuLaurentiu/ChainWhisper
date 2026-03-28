@@ -1,4 +1,4 @@
-import type { MutableRefObject, ReactNode, Ref } from 'react';
+import { useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import DirectChatCompose from './DirectChatCompose';
 import ChatImage from './ChatImage';
 import TradeOfferCard from './TradeOfferCard';
@@ -8,11 +8,13 @@ import {
   formatMessageTimestamp,
   getMessageDisplayText,
   parseTradeOfferMessagePayload,
+  parseTradeResponseMessagePayload,
   shortenAddress,
   type ChatMessage,
   type Contact,
   type TipTokenSelection,
   type TradeOfferMessagePayload,
+  type TradeResponseMessagePayload,
   type TradeSnapshot
 } from '../lib/appShared';
 
@@ -159,9 +161,26 @@ export default function DirectChatPanel({
   tradeToggleDisabled,
   tradeToggleTitle
 }: DirectChatPanelProps) {
+  const [tradeCardExpandedState, setTradeCardExpandedState] = useState<Record<string, boolean>>({});
   const activeContactLabel = activeContactMeta?.name
     ? `${activeContactMeta.name} (${shortenAddress(activeContact)})`
     : shortenAddress(activeContact);
+  const visibleTradeOfferIds = new Set<string>();
+  const latestTradeResponsesById: Record<string, TradeResponseMessagePayload> = {};
+
+  activeMessages.forEach((message) => {
+    const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
+    const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
+
+    if (parsedTradeOffer) {
+      const tradeId = String(parsedTradeOffer.tradeId);
+      visibleTradeOfferIds.add(tradeId);
+    }
+
+    if (parsedTradeResponse) {
+      latestTradeResponsesById[String(parsedTradeResponse.tradeId)] = parsedTradeResponse;
+    }
+  });
 
   return (
     <div className="chat-shell">
@@ -214,6 +233,18 @@ export default function DirectChatPanel({
             }
 
             const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
+            const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
+            const hideTradeResponseMessage =
+              parsedTradeResponse &&
+              (visibleTradeOfferIds.has(String(parsedTradeResponse.tradeId)) ||
+                (parsedTradeResponse.action === 'countered' &&
+                  typeof parsedTradeResponse.counterTradeId === 'number' &&
+                  visibleTradeOfferIds.has(String(parsedTradeResponse.counterTradeId))));
+
+            if (hideTradeResponseMessage) {
+              return null;
+            }
+
             const messageDisplayText = getMessageDisplayText(message.text, message.direction);
             const parsedImageTag = parseImageTag(message.text);
             const messageReactions = getReactionsForMessage(message);
@@ -228,6 +259,8 @@ export default function DirectChatPanel({
                   : message.deliveryState === 'failed'
                     ? 'Failed'
                     : '';
+            const showMessageMeta =
+              !parsedTradeOffer || message.deliveryState === 'pending' || message.deliveryState === 'failed';
 
             return (
               <div
@@ -303,24 +336,43 @@ export default function DirectChatPanel({
                     </button>
                   ) : null}
                   {parsedTradeOffer ? (
-                    <TradeOfferCard
-                      offer={parsedTradeOffer}
-                      snapshot={tradeSnapshotsById[String(parsedTradeOffer.tradeId)] ?? null}
-                      currentWalletAddress={walletAddress}
-                      actionPending={processingTradeActionId === String(parsedTradeOffer.tradeId)}
-                      onAccept={() => {
-                        onAcceptTrade(parsedTradeOffer, message).catch(() => {});
-                      }}
-                      onDecline={() => {
-                        onDeclineTrade(parsedTradeOffer, message).catch(() => {});
-                      }}
-                      onCounter={() => {
-                        onCounterTrade(parsedTradeOffer, message).catch(() => {});
-                      }}
-                      onCancel={() => {
-                        onCancelTrade(parsedTradeOffer, message).catch(() => {});
-                      }}
-                    />
+                    (() => {
+                      const tradeId = String(parsedTradeOffer.tradeId);
+                      const snapshot = tradeSnapshotsById[tradeId] ?? null;
+                      const latestResponse = latestTradeResponsesById[tradeId] ?? null;
+                      const defaultExpanded = true;
+                      const expanded = tradeCardExpandedState[tradeId] ?? defaultExpanded;
+
+                      return (
+                        <TradeOfferCard
+                          offer={parsedTradeOffer}
+                          snapshot={snapshot}
+                          latestResponse={latestResponse}
+                          currentWalletAddress={walletAddress}
+                          actionPending={processingTradeActionId === tradeId}
+                          collapsed={!expanded}
+                          canToggleCollapsed={true}
+                          onToggleCollapsed={() => {
+                            setTradeCardExpandedState((previous) => ({
+                              ...previous,
+                              [tradeId]: !(previous[tradeId] ?? defaultExpanded)
+                            }));
+                          }}
+                          onAccept={() => {
+                            onAcceptTrade(parsedTradeOffer, message).catch(() => {});
+                          }}
+                          onDecline={() => {
+                            onDeclineTrade(parsedTradeOffer, message).catch(() => {});
+                          }}
+                          onCounter={() => {
+                            onCounterTrade(parsedTradeOffer, message).catch(() => {});
+                          }}
+                          onCancel={() => {
+                            onCancelTrade(parsedTradeOffer, message).catch(() => {});
+                          }}
+                        />
+                      );
+                    })()
                   ) : parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} />
                   ) : messageDisplayText ? (
@@ -344,7 +396,7 @@ export default function DirectChatPanel({
                       ))}
                     </div>
                   ) : null}
-                  {message.timestamp || deliveryLabel ? (
+                  {showMessageMeta && (message.timestamp || deliveryLabel) ? (
                     <div className="message-meta">
                       {message.timestamp ? (
                         <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span>

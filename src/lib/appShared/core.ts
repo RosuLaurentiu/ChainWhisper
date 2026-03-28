@@ -414,6 +414,7 @@ export type TradeSnapshot = {
   createdAt: number;
   expiresAt: number;
   status: TradeOnChainStatus;
+  acceptedTxHash?: string;
 };
 
 export type PendingBurnerInit = {

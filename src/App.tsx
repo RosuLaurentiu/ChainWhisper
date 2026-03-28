@@ -3518,6 +3518,24 @@ export default function App() {
       resolveTradeAssetSnapshot(offerAssetType, offerToken, offerAmount),
       resolveTradeAssetSnapshot(requestAssetType, requestToken, requestAmount)
     ]);
+    const resolvedStatus = resolveTradeSnapshotStatus(statusRaw, expiresAt);
+    let acceptedTxHash: string | undefined;
+
+    if (resolvedStatus === 'accepted') {
+      try {
+        const acceptedLogs = await contract.queryFilter(
+          contract.filters.TradeAccepted(BigInt(tradeId), null),
+          0,
+          'latest'
+        );
+        const latestAcceptedLog = acceptedLogs[acceptedLogs.length - 1];
+        if (latestAcceptedLog && typeof latestAcceptedLog.transactionHash === 'string') {
+          acceptedTxHash = latestAcceptedLog.transactionHash;
+        }
+      } catch {
+        acceptedTxHash = undefined;
+      }
+    }
 
     return {
       tradeId,
@@ -3527,7 +3545,8 @@ export default function App() {
       request,
       createdAt,
       expiresAt,
-      status: resolveTradeSnapshotStatus(statusRaw, expiresAt)
+      status: resolvedStatus,
+      acceptedTxHash
     };
   };
 
@@ -8464,7 +8483,13 @@ export default function App() {
         ...previous,
         [String(offer.tradeId)]: {
           ...(previous[String(offer.tradeId)] ?? snapshot),
-          status: 'accepted'
+          status: 'accepted',
+          acceptedTxHash:
+            (typeof (acceptReceipt as { hash?: unknown }).hash === 'string'
+              ? (acceptReceipt as { hash: string }).hash
+              : typeof (acceptReceipt as { transactionHash?: unknown }).transactionHash === 'string'
+                ? (acceptReceipt as { transactionHash: string }).transactionHash
+                : acceptTx.hash) || undefined
         }
       }));
       setTopUpMetricsNonce((previous) => previous + 1);

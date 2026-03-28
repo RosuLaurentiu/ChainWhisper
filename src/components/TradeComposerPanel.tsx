@@ -1,4 +1,4 @@
-import type { TradeFeeModeSelection } from '../lib/appShared';
+import { COTI_NETWORK, TRADE_ESCROW_CONTRACT_ADDRESS, type TradeFeeModeSelection } from '../lib/appShared';
 
 export type TradeComposerTokenOption = {
   value: string;
@@ -50,37 +50,6 @@ type TradeComposerPanelProps = {
   generalError?: string;
   validationMessage?: string;
 };
-
-function ExternalLinkIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path
-        d="M6 3.5h6.5V10"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-      />
-      <path
-        d="M12.5 3.5 6 10"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-      />
-      <path
-        d="M10 8.5v3H3.5V5H6"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-      />
-    </svg>
-  );
-}
 
 function TradeSwapIcon() {
   return (
@@ -156,12 +125,23 @@ export default function TradeComposerPanel({
   const showRequestCustomToken = requestTokenSelection.startsWith('custom');
   const compactFeeSummaryLabel = feeSummaryLabel.replace(/^fee:\s*/i, '').trim();
   const hasTradePreview = Boolean(tradePreviewLabel || tradeRateLabel);
+  const escrowContractUrl = `${COTI_NETWORK.blockExplorerUrl}/address/${TRADE_ESCROW_CONTRACT_ADDRESS}`;
 
   return (
     <div className="trade-compose-panel" role="group" aria-label="P2P trade offer">
       <div className="trade-compose-header">
         <strong>Trade offer</strong>
-        <span>Private terms, on-chain escrow</span>
+        <div className="trade-compose-header-meta">
+          <span>Private terms, on-chain escrow</span>
+          <a
+            className="trade-compose-header-link"
+            href={escrowContractUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Escrow
+          </a>
+        </div>
       </div>
 
       <details className="trade-compose-warning">
@@ -190,7 +170,7 @@ export default function TradeComposerPanel({
                   aria-label={explorerLabel}
                   title={explorerLabel}
                 >
-                  <ExternalLinkIcon />
+                  Explorer
                 </a>
               ) : null}
             </span>
@@ -233,7 +213,7 @@ export default function TradeComposerPanel({
                     aria-label={explorerLabel}
                     title={explorerLabel}
                   >
-                    <ExternalLinkIcon />
+                    Explorer
                   </a>
                 ) : null}
               </div>
@@ -297,7 +277,7 @@ export default function TradeComposerPanel({
                   aria-label={explorerLabel}
                   title={explorerLabel}
                 >
-                  <ExternalLinkIcon />
+                  Explorer
                 </a>
               ) : null}
             </span>
@@ -340,7 +320,7 @@ export default function TradeComposerPanel({
                     aria-label={explorerLabel}
                     title={explorerLabel}
                   >
-                    <ExternalLinkIcon />
+                    Explorer
                   </a>
                 ) : null}
               </div>
