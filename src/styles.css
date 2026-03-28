@@ -3702,10 +3702,10 @@ body {
 .trade-compose-panel {
   grid-column: 1 / -1;
   display: grid;
-  gap: 8px;
+  gap: 7px;
   border: 1px solid rgba(245, 158, 11, 0.28);
   border-radius: 13px;
-  padding: 10px 11px;
+  padding: 9px 10px;
   box-sizing: border-box;
   background:
     radial-gradient(120% 120% at 100% 0%, rgba(249, 115, 22, 0.12), transparent 42%),
@@ -3722,19 +3722,19 @@ body {
 }
 
 .trade-compose-header strong {
-  font-size: 0.94rem;
+  font-size: 0.92rem;
   letter-spacing: -0.01em;
 }
 
 .trade-compose-header span {
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   line-height: 1.35;
   color: var(--muted);
 }
 
 .trade-compose-warning {
-  padding: 8px 9px;
-  border-radius: 10px;
+  padding: 6px 8px;
+  border-radius: 9px;
   border: 1px solid rgba(245, 158, 11, 0.24);
   background: linear-gradient(180deg, rgba(68, 39, 10, 0.28), rgba(43, 24, 9, 0.2));
 }
@@ -3742,7 +3742,7 @@ body {
 .trade-compose-warning summary {
   list-style: none;
   cursor: pointer;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   font-weight: 700;
   line-height: 1.4;
   color: #fcd34d;
@@ -3773,7 +3773,7 @@ body {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   align-items: center;
-  padding: 7px 8px;
+  padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: rgba(12, 12, 19, 0.5);
@@ -3806,18 +3806,18 @@ body {
 }
 
 .trade-compose-fee-value {
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   line-height: 1.1;
 }
 
 .trade-compose-fee-toggle {
   min-width: 64px;
-  min-height: 30px;
+  min-height: 28px;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  padding: 3px 8px;
+  padding: 2px 8px;
   font-size: 0.7rem;
   font-weight: 700;
   cursor: pointer;
@@ -3843,18 +3843,18 @@ body {
 
 .trade-compose-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
 }
 
 .trade-compose-section {
   display: grid;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
-  padding: 9px;
+  padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: 10px;
   background: linear-gradient(180deg, rgba(17, 17, 27, 0.72), rgba(11, 11, 18, 0.8));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
@@ -3906,18 +3906,18 @@ body {
 }
 
 .trade-compose-section-header strong {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
 }
 
 .trade-compose-section-header span,
 .trade-compose-expiry span {
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   color: var(--muted);
 }
 
 .trade-compose-field {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -3925,19 +3925,19 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
 .trade-compose-field-tools {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
 .trade-compose-field-value {
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text);
@@ -3960,9 +3960,9 @@ body {
   border-radius: 9px;
   background: var(--bg-elev-1);
   color: var(--text);
-  padding: 9px 10px;
-  font-size: 0.82rem;
-  min-height: 40px;
+  padding: 8px 10px;
+  font-size: 0.81rem;
+  min-height: 36px;
 }
 
 .trade-compose-select:focus,
@@ -3979,12 +3979,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 5px 7px;
+  border-radius: 7px;
   border: 1px dashed rgba(120, 113, 166, 0.4);
   background: rgba(14, 14, 22, 0.58);
+  font-size: 0.74rem;
 }
 
 .trade-compose-token-meta span {
@@ -3998,8 +3999,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   color: #c4b5fd;
   text-decoration: none;
 }
@@ -4009,8 +4010,8 @@ body {
 }
 
 .trade-compose-icon-link svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 
 .trade-compose-max {
@@ -4019,7 +4020,7 @@ body {
   background: rgba(139, 92, 246, 0.12);
   color: var(--text);
   padding: 1px 7px;
-  min-height: 22px;
+  min-height: 20px;
   font-size: 0.68rem;
   font-weight: 700;
   cursor: pointer;
@@ -4036,34 +4037,36 @@ body {
 
 .trade-compose-field-error {
   margin: 0;
-  font-size: 0.74rem;
-  line-height: 1.35;
+  font-size: 0.72rem;
+  line-height: 1.25;
   color: #fca5a5;
 }
 
 .trade-compose-swap-indicator {
   grid-column: 2;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  min-height: 28px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
   border-radius: 999px;
-  border: 1px solid rgba(120, 113, 166, 0.32);
-  background: rgba(17, 17, 27, 0.72);
+  border: 1px solid rgba(167, 139, 250, 0.46);
+  background:
+    linear-gradient(90deg, rgba(244, 63, 94, 0.18), rgba(28, 24, 46, 0.98) 50%, rgba(34, 197, 94, 0.18));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.54);
+  color: #f5f3ff;
   padding: 0;
   justify-self: center;
   align-self: center;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
 }
 
 .trade-compose-swap-indicator:hover:not(:disabled) {
-  color: var(--text);
-  border-color: rgba(167, 139, 250, 0.42);
-  background: rgba(40, 28, 66, 0.82);
+  color: #ffffff;
+  border-color: rgba(196, 181, 253, 0.78);
+  background:
+    linear-gradient(90deg, rgba(244, 63, 94, 0.26), rgba(43, 32, 73, 0.98) 50%, rgba(34, 197, 94, 0.24));
 }
 
 .trade-compose-swap-indicator:disabled {
@@ -4071,51 +4074,75 @@ body {
 }
 
 .trade-compose-swap-indicator svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
+}
+
+.trade-compose-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trade-compose-bottom-compact {
+  justify-content: flex-end;
 }
 
 .trade-compose-preview {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: rgba(12, 12, 19, 0.48);
+  justify-self: start;
+  min-width: 0;
 }
 
 .trade-compose-preview strong {
-  font-size: 0.78rem;
-  line-height: 1.35;
+  font-size: 0.76rem;
+  line-height: 1.25;
 }
 
 .trade-compose-preview span {
-  font-size: 0.72rem;
-  line-height: 1.35;
+  font-size: 0.7rem;
+  line-height: 1.25;
   color: var(--muted);
 }
 
 .trade-compose-footer {
-  display: grid;
-  grid-template-columns: minmax(88px, 104px) minmax(0, 1fr);
-  gap: 8px;
-  align-items: end;
+  display: inline-grid;
+  grid-template-columns: auto auto auto;
+  gap: 5px;
+  align-items: center;
+  justify-self: end;
+  width: auto;
+}
+
+.trade-compose-fee-row-inline {
+  min-width: 0;
+  grid-template-columns: auto auto;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .trade-compose-expiry {
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto 64px;
+  gap: 5px;
+  align-items: center;
   min-width: 0;
 }
 
 .trade-compose-send {
   min-width: 0;
-  min-height: 40px;
-  padding: 10px 12px;
-  border-radius: 9px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 8px;
   border-color: #7c2d12;
   background: linear-gradient(140deg, #9a3412, #ea580c);
   font-weight: 700;
@@ -4123,13 +4150,53 @@ body {
   box-shadow: 0 10px 20px rgba(124, 45, 18, 0.2);
 }
 
+.trade-compose-expiry > .trade-compose-input {
+  min-width: 0;
+  text-align: center;
+  min-height: 32px;
+  padding-block: 6px;
+}
+
+.trade-compose-fee-row-inline .trade-compose-fee-copy {
+  align-items: center;
+  gap: 5px;
+}
+
+.trade-compose-fee-row-inline .trade-compose-field-label {
+  font-size: 0.64rem;
+}
+
+.trade-compose-fee-row-inline .trade-compose-fee-value {
+  font-size: 0.8rem;
+}
+
+.trade-compose-fee-row-inline .trade-compose-fee-segmented {
+  gap: 2px;
+  padding: 1px;
+  border-radius: 8px;
+}
+
+.trade-compose-fee-row-inline .trade-compose-fee-toggle {
+  min-width: 48px;
+  min-height: 26px;
+  padding: 2px 6px;
+}
+
+.trade-compose-fee-row-inline .trade-compose-fee-error {
+  grid-column: 1 / -1;
+}
+
+.trade-compose-expiry span {
+  white-space: nowrap;
+}
+
 .trade-compose-send:hover:not(:disabled) {
   background: linear-gradient(140deg, #c2410c, #f97316);
 }
 
 .trade-compose-validation {
-  padding: 9px 10px;
-  border-radius: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
   border: 1px solid rgba(244, 63, 94, 0.24);
   background: rgba(76, 17, 33, 0.2);
 }
@@ -4779,6 +4846,7 @@ body {
   .trade-card-grid,
   .trade-compose-grid {
     grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
   .trade-compose-panel {
@@ -4802,11 +4870,16 @@ body {
   }
 
   .trade-compose-swap-indicator {
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
     grid-column: auto;
     width: 26px;
     min-width: 26px;
     height: 26px;
     min-height: 26px;
+    margin-inline: auto;
   }
 
   .trade-compose-section-header {
@@ -4838,14 +4911,40 @@ body {
   }
 
   .trade-compose-preview {
+    justify-self: stretch;
     flex-direction: column;
     align-items: flex-start;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(12, 12, 19, 0.48);
     padding: 6px 7px;
   }
 
+  .trade-compose-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
   .trade-compose-footer {
-    grid-template-columns: minmax(80px, 94px) minmax(0, 1fr);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(80px, 94px) minmax(0, 1fr);
     gap: 6px;
+    width: 100%;
+  }
+
+  .trade-compose-fee-row-inline {
+    grid-column: 1 / -1;
+  }
+
+  .trade-compose-expiry {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    align-items: stretch;
+  }
+
+  .trade-compose-expiry > .trade-compose-input {
+    text-align: left;
   }
 
   .trade-compose-fee-toggle {

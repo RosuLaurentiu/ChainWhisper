@@ -1867,10 +1867,27 @@ export default function App() {
     [selectedTradeOfferToken, tradeOfferMaxAmountWei]
   );
   const canUseTradeOfferMax = tradeOfferMaxAmountWei !== null && tradeOfferMaxAmountWei > 0n;
-  const tradePreviewLabel =
-    selectedTradeOfferToken && selectedTradeRequestToken
-      ? `Send ${tradeOfferAmountSummaryLabel} for ${tradeRequestAmountSummaryLabel}`
-      : '';
+  const tradePreviewLabel = useMemo(() => {
+    if (
+      !selectedTradeOfferToken ||
+      !selectedTradeRequestToken ||
+      parsedTradeOfferAmountWei === null ||
+      parsedTradeRequestAmountWei === null ||
+      parsedTradeOfferAmountWei <= 0n ||
+      parsedTradeRequestAmountWei <= 0n
+    ) {
+      return '';
+    }
+
+    return `Send ${tradeOfferAmountSummaryLabel} for ${tradeRequestAmountSummaryLabel}`;
+  }, [
+    parsedTradeOfferAmountWei,
+    parsedTradeRequestAmountWei,
+    selectedTradeOfferToken,
+    selectedTradeRequestToken,
+    tradeOfferAmountSummaryLabel,
+    tradeRequestAmountSummaryLabel
+  ]);
   const tradeRateLabel = useMemo(() => {
     if (
       !selectedTradeOfferToken ||

@@ -84,14 +84,14 @@ function ExternalLinkIcon() {
 
 function TradeSwapIcon() {
   return (
-    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path
-        d="M3.5 7h10.75m0 0L11.5 4.25M14.25 7 11.5 9.75M16.5 13H5.75m0 0 2.75-2.75M5.75 13l2.75 2.75"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
+        d="M3 8.5h12.5l-2.8-2.8 1.45-1.45L19.55 9l-5.4 4.75-1.45-1.45 2.8-2.8H3z"
+        fill="currentColor"
+      />
+      <path
+        d="M21 15.5H8.5l2.8 2.8-1.45 1.45L4.45 15l5.4-4.75 1.45 1.45-2.8 2.8H21z"
+        fill="currentColor"
       />
     </svg>
   );
@@ -164,34 +164,6 @@ export default function TradeComposerPanel({
         </div>
       </details>
 
-      <div className="trade-compose-fee-row">
-        <div className="trade-compose-fee-copy">
-          <span className="trade-compose-field-label">Fee</span>
-          <strong className="trade-compose-fee-value">{compactFeeSummaryLabel || feeSummaryLabel}</strong>
-        </div>
-        <div className="trade-compose-fee-segmented" role="group" aria-label="Trade fee mode">
-          <button
-            type="button"
-            className={feeMode === 'coti' ? 'trade-compose-fee-toggle active' : 'trade-compose-fee-toggle'}
-            onClick={() => onFeeModeChange('coti')}
-            disabled={sending}
-            aria-pressed={feeMode === 'coti'}
-          >
-            COTI
-          </button>
-          <button
-            type="button"
-            className={feeMode === 'token' ? 'trade-compose-fee-toggle active token' : 'trade-compose-fee-toggle token'}
-            onClick={() => onFeeModeChange('token')}
-            disabled={sending}
-            aria-pressed={feeMode === 'token'}
-          >
-            Token
-          </button>
-        </div>
-        {feeError ? <p className="trade-compose-field-error trade-compose-fee-error">{feeError}</p> : null}
-      </div>
-
       <div className="trade-compose-grid">
         <section className="trade-compose-section trade-compose-section-sell" aria-label="Asset you are sending">
           <div className="trade-compose-section-header">
@@ -199,7 +171,21 @@ export default function TradeComposerPanel({
             <span>Balance: {offerBalanceSummaryLabel}</span>
           </div>
           <label className="trade-compose-field">
-            <span className="trade-compose-field-label">Asset</span>
+            <span className="trade-compose-field-head">
+              <span className="trade-compose-field-label">Asset</span>
+              {!showOfferCustomToken && offerVerifyUrl ? (
+                <a
+                  className="trade-compose-icon-link"
+                  href={offerVerifyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={explorerLabel}
+                  title={explorerLabel}
+                >
+                  <ExternalLinkIcon />
+                </a>
+              ) : null}
+            </span>
             <select
               className="trade-compose-select"
               value={offerTokenSelection}
@@ -244,22 +230,6 @@ export default function TradeComposerPanel({
                 ) : null}
               </div>
             </>
-          ) : offerVerifyUrl ? (
-            <div className="trade-compose-token-meta">
-              <span>
-                Token preset{' '}
-                <a
-                  className="trade-compose-icon-link inline"
-                  href={offerVerifyUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={explorerLabel}
-                  title={explorerLabel}
-                >
-                  <ExternalLinkIcon />
-                </a>
-              </span>
-            </div>
           ) : null}
           {offerAssetError ? <p className="trade-compose-field-error">{offerAssetError}</p> : null}
           <label className="trade-compose-field">
@@ -308,7 +278,21 @@ export default function TradeComposerPanel({
             <span>Counterparty sends this</span>
           </div>
           <label className="trade-compose-field">
-            <span className="trade-compose-field-label">Asset</span>
+            <span className="trade-compose-field-head">
+              <span className="trade-compose-field-label">Asset</span>
+              {!showRequestCustomToken && requestVerifyUrl ? (
+                <a
+                  className="trade-compose-icon-link"
+                  href={requestVerifyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={explorerLabel}
+                  title={explorerLabel}
+                >
+                  <ExternalLinkIcon />
+                </a>
+              ) : null}
+            </span>
             <select
               className="trade-compose-select"
               value={requestTokenSelection}
@@ -353,22 +337,6 @@ export default function TradeComposerPanel({
                 ) : null}
               </div>
             </>
-          ) : requestVerifyUrl ? (
-            <div className="trade-compose-token-meta">
-              <span>
-                Token preset{' '}
-                <a
-                  className="trade-compose-icon-link inline"
-                  href={requestVerifyUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={explorerLabel}
-                  title={explorerLabel}
-                >
-                  <ExternalLinkIcon />
-                </a>
-              </span>
-            </div>
           ) : null}
           {requestAssetError ? <p className="trade-compose-field-error">{requestAssetError}</p> : null}
           <label className="trade-compose-field">
@@ -391,35 +359,64 @@ export default function TradeComposerPanel({
         </section>
       </div>
 
-      {hasTradePreview ? (
-        <div className="trade-compose-preview" aria-live="polite">
-          {tradePreviewLabel ? <strong>{tradePreviewLabel}</strong> : null}
-          {tradeRateLabel ? <span>{tradeRateLabel}</span> : null}
-        </div>
-      ) : null}
+      <div className={hasTradePreview ? 'trade-compose-bottom' : 'trade-compose-bottom trade-compose-bottom-compact'}>
+        {hasTradePreview ? (
+          <div className="trade-compose-preview" aria-live="polite">
+            {tradePreviewLabel ? <strong>{tradePreviewLabel}</strong> : null}
+            {tradeRateLabel ? <span>{tradeRateLabel}</span> : null}
+          </div>
+        ) : null}
 
-      <div className="trade-compose-footer">
-        <label className="trade-compose-expiry">
-          <span>Expiry (hours)</span>
-          <input
-            className="trade-compose-input"
-            type="text"
-            inputMode="numeric"
-            value={expiresHoursInput}
-            onChange={(event) => onExpiresHoursInputChange(event.target.value)}
-            disabled={sending}
-            aria-invalid={expiryError ? 'true' : 'false'}
-          />
-        </label>
-        <button
-          type="button"
-          className="trade-compose-send"
-          onClick={onSendTradeOffer}
-          disabled={!canSend}
-          title={validationMessage || 'Create the escrow trade and send the encrypted offer to this chat.'}
-        >
-          {sending ? 'Creating...' : 'Send Trade'}
-        </button>
+        <div className="trade-compose-footer">
+          <div className="trade-compose-fee-row trade-compose-fee-row-inline">
+            <div className="trade-compose-fee-copy">
+              <span className="trade-compose-field-label">Fee</span>
+              <strong className="trade-compose-fee-value">{compactFeeSummaryLabel || feeSummaryLabel}</strong>
+            </div>
+            <div className="trade-compose-fee-segmented" role="group" aria-label="Trade fee mode">
+              <button
+                type="button"
+                className={feeMode === 'coti' ? 'trade-compose-fee-toggle active' : 'trade-compose-fee-toggle'}
+                onClick={() => onFeeModeChange('coti')}
+                disabled={sending}
+                aria-pressed={feeMode === 'coti'}
+              >
+                COTI
+              </button>
+              <button
+                type="button"
+                className={feeMode === 'token' ? 'trade-compose-fee-toggle active token' : 'trade-compose-fee-toggle token'}
+                onClick={() => onFeeModeChange('token')}
+                disabled={sending}
+                aria-pressed={feeMode === 'token'}
+              >
+                Token
+              </button>
+            </div>
+            {feeError ? <p className="trade-compose-field-error trade-compose-fee-error">{feeError}</p> : null}
+          </div>
+          <label className="trade-compose-expiry">
+            <span>Expiry (hours)</span>
+            <input
+              className="trade-compose-input"
+              type="text"
+              inputMode="numeric"
+              value={expiresHoursInput}
+              onChange={(event) => onExpiresHoursInputChange(event.target.value)}
+              disabled={sending}
+              aria-invalid={expiryError ? 'true' : 'false'}
+            />
+          </label>
+          <button
+            type="button"
+            className="trade-compose-send"
+            onClick={onSendTradeOffer}
+            disabled={!canSend}
+            title={validationMessage || 'Create the escrow trade and send the encrypted offer to this chat.'}
+          >
+            {sending ? 'Creating...' : 'Send Trade'}
+          </button>
+        </div>
       </div>
       {expiryError ? <p className="trade-compose-field-error">{expiryError}</p> : null}
 
