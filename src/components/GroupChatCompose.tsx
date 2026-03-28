@@ -1,4 +1,5 @@
 import type { Ref } from 'react';
+import ChatSendIcon from './ChatSendIcon';
 import { TIP_NATIVE_TOKEN_SYMBOL, type GroupFeeModeSelection, type TipTokenSelection } from '../lib/appShared';
 
 type GroupTipRecipient = {
@@ -185,74 +186,80 @@ export default function GroupChatCompose({
         </div>
       ) : null}
       <div className="group-compose-main">
-        <button
-          type="button"
-          className={
-            groupFeeModeSelection === 'token'
-              ? 'group-fee-toggle group-fee-toggle-compact token'
-              : 'group-fee-toggle group-fee-toggle-compact coti'
-          }
-          onClick={onToggleGroupFeeMode}
-          disabled={sendingGroupMessage || processingGroupAction}
-          aria-label="Toggle group fee mode"
-          aria-pressed={groupFeeModeSelection === 'token'}
-          title={
-            groupFeeModeSelection === 'coti'
-              ? `${selectedGroupFeeLabel}. Click to switch to ${rewardTokenSymbol} mode.`
-              : `${selectedGroupFeeLabel}. Click to switch to COTI mode.`
-          }
-        >
-          {groupFeeModeSelection === 'token' ? rewardTokenSymbol : 'COTI'}
-        </button>
-        <div
-          ref={composerRef}
-          className="chat-compose-editor"
-          contentEditable
-          suppressContentEditableWarning
-          role="textbox"
-          aria-multiline={isMobileNav}
-          aria-label="Group message"
-          data-placeholder="Type a group message"
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
-              event.preventDefault();
-              onSendMessage();
+        <div className="group-compose-entry">
+          <div
+            ref={composerRef}
+            className="chat-compose-editor"
+            contentEditable
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline={isMobileNav}
+            aria-label="Group message"
+            data-placeholder="Type a group message"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
+                event.preventDefault();
+                onSendMessage();
+              }
+            }}
+            onInput={(event) => {
+              const raw = event.currentTarget.textContent ?? '';
+              const normalized = raw.replace(/\r/g, '');
+              const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
+              const capped = nextValue.slice(0, maxMessageLength);
+              if (capped !== raw) {
+                event.currentTarget.textContent = capped;
+              }
+              onMessageInputChange(capped);
+            }}
+          />
+          <button
+            className="group-compose-send chat-compose-send"
+            type="button"
+            onClick={onSendMessage}
+            disabled={sendingGroupMessage || processingGroupAction}
+            aria-label={sendingGroupMessage ? 'Sending group message' : 'Send group message'}
+            title={sendingGroupMessage ? 'Sending...' : 'Send group message'}
+          >
+            <ChatSendIcon />
+          </button>
+        </div>
+        <div className="group-compose-actions">
+          <button
+            type="button"
+            className={
+              groupFeeModeSelection === 'token'
+                ? 'group-fee-toggle group-fee-toggle-compact token'
+                : 'group-fee-toggle group-fee-toggle-compact coti'
             }
-          }}
-          onInput={(event) => {
-            const raw = event.currentTarget.textContent ?? '';
-            const normalized = raw.replace(/\r/g, '');
-            const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
-            const capped = nextValue.slice(0, maxMessageLength);
-            if (capped !== raw) {
-              event.currentTarget.textContent = capped;
+            onClick={onToggleGroupFeeMode}
+            disabled={sendingGroupMessage || processingGroupAction}
+            aria-label="Toggle group fee mode"
+            aria-pressed={groupFeeModeSelection === 'token'}
+            title={
+              groupFeeModeSelection === 'coti'
+                ? `${selectedGroupFeeLabel}. Click to switch to ${rewardTokenSymbol} mode.`
+                : `${selectedGroupFeeLabel}. Click to switch to COTI mode.`
             }
-            onMessageInputChange(capped);
-          }}
-        />
-        <button
-          className="group-compose-send"
-          type="button"
-          onClick={onSendMessage}
-          disabled={sendingGroupMessage || processingGroupAction}
-        >
-          {sendingGroupMessage ? 'Sending...' : 'Send'}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleTipComposer}
-          className={tipComposerOpen ? 'chat-tip-toggle group-compose-tip active' : 'chat-tip-toggle group-compose-tip'}
-          disabled={tipping || sendingGroupMessage || processingGroupAction || activeGroupTipRecipients.length === 0}
-          title={
-            activeGroupTipRecipients.length === 0
-              ? 'No other group members available to tip'
-              : tipComposerOpen
-                ? 'Hide tip options'
-                : 'Open tip options'
-          }
-        >
-          Tip
-        </button>
+          >
+            {groupFeeModeSelection === 'token' ? rewardTokenSymbol : 'COTI'}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleTipComposer}
+            className={tipComposerOpen ? 'chat-tip-toggle group-compose-tip active' : 'chat-tip-toggle group-compose-tip'}
+            disabled={tipping || sendingGroupMessage || processingGroupAction || activeGroupTipRecipients.length === 0}
+            title={
+              activeGroupTipRecipients.length === 0
+                ? 'No other group members available to tip'
+                : tipComposerOpen
+                  ? 'Hide tip options'
+                  : 'Open tip options'
+            }
+          >
+            Tip
+          </button>
+        </div>
       </div>
     </div>
   );

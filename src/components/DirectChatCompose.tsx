@@ -1,4 +1,5 @@
 import type { ReactNode, Ref } from 'react';
+import ChatSendIcon from './ChatSendIcon';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
 
 type DirectChatComposeProps = {
@@ -69,7 +70,7 @@ export default function DirectChatCompose({
   tradeToggleTitle
 }: DirectChatComposeProps) {
   return (
-    <div className="chat-compose">
+    <div className={tradeComposerOpen ? 'chat-compose trade-compose-active' : 'chat-compose'}>
       {replyPreviewText ? (
         <div className="chat-replying">
           <span>Replying to: {replyPreviewText}</span>
@@ -146,57 +147,66 @@ export default function DirectChatCompose({
         </div>
       ) : null}
       {tradeComposerOpen ? tradeComposerContent : null}
-      <div
-        ref={composerRef}
-        className="chat-compose-editor"
-        contentEditable
-        suppressContentEditableWarning
-        role="textbox"
-        aria-multiline={isMobileNav}
-        aria-label="Message"
-        data-placeholder="Type a message"
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
-            event.preventDefault();
-            onSendMessage();
-          }
-        }}
-        onInput={(event) => {
-          const raw = event.currentTarget.textContent ?? '';
-          const normalized = raw.replace(/\r/g, '');
-          const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
-          const capped = nextValue.slice(0, maxMessageLength);
-          if (capped !== raw) {
-            event.currentTarget.textContent = capped;
-          }
-          onMessageInputChange(capped);
-        }}
-      />
-      <button
-        type="button"
-        onClick={onSendMessage}
-        disabled={sending || tipping}
-      >
-        {sending ? 'Sending...' : 'Send'}
-      </button>
-      <button
-        type="button"
-        onClick={onToggleTipComposer}
-        className={tipComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
-        disabled={tipToggleDisabled}
-        title={tipToggleTitle}
-      >
-        Tip
-      </button>
-      <button
-        type="button"
-        onClick={onToggleTradeComposer}
-        className={tradeComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
-        disabled={tradeToggleDisabled}
-        title={tradeToggleTitle}
-      >
-        Trade
-      </button>
+      <div className="chat-compose-main">
+        <div className="chat-compose-entry">
+          <div
+            ref={composerRef}
+            className="chat-compose-editor"
+            contentEditable
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline={isMobileNav}
+            aria-label="Message"
+            data-placeholder="Type a message"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
+                event.preventDefault();
+                onSendMessage();
+              }
+            }}
+            onInput={(event) => {
+              const raw = event.currentTarget.textContent ?? '';
+              const normalized = raw.replace(/\r/g, '');
+              const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
+              const capped = nextValue.slice(0, maxMessageLength);
+              if (capped !== raw) {
+                event.currentTarget.textContent = capped;
+              }
+              onMessageInputChange(capped);
+            }}
+          />
+          <button
+            type="button"
+            className="chat-compose-send"
+            onClick={onSendMessage}
+            disabled={sending || tipping}
+            aria-label={sending ? 'Sending message' : 'Send message'}
+            title={sending ? 'Sending...' : 'Send message'}
+          >
+            <ChatSendIcon />
+          </button>
+        </div>
+        <div className="chat-compose-actions">
+          <button
+            type="button"
+            onClick={onToggleTipComposer}
+            className={tipComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+            disabled={tipToggleDisabled}
+            title={tipToggleTitle}
+          >
+            Tip
+          </button>
+          <button
+            type="button"
+            onClick={onToggleTradeComposer}
+            className={tradeComposerOpen ? 'chat-tip-toggle active' : 'chat-tip-toggle'}
+            disabled={tradeToggleDisabled}
+            title={tradeToggleTitle}
+          >
+            Trade
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

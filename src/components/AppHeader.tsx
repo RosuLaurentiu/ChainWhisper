@@ -13,7 +13,7 @@ type AppHeaderProps = {
 };
 
 const NAV_LINKS = [
-  { href: 'https://t.me/CipherTrade_bot', label: '@CipherTrade_bot' },
+  { href: 'https://ciphertrade.org/', label: 'CipherTrade' },
   { href: 'https://pengodefi.app/', label: 'PengoDeFi' },
   { href: 'https://bridge.coti.io/bridge', label: 'COTI Bridge' },
   { href: 'https://coti.carbondefi.xyz/', label: 'CarbonDeFi' },

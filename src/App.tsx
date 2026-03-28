@@ -182,6 +182,21 @@ type TradeCustomTokenInfo = {
   walletKey?: string;
 };
 
+type TradeComposerFieldErrors = {
+  general?: string;
+  fee?: string;
+  offerAsset?: string;
+  requestAsset?: string;
+  offerAmount?: string;
+  requestAmount?: string;
+  expiry?: string;
+};
+
+type PendingTradeCounterContext = {
+  offer: TradeOfferMessagePayload;
+  sourceMessage: ChatMessage;
+};
+
 const DEFAULT_TRADE_EXPIRY_HOURS = '24';
 const TRADE_STATUS_OPEN = 1;
 const TRADE_STATUS_ACCEPTED = 2;
@@ -546,6 +561,7 @@ export default function App() {
   const [tradeRequestAmountInput, setTradeRequestAmountInput] = useState('');
   const [tradeExpiryHoursInput, setTradeExpiryHoursInput] = useState(DEFAULT_TRADE_EXPIRY_HOURS);
   const [tradeCounterParentId, setTradeCounterParentId] = useState<number | null>(null);
+  const [tradeCounterContext, setTradeCounterContext] = useState<PendingTradeCounterContext | null>(null);
   const [tradeSnapshotsById, setTradeSnapshotsById] = useState<Record<string, TradeSnapshot>>({});
   const [groupTipRecipientAddress, setGroupTipRecipientAddress] = useState('');
   const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
@@ -1653,96 +1669,127 @@ export default function App() {
     const parsed = Number.parseInt(normalized, 10);
     return Number.isFinite(parsed) ? parsed : 0;
   }, [tradeExpiryHoursInput]);
-  const tradeComposerValidationMessage = useMemo(() => {
+  const tradeComposerFieldErrors = useMemo<TradeComposerFieldErrors>(() => {
+    const errors: TradeComposerFieldErrors = {};
+
     if (!activeContact) {
-      return 'Select a contact first.';
+      errors.general = 'Select a contact first.';
+      return errors;
     }
     if (!walletAddress || !isWalletAddress(walletAddress)) {
-      return 'Connect your wallet first.';
+      errors.general = 'Connect your wallet first.';
+      return errors;
     }
     if (isSelfChat) {
-      return 'P2P trades are only available in private chats with another wallet.';
+      errors.general = 'P2P trades are only available in private chats with another wallet.';
+      return errors;
     }
     if (!onCotiNetwork) {
-      return 'Switch to COTI network first.';
+      errors.general = 'Switch to COTI network first.';
+      return errors;
     }
     if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS)) {
-      return 'Trade escrow contract is not configured yet.';
+      errors.general = 'Trade escrow contract is not configured yet.';
+      return errors;
     }
     if (!selectedTradeOfferToken) {
-      return isCustomTradeTokenSelection(tradeOfferTokenSelection) ? 'Load a valid token to lock.' : 'Select a token to lock.';
+      errors.offerAsset = isCustomTradeTokenSelection(tradeOfferTokenSelection)
+        ? 'Load a valid token to send.'
+        : 'Select a token to send.';
     }
     if (!selectedTradeRequestToken) {
-      return isCustomTradeTokenSelection(tradeRequestTokenSelection)
-        ? 'Load a valid token to request.'
-        : 'Select a token to request.';
+      errors.requestAsset = isCustomTradeTokenSelection(tradeRequestTokenSelection)
+        ? 'Load a valid token to receive.'
+        : 'Select a token to receive.';
     }
-    if (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n) {
-      return `Enter a valid ${selectedTradeOfferToken.symbol} amount to lock.`;
+
+    if (selectedTradeOfferToken && (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n)) {
+      errors.offerAmount = `Enter a valid ${selectedTradeOfferToken.symbol} amount to send.`;
     }
-    if (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n) {
-      return `Enter a valid ${selectedTradeRequestToken.symbol} amount to request.`;
+    if (selectedTradeRequestToken && (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n)) {
+      errors.requestAmount = `Enter a valid ${selectedTradeRequestToken.symbol} amount to receive.`;
     }
-    if (selectedTradeOfferToken.kind === 'private-erc20' && parsedTradeOfferAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
-      return `${selectedTradeOfferToken.symbol} private trades are capped at ${formatTokenAmount(
+
+    if (
+      selectedTradeOfferToken &&
+      parsedTradeOfferAmountWei !== null &&
+      parsedTradeOfferAmountWei > 0n &&
+      selectedTradeOfferToken.kind === 'private-erc20' &&
+      parsedTradeOfferAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+    ) {
+      errors.offerAmount = `${selectedTradeOfferToken.symbol} private trades are capped at ${formatTokenAmount(
         PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
         selectedTradeOfferToken.decimals,
         6
       )} ${selectedTradeOfferToken.symbol}.`;
     }
-    if (selectedTradeRequestToken.kind === 'private-erc20' && parsedTradeRequestAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
-      return `${selectedTradeRequestToken.symbol} private trades are capped at ${formatTokenAmount(
+    if (
+      selectedTradeRequestToken &&
+      parsedTradeRequestAmountWei !== null &&
+      parsedTradeRequestAmountWei > 0n &&
+      selectedTradeRequestToken.kind === 'private-erc20' &&
+      parsedTradeRequestAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+    ) {
+      errors.requestAmount = `${selectedTradeRequestToken.symbol} private trades are capped at ${formatTokenAmount(
         PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
         selectedTradeRequestToken.decimals,
         6
       )} ${selectedTradeRequestToken.symbol}.`;
     }
-    if (selectedTradeOfferToken.kind === 'native') {
+
+    const offerAmountValid = selectedTradeOfferToken && parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n;
+    const requestAmountValid =
+      selectedTradeRequestToken && parsedTradeRequestAmountWei !== null && parsedTradeRequestAmountWei > 0n;
+
+    if (selectedTradeOfferToken?.kind === 'native' && offerAmountValid) {
       if (tipNativeBalanceWei === null) {
-        return 'Unable to read your COTI balance yet.';
+        errors.offerAmount = 'Unable to read your COTI balance yet.';
+      } else {
+        const requiredNativeBalance =
+          parsedTradeOfferAmountWei + (tradeFeeModeSelection === 'coti' ? tradeRequiredFeeWei ?? 0n : 0n);
+        if (requiredNativeBalance > tipNativeBalanceWei) {
+          errors.offerAmount = `Need ${formatTokenAmount(requiredNativeBalance, TIP_NATIVE_TOKEN_DECIMALS, 6)} ${TIP_NATIVE_TOKEN_SYMBOL} to cover the send amount and fee.`;
+        }
       }
-      const requiredNativeBalance =
-        parsedTradeOfferAmountWei + (tradeFeeModeSelection === 'coti' ? tradeRequiredFeeWei ?? 0n : 0n);
-      if (requiredNativeBalance > tipNativeBalanceWei) {
-        return `Need ${formatTokenAmount(requiredNativeBalance, TIP_NATIVE_TOKEN_DECIMALS, 6)} ${TIP_NATIVE_TOKEN_SYMBOL} to cover the escrow and fee.`;
+    } else if (selectedTradeOfferToken && offerAmountValid) {
+      if (selectedTradeOfferBalanceWei === null) {
+        errors.offerAmount = `Unable to read ${selectedTradeOfferToken.symbol} balance yet.`;
+      } else if (parsedTradeOfferAmountWei > selectedTradeOfferBalanceWei) {
+        errors.offerAmount = `Insufficient ${selectedTradeOfferToken.symbol} balance to send this amount.`;
+      }
+    }
+
+    if (tradeFeeModeSelection === 'token') {
+      if (tradeTokenFeeWei === null) {
+        errors.fee = `Loading ${rewardTokenSymbol} fee...`;
       }
     } else {
-      if (selectedTradeOfferBalanceWei === null) {
-        return `Unable to read ${selectedTradeOfferToken.symbol} balance yet.`;
-      }
-      if (parsedTradeOfferAmountWei > selectedTradeOfferBalanceWei) {
-        return `Insufficient ${selectedTradeOfferToken.symbol} balance for this offer.`;
-      }
-      if (tradeFeeModeSelection === 'coti') {
-        if (tradeRequiredFeeWei === null) {
-          return 'Loading trade fee...';
-        }
+      if (tradeRequiredFeeWei === null) {
+        errors.fee = 'Loading trade fee...';
+      } else if (selectedTradeOfferToken?.kind !== 'native') {
         if (tipNativeBalanceWei === null || tipNativeBalanceWei < tradeRequiredFeeWei) {
-          return `Need ${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL} for the trade fee.`;
+          errors.fee = `Need ${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL} for the trade fee.`;
         }
       }
     }
-    if (tradeFeeModeSelection === 'token' && tradeTokenFeeWei === null) {
-      return `Loading ${rewardTokenSymbol} trade fee...`;
-    }
-    if (tradeFeeModeSelection === 'coti' && tradeRequiredFeeWei === null) {
-      return 'Loading trade fee...';
-    }
+
     if (parsedTradeExpiryHours < 1 || parsedTradeExpiryHours > 720) {
-      return 'Set an expiry between 1 and 720 hours.';
+      errors.expiry = 'Set an expiry between 1 and 720 hours.';
     }
 
-    const offerTokenKey = selectedTradeOfferToken.tokenAddress?.toLowerCase() ?? 'native';
-    const requestTokenKey = selectedTradeRequestToken.tokenAddress?.toLowerCase() ?? 'native';
-    if (
-      selectedTradeOfferToken.kind === selectedTradeRequestToken.kind &&
-      offerTokenKey === requestTokenKey &&
-      parsedTradeOfferAmountWei === parsedTradeRequestAmountWei
-    ) {
-      return 'Choose different offer and request terms.';
+    if (selectedTradeOfferToken && selectedTradeRequestToken && offerAmountValid && requestAmountValid) {
+      const offerTokenKey = selectedTradeOfferToken.tokenAddress?.toLowerCase() ?? 'native';
+      const requestTokenKey = selectedTradeRequestToken.tokenAddress?.toLowerCase() ?? 'native';
+      if (
+        selectedTradeOfferToken.kind === selectedTradeRequestToken.kind &&
+        offerTokenKey === requestTokenKey &&
+        parsedTradeOfferAmountWei === parsedTradeRequestAmountWei
+      ) {
+        errors.general = 'Choose different send and receive terms.';
+      }
     }
 
-    return '';
+    return errors;
   }, [
     activeContact,
     walletAddress,
@@ -1762,11 +1809,97 @@ export default function App() {
     parsedTradeExpiryHours,
     tipNativeBalanceWei
   ]);
+  const tradeComposerValidationMessage =
+    tradeComposerFieldErrors.general ??
+    tradeComposerFieldErrors.offerAsset ??
+    tradeComposerFieldErrors.requestAsset ??
+    tradeComposerFieldErrors.offerAmount ??
+    tradeComposerFieldErrors.requestAmount ??
+    tradeComposerFieldErrors.fee ??
+    tradeComposerFieldErrors.expiry ??
+    '';
   const canSendTradeOffer =
     !creatingTrade &&
     !sending &&
     !tipping &&
     tradeComposerValidationMessage.length === 0;
+  const tradeOfferMaxAmountWei = useMemo(() => {
+    if (!selectedTradeOfferToken) {
+      return null;
+    }
+
+    let maxAmountWei: bigint | null = null;
+    if (selectedTradeOfferToken.kind === 'native') {
+      if (tipNativeBalanceWei === null) {
+        return null;
+      }
+      maxAmountWei = tipNativeBalanceWei;
+      if (tradeFeeModeSelection === 'coti') {
+        if (tradeRequiredFeeWei === null) {
+          return null;
+        }
+        maxAmountWei = maxAmountWei > tradeRequiredFeeWei ? maxAmountWei - tradeRequiredFeeWei : 0n;
+      }
+    } else {
+      if (selectedTradeOfferBalanceWei === null) {
+        return null;
+      }
+      maxAmountWei = selectedTradeOfferBalanceWei;
+    }
+
+    if (selectedTradeOfferToken.kind === 'private-erc20' && maxAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
+      maxAmountWei = PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE;
+    }
+
+    return maxAmountWei >= 0n ? maxAmountWei : 0n;
+  }, [
+    selectedTradeOfferBalanceWei,
+    selectedTradeOfferToken,
+    tipNativeBalanceWei,
+    tradeFeeModeSelection,
+    tradeRequiredFeeWei
+  ]);
+  const tradeOfferMaxInputValue = useMemo(
+    () =>
+      selectedTradeOfferToken && tradeOfferMaxAmountWei !== null
+        ? formatTokenAmount(tradeOfferMaxAmountWei, selectedTradeOfferToken.decimals, 18)
+        : '',
+    [selectedTradeOfferToken, tradeOfferMaxAmountWei]
+  );
+  const canUseTradeOfferMax = tradeOfferMaxAmountWei !== null && tradeOfferMaxAmountWei > 0n;
+  const tradePreviewLabel =
+    selectedTradeOfferToken && selectedTradeRequestToken
+      ? `Send ${tradeOfferAmountSummaryLabel} for ${tradeRequestAmountSummaryLabel}`
+      : '';
+  const tradeRateLabel = useMemo(() => {
+    if (
+      !selectedTradeOfferToken ||
+      !selectedTradeRequestToken ||
+      parsedTradeOfferAmountWei === null ||
+      parsedTradeRequestAmountWei === null ||
+      parsedTradeOfferAmountWei <= 0n ||
+      parsedTradeRequestAmountWei <= 0n
+    ) {
+      return '';
+    }
+
+    try {
+      const scaledRequestAmount =
+        (parsedTradeRequestAmountWei * 10n ** BigInt(selectedTradeOfferToken.decimals)) / parsedTradeOfferAmountWei;
+      return `1 ${selectedTradeOfferToken.symbol} ≈ ${formatTokenAmount(
+        scaledRequestAmount,
+        selectedTradeRequestToken.decimals,
+        6
+      )} ${selectedTradeRequestToken.symbol}`;
+    } catch {
+      return '';
+    }
+  }, [
+    parsedTradeOfferAmountWei,
+    parsedTradeRequestAmountWei,
+    selectedTradeOfferToken,
+    selectedTradeRequestToken
+  ]);
   const tradeFeeSummaryLabel =
     tradeFeeModeSelection === 'coti'
       ? `Fee: ${tradeRequiredFeeWei !== null ? `${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL}` : '--'}`
@@ -1810,6 +1943,7 @@ export default function App() {
     setTradeRequestAmountInput('');
     setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
     setTradeCounterParentId(null);
+    setTradeCounterContext(null);
   }, [activeContact]);
   useEffect(() => {
     const customTokenRequests = Array.from(
@@ -8078,17 +8212,18 @@ export default function App() {
     }
 
     if (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n) {
-      setError(`Enter a valid ${selectedTradeOfferToken.symbol} amount to lock.`);
+      setError(`Enter a valid ${selectedTradeOfferToken.symbol} amount to send.`);
       return;
     }
 
     if (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n) {
-      setError(`Enter a valid ${selectedTradeRequestToken.symbol} amount to request.`);
+      setError(`Enter a valid ${selectedTradeRequestToken.symbol} amount to receive.`);
       return;
     }
 
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    const pendingCounterContext = tradeCounterContext;
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
       setError('Connect a wallet first.');
       return;
@@ -8096,6 +8231,9 @@ export default function App() {
 
     try {
       setCreatingTrade(true);
+      if (pendingCounterContext) {
+        setProcessingTradeActionId(String(pendingCounterContext.offer.tradeId));
+      }
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const tradeContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, signer);
@@ -8104,6 +8242,42 @@ export default function App() {
         tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
       const tokenFeeAmount =
         tradeFeeModeSelection === 'token' ? await resolveRequiredTokenFeeForTradeCreate() : 0n;
+
+      if (pendingCounterContext) {
+        const parentSnapshot = await resolveTradeSnapshotForOffer(pendingCounterContext.offer);
+        const isParentMaker = pendingCounterContext.offer.maker.toLowerCase() === requestedWalletKey;
+        const isParentTaker = pendingCounterContext.offer.taker.toLowerCase() === requestedWalletKey;
+
+        if (!isParentMaker && !isParentTaker) {
+          throw new Error('You are no longer a participant in the original trade.');
+        }
+
+        const closeParentTx = isParentMaker
+          ? await tradeContract.cancelTrade(pendingCounterContext.offer.tradeId)
+          : await tradeContract.declineTrade(pendingCounterContext.offer.tradeId);
+        const closeParentReceipt = await closeParentTx.wait();
+        if (
+          !closeParentReceipt ||
+          Number((closeParentReceipt as { status?: number | bigint }).status ?? 0) !== 1
+        ) {
+          throw new Error('Failed to close the original trade before sending your counter offer.');
+        }
+
+        setTradeSnapshotsById((previous) => ({
+          ...previous,
+          [String(pendingCounterContext.offer.tradeId)]: {
+            ...(previous[String(pendingCounterContext.offer.tradeId)] ?? parentSnapshot),
+            status: isParentMaker ? 'cancelled' : 'declined'
+          }
+        }));
+        setTradeCounterContext(null);
+
+        const counterOnboardInfo = signer.getUserOnboardInfo();
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], counterOnboardInfo)
+        }));
+      }
 
       if (selectedTradeOfferToken.kind !== 'native' && selectedTradeOfferToken.tokenAddress) {
         await ensureTradeTokenAllowance(
@@ -8213,6 +8387,7 @@ export default function App() {
       setTradeRequestAmountInput('');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
       setTradeCounterParentId(null);
+      setTradeCounterContext(null);
       setTradeComposerOpen(false);
       await sendMessage(buildTradeOfferMessagePayload(tradeMessagePayload), overrideReplyTarget ?? replyingToMessage);
     } catch (tradeError) {
@@ -8234,6 +8409,9 @@ export default function App() {
       }
     } finally {
       setCreatingTrade(false);
+      if (pendingCounterContext) {
+        setProcessingTradeActionId('');
+      }
     }
   };
 
@@ -8454,6 +8632,7 @@ export default function App() {
       setTradeRequestAmountInput
     );
     setTradeCounterParentId(offer.tradeId);
+    setTradeCounterContext({ offer, sourceMessage });
     setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
     setReplyingToMessage(sourceMessage);
     setTipComposerOpen(false);
@@ -10266,19 +10445,39 @@ export default function App() {
       </button>
     </>
   );
+  const swapTradeComposerSides = () => {
+    if (creatingTrade) {
+      return;
+    }
+
+    const nextOfferSelection = tradeRequestTokenSelection;
+    const nextRequestSelection = tradeOfferTokenSelection;
+    const nextOfferCustomAddress = tradeRequestCustomTokenAddress;
+    const nextRequestCustomAddress = tradeOfferCustomTokenAddress;
+    const nextOfferAmountInput = tradeRequestAmountInput;
+    const nextRequestAmountInput = tradeOfferAmountInput;
+
+    setTradeOfferTokenSelection(nextOfferSelection);
+    setTradeRequestTokenSelection(nextRequestSelection);
+    setTradeOfferCustomTokenAddress(nextOfferCustomAddress);
+    setTradeRequestCustomTokenAddress(nextRequestCustomAddress);
+    setTradeOfferAmountInput(nextOfferAmountInput);
+    setTradeRequestAmountInput(nextRequestAmountInput);
+  };
   const tradeComposerContent = (
     <TradeComposerPanel
       feeMode={tradeFeeModeSelection}
-      onToggleFeeMode={() => {
-        setTradeFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
-      }}
+      onFeeModeChange={setTradeFeeModeSelection}
       feeSummaryLabel={tradeFeeSummaryLabel}
+      feeError={tradeComposerFieldErrors.fee}
       offerTokenOptions={tradeTokenOptions}
       requestTokenOptions={tradeTokenOptions}
       offerTokenSelection={tradeOfferTokenSelection}
       onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
       requestTokenSelection={tradeRequestTokenSelection}
       onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
+      offerAssetError={tradeComposerFieldErrors.offerAsset}
+      requestAssetError={tradeComposerFieldErrors.requestAsset}
       offerCustomAddress={tradeOfferCustomTokenAddress}
       onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
       requestCustomAddress={tradeRequestCustomTokenAddress}
@@ -10291,16 +10490,26 @@ export default function App() {
       onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
       requestAmountInput={tradeRequestAmountInput}
       onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
+      offerAmountError={tradeComposerFieldErrors.offerAmount}
+      requestAmountError={tradeComposerFieldErrors.requestAmount}
+      canUseMaxOfferAmount={canUseTradeOfferMax}
+      onUseMaxOfferAmount={() => setTradeOfferAmountInput(tradeOfferMaxInputValue)}
       offerAmountSummaryLabel={tradeOfferAmountSummaryLabel}
       requestAmountSummaryLabel={tradeRequestAmountSummaryLabel}
       offerBalanceSummaryLabel={tradeOfferBalanceSummaryLabel}
+      onSwapSides={swapTradeComposerSides}
+      swapDisabled={creatingTrade}
+      tradePreviewLabel={tradePreviewLabel}
+      tradeRateLabel={tradeRateLabel}
       expiresHoursInput={tradeExpiryHoursInput}
       onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
+      expiryError={tradeComposerFieldErrors.expiry}
       sending={creatingTrade}
       canSend={canSendTradeOffer}
       onSendTradeOffer={() => {
         createTradeOffer().catch(() => {});
       }}
+      generalError={tradeComposerFieldErrors.general}
       validationMessage={tradeComposerValidationMessage || undefined}
     />
   );
@@ -10610,12 +10819,14 @@ export default function App() {
               setTradeComposerOpen((previous) => {
                 const nextOpen = !previous;
                 if (nextOpen && tradeCounterParentId === null) {
+                  setTradeCounterContext(null);
                   setTradeOfferAmountInput('');
                   setTradeRequestAmountInput('');
                   setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
                 }
                 if (!nextOpen) {
                   setTradeCounterParentId(null);
+                  setTradeCounterContext(null);
                 }
                 return nextOpen;
               });
