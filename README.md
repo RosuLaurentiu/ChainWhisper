@@ -81,7 +81,9 @@ Deployment outline:
 
 ### GitHub Pages deploy variables
 
-If you deploy through GitHub Pages, the workflow must receive the same Vite variables at build time. Set these in GitHub under `Settings -> Secrets and variables -> Actions -> Variables` for the repository, or under the `github-pages` environment:
+This repo now includes fallback values for the current Supabase project URL and publishable key, so GitHub Pages does not need extra Supabase variables just to build and run this project.
+
+If you want to override them later, you can still set Vite variables in GitHub under `Settings -> Secrets and variables -> Actions -> Variables` for the repository, or under the `github-pages` environment:
 
 - `VITE_WALLETCONNECT_PROJECT_ID`
 - `VITE_SUPABASE_PROJECT_URL`
