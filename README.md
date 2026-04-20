@@ -79,4 +79,18 @@ Deployment outline:
 2. Deploy the Edge Function in `supabase/functions/chat-image-cleanup`.
 3. Point the frontend at the project with `VITE_SUPABASE_PROJECT_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
 
+### GitHub Pages deploy variables
+
+If you deploy through GitHub Pages, the workflow must receive the same Vite variables at build time. Set these in GitHub under `Settings -> Secrets and variables -> Actions -> Variables` for the repository, or under the `github-pages` environment:
+
+- `VITE_WALLETCONNECT_PROJECT_ID`
+- `VITE_SUPABASE_PROJECT_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+For this project, `VITE_SUPABASE_PROJECT_URL` should be:
+
+```text
+https://ousgmjyajyorywpqbdkf.supabase.co
+```
+
 The storage bucket is intentionally public for reads because the blobs are encrypted client-side before upload and decrypted only after the chat message delivers the AES key material. The upload path now uses the Supabase publishable browser client, so the storage insert policy in the migration is required before image sending will work.
