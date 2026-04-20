@@ -1,6 +1,7 @@
-import type { Ref } from 'react';
+import { useRef, type Ref } from 'react';
 import ChatSendIcon from './ChatSendIcon';
 import { TIP_NATIVE_TOKEN_SYMBOL, type GroupFeeModeSelection, type TipTokenSelection } from '../lib/appShared';
+import { CHAT_IMAGE_FILE_ACCEPT } from '../lib/imagePull';
 
 type GroupTipRecipient = {
   key: string;
@@ -39,6 +40,10 @@ type GroupChatComposeProps = {
   processingGroupAction: boolean;
   composerRef: Ref<HTMLDivElement>;
   isMobileNav: boolean;
+  onSendImage: (file: File) => void;
+  uploadingImage: boolean;
+  imageAttachDisabled: boolean;
+  imageAttachTitle: string;
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
@@ -74,10 +79,16 @@ export default function GroupChatCompose({
   processingGroupAction,
   composerRef,
   isMobileNav,
+  onSendImage,
+  uploadingImage,
+  imageAttachDisabled,
+  imageAttachTitle,
   onSendMessage,
   maxMessageLength,
   onMessageInputChange
 }: GroupChatComposeProps) {
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+
   return (
     <div className="chat-compose group-chat-compose">
       {replyPreviewText ? (
@@ -187,6 +198,32 @@ export default function GroupChatCompose({
       ) : null}
       <div className="group-compose-main">
         <div className="group-compose-entry">
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept={CHAT_IMAGE_FILE_ACCEPT}
+            hidden
+            disabled={imageAttachDisabled}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.currentTarget.value = '';
+              if (!file) {
+                return;
+              }
+              onSendImage(file);
+            }}
+          />
+          <button
+            type="button"
+            className="chat-compose-attach"
+            onClick={() => {
+              imageInputRef.current?.click();
+            }}
+            disabled={imageAttachDisabled}
+            title={imageAttachTitle}
+          >
+            {uploadingImage ? 'Image...' : 'Image'}
+          </button>
           <div
             ref={composerRef}
             className="chat-compose-editor"
@@ -217,9 +254,11 @@ export default function GroupChatCompose({
             className="group-compose-send chat-compose-send"
             type="button"
             onClick={onSendMessage}
-            disabled={sendingGroupMessage || processingGroupAction}
-            aria-label={sendingGroupMessage ? 'Sending group message' : 'Send group message'}
-            title={sendingGroupMessage ? 'Sending...' : 'Send group message'}
+            disabled={sendingGroupMessage || processingGroupAction || uploadingImage}
+            aria-label={
+              sendingGroupMessage ? 'Sending group message' : uploadingImage ? 'Preparing image' : 'Send group message'
+            }
+            title={sendingGroupMessage ? 'Sending...' : uploadingImage ? 'Preparing image...' : 'Send group message'}
           >
             <ChatSendIcon />
           </button>
@@ -233,7 +272,7 @@ export default function GroupChatCompose({
                 : 'group-fee-toggle group-fee-toggle-compact coti'
             }
             onClick={onToggleGroupFeeMode}
-            disabled={sendingGroupMessage || processingGroupAction}
+            disabled={sendingGroupMessage || processingGroupAction || uploadingImage}
             aria-label="Toggle group fee mode"
             aria-pressed={groupFeeModeSelection === 'token'}
             title={
@@ -248,7 +287,9 @@ export default function GroupChatCompose({
             type="button"
             onClick={onToggleTipComposer}
             className={tipComposerOpen ? 'chat-tip-toggle group-compose-tip active' : 'chat-tip-toggle group-compose-tip'}
-            disabled={tipping || sendingGroupMessage || processingGroupAction || activeGroupTipRecipients.length === 0}
+            disabled={
+              tipping || sendingGroupMessage || processingGroupAction || uploadingImage || activeGroupTipRecipients.length === 0
+            }
             title={
               activeGroupTipRecipients.length === 0
                 ? 'No other group members available to tip'

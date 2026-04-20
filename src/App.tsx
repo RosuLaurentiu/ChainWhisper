@@ -70,6 +70,7 @@ import {
   getStoredGroupRemovalNoticeMarker as getStoredGroupRemovalNoticeMarkerStorage,
   setStoredGroupRemovalNoticeMarker as setStoredGroupRemovalNoticeMarkerStorage
 } from './lib/appStorage';
+import { createEncryptedImageTagFromFile } from './lib/imagePull';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
@@ -341,6 +342,7 @@ export default function App() {
     }
   };
   const [sending, setSending] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [sendingReaction, setSendingReaction] = useState(false);
   const [syncingHistory, setSyncingHistory] = useState(false);
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
@@ -5998,7 +6000,65 @@ export default function App() {
     }
   };
 
-  const sendGroupMessage = async (overrideMessageText?: string) => {
+  const sendDirectImageMessage = async (file: File) => {
+    setError('');
+    if (uploadingImage) {
+      return;
+    }
+
+    const targetContact = activeContact;
+    const replyTarget = replyingToMessage;
+    if (!targetContact) {
+      setError('Select a contact first.');
+      return;
+    }
+
+    try {
+      setUploadingImage(true);
+      const imageTag = await createEncryptedImageTagFromFile(file, 'direct');
+      if (activeContact !== targetContact) {
+        throw new Error('Conversation changed while the image was uploading. Please attach the image again.');
+      }
+
+      await sendMessage(imageTag, replyTarget);
+    } catch (imageError) {
+      const message = imageError instanceof Error ? imageError.message : 'Failed to send image.';
+      setError(message);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const sendGroupImageMessage = async (file: File) => {
+    setError('');
+    if (uploadingImage) {
+      return;
+    }
+
+    const targetGroupId = activeGroupId;
+    const replyTarget = replyingToMessage;
+    if (targetGroupId === null) {
+      setError('Select a group first.');
+      return;
+    }
+
+    try {
+      setUploadingImage(true);
+      const imageTag = await createEncryptedImageTagFromFile(file, 'group');
+      if (activeGroupId !== targetGroupId) {
+        throw new Error('Group changed while the image was uploading. Please attach the image again.');
+      }
+
+      await sendGroupMessage(imageTag, replyTarget);
+    } catch (imageError) {
+      const message = imageError instanceof Error ? imageError.message : 'Failed to send group image.';
+      setError(message);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const sendGroupMessage = async (overrideMessageText?: string, overrideReplyTarget?: ChatMessage | null) => {
     setError('');
 
     if (sendingGroupMessage) {
@@ -6031,7 +6091,8 @@ export default function App() {
 
     const groupId = activeGroupId;
     const groupKey = String(groupId);
-    const replyingPreviewText = replyingToMessage ? getMessageDisplayText(replyingToMessage.text) : undefined;
+    const replyTarget = overrideReplyTarget ?? replyingToMessage;
+    const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
     const localMessageId = `local-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
 
@@ -6046,11 +6107,11 @@ export default function App() {
             direction: 'outgoing',
             text: plainText,
             senderAddress: requestedWalletAddress,
-            replyToMessageId: replyingToMessage?.id,
+            replyToMessageId: replyTarget?.id,
             replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
-            replyToTxHash: replyingToMessage?.txHash,
-            replyToBlockNumber: replyingToMessage?.blockNumber,
-            replyToLogIndex: replyingToMessage?.logIndex,
+            replyToTxHash: replyTarget?.txHash,
+            replyToBlockNumber: replyTarget?.blockNumber,
+            replyToLogIndex: replyTarget?.logIndex,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
@@ -6066,9 +6127,9 @@ export default function App() {
       const plainTextWithReply = buildMessageWithReplyPayload(
         plainText,
         replyingPreviewText,
-        replyingToMessage?.txHash,
-        replyingToMessage?.blockNumber,
-        replyingToMessage?.logIndex,
+        replyTarget?.txHash,
+        replyTarget?.blockNumber,
+        replyTarget?.logIndex,
         true
       );
       const submittedTx = await submitGroupMemo({
@@ -6128,7 +6189,9 @@ export default function App() {
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
 
-      setMessageInput('');
+      if (typeof overrideMessageText === 'undefined') {
+        setMessageInput('');
+      }
       setReplyingToMessage(null);
       await syncGroupData({ background: true });
       setTopUpMetricsNonce((previous) => previous + 1);
@@ -6772,7 +6835,9 @@ export default function App() {
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
 
-      setMessageInput('');
+      if (typeof overrideMessageText === 'undefined') {
+        setMessageInput('');
+      }
       setReplyingToMessage(null);
       syncConversationHistory().catch(() => {});
       if (activeSignerSource === 'burner') {
@@ -9214,6 +9279,12 @@ export default function App() {
               selectedGroupFeeLabel={selectedGroupFeeLabel}
               sendingGroupMessage={sendingGroupMessage}
               composerRef={chatComposerRef}
+              onSendImage={(file) => {
+                sendGroupImageMessage(file).catch(() => {});
+              }}
+              uploadingImage={uploadingImage}
+              imageAttachDisabled={uploadingImage || sendingGroupMessage || processingGroupAction}
+              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach an image'}
               onSendMessage={() => {
                 sendGroupMessage().catch(() => {});
               }}
@@ -9302,15 +9373,21 @@ export default function App() {
               }}
               composerRef={chatComposerRef}
               isMobileNav={isMobileNav}
+              onSendImage={(file) => {
+                sendDirectImageMessage(file).catch(() => {});
+              }}
+              uploadingImage={uploadingImage}
+              imageAttachDisabled={uploadingImage || sending || tipping}
+              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach an image'}
               onSendMessage={() => {
                 sendMessage().catch(() => {});
               }}
               maxMessageLength={MAX_MESSAGE_LENGTH}
               onMessageInputChange={handleMessageInputChange}
               sending={sending}
-              tipToggleDisabled={tipping || sending || !activeContact || isSelfChat}
+              tipToggleDisabled={tipping || sending || uploadingImage || !activeContact || isSelfChat}
               tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
-              tradeToggleDisabled={creatingTrade || tipping || sending || !activeContact || isSelfChat}
+              tradeToggleDisabled={creatingTrade || tipping || sending || uploadingImage || !activeContact || isSelfChat}
               tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
             />
           ) : (

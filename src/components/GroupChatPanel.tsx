@@ -98,6 +98,10 @@ type GroupChatPanelProps = {
   selectedGroupFeeLabel: string;
   sendingGroupMessage: boolean;
   composerRef: Ref<HTMLDivElement>;
+  onSendImage: (file: File) => void;
+  uploadingImage: boolean;
+  imageAttachDisabled: boolean;
+  imageAttachTitle: string;
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
@@ -166,6 +170,10 @@ export default function GroupChatPanel({
   selectedGroupFeeLabel,
   sendingGroupMessage,
   composerRef,
+  onSendImage,
+  uploadingImage,
+  imageAttachDisabled,
+  imageAttachTitle,
   onSendMessage,
   maxMessageLength,
   onMessageInputChange
@@ -510,6 +518,10 @@ export default function GroupChatPanel({
         processingGroupAction={processingGroupAction}
         composerRef={composerRef}
         isMobileNav={isMobileNav}
+        onSendImage={onSendImage}
+        uploadingImage={uploadingImage}
+        imageAttachDisabled={imageAttachDisabled}
+        imageAttachTitle={imageAttachTitle}
         onSendMessage={onSendMessage}
         maxMessageLength={maxMessageLength}
         onMessageInputChange={onMessageInputChange}

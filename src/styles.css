@@ -3660,7 +3660,7 @@ body {
 .chat-compose-entry,
 .group-compose-entry {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: end;
 }
@@ -3850,6 +3850,11 @@ body {
 .chat-compose-send:disabled {
   background: rgba(63, 47, 104, 0.6);
   box-shadow: none;
+}
+
+.chat-compose-attach {
+  min-width: 78px;
+  align-self: stretch;
 }
 
 .chat-tip-panel {
@@ -5100,7 +5105,7 @@ body {
 
   .chat-compose-entry,
   .group-compose-entry {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 8px;
     align-items: end;
   }
@@ -5134,6 +5139,12 @@ body {
     min-width: 48px;
     min-height: 48px;
     padding: 0;
+  }
+
+  .chat-compose-entry > .chat-compose-attach,
+  .group-compose-entry > .chat-compose-attach {
+    width: auto;
+    min-width: 68px;
   }
 
   .group-compose-actions > .group-fee-toggle-compact {

@@ -1,3 +1,5 @@
+import { getSupabaseBrowserClient } from './supabaseClient';
+
 export type ParsedImageTag = {
   blobId: string;
   keyHex: string;
@@ -6,15 +8,20 @@ export type ParsedImageTag = {
   mime: string;
 };
 
-const MAX_IMAGE_PLAINTEXT_BYTES = 8 * 1024 * 1024;
-const MAX_IMAGE_ENCRYPTED_BYTES = MAX_IMAGE_PLAINTEXT_BYTES + 64 * 1024;
-const ALLOWED_IMAGE_MIME_TYPES = new Set([
+export type ChatImageConversationKind = 'direct' | 'group';
+
+export const MAX_IMAGE_PLAINTEXT_BYTES = 8 * 1024 * 1024;
+export const MAX_IMAGE_ENCRYPTED_BYTES = MAX_IMAGE_PLAINTEXT_BYTES + 64 * 1024;
+export const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
   'image/webp',
   'image/gif',
   'image/avif'
 ]);
+export const CHAT_IMAGE_FILE_ACCEPT = Array.from(ALLOWED_IMAGE_MIME_TYPES).join(',');
+
+const CHAT_IMAGES_BUCKET = 'chat-images';
 
 const getSecureWebCrypto = (): { webCrypto: Crypto; subtle: SubtleCrypto } => {
   const webCrypto = globalThis.crypto;
@@ -24,7 +31,7 @@ const getSecureWebCrypto = (): { webCrypto: Crypto; subtle: SubtleCrypto } => {
   }
 
   if (typeof window !== 'undefined' && !window.isSecureContext) {
-    throw new Error('Image decryption requires HTTPS. Open the app using an https:// URL.');
+    throw new Error('Image encryption requires HTTPS. Open the app using an https:// URL.');
   }
 
   throw new Error('Web Crypto API is unavailable in this browser.');
@@ -64,10 +71,122 @@ function hexToBytes(hex: string): Uint8Array {
   return b;
 }
 
-const BASE_URL = 'https://api-ciphertrade.innovunode.io/';
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function buildImageBlobId(): string {
+  const { webCrypto } = getSecureWebCrypto();
+  if (typeof webCrypto.randomUUID === 'function') {
+    return webCrypto.randomUUID();
+  }
+
+  const randomBytes = webCrypto.getRandomValues(new Uint8Array(16));
+  randomBytes[6] = (randomBytes[6] & 0x0f) | 0x40;
+  randomBytes[8] = (randomBytes[8] & 0x3f) | 0x80;
+  const hex = bytesToHex(randomBytes);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function normalizeImageMimeType(mime: string): string {
+  return mime.trim().toLowerCase();
+}
+
+function validateImageFile(file: File): { mime: string; sizeBytes: number } {
+  const mime = normalizeImageMimeType(file.type);
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(mime)) {
+    throw new Error('Unsupported image format. Use JPEG, PNG, WEBP, GIF, or AVIF.');
+  }
+
+  const sizeBytes = Math.floor(file.size);
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
+    throw new Error('The selected image is empty.');
+  }
+  if (sizeBytes > MAX_IMAGE_PLAINTEXT_BYTES) {
+    throw new Error('Image is too large. The 8 MB limit applies before encryption.');
+  }
+
+  return { mime, sizeBytes };
+}
+
+async function uploadEncryptedBlob(
+  blobId: string,
+  encrypted: ArrayBuffer,
+  mime: string,
+  sizeBytes: number,
+  kind: ChatImageConversationKind
+): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const encryptedBlob = new Blob([encrypted], { type: 'application/octet-stream' });
+  const { error } = await supabase.storage.from(CHAT_IMAGES_BUCKET).upload(blobId, encryptedBlob, {
+    cacheControl: '86400',
+    contentType: 'application/octet-stream',
+    upsert: false,
+    metadata: {
+      mime,
+      plaintextSize: String(sizeBytes),
+      conversationKind: kind
+    }
+  });
+  if (error) {
+    const normalizedMessage = error.message.toLowerCase();
+    if (normalizedMessage.includes('row-level security')) {
+      throw new Error('Supabase Storage upload is blocked by policy. Apply the storage policy migration first.');
+    }
+    if (normalizedMessage.includes('bucket not found')) {
+      throw new Error('Supabase Storage bucket "chat-images" does not exist yet.');
+    }
+    throw new Error(error.message || 'Failed to upload the encrypted image.');
+  }
+}
+
+async function encryptImageToBlob(file: File): Promise<{ blobId: string; encrypted: ArrayBuffer; keyHex: string; ivHex: string }> {
+  const { webCrypto, subtle } = getSecureWebCrypto();
+  const plainBuffer = await file.arrayBuffer();
+  if (plainBuffer.byteLength > MAX_IMAGE_PLAINTEXT_BYTES) {
+    throw new Error('Image is too large. The 8 MB limit applies before encryption.');
+  }
+
+  const keyBytes = webCrypto.getRandomValues(new Uint8Array(32));
+  const ivBytes = webCrypto.getRandomValues(new Uint8Array(12));
+  const cryptoKey = await subtle.importKey(
+    'raw',
+    keyBytes as unknown as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+  const encrypted = await subtle.encrypt(
+    { name: 'AES-GCM', iv: ivBytes as unknown as BufferSource },
+    cryptoKey,
+    plainBuffer
+  );
+
+  if ((encrypted as ArrayBuffer).byteLength > MAX_IMAGE_ENCRYPTED_BYTES) {
+    throw new Error('Encrypted image blob exceeds the supported size limit.');
+  }
+
+  return {
+    blobId: buildImageBlobId(),
+    encrypted: encrypted as ArrayBuffer,
+    keyHex: bytesToHex(keyBytes),
+    ivHex: bytesToHex(ivBytes)
+  };
+}
+
+export async function createEncryptedImageTagFromFile(
+  file: File,
+  kind: ChatImageConversationKind
+): Promise<string> {
+  const { mime, sizeBytes } = validateImageFile(file);
+  const { blobId, encrypted, keyHex, ivHex } = await encryptImageToBlob(file);
+  await uploadEncryptedBlob(blobId, encrypted, mime, sizeBytes, kind);
+  return `[img:${blobId}|${keyHex}:${ivHex}|${sizeBytes}|${mime}]`;
+}
 
 export async function fetchEncryptedBlob(blobId: string, signal?: AbortSignal): Promise<ArrayBuffer> {
-  const resp = await fetch(`${BASE_URL}chat/blob/${encodeURIComponent(blobId)}`, { signal });
+  const { data } = getSupabaseBrowserClient().storage.from(CHAT_IMAGES_BUCKET).getPublicUrl(blobId);
+  const resp = await fetch(data.publicUrl, { signal });
   if (!resp.ok) throw new Error(`Blob ${resp.status}`);
 
   const contentLengthHeader = resp.headers.get('content-length');
@@ -85,7 +204,12 @@ export async function fetchEncryptedBlob(blobId: string, signal?: AbortSignal): 
   return encrypted;
 }
 
-export async function decryptBlobToObjectUrl(encrypted: ArrayBuffer, keyHex: string, ivHex: string, mime?: string): Promise<string> {
+export async function decryptBlobToObjectUrl(
+  encrypted: ArrayBuffer,
+  keyHex: string,
+  ivHex: string,
+  mime?: string
+): Promise<string> {
   if (encrypted.byteLength > MAX_IMAGE_ENCRYPTED_BYTES) {
     throw new Error('Encrypted image blob exceeds limit.');
   }

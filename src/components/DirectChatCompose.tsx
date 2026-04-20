@@ -1,6 +1,7 @@
-import type { ReactNode, Ref } from 'react';
+import { useRef, type ReactNode, type Ref } from 'react';
 import ChatSendIcon from './ChatSendIcon';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
+import { CHAT_IMAGE_FILE_ACCEPT } from '../lib/imagePull';
 
 type DirectChatComposeProps = {
   replyPreviewText: string;
@@ -26,6 +27,10 @@ type DirectChatComposeProps = {
   onToggleTradeComposer: () => void;
   composerRef: Ref<HTMLDivElement>;
   isMobileNav: boolean;
+  onSendImage: (file: File) => void;
+  uploadingImage: boolean;
+  imageAttachDisabled: boolean;
+  imageAttachTitle: string;
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
@@ -60,6 +65,10 @@ export default function DirectChatCompose({
   onToggleTradeComposer,
   composerRef,
   isMobileNav,
+  onSendImage,
+  uploadingImage,
+  imageAttachDisabled,
+  imageAttachTitle,
   onSendMessage,
   maxMessageLength,
   onMessageInputChange,
@@ -69,6 +78,8 @@ export default function DirectChatCompose({
   tradeToggleDisabled,
   tradeToggleTitle
 }: DirectChatComposeProps) {
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+
   return (
     <div className={tradeComposerOpen ? 'chat-compose trade-compose-active' : 'chat-compose'}>
       {replyPreviewText ? (
@@ -149,6 +160,32 @@ export default function DirectChatCompose({
       {tradeComposerOpen ? tradeComposerContent : null}
       <div className="chat-compose-main">
         <div className="chat-compose-entry">
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept={CHAT_IMAGE_FILE_ACCEPT}
+            hidden
+            disabled={imageAttachDisabled}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.currentTarget.value = '';
+              if (!file) {
+                return;
+              }
+              onSendImage(file);
+            }}
+          />
+          <button
+            type="button"
+            className="chat-compose-attach"
+            onClick={() => {
+              imageInputRef.current?.click();
+            }}
+            disabled={imageAttachDisabled}
+            title={imageAttachTitle}
+          >
+            {uploadingImage ? 'Image...' : 'Image'}
+          </button>
           <div
             ref={composerRef}
             className="chat-compose-editor"
@@ -179,9 +216,9 @@ export default function DirectChatCompose({
             type="button"
             className="chat-compose-send"
             onClick={onSendMessage}
-            disabled={sending || tipping}
-            aria-label={sending ? 'Sending message' : 'Send message'}
-            title={sending ? 'Sending...' : 'Send message'}
+            disabled={sending || tipping || uploadingImage}
+            aria-label={sending ? 'Sending message' : uploadingImage ? 'Preparing image' : 'Send message'}
+            title={sending ? 'Sending...' : uploadingImage ? 'Preparing image...' : 'Send message'}
           >
             <ChatSendIcon />
           </button>

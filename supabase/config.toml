@@ -1,0 +1,4 @@
+project_id = "ousgmjyajyorywpqbdkf"
+
+[functions.chat-image-cleanup]
+verify_jwt = false

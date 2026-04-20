@@ -26,7 +26,7 @@ Messages are encrypted client-side and sent through COTI smart contracts, with r
 7. Groups are managed on-chain.
    You can create groups, invite wallets, create expiring join codes (single or multi-use), accept/decline invites, rename groups, remove members, leave, or disband.
 8. Optional extras:
-   On-chain nickname sync, encrypted contact alias sync, reply metadata, tip transfers, notification sound, and encrypted image rendering from external blob storage.
+   On-chain nickname sync, encrypted contact alias sync, reply metadata, tip transfers, notification sound, and encrypted image attachments backed by Supabase Storage.
 
 ## Wallet Modes
 
@@ -41,10 +41,8 @@ Messages are encrypted client-side and sent through COTI smart contracts, with r
   Encrypted chat payloads, group membership/invites/join-code state, nickname records, and read-state backup memo.
 - Browser local state:
   UI state, cached decrypted timelines, unread maps, audio preference, and encrypted burner wallet vault.
-- External API:
-  Encrypted image blobs are fetched from `https://api-ciphertrade.innovunode.io/chat/blob/:blobId` and decrypted client-side for display.
-
-Note: sending new image messages is currently blocked in the UI for security hardening; existing tagged image messages can still render.
+- Supabase Storage + Edge Functions:
+  Image attachments are encrypted in the browser with AES-GCM, uploaded directly from the React app to the `chat-images` bucket with the Supabase browser client, fetched back from Supabase public storage URLs, and swept after 24 hours by the `chat-image-cleanup` scheduled function.
 
 ## Network and Contracts
 
@@ -65,3 +63,20 @@ Other scripts:
 - `npm run preview` - preview built app
 - `npm run lint` - run ESLint
 - `npm run test` - run Vitest
+
+## Supabase Image Storage
+
+The repository now includes the Supabase assets needed for temporary encrypted image messaging:
+
+- `supabase/migrations/20260417130500_chat_image_storage.sql`
+  Creates the public `chat-images` bucket, caps object size to the encrypted image limit, adds the browser-upload storage policy, and schedules a cleanup job every 15 minutes.
+- `supabase/functions/chat-image-cleanup`
+  Deletes bucket objects older than 24 hours.
+
+Deployment outline:
+
+1. Apply the migration in `supabase/migrations/20260417130500_chat_image_storage.sql`.
+2. Deploy the Edge Function in `supabase/functions/chat-image-cleanup`.
+3. Point the frontend at the project with `VITE_SUPABASE_PROJECT_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+
+The storage bucket is intentionally public for reads because the blobs are encrypted client-side before upload and decrypted only after the chat message delivers the AES key material. The upload path now uses the Supabase publishable browser client, so the storage insert policy in the migration is required before image sending will work.

@@ -86,6 +86,10 @@ type DirectChatPanelProps = {
   onToggleTradeComposer: () => void;
   composerRef: Ref<HTMLDivElement>;
   isMobileNav: boolean;
+  onSendImage: (file: File) => void;
+  uploadingImage: boolean;
+  imageAttachDisabled: boolean;
+  imageAttachTitle: string;
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
@@ -152,6 +156,10 @@ export default function DirectChatPanel({
   onToggleTradeComposer,
   composerRef,
   isMobileNav,
+  onSendImage,
+  uploadingImage,
+  imageAttachDisabled,
+  imageAttachTitle,
   onSendMessage,
   maxMessageLength,
   onMessageInputChange,
@@ -447,6 +455,10 @@ export default function DirectChatPanel({
         onToggleTradeComposer={onToggleTradeComposer}
         composerRef={composerRef}
         isMobileNav={isMobileNav}
+        onSendImage={onSendImage}
+        uploadingImage={uploadingImage}
+        imageAttachDisabled={imageAttachDisabled}
+        imageAttachTitle={imageAttachTitle}
         onSendMessage={onSendMessage}
         maxMessageLength={maxMessageLength}
         onMessageInputChange={onMessageInputChange}
