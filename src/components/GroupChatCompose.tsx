@@ -1,6 +1,7 @@
 import { useRef, type Ref } from 'react';
 import ChatSendIcon from './ChatSendIcon';
-import { TIP_NATIVE_TOKEN_SYMBOL, type GroupFeeModeSelection, type TipTokenSelection } from '../lib/appShared';
+import ChatImageIcon from './ChatImageIcon';
+import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
 import { CHAT_IMAGE_FILE_ACCEPT } from '../lib/imagePull';
 
 type GroupTipRecipient = {
@@ -33,9 +34,6 @@ type GroupChatComposeProps = {
   onGroupTipRecipientChange: (address: string) => void;
   activeGroupTipRecipients: GroupTipRecipient[];
   selectedGroupTipRecipient: GroupTipRecipient | null;
-  groupFeeModeSelection: GroupFeeModeSelection;
-  onToggleGroupFeeMode: () => void;
-  selectedGroupFeeLabel: string;
   sendingGroupMessage: boolean;
   processingGroupAction: boolean;
   composerRef: Ref<HTMLDivElement>;
@@ -72,9 +70,6 @@ export default function GroupChatCompose({
   onGroupTipRecipientChange,
   activeGroupTipRecipients,
   selectedGroupTipRecipient,
-  groupFeeModeSelection,
-  onToggleGroupFeeMode,
-  selectedGroupFeeLabel,
   sendingGroupMessage,
   processingGroupAction,
   composerRef,
@@ -215,14 +210,15 @@ export default function GroupChatCompose({
           />
           <button
             type="button"
-            className="chat-compose-attach"
+            className="chat-compose-attach chat-compose-attach-icon"
             onClick={() => {
               imageInputRef.current?.click();
             }}
             disabled={imageAttachDisabled}
+            aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
             title={imageAttachTitle}
           >
-            {uploadingImage ? 'Image...' : 'Image'}
+            <ChatImageIcon />
           </button>
           <div
             ref={composerRef}
@@ -249,6 +245,22 @@ export default function GroupChatCompose({
               }
               onMessageInputChange(capped);
             }}
+            onPaste={(event) => {
+              const imageItem = Array.from(event.clipboardData.items).find(
+                (item) => item.kind === 'file' && item.type.startsWith('image/')
+              );
+              if (!imageItem) {
+                return;
+              }
+              event.preventDefault();
+              if (imageAttachDisabled) {
+                return;
+              }
+              const file = imageItem.getAsFile();
+              if (file) {
+                onSendImage(file);
+              }
+            }}
           />
           <button
             className="group-compose-send chat-compose-send"
@@ -263,26 +275,7 @@ export default function GroupChatCompose({
             <ChatSendIcon />
           </button>
         </div>
-        <div className="group-compose-actions">
-          <button
-            type="button"
-            className={
-              groupFeeModeSelection === 'token'
-                ? 'group-fee-toggle group-fee-toggle-compact token'
-                : 'group-fee-toggle group-fee-toggle-compact coti'
-            }
-            onClick={onToggleGroupFeeMode}
-            disabled={sendingGroupMessage || processingGroupAction || uploadingImage}
-            aria-label="Toggle group fee mode"
-            aria-pressed={groupFeeModeSelection === 'token'}
-            title={
-              groupFeeModeSelection === 'coti'
-                ? `${selectedGroupFeeLabel}. Click to switch to ${rewardTokenSymbol} mode.`
-                : `${selectedGroupFeeLabel}. Click to switch to COTI mode.`
-            }
-          >
-            {groupFeeModeSelection === 'token' ? rewardTokenSymbol : 'COTI'}
-          </button>
+        <div className="group-compose-actions group-compose-actions-single">
           <button
             type="button"
             onClick={onToggleTipComposer}

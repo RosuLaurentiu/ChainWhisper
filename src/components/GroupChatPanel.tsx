@@ -9,7 +9,6 @@ import {
   isWalletAddress,
   shortenAddress,
   type ChatMessage,
-  type GroupFeeModeSelection,
   type GroupSummary,
   type TipTokenSelection
 } from '../lib/appShared';
@@ -93,9 +92,6 @@ type GroupChatPanelProps = {
   onGroupTipRecipientChange: (address: string) => void;
   activeGroupTipRecipients: GroupParticipantSummary[];
   selectedGroupTipRecipient: GroupParticipantSummary | null;
-  groupFeeModeSelection: GroupFeeModeSelection;
-  onToggleGroupFeeMode: () => void;
-  selectedGroupFeeLabel: string;
   sendingGroupMessage: boolean;
   composerRef: Ref<HTMLDivElement>;
   onSendImage: (file: File) => void;
@@ -165,9 +161,6 @@ export default function GroupChatPanel({
   onGroupTipRecipientChange,
   activeGroupTipRecipients,
   selectedGroupTipRecipient,
-  groupFeeModeSelection,
-  onToggleGroupFeeMode,
-  selectedGroupFeeLabel,
   sendingGroupMessage,
   composerRef,
   onSendImage,
@@ -511,9 +504,6 @@ export default function GroupChatPanel({
         onGroupTipRecipientChange={onGroupTipRecipientChange}
         activeGroupTipRecipients={activeGroupTipRecipients}
         selectedGroupTipRecipient={selectedGroupTipRecipient}
-        groupFeeModeSelection={groupFeeModeSelection}
-        onToggleGroupFeeMode={onToggleGroupFeeMode}
-        selectedGroupFeeLabel={selectedGroupFeeLabel}
         sendingGroupMessage={sendingGroupMessage}
         processingGroupAction={processingGroupAction}
         composerRef={composerRef}

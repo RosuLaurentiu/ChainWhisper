@@ -3613,44 +3613,6 @@ body {
   grid-column: 1 / -1;
 }
 
-.group-fee-toggle {
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--bg-elev-3);
-  color: var(--text);
-  padding: 4px 10px;
-  font-size: 0.76rem;
-  font-weight: 600;
-  line-height: 1.15;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.group-fee-toggle.coti {
-  border-color: #4a4070;
-  background: rgba(139, 92, 246, 0.18);
-}
-
-.group-fee-toggle.token {
-  border-color: #3d7756;
-  background: rgba(34, 197, 94, 0.16);
-}
-
-.group-fee-toggle:hover:not(:disabled) {
-  filter: brightness(1.06);
-}
-
-.group-fee-toggle:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.group-fee-toggle-compact {
-  padding: 6px 10px;
-  font-size: 0.72rem;
-  line-height: 1.1;
-}
-
 .chat-compose-main,
 .group-compose-main {
   display: grid;
@@ -3676,6 +3638,10 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.group-compose-actions-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .chat-compose-actions > button,
@@ -3855,6 +3821,17 @@ body {
 .chat-compose-attach {
   min-width: 78px;
   align-self: stretch;
+}
+
+.chat-compose-attach-icon {
+  width: 50px;
+  min-width: 50px;
+  padding: 0;
+}
+
+.chat-compose-attach-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .chat-tip-panel {
@@ -5093,11 +5070,6 @@ body {
     gap: 8px;
   }
 
-  .group-fee-toggle-compact {
-    padding: 6px 10px;
-    font-size: 0.7rem;
-  }
-
   .chat-compose-main,
   .group-compose-main {
     gap: 10px;
@@ -5119,6 +5091,10 @@ body {
   .group-compose-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  .group-compose-actions-single {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .chat-image-attach {
@@ -5143,13 +5119,9 @@ body {
 
   .chat-compose-entry > .chat-compose-attach,
   .group-compose-entry > .chat-compose-attach {
-    width: auto;
-    min-width: 68px;
-  }
-
-  .group-compose-actions > .group-fee-toggle-compact {
-    width: 100%;
-    min-width: 0;
+    width: 48px;
+    min-width: 48px;
+    padding: 0;
   }
 
   .chat-tip-token-switch {

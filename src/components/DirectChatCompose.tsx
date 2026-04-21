@@ -1,5 +1,6 @@
 import { useRef, type ReactNode, type Ref } from 'react';
 import ChatSendIcon from './ChatSendIcon';
+import ChatImageIcon from './ChatImageIcon';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
 import { CHAT_IMAGE_FILE_ACCEPT } from '../lib/imagePull';
 
@@ -177,14 +178,15 @@ export default function DirectChatCompose({
           />
           <button
             type="button"
-            className="chat-compose-attach"
+            className="chat-compose-attach chat-compose-attach-icon"
             onClick={() => {
               imageInputRef.current?.click();
             }}
             disabled={imageAttachDisabled}
+            aria-label={uploadingImage ? 'Preparing image' : 'Attach image'}
             title={imageAttachTitle}
           >
-            {uploadingImage ? 'Image...' : 'Image'}
+            <ChatImageIcon />
           </button>
           <div
             ref={composerRef}
@@ -210,6 +212,22 @@ export default function DirectChatCompose({
                 event.currentTarget.textContent = capped;
               }
               onMessageInputChange(capped);
+            }}
+            onPaste={(event) => {
+              const imageItem = Array.from(event.clipboardData.items).find(
+                (item) => item.kind === 'file' && item.type.startsWith('image/')
+              );
+              if (!imageItem) {
+                return;
+              }
+              event.preventDefault();
+              if (imageAttachDisabled) {
+                return;
+              }
+              const file = imageItem.getAsFile();
+              if (file) {
+                onSendImage(file);
+              }
             }}
           />
           <button

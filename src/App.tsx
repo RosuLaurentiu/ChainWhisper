@@ -352,8 +352,6 @@ export default function App() {
   const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
   const [requiredFeeWei, setRequiredFeeWei] = useState<bigint | null>(null);
   const [tipNativeBalanceWei, setTipNativeBalanceWei] = useState<bigint | null>(null);
-  const [groupRequiredFeeWei, setGroupRequiredFeeWei] = useState<bigint | null>(null);
-  const [groupTokenFeeWei, setGroupTokenFeeWei] = useState<bigint | null>(null);
   const [groupRewardsContractAddress, setGroupRewardsContractAddress] = useState('');
   const [groupRewardsPaused, setGroupRewardsPaused] = useState<boolean | null>(null);
   const [rewardsContractPaused, setRewardsContractPaused] = useState<boolean | null>(null);
@@ -1292,19 +1290,6 @@ export default function App() {
 
     return burnerBalanceWei / requiredFeeWei;
   }, [requiredFeeWei, burnerBalanceWei]);
-  const selectedGroupFeeLabel = useMemo(() => {
-    if (groupFeeModeSelection === 'token') {
-      if (groupTokenFeeWei === null) {
-        return `${rewardTokenSymbol} fee: --`;
-      }
-      return `${rewardTokenSymbol} fee: ${formatTokenAmount(groupTokenFeeWei, rewardTokenDecimals, 4)}`;
-    }
-
-    if (groupRequiredFeeWei === null) {
-      return 'COTI fee: --';
-    }
-    return `COTI fee: ${formatCotiAmount(groupRequiredFeeWei)}`;
-  }, [groupFeeModeSelection, groupTokenFeeWei, groupRequiredFeeWei, rewardTokenSymbol, rewardTokenDecimals]);
   const parsedSwapAmount = useMemo(
     () => parseTokenAmountInput(swapAmountInput, rewardTokenDecimals),
     [swapAmountInput, rewardTokenDecimals]
@@ -2749,7 +2734,6 @@ export default function App() {
 
   const resolveRequiredFeeForGroupSend = async (): Promise<bigint> => {
     if (groupRequiredFeeCacheRef.current !== null && groupRequiredFeeCacheRef.current > 0n) {
-      setGroupRequiredFeeWei(groupRequiredFeeCacheRef.current);
       return groupRequiredFeeCacheRef.current;
     }
 
@@ -2760,7 +2744,6 @@ export default function App() {
         const readContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
         const resolvedFee = (await readContract.feeAmount()) as bigint;
         groupRequiredFeeCacheRef.current = resolvedFee;
-        setGroupRequiredFeeWei(resolvedFee);
         return resolvedFee;
       })();
     }
@@ -2774,7 +2757,6 @@ export default function App() {
 
   const resolveRequiredTokenFeeForGroupSend = async (): Promise<bigint> => {
     if (groupTokenFeeCacheRef.current !== null) {
-      setGroupTokenFeeWei(groupTokenFeeCacheRef.current);
       return groupTokenFeeCacheRef.current;
     }
 
@@ -2785,7 +2767,6 @@ export default function App() {
         const readContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
         const resolvedFee = (await readContract.tokenFeeAmount()) as bigint;
         groupTokenFeeCacheRef.current = resolvedFee;
-        setGroupTokenFeeWei(resolvedFee);
         return resolvedFee;
       })();
     }
@@ -7471,8 +7452,6 @@ export default function App() {
     groupTokenFeeCacheRef.current = null;
     groupTokenFeeRequestRef.current = null;
     groupSubmitSelectorRef.current = null;
-    setGroupRequiredFeeWei(null);
-    setGroupTokenFeeWei(null);
     setGroupRewardsContractAddress('');
     setGroupRewardsPaused(null);
     setRewardsContractPaused(null);
@@ -8023,8 +8002,6 @@ export default function App() {
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress) || chainId !== COTI_NETWORK.chainIdDecimal) {
       setRewardTokenBalanceWei(null);
       setPrivateRewardTokenBalanceWei(null);
-      setGroupRequiredFeeWei(null);
-      setGroupTokenFeeWei(null);
       setGroupRewardsContractAddress('');
       setGroupRewardsPaused(null);
       setRewardsContractPaused(null);
@@ -8191,8 +8168,6 @@ export default function App() {
           setPrivateRewardTokenSymbol(resolvedPrivateSymbol);
           setRewardTokenDecimals(resolvedRewardDecimals);
           setPrivateRewardTokenDecimals(resolvedPrivateDecimals);
-          setGroupRequiredFeeWei(nextGroupNativeFee);
-          setGroupTokenFeeWei(nextGroupTokenFee);
           setGroupRewardsContractAddress(nextRewardsContractAddress);
           setGroupRewardsPaused(nextRewardsPaused);
           setRewardsContractPaused(nextRewardsContractPaused);
@@ -8212,8 +8187,6 @@ export default function App() {
         if (!cancelled) {
           setRewardTokenBalanceWei(null);
           setPrivateRewardTokenBalanceWei(null);
-          setGroupRequiredFeeWei(null);
-          setGroupTokenFeeWei(null);
           setGroupRewardsContractAddress('');
           setGroupRewardsPaused(null);
           setRewardsContractPaused(null);
@@ -9272,11 +9245,6 @@ export default function App() {
               onGroupTipRecipientChange={setGroupTipRecipientAddress}
               activeGroupTipRecipients={activeGroupTipRecipients}
               selectedGroupTipRecipient={selectedGroupTipRecipient}
-              groupFeeModeSelection={groupFeeModeSelection}
-              onToggleGroupFeeMode={() => {
-                setGroupFeeModeSelection((previous) => (previous === 'coti' ? 'token' : 'coti'));
-              }}
-              selectedGroupFeeLabel={selectedGroupFeeLabel}
               sendingGroupMessage={sendingGroupMessage}
               composerRef={chatComposerRef}
               onSendImage={(file) => {
@@ -9284,7 +9252,7 @@ export default function App() {
               }}
               uploadingImage={uploadingImage}
               imageAttachDisabled={uploadingImage || sendingGroupMessage || processingGroupAction}
-              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach an image'}
+              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
               onSendMessage={() => {
                 sendGroupMessage().catch(() => {});
               }}
@@ -9378,7 +9346,7 @@ export default function App() {
               }}
               uploadingImage={uploadingImage}
               imageAttachDisabled={uploadingImage || sending || tipping}
-              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach an image'}
+              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
               onSendMessage={() => {
                 sendMessage().catch(() => {});
               }}
