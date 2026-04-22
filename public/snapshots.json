@@ -1,0 +1,73 @@
+[
+  {
+    "capturedAt": "2026-03-13T18:11:31.345Z",
+    "capturedAtUnix": 1773425491,
+    "day": 20260313,
+    "normalized": {
+      "activeGcoti": "145836228.94430977",
+      "cotiInPool": "402802764.6186870036",
+      "maxApy": "21.41996656",
+      "maxBoostApy": "21.41996656",
+      "maxTotalApy": "42.83993312"
+    },
+    "onchain": null,
+    "raw": {
+      "totalCotiInPool": "402802764.6186870036",
+      "totalActiveGCoti": "145836228.94430977",
+      "totalUnlocked": "254423287.84356941",
+      "totalUnlockedUsd": "3199136.23097519",
+      "totalLevragedCoti": "727503728.83270787690269529",
+      "tvl": "5300005.01440828",
+      "oldTvl": "4862535.70335717",
+      "maxApy": "21.41996656",
+      "maxBoostApy": "21.41996656",
+      "maxTotalApy": "42.83993312"
+    },
+    "scaled": {
+      "activeGcoti18": "145836228944309770000000000",
+      "cotiInPool18": "402802764618687003600000000",
+      "maxApyE8": "2141996656",
+      "maxBoostApyE8": "2141996656",
+      "maxTotalApyE8": "4283993312"
+    },
+    "source": "https://treasury-app.coti.io/get-total"
+  },
+  {
+    "capturedAt": "2026-03-15T12:25:48.525Z",
+    "capturedAtUnix": 1773577548,
+    "day": 20260315,
+    "normalized": {
+      "activeGcoti": "145923321.59699138",
+      "cotiInPool": "402401128.3361130536",
+      "maxApy": "21.41247208",
+      "maxBoostApy": "21.41247208",
+      "maxTotalApy": "42.82494416"
+    },
+    "onchain": {
+      "blockNumber": "6180269",
+      "contractAddress": "0x25975eda0B0Ef3E5D86787Cb89D0A3468C17Bece",
+      "explorerUrl": "https://mainnet.cotiscan.io/tx/0xabb8417714498d5d131d2fdf4c8eb7b702e9ec28a3c9a0dfc2f8faf71bc83eb4",
+      "txHash": "0xabb8417714498d5d131d2fdf4c8eb7b702e9ec28a3c9a0dfc2f8faf71bc83eb4"
+    },
+    "raw": {
+      "totalCotiInPool": "402401128.3361130536",
+      "totalActiveGCoti": "145923321.59699138",
+      "totalUnlocked": "253901874.46702747",
+      "totalUnlockedUsd": "3273932.64227759",
+      "totalLevragedCoti": "727073792.49461638744708410",
+      "tvl": "5419197.93240385",
+      "oldTvl": "4979800.92257707",
+      "maxApy": "21.41247208",
+      "maxBoostApy": "21.41247208",
+      "maxTotalApy": "42.82494416"
+    },
+    "scaled": {
+      "activeGcoti18": "145923321596991380000000000",
+      "cotiInPool18": "402401128336113053600000000",
+      "maxApyE8": "2141247208",
+      "maxBoostApyE8": "2141247208",
+      "maxTotalApyE8": "4282494416"
+    },
+    "source": "https://treasury-app.coti.io/get-total"
+  }
+]

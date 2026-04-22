@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI,
+  BURNER_TOP_UP_MAX_MESSAGE_TARGET,
+  BURNER_TOP_UP_MIN_MESSAGE_TARGET,
   formatCotiAmount,
   formatTokenAmount,
   shortenAddress,
@@ -35,9 +38,7 @@ type WalletSidebarProps = {
   connectionMethod: 'metamask' | null;
   connectingMethod: 'metamask' | null;
   connectingWalletLabel: string;
-  savedBurnerWalletCount: number;
   burnerWallets: BurnerWalletRecord[];
-  currentBurnerWalletId: string;
   getBurnerWalletDisplayName: (walletRecord: BurnerWalletRecord) => string;
   onConnectInjectedWallet: (walletId?: string) => Promise<void>;
   onSwitchBurnerWallet: (walletId: string) => Promise<void>;
@@ -45,8 +46,8 @@ type WalletSidebarProps = {
   burnerWalletSelectionValue: string;
   burnerAddress: string;
   topUpAmountWei: bigint | null;
-  topUpMultiplier: number;
-  onTopUpMultiplierChange: (value: number) => void;
+  topUpMessageTarget: number;
+  onTopUpMessageTargetChange: (value: number) => void;
   loadingTopUpQuote: boolean;
   burnerBalanceWei: bigint | null;
   estimatedMessagesLeft: bigint | null;
@@ -109,9 +110,7 @@ export default function WalletSidebar({
   connectionMethod,
   connectingMethod,
   connectingWalletLabel,
-  savedBurnerWalletCount,
   burnerWallets,
-  currentBurnerWalletId,
   getBurnerWalletDisplayName,
   onConnectInjectedWallet,
   onSwitchBurnerWallet,
@@ -119,8 +118,8 @@ export default function WalletSidebar({
   burnerWalletSelectionValue,
   burnerAddress,
   topUpAmountWei,
-  topUpMultiplier,
-  onTopUpMultiplierChange,
+  topUpMessageTarget,
+  onTopUpMessageTargetChange,
   loadingTopUpQuote,
   burnerBalanceWei,
   estimatedMessagesLeft,
@@ -156,32 +155,33 @@ export default function WalletSidebar({
   showBurnerMnemonic,
   onBeginRevealBurnerBackup
 }: WalletSidebarProps) {
-  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
   const [showTokenTools, setShowTokenTools] = useState(false);
   const [showBackupTools, setShowBackupTools] = useState(false);
-  const walletPickerRef = useRef<HTMLDivElement | null>(null);
 
   const hasConnectedWallet = walletAddress.length > 0;
-  const activeInjectedWalletLabel = currentInjectedWalletOption?.label ?? preferredInjectedWalletOption?.label ?? 'Wallet';
-  const shouldHighlightWalletPicker = !hasConnectedWallet && !hasSavedBurnerWallet;
-  const walletPrimaryButtonClass = shouldHighlightWalletPicker
+  const isBurnerConnected = hasConnectedWallet && activeSignerSource === 'burner';
+  const showUnlockBurnerButton = hasSavedBurnerWallet && !isConnected;
+  const showChangeBurnerPinButton = hasSavedBurnerWallet && isBurnerConnected && hasActiveBurnerRecord;
+  const primaryInjectedWalletOption = preferredInjectedWalletOption ?? injectedWalletOptions[0] ?? null;
+  const activeInjectedWalletLabel = currentInjectedWalletOption?.label ?? primaryInjectedWalletOption?.label ?? 'Wallet';
+  const hasMultipleInjectedWalletOptions = injectedWalletOptions.length > 1;
+  const estimatedTopUpRateLabel = `${formatCotiAmount(BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI, 3)} COTI/msg`;
+  const shouldHighlightWalletButton = !hasConnectedWallet && !hasSavedBurnerWallet;
+  const walletPrimaryButtonClass = shouldHighlightWalletButton
     ? 'connect-btn wallet-inline-btn wallet-primary-action'
     : 'connect-btn wallet-inline-btn';
-  const shouldOpenWalletPickerFromPrimary =
-    hasConnectedWallet ||
-    injectedWalletOptions.length > 1 ||
-    savedBurnerWalletCount > 1 ||
-    (Boolean(preferredInjectedWalletOption) && hasSavedBurnerWallet);
-  const walletPrimaryOpensPicker =
-    shouldOpenWalletPickerFromPrimary || (!preferredInjectedWalletOption && !hasSavedBurnerWallet);
-  const walletPickerButtonLabel =
+  const walletPrimaryButtonLabel =
     connectingMethod === 'metamask'
-      ? `Connecting ${connectingWalletLabel || preferredInjectedWalletOption?.label || 'Wallet'}...`
-      : !hasConnectedWallet || connectionMethod !== 'metamask'
-        ? 'Connect with Wallet'
-        : onboardStatus === 'AES key ready'
-          ? `${activeInjectedWalletLabel} + AES Ready`
-          : 'Sign AES Key';
+      ? `Connecting ${connectingWalletLabel || primaryInjectedWalletOption?.label || 'Wallet'}...`
+      : !primaryInjectedWalletOption
+        ? 'No browser wallet detected'
+        : isBurnerConnected
+          ? `Switch to ${primaryInjectedWalletOption.label}`
+          : connectionMethod !== 'metamask'
+            ? `Connect ${primaryInjectedWalletOption.label}`
+            : onboardStatus === 'AES key ready'
+              ? `${activeInjectedWalletLabel} + AES Ready`
+              : 'Sign AES Key';
 
   useEffect(() => {
     if (swapStatusMessage) {
@@ -195,41 +195,9 @@ export default function WalletSidebar({
     }
   }, [showBurnerMnemonic]);
 
-  useEffect(() => {
-    if (!walletPickerOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const targetNode = event.target;
-      if (targetNode instanceof Node && !walletPickerRef.current?.contains(targetNode)) {
-        setWalletPickerOpen(false);
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setWalletPickerOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [walletPickerOpen]);
-
   const handleWalletPrimaryAction = () => {
-    if (walletPrimaryOpensPicker) {
-      setWalletPickerOpen((previous) => !previous);
-      return;
-    }
-
-    if (preferredInjectedWalletOption) {
-      onConnectInjectedWallet(preferredInjectedWalletOption.id).catch(() => {});
+    if (primaryInjectedWalletOption) {
+      onConnectInjectedWallet(primaryInjectedWalletOption.id).catch(() => {});
       return;
     }
 
@@ -296,7 +264,7 @@ export default function WalletSidebar({
           ) : null}
 
           <div className="wallet-action-grid">
-            {hasSavedBurnerWallet ? (
+            {showUnlockBurnerButton ? (
               <button
                 className="connect-btn wallet-primary-action wallet-action-span-2"
                 onClick={onUnlockBurnerWallet}
@@ -307,12 +275,12 @@ export default function WalletSidebar({
               </button>
             ) : null}
 
-            {hasSavedBurnerWallet ? (
+            {showChangeBurnerPinButton ? (
               <button
                 className="connect-btn"
                 onClick={onChangeBurnerPin}
                 type="button"
-                disabled={initializingBurner || !hasActiveBurnerRecord}
+                disabled={initializingBurner}
               >
                 Change PIN
               </button>
@@ -340,141 +308,68 @@ export default function WalletSidebar({
 
         <div className="wallet-inline-action">
           <span className="wallet-section-label wallet-section-label-inline">Wallet</span>
-          <div className="wallet-inline-control" ref={walletPickerRef}>
+          {hasMultipleInjectedWalletOptions ? (
+            <div className="wallet-action-grid wallet-browser-option-grid">
+              {injectedWalletOptions.map((option) => {
+                const isCurrentWallet =
+                  activeSignerSource === 'metamask' &&
+                  connectionMethod === 'metamask' &&
+                  currentInjectedWalletOption?.id === option.id &&
+                  isConnected;
+                const optionMeta = isCurrentWallet
+                  ? onboardStatus === 'AES key ready'
+                    ? 'Current'
+                    : 'Sign AES Key'
+                  : isBurnerConnected
+                    ? 'Switch'
+                    : 'Connect';
+                return (
+                  <button
+                    key={option.id}
+                    className="connect-btn wallet-picker-option"
+                    onClick={() => {
+                      onConnectInjectedWallet(option.id).catch(() => {});
+                    }}
+                    type="button"
+                    disabled={connectingMethod !== null}
+                  >
+                    <span className="wallet-picker-option-label">{option.label}</span>
+                    <span className="wallet-picker-option-meta">
+                      {connectingMethod === 'metamask' && connectingWalletLabel === option.label ? 'Connecting...' : optionMeta}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
             <button
               className={walletPrimaryButtonClass}
               onClick={handleWalletPrimaryAction}
               type="button"
-              disabled={connectingMethod !== null}
-              aria-expanded={walletPrimaryOpensPicker ? walletPickerOpen : undefined}
-              aria-haspopup={walletPrimaryOpensPicker ? 'menu' : undefined}
-              title={walletPrimaryOpensPicker ? 'Choose or switch wallet' : undefined}
+              disabled={connectingMethod !== null || !primaryInjectedWalletOption}
+              title={primaryInjectedWalletOption ? 'Connect browser wallet' : 'No browser wallet detected'}
             >
-              {walletPickerButtonLabel}
+              {walletPrimaryButtonLabel}
             </button>
-            {walletPickerOpen ? (
-              <div className="wallet-picker-menu" role="menu" aria-label="Wallet options">
-                <div className="wallet-picker-section">
-                  <p className="wallet-picker-heading">Browser wallets</p>
-                  {injectedWalletOptions.length > 0 ? (
-                    injectedWalletOptions.map((option) => {
-                      const isCurrentWallet =
-                        activeSignerSource === 'metamask' &&
-                        connectionMethod === 'metamask' &&
-                        currentInjectedWalletOption?.id === option.id &&
-                        isConnected;
-                      return (
-                        <button
-                          key={option.id}
-                          className="connect-btn wallet-picker-option"
-                          onClick={() => {
-                            setWalletPickerOpen(false);
-                            onConnectInjectedWallet(option.id).catch(() => {});
-                          }}
-                          type="button"
-                          disabled={connectingMethod !== null}
-                          role="menuitem"
-                        >
-                          <span className="wallet-picker-option-label">{option.label}</span>
-                          <span className="wallet-picker-option-meta">{isCurrentWallet ? 'Current' : 'Detected'}</span>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <p className="wallet-picker-empty">No browser wallet detected yet.</p>
-                  )}
-                </div>
-                <div className="wallet-picker-section">
-                  <p className="wallet-picker-heading">Chat wallets</p>
-                  {hasSavedBurnerWallet ? (
-                    <button
-                      className="connect-btn wallet-picker-option"
-                      onClick={() => {
-                        setWalletPickerOpen(false);
-                        onUnlockBurnerWallet();
-                      }}
-                      type="button"
-                      disabled={initializingBurner || burnerStorageBlocked}
-                      role="menuitem"
-                    >
-                      <span className="wallet-picker-option-label">Unlock saved wallet</span>
-                      <span className="wallet-picker-option-meta">{savedBurnerWalletCount} saved</span>
-                    </button>
-                  ) : (
-                    <p className="wallet-picker-empty">No saved chat wallet yet.</p>
-                  )}
-                  {burnerWallets.map((walletRecord, index) => {
-                    const optionName = getBurnerWalletDisplayName(walletRecord);
-                    const optionAddress = walletRecord.address ? shortenAddress(walletRecord.address) : 'Unknown';
-                    const isCurrentWallet =
-                      activeSignerSource === 'burner' &&
-                      walletRecord.id &&
-                      currentBurnerWalletId === walletRecord.id &&
-                      isConnected;
-                    return (
-                      <button
-                        key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`}
-                        className="connect-btn wallet-picker-option"
-                        onClick={() => {
-                          setWalletPickerOpen(false);
-                          onSwitchBurnerWallet(walletRecord.id ?? '').catch(() => {});
-                        }}
-                        type="button"
-                        disabled={initializingBurner || !walletRecord.id}
-                        role="menuitem"
-                      >
-                        <span className="wallet-picker-option-label">{`${optionName} (${optionAddress})`}</span>
-                        <span className="wallet-picker-option-meta">{isCurrentWallet ? 'Current' : 'Saved'}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="wallet-picker-section">
-                  <p className="wallet-picker-heading">New wallet</p>
-                  <button
-                    className="connect-btn wallet-picker-option"
-                    onClick={() => {
-                      setWalletPickerOpen(false);
-                      onGenerateBurnerWallet();
-                    }}
-                    type="button"
-                    disabled={initializingBurner || burnerStorageBlocked}
-                    role="menuitem"
-                  >
-                    <span className="wallet-picker-option-label">Generate wallet</span>
-                  </button>
-                  <button
-                    className="connect-btn wallet-picker-option"
-                    onClick={() => {
-                      setWalletPickerOpen(false);
-                      onOpenBurnerImportModal();
-                    }}
-                    type="button"
-                    disabled={initializingBurner || burnerStorageBlocked}
-                    role="menuitem"
-                  >
-                    <span className="wallet-picker-option-label">Import wallet</span>
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </div>
+          )}
         </div>
 
-        <div className="wallet-inline-action">
-          <span className="wallet-section-label wallet-section-label-inline">Session</span>
-          <button
-            className="connect-btn wallet-inline-btn"
-            onClick={() => {
-              onDisconnectWallet().catch(() => {});
-            }}
-            type="button"
-            disabled={!isConnected || connectingMethod !== null}
-            title="Disconnects the currently active wallet session."
-          >
-            Disconnect current wallet
-          </button>
-        </div>
+        {isConnected ? (
+          <div className="wallet-inline-action">
+            <span className="wallet-section-label wallet-section-label-inline">Session</span>
+            <button
+              className="connect-btn wallet-inline-btn"
+              onClick={() => {
+                onDisconnectWallet().catch(() => {});
+              }}
+              type="button"
+              disabled={connectingMethod !== null}
+              title="Disconnects the currently active wallet session."
+            >
+              Disconnect current wallet
+            </button>
+          </div>
+        ) : null}
         {burnerWallets.length > 0 ? (
           <div className="wallet-inline-select">
             <span className="wallet-section-label wallet-section-label-inline">Saved wallets</span>
@@ -511,10 +406,10 @@ export default function WalletSidebar({
             <span className="wallet-section-label">Funding</span>
             <span className="wallet-section-hint">
               {loadingTopUpQuote
-                ? 'Calculating...'
+                ? 'Loading...'
                 : `${burnerBalanceWei !== null ? formatTokenAmount(burnerBalanceWei, 18, 4) : '--'} COTI | ${
                     estimatedMessagesLeft !== null ? estimatedMessagesLeft.toString() : '--'
-                  } msgs left`}
+                  } est. msgs left`}
             </span>
           </div>
           <button
@@ -530,15 +425,15 @@ export default function WalletSidebar({
           <input
             className="topup-slider"
             type="range"
-            min={0}
-            max={100}
+            min={BURNER_TOP_UP_MIN_MESSAGE_TARGET}
+            max={BURNER_TOP_UP_MAX_MESSAGE_TARGET}
             step={1}
-            value={topUpMultiplier}
-            onChange={(event) => onTopUpMultiplierChange(Number(event.target.value))}
-            aria-label="Top up multiplier"
+            value={topUpMessageTarget}
+            onChange={(event) => onTopUpMessageTargetChange(Number(event.target.value))}
+            aria-label="Top up message target"
           />
           <p className="topup-estimate-line">
-            Approx: <strong>{topUpMultiplier}</strong> msgs = <strong>{topUpAmountLabel}</strong>
+            Approx @ {estimatedTopUpRateLabel}: <strong>{topUpMessageTarget}</strong> msgs = <strong>{topUpAmountLabel}</strong>
           </p>
         </div>
       ) : null}

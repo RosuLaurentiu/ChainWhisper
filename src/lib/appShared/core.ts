@@ -242,6 +242,10 @@ export const COPY_FEEDBACK_DURATION_MS = 1400;
 export const GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS = 9000;
 export const COTI_WEI = 10n ** 18n;
 export const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
+export const BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI = 5_000_000_000_000_000n;
+export const BURNER_TOP_UP_MIN_MESSAGE_TARGET = 1;
+export const BURNER_TOP_UP_MAX_MESSAGE_TARGET = 200;
+export const BURNER_TOP_UP_DEFAULT_MESSAGE_TARGET = 50;
 export const TEXT_ENCODER = new TextEncoder();
 export const TEXT_DECODER = new TextDecoder();
 const MEMO_RAW_PREFIX = '[[coti-memo-raw:v1]]';
@@ -1555,14 +1559,25 @@ export const formatMessageTimestamp = (timestamp?: number): string => {
   });
 };
 
-export const calculateTopUpAmount = (requiredFee: bigint, multiplier: number): bigint => {
-  const safeMultiplier = Math.max(0, Math.floor(multiplier));
-  return requiredFee > 0n ? requiredFee * BigInt(safeMultiplier) : MIN_BURNER_TOP_UP_WEI * BigInt(safeMultiplier);
+export const calculateEstimatedBurnerTopUpAmount = (messageTarget: number): bigint => {
+  const safeMessageTarget = Math.max(
+    BURNER_TOP_UP_MIN_MESSAGE_TARGET,
+    Math.min(BURNER_TOP_UP_MAX_MESSAGE_TARGET, Math.floor(messageTarget))
+  );
+  return BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI * BigInt(safeMessageTarget);
 };
 
-export const formatCotiAmount = (weiAmount: bigint): string => {
+export const formatCotiAmount = (weiAmount: bigint, precision = 6): string => {
   const whole = weiAmount / COTI_WEI;
-  const fraction = (weiAmount % COTI_WEI).toString().padStart(18, '0').slice(0, 6).replace(/0+$/, '');
+  const safePrecision = Math.max(0, Math.min(18, Math.floor(precision)));
+  const fraction =
+    safePrecision > 0
+      ? (weiAmount % COTI_WEI)
+          .toString()
+          .padStart(18, '0')
+          .slice(0, safePrecision)
+          .replace(/0+$/, '')
+      : '';
   return fraction ? `${whole.toString()}.${fraction}` : whole.toString();
 };
 

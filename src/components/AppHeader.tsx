@@ -1,29 +1,29 @@
 import type { ReactNode, Ref } from 'react';
 import AppFavicon from '../assets/favicon.png';
 
+type AppHeaderLink = {
+  href: string;
+  label: string;
+};
+
 type AppHeaderProps = {
   headerRef: Ref<HTMLElement>;
   mobileLinksOpen: boolean;
   isMobileNav: boolean;
-  soundEnabled: boolean;
+  soundEnabled?: boolean;
   onToggleMobileLinksOpen: () => void;
-  onToggleSound: () => void;
+  onToggleSound?: () => void;
   onCloseMobileLinks: () => void;
   debugControl?: ReactNode;
+  links?: readonly AppHeaderLink[];
+  brandActions?: ReactNode;
+  title?: string;
+  subtitle?: string;
+  showSoundToggle?: boolean;
 };
 
-const NAV_LINKS = [
-  { href: 'https://ciphertrade.org/', label: 'CipherTrade' },
-  { href: 'https://pengodefi.app/', label: 'PengoDeFi' },
-  { href: 'https://bridge.coti.io/bridge', label: 'COTI Bridge' },
-  { href: 'https://coti.carbondefi.xyz/', label: 'CarbonDeFi' },
-  { href: 'https://nexus.hyperlane.xyz/', label: 'Hyperlane Bridge' },
-  { href: 'https://app.houdiniswap.com/', label: 'Houdini Swap' },
-  { href: 'https://app.chainport.io/', label: 'ChainPort' }
-] as const;
-
-const renderNavLinks = (onLinkClick: () => void) =>
-  NAV_LINKS.map((link) => (
+const renderNavLinks = (links: readonly AppHeaderLink[], onLinkClick: () => void) =>
+  links.map((link) => (
     <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer" onClick={onLinkClick}>
       {link.label}
     </a>
@@ -37,46 +37,28 @@ export default function AppHeader({
   onToggleMobileLinksOpen,
   onToggleSound,
   onCloseMobileLinks,
-  debugControl
+  debugControl,
+  links = [],
+  brandActions,
+  title = 'ChainWhisper',
+  subtitle = '',
+  showSoundToggle = false
 }: AppHeaderProps) {
-  return (
-    <header className="top-header" ref={headerRef}>
-      <div className="top-header-brand">
-        <div className="top-header-section top-header-branding">
-          <span className="top-header-brand-logo-shell" aria-hidden="true">
-            <img className="top-header-brand-logo" src={AppFavicon} alt="" />
-          </span>
-          <div className="top-header-brand-copy">
-            <span className="top-header-brand-title">ChainWhisper</span>
-            <span className="top-header-brand-subtitle">powered by COTI</span>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="top-header-menu-btn"
-          aria-expanded={mobileLinksOpen}
-          aria-controls="top-navigation-links-mobile"
-          onClick={onToggleMobileLinksOpen}
-          aria-label="Open links menu"
-          style={
-            isMobileNav
-              ? { display: 'inline-grid', position: 'fixed', top: '8px', right: '20px', zIndex: 120 }
-              : { display: 'none' }
-          }
-        >
-          {'\u2630'}
-        </button>
+  const hasNavLinks = links.length > 0;
+  const shouldShowSoundToggle = showSoundToggle && typeof onToggleSound === 'function' && typeof soundEnabled === 'boolean';
+  const hasHeaderActions = Boolean(brandActions || shouldShowSoundToggle || debugControl);
+  const showBrandActions = !hasNavLinks && hasHeaderActions;
+  const showRightActions = hasNavLinks && hasHeaderActions;
+  const headerActions = (
+    <>
+      {brandActions}
+      {shouldShowSoundToggle ? (
         <button
           type="button"
           className="sound-toggle-btn"
           onClick={onToggleSound}
           title={soundEnabled ? 'Disable sound' : 'Enable sound'}
           aria-pressed={soundEnabled}
-          style={
-            isMobileNav
-              ? { display: 'inline-grid', position: 'fixed', top: '8px', right: '64px', zIndex: 120 }
-              : { marginLeft: 8 }
-          }
         >
           {soundEnabled ? (
             <svg
@@ -108,38 +90,61 @@ export default function AppHeader({
             </svg>
           )}
         </button>
-        {debugControl}
+      ) : null}
+      {debugControl}
+    </>
+  );
+  const headerClassName = hasNavLinks ? 'top-header top-header-has-links' : 'top-header top-header-no-links';
+
+  return (
+    <header className={headerClassName} ref={headerRef}>
+      <div className="top-header-bar">
+        <div className="top-header-brand">
+          <div className="top-header-brand-main">
+            <span className="top-header-brand-logo-shell" aria-hidden="true">
+              <img className="top-header-brand-logo" src={AppFavicon} alt="" />
+            </span>
+            <div className="top-header-brand-copy">
+              <span className="top-header-brand-title">{title}</span>
+              {subtitle ? <span className="top-header-brand-subtitle">{subtitle}</span> : null}
+            </div>
+          </div>
+          {showBrandActions ? <div className="top-header-brand-actions">{headerActions}</div> : null}
+        </div>
+
+        <div className="top-header-right">
+          {!isMobileNav && hasNavLinks ? (
+            <nav className="top-header-links" aria-label="COTI ecosystem navigation">
+              {renderNavLinks(links, onCloseMobileLinks)}
+            </nav>
+          ) : null}
+
+          {showRightActions ? <div className="top-header-actions">{headerActions}</div> : null}
+
+          {isMobileNav && hasNavLinks ? (
+            <button
+              type="button"
+              className="top-header-menu-btn"
+              aria-expanded={mobileLinksOpen}
+              aria-controls="top-navigation-links-mobile"
+              onClick={onToggleMobileLinksOpen}
+              aria-label="Open ecosystem links menu"
+            >
+              {'\u2630'}
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <nav
-        id="top-navigation-links-desktop"
-        className="top-header-links top-header-links-desktop"
-        aria-label="Top navigation"
-        style={{ display: isMobileNav ? 'none' : 'flex' }}
-      >
-        {renderNavLinks(onCloseMobileLinks)}
-      </nav>
-      <nav
-        id="top-navigation-links-mobile"
-        className={mobileLinksOpen ? 'top-header-links top-header-links-mobile open' : 'top-header-links top-header-links-mobile'}
-        aria-label="Top navigation mobile"
-        style={
-          isMobileNav && mobileLinksOpen
-            ? {
-                display: 'grid',
-                gridTemplateColumns: '1fr',
-                gap: '6px',
-                position: 'fixed',
-                top: '50px',
-                right: '20px',
-                width: 'min(240px, calc(100vw - 40px))',
-                zIndex: 130
-              }
-            : { display: 'none' }
-        }
-      >
-        {renderNavLinks(onCloseMobileLinks)}
-      </nav>
+      {isMobileNav && hasNavLinks ? (
+        <nav
+          id="top-navigation-links-mobile"
+          className={mobileLinksOpen ? 'top-header-mobile-links open' : 'top-header-mobile-links'}
+          aria-label="COTI ecosystem navigation mobile"
+        >
+          {renderNavLinks(links, onCloseMobileLinks)}
+        </nav>
+      ) : null}
     </header>
   );
 }

@@ -2,6 +2,7 @@ import { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, use
 import AppHeader from './components/AppHeader';
 import ContactsSidebar from './components/ContactsSidebar';
 import GroupActionControls from './components/GroupActionControls';
+import HomePage from './components/HomePage';
 import { ActiveJoinCodeList, GroupInviteMenu } from './components/GroupInviteTools';
 import MobileBottomNav from './components/MobileBottomNav';
 import WalletSidebar from './components/WalletSidebar';
@@ -72,6 +73,7 @@ import {
 } from './lib/appStorage';
 import { createEncryptedImageTagFromFile } from './lib/imagePull';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
+import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
   ActiveGroupJoinCode,
@@ -79,13 +81,14 @@ import {
   AUTO_STATE_BACKUP_BLOCK_DISTANCE,
   AUTO_STATE_BACKUP_RETRY_BLOCKS,
   AUTO_SYNC_INTERVAL_MS,
+  BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI,
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
   buildTradeOfferMessagePayload,
   buildTradeResponseMessagePayload,
   BURNER_PIN_MIN_LENGTH,
   BurnerWalletRecord,
-  calculateTopUpAmount,
+  calculateEstimatedBurnerTopUpAmount,
   CHAT_CONTRACT_ABI,
   CHAT_CONTRACT_ADDRESS,
   ChatMessage,
@@ -197,11 +200,63 @@ const BurnerPinModal = lazy(() => import('./components/BurnerPinModal'));
 const DirectChatPanel = lazy(() => import('./components/DirectChatPanel'));
 const GroupChatPanel = lazy(() => import('./components/GroupChatPanel'));
 const QuickActionsModal = lazy(() => import('./components/QuickActionsModal'));
+const TreasuryPage = lazy(() => import('./components/TreasuryPage'));
 const TradeComposerPanel = lazy(() => import('./components/TradeComposerPanel'));
 
 const INITIAL_VISIBLE_THREAD_MESSAGE_COUNT = 160;
 const VISIBLE_THREAD_MESSAGE_CHUNK = 120;
 const BACKGROUND_DEEP_SYNC_DELAY_MS = 500;
+
+type AppPage = 'home' | 'chat' | 'treasury';
+
+const normalizeAppPathname = (pathname: string): string => {
+  const trimmed = pathname.trim();
+  if (!trimmed || trimmed === '/') {
+    return '/';
+  }
+
+  const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  const withoutTrailingSlash = withLeadingSlash.replace(/\/+$/, '');
+  return withoutTrailingSlash || '/';
+};
+
+const getPathForAppPage = (page: AppPage): string => {
+  if (page === 'home') {
+    return '/home';
+  }
+
+  if (page === 'treasury') {
+    return '/treasury';
+  }
+
+  return '/';
+};
+
+const resolveAppPageFromLocation = (): AppPage => {
+  if (typeof window === 'undefined') {
+    return 'chat';
+  }
+
+  const normalizedPathname = normalizeAppPathname(window.location.pathname).toLowerCase();
+  if (normalizedPathname === '/home') {
+    return 'home';
+  }
+
+  if (normalizedPathname === '/treasury') {
+    return 'treasury';
+  }
+
+  if (normalizedPathname === '/' || normalizedPathname === '/chat') {
+    return 'chat';
+  }
+
+  const normalizedHash = window.location.hash.replace(/^#/, '').trim().toLowerCase();
+  if (normalizedHash === 'home' || normalizedHash === 'chat' || normalizedHash === 'treasury') {
+    return normalizedHash as AppPage;
+  }
+
+  return 'chat';
+};
 
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
@@ -400,6 +455,7 @@ export default function App() {
   const [processingGroupAction, setProcessingGroupAction] = useState(false);
   const [syncingGroups, setSyncingGroups] = useState(false);
   const [error, setError] = useState<string>('');
+  const [activePage, setActivePage] = useState<AppPage>(() => resolveAppPageFromLocation());
   const [activeMobileView, setActiveMobileView] = useState<MobileView>('wallets');
   const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
   const [isMobileNav, setIsMobileNav] = useState<boolean>(() =>
@@ -650,7 +706,6 @@ export default function App() {
     setMyNickname
   });
   const {
-    activeBurnerWalletId,
     beginBurnerPinFlow,
     beginRevealBurnerBackup,
     burnerAddress,
@@ -676,7 +731,7 @@ export default function App() {
     setBurnerPinInput,
     setShowBurnerImportModal,
     setTopUpMetricsNonce,
-    setTopUpMultiplier,
+    setTopUpMessageTarget,
     showBurnerImportModal,
     showBurnerMnemonic,
     showBurnerPinModal,
@@ -684,14 +739,13 @@ export default function App() {
     switchActiveBurnerWallet,
     topUpBurnerWithWallet,
     topUpMetricsNonce,
-    topUpMultiplier
+    topUpMessageTarget
   } = useBurnerWallet({
     activeSignerSource,
     currentWalletKeyRef,
     ensureCotiNetwork,
     loadMyNicknameFromChainRef,
     preferredInjectedWalletOption,
-    resolveRequiredFeeForSendRef,
     runPostConnectDataSyncUntilAppliedRef,
     schedulePostUnlockRefresh,
     sessionOnboardInfo,
@@ -1284,12 +1338,12 @@ export default function App() {
     hasAesReady
   ]);
   const estimatedMessagesLeft = useMemo(() => {
-    if (requiredFeeWei === null || burnerBalanceWei === null || requiredFeeWei <= 0n) {
+    if (burnerBalanceWei === null || BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI <= 0n) {
       return null;
     }
 
-    return burnerBalanceWei / requiredFeeWei;
-  }, [requiredFeeWei, burnerBalanceWei]);
+    return burnerBalanceWei / BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI;
+  }, [burnerBalanceWei]);
   const parsedSwapAmount = useMemo(
     () => parseTokenAmountInput(swapAmountInput, rewardTokenDecimals),
     [swapAmountInput, rewardTokenDecimals]
@@ -1316,14 +1370,11 @@ export default function App() {
               ? `Shield to ${privateRewardTokenSymbol}`
               : `Unshield to ${rewardTokenSymbol}`;
   const topUpAmountLabel = useMemo(() => {
-    if (loadingTopUpQuote) {
-      return 'Calculating...';
-    }
     if (topUpAmountWei !== null) {
-      return `${formatCotiAmount(topUpAmountWei)} COTI`;
+      return `${formatCotiAmount(topUpAmountWei, 3)} COTI`;
     }
     return '--';
-  }, [loadingTopUpQuote, topUpAmountWei]);
+  }, [topUpAmountWei]);
   const activeTipTokenSymbol =
     tipTokenSelection === 'coti'
       ? TIP_NATIVE_TOKEN_SYMBOL
@@ -7601,6 +7652,95 @@ export default function App() {
     }
   }, [isConnected]);
 
+  const navigateToPage = useCallback((page: AppPage) => {
+    setActivePage(page);
+    if (typeof window !== 'undefined') {
+      const nextPath = getPathForAppPage(page);
+      const currentPath = normalizeAppPathname(window.location.pathname);
+      if (currentPath !== nextPath || window.location.hash) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.pathname = nextPath;
+        nextUrl.hash = '';
+        window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}`);
+      }
+    }
+  }, []);
+
+  const openPageInNewTab = useCallback(
+    (page: AppPage) => {
+      if (typeof window === 'undefined') {
+        navigateToPage(page);
+        return;
+      }
+
+      const nextUrl = new URL(window.location.href);
+      nextUrl.pathname = getPathForAppPage(page);
+      nextUrl.hash = '';
+
+      if (typeof document !== 'undefined' && document.body) {
+        const launchLink = document.createElement('a');
+        launchLink.href = nextUrl.toString();
+        launchLink.target = '_blank';
+        launchLink.rel = 'noopener noreferrer';
+        launchLink.style.display = 'none';
+        document.body.appendChild(launchLink);
+        launchLink.click();
+        document.body.removeChild(launchLink);
+        return;
+      }
+
+      window.open(nextUrl.toString(), '_blank', 'noopener,noreferrer');
+    },
+    [navigateToPage]
+  );
+
+  useEffect(() => {
+    const syncPageWithLocation = () => {
+      const nextPage = resolveAppPageFromLocation();
+      setActivePage(nextPage);
+
+      const canonicalPath = getPathForAppPage(nextPage);
+      const currentPath = normalizeAppPathname(window.location.pathname);
+      if (currentPath !== canonicalPath || window.location.hash) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.pathname = canonicalPath;
+        nextUrl.hash = '';
+        window.history.replaceState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}`);
+      }
+    };
+
+    syncPageWithLocation();
+    window.addEventListener('popstate', syncPageWithLocation);
+    window.addEventListener('hashchange', syncPageWithLocation);
+    return () => {
+      window.removeEventListener('popstate', syncPageWithLocation);
+      window.removeEventListener('hashchange', syncPageWithLocation);
+    };
+  }, []);
+
+  useEffect(() => {
+    setMobileLinksOpen(false);
+    if (activePage !== 'chat') {
+      setShowQuickActionsModal(false);
+      setMobileGroupOptionsOpen(false);
+      setShowBurnerImportModal(false);
+      closeBurnerPinModal();
+    }
+  }, [activePage, closeBurnerPinModal, setShowBurnerImportModal]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    document.title =
+      activePage === 'home'
+        ? 'ChainWhisper'
+        : activePage === 'chat'
+          ? 'ChainWhisper Chat'
+          : 'Treasury Data | ChainWhisper';
+  }, [activePage]);
+
   useEffect(() => {
     if (!mobileLinksOpen) {
       return;
@@ -7924,31 +8064,22 @@ export default function App() {
 
     if (!burnerAddress || !isWalletAddress(burnerAddress)) {
       setTopUpAmountWei(null);
-      setRequiredFeeWei(null);
       setBurnerBalanceWei(null);
       setLoadingTopUpQuote(false);
       return;
     }
 
     const loadTopUpAmount = async () => {
+      setTopUpAmountWei(calculateEstimatedBurnerTopUpAmount(topUpMessageTarget));
       setLoadingTopUpQuote(true);
       try {
-        const cotiEthers = await loadCotiEthersModule();
         const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
-        const [requiredFee, burnerBalance] = (await Promise.all([
-          readContract.feeAmount(),
-          readProvider.getBalance(burnerAddress)
-        ])) as [bigint, bigint];
+        const burnerBalance = (await readProvider.getBalance(burnerAddress)) as bigint;
         if (!cancelled) {
-          setRequiredFeeWei(requiredFee);
           setBurnerBalanceWei(burnerBalance);
-          setTopUpAmountWei(calculateTopUpAmount(requiredFee, topUpMultiplier));
         }
       } catch {
         if (!cancelled) {
-          setTopUpAmountWei(null);
-          setRequiredFeeWei(null);
           setBurnerBalanceWei(null);
         }
       } finally {
@@ -7963,7 +8094,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [burnerAddress, topUpMultiplier, topUpMetricsNonce]);
+  }, [burnerAddress, topUpMessageTarget, topUpMetricsNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -9024,20 +9155,32 @@ export default function App() {
       />
     </Suspense>
   ) : null;
-
-  return (
-    <div className={`app-shell mobile-view-${activeMobileView}`}>
-      <AppHeader
-        headerRef={topHeaderRef}
-        mobileLinksOpen={mobileLinksOpen}
-        isMobileNav={isMobileNav}
-        soundEnabled={soundEnabled}
-        onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
-        onToggleSound={handleToggleSound}
-        onCloseMobileLinks={() => setMobileLinksOpen(false)}
-        debugControl={debugControl}
-      />
-
+  const headerHomeAction =
+    activePage !== 'home' ? (
+      <button
+        type="button"
+        className="header-icon-btn"
+        onClick={() => navigateToPage('home')}
+        aria-label="Back to home"
+        title="Back to home"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          aria-hidden="true"
+          focusable="false"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            fill="currentColor"
+            d="M12 3.2 3.5 10v10.3h6.2v-5.8h4.6v5.8h6.2V10L12 3.2Zm0 2.6 6 4.8v7.7h-1.7v-5.8H7.7v5.8H6V10.6l6-4.8Z"
+          />
+        </svg>
+      </button>
+    ) : null;
+  const chatWorkspace = (
+    <>
       <div className="app-root">
         <WalletSidebar
           isConnected={isConnected}
@@ -9069,9 +9212,7 @@ export default function App() {
           connectionMethod={connectionMethod}
           connectingMethod={connectingMethod}
           connectingWalletLabel={connectingWalletLabel}
-          savedBurnerWalletCount={savedBurnerWalletCount}
           burnerWallets={burnerWallets}
-          currentBurnerWalletId={activeBurnerWalletId}
           getBurnerWalletDisplayName={getBurnerWalletDisplayName}
           onConnectInjectedWallet={connectAndOnboard}
           onSwitchBurnerWallet={switchActiveBurnerWallet}
@@ -9079,8 +9220,8 @@ export default function App() {
           burnerWalletSelectionValue={burnerWalletSelectionValue}
           burnerAddress={burnerAddress}
           topUpAmountWei={topUpAmountWei}
-          topUpMultiplier={topUpMultiplier}
-          onTopUpMultiplierChange={setTopUpMultiplier}
+          topUpMessageTarget={topUpMessageTarget}
+          onTopUpMessageTargetChange={setTopUpMessageTarget}
           loadingTopUpQuote={loadingTopUpQuote}
           burnerBalanceWei={burnerBalanceWei}
           estimatedMessagesLeft={estimatedMessagesLeft}
@@ -9117,260 +9258,255 @@ export default function App() {
           onBeginRevealBurnerBackup={beginRevealBurnerBackup}
         />
 
-      {isConnected ? (
-        <ContactsSidebar
-          nicknameEditorRef={nicknameEditorRef}
-          nicknameMaxBytes={nicknameMaxBytes}
-          hasAesReady={hasAesReady}
-          walletAddress={walletAddress}
-          onNicknameInputChange={setMyNickname}
-          onSaveNickname={() => {
-            saveMyNicknameOnChain().catch(() => {});
-          }}
-          hasUnreadConversations={hasUnreadConversations}
-          onMarkAllConversationsAsRead={markAllConversationsAsRead}
-          onForceSync={() => {
-            forceSyncAllData().catch(() => {});
-          }}
-          syncingHistory={syncingHistory}
-          syncingGroups={syncingGroups}
-          onOpenNewChat={() => {
-            setQuickActionTab('contact');
-            setShowQuickActionsModal(true);
-          }}
-          showHiddenContacts={showHiddenContacts}
-          onToggleShowHiddenContacts={() => setShowHiddenContacts((previous) => !previous)}
-          hiddenContactsCount={hiddenContactsCount}
-          hiddenContactsLabel={hiddenContactsLabel}
-          contactGroupPanelRatio={contactGroupPanelRatio}
-          visibleSortedContacts={visibleSortedContacts}
-          contactsListEmptyMessage={contactsListEmptyMessage}
-          activeContact={activeContact}
-          editingContactAddress={editingContactAddress}
-          editingContactName={editingContactName}
-          onEditingContactNameChange={setEditingContactName}
-          isConversationStateSyncPending={isConversationStateSyncPending}
-          messagesByContact={messagesByContact}
-          lastCopiedKey={lastCopiedKey}
-          unreadMap={unreadMap}
-          onCopyWithFeedback={copyWithFeedback}
-          onActivateContact={activateContact}
-          onStartRenameContact={startRenameContact}
-          onRemoveContact={removeContact}
-          onSaveRenamedContact={saveRenamedContact}
-          onCancelRenameContact={cancelRenameContact}
-          sortedGroupInvites={sortedGroupInvites}
-          onAcceptGroupInvite={(groupId) => {
-            acceptGroupInvite(groupId).catch(() => {});
-          }}
-          onDeclineGroupInvite={(groupId) => {
-            declineGroupInvite(groupId).catch(() => {});
-          }}
-          processingGroupAction={processingGroupAction}
-          sortedGroups={sortedGroups}
-          activeGroupId={activeGroupId}
-          messagesByGroup={messagesByGroup}
-          unreadGroupMap={unreadGroupMap}
-          onActivateGroup={activateGroup}
-          error={error}
-        />
-      ) : null}
+        {isConnected ? (
+          <ContactsSidebar
+            nicknameEditorRef={nicknameEditorRef}
+            nicknameMaxBytes={nicknameMaxBytes}
+            hasAesReady={hasAesReady}
+            walletAddress={walletAddress}
+            onNicknameInputChange={setMyNickname}
+            onSaveNickname={() => {
+              saveMyNicknameOnChain().catch(() => {});
+            }}
+            hasUnreadConversations={hasUnreadConversations}
+            onMarkAllConversationsAsRead={markAllConversationsAsRead}
+            onForceSync={() => {
+              forceSyncAllData().catch(() => {});
+            }}
+            syncingHistory={syncingHistory}
+            syncingGroups={syncingGroups}
+            onOpenNewChat={() => {
+              setQuickActionTab('contact');
+              setShowQuickActionsModal(true);
+            }}
+            showHiddenContacts={showHiddenContacts}
+            onToggleShowHiddenContacts={() => setShowHiddenContacts((previous) => !previous)}
+            hiddenContactsCount={hiddenContactsCount}
+            hiddenContactsLabel={hiddenContactsLabel}
+            contactGroupPanelRatio={contactGroupPanelRatio}
+            visibleSortedContacts={visibleSortedContacts}
+            contactsListEmptyMessage={contactsListEmptyMessage}
+            activeContact={activeContact}
+            editingContactAddress={editingContactAddress}
+            editingContactName={editingContactName}
+            onEditingContactNameChange={setEditingContactName}
+            isConversationStateSyncPending={isConversationStateSyncPending}
+            messagesByContact={messagesByContact}
+            lastCopiedKey={lastCopiedKey}
+            unreadMap={unreadMap}
+            onCopyWithFeedback={copyWithFeedback}
+            onActivateContact={activateContact}
+            onStartRenameContact={startRenameContact}
+            onRemoveContact={removeContact}
+            onSaveRenamedContact={saveRenamedContact}
+            onCancelRenameContact={cancelRenameContact}
+            sortedGroupInvites={sortedGroupInvites}
+            onAcceptGroupInvite={(groupId) => {
+              acceptGroupInvite(groupId).catch(() => {});
+            }}
+            onDeclineGroupInvite={(groupId) => {
+              declineGroupInvite(groupId).catch(() => {});
+            }}
+            processingGroupAction={processingGroupAction}
+            sortedGroups={sortedGroups}
+            activeGroupId={activeGroupId}
+            messagesByGroup={messagesByGroup}
+            unreadGroupMap={unreadGroupMap}
+            onActivateGroup={activateGroup}
+            error={error}
+          />
+        ) : null}
 
-      <main className="chat-panel">
-        <Suspense fallback={<div className="chat-placeholder">Loading conversation...</div>}>
-          {!isConnected ? (
-            <div className="chat-placeholder">Connect a wallet to view contacts and start messaging.</div>
-          ) : activeGroupId !== null ? (
-            <GroupChatPanel
-              activeGroupId={activeGroupId}
-              activeGroupMeta={activeGroupMeta}
-              isActiveGroupAdmin={isActiveGroupAdmin}
-              activeGroupMemberCount={activeGroupMemberCount}
-              activeGroupParticipants={activeGroupParticipants}
-              lastCopiedKey={lastCopiedKey}
-              onCopyWithFeedback={copyWithFeedback}
-              processingGroupAction={processingGroupAction}
-              onRemoveMember={removeMemberFromActiveGroup}
-              desktopJoinCodeList={desktopJoinCodeList}
-              desktopInviteMenu={desktopInviteMenu}
-              mobileInviteTools={mobileInviteTools}
-              desktopGroupActions={desktopGroupActions}
-              mobileGroupActions={mobileGroupActions}
-              isMobileNav={isMobileNav}
-              syncingGroups={syncingGroups}
-              mobileGroupOptionsOpen={mobileGroupOptionsOpen}
-              onToggleMobileGroupOptions={() => setMobileGroupOptionsOpen((previous) => !previous)}
-              onRefreshGroup={() => {
-                syncGroupData({ deep: true }).catch(() => {});
-              }}
-              chatMessagesRef={setChatMessagesContainerRef}
-              activeGroupMessages={visibleActiveGroupMessages}
-              isReactionOnlyMessage={isReactionOnlyMessage}
-              getReactionsForMessage={getReactionsForMessage}
-              reactionPickerMessageId={reactionPickerMessageId}
-              onToggleReactionPicker={(messageId) =>
-                setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
-              }
-              sendingReaction={sendingReaction}
-              onSendReaction={sendReactionToMessage}
-              replyingToMessage={replyingToMessage}
-              onReplyToMessage={setReplyingToMessage}
-              highlightedMessageId={highlightedMessageId}
-              messageElementRefs={messageElementRefs}
-              onJumpToReferencedMessage={jumpToReferencedMessage}
-              getReplyReferenceFallbackLabel={getReplyReferenceFallbackLabel}
-              walletAddress={walletAddress}
-              findContactNameForWalletAddress={findContactNameForWalletAddress}
-              replyingPreviewText={replyingPreviewText}
-              onCancelReply={() => setReplyingToMessage(null)}
-              tipComposerOpen={tipComposerOpen}
-              onToggleTipComposer={() => setTipComposerOpen((previous) => !previous)}
-              tipping={tipping}
-              tipTokenSelection={tipTokenSelection}
-              onTipTokenSelectionChange={setTipTokenSelection}
-              rewardTokenSymbol={rewardTokenSymbol}
-              privateRewardTokenSymbol={privateRewardTokenSymbol}
-              tipAmountInput={tipAmountInput}
-              onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
-              activeTipTokenSymbol={activeTipTokenSymbol}
-              tipAmountWeiFromInput={tipAmountWeiFromInput}
-              canSendGroupTipFromComposer={canSendGroupTipFromComposer}
-              tipAmountExceedsBalance={tipAmountExceedsBalance}
-              tipAmountSummaryLabel={tipAmountSummaryLabel}
-              tipBalanceSummaryLabel={tipBalanceSummaryLabel}
-              onSendTip={() => {
-                sendTipToActiveGroupMember(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
-              }}
-              groupTipRecipientAddress={groupTipRecipientAddress}
-              onGroupTipRecipientChange={setGroupTipRecipientAddress}
-              activeGroupTipRecipients={activeGroupTipRecipients}
-              selectedGroupTipRecipient={selectedGroupTipRecipient}
-              sendingGroupMessage={sendingGroupMessage}
-              composerRef={chatComposerRef}
-              onSendImage={(file) => {
-                sendGroupImageMessage(file).catch(() => {});
-              }}
-              uploadingImage={uploadingImage}
-              imageAttachDisabled={uploadingImage || sendingGroupMessage || processingGroupAction}
-              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
-              onSendMessage={() => {
-                sendGroupMessage().catch(() => {});
-              }}
-              maxMessageLength={MAX_MESSAGE_LENGTH}
-              onMessageInputChange={handleMessageInputChange}
-            />
-          ) : activeContact ? (
-            <DirectChatPanel
-              activeContact={activeContact}
-              activeContactMeta={activeContactMeta}
-              isSelfChat={isSelfChat}
-              activeConversationMuted={activeConversationMuted}
-              activeConversationHidden={activeConversationHidden}
-              activeConversationStateSyncPending={activeConversationStateSyncPending}
-              onToggleConversationMute={() => {
-                toggleConversationMuteForContact(activeContact).catch(() => {});
-              }}
-              onLoadFullConversationHistory={loadFullConversationHistory}
-              syncingHistory={syncingHistory}
-              chatMessagesRef={setChatMessagesContainerRef}
-              markConversationAsRead={markConversationAsRead}
-              loadingOlderHistory={loadingOlderHistory}
-              activeMessages={visibleActiveMessages}
-              isReactionOnlyMessage={isReactionOnlyMessage}
-              reactionPickerMessageId={reactionPickerMessageId}
-              onToggleReactionPicker={(messageId) =>
-                setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
-              }
-              sendingReaction={sendingReaction}
-              onSendReaction={sendReactionToMessage}
-              onReplyToMessage={setReplyingToMessage}
-              replyingToMessage={replyingToMessage}
-              highlightedMessageId={highlightedMessageId}
-              messageElementRefs={messageElementRefs}
-              getReactionsForMessage={getReactionsForMessage}
-              onJumpToReferencedMessage={jumpToReferencedMessage}
-              getReplyReferenceFallbackLabel={getReplyReferenceFallbackLabel}
-              tradeSnapshotsById={tradeSnapshotsById}
-              walletAddress={walletAddress}
-              processingTradeActionId={processingTradeActionId}
-              onAcceptTrade={acceptTradeOffer}
-              onDeclineTrade={declineTradeOffer}
-              onCounterTrade={prepareCounterTrade}
-              onCancelTrade={cancelTradeOffer}
-              replyingPreviewText={replyingPreviewText}
-              onCancelReply={() => setReplyingToMessage(null)}
-              tipComposerOpen={tipComposerOpen}
-              onToggleTipComposer={() => {
-                setTradeComposerOpen(false);
-                setTipComposerOpen((previous) => !previous);
-              }}
-              tipping={tipping}
-              tipTokenSelection={tipTokenSelection}
-              onTipTokenSelectionChange={setTipTokenSelection}
-              rewardTokenSymbol={rewardTokenSymbol}
-              privateRewardTokenSymbol={privateRewardTokenSymbol}
-              tipAmountInput={tipAmountInput}
-              onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
-              activeTipTokenSymbol={activeTipTokenSymbol}
-              tipAmountWeiFromInput={tipAmountWeiFromInput}
-              canSendTipFromComposer={canSendTipFromComposer}
-              tipAmountExceedsBalance={tipAmountExceedsBalance}
-              tipAmountSummaryLabel={tipAmountSummaryLabel}
-              tipBalanceSummaryLabel={tipBalanceSummaryLabel}
-              onSendTip={() => {
-                sendTipToActiveContact(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
-              }}
-              tradeComposerOpen={tradeComposerOpen}
-              tradeComposerContent={tradeComposerContent}
-              onToggleTradeComposer={() => {
-                setTipComposerOpen(false);
-                setTradeComposerOpen((previous) => {
-                  const nextOpen = !previous;
-                  if (nextOpen && tradeCounterParentId === null) {
-                    setTradeCounterContext(null);
-                    setTradeOfferAmountInput('');
-                    setTradeRequestAmountInput('');
-                    setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-                  }
-                  if (!nextOpen) {
-                    setTradeCounterParentId(null);
-                    setTradeCounterContext(null);
-                  }
-                  return nextOpen;
-                });
-              }}
-              composerRef={chatComposerRef}
-              isMobileNav={isMobileNav}
-              onSendImage={(file) => {
-                sendDirectImageMessage(file).catch(() => {});
-              }}
-              uploadingImage={uploadingImage}
-              imageAttachDisabled={uploadingImage || sending || tipping}
-              imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
-              onSendMessage={() => {
-                sendMessage().catch(() => {});
-              }}
-              maxMessageLength={MAX_MESSAGE_LENGTH}
-              onMessageInputChange={handleMessageInputChange}
-              sending={sending}
-              tipToggleDisabled={tipping || sending || uploadingImage || !activeContact || isSelfChat}
-              tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
-              tradeToggleDisabled={creatingTrade || tipping || sending || uploadingImage || !activeContact || isSelfChat}
-              tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
-            />
-          ) : (
-            <div className="chat-placeholder">Select a contact or group to start messaging.</div>
-          )}
-        </Suspense>
-      </main>
-
+        <main className="chat-panel">
+          <Suspense fallback={<div className="chat-placeholder">Loading conversation...</div>}>
+            {!isConnected ? (
+              <div className="chat-placeholder">Connect a wallet to view contacts and start messaging.</div>
+            ) : activeGroupId !== null ? (
+              <GroupChatPanel
+                activeGroupId={activeGroupId!}
+                activeGroupMeta={activeGroupMeta}
+                isActiveGroupAdmin={isActiveGroupAdmin}
+                activeGroupMemberCount={activeGroupMemberCount}
+                activeGroupParticipants={activeGroupParticipants}
+                lastCopiedKey={lastCopiedKey}
+                onCopyWithFeedback={copyWithFeedback}
+                processingGroupAction={processingGroupAction}
+                onRemoveMember={removeMemberFromActiveGroup}
+                desktopJoinCodeList={desktopJoinCodeList}
+                desktopInviteMenu={desktopInviteMenu}
+                mobileInviteTools={mobileInviteTools}
+                desktopGroupActions={desktopGroupActions}
+                mobileGroupActions={mobileGroupActions}
+                isMobileNav={isMobileNav}
+                syncingGroups={syncingGroups}
+                mobileGroupOptionsOpen={mobileGroupOptionsOpen}
+                onToggleMobileGroupOptions={() => setMobileGroupOptionsOpen((previous) => !previous)}
+                onRefreshGroup={() => {
+                  syncGroupData({ deep: true }).catch(() => {});
+                }}
+                chatMessagesRef={setChatMessagesContainerRef}
+                activeGroupMessages={visibleActiveGroupMessages}
+                isReactionOnlyMessage={isReactionOnlyMessage}
+                getReactionsForMessage={getReactionsForMessage}
+                reactionPickerMessageId={reactionPickerMessageId}
+                onToggleReactionPicker={(messageId) =>
+                  setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
+                }
+                sendingReaction={sendingReaction}
+                onSendReaction={sendReactionToMessage}
+                replyingToMessage={replyingToMessage}
+                onReplyToMessage={setReplyingToMessage}
+                highlightedMessageId={highlightedMessageId}
+                messageElementRefs={messageElementRefs}
+                onJumpToReferencedMessage={jumpToReferencedMessage}
+                getReplyReferenceFallbackLabel={getReplyReferenceFallbackLabel}
+                walletAddress={walletAddress}
+                findContactNameForWalletAddress={findContactNameForWalletAddress}
+                replyingPreviewText={replyingPreviewText}
+                onCancelReply={() => setReplyingToMessage(null)}
+                tipComposerOpen={tipComposerOpen}
+                onToggleTipComposer={() => setTipComposerOpen((previous) => !previous)}
+                tipping={tipping}
+                tipTokenSelection={tipTokenSelection}
+                onTipTokenSelectionChange={setTipTokenSelection}
+                rewardTokenSymbol={rewardTokenSymbol}
+                privateRewardTokenSymbol={privateRewardTokenSymbol}
+                tipAmountInput={tipAmountInput}
+                onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
+                activeTipTokenSymbol={activeTipTokenSymbol}
+                tipAmountWeiFromInput={tipAmountWeiFromInput}
+                canSendGroupTipFromComposer={canSendGroupTipFromComposer}
+                tipAmountExceedsBalance={tipAmountExceedsBalance}
+                tipAmountSummaryLabel={tipAmountSummaryLabel}
+                tipBalanceSummaryLabel={tipBalanceSummaryLabel}
+                onSendTip={() => {
+                  sendTipToActiveGroupMember(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
+                }}
+                groupTipRecipientAddress={groupTipRecipientAddress}
+                onGroupTipRecipientChange={setGroupTipRecipientAddress}
+                activeGroupTipRecipients={activeGroupTipRecipients}
+                selectedGroupTipRecipient={selectedGroupTipRecipient}
+                sendingGroupMessage={sendingGroupMessage}
+                composerRef={chatComposerRef}
+                onSendImage={(file) => {
+                  sendGroupImageMessage(file).catch(() => {});
+                }}
+                uploadingImage={uploadingImage}
+                imageAttachDisabled={uploadingImage || sendingGroupMessage || processingGroupAction}
+                imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
+                onSendMessage={() => {
+                  sendGroupMessage().catch(() => {});
+                }}
+                maxMessageLength={MAX_MESSAGE_LENGTH}
+                onMessageInputChange={handleMessageInputChange}
+              />
+            ) : activeContact ? (
+              <DirectChatPanel
+                activeContact={activeContact!}
+                activeContactMeta={activeContactMeta}
+                isSelfChat={isSelfChat}
+                activeConversationMuted={activeConversationMuted}
+                activeConversationHidden={activeConversationHidden}
+                activeConversationStateSyncPending={activeConversationStateSyncPending}
+                onToggleConversationMute={() => {
+                  toggleConversationMuteForContact(activeContact!).catch(() => {});
+                }}
+                onLoadFullConversationHistory={loadFullConversationHistory}
+                syncingHistory={syncingHistory}
+                chatMessagesRef={setChatMessagesContainerRef}
+                markConversationAsRead={markConversationAsRead}
+                loadingOlderHistory={loadingOlderHistory}
+                activeMessages={visibleActiveMessages}
+                isReactionOnlyMessage={isReactionOnlyMessage}
+                reactionPickerMessageId={reactionPickerMessageId}
+                onToggleReactionPicker={(messageId) =>
+                  setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
+                }
+                sendingReaction={sendingReaction}
+                onSendReaction={sendReactionToMessage}
+                onReplyToMessage={setReplyingToMessage}
+                replyingToMessage={replyingToMessage}
+                highlightedMessageId={highlightedMessageId}
+                messageElementRefs={messageElementRefs}
+                getReactionsForMessage={getReactionsForMessage}
+                onJumpToReferencedMessage={jumpToReferencedMessage}
+                getReplyReferenceFallbackLabel={getReplyReferenceFallbackLabel}
+                tradeSnapshotsById={tradeSnapshotsById}
+                walletAddress={walletAddress}
+                processingTradeActionId={processingTradeActionId}
+                onAcceptTrade={acceptTradeOffer}
+                onDeclineTrade={declineTradeOffer}
+                onCounterTrade={prepareCounterTrade}
+                onCancelTrade={cancelTradeOffer}
+                replyingPreviewText={replyingPreviewText}
+                onCancelReply={() => setReplyingToMessage(null)}
+                tipComposerOpen={tipComposerOpen}
+                onToggleTipComposer={() => {
+                  setTradeComposerOpen(false);
+                  setTipComposerOpen((previous) => !previous);
+                }}
+                tipping={tipping}
+                tipTokenSelection={tipTokenSelection}
+                onTipTokenSelectionChange={setTipTokenSelection}
+                rewardTokenSymbol={rewardTokenSymbol}
+                privateRewardTokenSymbol={privateRewardTokenSymbol}
+                tipAmountInput={tipAmountInput}
+                onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
+                activeTipTokenSymbol={activeTipTokenSymbol}
+                tipAmountWeiFromInput={tipAmountWeiFromInput}
+                canSendTipFromComposer={canSendTipFromComposer}
+                tipAmountExceedsBalance={tipAmountExceedsBalance}
+                tipAmountSummaryLabel={tipAmountSummaryLabel}
+                tipBalanceSummaryLabel={tipBalanceSummaryLabel}
+                onSendTip={() => {
+                  sendTipToActiveContact(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
+                }}
+                tradeComposerOpen={tradeComposerOpen}
+                tradeComposerContent={tradeComposerContent}
+                onToggleTradeComposer={() => {
+                  setTipComposerOpen(false);
+                  setTradeComposerOpen((previous) => {
+                    const nextOpen = !previous;
+                    if (nextOpen && tradeCounterParentId === null) {
+                      setTradeCounterContext(null);
+                      setTradeOfferAmountInput('');
+                      setTradeRequestAmountInput('');
+                      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+                    }
+                    if (!nextOpen) {
+                      setTradeCounterParentId(null);
+                      setTradeCounterContext(null);
+                    }
+                    return nextOpen;
+                  });
+                }}
+                composerRef={chatComposerRef}
+                isMobileNav={isMobileNav}
+                onSendImage={(file) => {
+                  sendDirectImageMessage(file).catch(() => {});
+                }}
+                uploadingImage={uploadingImage}
+                imageAttachDisabled={uploadingImage || sending || tipping}
+                imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
+                onSendMessage={() => {
+                  sendMessage().catch(() => {});
+                }}
+                maxMessageLength={MAX_MESSAGE_LENGTH}
+                onMessageInputChange={handleMessageInputChange}
+                sending={sending}
+                tipToggleDisabled={tipping || sending || uploadingImage || !activeContact || isSelfChat}
+                tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
+                tradeToggleDisabled={creatingTrade || tipping || sending || uploadingImage || !activeContact || isSelfChat}
+                tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
+              />
+            ) : (
+              <div className="chat-placeholder">Select a contact or group to start messaging.</div>
+            )}
+          </Suspense>
+        </main>
       </div>
 
-      <MobileBottomNav
-        activeMobileView={activeMobileView}
-        isConnected={isConnected}
-        onSelectView={setActiveMobileView}
-      />
+      <MobileBottomNav activeMobileView={activeMobileView} isConnected={isConnected} onSelectView={setActiveMobileView} />
 
       {showQuickActionsModal ? (
         <Suspense fallback={null}>
@@ -9430,7 +9566,70 @@ export default function App() {
           />
         </Suspense>
       ) : null}
+    </>
+  );
+
+  if (activePage === 'home') {
+    return (
+      <div className="app-shell app-shell-landing">
+        <AppHeader
+          headerRef={topHeaderRef}
+          mobileLinksOpen={mobileLinksOpen}
+          isMobileNav={isMobileNav}
+          onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+          onCloseMobileLinks={() => setMobileLinksOpen(false)}
+          links={COTI_ECOSYSTEM_LINKS}
+        />
+        <HomePage
+          onLaunchChat={() => openPageInNewTab('chat')}
+          onOpenTreasury={() => navigateToPage('treasury')}
+          isConnected={isConnected}
+        />
+      </div>
+    );
+  }
+
+  if (activePage === 'treasury') {
+    return (
+      <div className="app-shell app-shell-landing">
+        <AppHeader
+          headerRef={topHeaderRef}
+          mobileLinksOpen={mobileLinksOpen}
+          isMobileNav={isMobileNav}
+          onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+          onCloseMobileLinks={() => setMobileLinksOpen(false)}
+          brandActions={headerHomeAction}
+        />
+        <Suspense
+          fallback={
+            <main className="treasury-shell">
+              <section className="treasury-panel">
+                <p className="treasury-state-message">Loading Treasury Data...</p>
+              </section>
+            </main>
+          }
+        >
+          <TreasuryPage isCompactLayout={isMobileNav} />
+        </Suspense>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`app-shell mobile-view-${activeMobileView}`}>
+      <AppHeader
+        headerRef={topHeaderRef}
+        mobileLinksOpen={mobileLinksOpen}
+        isMobileNav={isMobileNav}
+        soundEnabled={soundEnabled}
+        onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+        onToggleSound={handleToggleSound}
+        onCloseMobileLinks={() => setMobileLinksOpen(false)}
+        debugControl={debugControl}
+        brandActions={headerHomeAction}
+        showSoundToggle
+      />
+      {chatWorkspace}
     </div>
   );
 }
-

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
+  BURNER_TOP_UP_DEFAULT_MESSAGE_TARGET,
   BURNER_ONBOARD_TIMEOUT_MS,
   BURNER_PIN_MIN_LENGTH,
-  calculateTopUpAmount,
+  calculateEstimatedBurnerTopUpAmount,
   COTI_NETWORK,
   createBurnerWalletVault,
   createCotiBrowserProvider,
@@ -41,7 +42,6 @@ type UseBurnerWalletArgs = {
   ensureCotiNetwork: (provider: Eip1193Provider) => Promise<void>;
   loadMyNicknameFromChainRef: MutableRefObject<(address: string) => Promise<string>>;
   preferredInjectedWalletOption: InjectedWalletOption | null;
-  resolveRequiredFeeForSendRef: MutableRefObject<() => Promise<bigint>>;
   runPostConnectDataSyncUntilAppliedRef: MutableRefObject<(address: string) => Promise<void>>;
   schedulePostUnlockRefresh: () => void;
   sessionOnboardInfo: Record<string, OnboardInfo>;
@@ -66,7 +66,6 @@ export function useBurnerWallet({
   ensureCotiNetwork,
   loadMyNicknameFromChainRef,
   preferredInjectedWalletOption,
-  resolveRequiredFeeForSendRef,
   runPostConnectDataSyncUntilAppliedRef,
   schedulePostUnlockRefresh,
   sessionOnboardInfo,
@@ -100,7 +99,7 @@ export function useBurnerWallet({
   const [initializingBurner, setInitializingBurner] = useState(false);
   const [burnerNeedsFunding, setBurnerNeedsFunding] = useState(false);
   const [burnerBalanceWei, setBurnerBalanceWei] = useState<bigint | null>(null);
-  const [topUpMultiplier, setTopUpMultiplier] = useState(0);
+  const [topUpMessageTarget, setTopUpMessageTarget] = useState(BURNER_TOP_UP_DEFAULT_MESSAGE_TARGET);
   const [topUpMetricsNonce, setTopUpMetricsNonce] = useState(0);
 
   const burnerWalletRef = useRef<Wallet | null>(null);
@@ -686,8 +685,7 @@ export function useBurnerWallet({
       const funderSigner = await browserProvider.getSigner();
       let topUpAmount = topUpAmountWei;
       if (topUpAmount === null) {
-        const requiredFee = await resolveRequiredFeeForSendRef.current();
-        topUpAmount = calculateTopUpAmount(requiredFee, topUpMultiplier);
+        topUpAmount = calculateEstimatedBurnerTopUpAmount(topUpMessageTarget);
       }
 
       if (topUpAmount === null) {
@@ -721,12 +719,11 @@ export function useBurnerWallet({
     ensureCotiNetwork,
     initializeBurnerWallet,
     preferredInjectedWalletOption,
-    resolveRequiredFeeForSendRef,
     setError,
     setSelectedInjectedWalletId,
     setStatus,
     topUpAmountWei,
-    topUpMultiplier,
+    topUpMessageTarget,
     walletAddress
   ]);
 
@@ -768,7 +765,7 @@ export function useBurnerWallet({
     setBurnerPinInput,
     setShowBurnerImportModal,
     setTopUpMetricsNonce,
-    setTopUpMultiplier,
+    setTopUpMessageTarget,
     showBurnerImportModal,
     showBurnerMnemonic,
     showBurnerPinModal,
@@ -776,7 +773,7 @@ export function useBurnerWallet({
     switchActiveBurnerWallet,
     topUpBurnerWithWallet,
     topUpMetricsNonce,
-    topUpMultiplier,
+    topUpMessageTarget,
     burnerMnemonicBackup
   };
 }
