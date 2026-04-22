@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChainWhisper</title>
+    <script>
+      (function () {
+        const redirectUrl = new URL(window.location.origin + '/');
+        redirectUrl.searchParams.set('p', window.location.pathname);
+
+        const currentSearch = new URLSearchParams(window.location.search);
+        currentSearch.forEach((value, key) => {
+          redirectUrl.searchParams.append(key, value);
+        });
+
+        redirectUrl.hash = window.location.hash;
+        window.location.replace(redirectUrl.toString());
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

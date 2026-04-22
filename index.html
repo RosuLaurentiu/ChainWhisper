@@ -3,6 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function () {
+        const currentUrl = new URL(window.location.href);
+        const restoredPath = currentUrl.searchParams.get('p');
+        if (!restoredPath) {
+          return;
+        }
+
+        const normalizedPath = restoredPath.startsWith('/') ? restoredPath : `/${restoredPath}`;
+        currentUrl.searchParams.delete('p');
+        const nextSearch = currentUrl.searchParams.toString();
+        window.history.replaceState(
+          null,
+          '',
+          `${normalizedPath}${nextSearch ? `?${nextSearch}` : ''}${currentUrl.hash}`
+        );
+      })();
+    </script>
     <title>COTI Messaging</title>
     <link rel="icon" type="image/png" href="/src/assets/favicon.png" />
   </head>
