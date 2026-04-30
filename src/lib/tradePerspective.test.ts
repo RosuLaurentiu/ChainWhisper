@@ -49,11 +49,11 @@ describe('resolveTradePerspective', () => {
     expect(perspective.requestSide).toMatchObject({ label: 'You send', tone: 'send' });
   });
 
-  it('uses neutral labels when no wallet role is known', () => {
+  it('labels maker terms when no wallet role is known', () => {
     const perspective = resolveTradePerspective(trade(), '');
     expect(perspective.role).toBe('unknown');
-    expect(perspective.offerSide).toMatchObject({ label: 'Maker sends', tone: 'neutral' });
-    expect(perspective.requestSide).toMatchObject({ label: 'Taker sends', tone: 'neutral' });
+    expect(perspective.offerSide).toMatchObject({ label: 'Maker sends', tone: 'send' });
+    expect(perspective.requestSide).toMatchObject({ label: 'Maker wants', tone: 'receive' });
   });
 });
 

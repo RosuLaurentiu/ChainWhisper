@@ -6703,7 +6703,7 @@ body {
 
 .trade-compose-expiry {
   display: grid;
-  grid-template-columns: auto 64px;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 5px;
   align-items: center;
   min-width: 0;
@@ -6711,11 +6711,48 @@ body {
 
 .standalone-trade-create-panel .trade-compose-expiry,
 .p2p-counter-panel .trade-compose-expiry {
-  grid-template-columns: auto minmax(72px, 96px);
+  grid-template-columns: auto minmax(0, 1fr);
   border: 1px solid rgba(74, 64, 112, 0.58);
   border-radius: 12px;
   background: rgba(10, 10, 18, 0.5);
   padding: 8px 10px;
+}
+
+.trade-compose-expiry-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(54px, 72px) auto;
+  gap: 6px;
+  align-items: center;
+  justify-content: end;
+}
+
+.trade-compose-expiry-controls-single {
+  grid-template-columns: minmax(54px, 72px);
+}
+
+.trade-compose-expiry-toggle {
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(10, 10, 18, 0.62);
+  color: var(--muted);
+  padding: 6px 9px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.trade-compose-expiry-toggle.active {
+  border-color: rgba(139, 92, 246, 0.58);
+  background: rgba(139, 92, 246, 0.18);
+  color: #f5f3ff;
+}
+
+.trade-compose-expiry-toggle:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 
 .trade-compose-send {
@@ -6738,7 +6775,7 @@ body {
   font-weight: 800;
 }
 
-.trade-compose-expiry > .trade-compose-input {
+.trade-compose-expiry-controls > .trade-compose-input {
   min-width: 0;
   text-align: center;
   min-height: 32px;
@@ -7629,15 +7666,26 @@ body {
 
   .trade-compose-expiry {
     grid-area: expiry;
-    grid-template-columns: auto 58px;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
     align-items: center;
   }
 
-  .trade-compose-expiry > .trade-compose-input {
+  .trade-compose-expiry-controls {
+    grid-template-columns: minmax(46px, 58px) minmax(0, 1fr);
+    justify-content: stretch;
+  }
+
+  .trade-compose-expiry-controls > .trade-compose-input {
     min-height: 30px;
     padding-block: 5px;
     text-align: center;
+  }
+
+  .trade-compose-expiry-toggle {
+    min-height: 30px;
+    padding-inline: 7px;
+    font-size: 0.68rem;
   }
 
   .trade-compose-fee-toggle {

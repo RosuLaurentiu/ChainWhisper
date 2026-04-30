@@ -43,6 +43,8 @@ type TradeComposerPanelProps = {
   tradeRateLabel?: string;
   expiresHoursInput: string;
   onExpiresHoursInputChange: (value: string) => void;
+  expiresNever?: boolean;
+  onExpiresNeverChange?: (value: boolean) => void;
   expiryError?: string;
   sending: boolean;
   canSend: boolean;
@@ -120,6 +122,8 @@ export default function TradeComposerPanel({
   tradeRateLabel,
   expiresHoursInput,
   onExpiresHoursInputChange,
+  expiresNever = false,
+  onExpiresNeverChange,
   expiryError,
   sending,
   canSend,
@@ -396,16 +400,36 @@ export default function TradeComposerPanel({
             {feeError ? <p className="trade-compose-field-error trade-compose-fee-error">{feeError}</p> : null}
           </div>
           <label className="trade-compose-expiry">
-            <span>Expiry (hours)</span>
-            <input
-              className="trade-compose-input"
-              type="text"
-              inputMode="numeric"
-              value={expiresHoursInput}
-              onChange={(event) => onExpiresHoursInputChange(event.target.value)}
-              disabled={sending}
-              aria-invalid={expiryError ? 'true' : 'false'}
-            />
+            <span>Expiration</span>
+            <div
+              className={
+                onExpiresNeverChange
+                  ? 'trade-compose-expiry-controls'
+                  : 'trade-compose-expiry-controls trade-compose-expiry-controls-single'
+              }
+            >
+              <input
+                className="trade-compose-input"
+                type="text"
+                inputMode="numeric"
+                value={expiresHoursInput}
+                onChange={(event) => onExpiresHoursInputChange(event.target.value)}
+                disabled={sending || expiresNever}
+                aria-invalid={expiryError ? 'true' : 'false'}
+                aria-label="Expiry in hours"
+              />
+              {onExpiresNeverChange ? (
+                <button
+                  type="button"
+                  className={expiresNever ? 'trade-compose-expiry-toggle active' : 'trade-compose-expiry-toggle'}
+                  onClick={() => onExpiresNeverChange(!expiresNever)}
+                  disabled={sending}
+                  aria-pressed={expiresNever}
+                >
+                  No expiry
+                </button>
+              ) : null}
+            </div>
           </label>
           <button
             type="button"

@@ -1990,7 +1990,8 @@ export const parseTradeOfferMessagePayload = (text: string): TradeOfferMessagePa
     (parsed.version !== 1 && parsed.version !== 2) ||
     tradeId <= 0 ||
     createdAt <= 0 ||
-    expiresAt <= 0 ||
+    parsed.expiresAt === undefined ||
+    parsed.expiresAt === null ||
     !escrowContract ||
     !maker ||
     !taker

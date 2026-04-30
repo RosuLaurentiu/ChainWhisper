@@ -76,7 +76,7 @@ const resolveTradeStatus = (
     return latestResponse.action === 'countered' ? 'Countered' : toStatusLabel(latestResponse.action);
   }
 
-  if (offer.expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (offer.expiresAt > 0 && offer.expiresAt <= Math.floor(Date.now() / 1000)) {
     return 'Expired';
   }
 
@@ -414,7 +414,7 @@ export default function TradeOfferCard({
 
       <div className="trade-card-meta-inline">
         <span>Created {formatMessageTimestamp(createdAt)}</span>
-        {showExpiryAt ? <span>Expires {formatMessageTimestamp(expiresAt)}</span> : null}
+        {showExpiryAt ? <span>Expires {expiresAt > 0 ? formatMessageTimestamp(expiresAt) : 'No expiration'}</span> : null}
         {!showExpiryAt && latestResponse ? <span>Updated {formatMessageTimestamp(latestResponse.createdAt)}</span> : null}
       </div>
     </div>

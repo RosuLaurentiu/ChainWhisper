@@ -62,12 +62,12 @@ export const resolveTradePerspective = (
   const offerSide: TradePerspectiveSide = {
     asset: trade.offer,
     label: isMaker ? 'You send' : showTakerPerspective ? 'You receive' : 'Maker sends',
-    tone: isMaker ? 'send' : showTakerPerspective ? 'receive' : 'neutral'
+    tone: isMaker ? 'send' : showTakerPerspective ? 'receive' : 'send'
   };
   const requestSide: TradePerspectiveSide = {
     asset: trade.request,
-    label: isMaker ? 'You receive' : showTakerPerspective ? 'You send' : 'Taker sends',
-    tone: isMaker ? 'receive' : showTakerPerspective ? 'send' : 'neutral'
+    label: isMaker ? 'You receive' : showTakerPerspective ? 'You send' : 'Maker wants',
+    tone: isMaker ? 'receive' : showTakerPerspective ? 'send' : 'receive'
   };
   const sendSide = isMaker ? offerSide : showTakerPerspective ? requestSide : null;
   const receiveSide = isMaker ? requestSide : showTakerPerspective ? offerSide : null;

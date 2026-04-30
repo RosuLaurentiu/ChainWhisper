@@ -231,6 +231,8 @@ const sortTrades = (trades: TradeSnapshot[]): TradeSnapshot[] =>
     return right.tradeId - left.tradeId;
   });
 
+const formatTradeExpiryText = (expiresAt: number): string => (expiresAt > 0 ? formatMessageTimestamp(expiresAt) : 'No expiration');
+
 const resolveTradeLinkInput = (value: string): { tradeId: number; accessSecret?: string } | null => {
   const raw = value.trim();
   if (!raw) {
@@ -390,6 +392,7 @@ export default function P2PTradingPage() {
   const [tradeOfferAmountInput, setTradeOfferAmountInput] = useState('');
   const [tradeRequestAmountInput, setTradeRequestAmountInput] = useState('');
   const [tradeExpiryHoursInput, setTradeExpiryHoursInput] = useState(DEFAULT_TRADE_EXPIRY_HOURS);
+  const [tradeHasNoExpiry, setTradeHasNoExpiry] = useState(false);
   const [customTradeTokenInfoByAddress, setCustomTradeTokenInfoByAddress] = useState<Record<string, TradeCustomTokenInfo>>({});
   const [nativeBalanceWei, setNativeBalanceWei] = useState<bigint | null>(null);
   const [rewardTokenBalanceWei, setRewardTokenBalanceWei] = useState<bigint | null>(null);
@@ -885,6 +888,7 @@ export default function P2PTradingPage() {
         tradeOfferAmountInput,
         tradeRequestAmountInput,
         tradeExpiryHoursInput,
+        tradeHasNoExpiry,
         rewardTokenSymbol,
         rewardTokenDecimals,
         privateRewardTokenSymbol,
@@ -908,6 +912,7 @@ export default function P2PTradingPage() {
       rewardTokenDecimals,
       rewardTokenSymbol,
       tradeExpiryHoursInput,
+      tradeHasNoExpiry,
       tradeFeeModeSelection,
       tradeOfferAmountInput,
       tradeOfferCustomTokenAddress,
@@ -1091,6 +1096,7 @@ export default function P2PTradingPage() {
       setTradeOfferAmountInput(formatTradeAmountInput(snapshot.request));
       setTradeRequestAmountInput(formatTradeAmountInput(snapshot.offer));
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeHasNoExpiry(false);
       setTradeActionError('');
       openTradeSnapshot(snapshot);
     },
@@ -1139,7 +1145,7 @@ export default function P2PTradingPage() {
       const signer = await getTradeSigner(isPrivateTradeAsset(offerToken));
       const nativeFeeWei = tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
       const tokenFeeAmount = tradeFeeModeSelection === 'token' ? await resolveRequiredTokenFeeForTradeCreate() : 0n;
-      const expiresAt = Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
+      const expiresAt = tradeHasNoExpiry ? 0 : Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
       const takerAddress =
         counterParentTrade?.maker ?? (tradeVisibility === 'direct' ? directTradeRecipientNormalized : ZERO_TRADE_TAKER_ADDRESS);
       const { tradeId } = await createTradeOnChain({
@@ -1184,6 +1190,7 @@ export default function P2PTradingPage() {
       setTradeOfferAmountInput('');
       setTradeRequestAmountInput('');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeHasNoExpiry(false);
       openTrade(tradeId, accessSecret || undefined);
       await Promise.all([loadWalletBalances(), refreshMyTrades(), tradeVisibility === 'public' ? refreshPublicTrades() : Promise.resolve()]);
     } catch (error) {
@@ -1209,6 +1216,7 @@ export default function P2PTradingPage() {
     resolveRequiredTokenFeeForTradeCreate,
     tradeComposerModel,
     tradeFeeModeSelection,
+    tradeHasNoExpiry,
     tradeVisibility,
     walletAddress
   ]);
@@ -1572,6 +1580,8 @@ export default function P2PTradingPage() {
       tradeRateLabel={tradeComposerModel.tradeRateLabel}
       expiresHoursInput={tradeExpiryHoursInput}
       onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
+      expiresNever={tradeHasNoExpiry}
+      onExpiresNeverChange={setTradeHasNoExpiry}
       expiryError={tradeComposerModel.tradeComposerFieldErrors.expiry}
       sending={creatingTrade}
       canSend={tradeComposerModel.canSendTradeOffer}
@@ -1665,7 +1675,7 @@ export default function P2PTradingPage() {
           </div>
           <div>
             <span>Expires</span>
-            <strong>{formatMessageTimestamp(trade.expiresAt)}</strong>
+            <strong>{formatTradeExpiryText(trade.expiresAt)}</strong>
           </div>
           <div>
             <span>Access</span>
@@ -1790,7 +1800,7 @@ export default function P2PTradingPage() {
   const walletPrimaryButtonCopied = lastCopiedKey === walletAddressCopyKey;
   const walletPrimaryButtonIsAddress = Boolean(walletAddress && onCotiNetwork && walletHasAes);
   const filteredPublicTrades = useMemo(
-    () => publicTrades.filter((trade) => matchesTradeSearch(trade, tradeSearchInput)),
+    () => publicTrades.filter((trade) => trade.status === 'open' && matchesTradeSearch(trade, tradeSearchInput)),
     [publicTrades, tradeSearchInput]
   );
   const filteredMyTrades = useMemo(

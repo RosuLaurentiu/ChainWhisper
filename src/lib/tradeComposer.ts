@@ -40,6 +40,7 @@ type DeriveTradeComposerModelParams = {
   tradeOfferAmountInput: string;
   tradeRequestAmountInput: string;
   tradeExpiryHoursInput: string;
+  tradeHasNoExpiry?: boolean;
   rewardTokenSymbol: string;
   rewardTokenDecimals: number;
   privateRewardTokenSymbol: string;
@@ -174,6 +175,7 @@ export const deriveTradeComposerModel = ({
   tradeOfferAmountInput,
   tradeRequestAmountInput,
   tradeExpiryHoursInput,
+  tradeHasNoExpiry = false,
   rewardTokenSymbol,
   rewardTokenDecimals,
   privateRewardTokenSymbol,
@@ -280,7 +282,7 @@ export const deriveTradeComposerModel = ({
     ? `${COTI_NETWORK.blockExplorerUrl}/token/${selectedTradeRequestToken.tokenAddress}`
     : undefined;
 
-  const normalizedExpiryInput = tradeExpiryHoursInput.trim();
+  const normalizedExpiryInput = tradeHasNoExpiry ? '0' : tradeExpiryHoursInput.trim();
   const parsedTradeExpiryHours = /^\d+$/.test(normalizedExpiryInput)
     ? Number.parseInt(normalizedExpiryInput, 10)
     : 0;
@@ -379,7 +381,7 @@ export const deriveTradeComposerModel = ({
     }
   }
 
-  if (safeParsedTradeExpiryHours < 1 || safeParsedTradeExpiryHours > 720) {
+  if (!tradeHasNoExpiry && (safeParsedTradeExpiryHours < 1 || safeParsedTradeExpiryHours > 720)) {
     tradeComposerFieldErrors.expiry = 'Set an expiry between 1 and 720 hours.';
   }
 
