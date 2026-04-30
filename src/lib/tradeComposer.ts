@@ -78,6 +78,7 @@ export type TradeComposerModel = {
   canUseTradeOfferMax: boolean;
   tradePreviewLabel: string;
   tradeRateLabel: string;
+  tradeReverseRateLabel: string;
   tradeFeeSummaryLabel: string;
   tradeOfferCustomMetaLabel: string;
   tradeRequestCustomMetaLabel: string;
@@ -455,6 +456,7 @@ export const deriveTradeComposerModel = ({
       : `Send ${tradeOfferAmountSummaryLabel} for ${tradeRequestAmountSummaryLabel}`;
 
   let tradeRateLabel = '';
+  let tradeReverseRateLabel = '';
   if (
     selectedTradeOfferToken &&
     selectedTradeRequestToken &&
@@ -471,8 +473,16 @@ export const deriveTradeComposerModel = ({
         selectedTradeRequestToken.decimals,
         6
       )} ${selectedTradeRequestToken.symbol}`;
+      const scaledOfferAmount =
+        (parsedTradeOfferAmountWei * 10n ** BigInt(selectedTradeRequestToken.decimals)) / parsedTradeRequestAmountWei;
+      tradeReverseRateLabel = `1 ${selectedTradeRequestToken.symbol} \u2248 ${formatTokenAmount(
+        scaledOfferAmount,
+        selectedTradeOfferToken.decimals,
+        6
+      )} ${selectedTradeOfferToken.symbol}`;
     } catch {
       tradeRateLabel = '';
+      tradeReverseRateLabel = '';
     }
   }
 
@@ -508,6 +518,7 @@ export const deriveTradeComposerModel = ({
     canUseTradeOfferMax,
     tradePreviewLabel,
     tradeRateLabel,
+    tradeReverseRateLabel,
     tradeFeeSummaryLabel,
     tradeOfferCustomMetaLabel: buildTradeCustomMetaLabel(
       normalizedTradeOfferCustomTokenAddress,

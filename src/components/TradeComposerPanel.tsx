@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { COTI_NETWORK, TRADE_ESCROW_CONTRACT_ADDRESS, type TradeFeeModeSelection } from '../lib/appShared';
 
 export type TradeComposerTokenOption = {
@@ -41,6 +42,7 @@ type TradeComposerPanelProps = {
   swapDisabled?: boolean;
   tradePreviewLabel?: string;
   tradeRateLabel?: string;
+  tradeReverseRateLabel?: string;
   expiresHoursInput: string;
   onExpiresHoursInputChange: (value: string) => void;
   expiresNever?: boolean;
@@ -120,6 +122,7 @@ export default function TradeComposerPanel({
   swapDisabled,
   tradePreviewLabel,
   tradeRateLabel,
+  tradeReverseRateLabel,
   expiresHoursInput,
   onExpiresHoursInputChange,
   expiresNever = false,
@@ -142,6 +145,12 @@ export default function TradeComposerPanel({
   const compactFeeSummaryLabel = feeSummaryLabel.replace(/^fee:\s*/i, '').trim();
   const hasTradePreview = Boolean(tradePreviewLabel || tradeRateLabel);
   const escrowContractUrl = `${COTI_NETWORK.blockExplorerUrl}/address/${TRADE_ESCROW_CONTRACT_ADDRESS}`;
+  const [showReverseRate, setShowReverseRate] = useState(false);
+  const visibleTradeRateLabel = showReverseRate && tradeReverseRateLabel ? tradeReverseRateLabel : tradeRateLabel;
+
+  useEffect(() => {
+    setShowReverseRate(false);
+  }, [tradeRateLabel, tradeReverseRateLabel]);
 
   return (
     <div className="trade-compose-panel" role="group" aria-label="P2P trade offer">
@@ -367,7 +376,18 @@ export default function TradeComposerPanel({
         {hasTradePreview ? (
           <div className="trade-compose-preview" aria-live="polite">
             {tradePreviewLabel ? <strong>{tradePreviewLabel}</strong> : null}
-            {tradeRateLabel ? <span>{tradeRateLabel}</span> : null}
+            {visibleTradeRateLabel ? (
+              <button
+                type="button"
+                className="trade-compose-rate-toggle"
+                onClick={() => setShowReverseRate((value) => !value)}
+                title="Flip rate"
+                aria-label="Flip displayed trade rate"
+              >
+                <span>Rate</span>
+                <strong>{visibleTradeRateLabel}</strong>
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -399,8 +419,8 @@ export default function TradeComposerPanel({
             </div>
             {feeError ? <p className="trade-compose-field-error trade-compose-fee-error">{feeError}</p> : null}
           </div>
-          <label className="trade-compose-expiry">
-            <span>Expiration</span>
+          <div className="trade-compose-expiry" role="group" aria-label="Trade expiration">
+            <label htmlFor="trade-compose-expiry-hours">Expiration</label>
             <div
               className={
                 onExpiresNeverChange
@@ -409,6 +429,7 @@ export default function TradeComposerPanel({
               }
             >
               <input
+                id="trade-compose-expiry-hours"
                 className="trade-compose-input"
                 type="text"
                 inputMode="numeric"
@@ -421,7 +442,11 @@ export default function TradeComposerPanel({
               {onExpiresNeverChange ? (
                 <button
                   type="button"
-                  className={expiresNever ? 'trade-compose-expiry-toggle active' : 'trade-compose-expiry-toggle'}
+                  className={
+                    expiresNever
+                      ? 'trade-compose-expiry-toggle trade-compose-expiry-never active'
+                      : 'trade-compose-expiry-toggle trade-compose-expiry-never'
+                  }
                   onClick={() => onExpiresNeverChange(!expiresNever)}
                   disabled={sending}
                   aria-pressed={expiresNever}
@@ -430,7 +455,7 @@ export default function TradeComposerPanel({
                 </button>
               ) : null}
             </div>
-          </label>
+          </div>
           <button
             type="button"
             className="trade-compose-send"

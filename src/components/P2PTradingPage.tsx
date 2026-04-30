@@ -255,7 +255,29 @@ const sortTrades = (trades: TradeSnapshot[]): TradeSnapshot[] =>
     return right.tradeId - left.tradeId;
   });
 
-const formatTradeExpiryText = (expiresAt: number): string => (expiresAt > 0 ? formatMessageTimestamp(expiresAt) : 'No expiration');
+const formatTradeExpiryParts = (expiresAt: number): { date: string; time: string; title: string } => {
+  if (expiresAt <= 0) {
+    return { date: 'No expiration', time: '', title: 'No expiration' };
+  }
+
+  const expiryDate = new Date(expiresAt * 1000);
+  const isCurrentYear = expiryDate.getFullYear() === new Date().getFullYear();
+  const date = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(isCurrentYear ? {} : { year: 'numeric' })
+  }).format(expiryDate);
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(expiryDate);
+
+  return {
+    date,
+    time,
+    title: formatMessageTimestamp(expiresAt)
+  };
+};
 
 const resolveTradeLinkInput = (value: string): { tradeId: number; accessSecret?: string } | null => {
   const raw = value.trim();
@@ -321,12 +343,17 @@ const resolveTradeLinkInput = (value: string): { tradeId: number; accessSecret?:
 const formatTradeListTerms = (trade: TradeSnapshot): string =>
   `${formatTradeAssetDisplayText(trade.offer)} for ${formatTradeAssetDisplayText(trade.request)}`;
 
-const formatTradeRateText = (trade: TradeSnapshot): string => {
+const formatTradeRateText = (trade: TradeSnapshot, reversed = false): string => {
   try {
     const offerAmount = BigInt(trade.offer.amount);
     const requestAmount = BigInt(trade.request.amount);
     if (offerAmount <= 0n || requestAmount <= 0n) {
       return 'Rate unavailable';
+    }
+
+    if (reversed) {
+      const scaledOffer = (offerAmount * 10n ** BigInt(trade.request.decimals)) / requestAmount;
+      return `1 ${trade.request.symbol} ~= ${formatTokenAmount(scaledOffer, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
     }
 
     const scaledRequest = (requestAmount * 10n ** BigInt(trade.offer.decimals)) / offerAmount;
@@ -457,6 +484,7 @@ export default function P2PTradingPage() {
   const [tradeLinkInput, setTradeLinkInput] = useState('');
   const [tradeSearchInput, setTradeSearchInput] = useState('');
   const [myTradeGroupView, setMyTradeGroupView] = useState<MyTradeGroupView>('received');
+  const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
     () => loadStoredTradeAccessSecrets()
   );
@@ -489,6 +517,14 @@ export default function P2PTradingPage() {
   const directTradeRecipientNormalized = directTradeRecipient.trim();
   const directTradeRecipientIsValid =
     directTradeRecipientNormalized.length > 0 && isWalletAddress(directTradeRecipientNormalized);
+
+  const toggleTradeRateDirection = useCallback((tradeId: number) => {
+    const key = String(tradeId);
+    setReversedRateTradeIds((current) => ({
+      ...current,
+      [key]: !current[key]
+    }));
+  }, []);
 
   const navigateToTradePath = useCallback((path: string) => {
     if (typeof window === 'undefined') {
@@ -2072,6 +2108,7 @@ export default function P2PTradingPage() {
       swapDisabled={creatingTrade}
       tradePreviewLabel={tradeComposerModel.tradePreviewLabel}
       tradeRateLabel={tradeComposerModel.tradeRateLabel}
+      tradeReverseRateLabel={tradeComposerModel.tradeReverseRateLabel}
       expiresHoursInput={tradeExpiryHoursInput}
       onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
       expiresNever={tradeHasNoExpiry}
@@ -2122,6 +2159,9 @@ export default function P2PTradingPage() {
     const isFinishedTrade = trade.status !== 'open';
     const offerToneClass = `p2p-offer-term-${perspective.offerSide.tone}`;
     const requestToneClass = `p2p-offer-term-${perspective.requestSide.tone}`;
+    const isRateReversed = Boolean(reversedRateTradeIds[String(trade.tradeId)]);
+    const tradeRateText = formatTradeRateText(trade, isRateReversed);
+    const expiryParts = formatTradeExpiryParts(trade.expiresAt);
 
     return (
       <article key={trade.tradeId} className={`p2p-offer-card p2p-offer-card-${trade.status}`}>
@@ -2130,7 +2170,7 @@ export default function P2PTradingPage() {
             <h3 title={formatTradeListTerms(trade)}>{pairLabel}</h3>
             <p>
               #{trade.tradeId}
-              <span>{trade.parentTradeId ? `Counter to #${trade.parentTradeId}` : visibilityLabel}</span>
+              {trade.parentTradeId ? <span>Counter to #{trade.parentTradeId}</span> : null}
             </p>
           </div>
           <strong className={`p2p-offer-status ${statusClassName}`}>{statusLabel}</strong>
@@ -2165,11 +2205,22 @@ export default function P2PTradingPage() {
         <div className="p2p-offer-facts">
           <div>
             <span>Rate</span>
-            <strong>{formatTradeRateText(trade)}</strong>
+            <button
+              type="button"
+              className="p2p-offer-rate-toggle"
+              onClick={() => toggleTradeRateDirection(trade.tradeId)}
+              title="Flip rate"
+              aria-label={`Flip rate for trade ${trade.tradeId}`}
+            >
+              {tradeRateText}
+            </button>
           </div>
           <div>
             <span>Expires</span>
-            <strong>{formatTradeExpiryText(trade.expiresAt)}</strong>
+            <strong className="p2p-offer-expiry" title={expiryParts.title}>
+              {expiryParts.date}
+              {expiryParts.time ? <small>{expiryParts.time}</small> : null}
+            </strong>
           </div>
           <div>
             <span>Access</span>
@@ -2377,28 +2428,6 @@ export default function P2PTradingPage() {
   return (
     <main className="standalone-trades-shell p2p-trading-shell">
       <section className="p2p-trading-topbar">
-        <nav className="p2p-trade-tabs" aria-label="P2P trade views">
-          <button type="button" className={route.view === 'public' ? 'active' : undefined} onClick={() => navigateToTradePath('/trades')}>
-            <span>Browse Offers</span>
-          </button>
-          <button
-            type="button"
-            className={route.view === 'create' ? 'active' : undefined}
-            onClick={() => {
-              clearCounterTrade();
-              navigateToTradePath('/trades/create');
-            }}
-          >
-            <span>Create Trade</span>
-          </button>
-          <button type="button" className={route.view === 'trade' ? 'active' : undefined} onClick={() => navigateToTradePath('/trades/open')}>
-            <span>Open Trade</span>
-          </button>
-          <button type="button" className={route.view === 'mine' ? 'active' : undefined} onClick={() => navigateToTradePath('/trades/mine')}>
-            <span>My Trades</span>
-          </button>
-        </nav>
-
         <div className="p2p-wallet-panel">
           <div className="p2p-wallet-status">
             <button
@@ -2528,6 +2557,28 @@ export default function P2PTradingPage() {
           </div>
         </div>
       </section>
+
+      <nav className="p2p-trade-tabs" aria-label="P2P trade views">
+        <button type="button" className={route.view === 'public' ? 'active' : undefined} onClick={() => navigateToTradePath('/trades')}>
+          <span>Browse Offers</span>
+        </button>
+        <button
+          type="button"
+          className={route.view === 'create' ? 'active' : undefined}
+          onClick={() => {
+            clearCounterTrade();
+            navigateToTradePath('/trades/create');
+          }}
+        >
+          <span>Create Trade</span>
+        </button>
+        <button type="button" className={route.view === 'trade' ? 'active' : undefined} onClick={() => navigateToTradePath('/trades/open')}>
+          <span>Open Trade</span>
+        </button>
+        <button type="button" className={route.view === 'mine' ? 'active' : undefined} onClick={() => navigateToTradePath('/trades/mine')}>
+          <span>My Trades</span>
+        </button>
+      </nav>
 
       {route.view !== 'create' ? (
         <section className={`p2p-market-overview p2p-market-overview-${route.view}`}>
