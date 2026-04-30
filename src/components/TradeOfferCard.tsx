@@ -46,6 +46,9 @@ const buildTokenExplorerUrl = (tokenAddress?: string): string | undefined =>
 const buildTransactionExplorerUrl = (txHash?: string): string | undefined =>
   txHash ? `${COTI_NETWORK.blockExplorerUrl}/tx/${txHash}` : undefined;
 
+const buildAddressExplorerUrl = (address?: string): string | undefined =>
+  address ? `${COTI_NETWORK.blockExplorerUrl}/address/${address}` : undefined;
+
 const resolveAssetScopeLabel = (kind: TradeAssetPayload['kind']): string | null => {
   if (kind === 'private-erc20') {
     return 'Private token';
@@ -229,6 +232,9 @@ export default function TradeOfferCard({
   const offerVerifyUrl = buildTokenExplorerUrl(resolvedOffer?.tokenAddress);
   const requestVerifyUrl = buildTokenExplorerUrl(resolvedRequest?.tokenAddress);
   const acceptedTransactionUrl = buildTransactionExplorerUrl(snapshot?.acceptedTxHash);
+  const counterpartyAddress = isMaker ? offer.taker : offer.maker;
+  const hasCounterpartyAddress = !isZeroTradeTakerAddress(counterpartyAddress);
+  const counterpartyExplorerUrl = hasCounterpartyAddress ? buildAddressExplorerUrl(counterpartyAddress) : undefined;
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
   const requestScopeLabel = resolvedRequest ? resolveAssetScopeLabel(resolvedRequest.kind) : null;
   const tradePerspective =
@@ -363,6 +369,16 @@ export default function TradeOfferCard({
 
           {tradeRateLabel ? <p className="trade-card-rate">{tradeRateLabel}</p> : null}
           <p className="trade-card-note">On-chain escrow. Verify token contracts before accepting.</p>
+          <div className="trade-card-counterparty">
+            <span>Counterparty</span>
+            {counterpartyExplorerUrl ? (
+              <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
+                {shortenAddress(counterpartyAddress)}
+              </a>
+            ) : (
+              <strong>Any wallet</strong>
+            )}
+          </div>
 
           {isOpen && (isTaker || canAcceptOpenTakerTrade) ? (
             <div className="trade-card-actions">

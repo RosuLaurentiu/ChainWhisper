@@ -1,4 +1,4 @@
-import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   COTI_NETWORK,
@@ -12,22 +12,42 @@ import {
   TIP_NATIVE_TOKEN_SYMBOL,
   TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
+  BURNER_PIN_MIN_LENGTH,
+  createBurnerWalletVault,
   createCotiBrowserProvider,
   formatCotiAmount,
   formatMessageTimestamp,
   formatTokenAmount,
   formatTradeAssetDisplayText,
+  getCotiWsLastHealthyAt,
   getInjectedWalletOptions,
   getProviderErrorMessage,
   isWalletAddress,
+  loadBurnerWalletVaultFromStorage,
   loadCotiEthersModule,
   loadCotiReadProvider,
+  loadCotiWsProvider,
+  looksLikePrivateKeyInput,
+  markCotiWsHealthyNow,
   mergeOnboardInfo,
   normalizeChainId,
+  normalizeImportInput,
+  normalizeMnemonicInput,
+  normalizePrivateKeyInput,
   normalizeTokenDecimals,
+  parseBurnerWalletStorageState,
+  REALTIME_SYNC_FALLBACK_INTERVAL_MS,
+  resetCotiWsProvider,
+  saveEncryptedBurnerWalletVault,
   sanitizeTokenAmountInput,
   shortenAddress,
+  upsertBurnerWalletInVault,
   withTimeout,
+  WS_HEALTHCHECK_TTL_MS,
+  WS_RETRY_COOLDOWN_MS,
+  type BurnerInitMode,
+  type BurnerPinMode,
+  type BurnerWalletRecord,
   type Eip1193Provider,
   type TradeAssetPayload,
   type TradeFeeModeSelection,
@@ -59,12 +79,15 @@ import {
   resolveTradePerspective,
   ZERO_TRADE_TAKER_ADDRESS
 } from '../lib/tradePerspective';
+import BurnerImportModal from './BurnerImportModal';
+import BurnerPinModal from './BurnerPinModal';
 import TradeComposerPanel from './TradeComposerPanel';
 import TradeOfferCard from './TradeOfferCard';
 
 type TradePageView = 'public' | 'create' | 'trade' | 'mine';
 type TradeVisibility = 'public' | 'unlisted' | 'direct';
 type MyTradeGroupView = 'received' | 'active' | 'history';
+type PendingBurnerWalletAction = 'connect' | 'generate' | 'import';
 
 type TradeRouteState = {
   view: TradePageView;
@@ -77,6 +100,7 @@ const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const WALLET_STATUS_STORAGE_KEY = 'coti-trade-last-wallet-id';
 const TRADE_ACCESS_SECRET_STORAGE_KEY = 'coti-trade-access-secrets-v1';
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
+type TradeSigner = JsonRpcSigner | Wallet;
 
 const normalizeTradePathname = (value: string): string => {
   const normalized = value.trim().replace(/\/+$/, '');
@@ -381,6 +405,17 @@ export default function P2PTradingPage() {
   );
   const [connectingWalletId, setConnectingWalletId] = useState('');
   const [connectedWalletLabel, setConnectedWalletLabel] = useState('Wallet');
+  const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>([]);
+  const [selectedBurnerWalletId, setSelectedBurnerWalletId] = useState('');
+  const [pendingBurnerWalletId, setPendingBurnerWalletId] = useState('');
+  const [pendingBurnerAction, setPendingBurnerAction] = useState<PendingBurnerWalletAction>('connect');
+  const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
+  const [burnerPinInput, setBurnerPinInput] = useState('');
+  const [burnerImportInput, setBurnerImportInput] = useState('');
+  const [showBurnerImportModal, setShowBurnerImportModal] = useState(false);
+  const [showBurnerPinModal, setShowBurnerPinModal] = useState(false);
+  const [unlockingBurner, setUnlockingBurner] = useState(false);
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const [onboardInfoByAddress, setOnboardInfoByAddress] = useState<Record<string, OnboardInfo>>({});
   const [tradeFeeModeSelection, setTradeFeeModeSelection] = useState<TradeFeeModeSelection>('coti');
   const [tradeVisibility, setTradeVisibility] = useState<TradeVisibility>('public');
@@ -428,7 +463,8 @@ export default function P2PTradingPage() {
   const [counterParentTrade, setCounterParentTrade] = useState<TradeSnapshot | null>(null);
 
   const providerRef = useRef<Eip1193Provider | null>(null);
-  const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
+  const burnerWalletRef = useRef<Wallet | null>(null);
+  const signerCacheRef = useRef<Record<string, TradeSigner>>({});
   const feeRequestRef = useRef<Promise<bigint> | null>(null);
   const tokenFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const counterPanelRef = useRef<HTMLDivElement | null>(null);
@@ -441,6 +477,7 @@ export default function P2PTradingPage() {
     null;
   const onCotiNetwork = chainId === COTI_NETWORK.chainIdDecimal;
   const walletKey = walletAddress.trim().toLowerCase();
+  const connectedWithBurner = Boolean(burnerWalletRef.current && walletKey === burnerWalletRef.current.address.toLowerCase());
   const walletHasAes = Boolean(walletKey && onboardInfoByAddress[walletKey]?.aesKey);
   const openPublicTradeCount = publicTrades.filter((trade) => trade.status === 'open').length;
   const routeView = route.view;
@@ -513,6 +550,87 @@ export default function P2PTradingPage() {
     }, 1400);
   }, []);
 
+  const syncVisibleBurnerWallets = useCallback(() => {
+    const storageState = parseBurnerWalletStorageState();
+    if (storageState.kind === 'legacy') {
+      setBurnerWallets([storageState.record]);
+      return;
+    }
+    if (storageState.kind === 'legacy-vault') {
+      setBurnerWallets(storageState.record.wallets);
+      setSelectedBurnerWalletId(storageState.record.activeWalletId ?? storageState.record.wallets[0]?.id ?? '');
+      return;
+    }
+    if (storageState.kind === 'none') {
+      setBurnerWallets([]);
+      setSelectedBurnerWalletId('');
+    }
+  }, []);
+
+  useEffect(() => {
+    syncVisibleBurnerWallets();
+    const handleFocus = () => syncVisibleBurnerWallets();
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [syncVisibleBurnerWallets]);
+
+  const chooseBurnerPinMode = useCallback((): BurnerPinMode => {
+    const storageState = parseBurnerWalletStorageState();
+    return storageState.kind === 'encrypted' ? 'unlock' : 'set';
+  }, []);
+
+  const buildNewBurnerRecord = useCallback(async (mode: Exclude<BurnerInitMode, 'stored'>, seedOrPrivateKey = '') => {
+    const cotiEthers = await loadCotiEthersModule();
+    if (mode === 'generate') {
+      const createdWallet = cotiEthers.Wallet.createRandom();
+      return {
+        privateKey: createdWallet.privateKey,
+        mnemonic: createdWallet.mnemonic?.phrase
+      } satisfies BurnerWalletRecord;
+    }
+
+    const normalizedSeed = normalizeImportInput(seedOrPrivateKey);
+    if (!normalizedSeed) {
+      throw new Error('Enter a mnemonic phrase or private key.');
+    }
+
+    const normalizedPrivateKey = normalizePrivateKeyInput(normalizedSeed);
+    if (normalizedPrivateKey) {
+      return { privateKey: normalizedPrivateKey } satisfies BurnerWalletRecord;
+    }
+
+    if (looksLikePrivateKeyInput(normalizedSeed)) {
+      throw new Error('Invalid private key. Use exactly 64 hex characters, optionally prefixed with 0x.');
+    }
+
+    const normalizedMnemonic = normalizeMnemonicInput(normalizedSeed);
+    try {
+      const importedWallet = cotiEthers.Wallet.fromPhrase(normalizedMnemonic);
+      return {
+        privateKey: importedWallet.privateKey,
+        mnemonic: normalizedMnemonic
+      } satisfies BurnerWalletRecord;
+    } catch {
+      throw new Error('Invalid mnemonic phrase.');
+    }
+  }, []);
+
+  const saveBurnerRecordWithPin = useCallback(
+    async (record: BurnerWalletRecord, pin: string) => {
+      const storageState = parseBurnerWalletStorageState();
+      const existingVault =
+        storageState.kind === 'none'
+          ? null
+          : await loadBurnerWalletVaultFromStorage(storageState.kind === 'encrypted' ? pin : '');
+      const nextVault = existingVault
+        ? await upsertBurnerWalletInVault(existingVault, record)
+        : await createBurnerWalletVault([record]);
+      await saveEncryptedBurnerWalletVault(nextVault, pin);
+      return nextVault.activeWalletId;
+    },
+    []
+  );
+
   const ensureCotiNetwork = useCallback(async (provider: Eip1193Provider) => {
     try {
       await provider.request({
@@ -564,7 +682,7 @@ export default function P2PTradingPage() {
       await ensureCotiNetwork(provider);
 
       const cacheKey = address.toLowerCase();
-      let signer = signerCacheRef.current[cacheKey];
+      let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
       if (!signer) {
         const browserProvider = await createCotiBrowserProvider(provider);
         signer = await browserProvider.getSigner(address, onboardInfoByAddress[cacheKey]);
@@ -595,7 +713,7 @@ export default function P2PTradingPage() {
   );
 
   const connectWallet = useCallback(
-    async (walletId?: string) => {
+    async (walletId?: string, forceAccountPicker = false) => {
       const walletOption =
         (walletId ? injectedWalletOptions.find((option) => option.id === walletId) ?? null : preferredWalletOption) ??
         preferredWalletOption;
@@ -613,12 +731,21 @@ export default function P2PTradingPage() {
       }
 
       try {
+        if (forceAccountPicker) {
+          await provider
+            .request({
+              method: 'wallet_requestPermissions',
+              params: [{ eth_accounts: {} }]
+            })
+            .catch(() => null);
+        }
         const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
         const selected = accounts[0] ?? '';
         if (!selected) {
           throw new Error('No wallet account selected.');
         }
         await ensureCotiNetwork(provider);
+        burnerWalletRef.current = null;
         await attachWallet(provider, selected, walletLabel, walletOption?.id);
         try {
           await onboardTradeWalletAes(provider, selected);
@@ -633,6 +760,173 @@ export default function P2PTradingPage() {
     },
     [attachWallet, ensureCotiNetwork, injectedWalletOptions, onboardTradeWalletAes, preferredWalletOption]
   );
+
+  const unlockBurnerWalletWithPin = useCallback(
+    async (walletId?: string, pin = '') => {
+      setWalletError('');
+      setTradeActionError('');
+      setConnectingWalletId('burner');
+      setUnlockingBurner(true);
+
+      try {
+        const vault = await loadBurnerWalletVaultFromStorage(pin);
+        const selectedRecord =
+          vault.wallets.find((walletRecord) => walletRecord.id === walletId) ??
+          vault.wallets.find((walletRecord) => walletRecord.id === vault.activeWalletId) ??
+          vault.wallets[0];
+        if (!selectedRecord) {
+          throw new Error('No saved burner wallet found.');
+        }
+
+        const cotiEthers = await loadCotiEthersModule();
+        const rpcProvider = new cotiEthers.JsonRpcProvider(COTI_NETWORK.rpcUrl, {
+          name: COTI_NETWORK.chainName,
+          chainId: COTI_NETWORK.chainIdDecimal
+        });
+        const signer = new cotiEthers.Wallet(selectedRecord.privateKey, rpcProvider);
+        const cacheKey = signer.address.toLowerCase();
+        const cachedOnboardInfo = onboardInfoByAddress[cacheKey];
+        if (cachedOnboardInfo) {
+          signer.setUserOnboardInfo(cachedOnboardInfo);
+        }
+
+        signer.disableAutoOnboard();
+        let onboardInfo = signer.getUserOnboardInfo();
+        if (!onboardInfo?.aesKey) {
+          await signer.generateOrRecoverAes();
+          onboardInfo = signer.getUserOnboardInfo();
+        }
+        if (!onboardInfo?.aesKey) {
+          throw new Error('AES key was not returned for burner wallet.');
+        }
+
+        burnerWalletRef.current = signer;
+        signerCacheRef.current[cacheKey] = signer;
+        providerRef.current = null;
+        setBurnerWallets(vault.wallets);
+        setSelectedBurnerWalletId(selectedRecord.id ?? '');
+        setWalletAddress(signer.address);
+        setConnectedWalletLabel('App wallet');
+        setSelectedWalletId('');
+        setChainId(COTI_NETWORK.chainIdDecimal);
+        setOnboardInfoByAddress((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+        }));
+        setShowBurnerPinModal(false);
+        setPendingBurnerWalletId('');
+        setBurnerPinInput('');
+      } catch (error) {
+        setWalletError(getProviderErrorMessage(error, 'Failed to connect app wallet.'));
+      } finally {
+        setUnlockingBurner(false);
+        setConnectingWalletId('');
+      }
+    },
+    [onboardInfoByAddress]
+  );
+
+  const connectBurnerWallet = useCallback(
+    async (walletId?: string) => {
+      setWalletError('');
+      setTradeActionError('');
+      const storageState = parseBurnerWalletStorageState();
+      if (storageState.kind === 'none') {
+        setWalletError('No saved app wallet found. Generate or import one from the wallet panel first.');
+        return;
+      }
+
+      if (storageState.kind === 'encrypted') {
+        setPendingBurnerAction('connect');
+        setPendingBurnerWalletId(walletId ?? '');
+        setBurnerPinMode('unlock');
+        setBurnerPinInput('');
+        setShowBurnerPinModal(true);
+        return;
+      }
+
+      await unlockBurnerWalletWithPin(walletId, '');
+    },
+    [unlockBurnerWalletWithPin]
+  );
+
+  const beginGenerateBurnerWallet = useCallback(() => {
+    setWalletError('');
+    setTradeActionError('');
+    setPendingBurnerAction('generate');
+    setPendingBurnerWalletId('');
+    setBurnerPinMode(chooseBurnerPinMode());
+    setBurnerPinInput('');
+    setWalletMenuOpen(false);
+    setShowBurnerPinModal(true);
+  }, [chooseBurnerPinMode]);
+
+  const beginImportBurnerWallet = useCallback(() => {
+    setWalletError('');
+    setTradeActionError('');
+    setBurnerImportInput('');
+    setWalletMenuOpen(false);
+    setShowBurnerImportModal(true);
+  }, []);
+
+  const submitBurnerImport = useCallback(async () => {
+    setWalletError('');
+    setPendingBurnerAction('import');
+    setPendingBurnerWalletId('');
+    setBurnerPinMode(chooseBurnerPinMode());
+    setBurnerPinInput('');
+    setShowBurnerImportModal(false);
+    setShowBurnerPinModal(true);
+  }, [chooseBurnerPinMode]);
+
+  const closeBurnerPinModal = useCallback(() => {
+    if (unlockingBurner) {
+      return;
+    }
+    setShowBurnerPinModal(false);
+    setPendingBurnerAction('connect');
+    setPendingBurnerWalletId('');
+    setBurnerPinInput('');
+  }, [unlockingBurner]);
+
+  const submitBurnerPin = useCallback(async () => {
+    const pin = burnerPinInput.trim();
+    if (pin.length < BURNER_PIN_MIN_LENGTH) {
+      setWalletError(`PIN must be at least ${BURNER_PIN_MIN_LENGTH} digits.`);
+      return;
+    }
+
+    if (pendingBurnerAction === 'connect') {
+      await unlockBurnerWalletWithPin(pendingBurnerWalletId || undefined, pin);
+      return;
+    }
+
+    setUnlockingBurner(true);
+    setConnectingWalletId('burner');
+    try {
+      const record = await buildNewBurnerRecord(
+        pendingBurnerAction === 'generate' ? 'generate' : 'import',
+        burnerImportInput
+      );
+      const walletId = await saveBurnerRecordWithPin(record, pin);
+      await unlockBurnerWalletWithPin(walletId, pin);
+      setShowBurnerImportModal(false);
+      setPendingBurnerAction('connect');
+    } catch (error) {
+      setWalletError(getProviderErrorMessage(error, 'Failed to save burner wallet.'));
+    } finally {
+      setUnlockingBurner(false);
+      setConnectingWalletId('');
+    }
+  }, [
+    buildNewBurnerRecord,
+    burnerImportInput,
+    burnerPinInput,
+    pendingBurnerAction,
+    pendingBurnerWalletId,
+    saveBurnerRecordWithPin,
+    unlockBurnerWalletWithPin
+  ]);
 
   useEffect(() => {
     if (providerRef.current || walletAddress || connectingWalletId || !preferredWalletOption?.provider?.request) {
@@ -661,7 +955,27 @@ export default function P2PTradingPage() {
   }, [attachWallet, connectingWalletId, preferredWalletOption, walletAddress]);
 
   const getTradeSigner = useCallback(
-    async (requireAes: boolean): Promise<JsonRpcSigner> => {
+    async (requireAes: boolean): Promise<TradeSigner> => {
+      const burnerSigner = burnerWalletRef.current;
+      if (burnerSigner && walletAddress && burnerSigner.address.toLowerCase() === walletAddress.toLowerCase()) {
+        const cacheKey = burnerSigner.address.toLowerCase();
+        if (onboardInfoByAddress[cacheKey]) {
+          burnerSigner.setUserOnboardInfo(onboardInfoByAddress[cacheKey]);
+        }
+        burnerSigner.disableAutoOnboard();
+        if (requireAes && !burnerSigner.getUserOnboardInfo()?.aesKey) {
+          await burnerSigner.generateOrRecoverAes();
+        }
+        const onboardInfo = burnerSigner.getUserOnboardInfo();
+        if (onboardInfo?.aesKey) {
+          setOnboardInfoByAddress((previous) => ({
+            ...previous,
+            [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+          }));
+        }
+        return burnerSigner;
+      }
+
       const provider = providerRef.current;
       if (!provider || !walletAddress) {
         throw new Error('Connect a wallet first.');
@@ -674,7 +988,7 @@ export default function P2PTradingPage() {
       }
 
       const cacheKey = walletAddress.toLowerCase();
-      let signer = signerCacheRef.current[cacheKey];
+      let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
       if (!signer) {
         const browserProvider = await createCotiBrowserProvider(provider);
         signer = await browserProvider.getSigner(walletAddress, onboardInfoByAddress[cacheKey]);
@@ -974,7 +1288,12 @@ export default function P2PTradingPage() {
 
   const signAesForCurrentWallet = useCallback(async () => {
     const provider = providerRef.current;
-    if (!provider || !walletAddress) {
+    const burnerSigner = burnerWalletRef.current;
+    if (!provider && !burnerSigner) {
+      setWalletError('Connect a wallet first.');
+      return;
+    }
+    if (!walletAddress) {
       setWalletError('Connect a wallet first.');
       return;
     }
@@ -982,14 +1301,18 @@ export default function P2PTradingPage() {
     setWalletError('');
     setConnectingWalletId('aes');
     try {
-      await onboardTradeWalletAes(provider, walletAddress);
+      if (burnerSigner && burnerSigner.address.toLowerCase() === walletAddress.toLowerCase()) {
+        await getTradeSigner(true);
+      } else if (provider) {
+        await onboardTradeWalletAes(provider, walletAddress);
+      }
       await loadWalletBalances().catch(() => {});
     } catch (error) {
       setWalletError(getProviderErrorMessage(error, 'AES signature was not completed.'));
     } finally {
       setConnectingWalletId('');
     }
-  }, [connectedWalletLabel, loadWalletBalances, onboardTradeWalletAes, walletAddress]);
+  }, [connectedWalletLabel, getTradeSigner, loadWalletBalances, onboardTradeWalletAes, walletAddress]);
 
   const loadCustomTokenInfo = useCallback(
     async (token: { address: string; kind: Extract<ResolvedTradeToken['kind'], 'erc20' | 'private-erc20'> }) => {
@@ -1228,17 +1551,31 @@ export default function P2PTradingPage() {
         return;
       }
 
+      if (connectedWithBurner) {
+        const confirmed = window.confirm('Accept this trade using your app wallet? This will submit an on-chain transaction.');
+        if (!confirmed) {
+          return;
+        }
+      }
+
       setTradeActionError('');
       try {
         setProcessingTradeActionId(String(snapshot.tradeId));
         const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId)) ?? snapshot;
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
+        const accessSecret =
+          route.tradeId === snapshot.tradeId && resolvedRouteAccessSecret
+            ? resolvedRouteAccessSecret
+            : resolveKnownTradeAccessSecret(snapshot.tradeId);
+        if (latestSnapshot.hasAccessHash && !accessSecret) {
+          throw new Error('This trade needs its full private link before it can be accepted.');
+        }
         const { acceptedTxHash } = await acceptTradeOnChain({
           signer,
           ownerAddress: walletAddress,
           tradeId: snapshot.tradeId,
           requestAsset: latestSnapshot.request,
-          accessSecret: route.tradeId === snapshot.tradeId && resolvedRouteAccessSecret ? resolvedRouteAccessSecret : undefined
+          accessSecret: accessSecret || undefined
         });
         const nextSnapshot: TradeSnapshot = {
           ...latestSnapshot,
@@ -1265,9 +1602,11 @@ export default function P2PTradingPage() {
       refreshMyTrades,
       refreshPublicTrades,
       refreshTradeDetail,
+      resolveKnownTradeAccessSecret,
       resolvedRouteAccessSecret,
       route.tradeId,
-      walletAddress
+      walletAddress,
+      connectedWithBurner
     ]
   );
 
@@ -1416,6 +1755,161 @@ export default function P2PTradingPage() {
   useEffect(() => {
     refreshMyTrades().catch(() => {});
   }, [refreshMyTrades]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+    let pollIntervalId: number | null = null;
+    let wsReconnectIntervalId: number | null = null;
+    let wsReconnectInFlight = false;
+
+    const parseEventTradeId = (value: unknown): number => {
+      const parsed =
+        typeof value === 'bigint'
+          ? Number(value)
+          : typeof value === 'number'
+            ? value
+            : typeof value === 'string' && /^\d+$/.test(value)
+              ? Number.parseInt(value, 10)
+              : 0;
+      return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+    };
+
+    const refreshTradeFromEvent = async (tradeIdValue: unknown, eventPayload?: unknown) => {
+      const tradeId = parseEventTradeId(tradeIdValue);
+      if (cancelled || tradeId <= 0) {
+        return;
+      }
+
+      try {
+        const snapshot = await refreshTradeDetail(tradeId);
+        if (cancelled || !snapshot) {
+          return;
+        }
+
+        const transactionHash =
+          typeof (eventPayload as { transactionHash?: unknown } | undefined)?.transactionHash === 'string'
+            ? ((eventPayload as { transactionHash: string }).transactionHash)
+            : undefined;
+        if (transactionHash && snapshot.status === 'accepted') {
+          mergeTradeSnapshot({
+            ...snapshot,
+            acceptedTxHash: transactionHash
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          refreshPublicTrades().catch(() => {});
+          if (walletAddress) {
+            refreshMyTrades().catch(() => {});
+          }
+        }
+      }
+    };
+
+    const runPollRefresh = () => {
+      if (cancelled || (typeof document !== 'undefined' && document.hidden)) {
+        return;
+      }
+      refreshPublicTrades().catch(() => {});
+      if (walletAddress) {
+        refreshMyTrades().catch(() => {});
+      }
+    };
+
+    const clearPollFallback = () => {
+      if (pollIntervalId !== null) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+      if (wsReconnectIntervalId !== null) {
+        window.clearInterval(wsReconnectIntervalId);
+        wsReconnectIntervalId = null;
+      }
+    };
+
+    const setupTradeRealtimeSubscription = async () => {
+      try {
+        if (cancelled) {
+          return;
+        }
+
+        const cotiEthers = await loadCotiEthersModule();
+        const wsProvider = await loadCotiWsProvider();
+        if (Date.now() - getCotiWsLastHealthyAt() > WS_HEALTHCHECK_TTL_MS) {
+          await wsProvider.getBlockNumber();
+        }
+        markCotiWsHealthyNow();
+
+        const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, wsProvider);
+        const handleTradeEvent = (...args: unknown[]) => {
+          refreshTradeFromEvent(args[0], args[args.length - 1]).catch(() => {});
+        };
+
+        const openedFilter = contract.filters.TradeOpened();
+        const acceptedFilter = contract.filters.TradeAccepted();
+        const cancelledFilter = contract.filters.TradeCancelled();
+        const declinedFilter = contract.filters.TradeDeclined();
+        const expiredFilter = contract.filters.TradeExpired();
+
+        contract.on(openedFilter, handleTradeEvent);
+        contract.on(acceptedFilter, handleTradeEvent);
+        contract.on(cancelledFilter, handleTradeEvent);
+        contract.on(declinedFilter, handleTradeEvent);
+        contract.on(expiredFilter, handleTradeEvent);
+
+        if (cancelled) {
+          contract.off(openedFilter, handleTradeEvent);
+          contract.off(acceptedFilter, handleTradeEvent);
+          contract.off(cancelledFilter, handleTradeEvent);
+          contract.off(declinedFilter, handleTradeEvent);
+          contract.off(expiredFilter, handleTradeEvent);
+          return;
+        }
+
+        unsubscribe = () => {
+          contract.off(openedFilter, handleTradeEvent);
+          contract.off(acceptedFilter, handleTradeEvent);
+          contract.off(cancelledFilter, handleTradeEvent);
+          contract.off(declinedFilter, handleTradeEvent);
+          contract.off(expiredFilter, handleTradeEvent);
+        };
+        clearPollFallback();
+      } catch {
+        await resetCotiWsProvider();
+        if (cancelled) {
+          return;
+        }
+
+        if (pollIntervalId === null) {
+          pollIntervalId = window.setInterval(runPollRefresh, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
+        }
+
+        if (wsReconnectIntervalId === null) {
+          wsReconnectIntervalId = window.setInterval(() => {
+            if (wsReconnectInFlight || cancelled) {
+              return;
+            }
+
+            wsReconnectInFlight = true;
+            setupTradeRealtimeSubscription()
+              .catch(() => {})
+              .finally(() => {
+                wsReconnectInFlight = false;
+              });
+          }, WS_RETRY_COOLDOWN_MS);
+        }
+      }
+    };
+
+    setupTradeRealtimeSubscription().catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+      clearPollFallback();
+    };
+  }, [mergeTradeSnapshot, refreshMyTrades, refreshPublicTrades, refreshTradeDetail, walletAddress]);
 
   useEffect(() => {
     const requestedTokens = [
@@ -1792,6 +2286,23 @@ export default function P2PTradingPage() {
 
     connectWallet(preferredWalletOption?.id).catch(() => {});
   };
+  const disconnectWallet = useCallback(() => {
+    providerRef.current = null;
+    burnerWalletRef.current = null;
+    signerCacheRef.current = {};
+    setWalletAddress('');
+    setChainId(null);
+    setConnectedWalletLabel('Wallet');
+    setSelectedWalletId('');
+    setSelectedBurnerWalletId('');
+    setWalletError('');
+    setTradeActionError('');
+    setNativeBalanceWei(null);
+    setRewardTokenBalanceWei(null);
+    setPrivateRewardTokenBalanceWei(null);
+    setMyTrades([]);
+    window.localStorage.removeItem(WALLET_STATUS_STORAGE_KEY);
+  }, []);
   const walletAddressCopyKey = walletAddress ? `trade-wallet-address:${walletAddress.toLowerCase()}` : '';
   const walletPrimaryButtonClass =
     !walletAddress || !onCotiNetwork || !walletHasAes
@@ -1799,6 +2310,14 @@ export default function P2PTradingPage() {
       : 'connect-btn wallet-inline-btn';
   const walletPrimaryButtonCopied = lastCopiedKey === walletAddressCopyKey;
   const walletPrimaryButtonIsAddress = Boolean(walletAddress && onCotiNetwork && walletHasAes);
+  const walletModeLabel = walletAddress ? (connectedWithBurner ? 'App wallet' : connectedWalletLabel) : 'No wallet connected';
+  const walletStatusLabel = !walletAddress
+    ? 'Disconnected'
+    : !onCotiNetwork
+      ? 'Switch network'
+      : !walletHasAes
+        ? 'AES signature needed'
+        : 'Ready';
   const filteredPublicTrades = useMemo(
     () => publicTrades.filter((trade) => trade.status === 'open' && matchesTradeSearch(trade, tradeSearchInput)),
     [publicTrades, tradeSearchInput]
@@ -1881,23 +2400,131 @@ export default function P2PTradingPage() {
         </nav>
 
         <div className="p2p-wallet-panel">
-          <div className="p2p-wallet-compact">
+          <div className="p2p-wallet-status">
             <button
               type="button"
-              className={walletPrimaryButtonCopied ? `${walletPrimaryButtonClass} copied` : walletPrimaryButtonClass}
+              className={
+                walletPrimaryButtonCopied
+                  ? `${walletPrimaryButtonClass} p2p-wallet-address copied`
+                  : `${walletPrimaryButtonClass} p2p-wallet-address`
+              }
               onClick={handleWalletPrimaryAction}
               disabled={Boolean(connectingWalletId) || (!walletAddress && !preferredWalletOption)}
               title={walletAddress || undefined}
             >
-              {walletPrimaryButtonIsAddress ? (
-                <>
-                  <span>{walletPrimaryButtonLabel}</span>
-                  <small>{walletPrimaryButtonCopied ? 'Copied' : 'Copy'}</small>
-                </>
-              ) : (
-                walletPrimaryButtonLabel
-              )}
+              <span>{walletPrimaryButtonLabel}</span>
+              {walletPrimaryButtonIsAddress ? <small>{walletPrimaryButtonCopied ? 'Copied' : 'Copy'}</small> : null}
             </button>
+            <div className="p2p-wallet-status-text">
+              <span>{walletModeLabel}</span>
+              <strong>{walletStatusLabel}</strong>
+            </div>
+          </div>
+
+          <div className="p2p-wallet-menu-wrap">
+            <button
+              type="button"
+              className={walletMenuOpen ? 'p2p-wallet-menu-trigger active' : 'p2p-wallet-menu-trigger'}
+              onClick={() => setWalletMenuOpen((previous) => !previous)}
+              disabled={Boolean(connectingWalletId)}
+              aria-haspopup="menu"
+              aria-expanded={walletMenuOpen}
+            >
+              Wallet
+            </button>
+            {walletMenuOpen ? (
+              <div className="p2p-wallet-menu" role="menu">
+                <div className="p2p-wallet-menu-section">
+                  <span>Browser wallet</span>
+                  <button
+                    type="button"
+                    className={!connectedWithBurner && walletAddress ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                    onClick={() => {
+                      setWalletMenuOpen(false);
+                      connectWallet(preferredWalletOption?.id, true).catch(() => {});
+                    }}
+                    disabled={Boolean(connectingWalletId) || !preferredWalletOption}
+                    role="menuitem"
+                  >
+                    {connectingWalletId && connectingWalletId !== 'burner' && connectingWalletId !== 'aes'
+                      ? 'Connecting...'
+                      : 'Connect or switch'}
+                  </button>
+                  {injectedWalletOptions.length > 1 ? (
+                    <select
+                      className="p2p-wallet-select"
+                      value={selectedWalletId || preferredWalletOption?.id || ''}
+                      onChange={(event) => {
+                        setWalletMenuOpen(false);
+                        connectWallet(event.target.value, true).catch(() => {});
+                      }}
+                      disabled={Boolean(connectingWalletId)}
+                      aria-label="Switch browser wallet"
+                    >
+                      {injectedWalletOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                </div>
+
+                <div className="p2p-wallet-menu-section">
+                  <span>App wallet</span>
+                  <button
+                    type="button"
+                    className={connectedWithBurner ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                    onClick={() => {
+                      setWalletMenuOpen(false);
+                      connectBurnerWallet(selectedBurnerWalletId || undefined).catch(() => {});
+                    }}
+                    disabled={Boolean(connectingWalletId)}
+                    role="menuitem"
+                  >
+                    {connectingWalletId === 'burner' ? 'Unlocking...' : 'Connect saved'}
+                  </button>
+                  {burnerWallets.length > 1 ? (
+                    <select
+                      className="p2p-wallet-select"
+                      value={selectedBurnerWalletId}
+                      onChange={(event) => {
+                        setSelectedBurnerWalletId(event.target.value);
+                        setWalletMenuOpen(false);
+                        connectBurnerWallet(event.target.value).catch(() => {});
+                      }}
+                      disabled={Boolean(connectingWalletId)}
+                      aria-label="Switch burner wallet"
+                    >
+                      {burnerWallets.map((walletRecord, index) => (
+                        <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
+                          {walletRecord.name?.trim() || (walletRecord.address ? shortenAddress(walletRecord.address) : `Wallet ${index + 1}`)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  <button type="button" className="p2p-wallet-action" onClick={beginGenerateBurnerWallet} role="menuitem">
+                    Generate wallet
+                  </button>
+                  <button type="button" className="p2p-wallet-action" onClick={beginImportBurnerWallet} role="menuitem">
+                    Import wallet
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  className="p2p-wallet-action danger"
+                  onClick={() => {
+                    setWalletMenuOpen(false);
+                    disconnectWallet();
+                  }}
+                  disabled={Boolean(connectingWalletId) || !walletAddress}
+                  role="menuitem"
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
@@ -2193,6 +2820,31 @@ export default function P2PTradingPage() {
           Escrow contract
         </a>
       </div>
+      <BurnerPinModal
+        isOpen={showBurnerPinModal}
+        burnerPinMode={burnerPinMode}
+        burnerPinInput={burnerPinInput}
+        onBurnerPinInputChange={setBurnerPinInput}
+        pinMinLength={BURNER_PIN_MIN_LENGTH}
+        error={showBurnerPinModal ? walletError : ''}
+        initializingBurner={unlockingBurner}
+        onClose={closeBurnerPinModal}
+        onSubmit={submitBurnerPin}
+      />
+      <BurnerImportModal
+        isOpen={showBurnerImportModal}
+        initializingBurner={unlockingBurner}
+        burnerImportInput={burnerImportInput}
+        onBurnerImportInputChange={setBurnerImportInput}
+        error={showBurnerImportModal ? walletError : ''}
+        onClose={() => {
+          if (!unlockingBurner) {
+            setShowBurnerImportModal(false);
+            setBurnerImportInput('');
+          }
+        }}
+        onImport={submitBurnerImport}
+      />
     </main>
   );
 }

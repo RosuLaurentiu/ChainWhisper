@@ -1423,14 +1423,11 @@ body {
   width: 100%;
   max-width: none;
   justify-self: end;
-}
-
-.p2p-wallet-compact {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(190px, auto) minmax(0, auto);
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  min-width: 0;
+  justify-content: end;
+  gap: 10px;
 }
 
 .p2p-wallet-panel .connect-btn {
@@ -1455,6 +1452,133 @@ body {
 
 .p2p-wallet-panel .connect-btn.copied small {
   color: #d9d3ff;
+}
+
+.p2p-wallet-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.p2p-wallet-address {
+  min-width: 132px;
+}
+
+.p2p-wallet-status-text {
+  display: grid;
+  gap: 2px;
+  min-width: 92px;
+  text-align: left;
+}
+
+.p2p-wallet-status-text span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.p2p-wallet-status-text strong {
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.1;
+}
+
+.p2p-wallet-menu-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.p2p-wallet-menu-trigger,
+.p2p-wallet-action {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(10, 10, 18, 0.72);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.p2p-wallet-menu-trigger {
+  min-width: 86px;
+}
+
+.p2p-wallet-menu-trigger.active,
+.p2p-wallet-action.active {
+  border-color: rgba(34, 197, 94, 0.54);
+  background: rgba(34, 197, 94, 0.12);
+  color: #d9f7df;
+}
+
+.p2p-wallet-action.danger {
+  color: #fecdd3;
+}
+
+.p2p-wallet-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 8px;
+  width: min(280px, calc(100vw - 32px));
+  border: 1px solid rgba(74, 64, 112, 0.74);
+  border-radius: 10px;
+  background: rgba(13, 13, 22, 0.98);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  padding: 10px;
+}
+
+.p2p-wallet-menu-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2p-wallet-menu-section > span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.p2p-wallet-menu .p2p-wallet-action,
+.p2p-wallet-menu .p2p-wallet-select {
+  width: 100%;
+}
+
+.p2p-wallet-action:hover:not(:disabled),
+.p2p-wallet-menu-trigger:hover:not(:disabled),
+.p2p-wallet-select:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.p2p-wallet-action:disabled,
+.p2p-wallet-menu-trigger:disabled,
+.p2p-wallet-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.p2p-wallet-select {
+  min-height: 34px;
+  max-width: 150px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(10, 10, 18, 0.72);
+  color: var(--text);
+  font-weight: 800;
+  padding: 7px 10px;
 }
 
 .p2p-wallet-panel .wallet-inline-action {
@@ -2055,6 +2179,30 @@ body {
 .standalone-trade-detail-section .trade-card-rate {
   color: var(--text);
   font-weight: 800;
+}
+
+.trade-card-counterparty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(74, 64, 112, 0.5);
+  border-radius: 8px;
+  background: rgba(10, 10, 18, 0.42);
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding: 9px 10px;
+}
+
+.trade-card-counterparty a,
+.trade-card-counterparty strong {
+  color: var(--text);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.trade-card-counterparty a:hover {
+  color: #d9d3ff;
 }
 
 .standalone-trade-detail-section .trade-card-actions {
@@ -7757,10 +7905,10 @@ body {
     height: calc(100vh - 58px);
   }
 
-  .p2p-wallet-compact,
+  .p2p-wallet-panel,
   .p2p-footer-links {
     text-align: left;
-    justify-content: flex-start;
+    justify-content: stretch;
   }
 
   .p2p-footer-links,
@@ -7769,15 +7917,32 @@ body {
     flex-direction: column;
   }
 
-  .p2p-wallet-compact,
   .p2p-trade-tabs {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .p2p-wallet-panel .connect-btn {
+  .p2p-wallet-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .p2p-wallet-status,
+  .p2p-wallet-menu-wrap {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .p2p-wallet-panel .connect-btn,
+  .p2p-wallet-action,
+  .p2p-wallet-menu-trigger,
+  .p2p-wallet-select {
     width: 100%;
     justify-content: center;
+  }
+
+  .p2p-wallet-menu {
+    left: 0;
+    right: auto;
   }
 
   .p2p-stats-strip {

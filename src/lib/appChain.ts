@@ -28,6 +28,7 @@ import {
 import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHelpers';
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
+const ACCEPTED_TX_LOOKBACK_BLOCKS = 100_000;
 
 export type TradeAccessMetadata = {
   isPublic?: boolean;
@@ -287,7 +288,16 @@ export const fetchTradeSnapshotById = async (
 
   if (resolvedStatus === 'accepted') {
     try {
-      const acceptedLogs = await contract.queryFilter(contract.filters.TradeAccepted(BigInt(tradeId), null), 0, 'latest');
+      const latestBlock = await readProvider.getBlockNumber().catch(() => null);
+      const fromBlock =
+        typeof latestBlock === 'number' && Number.isSafeInteger(latestBlock)
+          ? Math.max(0, latestBlock - ACCEPTED_TX_LOOKBACK_BLOCKS)
+          : 0;
+      const acceptedLogs = await contract.queryFilter(
+        contract.filters.TradeAccepted(BigInt(tradeId), null),
+        fromBlock,
+        'latest'
+      );
       const latestAcceptedLog = acceptedLogs[acceptedLogs.length - 1];
       if (latestAcceptedLog && typeof latestAcceptedLog.transactionHash === 'string') {
         acceptedTxHash = latestAcceptedLog.transactionHash;

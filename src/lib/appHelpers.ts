@@ -9,6 +9,8 @@ import {
   REACTION_METADATA_PREFIX,
   REPLY_DELIMITER,
   REPLY_METADATA_PREFIX,
+  extractRevertData,
+  getProviderErrorMessage,
   type ChatMessage,
   type TradeAssetPayload,
   type TradeOfferMessagePayload,
@@ -61,6 +63,12 @@ const TRADE_STATUS_EXPIRED = 5;
 const TRADE_ASSET_TYPE_NATIVE = 0;
 const TRADE_ASSET_TYPE_ERC20 = 1;
 const TRADE_ASSET_TYPE_PRIVATE_ERC20 = 2;
+
+const TRADE_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
+  '0xfceb320b': 'This trade needs its full private link before it can be accepted.',
+  '0x025dbdd4': 'Insufficient escrow fee. Check the required COTI or token fee and try again.',
+  '0xe6c4247b': 'Invalid wallet address for this trade action.'
+};
 
 export const resolveTradeSnapshotStatus = (statusRaw: unknown, expiresAt: number): TradeSnapshot['status'] => {
   const status = Number(statusRaw);
@@ -227,5 +235,19 @@ export const getOnChainFailureMessage = (error: unknown, fallbackMessage: string
     return 'Transaction ran out of gas on-chain. Try a shorter message, clear any reply, or use a smaller group.';
   }
 
-  return fallbackMessage;
+  const revertData = extractRevertData(error);
+  if (revertData) {
+    const mappedMessage = TRADE_ERROR_MESSAGE_BY_SELECTOR[revertData.slice(0, 10).toLowerCase()];
+    if (mappedMessage) {
+      return mappedMessage;
+    }
+  }
+
+  const providerMessage = getProviderErrorMessage(error, fallbackMessage);
+  const normalizedProviderMessage = providerMessage.toLowerCase();
+  if (normalizedProviderMessage.includes('unknown custom error') || normalizedProviderMessage.includes('execution reverted')) {
+    return fallbackMessage;
+  }
+
+  return providerMessage;
 };

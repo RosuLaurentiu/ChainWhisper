@@ -8018,15 +8018,19 @@ export default function App() {
       setProcessingTradeActionId(String(snapshot.tradeId));
       const latestSnapshot = (await refreshStandaloneTradeSnapshot(snapshot.tradeId)) ?? snapshot;
       const { signer, cacheKey } = await getMemoSigner();
+      const accessSecret =
+        activeTradePageId === snapshot.tradeId && activeTradeAccessSecret
+          ? activeTradeAccessSecret
+          : '';
+      if (latestSnapshot.hasAccessHash && !accessSecret) {
+        throw new Error('This trade needs its full private link before it can be accepted.');
+      }
       const { acceptedTxHash } = await acceptTradeOnChain({
         signer,
         ownerAddress: walletAddress,
         tradeId: snapshot.tradeId,
         requestAsset: latestSnapshot.request,
-        accessSecret:
-          activeTradePageId === snapshot.tradeId && activeTradeAccessSecret
-            ? activeTradeAccessSecret
-            : undefined
+        accessSecret: accessSecret || undefined
       });
       const nextSnapshot: TradeSnapshot = {
         ...latestSnapshot,
