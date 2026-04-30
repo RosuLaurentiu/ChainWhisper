@@ -343,21 +343,16 @@ const resolveTradeLinkInput = (value: string): { tradeId: number; accessSecret?:
 const formatTradeListTerms = (trade: TradeSnapshot): string =>
   `${formatTradeAssetDisplayText(trade.offer)} for ${formatTradeAssetDisplayText(trade.request)}`;
 
-const formatTradeRateText = (trade: TradeSnapshot, reversed = false): string => {
+const formatTradeRateText = (baseAsset: TradeAssetPayload, quoteAsset: TradeAssetPayload): string => {
   try {
-    const offerAmount = BigInt(trade.offer.amount);
-    const requestAmount = BigInt(trade.request.amount);
-    if (offerAmount <= 0n || requestAmount <= 0n) {
+    const baseAmount = BigInt(baseAsset.amount);
+    const quoteAmount = BigInt(quoteAsset.amount);
+    if (baseAmount <= 0n || quoteAmount <= 0n) {
       return 'Rate unavailable';
     }
 
-    if (reversed) {
-      const scaledOffer = (offerAmount * 10n ** BigInt(trade.request.decimals)) / requestAmount;
-      return `1 ${trade.request.symbol} ~= ${formatTokenAmount(scaledOffer, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
-    }
-
-    const scaledRequest = (requestAmount * 10n ** BigInt(trade.offer.decimals)) / offerAmount;
-    return `1 ${trade.offer.symbol} ~= ${formatTokenAmount(scaledRequest, trade.request.decimals, 6)} ${trade.request.symbol}`;
+    const scaledQuote = (quoteAmount * 10n ** BigInt(baseAsset.decimals)) / baseAmount;
+    return `1 ${baseAsset.symbol} ~= ${formatTokenAmount(scaledQuote, quoteAsset.decimals, 6)} ${quoteAsset.symbol}`;
   } catch {
     return 'Rate unavailable';
   }
@@ -2136,7 +2131,6 @@ export default function P2PTradingPage() {
         ? ''
         : buildTradeShareUrl(trade.tradeId, accessSecret || undefined);
     const shareKey = `offer-trade-link:${trade.tradeId}:${accessSecret ? 'secret' : 'public'}`;
-    const pairLabel = `${trade.offer.symbol} / ${trade.request.symbol}`;
     const visibilityLabel =
       trade.isPublic === false
         ? trade.hasAccessHash
@@ -2153,14 +2147,29 @@ export default function P2PTradingPage() {
           ? 'Unknown'
           : trade.status.charAt(0).toUpperCase() + trade.status.slice(1);
     const statusClassName = `p2p-offer-status-${trade.status}`;
-    const offerExplorerUrl = buildTradeAssetExplorerUrl(trade.offer);
-    const requestExplorerUrl = buildTradeAssetExplorerUrl(trade.request);
     const acceptedTxExplorerUrl = buildTransactionExplorerUrl(trade.acceptedTxHash);
     const isFinishedTrade = trade.status !== 'open';
-    const offerToneClass = `p2p-offer-term-${perspective.offerSide.tone}`;
-    const requestToneClass = `p2p-offer-term-${perspective.requestSide.tone}`;
+    const leftSide = perspective.sendSide ?? {
+      asset: trade.request,
+      label: perspective.showTakerPerspective ? 'You send' : 'Requested',
+      tone: 'send' as const
+    };
+    const rightSide = perspective.receiveSide ?? {
+      asset: trade.offer,
+      label: perspective.showTakerPerspective ? 'You receive' : 'Offered',
+      tone: 'receive' as const
+    };
+    const leftExplorerUrl = buildTradeAssetExplorerUrl(leftSide.asset);
+    const rightExplorerUrl = buildTradeAssetExplorerUrl(rightSide.asset);
+    const pairLabel = `${leftSide.asset.symbol} / ${rightSide.asset.symbol}`;
+    const leftToneClass = `p2p-offer-term-${leftSide.tone}`;
+    const rightToneClass = `p2p-offer-term-${rightSide.tone}`;
     const isRateReversed = Boolean(reversedRateTradeIds[String(trade.tradeId)]);
-    const tradeRateText = formatTradeRateText(trade, isRateReversed);
+    const tradeRateText = isRateReversed
+      ? formatTradeRateText(rightSide.asset, leftSide.asset)
+      : formatTradeRateText(leftSide.asset, rightSide.asset);
+    const leftMetaLabel = leftSide.asset === trade.offer ? (trade.status === 'open' ? 'Available now' : statusLabel) : takerLabel;
+    const rightMetaLabel = rightSide.asset === trade.offer ? (trade.status === 'open' ? 'Available now' : statusLabel) : takerLabel;
     const expiryParts = formatTradeExpiryParts(trade.expiresAt);
 
     return (
@@ -2177,12 +2186,12 @@ export default function P2PTradingPage() {
         </div>
 
         <div className="p2p-offer-terms" aria-label={formatTradeListTerms(trade)}>
-          <div className={`p2p-offer-term p2p-offer-term-offered ${offerToneClass}`}>
-            <span>{perspective.offerSide.label}</span>
-            <strong>{formatTradeAssetDisplayText(trade.offer)}</strong>
-            <small>{trade.status === 'open' ? 'Available now' : statusLabel}</small>
-            {offerExplorerUrl ? (
-              <a className="p2p-offer-token-link" href={offerExplorerUrl} target="_blank" rel="noreferrer">
+          <div className={`p2p-offer-term p2p-offer-term-offered ${leftToneClass}`}>
+            <span>{leftSide.label}</span>
+            <strong>{formatTradeAssetDisplayText(leftSide.asset)}</strong>
+            <small>{leftMetaLabel}</small>
+            {leftExplorerUrl ? (
+              <a className="p2p-offer-token-link" href={leftExplorerUrl} target="_blank" rel="noreferrer">
                 Token Explorer
               </a>
             ) : null}
@@ -2190,12 +2199,12 @@ export default function P2PTradingPage() {
           <div className="p2p-offer-term-link" aria-hidden="true">
             for
           </div>
-          <div className={`p2p-offer-term p2p-offer-term-requested ${requestToneClass}`}>
-            <span>{perspective.requestSide.label}</span>
-            <strong>{formatTradeAssetDisplayText(trade.request)}</strong>
-            <small>{takerLabel}</small>
-            {requestExplorerUrl ? (
-              <a className="p2p-offer-token-link" href={requestExplorerUrl} target="_blank" rel="noreferrer">
+          <div className={`p2p-offer-term p2p-offer-term-requested ${rightToneClass}`}>
+            <span>{rightSide.label}</span>
+            <strong>{formatTradeAssetDisplayText(rightSide.asset)}</strong>
+            <small>{rightMetaLabel}</small>
+            {rightExplorerUrl ? (
+              <a className="p2p-offer-token-link" href={rightExplorerUrl} target="_blank" rel="noreferrer">
                 Token Explorer
               </a>
             ) : null}
