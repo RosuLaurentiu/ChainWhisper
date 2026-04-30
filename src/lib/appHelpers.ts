@@ -57,6 +57,7 @@ const TRADE_STATUS_OPEN = 1;
 const TRADE_STATUS_ACCEPTED = 2;
 const TRADE_STATUS_CANCELLED = 3;
 const TRADE_STATUS_DECLINED = 4;
+const TRADE_STATUS_EXPIRED = 5;
 const TRADE_ASSET_TYPE_NATIVE = 0;
 const TRADE_ASSET_TYPE_ERC20 = 1;
 const TRADE_ASSET_TYPE_PRIVATE_ERC20 = 2;
@@ -74,6 +75,9 @@ export const resolveTradeSnapshotStatus = (statusRaw: unknown, expiresAt: number
   }
   if (status === TRADE_STATUS_DECLINED) {
     return 'declined';
+  }
+  if (status === TRADE_STATUS_EXPIRED) {
+    return 'expired';
   }
   return 'unknown';
 };

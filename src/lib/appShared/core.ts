@@ -418,6 +418,9 @@ export type TradeSnapshot = {
   createdAt: number;
   expiresAt: number;
   status: TradeOnChainStatus;
+  isPublic?: boolean;
+  hasAccessHash?: boolean;
+  parentTradeId?: number;
   acceptedTxHash?: string;
 };
 
@@ -593,7 +596,7 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
 
-export const TRADE_ESCROW_CONTRACT_ADDRESS = '0x57D00e9B8689bDA8E1BD0524bE05d0869D20F899';
+export const TRADE_ESCROW_CONTRACT_ADDRESS = '0xeEE933f31Ba7dA6Cea3b30eE7BaaE2E88cb3d6f2';
 export const TRADE_ESCROW_CONTRACT_ABI = [
   'function feeRecipient() view returns (address)',
   'function feeAmount() view returns (uint256)',
@@ -602,14 +605,23 @@ export const TRADE_ESCROW_CONTRACT_ABI = [
   'function privateFeeToken() view returns (address)',
   'function nextTradeId() view returns (uint256)',
   'function createTrade((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, uint8 feeMode) payable returns (uint256 tradeId)',
+  'function createTradeAdvanced((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, uint8 feeMode, bool isPublic, bytes32 accessHash, uint256 parentTradeId) payable returns (uint256 tradeId)',
   'function acceptTrade(uint256 tradeId) payable',
+  'function acceptTradeWithSecret(uint256 tradeId, bytes32 accessSecret) payable',
   'function cancelTrade(uint256 tradeId)',
   'function declineTrade(uint256 tradeId)',
+  'function reclaimExpiredTrade(uint256 tradeId)',
   'function getTrade(uint256 tradeId) view returns (address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt)',
+  'function getTradeMetadata(uint256 tradeId) view returns (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint8 feeMode, address feeToken, uint256 feePaid)',
+  'function getOpenPublicTradeIds(uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
+  'function getRecentTradeIds(uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
+  'function getTradeIdsForMaker(address maker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
+  'function getTradeIdsForTaker(address taker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'event TradeOpened(uint256 indexed tradeId, address indexed maker, address indexed taker, uint8 offerAssetType, address offerToken, uint256 offerAmount, uint8 requestAssetType, address requestToken, uint256 requestAmount, uint64 createdAt, uint64 expiresAt)',
   'event TradeAccepted(uint256 indexed tradeId, address indexed taker)',
   'event TradeCancelled(uint256 indexed tradeId, address indexed maker)',
-  'event TradeDeclined(uint256 indexed tradeId, address indexed taker)'
+  'event TradeDeclined(uint256 indexed tradeId, address indexed taker)',
+  'event TradeExpired(uint256 indexed tradeId, address indexed maker, address indexed actor)'
 ] as const;
 
 export const ERC20_TOKEN_ABI = [

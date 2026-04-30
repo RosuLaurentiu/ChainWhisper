@@ -46,6 +46,12 @@ type TradeComposerPanelProps = {
   expiryError?: string;
   sending: boolean;
   canSend: boolean;
+  title?: string;
+  metaLabel?: string;
+  safetyNote?: string;
+  sendLabel?: string;
+  sendingLabel?: string;
+  sendTitle?: string;
   onSendTradeOffer: () => void;
   generalError?: string;
   validationMessage?: string;
@@ -117,6 +123,12 @@ export default function TradeComposerPanel({
   expiryError,
   sending,
   canSend,
+  title = 'Trade offer',
+  metaLabel = 'Private terms, on-chain escrow',
+  safetyNote = 'Trade terms stay in your encrypted private chat, but the final asset transfers remain visible on-chain.',
+  sendLabel = 'Send Trade',
+  sendingLabel = 'Creating...',
+  sendTitle = 'Create the escrow trade and send the encrypted offer to this chat.',
   onSendTradeOffer,
   generalError,
   validationMessage
@@ -130,9 +142,9 @@ export default function TradeComposerPanel({
   return (
     <div className="trade-compose-panel" role="group" aria-label="P2P trade offer">
       <div className="trade-compose-header">
-        <strong>Trade offer</strong>
+        <strong>{title}</strong>
         <div className="trade-compose-header-meta">
-          <span>Private terms, on-chain escrow</span>
+          <span>{metaLabel}</span>
           <a
             className="trade-compose-header-link"
             href={escrowContractUrl}
@@ -148,7 +160,7 @@ export default function TradeComposerPanel({
         <summary>Safety note: verify token contracts before sending</summary>
         <div className="trade-compose-warning-body">
           <p>Only the escrowed settlement is enforced on-chain. Trade only with people you trust.</p>
-          <p>Trade terms stay in your encrypted private chat, but the final asset transfers remain visible on-chain.</p>
+          <p>{safetyNote}</p>
         </div>
       </details>
 
@@ -400,9 +412,9 @@ export default function TradeComposerPanel({
             className="trade-compose-send"
             onClick={onSendTradeOffer}
             disabled={!canSend}
-            title={validationMessage || 'Create the escrow trade and send the encrypted offer to this chat.'}
+            title={validationMessage || sendTitle}
           >
-            {sending ? 'Creating...' : 'Send Trade'}
+            {sending ? sendingLabel : sendLabel}
           </button>
         </div>
       </div>

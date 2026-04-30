@@ -76,7 +76,10 @@ export const createTradeOnChain = async ({
   expiresAt,
   feeMode,
   nativeFeeWei,
-  tokenFeeAmount
+  tokenFeeAmount,
+  isPublic,
+  accessHash,
+  parentTradeId
 }: {
   signer: TradeSigner;
   makerAddress: string;
@@ -89,6 +92,9 @@ export const createTradeOnChain = async ({
   feeMode: TradeFeeModeSelection;
   nativeFeeWei: bigint;
   tokenFeeAmount: bigint;
+  isPublic?: boolean;
+  accessHash?: string;
+  parentTradeId?: number;
 }): Promise<{ tradeId: number }> => {
   const cotiEthers = await loadCotiEthersModule();
   const tradeContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, signer);
@@ -119,14 +125,27 @@ export const createTradeOnChain = async ({
     requestAmountWei
   ] as const;
   const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
-  const createTx = await tradeContract.createTrade(
-    offerAssetTuple,
-    requestAssetTuple,
-    takerAddress,
-    expiresAt,
-    feeMode === 'coti' ? 0 : 1,
-    { value: valueToSend }
-  );
+  const shouldUseAdvancedCreate = Boolean(isPublic || accessHash || parentTradeId);
+  const createTx = shouldUseAdvancedCreate
+    ? await tradeContract.createTradeAdvanced(
+        offerAssetTuple,
+        requestAssetTuple,
+        takerAddress,
+        expiresAt,
+        feeMode === 'coti' ? 0 : 1,
+        Boolean(isPublic),
+        accessHash ?? '0x0000000000000000000000000000000000000000000000000000000000000000',
+        parentTradeId ?? 0,
+        { value: valueToSend }
+      )
+    : await tradeContract.createTrade(
+        offerAssetTuple,
+        requestAssetTuple,
+        takerAddress,
+        expiresAt,
+        feeMode === 'coti' ? 0 : 1,
+        { value: valueToSend }
+      );
   const createReceipt = requireSuccessfulReceipt(await createTx.wait(), 'Trade creation failed on-chain.');
 
   let tradeId = 0;
@@ -159,12 +178,14 @@ export const acceptTradeOnChain = async ({
   signer,
   ownerAddress,
   tradeId,
-  requestAsset
+  requestAsset,
+  accessSecret
 }: {
   signer: TradeSigner;
   ownerAddress: string;
   tradeId: number;
   requestAsset: TradeAssetPayload;
+  accessSecret?: string;
 }): Promise<{ acceptedTxHash?: string }> => {
   const tradeContract = await createTradeContract(signer);
   const requestAmountWei = BigInt(requestAsset.amount);
@@ -173,9 +194,12 @@ export const acceptTradeOnChain = async ({
     await ensureTradeTokenAllowance(signer, ownerAddress, requestAsset.tokenAddress, requestAmountWei, requestAsset.kind);
   }
 
-  const acceptTx = await tradeContract.acceptTrade(tradeId, {
+  const txOverrides = {
     value: requestAsset.kind === 'native' ? requestAmountWei : 0n
-  });
+  };
+  const acceptTx = accessSecret
+    ? await tradeContract.acceptTradeWithSecret(tradeId, accessSecret, txOverrides)
+    : await tradeContract.acceptTrade(tradeId, txOverrides);
   const acceptReceipt = requireSuccessfulReceipt(
     (await acceptTx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown },
     'Trade acceptance failed on-chain.'

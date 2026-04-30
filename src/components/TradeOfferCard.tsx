@@ -9,6 +9,7 @@ import {
   type TradeResponseMessagePayload,
   type TradeSnapshot
 } from '../lib/appShared';
+import { isZeroTradeTakerAddress, resolveTradePerspective } from '../lib/tradePerspective';
 
 type TradeOfferCardProps = {
   offer: TradeOfferMessagePayload;
@@ -18,6 +19,11 @@ type TradeOfferCardProps = {
   actionPending: boolean;
   collapsed?: boolean;
   canToggleCollapsed?: boolean;
+  shareUrl?: string;
+  shareLabel?: string;
+  shareCopied?: boolean;
+  onCopyShareLink?: () => void;
+  showCounterAction?: boolean;
   onToggleCollapsed?: () => void;
   onAccept: () => void;
   onDecline: () => void;
@@ -194,6 +200,11 @@ export default function TradeOfferCard({
   actionPending,
   collapsed = false,
   canToggleCollapsed = false,
+  shareUrl,
+  shareLabel = 'Share Link',
+  shareCopied = false,
+  onCopyShareLink,
+  showCounterAction = true,
   onToggleCollapsed,
   onAccept,
   onDecline,
@@ -203,9 +214,12 @@ export default function TradeOfferCard({
   const walletKey = currentWalletAddress?.trim().toLowerCase() ?? '';
   const isMaker = walletKey.length > 0 && offer.maker.toLowerCase() === walletKey;
   const isTaker = walletKey.length > 0 && offer.taker.toLowerCase() === walletKey;
+  const isOpenTakerTrade = isZeroTradeTakerAddress(offer.taker);
   const statusLabel = resolveTradeStatus(offer, snapshot, latestResponse);
   const statusClassName = statusLabel.toLowerCase().replace(/\s+/g, '-');
   const isOpen = statusLabel === 'Open' || statusLabel === 'Pending sync';
+  const canAcceptOpenTakerTrade = isOpen && isOpenTakerTrade && !isMaker;
+  const hasWalletForOpenAccept = walletKey.length > 0;
   const showExpiryAt = isOpen;
   const resolvedOffer = snapshot?.offer ?? offer.offer;
   const resolvedRequest = snapshot?.request ?? offer.request;
@@ -217,64 +231,32 @@ export default function TradeOfferCard({
   const acceptedTransactionUrl = buildTransactionExplorerUrl(snapshot?.acceptedTxHash);
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
   const requestScopeLabel = resolvedRequest ? resolveAssetScopeLabel(resolvedRequest.kind) : null;
-  const assetPanels: TradeCardAssetPanel[] =
+  const tradePerspective =
     resolvedOffer && resolvedRequest
-      ? isMaker
-        ? [
-            {
-              asset: resolvedOffer,
-              label: 'You send',
-              tone: 'send',
-              verifyUrl: offerVerifyUrl,
-              scopeLabel: offerScopeLabel,
-              custom: Boolean(resolvedOffer.custom)
-            },
-            {
-              asset: resolvedRequest,
-              label: 'You receive',
-              tone: 'receive',
-              verifyUrl: requestVerifyUrl,
-              scopeLabel: requestScopeLabel,
-              custom: Boolean(resolvedRequest.custom)
-            }
-          ]
-        : isTaker
-          ? [
-              {
-                asset: resolvedRequest,
-                label: 'You send',
-                tone: 'send',
-                verifyUrl: requestVerifyUrl,
-                scopeLabel: requestScopeLabel,
-                custom: Boolean(resolvedRequest.custom)
-              },
-              {
-                asset: resolvedOffer,
-                label: 'You receive',
-                tone: 'receive',
-                verifyUrl: offerVerifyUrl,
-                scopeLabel: offerScopeLabel,
-                custom: Boolean(resolvedOffer.custom)
-              }
-            ]
-          : [
-              {
-                asset: resolvedOffer,
-                label: 'Maker locks',
-                tone: 'neutral',
-                verifyUrl: offerVerifyUrl,
-                scopeLabel: offerScopeLabel,
-                custom: Boolean(resolvedOffer.custom)
-              },
-              {
-                asset: resolvedRequest,
-                label: 'Taker sends',
-                tone: 'neutral',
-                verifyUrl: requestVerifyUrl,
-                scopeLabel: requestScopeLabel,
-                custom: Boolean(resolvedRequest.custom)
-              }
-            ]
+      ? resolveTradePerspective(
+          {
+            maker: offer.maker,
+            taker: offer.taker,
+            offer: resolvedOffer,
+            request: resolvedRequest,
+            status: snapshot?.status
+          },
+          currentWalletAddress
+        )
+      : null;
+  const assetPanels: TradeCardAssetPanel[] =
+    resolvedOffer && resolvedRequest && tradePerspective
+      ? (tradePerspective.showTakerPerspective
+          ? [tradePerspective.requestSide, tradePerspective.offerSide]
+          : [tradePerspective.offerSide, tradePerspective.requestSide]
+        ).map((side) => ({
+          asset: side.asset,
+          label: side.label,
+          tone: side.tone,
+          verifyUrl: side.asset === resolvedOffer ? offerVerifyUrl : requestVerifyUrl,
+          scopeLabel: side.asset === resolvedOffer ? offerScopeLabel : requestScopeLabel,
+          custom: Boolean(side.asset.custom)
+        }))
       : [];
   const tradeRateLabel =
     assetPanels.length >= 2 ? buildTradeRateLabel(assetPanels[0]?.asset, assetPanels[1]?.asset) : null;
@@ -303,7 +285,17 @@ export default function TradeOfferCard({
         <div className="trade-card-header-tags">
           {isMaker ? <span className="trade-card-parent">Your offer</span> : null}
           {isTaker ? <span className="trade-card-parent incoming">Incoming offer</span> : null}
+          {canAcceptOpenTakerTrade ? <span className="trade-card-parent incoming">Open offer</span> : null}
           {offer.parentTradeId ? <span className="trade-card-parent">Counter to #{offer.parentTradeId}</span> : null}
+          {shareUrl ? (
+            <button
+              type="button"
+              className={shareCopied ? 'trade-card-link-button copied' : 'trade-card-link-button'}
+              onClick={onCopyShareLink}
+            >
+              {shareCopied ? 'Copied' : shareLabel}
+            </button>
+          ) : null}
           {acceptedTransactionUrl ? (
             <a className="trade-card-link-button" href={acceptedTransactionUrl} target="_blank" rel="noreferrer">
               Accepted Tx
@@ -372,32 +364,36 @@ export default function TradeOfferCard({
           {tradeRateLabel ? <p className="trade-card-rate">{tradeRateLabel}</p> : null}
           <p className="trade-card-note">On-chain escrow. Verify token contracts before accepting.</p>
 
-          {isOpen && isTaker ? (
+          {isOpen && (isTaker || canAcceptOpenTakerTrade) ? (
             <div className="trade-card-actions">
               <button
                 type="button"
                 className="trade-card-action trade-card-action-accept"
                 onClick={onAccept}
-                disabled={actionPending}
+                disabled={actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)}
               >
-                {actionPending ? 'Processing...' : 'Accept'}
+                {actionPending ? 'Processing...' : hasWalletForOpenAccept ? 'Accept' : 'Connect wallet to accept'}
               </button>
-              <button
-                type="button"
-                className="trade-card-action trade-card-action-refuse"
-                onClick={onDecline}
-                disabled={actionPending}
-              >
-                Refuse
-              </button>
-              <button
-                type="button"
-                className="trade-card-action trade-card-action-counter"
-                onClick={onCounter}
-                disabled={actionPending}
-              >
-                Counter
-              </button>
+              {isTaker ? (
+                <button
+                  type="button"
+                  className="trade-card-action trade-card-action-refuse"
+                  onClick={onDecline}
+                  disabled={actionPending}
+                >
+                  Refuse
+                </button>
+              ) : null}
+              {(isTaker || canAcceptOpenTakerTrade) && showCounterAction ? (
+                <button
+                  type="button"
+                  className="trade-card-action trade-card-action-counter"
+                  onClick={onCounter}
+                  disabled={actionPending}
+                >
+                  Counter
+                </button>
+              ) : null}
             </div>
           ) : null}
 

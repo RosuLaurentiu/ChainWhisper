@@ -27,6 +27,32 @@ import {
 } from './appShared';
 import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHelpers';
 
+const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
+
+export type TradeAccessMetadata = {
+  isPublic?: boolean;
+  hasAccessHash?: boolean;
+  parentTradeId?: number;
+};
+
+const parseTradeAccessMetadata = (metadataRaw: unknown): TradeAccessMetadata => {
+  const metadata = metadataRaw as { isPublic?: unknown; accessHash?: unknown } | null | undefined;
+  const indexedMetadata = metadataRaw as { [key: number]: unknown } | null | undefined;
+  const metadataIsPublicRaw = metadata?.isPublic ?? indexedMetadata?.[0];
+  const metadataAccessHash = String(metadata?.accessHash ?? indexedMetadata?.[1] ?? '');
+  const parentTradeId = toSafeNumber((metadata as { parentTradeId?: unknown } | null | undefined)?.parentTradeId ?? indexedMetadata?.[2]);
+  const isPublic = typeof metadataIsPublicRaw === 'boolean' ? metadataIsPublicRaw : undefined;
+  const hasAccessHash = /^0x[0-9a-fA-F]{64}$/.test(metadataAccessHash)
+    ? metadataAccessHash.toLowerCase() !== ZERO_BYTES32
+    : undefined;
+
+  return {
+    isPublic,
+    hasAccessHash,
+    parentTradeId: parentTradeId > 0 ? parentTradeId : undefined
+  };
+};
+
 const decryptPrivateUintValue = async (
   encryptedValue: unknown,
   signer: Wallet | JsonRpcSigner
@@ -199,6 +225,14 @@ const resolveTradeAssetSnapshot = async (
   }
 };
 
+export const fetchTradeAccessMetadataById = async (tradeId: number): Promise<TradeAccessMetadata> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+  const metadataRaw = await contract.getTradeMetadata(tradeId);
+  return parseTradeAccessMetadata(metadataRaw);
+};
+
 export const fetchTradeSnapshotById = async (
   tradeId: number,
   options: {
@@ -212,6 +246,7 @@ export const fetchTradeSnapshotById = async (
   const readProvider = await loadCotiReadProvider(true);
   const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
   const tradeRaw = await contract.getTrade(tradeId);
+  const metadataRaw = await contract.getTradeMetadata?.(tradeId).catch(() => null);
   const maker = String((tradeRaw as { maker?: unknown }).maker ?? tradeRaw?.[0] ?? '').trim();
   const taker = String((tradeRaw as { taker?: unknown }).taker ?? tradeRaw?.[1] ?? '').trim();
   const statusRaw = (tradeRaw as { status?: unknown }).status ?? tradeRaw?.[2];
@@ -225,6 +260,7 @@ export const fetchTradeSnapshotById = async (
   const requestAssetType = (requestAssetRaw as { assetType?: unknown })?.assetType ?? requestAssetRaw?.[0] ?? 0;
   const requestToken = (requestAssetRaw as { token?: unknown })?.token ?? requestAssetRaw?.[1] ?? '';
   const requestAmount = (requestAssetRaw as { amount?: unknown })?.amount ?? requestAssetRaw?.[2] ?? 0n;
+  const { isPublic, hasAccessHash, parentTradeId } = parseTradeAccessMetadata(metadataRaw);
 
   const [offer, request] = await Promise.all([
     resolveTradeAssetSnapshot(
@@ -270,8 +306,113 @@ export const fetchTradeSnapshotById = async (
     createdAt,
     expiresAt,
     status: resolvedStatus,
+    isPublic,
+    hasAccessHash,
+    parentTradeId,
     acceptedTxHash
   };
+};
+
+export const fetchRecentTradeSnapshots = async (
+  options: {
+    rewardTokenSymbol: string;
+    rewardTokenDecimals: number;
+    privateRewardTokenSymbol: string;
+    privateRewardTokenDecimals: number;
+    limit?: number;
+  }
+): Promise<TradeSnapshot[]> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 48)));
+  const publicTradeIdsRaw = await contract.getOpenPublicTradeIds?.(0, safeLimit).catch(() => null);
+  const publicTradeIdsResult = Array.isArray(publicTradeIdsRaw) ? publicTradeIdsRaw[0] : null;
+  const publicTradeIds = Array.isArray(publicTradeIdsResult)
+    ? publicTradeIdsResult
+        .map((value: unknown) => toSafeNumber(value))
+        .filter((value: number) => value > 0)
+    : [];
+
+  if (publicTradeIdsRaw !== null) {
+    const publicSnapshots = await Promise.all(
+      publicTradeIds.map((tradeId: number) =>
+        fetchTradeSnapshotById(tradeId, {
+          rewardTokenSymbol: options.rewardTokenSymbol,
+          rewardTokenDecimals: options.rewardTokenDecimals,
+          privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+          privateRewardTokenDecimals: options.privateRewardTokenDecimals
+        }).catch(() => null)
+      )
+    );
+    return publicSnapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
+  }
+
+  const nextTradeIdRaw = await contract.nextTradeId();
+  const nextTradeId = toSafeNumber(nextTradeIdRaw);
+  const tradeIds: number[] = [];
+
+  for (let tradeId = nextTradeId - 1; tradeId > 0 && tradeIds.length < safeLimit; tradeId -= 1) {
+    tradeIds.push(tradeId);
+  }
+
+  const snapshots = await Promise.all(
+    tradeIds.map((tradeId) =>
+      fetchTradeSnapshotById(tradeId, {
+        rewardTokenSymbol: options.rewardTokenSymbol,
+        rewardTokenDecimals: options.rewardTokenDecimals,
+        privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+        privateRewardTokenDecimals: options.privateRewardTokenDecimals
+      }).catch(() => null)
+    )
+  );
+
+  return snapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
+};
+
+export const fetchWalletTradeSnapshots = async (
+  walletAddress: string,
+  options: {
+    rewardTokenSymbol: string;
+    rewardTokenDecimals: number;
+    privateRewardTokenSymbol: string;
+    privateRewardTokenDecimals: number;
+    limit?: number;
+  }
+): Promise<TradeSnapshot[]> => {
+  if (!isWalletAddress(walletAddress)) {
+    return [];
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 80)));
+  const [makerIdsRaw, takerIdsRaw] = await Promise.all([
+    contract.getTradeIdsForMaker(walletAddress, 0, safeLimit).catch(() => null),
+    contract.getTradeIdsForTaker(walletAddress, 0, safeLimit).catch(() => null)
+  ]);
+  const resolveIds = (raw: unknown): number[] => {
+    const idsRaw = Array.isArray(raw) ? raw[0] : null;
+    return Array.isArray(idsRaw)
+      ? idsRaw.map((value: unknown) => toSafeNumber(value)).filter((value: number) => value > 0)
+      : [];
+  };
+  const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw)]))
+    .sort((left, right) => right - left)
+    .slice(0, safeLimit);
+  const snapshots = await Promise.all(
+    tradeIds.map((tradeId) =>
+      fetchTradeSnapshotById(tradeId, {
+        rewardTokenSymbol: options.rewardTokenSymbol,
+        rewardTokenDecimals: options.rewardTokenDecimals,
+        privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+        privateRewardTokenDecimals: options.privateRewardTokenDecimals
+      }).catch(() => null)
+    )
+  );
+
+  return snapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
 };
 
 export const ensureTradeTokenAllowance = async (

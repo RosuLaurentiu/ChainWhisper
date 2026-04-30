@@ -49,6 +49,9 @@ type DeriveTradeComposerModelParams = {
   privateRewardTokenBalanceWei: bigint | null;
   tradeRequiredFeeWei: bigint | null;
   tradeTokenFeeWei: bigint | null;
+  counterpartyRequired?: boolean;
+  missingCounterpartyMessage?: string;
+  selfTradeMessage?: string;
 };
 
 export type TradeComposerModel = {
@@ -179,7 +182,10 @@ export const deriveTradeComposerModel = ({
   rewardTokenBalanceWei,
   privateRewardTokenBalanceWei,
   tradeRequiredFeeWei,
-  tradeTokenFeeWei
+  tradeTokenFeeWei,
+  counterpartyRequired = true,
+  missingCounterpartyMessage = 'Select a contact first.',
+  selfTradeMessage = 'P2P trades are only available in private chats with another wallet.'
 }: DeriveTradeComposerModelParams): TradeComposerModel => {
   const normalizedTradeOfferCustomTokenAddress = tradeOfferCustomTokenAddress.trim();
   const normalizedTradeRequestCustomTokenAddress = tradeRequestCustomTokenAddress.trim();
@@ -282,12 +288,12 @@ export const deriveTradeComposerModel = ({
 
   const tradeComposerFieldErrors: TradeComposerFieldErrors = {};
 
-  if (!activeContact) {
-    tradeComposerFieldErrors.general = 'Select a contact first.';
+  if (counterpartyRequired && !activeContact) {
+    tradeComposerFieldErrors.general = missingCounterpartyMessage;
   } else if (!walletAddress || !isWalletAddress(walletAddress)) {
     tradeComposerFieldErrors.general = 'Connect your wallet first.';
-  } else if (isSelfChat) {
-    tradeComposerFieldErrors.general = 'P2P trades are only available in private chats with another wallet.';
+  } else if (counterpartyRequired && isSelfChat) {
+    tradeComposerFieldErrors.general = selfTradeMessage;
   } else if (!onCotiNetwork) {
     tradeComposerFieldErrors.general = 'Switch to COTI network first.';
   } else if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS)) {

@@ -6,6 +6,7 @@ import HomePage from './components/HomePage';
 import { ActiveJoinCodeList, GroupInviteMenu } from './components/GroupInviteTools';
 import MobileBottomNav from './components/MobileBottomNav';
 import WalletSidebar from './components/WalletSidebar';
+import type { StandaloneTradeVisibility } from './components/StandaloneTradesPage';
 import { useBurnerWallet } from './hooks/useBurnerWallet';
 import { useStateBackupSync } from './hooks/useStateBackupSync';
 import { useWalletOnboarding } from './hooks/useWalletOnboarding';
@@ -25,6 +26,8 @@ import {
   type TradeTokenPresetKey
 } from './lib/appHelpers';
 import {
+  fetchTradeAccessMetadataById,
+  fetchRecentTradeSnapshots,
   fetchTradeSnapshotById,
   readPrivateTokenBalanceWei
 } from './lib/appChain';
@@ -199,6 +202,7 @@ const BurnerImportModal = lazy(() => import('./components/BurnerImportModal'));
 const BurnerPinModal = lazy(() => import('./components/BurnerPinModal'));
 const DirectChatPanel = lazy(() => import('./components/DirectChatPanel'));
 const GroupChatPanel = lazy(() => import('./components/GroupChatPanel'));
+const P2PTradingPage = lazy(() => import('./components/P2PTradingPage'));
 const QuickActionsModal = lazy(() => import('./components/QuickActionsModal'));
 const TreasuryPage = lazy(() => import('./components/TreasuryPage'));
 const TradeComposerPanel = lazy(() => import('./components/TradeComposerPanel'));
@@ -207,7 +211,16 @@ const INITIAL_VISIBLE_THREAD_MESSAGE_COUNT = 160;
 const VISIBLE_THREAD_MESSAGE_CHUNK = 120;
 const BACKGROUND_DEEP_SYNC_DELAY_MS = 500;
 
-type AppPage = 'home' | 'chat' | 'treasury';
+type AppPage = 'home' | 'chat' | 'treasury' | 'trades';
+
+type AppRoute = {
+  page: AppPage;
+  tradeId?: number;
+  tradeAccessSecret?: string;
+};
+
+const ZERO_TRADE_TAKER_ADDRESS = '0x0000000000000000000000000000000000000000';
+const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 const normalizeAppPathname = (pathname: string): string => {
   const trimmed = pathname.trim();
@@ -220,7 +233,7 @@ const normalizeAppPathname = (pathname: string): string => {
   return withoutTrailingSlash || '/';
 };
 
-const getPathForAppPage = (page: AppPage): string => {
+const getPathForAppPage = (page: AppPage, tradeId?: number | null): string => {
   if (page === 'home') {
     return '/home';
   }
@@ -229,33 +242,80 @@ const getPathForAppPage = (page: AppPage): string => {
     return '/treasury';
   }
 
+  if (page === 'trades') {
+    return tradeId && tradeId > 0 ? `/trades/${tradeId}` : '/trades';
+  }
+
   return '/';
 };
 
-const resolveAppPageFromLocation = (): AppPage => {
+const resolveNavigationPathFromLocation = (): string => {
   if (typeof window === 'undefined') {
-    return 'chat';
+    return '/';
   }
 
-  const normalizedPathname = normalizeAppPathname(window.location.pathname).toLowerCase();
+  const redirectedPath = new URLSearchParams(window.location.search).get('p');
+  return normalizeAppPathname(redirectedPath || window.location.pathname);
+};
+
+const resolveTradeIdFromPath = (pathname: string): number | undefined => {
+  const match = pathname.match(/^\/trades?\/(\d+)$/i);
+  if (!match) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const resolveTradeAccessSecretFromLocation = (): string | undefined => {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+
+  const hashValue = window.location.hash.replace(/^#/, '').trim();
+  const searchSecret = new URLSearchParams(window.location.search).get('secret')?.trim() ?? '';
+  const hashSecret =
+    hashValue.startsWith('secret=')
+      ? new URLSearchParams(hashValue).get('secret')?.trim() ?? ''
+      : hashValue;
+  const secret = searchSecret || hashSecret;
+  return /^0x[a-fA-F0-9]{64}$/.test(secret) ? secret : undefined;
+};
+
+const resolveAppRouteFromLocation = (): AppRoute => {
+  if (typeof window === 'undefined') {
+    return { page: 'chat' };
+  }
+
+  const normalizedPathname = resolveNavigationPathFromLocation().toLowerCase();
   if (normalizedPathname === '/home') {
-    return 'home';
+    return { page: 'home' };
   }
 
   if (normalizedPathname === '/treasury') {
-    return 'treasury';
+    return { page: 'treasury' };
+  }
+
+  if (normalizedPathname === '/trades' || normalizedPathname.startsWith('/trades/')) {
+    return { page: 'trades' };
+  }
+
+  const tradeId = resolveTradeIdFromPath(normalizedPathname);
+  if (tradeId) {
+    return { page: 'trades', tradeId, tradeAccessSecret: resolveTradeAccessSecretFromLocation() };
   }
 
   if (normalizedPathname === '/' || normalizedPathname === '/chat') {
-    return 'chat';
+    return { page: 'chat' };
   }
 
   const normalizedHash = window.location.hash.replace(/^#/, '').trim().toLowerCase();
-  if (normalizedHash === 'home' || normalizedHash === 'chat' || normalizedHash === 'treasury') {
-    return normalizedHash as AppPage;
+  if (normalizedHash === 'home' || normalizedHash === 'chat' || normalizedHash === 'treasury' || normalizedHash === 'trades') {
+    return { page: normalizedHash as AppPage };
   }
 
-  return 'chat';
+  return { page: 'chat' };
 };
 
 export default function App() {
@@ -450,12 +510,27 @@ export default function App() {
   const [tradeCounterParentId, setTradeCounterParentId] = useState<number | null>(null);
   const [tradeCounterContext, setTradeCounterContext] = useState<PendingTradeCounterContext | null>(null);
   const [tradeSnapshotsById, setTradeSnapshotsById] = useState<Record<string, TradeSnapshot>>({});
+  const [standaloneTradeVisibility, setStandaloneTradeVisibility] = useState<StandaloneTradeVisibility>('public');
+  const [standaloneTradeSnapshots, setStandaloneTradeSnapshots] = useState<TradeSnapshot[]>([]);
+  const [loadingStandaloneTrades, setLoadingStandaloneTrades] = useState(false);
+  const [standaloneTradesError, setStandaloneTradesError] = useState('');
+  const [loadingStandaloneTradeDetail, setLoadingStandaloneTradeDetail] = useState(false);
+  const [standaloneTradeDetailError, setStandaloneTradeDetailError] = useState('');
+  const [standaloneTradeDetailAccessBlocked, setStandaloneTradeDetailAccessBlocked] = useState(false);
+  const [standaloneCreatedTradeId, setStandaloneCreatedTradeId] = useState<number | null>(null);
+  const [standaloneCreatedTradeLink, setStandaloneCreatedTradeLink] = useState('');
   const [groupTipRecipientAddress, setGroupTipRecipientAddress] = useState('');
   const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
   const [processingGroupAction, setProcessingGroupAction] = useState(false);
   const [syncingGroups, setSyncingGroups] = useState(false);
   const [error, setError] = useState<string>('');
-  const [activePage, setActivePage] = useState<AppPage>(() => resolveAppPageFromLocation());
+  const [activePage, setActivePage] = useState<AppPage>(() => resolveAppRouteFromLocation().page);
+  const [activeTradePageId, setActiveTradePageId] = useState<number | null>(
+    () => resolveAppRouteFromLocation().tradeId ?? null
+  );
+  const [activeTradeAccessSecret, setActiveTradeAccessSecret] = useState<string>(
+    () => resolveAppRouteFromLocation().tradeAccessSecret ?? ''
+  );
   const [activeMobileView, setActiveMobileView] = useState<MobileView>('wallets');
   const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
   const [isMobileNav, setIsMobileNav] = useState<boolean>(() =>
@@ -1428,6 +1503,12 @@ export default function App() {
     !tipAmountExceedsBalance;
   const normalizedTradeOfferCustomTokenAddress = tradeOfferCustomTokenAddress.trim();
   const normalizedTradeRequestCustomTokenAddress = tradeRequestCustomTokenAddress.trim();
+  const standaloneTradeNeedsCounterparty = false;
+  const tradeComposerCounterparty =
+    activePage === 'trades' ? null : activeContact;
+  const tradeComposerIsSelfTrade =
+    activePage === 'trades' ? false : isSelfChat;
+  const tradeComposerSending = activePage === 'trades' ? false : sending;
   const tradeCustomOfferTokenKind =
     resolveTradePresetKind(tradeOfferTokenSelection) === 'private-erc20' ? 'private-erc20' : 'erc20';
   const tradeCustomRequestTokenKind =
@@ -1457,12 +1538,12 @@ export default function App() {
   } = useMemo(
     () =>
       deriveTradeComposerModel({
-        activeContact,
+        activeContact: tradeComposerCounterparty,
         walletAddress,
-        isSelfChat,
+        isSelfChat: tradeComposerIsSelfTrade,
         onCotiNetwork,
         creatingTrade,
-        sending,
+        sending: tradeComposerSending,
         tipping,
         tradeFeeModeSelection,
         tradeOfferTokenSelection,
@@ -1483,15 +1564,23 @@ export default function App() {
         rewardTokenBalanceWei,
         privateRewardTokenBalanceWei,
         tradeRequiredFeeWei,
-        tradeTokenFeeWei
+        tradeTokenFeeWei,
+        counterpartyRequired: activePage !== 'trades' || standaloneTradeNeedsCounterparty,
+        missingCounterpartyMessage:
+          activePage === 'trades' ? 'Enter a counterparty wallet first.' : 'Select a contact first.',
+        selfTradeMessage:
+          activePage === 'trades'
+            ? 'Choose a different counterparty wallet.'
+            : 'P2P trades are only available in private chats with another wallet.'
       }),
     [
-      activeContact,
+      activePage,
+      tradeComposerCounterparty,
       walletAddress,
-      isSelfChat,
+      tradeComposerIsSelfTrade,
       onCotiNetwork,
       creatingTrade,
-      sending,
+      tradeComposerSending,
       tipping,
       tradeFeeModeSelection,
       tradeOfferTokenSelection,
@@ -7652,16 +7741,24 @@ export default function App() {
     }
   }, [isConnected]);
 
-  const navigateToPage = useCallback((page: AppPage) => {
+  const navigateToPage = useCallback((page: AppPage, tradeId?: number | null, tradeAccessSecret?: string) => {
     setActivePage(page);
+    setActiveTradePageId(page === 'trades' ? tradeId ?? null : null);
+    setActiveTradeAccessSecret(page === 'trades' ? tradeAccessSecret ?? '' : '');
     if (typeof window !== 'undefined') {
-      const nextPath = getPathForAppPage(page);
-      const currentPath = normalizeAppPathname(window.location.pathname);
-      if (currentPath !== nextPath || window.location.hash) {
+      const nextPath = getPathForAppPage(page, tradeId);
+      const currentPath = resolveNavigationPathFromLocation();
+      const nextHash = page === 'trades' && tradeAccessSecret ? `#secret=${tradeAccessSecret}` : '';
+      if (
+        currentPath !== nextPath ||
+        window.location.hash !== nextHash ||
+        new URLSearchParams(window.location.search).has('p')
+      ) {
         const nextUrl = new URL(window.location.href);
         nextUrl.pathname = nextPath;
-        nextUrl.hash = '';
-        window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}`);
+        nextUrl.searchParams.delete('p');
+        nextUrl.hash = nextHash;
+        window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
       }
     }
   }, []);
@@ -7675,6 +7772,7 @@ export default function App() {
 
       const nextUrl = new URL(window.location.href);
       nextUrl.pathname = getPathForAppPage(page);
+      nextUrl.searchParams.delete('p');
       nextUrl.hash = '';
 
       if (typeof document !== 'undefined' && document.body) {
@@ -7694,18 +7792,369 @@ export default function App() {
     [navigateToPage]
   );
 
+  const buildStandaloneTradeUrl = useCallback((tradeId: number, accessSecret?: string): string => {
+    const path = getPathForAppPage('trades', tradeId);
+    if (typeof window === 'undefined') {
+      return accessSecret ? `${path}#secret=${accessSecret}` : path;
+    }
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.pathname = path;
+    nextUrl.search = '';
+    nextUrl.hash = accessSecret ? `secret=${accessSecret}` : '';
+    return nextUrl.toString();
+  }, []);
+
+  const createTradeAccessSecret = (): string => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  };
+
+  const hashTradeAccessSecret = async (accessSecret: string): Promise<string> => {
+    const cotiEthers = await loadCotiEthersModule();
+    return cotiEthers.keccak256(accessSecret);
+  };
+
+  const openStandaloneTradeById = useCallback(
+    (tradeId: number) => {
+      navigateToPage('trades', tradeId);
+    },
+    [navigateToPage]
+  );
+
+  const openStandaloneTradeDirectory = useCallback(() => {
+    navigateToPage('trades');
+  }, [navigateToPage]);
+
+  const mergeStandaloneTradeSnapshot = useCallback((snapshot: TradeSnapshot) => {
+    setTradeSnapshotsById((previous) => ({
+      ...previous,
+      [String(snapshot.tradeId)]: snapshot
+    }));
+    setStandaloneTradeSnapshots((previous) => {
+      const withoutCurrent = previous.filter((entry) => entry.tradeId !== snapshot.tradeId);
+      return [snapshot, ...withoutCurrent].sort((left, right) => right.tradeId - left.tradeId);
+    });
+  }, []);
+
+  const loadStandaloneTradeDirectory = useCallback(async () => {
+    setLoadingStandaloneTrades(true);
+    setStandaloneTradesError('');
+
+    try {
+      const snapshots = await fetchRecentTradeSnapshots({
+        rewardTokenSymbol,
+        rewardTokenDecimals,
+        privateRewardTokenSymbol,
+        privateRewardTokenDecimals,
+        limit: 60
+      });
+      setStandaloneTradeSnapshots(snapshots);
+      setTradeSnapshotsById((previous) => {
+        const next = { ...previous };
+        for (const snapshot of snapshots) {
+          next[String(snapshot.tradeId)] = snapshot;
+        }
+        return next;
+      });
+    } catch {
+      setStandaloneTradesError('Failed to load recent on-chain trades.');
+    } finally {
+      setLoadingStandaloneTrades(false);
+    }
+  }, [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
+
+  const createStandaloneTradeOffer = async () => {
+    setError('');
+    setStandaloneCreatedTradeId(null);
+    setStandaloneCreatedTradeLink('');
+
+    if (sendingRef.current || tipping || creatingTrade) {
+      return;
+    }
+
+    if (tradeComposerValidationMessage) {
+      setError(tradeComposerValidationMessage);
+      return;
+    }
+
+    const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    const takerAddress = ZERO_TRADE_TAKER_ADDRESS;
+    const accessSecret = standaloneTradeVisibility === 'private' ? createTradeAccessSecret() : '';
+    const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
+
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
+      setError('Connect a wallet first.');
+      return;
+    }
+
+    if (!selectedTradeOfferToken || !selectedTradeRequestToken) {
+      setError('Select valid trade tokens first.');
+      return;
+    }
+
+    if (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n) {
+      setError(`Enter a valid ${selectedTradeOfferToken.symbol} amount to send.`);
+      return;
+    }
+
+    if (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n) {
+      setError(`Enter a valid ${selectedTradeRequestToken.symbol} amount to receive.`);
+      return;
+    }
+
+    try {
+      setCreatingTrade(true);
+      const { signer, cacheKey } = await getMemoSigner();
+      const nativeFeeWei =
+        tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
+      const tokenFeeAmount =
+        tradeFeeModeSelection === 'token' ? await resolveRequiredTokenFeeForTradeCreate() : 0n;
+      const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
+      const { tradeId } = await createTradeOnChain({
+        signer,
+        makerAddress: requestedWalletAddress,
+        takerAddress,
+        offerAsset: selectedTradeOfferToken,
+        offerAmountWei: parsedTradeOfferAmountWei,
+        requestAsset: selectedTradeRequestToken,
+        requestAmountWei: parsedTradeRequestAmountWei,
+        expiresAt,
+        feeMode: tradeFeeModeSelection,
+        nativeFeeWei,
+        tokenFeeAmount,
+        isPublic: standaloneTradeVisibility === 'public',
+        accessHash: accessHash !== ZERO_BYTES32 ? accessHash : undefined
+      });
+      const createdAt = Math.floor(Date.now() / 1000);
+      const nextSnapshot: TradeSnapshot = {
+        tradeId,
+        maker: requestedWalletAddress,
+        taker: takerAddress,
+        offer: {
+          ...selectedTradeOfferToken,
+          amount: parsedTradeOfferAmountWei.toString()
+        },
+        request: {
+          ...selectedTradeRequestToken,
+          amount: parsedTradeRequestAmountWei.toString()
+        },
+        createdAt,
+        expiresAt,
+        status: 'open'
+      };
+      const shareUrl = buildStandaloneTradeUrl(tradeId, accessSecret || undefined);
+
+      mergeStandaloneTradeSnapshot(nextSnapshot);
+      setStandaloneCreatedTradeId(tradeId);
+      setStandaloneCreatedTradeLink(shareUrl);
+      setActiveTradeAccessSecret(accessSecret);
+      setTopUpMetricsNonce((previous) => previous + 1);
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      setTradeOfferAmountInput('');
+      setTradeRequestAmountInput('');
+      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      if (standaloneTradeVisibility === 'private') {
+        navigateToPage('trades', tradeId, accessSecret);
+      } else {
+        await loadStandaloneTradeDirectory();
+      }
+    } catch (tradeError) {
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to create trade offer.');
+      setError(message);
+      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+        const shouldTopUp = window.confirm(
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
+        );
+        if (shouldTopUp) {
+          await topUpBurnerWithWallet();
+        }
+      }
+    } finally {
+      setCreatingTrade(false);
+    }
+  };
+
+  const refreshStandaloneTradeSnapshot = async (tradeId: number): Promise<TradeSnapshot | null> => {
+    try {
+      const snapshot = await fetchTradeSnapshotById(tradeId, {
+        rewardTokenSymbol,
+        rewardTokenDecimals,
+        privateRewardTokenSymbol,
+        privateRewardTokenDecimals
+      });
+      mergeStandaloneTradeSnapshot(snapshot);
+      return snapshot;
+    } catch {
+      return null;
+    }
+  };
+
+  const acceptStandaloneTrade = async (snapshot: TradeSnapshot) => {
+    setError('');
+    if (processingTradeActionId || !walletAddress || !isWalletAddress(walletAddress)) {
+      return;
+    }
+
+    try {
+      setProcessingTradeActionId(String(snapshot.tradeId));
+      const latestSnapshot = (await refreshStandaloneTradeSnapshot(snapshot.tradeId)) ?? snapshot;
+      const { signer, cacheKey } = await getMemoSigner();
+      const { acceptedTxHash } = await acceptTradeOnChain({
+        signer,
+        ownerAddress: walletAddress,
+        tradeId: snapshot.tradeId,
+        requestAsset: latestSnapshot.request,
+        accessSecret:
+          activeTradePageId === snapshot.tradeId && activeTradeAccessSecret
+            ? activeTradeAccessSecret
+            : undefined
+      });
+      const nextSnapshot: TradeSnapshot = {
+        ...latestSnapshot,
+        status: 'accepted',
+        acceptedTxHash
+      };
+      mergeStandaloneTradeSnapshot(nextSnapshot);
+      setTopUpMetricsNonce((previous) => previous + 1);
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+    } catch (tradeError) {
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to accept trade.');
+      setError(message);
+      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+        const shouldTopUp = window.confirm(
+          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
+        );
+        if (shouldTopUp) {
+          await topUpBurnerWithWallet();
+        }
+      }
+    } finally {
+      setProcessingTradeActionId('');
+    }
+  };
+
+  const declineStandaloneTrade = async (snapshot: TradeSnapshot) => {
+    setError('');
+    if (processingTradeActionId) {
+      return;
+    }
+
+    try {
+      setProcessingTradeActionId(String(snapshot.tradeId));
+      const latestSnapshot = (await refreshStandaloneTradeSnapshot(snapshot.tradeId)) ?? snapshot;
+      const { signer, cacheKey } = await getMemoSigner();
+      await declineTradeOnChain({
+        signer,
+        tradeId: snapshot.tradeId
+      });
+      mergeStandaloneTradeSnapshot({
+        ...latestSnapshot,
+        status: 'declined'
+      });
+      setTopUpMetricsNonce((previous) => previous + 1);
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+    } catch (tradeError) {
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to refuse trade.');
+      setError(message);
+    } finally {
+      setProcessingTradeActionId('');
+    }
+  };
+
+  const cancelStandaloneTrade = async (snapshot: TradeSnapshot) => {
+    setError('');
+    if (processingTradeActionId) {
+      return;
+    }
+
+    try {
+      setProcessingTradeActionId(String(snapshot.tradeId));
+      const latestSnapshot = (await refreshStandaloneTradeSnapshot(snapshot.tradeId)) ?? snapshot;
+      const { signer, cacheKey } = await getMemoSigner();
+      await cancelTradeOnChain({
+        signer,
+        tradeId: snapshot.tradeId
+      });
+      mergeStandaloneTradeSnapshot({
+        ...latestSnapshot,
+        status: 'cancelled'
+      });
+      setTopUpMetricsNonce((previous) => previous + 1);
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+    } catch (tradeError) {
+      const message =
+        tradeError instanceof Error
+          ? getOnChainFailureMessage(tradeError, tradeError.message)
+          : getOnChainFailureMessage(tradeError, 'Failed to cancel trade.');
+      setError(message);
+    } finally {
+      setProcessingTradeActionId('');
+    }
+  };
+
   useEffect(() => {
     const syncPageWithLocation = () => {
-      const nextPage = resolveAppPageFromLocation();
-      setActivePage(nextPage);
+      const nextRoute = resolveAppRouteFromLocation();
+      setActivePage(nextRoute.page);
+      setActiveTradePageId(nextRoute.page === 'trades' ? nextRoute.tradeId ?? null : null);
+      setActiveTradeAccessSecret(nextRoute.page === 'trades' ? nextRoute.tradeAccessSecret ?? '' : '');
 
-      const canonicalPath = getPathForAppPage(nextPage);
-      const currentPath = normalizeAppPathname(window.location.pathname);
-      if (currentPath !== canonicalPath || window.location.hash) {
+      const currentPath = resolveNavigationPathFromLocation();
+      const canonicalPath =
+        nextRoute.page === 'trades' && currentPath.toLowerCase().startsWith('/trades')
+          ? currentPath
+          : getPathForAppPage(nextRoute.page, nextRoute.tradeId);
+      const canonicalHash = nextRoute.page === 'trades' ? window.location.hash : '';
+      if (
+        currentPath !== canonicalPath ||
+        window.location.hash !== canonicalHash ||
+        new URLSearchParams(window.location.search).has('p')
+      ) {
         const nextUrl = new URL(window.location.href);
         nextUrl.pathname = canonicalPath;
-        nextUrl.hash = '';
-        window.history.replaceState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}`);
+        nextUrl.searchParams.delete('p');
+        nextUrl.hash = canonicalHash;
+        window.history.replaceState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
       }
     };
 
@@ -7723,10 +8172,18 @@ export default function App() {
     if (activePage !== 'chat') {
       setShowQuickActionsModal(false);
       setMobileGroupOptionsOpen(false);
+    }
+    if (activePage !== 'chat' && activePage !== 'trades') {
       setShowBurnerImportModal(false);
       closeBurnerPinModal();
     }
   }, [activePage, closeBurnerPinModal, setShowBurnerImportModal]);
+
+  useEffect(() => {
+    if (activePage === 'trades' && activeMobileView === 'contacts') {
+      setActiveMobileView('chat');
+    }
+  }, [activeMobileView, activePage]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -7738,8 +8195,80 @@ export default function App() {
         ? 'ChainWhisper'
         : activePage === 'chat'
           ? 'ChainWhisper Chat'
-          : 'Treasury Data | ChainWhisper';
-  }, [activePage]);
+          : activePage === 'trades'
+            ? activeTradePageId
+              ? `Trade #${activeTradePageId} | ChainWhisper`
+              : 'P2P Trades | ChainWhisper'
+            : 'Treasury Data | ChainWhisper';
+  }, [activePage, activeTradePageId]);
+
+  useEffect(() => {
+    if (activePage === 'trades') {
+      return;
+    }
+  }, [activePage, loadStandaloneTradeDirectory]);
+
+  useEffect(() => {
+    if (activePage === 'trades' || activeTradePageId === null) {
+      setStandaloneTradeDetailError('');
+      setStandaloneTradeDetailAccessBlocked(false);
+      setLoadingStandaloneTradeDetail(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingStandaloneTradeDetail(true);
+    setStandaloneTradeDetailError('');
+    setStandaloneTradeDetailAccessBlocked(false);
+
+    const loadTradeDetail = async () => {
+      try {
+        const metadata = await fetchTradeAccessMetadataById(activeTradePageId).catch(() => null);
+        if (cancelled) {
+          return;
+        }
+
+        if (metadata?.isPublic === false && !activeTradeAccessSecret) {
+          setStandaloneTradeDetailAccessBlocked(true);
+          return;
+        }
+
+        const snapshot = await fetchTradeSnapshotById(activeTradePageId, {
+          rewardTokenSymbol,
+          rewardTokenDecimals,
+          privateRewardTokenSymbol,
+          privateRewardTokenDecimals
+        });
+        if (cancelled) {
+          return;
+        }
+        mergeStandaloneTradeSnapshot(snapshot);
+      } catch {
+        if (!cancelled) {
+          setStandaloneTradeDetailError(`Trade #${activeTradePageId} was not found on the escrow contract.`);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingStandaloneTradeDetail(false);
+        }
+      }
+    };
+
+    loadTradeDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activePage,
+    activeTradeAccessSecret,
+    activeTradePageId,
+    mergeStandaloneTradeSnapshot,
+    privateRewardTokenDecimals,
+    privateRewardTokenSymbol,
+    rewardTokenDecimals,
+    rewardTokenSymbol
+  ]);
 
   useEffect(() => {
     if (!mobileLinksOpen) {
@@ -9155,6 +9684,84 @@ export default function App() {
       />
     </Suspense>
   ) : null;
+  const legacyStandaloneTradesEnabled =
+    activePage === 'trades' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('__legacyTrades');
+  const standaloneTradeComposerContent =
+    legacyStandaloneTradesEnabled ? (
+      <Suspense fallback={<div className="chat-placeholder">Loading trade composer...</div>}>
+        <TradeComposerPanel
+          title="Create trade"
+          metaLabel={standaloneTradeVisibility === 'public' ? 'Listed escrow trade' : 'Direct-link escrow trade'}
+          safetyNote="Escrow settlement and trade terms are stored on-chain."
+          sendLabel="Create Trade"
+          sendingLabel="Creating..."
+          sendTitle="Create the escrow trade on chain."
+          feeMode={tradeFeeModeSelection}
+          onFeeModeChange={setTradeFeeModeSelection}
+          feeSummaryLabel={tradeFeeSummaryLabel}
+          feeError={tradeComposerFieldErrors.fee}
+          offerTokenOptions={tradeTokenOptions}
+          requestTokenOptions={tradeTokenOptions}
+          offerTokenSelection={tradeOfferTokenSelection}
+          onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
+          requestTokenSelection={tradeRequestTokenSelection}
+          onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
+          offerAssetError={tradeComposerFieldErrors.offerAsset}
+          requestAssetError={tradeComposerFieldErrors.requestAsset}
+          offerCustomAddress={tradeOfferCustomTokenAddress}
+          onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
+          requestCustomAddress={tradeRequestCustomTokenAddress}
+          onRequestCustomAddressChange={setTradeRequestCustomTokenAddress}
+          offerCustomMetaLabel={tradeOfferCustomMetaLabel}
+          requestCustomMetaLabel={tradeRequestCustomMetaLabel}
+          offerVerifyUrl={tradeOfferVerifyUrl}
+          requestVerifyUrl={tradeRequestVerifyUrl}
+          offerAmountInput={tradeOfferAmountInput}
+          onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
+          requestAmountInput={tradeRequestAmountInput}
+          onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
+          offerAmountError={tradeComposerFieldErrors.offerAmount}
+          requestAmountError={tradeComposerFieldErrors.requestAmount}
+          canUseMaxOfferAmount={canUseTradeOfferMax}
+          onUseMaxOfferAmount={() => setTradeOfferAmountInput(tradeOfferMaxInputValue)}
+          offerAmountSummaryLabel={tradeOfferAmountSummaryLabel}
+          requestAmountSummaryLabel={tradeRequestAmountSummaryLabel}
+          offerBalanceSummaryLabel={tradeOfferBalanceSummaryLabel}
+          onSwapSides={swapTradeComposerSides}
+          swapDisabled={creatingTrade}
+          tradePreviewLabel={tradePreviewLabel}
+          tradeRateLabel={tradeRateLabel}
+          expiresHoursInput={tradeExpiryHoursInput}
+          onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
+          expiryError={tradeComposerFieldErrors.expiry}
+          sending={creatingTrade}
+          canSend={canSendTradeOffer}
+          onSendTradeOffer={() => {
+            createStandaloneTradeOffer().catch(() => {});
+          }}
+          generalError={tradeComposerFieldErrors.general}
+          validationMessage={tradeComposerValidationMessage || undefined}
+        />
+      </Suspense>
+    ) : null;
+  const standaloneSelectedTradeSnapshot =
+    activeTradePageId !== null ? tradeSnapshotsById[String(activeTradePageId)] ?? null : null;
+  void setStandaloneTradeVisibility;
+  void standaloneTradeSnapshots;
+  void loadingStandaloneTrades;
+  void standaloneTradesError;
+  void loadingStandaloneTradeDetail;
+  void standaloneTradeDetailError;
+  void standaloneTradeDetailAccessBlocked;
+  void standaloneCreatedTradeId;
+  void standaloneCreatedTradeLink;
+  void openStandaloneTradeById;
+  void openStandaloneTradeDirectory;
+  void acceptStandaloneTrade;
+  void declineStandaloneTrade;
+  void cancelStandaloneTrade;
+  void standaloneTradeComposerContent;
+  void standaloneSelectedTradeSnapshot;
   const headerHomeAction =
     activePage !== 'home' ? (
       <button
@@ -9179,10 +9786,8 @@ export default function App() {
         </svg>
       </button>
     ) : null;
-  const chatWorkspace = (
-    <>
-      <div className="app-root">
-        <WalletSidebar
+  const walletSidebar = (
+    <WalletSidebar
           isConnected={isConnected}
           onCotiNetwork={onCotiNetwork}
           chainId={chainId}
@@ -9257,6 +9862,11 @@ export default function App() {
           showBurnerMnemonic={showBurnerMnemonic}
           onBeginRevealBurnerBackup={beginRevealBurnerBackup}
         />
+  );
+  const chatWorkspace = (
+    <>
+      <div className="app-root">
+        {walletSidebar}
 
         {isConnected ? (
           <ContactsSidebar
@@ -9583,8 +10193,34 @@ export default function App() {
         <HomePage
           onLaunchChat={() => openPageInNewTab('chat')}
           onOpenTreasury={() => navigateToPage('treasury')}
+          onOpenTrades={() => navigateToPage('trades')}
           isConnected={isConnected}
         />
+      </div>
+    );
+  }
+
+  if (activePage === 'trades') {
+    return (
+      <div className="app-shell app-shell-trades">
+        <AppHeader
+          headerRef={topHeaderRef}
+          mobileLinksOpen={mobileLinksOpen}
+          isMobileNav={isMobileNav}
+          onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+          onCloseMobileLinks={() => setMobileLinksOpen(false)}
+          brandActions={headerHomeAction}
+          subtitle="P2P Trades"
+        />
+        <Suspense
+          fallback={
+            <main className="standalone-trades-shell">
+              <p className="standalone-trade-state">Loading trades...</p>
+            </main>
+          }
+        >
+          <P2PTradingPage />
+        </Suspense>
       </div>
     );
   }
