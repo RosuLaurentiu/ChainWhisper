@@ -74,7 +74,7 @@ import {
   type TradeTokenPresetKey
 } from '../lib/appHelpers';
 import { deriveTradeComposerModel } from '../lib/tradeComposer';
-import { acceptTradeOnChain, cancelTradeOnChain, createTradeOnChain, declineTradeOnChain } from '../lib/tradeActions';
+import { acceptTradeOnChain, cancelTradeOnChain, closeCounterTradeOnChain, createTradeOnChain, declineTradeOnChain } from '../lib/tradeActions';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 import {
   groupWalletTradesByPerspective,
@@ -1664,7 +1664,41 @@ export default function P2PTradingPage() {
           acceptedTxHash
         };
         mergeTradeSnapshot(nextSnapshot);
+        let parentCloseWarning = '';
+        if (latestSnapshot.parentTradeId) {
+          try {
+            const parentSnapshot = await refreshTradeDetail(latestSnapshot.parentTradeId);
+            if (!parentSnapshot) {
+              throw new Error('Original trade was not found.');
+            }
+            const parentActorRole =
+              parentSnapshot.maker.toLowerCase() === walletKey
+                ? 'maker'
+                : parentSnapshot.taker.toLowerCase() === walletKey
+                  ? 'taker'
+                  : null;
+            if (parentSnapshot.status === 'open' && parentActorRole) {
+              const parentStatus = await closeCounterTradeOnChain({
+                signer,
+                tradeId: parentSnapshot.tradeId,
+                actorRole: parentActorRole
+              });
+              mergeTradeSnapshot({
+                ...parentSnapshot,
+                status: parentStatus
+              });
+            }
+          } catch (parentCloseError) {
+            parentCloseWarning = getOnChainFailureMessage(
+              parentCloseError,
+              'Counter accepted, but the original trade could not be closed automatically.'
+            );
+          }
+        }
         await Promise.all([loadWalletBalances(), refreshMyTrades(), refreshPublicTrades()]);
+        if (parentCloseWarning) {
+          setTradeActionError(parentCloseWarning);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to accept trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
@@ -1683,7 +1717,8 @@ export default function P2PTradingPage() {
       resolvedRouteAccessSecret,
       route.tradeId,
       walletAddress,
-      connectedWithBurner
+      connectedWithBurner,
+      walletKey
     ]
   );
 

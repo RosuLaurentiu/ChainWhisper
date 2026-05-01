@@ -61,7 +61,7 @@ export const closeCounterTradeOnChain = async ({
   const tradeContract = await createTradeContract(signer);
   const tx =
     actorRole === 'maker' ? await tradeContract.cancelTrade(tradeId) : await tradeContract.declineTrade(tradeId);
-  requireSuccessfulReceipt(await tx.wait(), 'Failed to close the original trade before sending your counter offer.');
+  requireSuccessfulReceipt(await tx.wait(), 'Failed to close the original trade.');
   return actorRole === 'maker' ? 'cancelled' : 'declined';
 };
 
