@@ -16,6 +16,7 @@ import {
   createBurnerWalletVault,
   createCotiBrowserProvider,
   formatCotiAmount,
+  formatExpiryCountdown,
   formatMessageTimestamp,
   formatTokenAmount,
   formatTradeAssetDisplayText,
@@ -2301,6 +2302,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     const leftMetaLabel = leftSide.asset === trade.offer ? (trade.status === 'open' ? 'Available now' : statusLabel) : takerLabel;
     const rightMetaLabel = rightSide.asset === trade.offer ? (trade.status === 'open' ? 'Available now' : statusLabel) : takerLabel;
     const expiryParts = formatTradeExpiryParts(trade.expiresAt);
+    const expiryCountdown = trade.status === 'open' ? formatExpiryCountdown(trade.expiresAt) : null;
 
     return (
       <article key={trade.tradeId} className={`p2p-offer-card p2p-offer-card-${trade.status}`}>
@@ -2356,10 +2358,19 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
           </div>
           <div>
             <span>Expires</span>
-            <strong className="p2p-offer-expiry" title={expiryParts.title}>
-              {expiryParts.date}
-              {expiryParts.time ? <small>{expiryParts.time}</small> : null}
-            </strong>
+            {expiryCountdown ? (
+              <strong
+                className={`p2p-offer-expiry trade-card-expiry-${expiryCountdown.urgency}`}
+                title={`Created: ${formatMessageTimestamp(trade.createdAt)}`}
+              >
+                {expiryCountdown.label.replace(/^Expires /, '')}
+              </strong>
+            ) : (
+              <strong className="p2p-offer-expiry" title={expiryParts.title}>
+                {expiryParts.date}
+                {expiryParts.time ? <small>{expiryParts.time}</small> : null}
+              </strong>
+            )}
           </div>
           <div>
             <span>Access</span>

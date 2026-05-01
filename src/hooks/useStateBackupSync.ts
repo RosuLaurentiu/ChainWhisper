@@ -13,6 +13,7 @@ import {
   isWalletAddress,
   loadCotiEthersModule,
   loadCotiReadProvider,
+  loadCotiWsProvider,
   mergeOnboardInfo,
   normalizeLastReadAllTs,
   parseStateBackupText,
@@ -29,6 +30,50 @@ import {
 type MemoSignerBundle = {
   signer: Wallet | JsonRpcSigner;
   cacheKey: string;
+};
+
+type RestoreCacheEntry = {
+  block: number;
+  version: number;
+  updatedAt: number;
+  lastReadAllTs: number;
+};
+
+const RESTORE_CACHE_KEY_PREFIX = 'coti-chat-restore-cache:';
+
+const loadRestoreCache = (walletKey: string): RestoreCacheEntry | null => {
+  try {
+    const raw = window.localStorage.getItem(`${RESTORE_CACHE_KEY_PREFIX}${walletKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof (parsed as RestoreCacheEntry).block !== 'number' ||
+      typeof (parsed as RestoreCacheEntry).version !== 'number' ||
+      typeof (parsed as RestoreCacheEntry).updatedAt !== 'number' ||
+      typeof (parsed as RestoreCacheEntry).lastReadAllTs !== 'number'
+    ) {
+      return null;
+    }
+    return parsed as RestoreCacheEntry;
+  } catch {
+    return null;
+  }
+};
+
+const saveRestoreCache = (walletKey: string, block: number, payload: StateBackupPayload): void => {
+  try {
+    const entry: RestoreCacheEntry = {
+      block,
+      version: payload.version,
+      updatedAt: payload.updatedAt,
+      lastReadAllTs: payload.lastReadAllTs ?? 0
+    };
+    window.localStorage.setItem(`${RESTORE_CACHE_KEY_PREFIX}${walletKey}`, JSON.stringify(entry));
+  } catch {
+    // localStorage may be unavailable or full.
+  }
 };
 
 type UseStateBackupSyncArgs = {
@@ -151,6 +196,9 @@ export function useStateBackupSync({
       }
 
       try {
+        const walletKey = targetAddress.toLowerCase();
+        const restoreCache = loadRestoreCache(walletKey);
+
         const { signer, cacheKey } = await getMemoSignerRef.current();
         const cotiEthers = await loadCotiEthersModule();
         const readProvider = await loadCotiReadProvider(true);
@@ -171,6 +219,13 @@ export function useStateBackupSync({
           0,
           Math.min(selfConversationRange.firstBlock, latestSelfConversationBlock)
         );
+
+        // When a cache exists, only scan blocks newer than the cached backup.
+        // If nothing newer is found, the cache is still the latest state.
+        const scanFloor =
+          restoreCache && restoreCache.block > earliestSelfConversationBlock
+            ? restoreCache.block + 1
+            : earliestSelfConversationBlock;
 
         let latestPayload: StateBackupPayload | null = null;
         let latestPayloadBlockNumber: number | undefined;
@@ -229,23 +284,36 @@ export function useStateBackupSync({
         }
 
         let windowEnd = latestSelfConversationBlock;
-        while (windowEnd >= earliestSelfConversationBlock && !latestPayload) {
-          const windowStart = Math.max(earliestSelfConversationBlock, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
+        while (windowEnd >= scanFloor && !latestPayload) {
+          const windowStart = Math.max(scanFloor, windowEnd - SELF_BACKUP_RESTORE_BLOCK_WINDOW + 1);
           const windowLogs = await contract.queryFilter(selfFilter, windowStart, windowEnd);
           await tryDecodeBackupLogs(windowLogs as Array<{ blockNumber: number; index: number; args?: Record<string, unknown> }>);
 
-          if (windowStart <= earliestSelfConversationBlock) {
+          if (windowStart <= scanFloor) {
             break;
           }
 
           windowEnd = windowStart - 1;
         }
 
+        // No newer backup found on-chain — fall back to cached payload if available.
+        if (!latestPayload && restoreCache && restoreCache.block >= earliestSelfConversationBlock) {
+          latestPayload = {
+            version: restoreCache.version,
+            updatedAt: restoreCache.updatedAt,
+            lastReadAllTs: restoreCache.lastReadAllTs
+          };
+          latestPayloadBlockNumber = restoreCache.block;
+        }
+
         if (!latestPayload) {
           return false;
         }
 
-        applyStateBackupPayload(targetAddress.toLowerCase(), latestPayload, latestPayloadBlockNumber);
+        applyStateBackupPayload(walletKey, latestPayload, latestPayloadBlockNumber);
+        if (typeof latestPayloadBlockNumber === 'number') {
+          saveRestoreCache(walletKey, latestPayloadBlockNumber, latestPayload);
+        }
 
         const nextOnboardInfo = signer.getUserOnboardInfo();
         setSessionOnboardInfo((previous) => ({
@@ -444,6 +512,48 @@ export function useStateBackupSync({
     readStateSyncEnabled,
     walletAddress
   ]);
+
+  // Listen for new self-memos via WebSocket so read state stays in sync across
+  // devices without waiting for the next connect.
+  useEffect(() => {
+    if (!readStateSyncEnabled || !isWalletAddress(walletAddress) || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
+      return;
+    }
+
+    let cancelled = false;
+    let debounceTimer: number | null = null;
+    let offListener: (() => void) | null = null;
+
+    const scheduleRemoteRestore = () => {
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        if (!cancelled) {
+          restoreStateFromChainSelfBackup().catch(() => {});
+        }
+      }, 3000);
+    };
+
+    const setup = async () => {
+      try {
+        const [cotiEthers, wsProvider] = await Promise.all([loadCotiEthersModule(), loadCotiWsProvider()]);
+        if (cancelled) return;
+        const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, wsProvider);
+        const selfFilter = contract.filters.MessageSubmitted(walletAddress, walletAddress);
+        contract.on(selfFilter, scheduleRemoteRestore);
+        offListener = () => contract.off(selfFilter, scheduleRemoteRestore);
+      } catch {
+        // WS unavailable — skip; the restore cache handles sync on next connect.
+      }
+    };
+
+    setup();
+
+    return () => {
+      cancelled = true;
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      offListener?.();
+    };
+  }, [chainId, hasAesReady, readStateSyncEnabled, restoreStateFromChainSelfBackup, walletAddress]);
 
   useEffect(() => {
     lastReadStateBackupSubmittedAtRef.current = 0;

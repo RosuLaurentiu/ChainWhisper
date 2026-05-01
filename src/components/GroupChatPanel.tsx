@@ -1,4 +1,5 @@
-import type { MutableRefObject, ReactNode, Ref } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useCallback, useMemo, useRef, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import GroupChatCompose from './GroupChatCompose';
 import ChatImage from './ChatImage';
 import { parseImageTag } from '../lib/imagePull';
@@ -175,6 +176,32 @@ export default function GroupChatPanel({
   maxMessageLength,
   onMessageInputChange
 }: GroupChatPanelProps) {
+  const chatMessagesNodeRef = useRef<HTMLDivElement | null>(null);
+  const setChatMessagesNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      chatMessagesNodeRef.current = node;
+      if (typeof chatMessagesRef === 'function') {
+        chatMessagesRef(node);
+        return;
+      }
+      if (chatMessagesRef && 'current' in chatMessagesRef) {
+        (chatMessagesRef as MutableRefObject<HTMLDivElement | null>).current = node;
+      }
+    },
+    [chatMessagesRef]
+  );
+  const renderableMessages = useMemo(
+    () => activeGroupMessages.filter((message) => !isReactionOnlyMessage(message)),
+    [activeGroupMessages, isReactionOnlyMessage]
+  );
+  const messageVirtualizer = useVirtualizer({
+    count: renderableMessages.length,
+    getScrollElement: () => chatMessagesNodeRef.current,
+    estimateSize: () => 112,
+    overscan: 12,
+    getItemKey: (index) => renderableMessages[index]?.id ?? index
+  });
+
   return (
     <div className="chat-shell">
       <div className="chat-header chat-header-group">
@@ -302,15 +329,19 @@ export default function GroupChatPanel({
         ) : null}
       </div>
 
-      <div className="chat-messages" ref={chatMessagesRef}>
-        {!activeGroupMessages.some((message) => !isReactionOnlyMessage(message)) ? (
+      <div className="chat-messages" ref={setChatMessagesNode}>
+        {renderableMessages.length === 0 ? (
           <p className="chat-empty">No group messages yet.</p>
         ) : (
-          activeGroupMessages.map((message) => {
+          <div
+            className="virtual-message-list"
+            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+          >
+            {messageVirtualizer.getVirtualItems().map((virtualItem) => {
+            const message = renderableMessages[virtualItem.index];
+            if (!message) return null;
+
             const isGroupSystemMessage = Boolean(message.isSystem);
-            if (isReactionOnlyMessage(message)) {
-              return null;
-            }
 
             const messageDisplayText = getMessageDisplayText(message.text, message.direction);
             const parsedImageTag = parseImageTag(message.text);
@@ -358,11 +389,19 @@ export default function GroupChatPanel({
               .join(' ');
 
             return (
-              <div key={message.id} className={messageRowClassName}>
+              <div
+                key={message.id}
+                ref={(node) => {
+                  if (node) {
+                    messageVirtualizer.measureElement(node);
+                  }
+                  messageElementRefs.current[message.id] = node;
+                }}
+                data-index={virtualItem.index}
+                className={messageRowClassName}
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
                 <div
-                  ref={(node) => {
-                    messageElementRefs.current[message.id] = node;
-                  }}
                   className={messageBubbleClassName}
                 >
                   {canReplyToGroupMessage ? (
@@ -440,7 +479,11 @@ export default function GroupChatPanel({
                       {'\u21AA'} {getReplyReferenceFallbackLabel(message)}
                     </button>
                   ) : null}
-                  {parsedImageTag ? <ChatImage tag={message.text} parsed={parsedImageTag} /> : messageDisplayText ? <div>{messageDisplayText}</div> : null}
+                  {parsedImageTag ? (
+                    <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
+                  ) : messageDisplayText ? (
+                    <div>{messageDisplayText}</div>
+                  ) : null}
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">
                       {messageReactions.map((reaction) => (
@@ -488,7 +531,8 @@ export default function GroupChatPanel({
                 </div>
               </div>
             );
-          })
+          })}
+          </div>
         )}
       </div>
 

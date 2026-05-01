@@ -1,4 +1,4 @@
-import { useRef, type Ref } from 'react';
+import { useRef, useState, type Ref } from 'react';
 import ChatSendIcon from './ChatSendIcon';
 import ChatImageIcon from './ChatImageIcon';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
@@ -83,6 +83,7 @@ export default function GroupChatCompose({
   onMessageInputChange
 }: GroupChatComposeProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const [msgLength, setMsgLength] = useState(0);
 
   return (
     <div className="chat-compose group-chat-compose">
@@ -244,6 +245,7 @@ export default function GroupChatCompose({
                 event.currentTarget.textContent = capped;
               }
               onMessageInputChange(capped);
+              setMsgLength(capped.length);
             }}
             onPaste={(event) => {
               const imageItem = Array.from(event.clipboardData.items).find(
@@ -275,6 +277,21 @@ export default function GroupChatCompose({
             <ChatSendIcon />
           </button>
         </div>
+        {msgLength > 0 ? (
+          <div className="chat-compose-length-row">
+            <span
+              className={
+                msgLength >= maxMessageLength * 0.9
+                  ? 'chat-compose-length danger'
+                  : msgLength >= maxMessageLength * 0.75
+                    ? 'chat-compose-length warning'
+                    : 'chat-compose-length'
+              }
+            >
+              {msgLength}/{maxMessageLength}
+            </span>
+          </div>
+        ) : null}
         <div className="group-compose-actions group-compose-actions-single">
           <button
             type="button"

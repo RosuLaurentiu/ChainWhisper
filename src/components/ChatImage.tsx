@@ -1,18 +1,26 @@
 import { useEffect, useState, useCallback, memo } from 'react';
-import { parseImageTag, fetchAndDecryptToUrl } from '../lib/imagePull';
+import { parseImageTag, fetchAndDecryptToUrl, isChatImageExpiredError } from '../lib/imagePull';
 import type { ParsedImageTag } from '../lib/imagePull';
 
-type Props = { tag: string; parsed?: ParsedImageTag };
+type Props = { tag: string; parsed?: ParsedImageTag; messageTimestamp?: number };
 type CachedImage = { url: string; refs: number };
 
 const imageUrlCache = new Map<string, CachedImage>();
+const CHAT_IMAGE_TTL_SECONDS = 24 * 60 * 60;
 
 const createImageCacheKey = (parsed: ParsedImageTag): string =>
   `${parsed.blobId}|${parsed.keyHex}|${parsed.ivHex}|${parsed.mime}`;
 
-function ChatImage({ tag, parsed }: Props) {
+const isPastImageRetentionWindow = (timestamp?: number): boolean =>
+  typeof timestamp === 'number' &&
+  Number.isFinite(timestamp) &&
+  timestamp > 0 &&
+  Math.floor(Date.now() / 1000) - timestamp >= CHAT_IMAGE_TTL_SECONDS;
+
+function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expired, setExpired] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
@@ -21,6 +29,7 @@ function ChatImage({ tag, parsed }: Props) {
     const parsedTag = parsed ?? parseImageTag(tag);
     if (!parsedTag) {
       setError('Invalid image tag');
+      setExpired(false);
       setUrl(null);
       return;
     }
@@ -31,6 +40,7 @@ function ChatImage({ tag, parsed }: Props) {
       cached.refs += 1;
       activeCacheKey = cacheKey;
       setError(null);
+      setExpired(false);
       setUrl(cached.url);
       return () => {
         mounted = false;
@@ -46,6 +56,7 @@ function ChatImage({ tag, parsed }: Props) {
     }
 
     setError(null);
+    setExpired(false);
     setUrl(null);
     const abortController = new AbortController();
 
@@ -61,9 +72,15 @@ function ChatImage({ tag, parsed }: Props) {
         if (!mounted) return;
         imageUrlCache.set(cacheKey, { url: objUrl, refs: 1 });
         activeCacheKey = cacheKey;
+        setExpired(false);
         setUrl(objUrl);
-      } catch {
+      } catch (loadError) {
         if (!mounted || abortController.signal.aborted) return;
+        if (isChatImageExpiredError(loadError) || isPastImageRetentionWindow(messageTimestamp)) {
+          setExpired(true);
+          setError(null);
+          return;
+        }
         setError('Unable to load image.');
       }
     })();
@@ -80,7 +97,7 @@ function ChatImage({ tag, parsed }: Props) {
         imageUrlCache.delete(activeCacheKey);
       }
     };
-  }, [tag, parsed]);
+  }, [tag, parsed, messageTimestamp]);
 
   const openLightbox = useCallback(() => setLightboxOpen(true), []);
   const closeLightbox = useCallback(() => setLightboxOpen(false), []);
@@ -94,8 +111,15 @@ function ChatImage({ tag, parsed }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [lightboxOpen, closeLightbox]);
 
+  if (expired) return <div className="chat-image-expired">This image expired after 24 hours.</div>;
   if (error) return <div className="chat-image-error">{error}</div>;
-  if (!url) return <div className="chat-image-loading">Loading image...</div>;
+  if (!url) {
+    return (
+      <div className="chat-image-loading" role="status" aria-label="Decrypting image">
+        <span>Decrypting image...</span>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -111,4 +135,7 @@ function ChatImage({ tag, parsed }: Props) {
   );
 }
 
-export default memo(ChatImage, (previous, next) => previous.tag === next.tag);
+export default memo(
+  ChatImage,
+  (previous, next) => previous.tag === next.tag && previous.messageTimestamp === next.messageTimestamp
+);

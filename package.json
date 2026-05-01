@@ -13,11 +13,13 @@
   "dependencies": {
     "@coti-io/coti-ethers": "^1.0.5",
     "@supabase/supabase-js": "^2.104.0",
+    "@tanstack/react-virtual": "^3.13.24",
     "fflate": "^0.8.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.15.4",
-    "viem": "^2.48.2"
+    "viem": "^2.48.2",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

@@ -1,4 +1,5 @@
-import { useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { memo, useCallback, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import DirectChatCompose from './DirectChatCompose';
 import ChatImage from './ChatImage';
 import TradeOfferCard from './TradeOfferCard';
@@ -102,7 +103,7 @@ type DirectChatPanelProps = {
   tradeToggleTitle: string;
 };
 
-export default function DirectChatPanel({
+function DirectChatPanel({
   activeContact,
   activeContactMeta,
   isSelfChat,
@@ -174,6 +175,20 @@ export default function DirectChatPanel({
   tradeToggleTitle
 }: DirectChatPanelProps) {
   const [tradeCardExpandedState, setTradeCardExpandedState] = useState<Record<string, boolean>>({});
+  const chatMessagesNodeRef = useRef<HTMLDivElement | null>(null);
+  const setChatMessagesNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      chatMessagesNodeRef.current = node;
+      if (typeof chatMessagesRef === 'function') {
+        chatMessagesRef(node);
+        return;
+      }
+      if (chatMessagesRef && 'current' in chatMessagesRef) {
+        (chatMessagesRef as MutableRefObject<HTMLDivElement | null>).current = node;
+      }
+    },
+    [chatMessagesRef]
+  );
   const activeContactLabel = activeContactMeta?.name
     ? `${activeContactMeta.name} (${shortenAddress(activeContact)})`
     : shortenAddress(activeContact);
@@ -192,6 +207,35 @@ export default function DirectChatPanel({
     if (parsedTradeResponse) {
       latestTradeResponsesById[String(parsedTradeResponse.tradeId)] = parsedTradeResponse;
     }
+  });
+  const latestTradeId = activeMessages.reduce<number>((max, message) => {
+    const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
+    return parsedTradeOffer && parsedTradeOffer.tradeId > max ? parsedTradeOffer.tradeId : max;
+  }, -1);
+  const renderableMessages = useMemo(
+    () =>
+      activeMessages.filter((message) => {
+        if (isReactionOnlyMessage(message)) {
+          return false;
+        }
+
+        const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
+        return !(
+          parsedTradeResponse &&
+          (visibleTradeOfferIds.has(String(parsedTradeResponse.tradeId)) ||
+            (parsedTradeResponse.action === 'countered' &&
+              typeof parsedTradeResponse.counterTradeId === 'number' &&
+              visibleTradeOfferIds.has(String(parsedTradeResponse.counterTradeId))))
+        );
+      }),
+    [activeMessages, isReactionOnlyMessage, visibleTradeOfferIds]
+  );
+  const messageVirtualizer = useVirtualizer({
+    count: renderableMessages.length,
+    getScrollElement: () => chatMessagesNodeRef.current,
+    estimateSize: () => 108,
+    overscan: 12,
+    getItemKey: (index) => renderableMessages[index]?.id ?? index
   });
 
   return (
@@ -236,29 +280,20 @@ export default function DirectChatPanel({
         </div>
       </div>
 
-      <div className="chat-messages" ref={chatMessagesRef} onClick={() => markConversationAsRead(activeContact)}>
+      <div className="chat-messages" ref={setChatMessagesNode} onClick={() => markConversationAsRead(activeContact)}>
         {loadingOlderHistory ? <p className="chat-empty">Loading older messages...</p> : null}
-        {!activeMessages.some((message) => !isReactionOnlyMessage(message)) ? (
+        {renderableMessages.length === 0 ? (
           <p className="chat-empty">No messages yet.</p>
         ) : (
-          activeMessages.map((message) => {
-            if (isReactionOnlyMessage(message)) {
-              return null;
-            }
+          <div
+            className="virtual-message-list"
+            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+          >
+            {messageVirtualizer.getVirtualItems().map((virtualItem) => {
+            const message = renderableMessages[virtualItem.index];
+            if (!message) return null;
 
             const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
-            const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
-            const hideTradeResponseMessage =
-              parsedTradeResponse &&
-              (visibleTradeOfferIds.has(String(parsedTradeResponse.tradeId)) ||
-                (parsedTradeResponse.action === 'countered' &&
-                  typeof parsedTradeResponse.counterTradeId === 'number' &&
-                  visibleTradeOfferIds.has(String(parsedTradeResponse.counterTradeId))));
-
-            if (hideTradeResponseMessage) {
-              return null;
-            }
-
             const messageDisplayText = getMessageDisplayText(message.text, message.direction);
             const parsedImageTag = parseImageTag(message.text);
             const messageReactions = getReactionsForMessage(message);
@@ -279,12 +314,17 @@ export default function DirectChatPanel({
             return (
               <div
                 key={message.id}
+                ref={(node) => {
+                  if (node) {
+                    messageVirtualizer.measureElement(node);
+                  }
+                  messageElementRefs.current[message.id] = node;
+                }}
+                data-index={virtualItem.index}
                 className={message.direction === 'outgoing' ? 'message-row outgoing' : 'message-row incoming'}
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
               >
                 <div
-                  ref={(node) => {
-                    messageElementRefs.current[message.id] = node;
-                  }}
                   className={
                     highlightedMessageId === message.id
                       ? 'message-bubble highlighted'
@@ -355,7 +395,7 @@ export default function DirectChatPanel({
                       const tradeId = String(parsedTradeOffer.tradeId);
                       const snapshot = tradeSnapshotsById[tradeId] ?? null;
                       const latestResponse = latestTradeResponsesById[tradeId] ?? null;
-                      const defaultExpanded = true;
+                      const defaultExpanded = parsedTradeOffer.tradeId === latestTradeId;
                       const expanded = tradeCardExpandedState[tradeId] ?? defaultExpanded;
 
                       return (
@@ -389,7 +429,7 @@ export default function DirectChatPanel({
                       );
                     })()
                   ) : parsedImageTag ? (
-                    <ChatImage tag={message.text} parsed={parsedImageTag} />
+                    <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
                   ) : messageDisplayText ? (
                     <div>{messageDisplayText}</div>
                   ) : null}
@@ -440,7 +480,8 @@ export default function DirectChatPanel({
                 </div>
               </div>
             );
-          })
+          })}
+          </div>
         )}
       </div>
 
@@ -484,3 +525,5 @@ export default function DirectChatPanel({
     </div>
   );
 }
+
+export default memo(DirectChatPanel);

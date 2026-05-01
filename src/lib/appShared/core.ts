@@ -451,12 +451,15 @@ export type SyncConversationOptions = {
   background?: boolean;
   fromBlock?: number;
   toBlock?: number;
+  skipContactStateUpdate?: boolean;
 };
 
 export type SyncGroupOptions = {
   deep?: boolean;
   background?: boolean;
   overviewOnly?: boolean;
+  activeMessagesOnly?: boolean;
+  wideLoad?: boolean;
 };
 
 export type StateBackupPayload = {
@@ -1584,6 +1587,25 @@ export const formatMessageTimestamp = (timestamp?: number): string => {
     hour: '2-digit',
     minute: '2-digit'
   });
+};
+
+export type TradeExpiryUrgency = 'none' | 'low' | 'medium' | 'high' | 'expired';
+
+export const formatExpiryCountdown = (expiresAt: number): { label: string; urgency: TradeExpiryUrgency } => {
+  if (expiresAt <= 0) return { label: 'No expiration', urgency: 'none' };
+  const secondsLeft = expiresAt - Math.floor(Date.now() / 1000);
+  if (secondsLeft <= 0) return { label: 'Expired', urgency: 'expired' };
+  const hours = secondsLeft / 3600;
+  let label: string;
+  if (secondsLeft >= 86400) {
+    label = `in ${Math.floor(secondsLeft / 86400)}d ${Math.floor((secondsLeft % 86400) / 3600)}h`;
+  } else if (secondsLeft >= 3600) {
+    label = `in ${Math.floor(hours)}h ${Math.floor((secondsLeft % 3600) / 60)}m`;
+  } else {
+    label = `in ${Math.floor(secondsLeft / 60)}m`;
+  }
+  const urgency: TradeExpiryUrgency = hours > 24 ? 'low' : hours > 1 ? 'medium' : 'high';
+  return { label: `Expires ${label}`, urgency };
 };
 
 export const calculateEstimatedBurnerTopUpAmount = (messageTarget: number): bigint => {

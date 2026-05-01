@@ -1,4 +1,4 @@
-import type { Ref } from 'react';
+import { memo, type Ref } from 'react';
 import {
   formatMessageTimestamp,
   isWalletAddress,
@@ -63,7 +63,7 @@ type ContactsSidebarProps = {
   error: string;
 };
 
-export default function ContactsSidebar({
+function ContactsSidebar({
   nicknameEditorRef,
   nicknameMaxBytes,
   hasAesReady,
@@ -302,13 +302,6 @@ export default function ContactsSidebar({
                             {isContactCopied ? 'Copied' : shortenAddress(contact.address)}
                           </button>
                         )}
-                        {contact.muted || contact.hidden ? (
-                          <span className="contact-state-inline">
-                            {contact.muted ? 'Muted' : null}
-                            {contact.muted && contact.hidden ? ' | ' : null}
-                            {contact.hidden ? 'Hidden' : null}
-                          </span>
-                        ) : null}
                       </div>
                       {hasConversation ? (
                         <span
@@ -582,3 +575,5 @@ export default function ContactsSidebar({
     </aside>
   );
 }
+
+export default memo(ContactsSidebar);

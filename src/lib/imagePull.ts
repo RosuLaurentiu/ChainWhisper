@@ -23,6 +23,16 @@ export const CHAT_IMAGE_FILE_ACCEPT = Array.from(ALLOWED_IMAGE_MIME_TYPES).join(
 
 const CHAT_IMAGES_BUCKET = 'chat-images';
 
+export class ChatImageExpiredError extends Error {
+  constructor() {
+    super('This image has expired.');
+    this.name = 'ChatImageExpiredError';
+  }
+}
+
+export const isChatImageExpiredError = (error: unknown): error is ChatImageExpiredError =>
+  error instanceof ChatImageExpiredError;
+
 const getSecureWebCrypto = (): { webCrypto: Crypto; subtle: SubtleCrypto } => {
   const webCrypto = globalThis.crypto;
   const subtle = webCrypto?.subtle;
@@ -187,7 +197,12 @@ export async function createEncryptedImageTagFromFile(
 export async function fetchEncryptedBlob(blobId: string, signal?: AbortSignal): Promise<ArrayBuffer> {
   const { data } = getSupabaseBrowserClient().storage.from(CHAT_IMAGES_BUCKET).getPublicUrl(blobId);
   const resp = await fetch(data.publicUrl, { signal });
-  if (!resp.ok) throw new Error(`Blob ${resp.status}`);
+  if (!resp.ok) {
+    if (resp.status === 404 || resp.status === 410) {
+      throw new ChatImageExpiredError();
+    }
+    throw new Error(`Blob ${resp.status}`);
+  }
 
   const contentLengthHeader = resp.headers.get('content-length');
   if (contentLengthHeader) {

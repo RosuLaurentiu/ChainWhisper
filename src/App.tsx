@@ -1,4 +1,5 @@
 import { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import AppErrorBoundary from './components/AppErrorBoundary';
 import AppHeader from './components/AppHeader';
 import ContactsSidebar from './components/ContactsSidebar';
 import GroupActionControls from './components/GroupActionControls';
@@ -7,6 +8,7 @@ import { ActiveJoinCodeList, GroupInviteMenu } from './components/GroupInviteToo
 import MobileBottomNav from './components/MobileBottomNav';
 import WalletHeaderPanel from './components/WalletHeaderPanel';
 import { useBurnerWallet } from './hooks/useBurnerWallet';
+import { useNotificationSound } from './hooks/useNotificationSound';
 import { useStateBackupSync } from './hooks/useStateBackupSync';
 import { useWalletOnboarding } from './hooks/useWalletOnboarding';
 import {
@@ -17,7 +19,6 @@ import {
   getOnChainFailureMessage,
   isCustomTradeTokenSelection,
   messageReferencesMatch,
-  type PendingTradeCounterContext,
   parseSharedTxReference,
   resolveTradePresetKind,
   sanitizeOutgoingMessagePlainText,
@@ -75,9 +76,20 @@ import { createEncryptedImageTagFromFile } from './lib/imagePull';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import { orderInjectedWalletOptions } from './lib/walletOptions';
+import {
+  getPathForAppPage,
+  resolveAppRouteFromLocation,
+  resolveNavigationPathFromLocation,
+  type AppPage
+} from './shell/routing';
+import { attachWsDisconnectListeners } from './shell/realtimeConnection';
+import { useAppShellStore } from './state/appShellStore';
+import { useChatUiStore } from './state/chatUiStore';
+import { useGroupUiStore } from './state/groupUiStore';
+import { useInChatTradeStore } from './state/inChatTradeStore';
+import { useTokenToolsStore } from './state/tokenToolsStore';
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
-  ActiveGroupJoinCode,
   applyConversationPreferenceStateToContact,
   AUTO_STATE_BACKUP_BLOCK_DISTANCE,
   AUTO_STATE_BACKUP_RETRY_BLOCKS,
@@ -126,7 +138,6 @@ import {
   GROUP_CHAT_CONTRACT_ABI,
   GROUP_CHAT_CONTRACT_ADDRESS,
   GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS,
-  GroupFeeModeSelection,
   GroupInvite,
   GroupMessageEntry,
   GroupSummary,
@@ -144,7 +155,6 @@ import {
   mergeOnboardInfo,
   markCotiWsHealthyNow,
   mergeUniqueContacts,
-  MobileView,
   normalizeContactName,
   normalizeConversationPreferenceState,
   normalizeLastReadAllTs,
@@ -176,8 +186,6 @@ import {
   StateBackupPayload,
   SWAP_VAULT_CONTRACT_ABI,
   SWAP_VAULT_CONTRACT_ADDRESS,
-  SwapDirection,
-  SwapFeeModeSelection,
   SyncConversationOptions,
   SyncGroupOptions,
   TIP_NATIVE_TOKEN_DECIMALS,
@@ -186,7 +194,6 @@ import {
   TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   TradeAssetPayload,
-  TradeFeeModeSelection,
   TradeOfferMessagePayload,
   TradeSnapshot,
   toSafeNumber,
@@ -211,96 +218,8 @@ const TradeComposerPanel = lazy(() => import('./components/TradeComposerPanel'))
 const INITIAL_VISIBLE_THREAD_MESSAGE_COUNT = 160;
 const VISIBLE_THREAD_MESSAGE_CHUNK = 120;
 const BACKGROUND_DEEP_SYNC_DELAY_MS = 500;
-
-type AppPage = 'home' | 'chat' | 'swap' | 'treasury' | 'trades';
-
-type AppRoute = {
-  page: AppPage;
-};
-
-const normalizeAppPathname = (pathname: string): string => {
-  const trimmed = pathname.trim();
-  if (!trimmed || trimmed === '/') {
-    return '/';
-  }
-
-  const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-  const withoutTrailingSlash = withLeadingSlash.replace(/\/+$/, '');
-  return withoutTrailingSlash || '/';
-};
-
-const getPathForAppPage = (page: AppPage): string => {
-  if (page === 'home') {
-    return '/home';
-  }
-
-  if (page === 'chat') {
-    return '/chat';
-  }
-
-  if (page === 'swap') {
-    return '/swap';
-  }
-
-  if (page === 'treasury') {
-    return '/treasury';
-  }
-
-  if (page === 'trades') {
-    return '/trades';
-  }
-
-  return '/';
-};
-
-const resolveNavigationPathFromLocation = (): string => {
-  if (typeof window === 'undefined') {
-    return '/';
-  }
-
-  const redirectedPath = new URLSearchParams(window.location.search).get('p');
-  return normalizeAppPathname(redirectedPath || window.location.pathname);
-};
-
-const resolveAppRouteFromLocation = (): AppRoute => {
-  if (typeof window === 'undefined') {
-    return { page: 'chat' };
-  }
-
-  const normalizedPathname = resolveNavigationPathFromLocation().toLowerCase();
-  if (normalizedPathname === '/home') {
-    return { page: 'home' };
-  }
-
-  if (normalizedPathname === '/treasury') {
-    return { page: 'treasury' };
-  }
-
-  if (normalizedPathname === '/swap') {
-    return { page: 'swap' };
-  }
-
-  if (normalizedPathname === '/trades' || normalizedPathname.startsWith('/trades/')) {
-    return { page: 'trades' };
-  }
-
-  if (normalizedPathname === '/' || normalizedPathname === '/chat') {
-    return { page: 'chat' };
-  }
-
-  const normalizedHash = window.location.hash.replace(/^#/, '').trim().toLowerCase();
-  if (
-    normalizedHash === 'home' ||
-    normalizedHash === 'chat' ||
-    normalizedHash === 'swap' ||
-    normalizedHash === 'treasury' ||
-    normalizedHash === 'trades'
-  ) {
-    return { page: normalizedHash as AppPage };
-  }
-
-  return { page: 'chat' };
-};
+const GROUP_MESSAGE_PREFETCH_LIMIT = 6;
+const GROUP_MESSAGE_PREFETCH_BATCH_SIZE = 2;
 
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
@@ -308,208 +227,236 @@ export default function App() {
   const [conversationStateSyncPendingByContact, setConversationStateSyncPendingByContact] = useState<
     Record<string, boolean>
   >({});
-  const [newContact, setNewContact] = useState('');
-  const [newContactName, setNewContactName] = useState('');
   const [activeContact, setActiveContact] = useState<string | null>(null);
-  const [showHiddenContacts, setShowHiddenContacts] = useState(false);
   const [activeGroupId, setActiveGroupId] = useState<number | null>(null);
-  const [editingContactAddress, setEditingContactAddress] = useState<string | null>(null);
-  const [editingContactName, setEditingContactName] = useState('');
-  const [showQuickActionsModal, setShowQuickActionsModal] = useState(false);
-  const [showTopUpModal, setShowTopUpModal] = useState(false);
-  const [quickActionTab, setQuickActionTab] = useState<'contact' | 'create-group' | 'join-group'>('contact');
   const [myNickname, setMyNickname] = useState('');
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
-  const [messageInput, setMessageInput] = useState('');
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const [messagesByGroup, setMessagesByGroup] = useState<Record<string, ChatMessage[]>>({});
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
-  const [newGroupTitle, setNewGroupTitle] = useState('');
-  const [newGroupIsPrivate, setNewGroupIsPrivate] = useState(false);
-  const [newGroupMembersInput, setNewGroupMembersInput] = useState('');
-  const [groupInviteMembersInput, setGroupInviteMembersInput] = useState('');
-  const [groupInviteTtlInput, setGroupInviteTtlInput] = useState('8');
-  const [groupJoinCodeMode, setGroupJoinCodeMode] = useState<'single' | 'multi'>('single');
-  const [groupJoinCodeMaxUsesInput, setGroupJoinCodeMaxUsesInput] = useState(
-    String(DEFAULT_GROUP_JOIN_CODE_MULTI_USES)
-  );
-  const [generatedGroupInviteCode, setGeneratedGroupInviteCode] = useState('');
-  const [generatedGroupJoinCodeHash, setGeneratedGroupJoinCodeHash] = useState('');
-  const [activeGroupJoinCodes, setActiveGroupJoinCodes] = useState<ActiveGroupJoinCode[]>([]);
-  const [loadingActiveGroupJoinCodes, setLoadingActiveGroupJoinCodes] = useState(false);
-  const [revokingGroupJoinCodeHash, setRevokingGroupJoinCodeHash] = useState('');
-  const [groupInviteMenuView, setGroupInviteMenuView] = useState<'invite' | 'code'>('invite');
-  const [groupJoinCodeInput, setGroupJoinCodeInput] = useState('');
-  const [groupRenameOpen, setGroupRenameOpen] = useState(false);
-  const [groupRenameInput, setGroupRenameInput] = useState('');
-  const [persistedContactOrder, setPersistedContactOrder] = useState<string[]>([]);
-  const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>({});
-  const [unreadGroupMap, setUnreadGroupMap] = useState<Record<string, boolean>>({});
-  const [lastCopiedKey, setLastCopiedKey] = useState<string | null>(null);
-  const [lastReadAllTs, setLastReadAllTs] = useState(0);
+  const {
+    newContact,
+    newContactName,
+    showHiddenContacts,
+    editingContactAddress,
+    editingContactName,
+    showQuickActionsModal,
+    showTopUpModal,
+    quickActionTab,
+    messageInput,
+    persistedContactOrder,
+    unreadMap,
+    unreadGroupMap,
+    lastCopiedKey,
+    lastReadAllTs,
+    soundEnabled,
+    sending,
+    uploadingImage,
+    sendingReaction,
+    syncingHistory,
+    loadingOlderHistory,
+    replyingToMessage,
+    reactionPickerMessageId,
+    highlightedMessageId,
+    tipping,
+    tipComposerOpen,
+    tipTokenSelection,
+    tipAmountInput,
+    setNewContact,
+    setNewContactName,
+    setShowHiddenContacts,
+    setEditingContactAddress,
+    setEditingContactName,
+    setShowQuickActionsModal,
+    setShowTopUpModal,
+    setQuickActionTab,
+    setMessageInput,
+    setPersistedContactOrder,
+    setUnreadMap,
+    setUnreadGroupMap,
+    setLastCopiedKey,
+    setLastReadAllTs,
+    setSoundEnabled,
+    setSending,
+    setUploadingImage,
+    setSendingReaction,
+    setSyncingHistory,
+    setLoadingOlderHistory,
+    setReplyingToMessage,
+    setReactionPickerMessageId,
+    setHighlightedMessageId,
+    setTipping,
+    setTipComposerOpen,
+    setTipTokenSelection,
+    setTipAmountInput
+  } = useChatUiStore();
+  const {
+    newGroupTitle,
+    newGroupIsPrivate,
+    newGroupMembersInput,
+    groupInviteMembersInput,
+    groupInviteTtlInput,
+    groupJoinCodeMode,
+    groupJoinCodeMaxUsesInput,
+    generatedGroupInviteCode,
+    generatedGroupJoinCodeHash,
+    activeGroupJoinCodes,
+    loadingActiveGroupJoinCodes,
+    revokingGroupJoinCodeHash,
+    groupInviteMenuView,
+    groupJoinCodeInput,
+    groupRenameOpen,
+    groupRenameInput,
+    groupTipRecipientAddress,
+    sendingGroupMessage,
+    processingGroupAction,
+    syncingGroups,
+    mobileGroupOptionsOpen,
+    setNewGroupTitle,
+    setNewGroupIsPrivate,
+    setNewGroupMembersInput,
+    setGroupInviteMembersInput,
+    setGroupInviteTtlInput,
+    setGroupJoinCodeMode,
+    setGroupJoinCodeMaxUsesInput,
+    setGeneratedGroupInviteCode,
+    setGeneratedGroupJoinCodeHash,
+    setActiveGroupJoinCodes,
+    setLoadingActiveGroupJoinCodes,
+    setRevokingGroupJoinCodeHash,
+    setGroupInviteMenuView,
+    setGroupJoinCodeInput,
+    setGroupRenameOpen,
+    setGroupRenameInput,
+    setGroupTipRecipientAddress,
+    setSendingGroupMessage,
+    setProcessingGroupAction,
+    setSyncingGroups,
+    setMobileGroupOptionsOpen
+  } = useGroupUiStore();
+  const {
+    topUpAmountWei,
+    requiredFeeWei,
+    tipNativeBalanceWei,
+    groupRewardsContractAddress,
+    groupRewardsPaused,
+    rewardsContractPaused,
+    rewardsCallerAllowed,
+    rewardsPublicPerInteractionWei,
+    rewardsPublicReserveWei,
+    rewardTokenBalanceWei,
+    privateRewardTokenBalanceWei,
+    rewardTokenSymbol,
+    privateRewardTokenSymbol,
+    rewardTokenDecimals,
+    privateRewardTokenDecimals,
+    swapFeeWei,
+    swapTokenFeeAmount,
+    groupFeeModeSelection,
+    swapFeeModeSelection,
+    swapDirection,
+    swapAmountInput,
+    swappingTokens,
+    swapStatusMessage,
+    loadingTopUpQuote,
+    loadingRewardBalances,
+    setTopUpAmountWei,
+    setRequiredFeeWei,
+    setTipNativeBalanceWei,
+    setGroupRewardsContractAddress,
+    setGroupRewardsPaused,
+    setRewardsContractPaused,
+    setRewardsCallerAllowed,
+    setRewardsPublicPerInteractionWei,
+    setRewardsPublicReserveWei,
+    setRewardTokenBalanceWei,
+    setPrivateRewardTokenBalanceWei,
+    setRewardTokenSymbol,
+    setPrivateRewardTokenSymbol,
+    setRewardTokenDecimals,
+    setPrivateRewardTokenDecimals,
+    setSwapFeeWei,
+    setSwapTokenFeeAmount,
+    setGroupFeeModeSelection,
+    setSwapFeeModeSelection,
+    setSwapDirection,
+    setSwapAmountInput,
+    setSwappingTokens,
+    setSwapStatusMessage,
+    setLoadingTopUpQuote,
+    setLoadingRewardBalances
+  } = useTokenToolsStore();
+  const {
+    tradeComposerOpen,
+    creatingTrade,
+    processingTradeActionId,
+    tradeFeeModeSelection,
+    tradeRequiredFeeWei,
+    tradeTokenFeeWei,
+    tradeOfferTokenSelection,
+    tradeRequestTokenSelection,
+    tradeOfferCustomTokenAddress,
+    tradeRequestCustomTokenAddress,
+    customTradeTokenInfoByAddress,
+    tradeOfferAmountInput,
+    tradeRequestAmountInput,
+    tradeExpiryHoursInput,
+    tradeCounterParentId,
+    tradeCounterContext,
+    tradeSnapshotsById,
+    setTradeComposerOpen,
+    setCreatingTrade,
+    setProcessingTradeActionId,
+    setTradeFeeModeSelection,
+    setTradeRequiredFeeWei,
+    setTradeTokenFeeWei,
+    setTradeOfferTokenSelection,
+    setTradeRequestTokenSelection,
+    setTradeOfferCustomTokenAddress,
+    setTradeRequestCustomTokenAddress,
+    setCustomTradeTokenInfoByAddress,
+    setTradeOfferAmountInput,
+    setTradeRequestAmountInput,
+    setTradeExpiryHoursInput,
+    setTradeCounterParentId,
+    setTradeCounterContext,
+    setTradeSnapshotsById
+  } = useInChatTradeStore();
   const lastReadAllTsRef = useRef(0);
   const lastReadByContactRef = useRef<Record<string, number>>({});
   const lastReadByGroupRef = useRef<Record<string, number>>({});
   const unreadMapRef = useRef<Record<string, boolean>>({});
   const unreadGroupMapRef = useRef<Record<string, boolean>>({});
-  const SOUND_ENABLED_STORAGE_KEY = 'coti-chat-sound-enabled';
   const GROUP_REMOVAL_NOTICE_MARKERS_STORAGE_KEY = 'coti-chat-group-removal-notice-markers-v1';
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
-    try {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem(SOUND_ENABLED_STORAGE_KEY) : null;
-      return raw === null ? true : raw === 'true';
-    } catch {
-      return true;
-    }
-  });
-  const NOTIF_SOUND_URL: string | null = (() => {
-    try {
-      return new URL('./lib/mixkit-long-pop-2358.wav', import.meta.url).href;
-    } catch {
-      return null;
-    }
-  })();
-  const audioUrlRef = useRef<string | null>(NOTIF_SOUND_URL);
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
-
-  const initPersistentAudio = () => {
-    try {
-      if (audioElRef.current) return;
-      const uri = audioUrlRef.current ?? NOTIF_SOUND_URL ?? null;
-      if (!uri) return;
-      audioUrlRef.current = uri;
-      const a = new Audio(uri);
-      a.preload = 'auto';
-      a.volume = 1;
-      a.loop = false;
-      audioElRef.current = a;
-      void a.play().catch(() => {});
-    } catch {}
-  };
-
-  const suppressSoundOnConnectRef = useRef<boolean>(false);
-  const suppressSoundReleaseTimerRef = useRef<number | null>(null);
-  const connectSoundSuppressionTokenRef = useRef(0);
-
-  const playNotificationSound = () => {
-    if (!soundEnabled) return;
-    try {
-      initPersistentAudio();
-      const a = audioElRef.current;
-      if (!a) return;
-      try {
-        a.currentTime = 0;
-      } catch {}
-      const p = a.play();
-      if (p && typeof p.catch === 'function') {
-        p.catch(() => {
-          // retry once after a short delay
-          try {
-            setTimeout(() => {
-              try {
-                if (audioElRef.current) audioElRef.current.play().catch(() => {});
-              } catch {}
-            }, 200);
-          } catch {}
-        });
-      }
-    } catch {}
-  };
-  const beginConnectSoundSuppression = (fallbackMs = 9000): number => {
-    const nextToken = connectSoundSuppressionTokenRef.current + 1;
-    connectSoundSuppressionTokenRef.current = nextToken;
-    suppressSoundOnConnectRef.current = true;
-    if (suppressSoundReleaseTimerRef.current !== null) {
-      window.clearTimeout(suppressSoundReleaseTimerRef.current);
-    }
-    suppressSoundReleaseTimerRef.current = window.setTimeout(() => {
-      if (connectSoundSuppressionTokenRef.current === nextToken) {
-        suppressSoundOnConnectRef.current = false;
-      }
-      suppressSoundReleaseTimerRef.current = null;
-    }, fallbackMs);
-    return nextToken;
-  };
-  const endConnectSoundSuppression = (token?: number) => {
-    if (typeof token === 'number' && token !== connectSoundSuppressionTokenRef.current) {
-      return;
-    }
-    suppressSoundOnConnectRef.current = false;
-    if (suppressSoundReleaseTimerRef.current !== null) {
-      window.clearTimeout(suppressSoundReleaseTimerRef.current);
-      suppressSoundReleaseTimerRef.current = null;
-    }
-  };
-  const [sending, setSending] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [sendingReaction, setSendingReaction] = useState(false);
-  const [syncingHistory, setSyncingHistory] = useState(false);
-  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
-  const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
-  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
-  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
-  const [topUpAmountWei, setTopUpAmountWei] = useState<bigint | null>(null);
-  const [requiredFeeWei, setRequiredFeeWei] = useState<bigint | null>(null);
-  const [tipNativeBalanceWei, setTipNativeBalanceWei] = useState<bigint | null>(null);
-  const [groupRewardsContractAddress, setGroupRewardsContractAddress] = useState('');
-  const [groupRewardsPaused, setGroupRewardsPaused] = useState<boolean | null>(null);
-  const [rewardsContractPaused, setRewardsContractPaused] = useState<boolean | null>(null);
-  const [rewardsCallerAllowed, setRewardsCallerAllowed] = useState<boolean | null>(null);
-  const [rewardsPublicPerInteractionWei, setRewardsPublicPerInteractionWei] = useState<bigint | null>(null);
-  const [rewardsPublicReserveWei, setRewardsPublicReserveWei] = useState<bigint | null>(null);
-  const [rewardTokenBalanceWei, setRewardTokenBalanceWei] = useState<bigint | null>(null);
-  const [privateRewardTokenBalanceWei, setPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
-  const [rewardTokenSymbol, setRewardTokenSymbol] = useState(FALLBACK_REWARD_TOKEN_SYMBOL);
-  const [privateRewardTokenSymbol, setPrivateRewardTokenSymbol] = useState(FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL);
-  const [rewardTokenDecimals, setRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
-  const [privateRewardTokenDecimals, setPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
-  const [swapFeeWei, setSwapFeeWei] = useState<bigint | null>(null);
-  const [swapTokenFeeAmount, setSwapTokenFeeAmount] = useState<bigint | null>(null);
-  const [groupFeeModeSelection, setGroupFeeModeSelection] = useState<GroupFeeModeSelection>('coti');
-  const [swapFeeModeSelection, setSwapFeeModeSelection] = useState<SwapFeeModeSelection>('coti');
-  const [swapDirection, setSwapDirection] = useState<SwapDirection>('shield');
-  const [swapAmountInput, setSwapAmountInput] = useState('');
-  const [swappingTokens, setSwappingTokens] = useState(false);
-  const [swapStatusMessage, setSwapStatusMessage] = useState('');
-  const [loadingTopUpQuote, setLoadingTopUpQuote] = useState(false);
-  const [loadingRewardBalances, setLoadingRewardBalances] = useState(false);
-  const [tipping, setTipping] = useState(false);
-  const [tipComposerOpen, setTipComposerOpen] = useState(false);
-  const [tipTokenSelection, setTipTokenSelection] = useState<TipTokenSelection>('coti');
-  const [tipAmountInput, setTipAmountInput] = useState('');
-  const [tradeComposerOpen, setTradeComposerOpen] = useState(false);
-  const [creatingTrade, setCreatingTrade] = useState(false);
-  const [processingTradeActionId, setProcessingTradeActionId] = useState('');
-  const [tradeFeeModeSelection, setTradeFeeModeSelection] = useState<TradeFeeModeSelection>('coti');
-  const [tradeRequiredFeeWei, setTradeRequiredFeeWei] = useState<bigint | null>(null);
-  const [tradeTokenFeeWei, setTradeTokenFeeWei] = useState<bigint | null>(null);
-  const [tradeOfferTokenSelection, setTradeOfferTokenSelection] = useState<TradeTokenPresetKey>('coti');
-  const [tradeRequestTokenSelection, setTradeRequestTokenSelection] = useState<TradeTokenPresetKey>('wisp');
-  const [tradeOfferCustomTokenAddress, setTradeOfferCustomTokenAddress] = useState('');
-  const [tradeRequestCustomTokenAddress, setTradeRequestCustomTokenAddress] = useState('');
-  const [customTradeTokenInfoByAddress, setCustomTradeTokenInfoByAddress] = useState<Record<string, TradeCustomTokenInfo>>({});
-  const [tradeOfferAmountInput, setTradeOfferAmountInput] = useState('');
-  const [tradeRequestAmountInput, setTradeRequestAmountInput] = useState('');
-  const [tradeExpiryHoursInput, setTradeExpiryHoursInput] = useState(DEFAULT_TRADE_EXPIRY_HOURS);
-  const [tradeCounterParentId, setTradeCounterParentId] = useState<number | null>(null);
-  const [tradeCounterContext, setTradeCounterContext] = useState<PendingTradeCounterContext | null>(null);
-  const [tradeSnapshotsById, setTradeSnapshotsById] = useState<Record<string, TradeSnapshot>>({});
-  const [groupTipRecipientAddress, setGroupTipRecipientAddress] = useState('');
-  const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
-  const [processingGroupAction, setProcessingGroupAction] = useState(false);
-  const [syncingGroups, setSyncingGroups] = useState(false);
+  const {
+    beginConnectSoundSuppression,
+    endConnectSoundSuppression,
+    initPersistentAudio,
+    isConnectSoundSuppressed,
+    playNotificationSound,
+    stopNotificationSound
+  } = useNotificationSound(soundEnabled);
   const [error, setError] = useState<string>('');
-  const [activePage, setActivePage] = useState<AppPage>(() => resolveAppRouteFromLocation().page);
-  const [activeMobileView, setActiveMobileView] = useState<MobileView>('contacts');
-  const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
-  const [chatWalletMenuOpen, setChatWalletMenuOpen] = useState(false);
   const [tradeHeaderWalletControl, setTradeHeaderWalletControl] = useState<ReactNode>(null);
   const [tradeHeaderNavigationControl, setTradeHeaderNavigationControl] = useState<ReactNode>(null);
+  const {
+    activePage,
+    activeMobileView,
+    mobileLinksOpen,
+    chatWalletMenuOpen,
+    directRealtimeStatus,
+    groupRealtimeStatus,
+    setActivePage,
+    setActiveMobileView,
+    setMobileLinksOpen,
+    setChatWalletMenuOpen,
+    setDirectRealtimeStatus,
+    setGroupRealtimeStatus
+  } = useAppShellStore();
   const [isMobileNav, setIsMobileNav] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= MOBILE_NAV_BREAKPOINT_PX : false
   );
-  const [mobileGroupOptionsOpen, setMobileGroupOptionsOpen] = useState(false);
   useEffect(() => {
     setGroupInviteTtlInput((previous) => {
       const normalized = previous.trim();
@@ -548,6 +495,7 @@ export default function App() {
   const previousWalletAddressRef = useRef<string>('');
   const postConnectDataSyncRunIdRef = useRef(0);
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
+  const pinnedContactStateRef = useRef<Map<string, { muted?: boolean; hidden?: boolean }>>(new Map());
   const tradeRequiredFeeCacheRef = useRef<bigint | null>(null);
   const tradeRequiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const tradeTokenFeeCacheRef = useRef<bigint | null>(null);
@@ -637,7 +585,7 @@ export default function App() {
     const shouldPlaySound =
       hasNewUnread(nextContacts, prevContacts, notificationSuppressedContactAddressSet) ||
       hasNewUnread(nextGroups, prevGroups);
-    if (shouldPlaySound && !suppressSoundOnConnectRef.current) {
+    if (shouldPlaySound && !isConnectSoundSuppressed()) {
       playNotificationSound();
     }
 
@@ -1035,6 +983,9 @@ export default function App() {
 
       const latestMessageChanged = previousThread.lastMessageId !== nextThreadLastMessageId;
       if (!latestMessageChanged) {
+        if (current < INITIAL_VISIBLE_THREAD_MESSAGE_COUNT) {
+          return Math.min(nextThreadLength, INITIAL_VISIBLE_THREAD_MESSAGE_COUNT);
+        }
         return current;
       }
 
@@ -2386,6 +2337,7 @@ export default function App() {
         return;
       }
 
+      pinnedContactStateRef.current.set(normalizedAddress, { muted: nextMuted, hidden: nextHidden });
       setContacts((previous) =>
         previous.map((contact) =>
           contact.address.trim().toLowerCase() === normalizedAddress
@@ -2434,6 +2386,7 @@ export default function App() {
         return;
       }
 
+      pinnedContactStateRef.current.set(normalizedAddress, { muted: nextMuted, hidden: nextHidden });
       setContacts((previous) =>
         previous.map((contact) =>
           contact.address.trim().toLowerCase() === normalizedAddress
@@ -3939,11 +3892,15 @@ export default function App() {
             nextContact = { ...nextContact, name: nickname };
           }
 
-          if (discoveredConversationState) {
+          if (discoveredConversationState && !options?.skipContactStateUpdate) {
             nextContact = applyConversationPreferenceStateToContact(
               nextContact,
               discoveredConversationState
             );
+          }
+          const pinned = pinnedContactStateRef.current.get(key);
+          if (pinned) {
+            nextContact = applyConversationPreferenceStateToContact(nextContact, pinned);
           }
           return nextContact;
         });
@@ -4526,10 +4483,17 @@ export default function App() {
 
     if (syncGroupDataInFlightRef.current) {
       const pending = pendingGroupSyncOptionsRef.current;
+      const mergedDeep = Boolean(options?.deep || pending?.deep);
+      const mergedActiveMessagesOnly = !mergedDeep && Boolean(options?.activeMessagesOnly || pending?.activeMessagesOnly);
       pendingGroupSyncOptionsRef.current = {
-        deep: Boolean(options?.deep || pending?.deep),
+        deep: mergedDeep,
         background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
-        overviewOnly: pending ? Boolean(options?.overviewOnly && pending.overviewOnly) : Boolean(options?.overviewOnly)
+        overviewOnly: mergedActiveMessagesOnly
+          ? false
+          : pending
+            ? Boolean(options?.overviewOnly && pending.overviewOnly)
+            : Boolean(options?.overviewOnly),
+        activeMessagesOnly: mergedActiveMessagesOnly
       };
       return;
     }
@@ -4551,6 +4515,280 @@ export default function App() {
         return;
       }
       const selectedActiveGroupId = activeGroupIdRef.current;
+
+      const syncActiveGroupMessagesFast = async (
+        groupId: number,
+        fastOptions?: { knownLastBlock?: number; prefetch?: boolean; wideLoad?: boolean }
+      ): Promise<Map<string, number>> => {
+        const latestIncomingByGroup = new Map<string, number>();
+        const groupMessageSyncKey = `${walletKey}:${groupId}`;
+        const previousGroupMessageBlock = groupMessageLastSyncedBlockRef.current[groupMessageSyncKey];
+        const knownLastBlock = toSafeNumber(fastOptions?.knownLastBlock);
+        const activeGroupLastMessageBlock =
+          knownLastBlock > 0
+            ? knownLastBlock
+            : toSafeNumber(await contract.lastMessageBlockForGroup(groupId).catch(() => null));
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return latestIncomingByGroup;
+        }
+
+        const hasNewGroupActivity =
+          Boolean(options?.deep) ||
+          Boolean(fastOptions?.wideLoad) ||
+          typeof previousGroupMessageBlock !== 'number' ||
+          activeGroupLastMessageBlock <= 0 ||
+          activeGroupLastMessageBlock > previousGroupMessageBlock;
+        if (!hasNewGroupActivity) {
+          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = latestBlock;
+          return latestIncomingByGroup;
+        }
+
+        const groupToBlock =
+          fastOptions?.prefetch && activeGroupLastMessageBlock > 0
+            ? Math.min(activeGroupLastMessageBlock, latestBlock)
+            : latestBlock;
+        const groupFromBlock = options?.deep
+          ? 0
+          : fastOptions?.wideLoad && activeGroupLastMessageBlock > 0
+            ? Math.max(0, activeGroupLastMessageBlock - INITIAL_SYNC_LOOKBACK_BLOCKS)
+            : typeof previousGroupMessageBlock === 'number'
+              ? previousGroupMessageBlock + 1
+              : fastOptions?.prefetch && activeGroupLastMessageBlock > 0
+                ? Math.max(0, activeGroupLastMessageBlock - FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK)
+                : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
+        if (groupFromBlock > groupToBlock) {
+          return latestIncomingByGroup;
+        }
+
+        const [incomingLogs, outgoingLogs] = await Promise.all([
+          contract.queryFilter(
+            contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress),
+            groupFromBlock,
+            groupToBlock
+          ),
+          contract.queryFilter(
+            contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress),
+            groupFromBlock,
+            groupToBlock
+          )
+        ]);
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return latestIncomingByGroup;
+        }
+
+        const blockNumbers = new Set<number>();
+        for (const log of incomingLogs) {
+          blockNumbers.add(log.blockNumber);
+        }
+        for (const log of outgoingLogs) {
+          blockNumbers.add(log.blockNumber);
+        }
+
+        const blockTimestampMap = new Map<number, number>();
+        const blockTimestampCache = blockTimestampCacheRef.current;
+        await Promise.all(
+          Array.from(blockNumbers).map(async (blockNumber) => {
+            const cachedTimestamp = blockTimestampCache.get(blockNumber);
+            if (typeof cachedTimestamp === 'number') {
+              blockTimestampMap.set(blockNumber, cachedTimestamp);
+              return;
+            }
+
+            const block = await readProvider.getBlock(blockNumber);
+            if (block?.timestamp) {
+              const timestamp = Number(block.timestamp);
+              blockTimestampMap.set(blockNumber, timestamp);
+              blockTimestampCache.set(blockNumber, timestamp);
+            }
+          })
+        );
+        if (currentWalletKeyRef.current !== requestedWalletKey) {
+          return latestIncomingByGroup;
+        }
+
+        const entries: GroupMessageEntry[] = [];
+        const appendMessageEntry = async (
+          log: unknown,
+          direction: 'incoming' | 'outgoing',
+          senderAddress: string,
+          ciphertextSource: unknown,
+          idSuffix: string
+        ): Promise<void> => {
+          const typedLog = log as { transactionHash: string; blockNumber: number; index: number };
+          const userCiphertext = extractUserCiphertext(ciphertextSource);
+          let messageText = '(Unable to decrypt message)';
+          let replyToMessageId: string | undefined;
+          let replyToText: string | undefined;
+          let replyToTxHash: string | undefined;
+          let replyToBlockNumber: number | undefined;
+          let replyToLogIndex: number | undefined;
+          let reactionToTxHash: string | undefined;
+          let reactionToBlockNumber: number | undefined;
+          let reactionToLogIndex: number | undefined;
+          let reactionEmoji: string | undefined;
+          if (userCiphertext && userCiphertext.value.length > 0) {
+            try {
+              const decrypted = await signer.decryptValue(userCiphertext as never);
+              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
+              const plain = decodeMemoPlaintext(raw);
+              const parsedMessage = parseChatMessagePayload(plain);
+              messageText = parsedMessage.cleanText;
+              replyToMessageId = parsedMessage.replyToMessageId;
+              replyToText = parsedMessage.replyToText;
+              replyToTxHash = parsedMessage.replyToTxHash;
+              replyToBlockNumber = parsedMessage.replyToBlockNumber;
+              replyToLogIndex = parsedMessage.replyToLogIndex;
+              reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
+              reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
+              reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
+              reactionEmoji = parsedMessage.embeddedReaction?.emoji;
+              if (
+                messageText.trim().length === 0 &&
+                (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
+              ) {
+                return;
+              }
+            } catch {
+              messageText = '(Unable to decrypt message)';
+            }
+          }
+
+          entries.push({
+            id: `${typedLog.transactionHash}-${typedLog.index}-${idSuffix}`,
+            groupId,
+            direction,
+            text: messageText,
+            senderAddress,
+            replyToMessageId,
+            replyToText,
+            replyToTxHash,
+            replyToBlockNumber,
+            replyToLogIndex,
+            reactionToTxHash,
+            reactionToBlockNumber,
+            reactionToLogIndex,
+            reactionEmoji,
+            txHash: typedLog.transactionHash,
+            blockNumber: typedLog.blockNumber,
+            logIndex: typedLog.index,
+            timestamp: blockTimestampMap.get(typedLog.blockNumber)
+          });
+        };
+
+        for (const log of incomingLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const from = String(args?.from ?? '').trim();
+          if (!isWalletAddress(from)) {
+            continue;
+          }
+          await appendMessageEntry(log, 'incoming', from, args?.messageForRecipient, 'group-in');
+        }
+
+        for (const log of outgoingLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          await appendMessageEntry(log, 'outgoing', requestedWalletAddress, args?.messageForSender, 'group-out');
+        }
+
+        entries.sort((left, right) => {
+          if (left.blockNumber !== right.blockNumber) {
+            return left.blockNumber - right.blockNumber;
+          }
+          return left.logIndex - right.logIndex;
+        });
+
+        const latestIncomingFromEntries = entries.reduce((max, entry) => {
+          if (entry.direction !== 'incoming' || typeof entry.timestamp !== 'number') {
+            return max;
+          }
+          const ts = Number(entry.timestamp);
+          return ts > max ? ts : max;
+        }, 0);
+        if (latestIncomingFromEntries > 0) {
+          latestIncomingByGroup.set(String(groupId), latestIncomingFromEntries);
+        }
+
+        if (entries.length > 0) {
+          const activeGroupKey = String(groupId);
+          const existingGroupMessages = messagesByGroup[activeGroupKey] ?? [];
+          if (!fastOptions?.prefetch && (stickToBottomRef.current || existingGroupMessages.length === 0)) {
+            pendingForcedBottomAnchorThreadKeyRef.current = `group:${groupId}`;
+          }
+
+          setMessagesByGroup((previous) => {
+            const existing = previous[activeGroupKey] ?? [];
+            const confirmedOutgoingTxHashes = new Set(
+              entries
+                .filter((entry) => entry.direction === 'outgoing')
+                .map((entry) => entry.txHash.toLowerCase())
+            );
+            const prunedExisting = existing.filter((message) => {
+              if (!message.id.startsWith('local-group-')) {
+                return true;
+              }
+              if (!message.txHash) {
+                return true;
+              }
+              return !confirmedOutgoingTxHashes.has(message.txHash.toLowerCase());
+            });
+
+            const nextMessages = [...prunedExisting];
+            const existingIds = new Set(nextMessages.map((message) => message.id));
+            for (const entry of entries) {
+              if (existingIds.has(entry.id)) {
+                continue;
+              }
+
+              existingIds.add(entry.id);
+              nextMessages.push({
+                id: entry.id,
+                direction: entry.direction,
+                text: entry.text,
+                senderAddress: entry.senderAddress,
+                replyToMessageId: entry.replyToMessageId,
+                replyToText: entry.replyToText,
+                replyToTxHash: entry.replyToTxHash,
+                replyToBlockNumber: entry.replyToBlockNumber,
+                replyToLogIndex: entry.replyToLogIndex,
+                reactionToTxHash: entry.reactionToTxHash,
+                reactionToBlockNumber: entry.reactionToBlockNumber,
+                reactionToLogIndex: entry.reactionToLogIndex,
+                reactionEmoji: entry.reactionEmoji,
+                timestamp: entry.timestamp,
+                blockNumber: entry.blockNumber,
+                logIndex: entry.logIndex,
+                txHash: entry.txHash
+              });
+            }
+
+            return {
+              ...previous,
+              [activeGroupKey]: sortMessagesChronologically(nextMessages)
+            };
+          });
+        }
+
+        groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = groupToBlock;
+        return latestIncomingByGroup;
+      };
+
+      if (options?.activeMessagesOnly && selectedActiveGroupId !== null) {
+        const activeGroupMeta = groupsRef.current.find((g) => g.id === selectedActiveGroupId);
+        await syncActiveGroupMessagesFast(
+          selectedActiveGroupId,
+          {
+            knownLastBlock: activeGroupMeta?.lastBlock && activeGroupMeta.lastBlock > 0
+              ? activeGroupMeta.lastBlock
+              : undefined,
+            wideLoad: options?.wideLoad
+          }
+        );
+        const nextOnboardInfo = signer.getUserOnboardInfo();
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+        }));
+        return;
+      }
 
       const knownGroupIds = new Set<number>();
       for (const group of groupsRef.current) {
@@ -4994,6 +5232,40 @@ export default function App() {
 
       groupOverviewLastSyncedBlockRef.current[walletKey] = latestBlock;
       const latestIncomingByGroup = new Map<string, number>();
+      if (options?.overviewOnly && !options.deep && !options.activeMessagesOnly) {
+        const prefetchGroups = [...nextGroups]
+          .filter((group) => group.lastBlock > 0)
+          .sort((left, right) => right.lastTimestamp - left.lastTimestamp || right.lastBlock - left.lastBlock)
+          .slice(0, GROUP_MESSAGE_PREFETCH_LIMIT);
+
+        for (
+          let batchStart = 0;
+          batchStart < prefetchGroups.length;
+          batchStart += GROUP_MESSAGE_PREFETCH_BATCH_SIZE
+        ) {
+          const batch = prefetchGroups.slice(batchStart, batchStart + GROUP_MESSAGE_PREFETCH_BATCH_SIZE);
+          const batchResults = await Promise.all(
+            batch.map((group) =>
+              syncActiveGroupMessagesFast(group.id, {
+                knownLastBlock: group.lastBlock,
+                prefetch: true
+              }).catch(() => new Map<string, number>())
+            )
+          );
+          if (currentWalletKeyRef.current !== requestedWalletKey) {
+            return;
+          }
+
+          for (const result of batchResults) {
+            for (const [groupKey, timestamp] of result.entries()) {
+              const existingTimestamp = latestIncomingByGroup.get(groupKey) ?? 0;
+              if (timestamp > existingTimestamp) {
+                latestIncomingByGroup.set(groupKey, timestamp);
+              }
+            }
+          }
+        }
+      }
 
       if (!options?.overviewOnly && selectedActiveGroupId !== null) {
         const groupId = selectedActiveGroupId;
@@ -6492,7 +6764,7 @@ export default function App() {
     try {
       const normalizedVisibleNotice = visibleNotice.replace(/\r?\n/g, ' ').trim().slice(0, MAX_MESSAGE_LENGTH);
       await sendHiddenConversationStateToContact(normalizedAddress, normalizedState, normalizedVisibleNotice);
-      syncConversationHistory({ updateHead: true }).catch(() => {});
+      syncConversationHistory({ updateHead: true, skipContactStateUpdate: true }).catch(() => {});
       setTopUpMetricsNonce((previous) => previous + 1);
       return true;
     } catch (syncError) {
@@ -7791,35 +8063,6 @@ export default function App() {
     }
   }, []);
 
-  const openPageInNewTab = useCallback(
-    (page: AppPage) => {
-      if (typeof window === 'undefined') {
-        navigateToPage(page);
-        return;
-      }
-
-      const nextUrl = new URL(window.location.href);
-      nextUrl.pathname = getPathForAppPage(page);
-      nextUrl.searchParams.delete('p');
-      nextUrl.hash = '';
-
-      if (typeof document !== 'undefined' && document.body) {
-        const launchLink = document.createElement('a');
-        launchLink.href = nextUrl.toString();
-        launchLink.target = '_blank';
-        launchLink.rel = 'noopener noreferrer';
-        launchLink.style.display = 'none';
-        document.body.appendChild(launchLink);
-        launchLink.click();
-        document.body.removeChild(launchLink);
-        return;
-      }
-
-      window.open(nextUrl.toString(), '_blank', 'noopener,noreferrer');
-    },
-    [navigateToPage]
-  );
-
   useEffect(() => {
     const syncPageWithLocation = () => {
       const nextRoute = resolveAppRouteFromLocation();
@@ -8184,6 +8427,7 @@ export default function App() {
       setReplyingToMessage(null);
       setHighlightedMessageId(null);
       lastSyncedBlockRef.current = {};
+      pinnedContactStateRef.current.clear();
       oldestLoadedBlockByContactRef.current = {};
       hasOlderHistoryByContactRef.current = {};
       conversationRangeByContactRef.current = {};
@@ -8562,15 +8806,18 @@ export default function App() {
 
   useEffect(() => {
     if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal) {
+      setDirectRealtimeStatus('idle');
       return;
     }
 
     if (!hasAesReady) {
+      setDirectRealtimeStatus('idle');
       return;
     }
 
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
+    let unsubscribeWsDisconnect: (() => void) | null = null;
     let pollIntervalId: number | null = null;
     let wsReconnectIntervalId: number | null = null;
     let wsReconnectInFlight = false;
@@ -8627,6 +8874,46 @@ export default function App() {
       }
     };
 
+    const startReconnectFallback = () => {
+      if (cancelled) {
+        return;
+      }
+
+      setDirectRealtimeStatus('reconnecting');
+      if (pollIntervalId === null) {
+        pollIntervalId = window.setInterval(() => {
+          scheduleRealtimeSync();
+        }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
+      }
+
+      if (wsReconnectIntervalId === null) {
+        wsReconnectIntervalId = window.setInterval(() => {
+          if (wsReconnectInFlight || cancelled) {
+            return;
+          }
+
+          wsReconnectInFlight = true;
+          setupRealtimeSubscription()
+            .catch(() => {})
+            .finally(() => {
+              wsReconnectInFlight = false;
+            });
+        }, WS_RETRY_COOLDOWN_MS);
+      }
+    };
+
+    const handleRealtimeDisconnect = () => {
+      if (cancelled) {
+        return;
+      }
+
+      unsubscribe?.();
+      unsubscribe = null;
+      scheduleRealtimeSync();
+      resetCotiWsProvider().catch(() => {});
+      startReconnectFallback();
+    };
+
     const setupRealtimeSubscription = async () => {
       try {
         if (cancelled) {
@@ -8672,8 +8959,12 @@ export default function App() {
         contract.on(incomingFilter, handleMessageSubmitted);
         contract.on(outgoingFilter, handleMessageSubmitted);
         contract.on(nicknameFilter, handleNicknameSet);
+        unsubscribeWsDisconnect?.();
+        unsubscribeWsDisconnect = attachWsDisconnectListeners(wsProvider, handleRealtimeDisconnect);
 
         if (cancelled) {
+          unsubscribeWsDisconnect?.();
+          unsubscribeWsDisconnect = null;
           contract.off(incomingFilter, handleMessageSubmitted);
           contract.off(outgoingFilter, handleMessageSubmitted);
           contract.off(nicknameFilter, handleNicknameSet);
@@ -8681,36 +8972,18 @@ export default function App() {
         }
 
         unsubscribe = () => {
+          unsubscribeWsDisconnect?.();
+          unsubscribeWsDisconnect = null;
           contract.off(incomingFilter, handleMessageSubmitted);
           contract.off(outgoingFilter, handleMessageSubmitted);
           contract.off(nicknameFilter, handleNicknameSet);
         };
 
         clearPollFallback();
+        setDirectRealtimeStatus('connected');
       } catch {
         await resetCotiWsProvider();
-        if (!cancelled) {
-          if (pollIntervalId === null) {
-            pollIntervalId = window.setInterval(() => {
-              scheduleRealtimeSync();
-            }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
-          }
-
-          if (wsReconnectIntervalId === null) {
-            wsReconnectIntervalId = window.setInterval(() => {
-              if (wsReconnectInFlight || cancelled) {
-                return;
-              }
-
-              wsReconnectInFlight = true;
-              setupRealtimeSubscription()
-                .catch(() => {})
-                .finally(() => {
-                  wsReconnectInFlight = false;
-                });
-            }, WS_RETRY_COOLDOWN_MS);
-          }
-        }
+        startReconnectFallback();
       }
     };
 
@@ -8745,6 +9018,7 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      setDirectRealtimeStatus('idle');
       clearPollFallback();
       if (deepConversationSyncTimerId !== null) {
         window.clearTimeout(deepConversationSyncTimerId);
@@ -8758,11 +9032,13 @@ export default function App() {
 
   useEffect(() => {
     if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal || !hasAesReady) {
+      setGroupRealtimeStatus('idle');
       return;
     }
 
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
+    let unsubscribeWsDisconnect: (() => void) | null = null;
     let pollIntervalId: number | null = null;
     let wsReconnectIntervalId: number | null = null;
     let wsReconnectInFlight = false;
@@ -8773,10 +9049,16 @@ export default function App() {
 
     const mergeRealtimeSyncOptions = (options?: SyncGroupOptions): void => {
       const pending = pendingRealtimeSyncOptions;
+      const nextActiveMessagesOnly = Boolean(options?.activeMessagesOnly || pending?.activeMessagesOnly);
       pendingRealtimeSyncOptions = {
         background: true,
         deep: Boolean(options?.deep || pending?.deep),
-        overviewOnly: pending ? Boolean(options?.overviewOnly && pending.overviewOnly) : Boolean(options?.overviewOnly)
+        overviewOnly: nextActiveMessagesOnly
+          ? false
+          : pending
+            ? Boolean(options?.overviewOnly && pending.overviewOnly)
+            : Boolean(options?.overviewOnly),
+        activeMessagesOnly: nextActiveMessagesOnly
       };
     };
 
@@ -8837,6 +9119,46 @@ export default function App() {
       }
     };
 
+    const startReconnectFallback = () => {
+      if (cancelled) {
+        return;
+      }
+
+      setGroupRealtimeStatus('reconnecting');
+      if (pollIntervalId === null) {
+        pollIntervalId = window.setInterval(() => {
+          scheduleRealtimeSync();
+        }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
+      }
+
+      if (wsReconnectIntervalId === null) {
+        wsReconnectIntervalId = window.setInterval(() => {
+          if (wsReconnectInFlight || cancelled) {
+            return;
+          }
+
+          wsReconnectInFlight = true;
+          setupGroupRealtimeSubscription()
+            .catch(() => {})
+            .finally(() => {
+              wsReconnectInFlight = false;
+            });
+        }, WS_RETRY_COOLDOWN_MS);
+      }
+    };
+
+    const handleRealtimeDisconnect = () => {
+      if (cancelled) {
+        return;
+      }
+
+      unsubscribe?.();
+      unsubscribe = null;
+      scheduleRealtimeSync();
+      resetCotiWsProvider().catch(() => {});
+      startReconnectFallback();
+    };
+
     const parseGroupIdFromEvent = (value: unknown): number => {
       const direct = toSafeNumber(value);
       if (direct > 0) {
@@ -8873,7 +9195,7 @@ export default function App() {
           const eventGroupId = parseGroupIdFromEvent(groupIdValue);
           const selectedActiveGroupId = activeGroupIdRef.current;
           if (selectedActiveGroupId !== null && (eventGroupId <= 0 || eventGroupId === selectedActiveGroupId)) {
-            scheduleRealtimeSync();
+            scheduleRealtimeSync({ activeMessagesOnly: true });
             return;
           }
 
@@ -8907,8 +9229,12 @@ export default function App() {
         contract.on(joinCodeRevokedFilter, handleOverviewEvent);
         contract.on(submittedFilter, handleMessageEvent);
         contract.on(deliveredFilter, handleMessageEvent);
+        unsubscribeWsDisconnect?.();
+        unsubscribeWsDisconnect = attachWsDisconnectListeners(wsProvider, handleRealtimeDisconnect);
 
         if (cancelled) {
+          unsubscribeWsDisconnect?.();
+          unsubscribeWsDisconnect = null;
           contract.off(createdFilter, handleOverviewEvent);
           contract.off(memberAddedFilter, handleOverviewEvent);
           contract.off(memberRemovedFilter, handleOverviewEvent);
@@ -8926,6 +9252,8 @@ export default function App() {
         }
 
         unsubscribe = () => {
+          unsubscribeWsDisconnect?.();
+          unsubscribeWsDisconnect = null;
           contract.off(createdFilter, handleOverviewEvent);
           contract.off(memberAddedFilter, handleOverviewEvent);
           contract.off(memberRemovedFilter, handleOverviewEvent);
@@ -8941,30 +9269,10 @@ export default function App() {
           contract.off(deliveredFilter, handleMessageEvent);
         };
         clearPollFallback();
+        setGroupRealtimeStatus('connected');
       } catch {
         await resetCotiWsProvider();
-        if (!cancelled) {
-          if (pollIntervalId === null) {
-            pollIntervalId = window.setInterval(() => {
-              scheduleRealtimeSync();
-            }, REALTIME_SYNC_FALLBACK_INTERVAL_MS);
-          }
-
-          if (wsReconnectIntervalId === null) {
-            wsReconnectIntervalId = window.setInterval(() => {
-              if (wsReconnectInFlight || cancelled) {
-                return;
-              }
-
-              wsReconnectInFlight = true;
-              setupGroupRealtimeSubscription()
-                .catch(() => {})
-                .finally(() => {
-                  wsReconnectInFlight = false;
-                });
-            }, WS_RETRY_COOLDOWN_MS);
-          }
-        }
+        startReconnectFallback();
       }
     };
 
@@ -8987,6 +9295,7 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      setGroupRealtimeStatus('idle');
       clearPollFallback();
       if (deepGroupSyncTimerId !== null) {
         window.clearTimeout(deepGroupSyncTimerId);
@@ -9009,17 +9318,13 @@ export default function App() {
     }
 
     const groupBackfillKey = `${walletKey}:${activeGroupId}`;
-    syncGroupDataRef.current({ background: true }).catch(() => {});
-    if (!groupDeepBackfillDoneRef.current[groupBackfillKey]) {
-      const timerId = window.setTimeout(() => {
-        groupDeepBackfillDoneRef.current[groupBackfillKey] = true;
-        syncGroupDataRef.current({ background: true, deep: true }).catch(() => {
-          delete groupDeepBackfillDoneRef.current[groupBackfillKey];
-        });
-      }, BACKGROUND_DEEP_SYNC_DELAY_MS);
-      return () => {
-        window.clearTimeout(timerId);
-      };
+    const isFirstOpen = !groupDeepBackfillDoneRef.current[groupBackfillKey];
+    syncGroupDataRef.current({ background: true, activeMessagesOnly: true, wideLoad: isFirstOpen }).catch(() => {});
+    if (isFirstOpen) {
+      groupDeepBackfillDoneRef.current[groupBackfillKey] = true;
+      syncGroupDataRef.current({ background: true, deep: true }).catch(() => {
+        delete groupDeepBackfillDoneRef.current[groupBackfillKey];
+      });
     }
   }, [activeGroupId, walletAddress, hasAesReady, chainId]);
 
@@ -9128,29 +9433,12 @@ export default function App() {
   const handleToggleSound = () => {
     setSoundEnabled((prev) => {
       const next = !prev;
-      try {
-        localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, String(next));
-      } catch {}
       if (next) {
         try {
           initPersistentAudio();
         } catch {}
       } else {
-        try {
-          if (audioUrlRef.current) {
-            try {
-              if (audioUrlRef.current.startsWith('blob:')) {
-                URL.revokeObjectURL(audioUrlRef.current);
-              }
-            } catch {}
-            audioUrlRef.current = null;
-          }
-          if (audioElRef.current) {
-            audioElRef.current.pause();
-            audioElRef.current.src = '';
-            audioElRef.current = null;
-          }
-        } catch {}
+        stopNotificationSound();
       }
       return next;
     });
@@ -9568,6 +9856,88 @@ export default function App() {
       }
     />
   );
+  // --- Stable callbacks for ContactsSidebar ---
+  const saveMyNicknameOnChainRef = useRef(saveMyNicknameOnChain);
+  saveMyNicknameOnChainRef.current = saveMyNicknameOnChain;
+  const handleSaveNickname = useCallback(() => { saveMyNicknameOnChainRef.current().catch(() => {}); }, []);
+
+  const forceSyncAllDataRef = useRef(forceSyncAllData);
+  forceSyncAllDataRef.current = forceSyncAllData;
+  const handleForceSync = useCallback(() => { forceSyncAllDataRef.current().catch(() => {}); }, []);
+
+  const handleOpenNewChat = useCallback(() => {
+    setQuickActionTab('contact');
+    setShowQuickActionsModal(true);
+  }, []);
+
+  const handleToggleShowHiddenContacts = useCallback(() => setShowHiddenContacts((previous) => !previous), []);
+
+  const acceptGroupInviteRef = useRef(acceptGroupInvite);
+  acceptGroupInviteRef.current = acceptGroupInvite;
+  const handleAcceptGroupInvite = useCallback((groupId: number) => { acceptGroupInviteRef.current(groupId).catch(() => {}); }, []);
+
+  const declineGroupInviteRef = useRef(declineGroupInvite);
+  declineGroupInviteRef.current = declineGroupInvite;
+  const handleDeclineGroupInvite = useCallback((groupId: number) => { declineGroupInviteRef.current(groupId).catch(() => {}); }, []);
+
+  // --- Stable callbacks for DirectChatPanel ---
+  const handleCancelReply = useCallback(() => setReplyingToMessage(null), []);
+
+  const handleToggleTipComposer = useCallback(() => {
+    setTradeComposerOpen(false);
+    setTipComposerOpen((previous) => !previous);
+  }, []);
+
+  const handleTipAmountInputChange = useCallback((value: string) => setTipAmountInput(sanitizeTokenAmountInput(value)), []);
+
+  const handleToggleTradeComposer = useCallback(() => {
+    setTipComposerOpen(false);
+    setTradeComposerOpen((previous) => {
+      const nextOpen = !previous;
+      if (nextOpen && tradeCounterParentId === null) {
+        setTradeCounterContext(null);
+        setTradeOfferAmountInput('');
+        setTradeRequestAmountInput('');
+        setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      }
+      if (!nextOpen) {
+        setTradeCounterParentId(null);
+        setTradeCounterContext(null);
+      }
+      return nextOpen;
+    });
+  }, [tradeCounterParentId]);
+
+  const sendDirectImageMessageRef = useRef(sendDirectImageMessage);
+  sendDirectImageMessageRef.current = sendDirectImageMessage;
+  const handleSendImage = useCallback((file: File) => { sendDirectImageMessageRef.current(file).catch(() => {}); }, []);
+
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
+  const handleSendMessage = useCallback(() => { sendMessageRef.current().catch(() => {}); }, []);
+
+  const handleToggleReactionPicker = useCallback((messageId: string) => {
+    if (browserWalletLiteMode) return;
+    setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId));
+  }, [browserWalletLiteMode]);
+
+  const handleReplyToMessage = useCallback((message: ChatMessage) => {
+    if (browserWalletLiteMode) {
+      setError('Use the app wallet to send replies.');
+      return;
+    }
+    setReplyingToMessage(message);
+  }, [browserWalletLiteMode]);
+
+  const tipSendStateRef = useRef({ tipTokenSelection, tipAmountWeiFromInput });
+  tipSendStateRef.current = { tipTokenSelection, tipAmountWeiFromInput };
+  const sendTipToActiveContactRef = useRef(sendTipToActiveContact);
+  sendTipToActiveContactRef.current = sendTipToActiveContact;
+  const handleSendTip = useCallback(() => {
+    const { tipTokenSelection: token, tipAmountWeiFromInput: amount } = tipSendStateRef.current;
+    sendTipToActiveContactRef.current(token, amount).catch(() => {});
+  }, []);
+
   const headerHomeAction =
     activePage !== 'home' ? (
       <button
@@ -9591,6 +9961,22 @@ export default function App() {
           />
         </svg>
       </button>
+    ) : null;
+  const chatRealtimeReconnecting =
+    activePage === 'chat' &&
+    (directRealtimeStatus === 'reconnecting' || groupRealtimeStatus === 'reconnecting');
+  const realtimeConnectionIndicator = chatRealtimeReconnecting ? (
+    <span className="realtime-status-pill" role="status" aria-live="polite">
+      <span className="realtime-status-dot" aria-hidden="true" />
+      Reconnecting...
+    </span>
+  ) : null;
+  const chatBrandActions =
+    realtimeConnectionIndicator || headerHomeAction ? (
+      <>
+        {realtimeConnectionIndicator}
+        {headerHomeAction}
+      </>
     ) : null;
   const walletSessionModals = (
     <>
@@ -9659,24 +10045,17 @@ export default function App() {
             hasAesReady={hasAesReady}
             walletAddress={walletAddress}
             onNicknameInputChange={setMyNickname}
-            onSaveNickname={() => {
-              saveMyNicknameOnChain().catch(() => {});
-            }}
+            onSaveNickname={handleSaveNickname}
             hasUnreadConversations={hasUnreadConversations}
             readStateActionsDisabled={!readStateFeaturesEnabled}
             walletPromptSensitiveActionsTitle={browserWalletLiteModeTitle}
             onMarkAllConversationsAsRead={markAllConversationsAsRead}
-            onForceSync={() => {
-              forceSyncAllData().catch(() => {});
-            }}
+            onForceSync={handleForceSync}
             syncingHistory={syncingHistory}
             syncingGroups={syncingGroups}
-            onOpenNewChat={() => {
-              setQuickActionTab('contact');
-              setShowQuickActionsModal(true);
-            }}
+            onOpenNewChat={handleOpenNewChat}
             showHiddenContacts={showHiddenContacts}
-            onToggleShowHiddenContacts={() => setShowHiddenContacts((previous) => !previous)}
+            onToggleShowHiddenContacts={handleToggleShowHiddenContacts}
             hiddenContactsCount={hiddenContactsCount}
             hiddenContactsLabel={hiddenContactsLabel}
             contactGroupPanelRatio={contactGroupPanelRatio}
@@ -9698,12 +10077,8 @@ export default function App() {
             onSaveRenamedContact={saveRenamedContact}
             onCancelRenameContact={cancelRenameContact}
             sortedGroupInvites={sortedGroupInvites}
-            onAcceptGroupInvite={(groupId) => {
-              acceptGroupInvite(groupId).catch(() => {});
-            }}
-            onDeclineGroupInvite={(groupId) => {
-              declineGroupInvite(groupId).catch(() => {});
-            }}
+            onAcceptGroupInvite={handleAcceptGroupInvite}
+            onDeclineGroupInvite={handleDeclineGroupInvite}
             processingGroupAction={processingGroupAction}
             sortedGroups={sortedGroups}
             activeGroupId={activeGroupId}
@@ -9714,6 +10089,7 @@ export default function App() {
           />
 
         <main className="chat-panel">
+          <AppErrorBoundary fallback={<div className="chat-placeholder">Something went wrong. <button type="button" onClick={() => window.location.reload()}>Reload</button></div>}>
           <Suspense fallback={<div className="chat-placeholder">Loading conversation...</div>}>
             {!isConnected ? (
               <div className="chat-placeholder">Connect a wallet to start messaging.</div>
@@ -9828,21 +10204,10 @@ export default function App() {
                 activeMessages={visibleActiveMessages}
                 isReactionOnlyMessage={isReactionOnlyMessage}
                 reactionPickerMessageId={reactionPickerMessageId}
-                onToggleReactionPicker={(messageId) => {
-                  if (browserWalletLiteMode) {
-                    return;
-                  }
-                  setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId));
-                }}
+                onToggleReactionPicker={handleToggleReactionPicker}
                 sendingReaction={sendingReaction}
                 onSendReaction={sendReactionToMessage}
-                onReplyToMessage={(message) => {
-                  if (browserWalletLiteMode) {
-                    setError('Use the app wallet to send replies.');
-                    return;
-                  }
-                  setReplyingToMessage(message);
-                }}
+                onReplyToMessage={handleReplyToMessage}
                 replyingToMessage={replyingToMessage}
                 highlightedMessageId={highlightedMessageId}
                 messageElementRefs={messageElementRefs}
@@ -9857,58 +10222,33 @@ export default function App() {
                 onCounterTrade={prepareCounterTrade}
                 onCancelTrade={cancelTradeOffer}
                 replyingPreviewText={replyingPreviewText}
-                onCancelReply={() => setReplyingToMessage(null)}
+                onCancelReply={handleCancelReply}
                 tipComposerOpen={tipComposerOpen}
-                onToggleTipComposer={() => {
-                  setTradeComposerOpen(false);
-                  setTipComposerOpen((previous) => !previous);
-                }}
+                onToggleTipComposer={handleToggleTipComposer}
                 tipping={tipping}
                 tipTokenSelection={tipTokenSelection}
                 onTipTokenSelectionChange={setTipTokenSelection}
                 rewardTokenSymbol={rewardTokenSymbol}
                 privateRewardTokenSymbol={privateRewardTokenSymbol}
                 tipAmountInput={tipAmountInput}
-                onTipAmountInputChange={(value) => setTipAmountInput(sanitizeTokenAmountInput(value))}
+                onTipAmountInputChange={handleTipAmountInputChange}
                 activeTipTokenSymbol={activeTipTokenSymbol}
                 tipAmountWeiFromInput={tipAmountWeiFromInput}
                 canSendTipFromComposer={canSendTipFromComposer}
                 tipAmountExceedsBalance={tipAmountExceedsBalance}
                 tipAmountSummaryLabel={tipAmountSummaryLabel}
                 tipBalanceSummaryLabel={tipBalanceSummaryLabel}
-                onSendTip={() => {
-                  sendTipToActiveContact(tipTokenSelection, tipAmountWeiFromInput).catch(() => {});
-                }}
+                onSendTip={handleSendTip}
                 tradeComposerOpen={tradeComposerOpen}
                 tradeComposerContent={tradeComposerContent}
-                onToggleTradeComposer={() => {
-                  setTipComposerOpen(false);
-                  setTradeComposerOpen((previous) => {
-                    const nextOpen = !previous;
-                    if (nextOpen && tradeCounterParentId === null) {
-                      setTradeCounterContext(null);
-                      setTradeOfferAmountInput('');
-                      setTradeRequestAmountInput('');
-                      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-                    }
-                    if (!nextOpen) {
-                      setTradeCounterParentId(null);
-                      setTradeCounterContext(null);
-                    }
-                    return nextOpen;
-                  });
-                }}
+                onToggleTradeComposer={handleToggleTradeComposer}
                 composerRef={chatComposerRef}
                 isMobileNav={isMobileNav}
-                onSendImage={(file) => {
-                  sendDirectImageMessage(file).catch(() => {});
-                }}
+                onSendImage={handleSendImage}
                 uploadingImage={uploadingImage}
                 imageAttachDisabled={uploadingImage || sending || tipping}
                 imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
-                onSendMessage={() => {
-                  sendMessage().catch(() => {});
-                }}
+                onSendMessage={handleSendMessage}
                 maxMessageLength={MAX_MESSAGE_LENGTH}
                 onMessageInputChange={handleMessageInputChange}
                 sending={sending}
@@ -9921,6 +10261,7 @@ export default function App() {
               <div className="chat-placeholder">Select a contact or group to start messaging.</div>
             )}
           </Suspense>
+          </AppErrorBoundary>
         </main>
       </div>
 
@@ -9971,7 +10312,7 @@ export default function App() {
           links={COTI_ECOSYSTEM_LINKS}
         />
         <HomePage
-          onLaunchChat={() => openPageInNewTab('chat')}
+          onLaunchChat={() => navigateToPage('chat')}
           onOpenSwap={() => navigateToPage('swap')}
           onOpenTreasury={() => navigateToPage('treasury')}
           onOpenTrades={() => navigateToPage('trades')}
@@ -9998,18 +10339,20 @@ export default function App() {
           subtitle="P2P Trades"
           showSoundToggle
         />
-        <Suspense
-          fallback={
-            <main className="standalone-trades-shell">
-              <p className="standalone-trade-state">Loading trades...</p>
-            </main>
-          }
-        >
-          <P2PTradingPage
-            onHeaderWalletControlChange={setTradeHeaderWalletControl}
-            onHeaderNavigationControlChange={setTradeHeaderNavigationControl}
-          />
-        </Suspense>
+        <AppErrorBoundary>
+          <Suspense
+            fallback={
+              <main className="standalone-trades-shell">
+                <p className="standalone-trade-state">Loading trades...</p>
+              </main>
+            }
+          >
+            <P2PTradingPage
+              onHeaderWalletControlChange={setTradeHeaderWalletControl}
+              onHeaderNavigationControlChange={setTradeHeaderNavigationControl}
+            />
+          </Suspense>
+        </AppErrorBoundary>
       </div>
     );
   }
@@ -10031,14 +10374,15 @@ export default function App() {
           showSoundToggle
         />
         {walletSessionModals}
-        <Suspense
-          fallback={
-            <main className="swap-page-shell">
-              <p className="standalone-trade-state">Loading token swap...</p>
-            </main>
-          }
-        >
-          <TokenSwapPage
+        <AppErrorBoundary>
+          <Suspense
+            fallback={
+              <main className="swap-page-shell">
+                <p className="standalone-trade-state">Loading token swap...</p>
+              </main>
+            }
+          >
+            <TokenSwapPage
             tokenToolsSummary={tokenToolsSummary}
             groupRewardsContractAddress={groupRewardsContractAddress}
             rewardsEnabled={rewardsEnabled}
@@ -10066,7 +10410,8 @@ export default function App() {
             swapStatusMessage={swapStatusMessage}
             error={error}
           />
-        </Suspense>
+          </Suspense>
+        </AppErrorBoundary>
       </div>
     );
   }
@@ -10085,17 +10430,19 @@ export default function App() {
           brandActions={headerHomeAction}
           showSoundToggle
         />
-        <Suspense
-          fallback={
-            <main className="treasury-shell">
-              <section className="treasury-panel">
-                <p className="treasury-state-message">Loading Treasury Data...</p>
-              </section>
-            </main>
-          }
-        >
-          <TreasuryPage isCompactLayout={isMobileNav} />
-        </Suspense>
+        <AppErrorBoundary>
+          <Suspense
+            fallback={
+              <main className="treasury-shell">
+                <section className="treasury-panel">
+                  <p className="treasury-state-message">Loading Treasury Data...</p>
+                </section>
+              </main>
+            }
+          >
+            <TreasuryPage isCompactLayout={isMobileNav} />
+          </Suspense>
+        </AppErrorBoundary>
       </div>
     );
   }
@@ -10111,7 +10458,7 @@ export default function App() {
         onToggleSound={handleToggleSound}
         onCloseMobileLinks={() => setMobileLinksOpen(false)}
         debugControl={debugControl}
-        brandActions={headerHomeAction}
+        brandActions={chatBrandActions}
         walletControl={chatWalletHeaderControl}
         showSoundToggle={readStateFeaturesEnabled}
       />

@@ -1,5 +1,6 @@
 import {
   COTI_NETWORK,
+  formatExpiryCountdown,
   formatMessageTimestamp,
   formatTokenAmount,
   formatTradeAssetDisplayText,
@@ -228,6 +229,7 @@ export default function TradeOfferCard({
   const resolvedRequest = snapshot?.request ?? offer.request;
   const createdAt = snapshot?.createdAt ?? offer.createdAt;
   const expiresAt = snapshot?.expiresAt ?? offer.expiresAt;
+  const expiryCountdown = showExpiryAt ? formatExpiryCountdown(expiresAt) : null;
   const statusDisplayLabel = buildTradeStatusDisplayLabel(statusLabel, offer, currentWalletAddress, latestResponse);
   const offerVerifyUrl = buildTokenExplorerUrl(resolvedOffer?.tokenAddress);
   const requestVerifyUrl = buildTokenExplorerUrl(resolvedRequest?.tokenAddress);
@@ -430,7 +432,14 @@ export default function TradeOfferCard({
 
       <div className="trade-card-meta-inline">
         <span>Created {formatMessageTimestamp(createdAt)}</span>
-        {showExpiryAt ? <span>Expires {expiresAt > 0 ? formatMessageTimestamp(expiresAt) : 'No expiration'}</span> : null}
+        {expiryCountdown ? (
+          <span
+            className={`trade-card-expiry-${expiryCountdown.urgency}`}
+            title={`Created: ${formatMessageTimestamp(createdAt)}`}
+          >
+            {expiryCountdown.label}
+          </span>
+        ) : null}
         {!showExpiryAt && latestResponse ? <span>Updated {formatMessageTimestamp(latestResponse.createdAt)}</span> : null}
       </div>
     </div>

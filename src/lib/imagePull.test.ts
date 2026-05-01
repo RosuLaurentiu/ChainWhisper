@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseImageTag } from './imagePull';
+import { ChatImageExpiredError, isChatImageExpiredError, parseImageTag } from './imagePull';
 
 describe('parseImageTag', () => {
   it('parses a valid image tag', () => {
@@ -28,5 +28,12 @@ describe('parseImageTag', () => {
       '[img:12345678-abcd-90ef-1234-567890abcdef|0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:0123456789abcdef01234567|99999999|image/jpeg]';
 
     expect(parseImageTag(tag)).toBeNull();
+  });
+});
+
+describe('isChatImageExpiredError', () => {
+  it('recognizes expired image errors', () => {
+    expect(isChatImageExpiredError(new ChatImageExpiredError())).toBe(true);
+    expect(isChatImageExpiredError(new Error('Blob 404'))).toBe(false);
   });
 });
