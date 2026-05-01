@@ -1130,8 +1130,7 @@ export default function P2PTradingPage() {
       return publicTradesRefreshRef.current;
     }
 
-    let refreshRequest: Promise<void>;
-    refreshRequest = (async () => {
+    const refreshRequest = (async () => {
       setLoadingPublicTrades(true);
       setPublicTradesError('');
       try {
@@ -1164,8 +1163,7 @@ export default function P2PTradingPage() {
       return myTradesRefreshRef.current;
     }
 
-    let refreshRequest: Promise<void>;
-    refreshRequest = (async () => {
+    const refreshRequest = (async () => {
       setLoadingMyTrades(true);
       setMyTradesError('');
       try {
