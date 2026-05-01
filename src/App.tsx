@@ -222,6 +222,15 @@ type AppRoute = {
 const ZERO_TRADE_TAKER_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
+const isZeroTradeTakerAddress = (value?: string | null): boolean =>
+  value?.trim().toLowerCase() === ZERO_TRADE_TAKER_ADDRESS;
+
+const canAcceptNamedTakerTradeWithoutSecret = (
+  trade: Pick<TradeSnapshot, 'taker'>,
+  walletAddress: string
+): boolean =>
+  !isZeroTradeTakerAddress(trade.taker) && trade.taker.toLowerCase() === walletAddress.trim().toLowerCase();
+
 const normalizeAppPathname = (pathname: string): string => {
   const trimmed = pathname.trim();
   if (!trimmed || trimmed === '/') {
@@ -8022,7 +8031,8 @@ export default function App() {
         activeTradePageId === snapshot.tradeId && activeTradeAccessSecret
           ? activeTradeAccessSecret
           : '';
-      if (latestSnapshot.hasAccessHash && !accessSecret) {
+      const canAcceptWithoutSecret = canAcceptNamedTakerTradeWithoutSecret(latestSnapshot, walletAddress);
+      if (latestSnapshot.hasAccessHash && !accessSecret && !canAcceptWithoutSecret) {
         throw new Error('This trade needs its full private link before it can be accepted.');
       }
       const { acceptedTxHash } = await acceptTradeOnChain({

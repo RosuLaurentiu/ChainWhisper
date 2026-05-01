@@ -213,11 +213,10 @@ const buildOfferFromSnapshot = (snapshot: TradeSnapshot): TradeOfferMessagePaylo
 
 const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
 
-const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'isPublic' | 'taker'>): boolean =>
-  trade.isPublic === false && !isZeroTradeTakerAddress(trade.taker);
+const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'taker'>): boolean => !isZeroTradeTakerAddress(trade.taker);
 
 const canAcceptDirectWalletTradeWithoutSecret = (
-  trade: Pick<TradeSnapshot, 'isPublic' | 'taker'>,
+  trade: Pick<TradeSnapshot, 'taker'>,
   walletAddress: string
 ): boolean => isDirectWalletTrade(trade) && trade.taker.toLowerCase() === walletAddress.trim().toLowerCase();
 
