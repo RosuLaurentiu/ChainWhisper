@@ -42,6 +42,7 @@ type UseStateBackupSyncArgs = {
   lastReadAllTs: number;
   lastReadAllTsRef: MutableRefObject<number>;
   postConnectDataSyncRunIdRef: MutableRefObject<number>;
+  readStateSyncEnabled: boolean;
   resolveConversationBlockRangeRef: MutableRefObject<
     (contract: unknown, me: string, peer: string) => Promise<ConversationBlockRange | null>
   >;
@@ -67,6 +68,7 @@ export function useStateBackupSync({
   lastReadAllTs,
   lastReadAllTsRef,
   postConnectDataSyncRunIdRef,
+  readStateSyncEnabled,
   resolveConversationBlockRangeRef,
   resolveRequiredFeeForSendRef,
   resolveSubmitSelectorRef,
@@ -144,7 +146,7 @@ export function useStateBackupSync({
   const restoreStateFromChainSelfBackup = useCallback(
     async (address?: string): Promise<boolean> => {
       const targetAddress = (address ?? walletAddress).trim();
-      if (!isWalletAddress(targetAddress)) {
+      if (!readStateSyncEnabled || !isWalletAddress(targetAddress)) {
         return false;
       }
 
@@ -255,13 +257,20 @@ export function useStateBackupSync({
         return false;
       }
     },
-    [applyStateBackupPayload, getMemoSignerRef, resolveConversationBlockRangeRef, setSessionOnboardInfo, walletAddress]
+    [
+      applyStateBackupPayload,
+      getMemoSignerRef,
+      readStateSyncEnabled,
+      resolveConversationBlockRangeRef,
+      setSessionOnboardInfo,
+      walletAddress
+    ]
   );
 
   const runPostConnectDataSyncUntilApplied = useCallback(
     async (address: string): Promise<void> => {
       const targetAddress = address.trim().toLowerCase();
-      if (!isWalletAddress(targetAddress)) {
+      if (!readStateSyncEnabled || !isWalletAddress(targetAddress)) {
         return;
       }
 
@@ -303,6 +312,7 @@ export function useStateBackupSync({
       endConnectSoundSuppression,
       lastReadAllTsRef,
       postConnectDataSyncRunIdRef,
+      readStateSyncEnabled,
       restoreStateFromChainSelfBackup
     ]
   );
@@ -313,7 +323,7 @@ export function useStateBackupSync({
         return;
       }
 
-      if (!walletAddress || !isWalletAddress(walletAddress)) {
+      if (!readStateSyncEnabled || !walletAddress || !isWalletAddress(walletAddress)) {
         return;
       }
 
@@ -386,6 +396,7 @@ export function useStateBackupSync({
       encodeMemoForActiveSignerRef,
       getMemoSignerRef,
       lastReadAllTsRef,
+      readStateSyncEnabled,
       resolveRequiredFeeForSendRef,
       resolveSubmitSelectorRef,
       setSessionOnboardInfo,
@@ -398,6 +409,7 @@ export function useStateBackupSync({
     const hasReadableState = normalizeLastReadAllTs(lastReadAllTs) > 0;
     const canAutoBackupReadState =
       isWalletAddress(normalizedWalletAddress) &&
+      readStateSyncEnabled &&
       hasAesReady &&
       chainId === COTI_NETWORK.chainIdDecimal &&
       hasReadableState;
@@ -423,7 +435,15 @@ export function useStateBackupSync({
       lastReadStateBackupSubmittedAtRef.current = Date.now();
       backupLocalStateToSelf({ background: true }).catch(() => {});
     }, delay);
-  }, [backupLocalStateToSelf, chainId, clearScheduledReadStateBackup, hasAesReady, lastReadAllTs, walletAddress]);
+  }, [
+    backupLocalStateToSelf,
+    chainId,
+    clearScheduledReadStateBackup,
+    hasAesReady,
+    lastReadAllTs,
+    readStateSyncEnabled,
+    walletAddress
+  ]);
 
   useEffect(() => {
     lastReadStateBackupSubmittedAtRef.current = 0;

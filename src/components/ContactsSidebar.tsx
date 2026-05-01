@@ -22,6 +22,8 @@ type ContactsSidebarProps = {
   onNicknameInputChange: (value: string) => void;
   onSaveNickname: () => void;
   hasUnreadConversations: boolean;
+  readStateActionsDisabled: boolean;
+  walletPromptSensitiveActionsTitle: string;
   onMarkAllConversationsAsRead: () => void;
   onForceSync: () => void;
   syncingHistory: boolean;
@@ -39,6 +41,7 @@ type ContactsSidebarProps = {
   editingContactName: string;
   onEditingContactNameChange: (value: string) => void;
   isConversationStateSyncPending: (address: string) => boolean;
+  conversationMetadataActionsDisabled: boolean;
   messagesByContact: Record<string, ChatMessage[]>;
   lastCopiedKey: string | null;
   unreadMap: Record<string, boolean>;
@@ -68,6 +71,8 @@ export default function ContactsSidebar({
   onNicknameInputChange,
   onSaveNickname,
   hasUnreadConversations,
+  readStateActionsDisabled,
+  walletPromptSensitiveActionsTitle,
   onMarkAllConversationsAsRead,
   onForceSync,
   syncingHistory,
@@ -85,6 +90,7 @@ export default function ContactsSidebar({
   editingContactName,
   onEditingContactNameChange,
   isConversationStateSyncPending,
+  conversationMetadataActionsDisabled,
   messagesByContact,
   lastCopiedKey,
   unreadMap,
@@ -161,7 +167,8 @@ export default function ContactsSidebar({
               type="button"
               className="contact mark-read-button contact-action-btn"
               onClick={onMarkAllConversationsAsRead}
-              disabled={!hasUnreadConversations}
+              disabled={readStateActionsDisabled || !hasUnreadConversations}
+              title={readStateActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}
             >
               Mark all as read
             </button>
@@ -177,6 +184,7 @@ export default function ContactsSidebar({
               type="button"
               className="contact mark-read-button contact-action-btn contact-action-btn-primary"
               onClick={onOpenNewChat}
+              disabled={!hasAesReady || !walletAddress}
             >
               New chat
             </button>
@@ -358,16 +366,20 @@ export default function ContactsSidebar({
                               event.stopPropagation();
                               onRemoveContact(contact.address);
                             }}
-                            disabled={conversationStatePending}
+                            disabled={conversationStatePending || conversationMetadataActionsDisabled}
                             aria-label={
-                              conversationStatePending
+                              conversationMetadataActionsDisabled
+                                ? 'Conversation sync unavailable'
+                                : conversationStatePending
                                 ? 'Conversation update in progress'
                                 : contact.hidden
                                   ? 'Unhide conversation'
                                   : 'Hide conversation'
                             }
                             title={
-                              conversationStatePending
+                              conversationMetadataActionsDisabled
+                                ? walletPromptSensitiveActionsTitle
+                                : conversationStatePending
                                 ? 'Waiting for confirmation...'
                                 : contact.hidden
                                   ? 'Unhide'

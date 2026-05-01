@@ -498,6 +498,10 @@ export function useBurnerWallet({
     setShowBurnerPinModal(true);
   }, [burnerMnemonicBackup, setError, showBurnerMnemonic]);
 
+  const closeBurnerBackup = useCallback(() => {
+    setShowBurnerMnemonic(false);
+  }, []);
+
   const beginBurnerPinFlow = useCallback(
     async (mode: BurnerInitMode, seedOrPrivateKey?: string) => {
       setError('');
@@ -754,6 +758,7 @@ export function useBurnerWallet({
     burnerWalletRef,
     burnerWalletSelectionValue,
     burnerWallets,
+    closeBurnerBackup,
     closeBurnerPinModal,
     importBurnerWallet,
     initializingBurner,

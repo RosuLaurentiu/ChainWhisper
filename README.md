@@ -1,54 +1,92 @@
-# ChainWhisper (COTI Messaging App)
+# ChainWhisper
 
-ChainWhisper is a browser-based encrypted chat app on the COTI network.  
-It supports 1:1 chat, group chat, wallet-to-wallet tips, and basic unread/read-state recovery across sessions.
+ChainWhisper is a browser-based COTI app suite. It started as an encrypted messaging app and now includes separate, app-like pages for chat, P2P escrow trades, token swaps, Treasury Data, and the home launcher.
 
-## Product Overview (Short)
+The project is built with Vite, React, TypeScript, `@coti-io/coti-ethers`, `viem`, Recharts, and Supabase Storage for temporary encrypted chat images.
 
-ChainWhisper is a wallet-native encrypted messenger built for COTI. Connect MetaMask or a PIN-protected burner wallet, then chat directly with contacts or groups without relying on centralized accounts.
+## Current Apps
 
-Messages are encrypted client-side and sent through COTI smart contracts, with realtime updates, on-chain group access controls, and built-in COTI tipping. The app also keeps lightweight read-state backups so sessions can recover quickly after reconnecting.
+### Home (`/home`)
 
-## How It Works
+The home page is the launcher for the project. It explains the recommended first-run flow, opens the chat app in its own tab, and links to the P2P Trades, Token Swap, and Treasury Data apps.
 
-1. You connect a wallet.
-   The app supports MetaMask or a local burner wallet.
-2. The app prepares encryption keys (AES onboarding).
-   It uses `@coti-io/coti-ethers` and requires AES onboarding before encrypted messaging.
-3. Messages are encrypted in the browser and sent on-chain.
-   Direct messages use the chat contract `submit(...)`; group messages use `submitGroupMessage(...)`.
-4. The app syncs message history from chain events.
-   It reads `MessageSubmitted` and group events, decrypts payloads locally, and builds per-contact/per-group timelines.
-5. Realtime updates come from WebSocket subscriptions with polling fallback.
-   If WS is unhealthy, it switches to RPC polling and retries WS later.
-6. Read state is tracked locally and backed up to chain.
-   The app periodically writes a compact self-message backup (read-state timestamp) so unread state can be restored after reconnecting.
-7. Groups are managed on-chain.
-   You can create groups, invite wallets, create expiring join codes (single or multi-use), accept/decline invites, rename groups, remove members, leave, or disband.
-8. Optional extras:
-   On-chain nickname sync, encrypted contact alias sync, reply metadata, tip transfers, notification sound, and encrypted image attachments backed by Supabase Storage.
+The Home page does not expose wallet controls because it is only a launcher.
 
-## Wallet Modes
+### ChainWhisper Chat (`/` and `/chat`)
 
-- Burner wallet:
-  Generated/imported locally, encrypted with a PIN, stored in browser storage, and can be topped up from MetaMask.
-- MetaMask:
-  Connected directly through EIP-1193, switched to COTI automatically, then AES onboarding is completed through signature flow.
+The main app is a wallet-native encrypted messenger for COTI.
 
-## Data Model (Practical View)
+- Direct wallet-to-wallet encrypted messages.
+- Group chat with on-chain group creation, invites, join codes, member removal, admin leave/handoff, rename, leave, and disband flows.
+- Client-side AES onboarding through `@coti-io/coti-ethers`.
+- MetaMask or local PIN-protected burner wallet sessions.
+- Contact aliases, hidden and muted conversations, replies, reactions, read-state backup, notification sound, and wallet-to-wallet tips.
+- Encrypted image attachments uploaded to Supabase Storage and cleaned up after 24 hours.
+- Inline P2P trade offers inside private chats using the same trade composer and escrow action logic as the standalone trades app.
+- Contacts are the first chat workspace on desktop and mobile; wallet actions live in the top header wallet menu.
 
-- On-chain:
-  Encrypted chat payloads, group membership/invites/join-code state, nickname records, and read-state backup memo.
-- Browser local state:
-  UI state, cached decrypted timelines, unread maps, audio preference, and encrypted burner wallet vault.
-- Supabase Storage + Edge Functions:
-  Image attachments are encrypted in the browser with AES-GCM, uploaded directly from the React app to the `chat-images` bucket with the Supabase browser client, fetched back from Supabase public storage URLs, and swept after 24 hours by the `chat-image-cleanup` scheduled function.
+### P2P Trades (`/trades`)
 
-## Network and Contracts
+The standalone P2P app is a separate trading workspace backed by the COTI escrow contract.
 
-- Network: COTI Mainnet (`chainId` `2632500`, hex `0x282b34`)
-- Direct chat contract: `0x3b7151a7B7F1ccEB9b2325A27f99B24b6479d2D7`
-- Group chat contract: `0xe9D356d11094E38B1F6529cd51cb995991F06E6F`
+- Public trade directory with search and refresh.
+- Create public, private-link, direct-recipient, and counter trades.
+- Open compact trade links, full URLs, legacy trade IDs, or redirected GitHub Pages links.
+- Accept, decline, cancel, and close counter-trade chains.
+- My Trades view grouped by received offers, active offers, and history.
+- Top-header wallet control that prioritizes MetaMask, excludes Brave from the trading wallet list, and still exposes app wallet options.
+- Reuses shared trade logic from `src/lib/tradeComposer.ts`, `src/lib/tradeActions.ts`, `src/lib/tradeLinks.ts`, `src/lib/tradePerspective.ts`, and `src/lib/appChain.ts`.
+
+### Token Swap (`/swap`)
+
+The Token Swap app is a compact reward-token swap page.
+
+- Swaps reward tokens into private token form and back through the reward swap vault.
+- Uses the same app-wallet-focused header wallet control as chat.
+- Keeps top-up, app wallet backup, PIN change, import, generate, and disconnect actions in the wallet menu.
+
+### Treasury Data (`/treasury`)
+
+The Treasury Data app is an analytics dashboard for COTI treasury metrics.
+
+- Loads live treasury totals from the Treasury API.
+- Loads historical snapshots from `public/snapshots.json`, an optional `VITE_API_BASE_URL`, and on-chain snapshot sources.
+- Reads the snapshot store contract and explorer transaction history.
+- Displays timeframe filters, metric switching, chart tooltips, saved snapshot counts, live values, and on-chain references.
+
+## Shared Logic
+
+The app pages should remain visually distinct where the workflow needs it, but shared behavior should live in shared modules:
+
+- `src/lib/appShared.ts` re-exports shared COTI constants, provider loading, wallet helpers, memo encoding, parsers, formatters, and common types.
+- `src/hooks/useWalletOnboarding.ts` manages browser wallet connection, COTI network switching, and AES onboarding for the main chat app.
+- `src/hooks/useBurnerWallet.ts` manages the PIN-protected local burner wallet vault used by the chat app.
+- `src/components/WalletHeaderPanel.tsx` is the shared compact header wallet surface. Chat and Token Swap prefer app wallets; P2P Trades prefers MetaMask. Home and Treasury do not show wallet controls.
+- `src/lib/tradeComposer.ts` derives trade composer state, validation, labels, balances, and fee summaries.
+- `src/lib/tradeActions.ts` submits escrow create, accept, decline, cancel, and counter-close transactions.
+- `src/lib/tradeLinks.ts` encodes and decodes compact trade links.
+- `src/lib/tradePerspective.ts` resolves maker/taker/open-trade perspective and My Trades grouping.
+- `src/lib/treasuryData.ts` normalizes live, feed, explorer, and on-chain Treasury Data sources.
+- `src/lib/imagePull.ts` encrypts/decrypts image attachments before Supabase upload/read.
+
+See `AGENTS.md` for a short future-maintenance map and consistency rules.
+
+## Network And Contracts
+
+- Network: COTI Mainnet, chain ID `2632500`, hex `0x282b34`.
+- Direct chat contract: `0xF4cab1599aafBBB68677682354B7c1760bCF6c48`.
+- Group chat contract: `0xE175ec590CE13FB6349f1CAd8b7e9D5d21eaa32b`.
+- Trade escrow contract: `0xeEE933f31Ba7dA6Cea3b30eE7BaaE2E88cb3d6f2`.
+- Reward token: `0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8`.
+- Private reward token: `0x922B39AC9FD4ccb5E5a9de0694C8189DC2D214E8`.
+- Reward swap vault: `0x5C35CD3659991051F4Fb04F2C4120643739b7BdE`.
+- Treasury snapshot store default: `0x25975eda0B0Ef3E5D86787Cb89D0A3468C17Bece`.
+
+## Data Model
+
+- On-chain: encrypted direct messages, encrypted group messages, group membership/invites/join-code state, nickname records, read-state backup memos, P2P escrow trades, token fees, and Treasury snapshot history.
+- Browser storage: UI state, cached decrypted timelines, unread maps, notification preference, known trade access secrets, selected wallet IDs, and encrypted burner wallet vaults.
+- Supabase Storage and Edge Functions: encrypted chat image blobs in the `chat-images` bucket, plus scheduled cleanup.
 
 ## Local Development
 
@@ -59,40 +97,54 @@ npm run dev
 
 Other scripts:
 
-- `npm run build` - type-check and production build
-- `npm run preview` - preview built app
-- `npm run lint` - run ESLint
-- `npm run test` - run Vitest
+- `npm run lint` - run ESLint.
+- `npm run test` - run Vitest tests.
+- `npm run build` - type-check and produce a production build.
+- `npm run preview` - preview the built app.
+
+## Environment
+
+Copy `.env.example` to `.env` and fill any project-specific values.
+
+Core variables:
+
+- `VITE_SUPABASE_PROJECT_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_TREASURY_API_BASE_URL`
+- `VITE_TREASURY_TOTALS_PATH`
+
+Optional Treasury history variables:
+
+- `VITE_API_BASE_URL`
+- `VITE_SNAPSHOT_URL`
+- `VITE_CONTRACT_ADDRESS`
+- `VITE_COTI_RPC_URL`
+- `VITE_COTI_EXPLORER_URL`
+- `VITE_COTI_EXPLORER_API_URL`
 
 ## Supabase Image Storage
 
-The repository now includes the Supabase assets needed for temporary encrypted image messaging:
+Temporary encrypted image messaging uses Supabase assets included in this repo:
 
-- `supabase/migrations/20260417130500_chat_image_storage.sql`
-  Creates the public `chat-images` bucket, caps object size to the encrypted image limit, adds the browser-upload storage policy, and schedules a cleanup job every 15 minutes.
-- `supabase/functions/chat-image-cleanup`
-  Deletes bucket objects older than 24 hours.
+- `supabase/migrations/20260417130500_chat_image_storage.sql` creates the public `chat-images` bucket, sets the encrypted image size limit, adds the browser upload policy, and schedules cleanup every 15 minutes.
+- `supabase/functions/chat-image-cleanup` deletes bucket objects older than 24 hours.
+
+The bucket is public for reads because blobs are encrypted client-side before upload. Decryption material is delivered through the encrypted chat message payload, not through Supabase.
 
 Deployment outline:
 
-1. Apply the migration in `supabase/migrations/20260417130500_chat_image_storage.sql`.
-2. Deploy the Edge Function in `supabase/functions/chat-image-cleanup`.
-3. Point the frontend at the project with `VITE_SUPABASE_PROJECT_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+1. Apply `supabase/migrations/20260417130500_chat_image_storage.sql`.
+2. Deploy `supabase/functions/chat-image-cleanup`.
+3. Set `VITE_SUPABASE_PROJECT_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
 
-### GitHub Pages deploy variables
+## GitHub Pages
 
-This repo now includes fallback values for the current Supabase project URL and publishable key, so GitHub Pages does not need extra Supabase variables just to build and run this project.
+The app is configured for a custom-domain GitHub Pages deployment from the repository root (`base: '/'`). The deploy workflow preserves `CNAME` and writes `dist/.nojekyll`.
 
-If you want to override them later, you can still set Vite variables in GitHub under `Settings -> Secrets and variables -> Actions -> Variables` for the repository, or under the `github-pages` environment:
+CI runs on pull requests and main branch pushes:
 
-- `VITE_WALLETCONNECT_PROJECT_ID`
-- `VITE_SUPABASE_PROJECT_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY`
-
-For this project, `VITE_SUPABASE_PROJECT_URL` should be:
-
-```text
-https://ousgmjyajyorywpqbdkf.supabase.co
+```bash
+npm run lint
+npm run test
+npm run build
 ```
-
-The storage bucket is intentionally public for reads because the blobs are encrypted client-side before upload and decrypted only after the chat message delivers the AES key material. The upload path now uses the Supabase publishable browser client, so the storage insert policy in the migration is required before image sending will work.

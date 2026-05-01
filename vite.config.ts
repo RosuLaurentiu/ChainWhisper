@@ -1,11 +1,20 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const VENDOR_GROUPS: Record<string, string> = {
-  react: 'react-vendor',
-  'react-dom': 'react-vendor',
-  scheduler: 'react-vendor',
-  '@coti-io/coti-ethers': 'coti-ethers'
+const getNodeModulePackageName = (id: string): string | undefined => {
+  const normalized = id.replace(/\\/g, '/');
+  const nodeModuleParts = normalized.split('/node_modules/');
+  const packagePath = nodeModuleParts[nodeModuleParts.length - 1];
+  if (!packagePath || packagePath.startsWith('.')) {
+    return undefined;
+  }
+
+  const [firstPart, secondPart] = packagePath.split('/');
+  if (!firstPart) {
+    return undefined;
+  }
+
+  return firstPart.startsWith('@') && secondPart ? `${firstPart}/${secondPart}` : firstPart;
 };
 
 const resolveVendorChunk = (id: string): string | undefined => {
@@ -13,14 +22,42 @@ const resolveVendorChunk = (id: string): string | undefined => {
     return undefined;
   }
 
-  const normalized = id.replace(/\\/g, '/');
-  for (const [pkgName, chunkName] of Object.entries(VENDOR_GROUPS)) {
-    if (normalized.includes(`/node_modules/${pkgName}/`) || normalized.includes(`/node_modules/.pnpm/${pkgName}@`)) {
-      return chunkName;
-    }
+  const packageName = getNodeModulePackageName(id);
+  if (!packageName) {
+    return undefined;
   }
 
-  return 'vendor';
+  if (packageName === 'react' || packageName === 'react-dom' || packageName === 'scheduler') {
+    return 'react-vendor';
+  }
+
+  if (packageName === '@coti-io/coti-ethers') {
+    return 'coti-ethers';
+  }
+
+  if (
+    packageName === 'viem' ||
+    packageName === 'abitype' ||
+    packageName === 'ox' ||
+    packageName.startsWith('@noble/') ||
+    packageName.startsWith('@scure/')
+  ) {
+    return 'web3-vendor';
+  }
+
+  if (packageName === 'recharts' || packageName.startsWith('d3-')) {
+    return 'charts-vendor';
+  }
+
+  if (packageName.startsWith('@supabase/')) {
+    return 'supabase-vendor';
+  }
+
+  if (packageName === 'fflate') {
+    return 'compression-vendor';
+  }
+
+  return undefined;
 };
 
 export default defineConfig({

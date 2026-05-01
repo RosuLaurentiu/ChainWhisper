@@ -1152,7 +1152,7 @@ export const decodeCompactSharedTxReference = (
     return undefined;
   }
 
-  const txHashPrefix = match[2].toLowerCase();
+  const txHashPrefix = match[2];
   return {
     blockNumber,
     txHashPrefix,

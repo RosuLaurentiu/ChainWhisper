@@ -17,6 +17,8 @@ type AppHeaderProps = {
   debugControl?: ReactNode;
   links?: readonly AppHeaderLink[];
   brandActions?: ReactNode;
+  navigationControl?: ReactNode;
+  walletControl?: ReactNode;
   title?: string;
   subtitle?: string;
   showSoundToggle?: boolean;
@@ -40,61 +42,84 @@ export default function AppHeader({
   debugControl,
   links = [],
   brandActions,
+  navigationControl,
+  walletControl,
   title = 'ChainWhisper',
   subtitle = '',
   showSoundToggle = false
 }: AppHeaderProps) {
   const hasNavLinks = links.length > 0;
   const shouldShowSoundToggle = showSoundToggle && typeof onToggleSound === 'function' && typeof soundEnabled === 'boolean';
-  const hasHeaderActions = Boolean(brandActions || shouldShowSoundToggle || debugControl);
-  const showBrandActions = !hasNavLinks && hasHeaderActions;
-  const showRightActions = hasNavLinks && hasHeaderActions;
+  const desktopNavigationControl = !isMobileNav ? navigationControl : null;
+  const mobileNavigationControl = isMobileNav ? navigationControl : null;
+  const desktopWalletControl = !isMobileNav ? walletControl : null;
+  const mobileWalletControl = isMobileNav ? walletControl : null;
+  const soundToggleControl = shouldShowSoundToggle ? (
+    <button
+      type="button"
+      className="sound-toggle-btn"
+      onClick={onToggleSound}
+      title={soundEnabled ? 'Disable sound' : 'Enable sound'}
+      aria-pressed={soundEnabled}
+    >
+      {soundEnabled ? (
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          aria-hidden="true"
+          focusable="false"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            fill="currentColor"
+            d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h16v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
+          />
+        </svg>
+      ) : (
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          aria-hidden="true"
+          focusable="false"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            fill="currentColor"
+            d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h9.17l3.7 3.7 1.41-1.41L7.41 4 6 5.41 16.59 16H18v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
+          />
+        </svg>
+      )}
+    </button>
+  ) : null;
+  const brandActionContent =
+    brandActions || soundToggleControl ? (
+      <>
+        {brandActions}
+        {soundToggleControl}
+      </>
+    ) : null;
+  const utilityActions =
+    desktopWalletControl || debugControl ? (
+      <>
+        {desktopWalletControl}
+        {debugControl}
+      </>
+    ) : null;
+  const hasBrandActions = Boolean(brandActionContent);
+  const hasUtilityActions = Boolean(utilityActions);
+  const showBrandActions = !hasNavLinks && hasBrandActions;
+  const showRightActions = hasUtilityActions || (hasNavLinks && hasBrandActions);
   const headerActions = (
     <>
-      {brandActions}
-      {shouldShowSoundToggle ? (
-        <button
-          type="button"
-          className="sound-toggle-btn"
-          onClick={onToggleSound}
-          title={soundEnabled ? 'Disable sound' : 'Enable sound'}
-          aria-pressed={soundEnabled}
-        >
-          {soundEnabled ? (
-            <svg
-              viewBox="0 0 24 24"
-              width="18"
-              height="18"
-              aria-hidden="true"
-              focusable="false"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                fill="currentColor"
-                d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h16v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
-              />
-            </svg>
-          ) : (
-            <svg
-              viewBox="0 0 24 24"
-              width="18"
-              height="18"
-              aria-hidden="true"
-              focusable="false"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                fill="currentColor"
-                d="M12 2a2 2 0 0 0-2 2v1.07A6.002 6.002 0 0 0 6 11v3l-2 2v1h9.17l3.7 3.7 1.41-1.41L7.41 4 6 5.41 16.59 16H18v-1l-2-2v-3a6.002 6.002 0 0 0-4-5.93V4a2 2 0 0 0-2-2zM7 20a5 5 0 0 0 10 0z"
-              />
-            </svg>
-          )}
-        </button>
-      ) : null}
-      {debugControl}
+      {hasNavLinks ? brandActionContent : null}
+      {utilityActions}
     </>
   );
-  const headerClassName = hasNavLinks ? 'top-header top-header-has-links' : 'top-header top-header-no-links';
+  const headerClassName = `${hasNavLinks ? 'top-header top-header-has-links' : 'top-header top-header-no-links'}${
+    desktopWalletControl ? ' top-header-has-wallet' : ''
+  }${desktopNavigationControl ? ' top-header-has-navigation' : ''}${mobileWalletControl ? ' top-header-has-mobile-wallet' : ''}`;
 
   return (
     <header className={headerClassName} ref={headerRef}>
@@ -109,10 +134,12 @@ export default function AppHeader({
               {subtitle ? <span className="top-header-brand-subtitle">{subtitle}</span> : null}
             </div>
           </div>
-          {showBrandActions ? <div className="top-header-brand-actions">{headerActions}</div> : null}
+          {showBrandActions ? <div className="top-header-brand-actions">{brandActionContent}</div> : null}
         </div>
 
         <div className="top-header-right">
+          {desktopNavigationControl ? <div className="top-header-nav">{desktopNavigationControl}</div> : null}
+
           {!isMobileNav && hasNavLinks ? (
             <nav className="top-header-links" aria-label="COTI ecosystem navigation">
               {renderNavLinks(links, onCloseMobileLinks)}
@@ -145,6 +172,9 @@ export default function AppHeader({
           {renderNavLinks(links, onCloseMobileLinks)}
         </nav>
       ) : null}
+
+      {mobileWalletControl ? <div className="top-header-mobile-wallet">{mobileWalletControl}</div> : null}
+      {mobileNavigationControl ? <div className="top-header-mobile-nav">{mobileNavigationControl}</div> : null}
     </header>
   );
 }

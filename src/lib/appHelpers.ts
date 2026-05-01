@@ -155,7 +155,7 @@ export const parseSharedTxReference = (
     return null;
   }
 
-  const txHashPrefix = match[2].toLowerCase();
+  const txHashPrefix = match[2];
   return {
     normalizedReference: `x${match[1].toLowerCase()}-${txHashPrefix}`,
     blockNumber,

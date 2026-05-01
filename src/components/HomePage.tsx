@@ -1,5 +1,6 @@
 type HomePageProps = {
   onLaunchChat: () => void;
+  onOpenSwap: () => void;
   onOpenTreasury: () => void;
   onOpenTrades: () => void;
   isConnected: boolean;
@@ -28,7 +29,7 @@ const QUICK_START_STEPS = [
 
 const FUTURE_SLOTS = ['Reserved Slot 01', 'Reserved Slot 02', 'Reserved Slot 03'] as const;
 
-export default function HomePage({ onLaunchChat, onOpenTreasury, onOpenTrades, isConnected }: HomePageProps) {
+export default function HomePage({ onLaunchChat, onOpenSwap, onOpenTreasury, onOpenTrades, isConnected }: HomePageProps) {
   return (
     <main className="landing-shell">
       <section className="landing-hero">
@@ -95,6 +96,15 @@ export default function HomePage({ onLaunchChat, onOpenTreasury, onOpenTrades, i
             <p>Create escrow trades, browse recent onchain offers, and open direct trade links.</p>
             <button type="button" className="landing-module-cta" onClick={onOpenTrades}>
               Open P2P Trades
+            </button>
+          </article>
+
+          <article className="landing-module-card">
+            <span className="landing-module-kicker">Private tokens</span>
+            <h3>Whisper Shield</h3>
+            <p>Swap reward tokens into private token form.</p>
+            <button type="button" className="landing-module-cta" onClick={onOpenSwap}>
+              Open Whisper Shield
             </button>
           </article>
 

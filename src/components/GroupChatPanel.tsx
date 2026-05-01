@@ -56,6 +56,8 @@ type GroupChatPanelProps = {
   onToggleReactionPicker: (messageId: string) => void;
   sendingReaction: boolean;
   onSendReaction: (targetMessage: ChatMessage, emojiInput: string) => Promise<void>;
+  walletPromptSensitiveActionsDisabled: boolean;
+  walletPromptSensitiveActionsTitle: string;
   replyingToMessage: ChatMessage | null;
   onReplyToMessage: (message: ChatMessage) => void;
   highlightedMessageId: string | null;
@@ -131,6 +133,8 @@ export default function GroupChatPanel({
   onToggleReactionPicker,
   sendingReaction,
   onSendReaction,
+  walletPromptSensitiveActionsDisabled,
+  walletPromptSensitiveActionsTitle,
   replyingToMessage,
   onReplyToMessage,
   highlightedMessageId,
@@ -368,8 +372,8 @@ export default function GroupChatPanel({
                         className="message-react-action"
                         onClick={() => onToggleReactionPicker(message.id)}
                         aria-label="React to this message"
-                        title="React"
-                        disabled={!message.txHash || sendingReaction}
+                        title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
+                        disabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
                       >
                         +
                       </button>
@@ -378,11 +382,12 @@ export default function GroupChatPanel({
                         className="message-reply-action"
                         onClick={() => onReplyToMessage(message)}
                         aria-label="Reply to this message"
-                        title="Reply"
+                        title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'Reply'}
+                        disabled={walletPromptSensitiveActionsDisabled}
                       >
                         R
                       </button>
-                      {reactionPickerMessageId === message.id ? (
+                      {!walletPromptSensitiveActionsDisabled && reactionPickerMessageId === message.id ? (
                         <div className="message-reaction-picker" role="dialog" aria-label="Pick reaction">
                           {DEFAULT_REACTION_EMOJIS.map((emoji) => (
                             <button
@@ -446,7 +451,13 @@ export default function GroupChatPanel({
                           onClick={() => {
                             onSendReaction(message, reaction.emoji).catch(() => {});
                           }}
-                          disabled={!message.txHash || sendingReaction || reaction.reactedByMe}
+                          disabled={
+                            !message.txHash ||
+                            sendingReaction ||
+                            reaction.reactedByMe ||
+                            walletPromptSensitiveActionsDisabled
+                          }
+                          title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}
                         >
                           <span>{reaction.emoji}</span>
                           <span>{reaction.count}</span>

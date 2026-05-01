@@ -1,12 +1,11 @@
-import { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import AppHeader from './components/AppHeader';
 import ContactsSidebar from './components/ContactsSidebar';
 import GroupActionControls from './components/GroupActionControls';
 import HomePage from './components/HomePage';
 import { ActiveJoinCodeList, GroupInviteMenu } from './components/GroupInviteTools';
 import MobileBottomNav from './components/MobileBottomNav';
-import WalletSidebar from './components/WalletSidebar';
-import type { StandaloneTradeVisibility } from './components/StandaloneTradesPage';
+import WalletHeaderPanel from './components/WalletHeaderPanel';
 import { useBurnerWallet } from './hooks/useBurnerWallet';
 import { useStateBackupSync } from './hooks/useStateBackupSync';
 import { useWalletOnboarding } from './hooks/useWalletOnboarding';
@@ -26,8 +25,6 @@ import {
   type TradeTokenPresetKey
 } from './lib/appHelpers';
 import {
-  fetchTradeAccessMetadataById,
-  fetchRecentTradeSnapshots,
   fetchTradeSnapshotById,
   readPrivateTokenBalanceWei
 } from './lib/appChain';
@@ -77,6 +74,7 @@ import {
 import { createEncryptedImageTagFromFile } from './lib/imagePull';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
+import { orderInjectedWalletOptions } from './lib/walletOptions';
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
   ActiveGroupJoinCode,
@@ -198,12 +196,15 @@ import {
   WS_RETRY_COOLDOWN_MS,
 } from './lib/appShared';
 
+const BurnerBackupModal = lazy(() => import('./components/BurnerBackupModal'));
 const BurnerImportModal = lazy(() => import('./components/BurnerImportModal'));
 const BurnerPinModal = lazy(() => import('./components/BurnerPinModal'));
 const DirectChatPanel = lazy(() => import('./components/DirectChatPanel'));
 const GroupChatPanel = lazy(() => import('./components/GroupChatPanel'));
 const P2PTradingPage = lazy(() => import('./components/P2PTradingPage'));
 const QuickActionsModal = lazy(() => import('./components/QuickActionsModal'));
+const TokenSwapPage = lazy(() => import('./components/TokenSwapPage'));
+const TopUpModal = lazy(() => import('./components/TopUpModal'));
 const TreasuryPage = lazy(() => import('./components/TreasuryPage'));
 const TradeComposerPanel = lazy(() => import('./components/TradeComposerPanel'));
 
@@ -211,16 +212,11 @@ const INITIAL_VISIBLE_THREAD_MESSAGE_COUNT = 160;
 const VISIBLE_THREAD_MESSAGE_CHUNK = 120;
 const BACKGROUND_DEEP_SYNC_DELAY_MS = 500;
 
-type AppPage = 'home' | 'chat' | 'treasury' | 'trades';
+type AppPage = 'home' | 'chat' | 'swap' | 'treasury' | 'trades';
 
 type AppRoute = {
   page: AppPage;
-  tradeId?: number;
-  tradeAccessSecret?: string;
 };
-
-const ZERO_TRADE_TAKER_ADDRESS = '0x0000000000000000000000000000000000000000';
-const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 const normalizeAppPathname = (pathname: string): string => {
   const trimmed = pathname.trim();
@@ -233,9 +229,17 @@ const normalizeAppPathname = (pathname: string): string => {
   return withoutTrailingSlash || '/';
 };
 
-const getPathForAppPage = (page: AppPage, tradeId?: number | null): string => {
+const getPathForAppPage = (page: AppPage): string => {
   if (page === 'home') {
     return '/home';
+  }
+
+  if (page === 'chat') {
+    return '/chat';
+  }
+
+  if (page === 'swap') {
+    return '/swap';
   }
 
   if (page === 'treasury') {
@@ -243,7 +247,7 @@ const getPathForAppPage = (page: AppPage, tradeId?: number | null): string => {
   }
 
   if (page === 'trades') {
-    return tradeId && tradeId > 0 ? `/trades/${tradeId}` : '/trades';
+    return '/trades';
   }
 
   return '/';
@@ -256,31 +260,6 @@ const resolveNavigationPathFromLocation = (): string => {
 
   const redirectedPath = new URLSearchParams(window.location.search).get('p');
   return normalizeAppPathname(redirectedPath || window.location.pathname);
-};
-
-const resolveTradeIdFromPath = (pathname: string): number | undefined => {
-  const match = pathname.match(/^\/trades?\/(\d+)$/i);
-  if (!match) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(match[1], 10);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
-};
-
-const resolveTradeAccessSecretFromLocation = (): string | undefined => {
-  if (typeof window === 'undefined') {
-    return undefined;
-  }
-
-  const hashValue = window.location.hash.replace(/^#/, '').trim();
-  const searchSecret = new URLSearchParams(window.location.search).get('secret')?.trim() ?? '';
-  const hashSecret =
-    hashValue.startsWith('secret=')
-      ? new URLSearchParams(hashValue).get('secret')?.trim() ?? ''
-      : hashValue;
-  const secret = searchSecret || hashSecret;
-  return /^0x[a-fA-F0-9]{64}$/.test(secret) ? secret : undefined;
 };
 
 const resolveAppRouteFromLocation = (): AppRoute => {
@@ -297,13 +276,12 @@ const resolveAppRouteFromLocation = (): AppRoute => {
     return { page: 'treasury' };
   }
 
-  if (normalizedPathname === '/trades' || normalizedPathname.startsWith('/trades/')) {
-    return { page: 'trades' };
+  if (normalizedPathname === '/swap') {
+    return { page: 'swap' };
   }
 
-  const tradeId = resolveTradeIdFromPath(normalizedPathname);
-  if (tradeId) {
-    return { page: 'trades', tradeId, tradeAccessSecret: resolveTradeAccessSecretFromLocation() };
+  if (normalizedPathname === '/trades' || normalizedPathname.startsWith('/trades/')) {
+    return { page: 'trades' };
   }
 
   if (normalizedPathname === '/' || normalizedPathname === '/chat') {
@@ -311,7 +289,13 @@ const resolveAppRouteFromLocation = (): AppRoute => {
   }
 
   const normalizedHash = window.location.hash.replace(/^#/, '').trim().toLowerCase();
-  if (normalizedHash === 'home' || normalizedHash === 'chat' || normalizedHash === 'treasury' || normalizedHash === 'trades') {
+  if (
+    normalizedHash === 'home' ||
+    normalizedHash === 'chat' ||
+    normalizedHash === 'swap' ||
+    normalizedHash === 'treasury' ||
+    normalizedHash === 'trades'
+  ) {
     return { page: normalizedHash as AppPage };
   }
 
@@ -332,6 +316,7 @@ export default function App() {
   const [editingContactAddress, setEditingContactAddress] = useState<string | null>(null);
   const [editingContactName, setEditingContactName] = useState('');
   const [showQuickActionsModal, setShowQuickActionsModal] = useState(false);
+  const [showTopUpModal, setShowTopUpModal] = useState(false);
   const [quickActionTab, setQuickActionTab] = useState<'contact' | 'create-group' | 'join-group'>('contact');
   const [myNickname, setMyNickname] = useState('');
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
@@ -510,29 +495,17 @@ export default function App() {
   const [tradeCounterParentId, setTradeCounterParentId] = useState<number | null>(null);
   const [tradeCounterContext, setTradeCounterContext] = useState<PendingTradeCounterContext | null>(null);
   const [tradeSnapshotsById, setTradeSnapshotsById] = useState<Record<string, TradeSnapshot>>({});
-  const [standaloneTradeVisibility, setStandaloneTradeVisibility] = useState<StandaloneTradeVisibility>('public');
-  const [standaloneTradeSnapshots, setStandaloneTradeSnapshots] = useState<TradeSnapshot[]>([]);
-  const [loadingStandaloneTrades, setLoadingStandaloneTrades] = useState(false);
-  const [standaloneTradesError, setStandaloneTradesError] = useState('');
-  const [loadingStandaloneTradeDetail, setLoadingStandaloneTradeDetail] = useState(false);
-  const [standaloneTradeDetailError, setStandaloneTradeDetailError] = useState('');
-  const [standaloneTradeDetailAccessBlocked, setStandaloneTradeDetailAccessBlocked] = useState(false);
-  const [standaloneCreatedTradeId, setStandaloneCreatedTradeId] = useState<number | null>(null);
-  const [standaloneCreatedTradeLink, setStandaloneCreatedTradeLink] = useState('');
   const [groupTipRecipientAddress, setGroupTipRecipientAddress] = useState('');
   const [sendingGroupMessage, setSendingGroupMessage] = useState(false);
   const [processingGroupAction, setProcessingGroupAction] = useState(false);
   const [syncingGroups, setSyncingGroups] = useState(false);
   const [error, setError] = useState<string>('');
   const [activePage, setActivePage] = useState<AppPage>(() => resolveAppRouteFromLocation().page);
-  const [activeTradePageId, setActiveTradePageId] = useState<number | null>(
-    () => resolveAppRouteFromLocation().tradeId ?? null
-  );
-  const [activeTradeAccessSecret, setActiveTradeAccessSecret] = useState<string>(
-    () => resolveAppRouteFromLocation().tradeAccessSecret ?? ''
-  );
-  const [activeMobileView, setActiveMobileView] = useState<MobileView>('wallets');
+  const [activeMobileView, setActiveMobileView] = useState<MobileView>('contacts');
   const [mobileLinksOpen, setMobileLinksOpen] = useState(false);
+  const [chatWalletMenuOpen, setChatWalletMenuOpen] = useState(false);
+  const [tradeHeaderWalletControl, setTradeHeaderWalletControl] = useState<ReactNode>(null);
+  const [tradeHeaderNavigationControl, setTradeHeaderNavigationControl] = useState<ReactNode>(null);
   const [isMobileNav, setIsMobileNav] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= MOBILE_NAV_BREAKPOINT_PX : false
   );
@@ -757,7 +730,6 @@ export default function App() {
     ensureCotiNetwork,
     getConnectedProvider,
     injectedWalletOptions,
-    onboardStatus,
     preferredInjectedWalletOption,
     sessionOnboardInfo,
     setActiveSignerSource,
@@ -770,7 +742,6 @@ export default function App() {
     setStatus,
     setWalletAddress,
     signerCacheRef,
-    status,
     walletAddress
   } = useWalletOnboarding({
     clearCachedStateBackupMemo,
@@ -787,7 +758,6 @@ export default function App() {
     burnerBalanceWei,
     burnerImportInput,
     burnerMnemonicBackup,
-    burnerNeedsFunding,
     burnerPinInput,
     burnerPinMode,
     burnerRecordRef,
@@ -795,6 +765,7 @@ export default function App() {
     burnerWalletRef,
     burnerWalletSelectionValue,
     burnerWallets,
+    closeBurnerBackup,
     closeBurnerPinModal,
     importBurnerWallet,
     initializingBurner,
@@ -883,6 +854,27 @@ export default function App() {
 
   const isConnected = useMemo(() => walletAddress.length > 0, [walletAddress]);
   const onCotiNetwork = useMemo(() => chainId === COTI_NETWORK.chainIdDecimal, [chainId]);
+  const browserWalletLiteMode = activeSignerSource === 'metamask';
+  const readStateFeaturesEnabled = activeSignerSource === 'burner';
+  const browserWalletLiteModeTitle = 'Use the app wallet for this chat feature.';
+  useEffect(() => {
+    if (readStateFeaturesEnabled) {
+      return;
+    }
+
+    unreadMapRef.current = {};
+    unreadGroupMapRef.current = {};
+    prevUnreadRef.current = {};
+    prevUnreadGroupRef.current = {};
+    lastReadByContactRef.current = {};
+    lastReadByGroupRef.current = {};
+    lastReadAllTsRef.current = 0;
+    setUnreadMap({});
+    setUnreadGroupMap({});
+    setLastReadAllTs(0);
+    setReplyingToMessage(null);
+    setReactionPickerMessageId(null);
+  }, [readStateFeaturesEnabled]);
   const activeMessages = useMemo(() => {
     if (!activeContact) {
       return [];
@@ -1298,10 +1290,18 @@ export default function App() {
   }, [visibleSortedContacts.length, sortedGroups.length, sortedGroupInvites.length]);
   const hasUnreadConversations = useMemo(
     () =>
-      Object.values(unreadMap).some((isUnread) => Boolean(isUnread)) ||
-      Object.values(unreadGroupMap).some((isUnread) => Boolean(isUnread)),
-    [unreadMap, unreadGroupMap]
+      readStateFeaturesEnabled &&
+      (Object.values(unreadMap).some((isUnread) => Boolean(isUnread)) ||
+        Object.values(unreadGroupMap).some((isUnread) => Boolean(isUnread))),
+    [readStateFeaturesEnabled, unreadMap, unreadGroupMap]
   );
+  const estimatedMessagesLeft = useMemo(() => {
+    if (burnerBalanceWei === null || BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI <= 0n) {
+      return null;
+    }
+
+    return burnerBalanceWei / BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI;
+  }, [burnerBalanceWei]);
   const activeContactMeta = useMemo(
     () => contacts.find((contact) => contact.address.toLowerCase() === activeContact?.toLowerCase()),
     [contacts, activeContact]
@@ -1412,13 +1412,6 @@ export default function App() {
     privateRewardTokenDecimals,
     hasAesReady
   ]);
-  const estimatedMessagesLeft = useMemo(() => {
-    if (burnerBalanceWei === null || BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI <= 0n) {
-      return null;
-    }
-
-    return burnerBalanceWei / BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI;
-  }, [burnerBalanceWei]);
   const parsedSwapAmount = useMemo(
     () => parseTokenAmountInput(swapAmountInput, rewardTokenDecimals),
     [swapAmountInput, rewardTokenDecimals]
@@ -1503,12 +1496,6 @@ export default function App() {
     !tipAmountExceedsBalance;
   const normalizedTradeOfferCustomTokenAddress = tradeOfferCustomTokenAddress.trim();
   const normalizedTradeRequestCustomTokenAddress = tradeRequestCustomTokenAddress.trim();
-  const standaloneTradeNeedsCounterparty = false;
-  const tradeComposerCounterparty =
-    activePage === 'trades' ? null : activeContact;
-  const tradeComposerIsSelfTrade =
-    activePage === 'trades' ? false : isSelfChat;
-  const tradeComposerSending = activePage === 'trades' ? false : sending;
   const tradeCustomOfferTokenKind =
     resolveTradePresetKind(tradeOfferTokenSelection) === 'private-erc20' ? 'private-erc20' : 'erc20';
   const tradeCustomRequestTokenKind =
@@ -1538,12 +1525,12 @@ export default function App() {
   } = useMemo(
     () =>
       deriveTradeComposerModel({
-        activeContact: tradeComposerCounterparty,
+        activeContact,
         walletAddress,
-        isSelfChat: tradeComposerIsSelfTrade,
+        isSelfChat,
         onCotiNetwork,
         creatingTrade,
-        sending: tradeComposerSending,
+        sending,
         tipping,
         tradeFeeModeSelection,
         tradeOfferTokenSelection,
@@ -1565,22 +1552,17 @@ export default function App() {
         privateRewardTokenBalanceWei,
         tradeRequiredFeeWei,
         tradeTokenFeeWei,
-        counterpartyRequired: activePage !== 'trades' || standaloneTradeNeedsCounterparty,
-        missingCounterpartyMessage:
-          activePage === 'trades' ? 'Enter a counterparty wallet first.' : 'Select a contact first.',
-        selfTradeMessage:
-          activePage === 'trades'
-            ? 'Choose a different counterparty wallet.'
-            : 'P2P trades are only available in private chats with another wallet.'
+        counterpartyRequired: true,
+        missingCounterpartyMessage: 'Select a contact first.',
+        selfTradeMessage: 'P2P trades are only available in private chats with another wallet.'
       }),
     [
-      activePage,
-      tradeComposerCounterparty,
+      activeContact,
       walletAddress,
-      tradeComposerIsSelfTrade,
+      isSelfChat,
       onCotiNetwork,
       creatingTrade,
-      tradeComposerSending,
+      sending,
       tipping,
       tradeFeeModeSelection,
       tradeOfferTokenSelection,
@@ -1887,8 +1869,6 @@ export default function App() {
       cancelled = true;
     };
   }, [activeTradeOffers, privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
-  const isStatusConnected = useMemo(() => /^connected/i.test(status.trim()), [status]);
-  const isAesConnected = useMemo(() => onboardStatus === 'AES key ready', [onboardStatus]);
   const rewardsConfigured = Boolean(groupRewardsContractAddress);
   const rewardsEnabled =
     groupRewardsPaused === false && rewardsContractPaused === false && rewardsCallerAllowed === true;
@@ -2374,6 +2354,11 @@ export default function App() {
   };
 
   const toggleConversationMuteForContact = async (address: string) => {
+    if (browserWalletLiteMode) {
+      setError('Use the app wallet to sync muted or hidden conversations.');
+      return;
+    }
+
     const normalizedAddress = address.trim().toLowerCase();
     if (isConversationStateSyncPending(normalizedAddress)) {
       return;
@@ -2414,6 +2399,11 @@ export default function App() {
   };
 
   const toggleConversationHiddenForContact = async (address: string) => {
+    if (browserWalletLiteMode) {
+      setError('Use the app wallet to sync muted or hidden conversations.');
+      return;
+    }
+
     const normalizedAddress = address.trim().toLowerCase();
     if (isConversationStateSyncPending(normalizedAddress)) {
       return;
@@ -2507,6 +2497,10 @@ export default function App() {
   }, [copyAddressToClipboard]);
 
   const markConversationAsRead = useCallback((contactAddress?: string | null) => {
+    if (!readStateFeaturesEnabled) {
+      return;
+    }
+
     if (!contactAddress) {
       return;
     }
@@ -2555,8 +2549,12 @@ export default function App() {
       lastReadAllTsRef.current = readAtTs;
       setLastReadAllTs((previous) => (readAtTs > previous ? readAtTs : previous));
     }
-  }, [messagesByContact]);
+  }, [messagesByContact, readStateFeaturesEnabled]);
   const markGroupConversationAsRead = useCallback((groupId?: number | null) => {
+    if (!readStateFeaturesEnabled) {
+      return;
+    }
+
     if (!Number.isFinite(groupId) || (groupId ?? 0) <= 0) {
       return;
     }
@@ -2604,8 +2602,12 @@ export default function App() {
       lastReadAllTsRef.current = readAtTs;
       setLastReadAllTs((previous) => (readAtTs > previous ? readAtTs : previous));
     }
-  }, [messagesByGroup]);
+  }, [messagesByGroup, readStateFeaturesEnabled]);
   const markAllConversationsAsRead = useCallback(() => {
+    if (!readStateFeaturesEnabled) {
+      return;
+    }
+
     const previousUnreadContacts = unreadMapRef.current || {};
     const previousUnreadGroups = unreadGroupMapRef.current || {};
     const unreadAddresses = Object.keys(previousUnreadContacts).filter((address) => isWalletAddress(address));
@@ -2681,7 +2683,7 @@ export default function App() {
       lastReadAllTsRef.current = nextGlobalReadTs;
       setLastReadAllTs((previous) => (nextGlobalReadTs > previous ? nextGlobalReadTs : previous));
     }
-  }, [messagesByContact, messagesByGroup]);
+  }, [messagesByContact, messagesByGroup, readStateFeaturesEnabled]);
 
   useEffect(() => {
     if (!activeContact) {
@@ -3001,8 +3003,8 @@ export default function App() {
       getNicknameMaxLength
     });
 
-  const saveMyNicknameOnChain = async (overrideNickname?: string): Promise<boolean> =>
-    saveMyNicknameOnChainLookup({
+  const saveMyNicknameOnChain = async (overrideNickname?: string): Promise<boolean> => {
+    return saveMyNicknameOnChainLookup({
       walletAddress,
       nickname: myNickname,
       overrideNickname,
@@ -3014,6 +3016,7 @@ export default function App() {
       setSessionOnboardInfo,
       setError
     });
+  };
 
   const loadMyNicknameFromChain = async (
     targetAddress: string,
@@ -3048,6 +3051,7 @@ export default function App() {
     lastReadAllTs,
     lastReadAllTsRef,
     postConnectDataSyncRunIdRef,
+    readStateSyncEnabled: readStateFeaturesEnabled,
     resolveConversationBlockRangeRef,
     resolveRequiredFeeForSendRef,
     resolveSubmitSelectorRef,
@@ -3962,7 +3966,12 @@ export default function App() {
         .map((address) => address.trim().toLowerCase())
         .filter((address) => isWalletAddress(address) && address !== walletKey);
 
-      if (unreadCandidateAddresses.length > 0) {
+      if (!readStateFeaturesEnabled) {
+        if (Object.keys(unreadMapRef.current || {}).length > 0) {
+          unreadMapRef.current = {};
+          setUnreadMap({});
+        }
+      } else if (unreadCandidateAddresses.length > 0) {
         const latestTimes = unreadCandidateAddresses.map((address) => {
           const observed = latestIncomingMessageTimeByContact.get(address) ?? 0;
           const localMessages = messagesByContact[address] ?? [];
@@ -5338,77 +5347,84 @@ export default function App() {
         return;
       }
 
-      const nextReadByGroup = { ...lastReadByGroupRef.current };
-      const previousUnreadGroups = unreadGroupMapRef.current || {};
-      const nextUnreadGroups = { ...previousUnreadGroups };
-      const activeGroupKey = selectedActiveGroupId !== null ? String(selectedActiveGroupId) : null;
-      const pageVisible =
-        typeof document !== 'undefined' &&
-        !document.hidden &&
-        (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
-      const globalReadTs = lastReadAllTsRef.current;
-      const candidateGroupKeys = new Set(nextGroups.map((group) => String(group.id)));
-      let readByGroupChanged = false;
-      let unreadGroupsChanged = false;
-
-      for (const group of nextGroups) {
-        const groupKey = String(group.id);
-        const localMessages = messagesByGroup[groupKey] ?? [];
-        let latestIncomingFromLocal = latestIncomingByGroup.get(groupKey) ?? 0;
-        let latestOutgoingFromLocal = 0;
-        for (const message of localMessages) {
-          if (typeof message.timestamp !== 'number') {
-            continue;
-          }
-          const ts = Number(message.timestamp);
-          if (message.direction === 'incoming' && ts > latestIncomingFromLocal) {
-            latestIncomingFromLocal = ts;
-          } else if (message.direction === 'outgoing' && ts > latestOutgoingFromLocal) {
-            latestOutgoingFromLocal = ts;
-          }
+      if (!readStateFeaturesEnabled) {
+        if (Object.keys(unreadGroupMapRef.current || {}).length > 0) {
+          unreadGroupMapRef.current = {};
+          setUnreadGroupMap({});
         }
+      } else {
+        const nextReadByGroup = { ...lastReadByGroupRef.current };
+        const previousUnreadGroups = unreadGroupMapRef.current || {};
+        const nextUnreadGroups = { ...previousUnreadGroups };
+        const activeGroupKey = selectedActiveGroupId !== null ? String(selectedActiveGroupId) : null;
+        const pageVisible =
+          typeof document !== 'undefined' &&
+          !document.hidden &&
+          (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+        const globalReadTs = lastReadAllTsRef.current;
+        const candidateGroupKeys = new Set(nextGroups.map((group) => String(group.id)));
+        let readByGroupChanged = false;
+        let unreadGroupsChanged = false;
 
-        // Group summary lastTimestamp advances for any activity (including my own outgoing messages).
-        // Treat it as incoming only when it is newer than known local outgoing timestamps.
-        const summaryLastTimestamp = toSafeNumber(group.lastTimestamp);
-        const latestIncomingFromSummary =
-          summaryLastTimestamp > latestOutgoingFromLocal ? summaryLastTimestamp : 0;
-        const latestMessageTs = Math.max(latestIncomingFromLocal, latestIncomingFromSummary);
-        if (groupKey === activeGroupKey && pageVisible && latestMessageTs > 0) {
-          const existingReadTs = nextReadByGroup[groupKey] ?? 0;
-          if (latestMessageTs > existingReadTs) {
-            nextReadByGroup[groupKey] = latestMessageTs;
-            readByGroupChanged = true;
+        for (const group of nextGroups) {
+          const groupKey = String(group.id);
+          const localMessages = messagesByGroup[groupKey] ?? [];
+          let latestIncomingFromLocal = latestIncomingByGroup.get(groupKey) ?? 0;
+          let latestOutgoingFromLocal = 0;
+          for (const message of localMessages) {
+            if (typeof message.timestamp !== 'number') {
+              continue;
+            }
+            const ts = Number(message.timestamp);
+            if (message.direction === 'incoming' && ts > latestIncomingFromLocal) {
+              latestIncomingFromLocal = ts;
+            } else if (message.direction === 'outgoing' && ts > latestOutgoingFromLocal) {
+              latestOutgoingFromLocal = ts;
+            }
           }
-        }
 
-        const groupReadTs = nextReadByGroup[groupKey] ?? 0;
-        const effectiveReadTs = Math.max(globalReadTs, groupReadTs);
-        const shouldUnread = latestMessageTs > effectiveReadTs && !(groupKey === activeGroupKey && pageVisible);
-        if (shouldUnread) {
-          if (!nextUnreadGroups[groupKey]) {
-            nextUnreadGroups[groupKey] = true;
+          // Group summary lastTimestamp advances for any activity (including my own outgoing messages).
+          // Treat it as incoming only when it is newer than known local outgoing timestamps.
+          const summaryLastTimestamp = toSafeNumber(group.lastTimestamp);
+          const latestIncomingFromSummary =
+            summaryLastTimestamp > latestOutgoingFromLocal ? summaryLastTimestamp : 0;
+          const latestMessageTs = Math.max(latestIncomingFromLocal, latestIncomingFromSummary);
+          if (groupKey === activeGroupKey && pageVisible && latestMessageTs > 0) {
+            const existingReadTs = nextReadByGroup[groupKey] ?? 0;
+            if (latestMessageTs > existingReadTs) {
+              nextReadByGroup[groupKey] = latestMessageTs;
+              readByGroupChanged = true;
+            }
+          }
+
+          const groupReadTs = nextReadByGroup[groupKey] ?? 0;
+          const effectiveReadTs = Math.max(globalReadTs, groupReadTs);
+          const shouldUnread = latestMessageTs > effectiveReadTs && !(groupKey === activeGroupKey && pageVisible);
+          if (shouldUnread) {
+            if (!nextUnreadGroups[groupKey]) {
+              nextUnreadGroups[groupKey] = true;
+              unreadGroupsChanged = true;
+            }
+          } else if (nextUnreadGroups[groupKey]) {
+            delete nextUnreadGroups[groupKey];
             unreadGroupsChanged = true;
           }
-        } else if (nextUnreadGroups[groupKey]) {
-          delete nextUnreadGroups[groupKey];
-          unreadGroupsChanged = true;
         }
-      }
 
-      for (const existingGroupKey of Object.keys(nextUnreadGroups)) {
-        if (!candidateGroupKeys.has(existingGroupKey)) {
-          delete nextUnreadGroups[existingGroupKey];
-          unreadGroupsChanged = true;
+        for (const existingGroupKey of Object.keys(nextUnreadGroups)) {
+          if (!candidateGroupKeys.has(existingGroupKey)) {
+            delete nextUnreadGroups[existingGroupKey];
+            unreadGroupsChanged = true;
+          }
         }
-      }
 
-      if (unreadGroupsChanged) {
-        unreadGroupMapRef.current = nextUnreadGroups;
-        setUnreadGroupMap(nextUnreadGroups);
-      }
-      if (readByGroupChanged) {
-        lastReadByGroupRef.current = nextReadByGroup;
+        if (unreadGroupsChanged) {
+          unreadGroupMapRef.current = nextUnreadGroups;
+          setUnreadGroupMap(nextUnreadGroups);
+        }
+        if (readByGroupChanged) {
+          lastReadByGroupRef.current = nextReadByGroup;
+        }
       }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -6128,7 +6144,7 @@ export default function App() {
     }
 
     const targetContact = activeContact;
-    const replyTarget = replyingToMessage;
+    const replyTarget = browserWalletLiteMode ? null : replyingToMessage;
     if (!targetContact) {
       setError('Select a contact first.');
       return;
@@ -6157,7 +6173,7 @@ export default function App() {
     }
 
     const targetGroupId = activeGroupId;
-    const replyTarget = replyingToMessage;
+    const replyTarget = browserWalletLiteMode ? null : replyingToMessage;
     if (targetGroupId === null) {
       setError('Select a group first.');
       return;
@@ -6212,7 +6228,7 @@ export default function App() {
 
     const groupId = activeGroupId;
     const groupKey = String(groupId);
-    const replyTarget = overrideReplyTarget ?? replyingToMessage;
+    const replyTarget = browserWalletLiteMode ? null : overrideReplyTarget ?? replyingToMessage;
     const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
     const localMessageId = `local-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
@@ -6370,6 +6386,10 @@ export default function App() {
   };
 
   const syncContactNameAliasFromInput = async (contactAddress: string, contactName: string): Promise<void> => {
+    if (browserWalletLiteMode) {
+      return;
+    }
+
     const normalizedAddress = contactAddress.trim();
     const normalizedContactName = normalizeContactName(contactName)?.slice(0, 42);
     if (!isWalletAddress(normalizedAddress) || !normalizedContactName) {
@@ -6450,6 +6470,11 @@ export default function App() {
     state: ConversationPreferenceState,
     visibleNotice = ''
   ): Promise<boolean> => {
+    if (browserWalletLiteMode) {
+      setError('Use the app wallet to sync muted or hidden conversations.');
+      return false;
+    }
+
     const normalizedAddress = contactAddress.trim();
     const normalizedState = normalizeConversationPreferenceState(state);
     if (!isWalletAddress(normalizedAddress) || !normalizedState) {
@@ -6487,6 +6512,11 @@ export default function App() {
 
   const sendReactionToMessage = async (targetMessage: ChatMessage, emojiInput: string) => {
     setError('');
+
+    if (browserWalletLiteMode) {
+      setError('Use the app wallet to send reactions.');
+      return;
+    }
 
     if (sendingReaction) {
       return;
@@ -6813,7 +6843,7 @@ export default function App() {
 
     const contactAddress = activeContact;
     const contactKey = contactAddress.toLowerCase();
-    const replyTarget = overrideReplyTarget ?? replyingToMessage;
+    const replyTarget = browserWalletLiteMode ? null : overrideReplyTarget ?? replyingToMessage;
     const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
     const localMessageId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
@@ -7737,18 +7767,16 @@ export default function App() {
 
   useEffect(() => {
     if (!isConnected) {
-      setActiveMobileView('wallets');
+      setActiveMobileView('contacts');
     }
   }, [isConnected]);
 
-  const navigateToPage = useCallback((page: AppPage, tradeId?: number | null, tradeAccessSecret?: string) => {
+  const navigateToPage = useCallback((page: AppPage) => {
     setActivePage(page);
-    setActiveTradePageId(page === 'trades' ? tradeId ?? null : null);
-    setActiveTradeAccessSecret(page === 'trades' ? tradeAccessSecret ?? '' : '');
     if (typeof window !== 'undefined') {
-      const nextPath = getPathForAppPage(page, tradeId);
+      const nextPath = getPathForAppPage(page);
       const currentPath = resolveNavigationPathFromLocation();
-      const nextHash = page === 'trades' && tradeAccessSecret ? `#secret=${tradeAccessSecret}` : '';
+      const nextHash = '';
       if (
         currentPath !== nextPath ||
         window.location.hash !== nextHash ||
@@ -7792,362 +7820,16 @@ export default function App() {
     [navigateToPage]
   );
 
-  const buildStandaloneTradeUrl = useCallback((tradeId: number, accessSecret?: string): string => {
-    const path = getPathForAppPage('trades', tradeId);
-    if (typeof window === 'undefined') {
-      return accessSecret ? `${path}#secret=${accessSecret}` : path;
-    }
-
-    const nextUrl = new URL(window.location.href);
-    nextUrl.pathname = path;
-    nextUrl.search = '';
-    nextUrl.hash = accessSecret ? `secret=${accessSecret}` : '';
-    return nextUrl.toString();
-  }, []);
-
-  const createTradeAccessSecret = (): string => {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-  };
-
-  const hashTradeAccessSecret = async (accessSecret: string): Promise<string> => {
-    const cotiEthers = await loadCotiEthersModule();
-    return cotiEthers.keccak256(accessSecret);
-  };
-
-  const openStandaloneTradeById = useCallback(
-    (tradeId: number) => {
-      navigateToPage('trades', tradeId);
-    },
-    [navigateToPage]
-  );
-
-  const openStandaloneTradeDirectory = useCallback(() => {
-    navigateToPage('trades');
-  }, [navigateToPage]);
-
-  const mergeStandaloneTradeSnapshot = useCallback((snapshot: TradeSnapshot) => {
-    setTradeSnapshotsById((previous) => ({
-      ...previous,
-      [String(snapshot.tradeId)]: snapshot
-    }));
-    setStandaloneTradeSnapshots((previous) => {
-      const withoutCurrent = previous.filter((entry) => entry.tradeId !== snapshot.tradeId);
-      return [snapshot, ...withoutCurrent].sort((left, right) => right.tradeId - left.tradeId);
-    });
-  }, []);
-
-  const loadStandaloneTradeDirectory = useCallback(async () => {
-    setLoadingStandaloneTrades(true);
-    setStandaloneTradesError('');
-
-    try {
-      const snapshots = await fetchRecentTradeSnapshots({
-        rewardTokenSymbol,
-        rewardTokenDecimals,
-        privateRewardTokenSymbol,
-        privateRewardTokenDecimals,
-        limit: 60
-      });
-      setStandaloneTradeSnapshots(snapshots);
-      setTradeSnapshotsById((previous) => {
-        const next = { ...previous };
-        for (const snapshot of snapshots) {
-          next[String(snapshot.tradeId)] = snapshot;
-        }
-        return next;
-      });
-    } catch {
-      setStandaloneTradesError('Failed to load recent on-chain trades.');
-    } finally {
-      setLoadingStandaloneTrades(false);
-    }
-  }, [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
-
-  const createStandaloneTradeOffer = async () => {
-    setError('');
-    setStandaloneCreatedTradeId(null);
-    setStandaloneCreatedTradeLink('');
-
-    if (sendingRef.current || tipping || creatingTrade) {
-      return;
-    }
-
-    if (tradeComposerValidationMessage) {
-      setError(tradeComposerValidationMessage);
-      return;
-    }
-
-    const requestedWalletAddress = walletAddress.trim();
-    const requestedWalletKey = requestedWalletAddress.toLowerCase();
-    const takerAddress = ZERO_TRADE_TAKER_ADDRESS;
-    const accessSecret = standaloneTradeVisibility === 'private' ? createTradeAccessSecret() : '';
-    const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
-
-    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
-      setError('Connect a wallet first.');
-      return;
-    }
-
-    if (!selectedTradeOfferToken || !selectedTradeRequestToken) {
-      setError('Select valid trade tokens first.');
-      return;
-    }
-
-    if (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n) {
-      setError(`Enter a valid ${selectedTradeOfferToken.symbol} amount to send.`);
-      return;
-    }
-
-    if (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n) {
-      setError(`Enter a valid ${selectedTradeRequestToken.symbol} amount to receive.`);
-      return;
-    }
-
-    try {
-      setCreatingTrade(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      const nativeFeeWei =
-        tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
-      const tokenFeeAmount =
-        tradeFeeModeSelection === 'token' ? await resolveRequiredTokenFeeForTradeCreate() : 0n;
-      const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
-      const { tradeId } = await createTradeOnChain({
-        signer,
-        makerAddress: requestedWalletAddress,
-        takerAddress,
-        offerAsset: selectedTradeOfferToken,
-        offerAmountWei: parsedTradeOfferAmountWei,
-        requestAsset: selectedTradeRequestToken,
-        requestAmountWei: parsedTradeRequestAmountWei,
-        expiresAt,
-        feeMode: tradeFeeModeSelection,
-        nativeFeeWei,
-        tokenFeeAmount,
-        isPublic: standaloneTradeVisibility === 'public',
-        accessHash: accessHash !== ZERO_BYTES32 ? accessHash : undefined
-      });
-      const createdAt = Math.floor(Date.now() / 1000);
-      const nextSnapshot: TradeSnapshot = {
-        tradeId,
-        maker: requestedWalletAddress,
-        taker: takerAddress,
-        offer: {
-          ...selectedTradeOfferToken,
-          amount: parsedTradeOfferAmountWei.toString()
-        },
-        request: {
-          ...selectedTradeRequestToken,
-          amount: parsedTradeRequestAmountWei.toString()
-        },
-        createdAt,
-        expiresAt,
-        status: 'open'
-      };
-      const shareUrl = buildStandaloneTradeUrl(tradeId, accessSecret || undefined);
-
-      mergeStandaloneTradeSnapshot(nextSnapshot);
-      setStandaloneCreatedTradeId(tradeId);
-      setStandaloneCreatedTradeLink(shareUrl);
-      setActiveTradeAccessSecret(accessSecret);
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-
-      setTradeOfferAmountInput('');
-      setTradeRequestAmountInput('');
-      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-      if (standaloneTradeVisibility === 'private') {
-        navigateToPage('trades', tradeId, accessSecret);
-      } else {
-        await loadStandaloneTradeDirectory();
-      }
-    } catch (tradeError) {
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to create trade offer.');
-      setError(message);
-      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
-      }
-    } finally {
-      setCreatingTrade(false);
-    }
-  };
-
-  const refreshStandaloneTradeSnapshot = async (tradeId: number): Promise<TradeSnapshot | null> => {
-    try {
-      const snapshot = await fetchTradeSnapshotById(tradeId, {
-        rewardTokenSymbol,
-        rewardTokenDecimals,
-        privateRewardTokenSymbol,
-        privateRewardTokenDecimals
-      });
-      mergeStandaloneTradeSnapshot(snapshot);
-      return snapshot;
-    } catch {
-      return null;
-    }
-  };
-
-  const acceptStandaloneTrade = async (snapshot: TradeSnapshot) => {
-    setError('');
-    if (processingTradeActionId || !walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-
-    try {
-      setProcessingTradeActionId(String(snapshot.tradeId));
-      const latestSnapshot = (await refreshStandaloneTradeSnapshot(snapshot.tradeId)) ?? snapshot;
-      const { signer, cacheKey } = await getMemoSigner();
-      const accessSecret =
-        activeTradePageId === snapshot.tradeId && activeTradeAccessSecret
-          ? activeTradeAccessSecret
-          : '';
-      if (latestSnapshot.hasAccessHash && !accessSecret) {
-        throw new Error('This trade needs its full private link before it can be accepted.');
-      }
-      const { acceptedTxHash } = await acceptTradeOnChain({
-        signer,
-        ownerAddress: walletAddress,
-        tradeId: snapshot.tradeId,
-        requestAsset: latestSnapshot.request,
-        accessSecret: accessSecret || undefined
-      });
-      const nextSnapshot: TradeSnapshot = {
-        ...latestSnapshot,
-        status: 'accepted',
-        acceptedTxHash
-      };
-      mergeStandaloneTradeSnapshot(nextSnapshot);
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-    } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to accept trade.');
-      setError(message);
-      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
-      }
-    } finally {
-      setProcessingTradeActionId('');
-    }
-  };
-
-  const declineStandaloneTrade = async (snapshot: TradeSnapshot) => {
-    setError('');
-    if (processingTradeActionId) {
-      return;
-    }
-
-    try {
-      setProcessingTradeActionId(String(snapshot.tradeId));
-      const latestSnapshot = (await refreshStandaloneTradeSnapshot(snapshot.tradeId)) ?? snapshot;
-      const { signer, cacheKey } = await getMemoSigner();
-      await declineTradeOnChain({
-        signer,
-        tradeId: snapshot.tradeId
-      });
-      mergeStandaloneTradeSnapshot({
-        ...latestSnapshot,
-        status: 'declined'
-      });
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-    } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to refuse trade.');
-      setError(message);
-    } finally {
-      setProcessingTradeActionId('');
-    }
-  };
-
-  const cancelStandaloneTrade = async (snapshot: TradeSnapshot) => {
-    setError('');
-    if (processingTradeActionId) {
-      return;
-    }
-
-    try {
-      setProcessingTradeActionId(String(snapshot.tradeId));
-      const latestSnapshot = (await refreshStandaloneTradeSnapshot(snapshot.tradeId)) ?? snapshot;
-      const { signer, cacheKey } = await getMemoSigner();
-      await cancelTradeOnChain({
-        signer,
-        tradeId: snapshot.tradeId
-      });
-      mergeStandaloneTradeSnapshot({
-        ...latestSnapshot,
-        status: 'cancelled'
-      });
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-    } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to cancel trade.');
-      setError(message);
-    } finally {
-      setProcessingTradeActionId('');
-    }
-  };
-
   useEffect(() => {
     const syncPageWithLocation = () => {
       const nextRoute = resolveAppRouteFromLocation();
       setActivePage(nextRoute.page);
-      setActiveTradePageId(nextRoute.page === 'trades' ? nextRoute.tradeId ?? null : null);
-      setActiveTradeAccessSecret(nextRoute.page === 'trades' ? nextRoute.tradeAccessSecret ?? '' : '');
 
       const currentPath = resolveNavigationPathFromLocation();
       const canonicalPath =
         nextRoute.page === 'trades' && currentPath.toLowerCase().startsWith('/trades')
           ? currentPath
-          : getPathForAppPage(nextRoute.page, nextRoute.tradeId);
+          : getPathForAppPage(nextRoute.page);
       const canonicalHash = nextRoute.page === 'trades' ? window.location.hash : '';
       if (
         currentPath !== canonicalPath ||
@@ -8173,11 +7855,17 @@ export default function App() {
 
   useEffect(() => {
     setMobileLinksOpen(false);
+    setChatWalletMenuOpen(false);
+    if (activePage !== 'trades') {
+      setTradeHeaderWalletControl(null);
+      setTradeHeaderNavigationControl(null);
+    }
     if (activePage !== 'chat') {
       setShowQuickActionsModal(false);
       setMobileGroupOptionsOpen(false);
     }
-    if (activePage !== 'chat' && activePage !== 'trades') {
+    if (activePage !== 'chat' && activePage !== 'trades' && activePage !== 'swap') {
+      setShowTopUpModal(false);
       setShowBurnerImportModal(false);
       closeBurnerPinModal();
     }
@@ -8199,80 +7887,12 @@ export default function App() {
         ? 'ChainWhisper'
         : activePage === 'chat'
           ? 'ChainWhisper Chat'
+          : activePage === 'swap'
+            ? 'Token Swap | ChainWhisper'
           : activePage === 'trades'
-            ? activeTradePageId
-              ? `Trade #${activeTradePageId} | ChainWhisper`
-              : 'P2P Trades | ChainWhisper'
+            ? 'P2P Trades | ChainWhisper'
             : 'Treasury Data | ChainWhisper';
-  }, [activePage, activeTradePageId]);
-
-  useEffect(() => {
-    if (activePage === 'trades') {
-      return;
-    }
-  }, [activePage, loadStandaloneTradeDirectory]);
-
-  useEffect(() => {
-    if (activePage === 'trades' || activeTradePageId === null) {
-      setStandaloneTradeDetailError('');
-      setStandaloneTradeDetailAccessBlocked(false);
-      setLoadingStandaloneTradeDetail(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingStandaloneTradeDetail(true);
-    setStandaloneTradeDetailError('');
-    setStandaloneTradeDetailAccessBlocked(false);
-
-    const loadTradeDetail = async () => {
-      try {
-        const metadata = await fetchTradeAccessMetadataById(activeTradePageId).catch(() => null);
-        if (cancelled) {
-          return;
-        }
-
-        if (metadata?.isPublic === false && !activeTradeAccessSecret) {
-          setStandaloneTradeDetailAccessBlocked(true);
-          return;
-        }
-
-        const snapshot = await fetchTradeSnapshotById(activeTradePageId, {
-          rewardTokenSymbol,
-          rewardTokenDecimals,
-          privateRewardTokenSymbol,
-          privateRewardTokenDecimals
-        });
-        if (cancelled) {
-          return;
-        }
-        mergeStandaloneTradeSnapshot(snapshot);
-      } catch {
-        if (!cancelled) {
-          setStandaloneTradeDetailError(`Trade #${activeTradePageId} was not found on the escrow contract.`);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingStandaloneTradeDetail(false);
-        }
-      }
-    };
-
-    loadTradeDetail();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activePage,
-    activeTradeAccessSecret,
-    activeTradePageId,
-    mergeStandaloneTradeSnapshot,
-    privateRewardTokenDecimals,
-    privateRewardTokenSymbol,
-    rewardTokenDecimals,
-    rewardTokenSymbol
-  ]);
+  }, [activePage]);
 
   useEffect(() => {
     if (!mobileLinksOpen) {
@@ -9688,84 +9308,266 @@ export default function App() {
       />
     </Suspense>
   ) : null;
-  const legacyStandaloneTradesEnabled =
-    activePage === 'trades' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('__legacyTrades');
-  const standaloneTradeComposerContent =
-    legacyStandaloneTradesEnabled ? (
-      <Suspense fallback={<div className="chat-placeholder">Loading trade composer...</div>}>
-        <TradeComposerPanel
-          title="Create trade"
-          metaLabel={standaloneTradeVisibility === 'public' ? 'Listed escrow trade' : 'Direct-link escrow trade'}
-          safetyNote="Escrow settlement and trade terms are stored on-chain."
-          sendLabel="Create Trade"
-          sendingLabel="Creating..."
-          sendTitle="Create the escrow trade on chain."
-          feeMode={tradeFeeModeSelection}
-          onFeeModeChange={setTradeFeeModeSelection}
-          feeSummaryLabel={tradeFeeSummaryLabel}
-          feeError={tradeComposerFieldErrors.fee}
-          offerTokenOptions={tradeTokenOptions}
-          requestTokenOptions={tradeTokenOptions}
-          offerTokenSelection={tradeOfferTokenSelection}
-          onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
-          requestTokenSelection={tradeRequestTokenSelection}
-          onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
-          offerAssetError={tradeComposerFieldErrors.offerAsset}
-          requestAssetError={tradeComposerFieldErrors.requestAsset}
-          offerCustomAddress={tradeOfferCustomTokenAddress}
-          onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
-          requestCustomAddress={tradeRequestCustomTokenAddress}
-          onRequestCustomAddressChange={setTradeRequestCustomTokenAddress}
-          offerCustomMetaLabel={tradeOfferCustomMetaLabel}
-          requestCustomMetaLabel={tradeRequestCustomMetaLabel}
-          offerVerifyUrl={tradeOfferVerifyUrl}
-          requestVerifyUrl={tradeRequestVerifyUrl}
-          offerAmountInput={tradeOfferAmountInput}
-          onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
-          requestAmountInput={tradeRequestAmountInput}
-          onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
-          offerAmountError={tradeComposerFieldErrors.offerAmount}
-          requestAmountError={tradeComposerFieldErrors.requestAmount}
-          canUseMaxOfferAmount={canUseTradeOfferMax}
-          onUseMaxOfferAmount={() => setTradeOfferAmountInput(tradeOfferMaxInputValue)}
-          offerAmountSummaryLabel={tradeOfferAmountSummaryLabel}
-          requestAmountSummaryLabel={tradeRequestAmountSummaryLabel}
-          offerBalanceSummaryLabel={tradeOfferBalanceSummaryLabel}
-          onSwapSides={swapTradeComposerSides}
-          swapDisabled={creatingTrade}
-          tradePreviewLabel={tradePreviewLabel}
-          tradeRateLabel={tradeRateLabel}
-          expiresHoursInput={tradeExpiryHoursInput}
-          onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
-          expiryError={tradeComposerFieldErrors.expiry}
-          sending={creatingTrade}
-          canSend={canSendTradeOffer}
-          onSendTradeOffer={() => {
-            createStandaloneTradeOffer().catch(() => {});
-          }}
-          generalError={tradeComposerFieldErrors.general}
-          validationMessage={tradeComposerValidationMessage || undefined}
-        />
-      </Suspense>
-    ) : null;
-  const standaloneSelectedTradeSnapshot =
-    activeTradePageId !== null ? tradeSnapshotsById[String(activeTradePageId)] ?? null : null;
-  void setStandaloneTradeVisibility;
-  void standaloneTradeSnapshots;
-  void loadingStandaloneTrades;
-  void standaloneTradesError;
-  void loadingStandaloneTradeDetail;
-  void standaloneTradeDetailError;
-  void standaloneTradeDetailAccessBlocked;
-  void standaloneCreatedTradeId;
-  void standaloneCreatedTradeLink;
-  void openStandaloneTradeById;
-  void openStandaloneTradeDirectory;
-  void acceptStandaloneTrade;
-  void declineStandaloneTrade;
-  void cancelStandaloneTrade;
-  void standaloneTradeComposerContent;
-  void standaloneSelectedTradeSnapshot;
+  const orderedChatInjectedWalletOptions = useMemo(
+    () => orderInjectedWalletOptions(injectedWalletOptions, currentInjectedWalletOption?.id ?? '', 'metamask'),
+    [currentInjectedWalletOption?.id, injectedWalletOptions]
+  );
+  const chatWalletAddressCopyKey = walletAddress ? `wallet-address:${walletAddress.toLowerCase()}` : '';
+  const chatWalletIsAppWallet = isConnected && activeSignerSource === 'burner';
+  const chatWalletPrimaryConnectLabel =
+    burnerStorageBlocked && preferredInjectedWalletOption
+      ? `Connect ${preferredInjectedWalletOption.label}`
+      : hasSavedBurnerWallet
+        ? 'Connect app wallet'
+        : 'Generate app wallet';
+  const chatWalletPrimaryButtonLabel =
+    connectingMethod === 'metamask'
+      ? `Connecting ${connectingWalletLabel || preferredInjectedWalletOption?.label || 'Wallet'}...`
+      : initializingBurner
+        ? 'Unlocking...'
+        : walletAddress && !onCotiNetwork
+          ? 'Switch to COTI'
+          : walletAddress
+            ? shortenAddress(walletAddress)
+            : chatWalletPrimaryConnectLabel;
+  const chatWalletPrimaryMetaLabel =
+    walletAddress && onCotiNetwork
+      ? lastCopiedKey === chatWalletAddressCopyKey
+        ? 'Copied'
+        : 'Copy'
+      : undefined;
+  const chatWalletPrimaryButtonClass =
+    `${!walletAddress || !onCotiNetwork ? 'connect-btn wallet-inline-btn wallet-primary-action' : 'connect-btn wallet-inline-btn'} p2p-wallet-address${
+      lastCopiedKey === chatWalletAddressCopyKey ? ' copied' : ''
+    }`;
+  const chatWalletPrimaryDisabled =
+    connectingMethod !== null ||
+    initializingBurner ||
+    (!walletAddress && burnerStorageBlocked && !preferredInjectedWalletOption);
+  const chatWalletModeLabel = walletAddress
+    ? chatWalletIsAppWallet
+      ? 'App wallet'
+      : currentInjectedWalletOption?.label ?? preferredInjectedWalletOption?.label ?? 'Browser wallet'
+    : 'No wallet connected';
+  const chatWalletStatusLabel = !walletAddress
+    ? 'Disconnected'
+    : !onCotiNetwork
+      ? 'Switch network'
+      : hasAesReady
+        ? 'Ready'
+        : 'Connected';
+  const showChangeBurnerPinButton = hasSavedBurnerWallet && chatWalletIsAppWallet && Boolean(burnerRecordRef.current);
+  const showBackupBurnerButton = chatWalletIsAppWallet && Boolean(burnerMnemonicBackup);
+  const handleChatWalletPrimaryAction = () => {
+    if (walletAddress && !onCotiNetwork) {
+      const provider = getConnectedProvider();
+      if (provider) {
+        ensureCotiNetwork(provider).catch((providerError) => {
+          setError(getProviderErrorMessage(providerError, 'Failed to switch network.'));
+        });
+      }
+      return;
+    }
+
+    if (walletAddress) {
+      copyWithFeedback(walletAddress, chatWalletAddressCopyKey).catch(() => {});
+      return;
+    }
+
+    if (!burnerStorageBlocked) {
+      beginBurnerPinFlow(hasSavedBurnerWallet ? 'stored' : 'generate').catch(() => {});
+      return;
+    }
+
+    if (preferredInjectedWalletOption) {
+      connectAndOnboard(preferredInjectedWalletOption.id).catch(() => {});
+    }
+  };
+  const chatWalletHeaderControl = (
+    <WalletHeaderPanel
+      primaryButtonClassName={chatWalletPrimaryButtonClass}
+      primaryButtonLabel={chatWalletPrimaryButtonLabel}
+      primaryMetaLabel={chatWalletPrimaryMetaLabel}
+      primaryButtonTitle={walletAddress || undefined}
+      primaryDisabled={chatWalletPrimaryDisabled}
+      onPrimaryAction={handleChatWalletPrimaryAction}
+      modeLabel={chatWalletModeLabel}
+      statusLabel={chatWalletStatusLabel}
+      action={
+        isConnected && activeSignerSource === 'metamask' && onCotiNetwork && !hasAesReady ? (
+          <button
+            type="button"
+            className="p2p-wallet-aes-action"
+            onClick={() => {
+              connectAndOnboard(currentInjectedWalletOption?.id ?? preferredInjectedWalletOption?.id).catch(() => {});
+            }}
+            disabled={connectingMethod !== null}
+            title="Sign once to unlock encrypted chat and private balances."
+          >
+            {connectingMethod === 'metamask' ? 'Signing...' : 'Sign AES key'}
+          </button>
+        ) : null
+      }
+      menuOpen={chatWalletMenuOpen}
+      onToggleMenu={() => setChatWalletMenuOpen((previous) => !previous)}
+      menuDisabled={connectingMethod !== null || initializingBurner}
+      menu={
+        <>
+          <div className="p2p-wallet-menu-section">
+            <span>App wallet</span>
+            <button
+              type="button"
+              className={chatWalletIsAppWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+              onClick={() => {
+                setChatWalletMenuOpen(false);
+                beginBurnerPinFlow('stored').catch(() => {});
+              }}
+              disabled={initializingBurner || burnerStorageBlocked || !hasSavedBurnerWallet}
+              role="menuitem"
+            >
+              {hasSavedBurnerWallet ? 'Connect app wallet' : 'No saved app wallet'}
+            </button>
+            {burnerWallets.length > 1 ? (
+              <select
+                className="p2p-wallet-select"
+                value={burnerWalletSelectionValue}
+                onChange={(event) => {
+                  setChatWalletMenuOpen(false);
+                  switchActiveBurnerWallet(event.target.value).catch(() => {});
+                }}
+                disabled={initializingBurner}
+                aria-label="Switch app wallet"
+              >
+                {burnerWallets.map((walletRecord, index) => (
+                  <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
+                    {getBurnerWalletDisplayName(walletRecord)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <button
+              type="button"
+              className="p2p-wallet-action"
+              onClick={() => {
+                setChatWalletMenuOpen(false);
+                beginBurnerPinFlow('generate').catch(() => {});
+              }}
+              disabled={initializingBurner || burnerStorageBlocked}
+              role="menuitem"
+            >
+              Generate wallet
+            </button>
+            <button
+              type="button"
+              className="p2p-wallet-action"
+              onClick={() => {
+                setChatWalletMenuOpen(false);
+                setShowBurnerImportModal(true);
+              }}
+              disabled={initializingBurner || burnerStorageBlocked}
+              role="menuitem"
+            >
+              Import wallet
+            </button>
+            {showChangeBurnerPinButton ? (
+              <button
+                type="button"
+                className="p2p-wallet-action"
+                onClick={() => {
+                  setChatWalletMenuOpen(false);
+                  openChangeBurnerPin();
+                }}
+                disabled={initializingBurner}
+                role="menuitem"
+              >
+                Change PIN
+              </button>
+            ) : null}
+            {chatWalletIsAppWallet ? (
+              <button
+                type="button"
+                className="p2p-wallet-action"
+                onClick={() => {
+                  setChatWalletMenuOpen(false);
+                  setShowTopUpModal(true);
+                }}
+                disabled={initializingBurner || !burnerAddress}
+                role="menuitem"
+                title={topUpAmountWei !== null ? `Top up ${topUpAmountLabel}` : 'Top up app wallet'}
+              >
+                {loadingTopUpQuote ? 'Top up loading...' : `Top up ${topUpAmountLabel}`}
+              </button>
+            ) : null}
+            {showBackupBurnerButton ? (
+              <button
+                type="button"
+                className="p2p-wallet-action"
+                onClick={() => {
+                  setChatWalletMenuOpen(false);
+                  beginRevealBurnerBackup();
+                }}
+                disabled={initializingBurner}
+                role="menuitem"
+              >
+                Backup wallet
+              </button>
+            ) : null}
+          </div>
+
+          <div className="p2p-wallet-menu-section">
+            <span>Browser wallet</span>
+            {orderedChatInjectedWalletOptions.length > 0 ? (
+              orderedChatInjectedWalletOptions.map((option) => {
+                const isCurrentWallet =
+                  activeSignerSource === 'metamask' &&
+                  connectionMethod === 'metamask' &&
+                  currentInjectedWalletOption?.id === option.id &&
+                  isConnected;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={isCurrentWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                    onClick={() => {
+                      setChatWalletMenuOpen(false);
+                      connectAndOnboard(option.id).catch(() => {});
+                    }}
+                    disabled={connectingMethod !== null}
+                    role="menuitem"
+                  >
+                    {connectingMethod === 'metamask' && connectingWalletLabel === option.label
+                      ? 'Connecting...'
+                      : isCurrentWallet
+                        ? hasAesReady
+                          ? `${option.label} ready`
+                          : `Sign ${option.label}`
+                        : `Connect ${option.label}`}
+                  </button>
+                );
+              })
+            ) : (
+              <button type="button" className="p2p-wallet-action" disabled role="menuitem">
+                No browser wallet detected
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="p2p-wallet-action danger"
+            onClick={() => {
+              setChatWalletMenuOpen(false);
+              disconnectWallet().catch(() => {});
+            }}
+            disabled={connectingMethod !== null || !walletAddress}
+            role="menuitem"
+          >
+            Disconnect
+          </button>
+        </>
+      }
+    />
+  );
   const headerHomeAction =
     activePage !== 'home' ? (
       <button
@@ -9790,90 +9592,68 @@ export default function App() {
         </svg>
       </button>
     ) : null;
-  const walletSidebar = (
-    <WalletSidebar
-          isConnected={isConnected}
-          onCotiNetwork={onCotiNetwork}
-          chainId={chainId}
-          status={status}
-          isStatusConnected={isStatusConnected}
-          onboardStatus={onboardStatus}
-          isAesConnected={isAesConnected}
-          walletAddress={walletAddress}
-          lastCopiedKey={lastCopiedKey}
-          onCopyWithFeedback={copyWithFeedback}
-          hasSavedBurnerWallet={hasSavedBurnerWallet}
-          initializingBurner={initializingBurner}
-          burnerStorageBlocked={burnerStorageBlocked}
-          hasActiveBurnerRecord={Boolean(burnerRecordRef.current)}
-          onUnlockBurnerWallet={() => {
-            beginBurnerPinFlow('stored').catch(() => {});
-          }}
-          onChangeBurnerPin={openChangeBurnerPin}
-          onGenerateBurnerWallet={() => {
-            beginBurnerPinFlow('generate').catch(() => {});
-          }}
-          onOpenBurnerImportModal={() => setShowBurnerImportModal(true)}
-          injectedWalletOptions={injectedWalletOptions}
-          preferredInjectedWalletOption={preferredInjectedWalletOption}
-          currentInjectedWalletOption={currentInjectedWalletOption}
-          activeSignerSource={activeSignerSource}
-          connectionMethod={connectionMethod}
-          connectingMethod={connectingMethod}
-          connectingWalletLabel={connectingWalletLabel}
-          burnerWallets={burnerWallets}
-          getBurnerWalletDisplayName={getBurnerWalletDisplayName}
-          onConnectInjectedWallet={connectAndOnboard}
-          onSwitchBurnerWallet={switchActiveBurnerWallet}
-          onDisconnectWallet={disconnectWallet}
-          burnerWalletSelectionValue={burnerWalletSelectionValue}
-          burnerAddress={burnerAddress}
-          topUpAmountWei={topUpAmountWei}
-          topUpMessageTarget={topUpMessageTarget}
-          onTopUpMessageTargetChange={setTopUpMessageTarget}
-          loadingTopUpQuote={loadingTopUpQuote}
-          burnerBalanceWei={burnerBalanceWei}
-          estimatedMessagesLeft={estimatedMessagesLeft}
-          topUpAmountLabel={topUpAmountLabel}
-          onTopUpBurnerWithWallet={topUpBurnerWithWallet}
-          tokenToolsSummary={tokenToolsSummary}
-          groupRewardsContractAddress={groupRewardsContractAddress}
-          rewardsEnabled={rewardsEnabled}
-          rewardsIndicatorLabel={rewardsIndicatorLabel}
-          rewardsPublicReserveWei={rewardsPublicReserveWei}
-          rewardsPublicPerInteractionWei={rewardsPublicPerInteractionWei}
-          rewardTokenDecimals={rewardTokenDecimals}
-          rewardTokenSymbol={rewardTokenSymbol}
-          privateRewardTokenSymbol={privateRewardTokenSymbol}
-          rewardsLowReserve={rewardsLowReserve}
-          swapAmountInput={swapAmountInput}
-          onSwapAmountInputChange={(value) => setSwapAmountInput(sanitizeTokenAmountInput(value))}
-          swappingTokens={swappingTokens}
-          swapInputSymbol={swapInputSymbol}
-          swapDirection={swapDirection}
-          onSwapDirectionChange={setSwapDirection}
-          swapFeeModeSelection={swapFeeModeSelection}
-          onSwapFeeModeChange={setSwapFeeModeSelection}
-          loadingRewardBalances={loadingRewardBalances}
-          swapFeeWei={swapFeeWei}
-          swapTokenFeeAmount={swapTokenFeeAmount}
-          canSwapRewardTokens={canSwapRewardTokens}
-          swapButtonLabel={swapButtonLabel}
-          onSwapRewardTokens={swapRewardTokens}
-          swapStatusMessage={swapStatusMessage}
-          burnerNeedsFunding={burnerNeedsFunding}
-          burnerMnemonicBackup={burnerMnemonicBackup}
-          showBurnerMnemonic={showBurnerMnemonic}
-          onBeginRevealBurnerBackup={beginRevealBurnerBackup}
-        />
+  const walletSessionModals = (
+    <>
+      {showBurnerImportModal ? (
+        <Suspense fallback={null}>
+          <BurnerImportModal
+            isOpen={showBurnerImportModal}
+            initializingBurner={initializingBurner}
+            burnerImportInput={burnerImportInput}
+            onBurnerImportInputChange={setBurnerImportInput}
+            error={error}
+            onClose={() => setShowBurnerImportModal(false)}
+            onImport={importBurnerWallet}
+          />
+        </Suspense>
+      ) : null}
+
+      {showBurnerPinModal ? (
+        <Suspense fallback={null}>
+          <BurnerPinModal
+            isOpen={showBurnerPinModal}
+            burnerPinMode={burnerPinMode}
+            burnerPinInput={burnerPinInput}
+            onBurnerPinInputChange={setBurnerPinInput}
+            pinMinLength={BURNER_PIN_MIN_LENGTH}
+            error={error}
+            initializingBurner={initializingBurner}
+            onClose={closeBurnerPinModal}
+            onSubmit={submitBurnerPinAndInitialize}
+          />
+        </Suspense>
+      ) : null}
+
+      {showBurnerMnemonic && burnerMnemonicBackup ? (
+        <Suspense fallback={null}>
+          <BurnerBackupModal isOpen={showBurnerMnemonic} mnemonic={burnerMnemonicBackup} onClose={closeBurnerBackup} />
+        </Suspense>
+      ) : null}
+
+      {showTopUpModal ? (
+        <Suspense fallback={null}>
+          <TopUpModal
+            isOpen={showTopUpModal}
+            initializingBurner={initializingBurner}
+            loadingTopUpQuote={loadingTopUpQuote}
+            burnerAddress={burnerAddress}
+            topUpAmountWei={topUpAmountWei}
+            topUpMessageTarget={topUpMessageTarget}
+            onTopUpMessageTargetChange={setTopUpMessageTarget}
+            burnerBalanceWei={burnerBalanceWei}
+            estimatedMessagesLeft={estimatedMessagesLeft}
+            topUpAmountLabel={topUpAmountLabel}
+            onTopUpBurnerWithWallet={topUpBurnerWithWallet}
+            onClose={() => setShowTopUpModal(false)}
+          />
+        </Suspense>
+      ) : null}
+    </>
   );
   const chatWorkspace = (
     <>
       <div className="app-root">
-        {walletSidebar}
-
-        {isConnected ? (
-          <ContactsSidebar
+        <ContactsSidebar
             nicknameEditorRef={nicknameEditorRef}
             nicknameMaxBytes={nicknameMaxBytes}
             hasAesReady={hasAesReady}
@@ -9883,6 +9663,8 @@ export default function App() {
               saveMyNicknameOnChain().catch(() => {});
             }}
             hasUnreadConversations={hasUnreadConversations}
+            readStateActionsDisabled={!readStateFeaturesEnabled}
+            walletPromptSensitiveActionsTitle={browserWalletLiteModeTitle}
             onMarkAllConversationsAsRead={markAllConversationsAsRead}
             onForceSync={() => {
               forceSyncAllData().catch(() => {});
@@ -9905,9 +9687,10 @@ export default function App() {
             editingContactName={editingContactName}
             onEditingContactNameChange={setEditingContactName}
             isConversationStateSyncPending={isConversationStateSyncPending}
+            conversationMetadataActionsDisabled={browserWalletLiteMode}
             messagesByContact={messagesByContact}
             lastCopiedKey={lastCopiedKey}
-            unreadMap={unreadMap}
+            unreadMap={readStateFeaturesEnabled ? unreadMap : {}}
             onCopyWithFeedback={copyWithFeedback}
             onActivateContact={activateContact}
             onStartRenameContact={startRenameContact}
@@ -9925,16 +9708,15 @@ export default function App() {
             sortedGroups={sortedGroups}
             activeGroupId={activeGroupId}
             messagesByGroup={messagesByGroup}
-            unreadGroupMap={unreadGroupMap}
+            unreadGroupMap={readStateFeaturesEnabled ? unreadGroupMap : {}}
             onActivateGroup={activateGroup}
             error={error}
           />
-        ) : null}
 
         <main className="chat-panel">
           <Suspense fallback={<div className="chat-placeholder">Loading conversation...</div>}>
             {!isConnected ? (
-              <div className="chat-placeholder">Connect a wallet to view contacts and start messaging.</div>
+              <div className="chat-placeholder">Connect a wallet to start messaging.</div>
             ) : activeGroupId !== null ? (
               <GroupChatPanel
                 activeGroupId={activeGroupId!}
@@ -9963,13 +9745,24 @@ export default function App() {
                 isReactionOnlyMessage={isReactionOnlyMessage}
                 getReactionsForMessage={getReactionsForMessage}
                 reactionPickerMessageId={reactionPickerMessageId}
-                onToggleReactionPicker={(messageId) =>
-                  setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
-                }
+                onToggleReactionPicker={(messageId) => {
+                  if (browserWalletLiteMode) {
+                    return;
+                  }
+                  setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId));
+                }}
                 sendingReaction={sendingReaction}
                 onSendReaction={sendReactionToMessage}
+                walletPromptSensitiveActionsDisabled={browserWalletLiteMode}
+                walletPromptSensitiveActionsTitle={browserWalletLiteModeTitle}
                 replyingToMessage={replyingToMessage}
-                onReplyToMessage={setReplyingToMessage}
+                onReplyToMessage={(message) => {
+                  if (browserWalletLiteMode) {
+                    setError('Use the app wallet to send replies.');
+                    return;
+                  }
+                  setReplyingToMessage(message);
+                }}
                 highlightedMessageId={highlightedMessageId}
                 messageElementRefs={messageElementRefs}
                 onJumpToReferencedMessage={jumpToReferencedMessage}
@@ -10022,6 +9815,8 @@ export default function App() {
                 activeConversationMuted={activeConversationMuted}
                 activeConversationHidden={activeConversationHidden}
                 activeConversationStateSyncPending={activeConversationStateSyncPending}
+                walletPromptSensitiveActionsDisabled={browserWalletLiteMode}
+                walletPromptSensitiveActionsTitle={browserWalletLiteModeTitle}
                 onToggleConversationMute={() => {
                   toggleConversationMuteForContact(activeContact!).catch(() => {});
                 }}
@@ -10033,12 +9828,21 @@ export default function App() {
                 activeMessages={visibleActiveMessages}
                 isReactionOnlyMessage={isReactionOnlyMessage}
                 reactionPickerMessageId={reactionPickerMessageId}
-                onToggleReactionPicker={(messageId) =>
-                  setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId))
-                }
+                onToggleReactionPicker={(messageId) => {
+                  if (browserWalletLiteMode) {
+                    return;
+                  }
+                  setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId));
+                }}
                 sendingReaction={sendingReaction}
                 onSendReaction={sendReactionToMessage}
-                onReplyToMessage={setReplyingToMessage}
+                onReplyToMessage={(message) => {
+                  if (browserWalletLiteMode) {
+                    setError('Use the app wallet to send replies.');
+                    return;
+                  }
+                  setReplyingToMessage(message);
+                }}
                 replyingToMessage={replyingToMessage}
                 highlightedMessageId={highlightedMessageId}
                 messageElementRefs={messageElementRefs}
@@ -10150,36 +9954,6 @@ export default function App() {
           />
         </Suspense>
       ) : null}
-
-      {showBurnerImportModal ? (
-        <Suspense fallback={null}>
-          <BurnerImportModal
-            isOpen={showBurnerImportModal}
-            initializingBurner={initializingBurner}
-            burnerImportInput={burnerImportInput}
-            onBurnerImportInputChange={setBurnerImportInput}
-            error={error}
-            onClose={() => setShowBurnerImportModal(false)}
-            onImport={importBurnerWallet}
-          />
-        </Suspense>
-      ) : null}
-
-      {showBurnerPinModal ? (
-        <Suspense fallback={null}>
-          <BurnerPinModal
-            isOpen={showBurnerPinModal}
-            burnerPinMode={burnerPinMode}
-            burnerPinInput={burnerPinInput}
-            onBurnerPinInputChange={setBurnerPinInput}
-            pinMinLength={BURNER_PIN_MIN_LENGTH}
-            error={error}
-            initializingBurner={initializingBurner}
-            onClose={closeBurnerPinModal}
-            onSubmit={submitBurnerPinAndInitialize}
-          />
-        </Suspense>
-      ) : null}
     </>
   );
 
@@ -10190,12 +9964,15 @@ export default function App() {
           headerRef={topHeaderRef}
           mobileLinksOpen={mobileLinksOpen}
           isMobileNav={isMobileNav}
+          soundEnabled={soundEnabled}
           onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+          onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           links={COTI_ECOSYSTEM_LINKS}
         />
         <HomePage
           onLaunchChat={() => openPageInNewTab('chat')}
+          onOpenSwap={() => navigateToPage('swap')}
           onOpenTreasury={() => navigateToPage('treasury')}
           onOpenTrades={() => navigateToPage('trades')}
           isConnected={isConnected}
@@ -10211,10 +9988,15 @@ export default function App() {
           headerRef={topHeaderRef}
           mobileLinksOpen={mobileLinksOpen}
           isMobileNav={isMobileNav}
+          soundEnabled={soundEnabled}
           onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+          onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
+          navigationControl={tradeHeaderNavigationControl}
+          walletControl={tradeHeaderWalletControl}
           subtitle="P2P Trades"
+          showSoundToggle
         />
         <Suspense
           fallback={
@@ -10223,7 +10005,67 @@ export default function App() {
             </main>
           }
         >
-          <P2PTradingPage />
+          <P2PTradingPage
+            onHeaderWalletControlChange={setTradeHeaderWalletControl}
+            onHeaderNavigationControlChange={setTradeHeaderNavigationControl}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (activePage === 'swap') {
+    return (
+      <div className="app-shell app-shell-swap">
+        <AppHeader
+          headerRef={topHeaderRef}
+          mobileLinksOpen={mobileLinksOpen}
+          isMobileNav={isMobileNav}
+          soundEnabled={soundEnabled}
+          onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+          onToggleSound={handleToggleSound}
+          onCloseMobileLinks={() => setMobileLinksOpen(false)}
+          brandActions={headerHomeAction}
+          walletControl={chatWalletHeaderControl}
+          subtitle="Token Swap"
+          showSoundToggle
+        />
+        {walletSessionModals}
+        <Suspense
+          fallback={
+            <main className="swap-page-shell">
+              <p className="standalone-trade-state">Loading token swap...</p>
+            </main>
+          }
+        >
+          <TokenSwapPage
+            tokenToolsSummary={tokenToolsSummary}
+            groupRewardsContractAddress={groupRewardsContractAddress}
+            rewardsEnabled={rewardsEnabled}
+            rewardsIndicatorLabel={rewardsIndicatorLabel}
+            rewardsPublicReserveWei={rewardsPublicReserveWei}
+            rewardsPublicPerInteractionWei={rewardsPublicPerInteractionWei}
+            rewardTokenDecimals={rewardTokenDecimals}
+            rewardTokenSymbol={rewardTokenSymbol}
+            privateRewardTokenSymbol={privateRewardTokenSymbol}
+            rewardsLowReserve={rewardsLowReserve}
+            swapAmountInput={swapAmountInput}
+            onSwapAmountInputChange={(value) => setSwapAmountInput(sanitizeTokenAmountInput(value))}
+            swappingTokens={swappingTokens}
+            swapInputSymbol={swapInputSymbol}
+            swapDirection={swapDirection}
+            onSwapDirectionChange={setSwapDirection}
+            swapFeeModeSelection={swapFeeModeSelection}
+            onSwapFeeModeChange={setSwapFeeModeSelection}
+            loadingRewardBalances={loadingRewardBalances}
+            swapFeeWei={swapFeeWei}
+            swapTokenFeeAmount={swapTokenFeeAmount}
+            canSwapRewardTokens={canSwapRewardTokens}
+            swapButtonLabel={swapButtonLabel}
+            onSwapRewardTokens={swapRewardTokens}
+            swapStatusMessage={swapStatusMessage}
+            error={error}
+          />
         </Suspense>
       </div>
     );
@@ -10236,9 +10078,12 @@ export default function App() {
           headerRef={topHeaderRef}
           mobileLinksOpen={mobileLinksOpen}
           isMobileNav={isMobileNav}
+          soundEnabled={soundEnabled}
           onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
+          onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
+          showSoundToggle
         />
         <Suspense
           fallback={
@@ -10267,8 +10112,10 @@ export default function App() {
         onCloseMobileLinks={() => setMobileLinksOpen(false)}
         debugControl={debugControl}
         brandActions={headerHomeAction}
-        showSoundToggle
+        walletControl={chatWalletHeaderControl}
+        showSoundToggle={readStateFeaturesEnabled}
       />
+      {walletSessionModals}
       {chatWorkspace}
     </div>
   );

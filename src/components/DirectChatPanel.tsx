@@ -31,6 +31,8 @@ type DirectChatPanelProps = {
   activeConversationMuted: boolean;
   activeConversationHidden: boolean;
   activeConversationStateSyncPending: boolean;
+  walletPromptSensitiveActionsDisabled: boolean;
+  walletPromptSensitiveActionsTitle: string;
   onToggleConversationMute: () => void;
   onLoadFullConversationHistory: () => void;
   syncingHistory: boolean;
@@ -107,6 +109,8 @@ export default function DirectChatPanel({
   activeConversationMuted,
   activeConversationHidden,
   activeConversationStateSyncPending,
+  walletPromptSensitiveActionsDisabled,
+  walletPromptSensitiveActionsTitle,
   onToggleConversationMute,
   onLoadFullConversationHistory,
   syncingHistory,
@@ -212,9 +216,11 @@ export default function DirectChatPanel({
               type="button"
               className="contact"
               onClick={onToggleConversationMute}
-              disabled={activeConversationStateSyncPending}
+              disabled={activeConversationStateSyncPending || walletPromptSensitiveActionsDisabled}
               title={
-                activeConversationStateSyncPending
+                walletPromptSensitiveActionsDisabled
+                  ? walletPromptSensitiveActionsTitle
+                  : activeConversationStateSyncPending
                   ? 'Waiting for confirmation...'
                   : activeConversationMuted
                     ? 'Unmute conversation'
@@ -293,8 +299,8 @@ export default function DirectChatPanel({
                       className="message-react-action"
                       onClick={() => onToggleReactionPicker(message.id)}
                       aria-label="React to this message"
-                      title="React"
-                      disabled={!message.txHash || sendingReaction}
+                      title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
+                      disabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
                     >
                       +
                     </button>
@@ -303,11 +309,12 @@ export default function DirectChatPanel({
                       className="message-reply-action"
                       onClick={() => onReplyToMessage(message)}
                       aria-label="Reply to this message"
-                      title="Reply"
+                      title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'Reply'}
+                      disabled={walletPromptSensitiveActionsDisabled}
                     >
                       R
                     </button>
-                    {reactionPickerMessageId === message.id ? (
+                    {!walletPromptSensitiveActionsDisabled && reactionPickerMessageId === message.id ? (
                       <div className="message-reaction-picker" role="dialog" aria-label="Pick reaction">
                         {DEFAULT_REACTION_EMOJIS.map((emoji) => (
                           <button
@@ -396,7 +403,13 @@ export default function DirectChatPanel({
                           onClick={() => {
                             onSendReaction(message, reaction.emoji).catch(() => {});
                           }}
-                          disabled={!message.txHash || sendingReaction || reaction.reactedByMe}
+                          disabled={
+                            !message.txHash ||
+                            sendingReaction ||
+                            reaction.reactedByMe ||
+                            walletPromptSensitiveActionsDisabled
+                          }
+                          title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}
                         >
                           <span>{reaction.emoji}</span>
                           <span>{reaction.count}</span>
