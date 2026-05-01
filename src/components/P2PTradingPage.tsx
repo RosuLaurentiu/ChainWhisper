@@ -2725,7 +2725,7 @@ export default function P2PTradingPage() {
               {route.view === 'public' ? (
                 <div>
                   <span>Open offers</span>
-                  <strong>{loadingPublicTrades ? '--' : openPublicTradeCount}</strong>
+                  <strong>{openPublicTradeCount}</strong>
                 </div>
               ) : null}
               {route.view === 'mine' ? (
@@ -2791,12 +2791,12 @@ export default function P2PTradingPage() {
           </div>
           {publicTradesError ? <p className="standalone-trade-error">{publicTradesError}</p> : null}
           {loadingPublicTrades && publicTrades.length === 0 ? <p className="standalone-trade-state">Loading public trades...</p> : null}
-          {!loadingPublicTrades
+          {(!loadingPublicTrades || publicTrades.length > 0)
             ? renderTradeList(
-                filteredPublicTrades,
-                tradeSearchInput ? 'No public trades match that search.' : 'No open public trades found.',
-                'p2p-public-trade-grid'
-              )
+              filteredPublicTrades,
+              tradeSearchInput ? 'No public trades match that search.' : 'No open public trades found.',
+              'p2p-public-trade-grid'
+            )
             : null}
         </section>
       ) : null}
@@ -2934,14 +2934,14 @@ export default function P2PTradingPage() {
             </div>
           ) : null}
           {route.routeError || detailTradeError ? <p className="standalone-trade-error">{route.routeError || detailTradeError}</p> : null}
-          {loadingDetailTrade ? <p className="standalone-trade-state">Loading trade...</p> : null}
+          {loadingDetailTrade && !detailTrade ? <p className="standalone-trade-state">Loading trade...</p> : null}
           {!loadingDetailTrade && tradeAccessBlocked ? (
             <div className="standalone-trade-state p2p-private-link-state">
               <strong>Private link required</strong>
               <span>Open the full shared link, not only the trade id.</span>
             </div>
           ) : null}
-          {!loadingDetailTrade && !tradeAccessBlocked && detailTrade ? renderTradeCard(detailTrade) : null}
+          {!tradeAccessBlocked && detailTrade ? renderTradeCard(detailTrade) : null}
           {!loadingDetailTrade && !detailTrade && !tradeAccessBlocked && !route.routeError && !detailTradeError ? (
             <p className="standalone-trade-state">Paste a trade link or open a public trade from the directory.</p>
           ) : null}
@@ -2968,7 +2968,7 @@ export default function P2PTradingPage() {
           {!walletAddress ? <p className="standalone-trade-state">Connect a wallet to view your trades.</p> : null}
           {myTradesError ? <p className="standalone-trade-error">{myTradesError}</p> : null}
           {walletAddress && loadingMyTrades && myTrades.length === 0 ? <p className="standalone-trade-state">Loading your trades...</p> : null}
-          {walletAddress && !loadingMyTrades ? (
+          {walletAddress && (!loadingMyTrades || myTrades.length > 0) ? (
             <div className="p2p-wallet-trade-groups">
               <div className="p2p-wallet-trade-switcher" role="tablist" aria-label="My trade groups">
                 {myTradeGroupOptions.map((group) => (
