@@ -103,6 +103,7 @@ const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const WALLET_STATUS_STORAGE_KEY = 'coti-trade-last-wallet-id';
 const TRADE_ACCESS_SECRET_STORAGE_KEY = 'coti-trade-access-secrets-v1';
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
+const P2P_VISIBLE_SYNC_INTERVAL_MS = 10_000;
 type TradeSigner = JsonRpcSigner | Wallet;
 
 const normalizeTradePathname = (value: string): string => {
@@ -498,6 +499,8 @@ export default function P2PTradingPage() {
   const counterPanelRef = useRef<HTMLDivElement | null>(null);
   const publicTradesRefreshRef = useRef<Promise<void> | null>(null);
   const myTradesRefreshRef = useRef<Promise<void> | null>(null);
+  const publicTradesRefreshQueuedRef = useRef(false);
+  const myTradesRefreshQueuedRef = useRef(false);
 
   const cotiBrowserWalletOptions = useMemo(
     () => injectedWalletOptions.filter((option) => option.provider.isMetaMask && !option.provider.isBraveWallet),
@@ -1127,27 +1130,32 @@ export default function P2PTradingPage() {
 
   const refreshPublicTrades = useCallback(async () => {
     if (publicTradesRefreshRef.current) {
+      publicTradesRefreshQueuedRef.current = true;
       return publicTradesRefreshRef.current;
     }
 
     const refreshRequest = (async () => {
-      setLoadingPublicTrades(true);
-      setPublicTradesError('');
-      try {
-        const snapshots = await fetchRecentTradeSnapshots({
-          rewardTokenSymbol,
-          rewardTokenDecimals,
-          privateRewardTokenSymbol,
-          privateRewardTokenDecimals,
-          limit: 80
-        });
-        setPublicTrades(sortTrades(snapshots));
-      } catch {
-        setPublicTradesError('Failed to load public trades.');
-      } finally {
-        setLoadingPublicTrades(false);
-        publicTradesRefreshRef.current = null;
-      }
+      do {
+        publicTradesRefreshQueuedRef.current = false;
+        setLoadingPublicTrades(true);
+        setPublicTradesError('');
+        try {
+          const snapshots = await fetchRecentTradeSnapshots({
+            rewardTokenSymbol,
+            rewardTokenDecimals,
+            privateRewardTokenSymbol,
+            privateRewardTokenDecimals,
+            limit: 80
+          });
+          setPublicTrades(sortTrades(snapshots));
+        } catch {
+          setPublicTradesError('Failed to load public trades.');
+        } finally {
+          setLoadingPublicTrades(false);
+        }
+      } while (publicTradesRefreshQueuedRef.current);
+
+      publicTradesRefreshRef.current = null;
     })();
 
     publicTradesRefreshRef.current = refreshRequest;
@@ -1160,27 +1168,32 @@ export default function P2PTradingPage() {
       return;
     }
     if (myTradesRefreshRef.current) {
+      myTradesRefreshQueuedRef.current = true;
       return myTradesRefreshRef.current;
     }
 
     const refreshRequest = (async () => {
-      setLoadingMyTrades(true);
-      setMyTradesError('');
-      try {
-        const snapshots = await fetchWalletTradeSnapshots(walletAddress, {
-          rewardTokenSymbol,
-          rewardTokenDecimals,
-          privateRewardTokenSymbol,
-          privateRewardTokenDecimals,
-          limit: 80
-        });
-        setMyTrades(sortTrades(snapshots));
-      } catch {
-        setMyTradesError('Failed to load your trades.');
-      } finally {
-        setLoadingMyTrades(false);
-        myTradesRefreshRef.current = null;
-      }
+      do {
+        myTradesRefreshQueuedRef.current = false;
+        setLoadingMyTrades(true);
+        setMyTradesError('');
+        try {
+          const snapshots = await fetchWalletTradeSnapshots(walletAddress, {
+            rewardTokenSymbol,
+            rewardTokenDecimals,
+            privateRewardTokenSymbol,
+            privateRewardTokenDecimals,
+            limit: 80
+          });
+          setMyTrades(sortTrades(snapshots));
+        } catch {
+          setMyTradesError('Failed to load your trades.');
+        } finally {
+          setLoadingMyTrades(false);
+        }
+      } while (myTradesRefreshQueuedRef.current);
+
+      myTradesRefreshRef.current = null;
     })();
 
     myTradesRefreshRef.current = refreshRequest;
@@ -1683,7 +1696,8 @@ export default function P2PTradingPage() {
                 tradeId: parentSnapshot.tradeId,
                 actorRole: parentActorRole
               });
-              mergeTradeSnapshot({
+              const closedParentSnapshot = await refreshTradeDetail(parentSnapshot.tradeId).catch(() => null);
+              mergeTradeSnapshot(closedParentSnapshot ?? {
                 ...parentSnapshot,
                 status: parentStatus
               });
@@ -1872,6 +1886,7 @@ export default function P2PTradingPage() {
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
     let pollIntervalId: number | null = null;
+    let visibleSyncIntervalId: number | null = null;
     let wsReconnectIntervalId: number | null = null;
     let wsReconnectInFlight = false;
     let realtimeSyncTimerId: number | null = null;
@@ -1932,6 +1947,21 @@ export default function P2PTradingPage() {
         wsReconnectIntervalId = null;
       }
     };
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
+      scheduleRealtimeSync();
+    };
+
+    if (typeof window !== 'undefined') {
+      visibleSyncIntervalId = window.setInterval(scheduleRealtimeSync, P2P_VISIBLE_SYNC_INTERVAL_MS);
+      window.addEventListener('focus', handleVisibilityOrFocus);
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    }
 
     const setupTradeRealtimeSubscription = async () => {
       try {
@@ -2013,6 +2043,15 @@ export default function P2PTradingPage() {
       cancelled = true;
       unsubscribe?.();
       clearPollFallback();
+      if (visibleSyncIntervalId !== null) {
+        window.clearInterval(visibleSyncIntervalId);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleVisibilityOrFocus);
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      }
       if (realtimeSyncTimerId !== null) {
         window.clearTimeout(realtimeSyncTimerId);
       }
