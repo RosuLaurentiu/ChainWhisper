@@ -31,9 +31,10 @@ import {
 } from './lib/appChain';
 import { submitGroupMemo } from './lib/groupChatChain';
 import {
+  acceptCounterTradeAndCloseParentOnChain,
   acceptTradeOnChain,
   cancelTradeOnChain,
-  closeCounterTradeOnChain,
+  counterTradeAndCloseCounteredTradeOnChain,
   createTradeOnChain,
   declineTradeOnChain
 } from './lib/tradeActions';
@@ -75,7 +76,7 @@ import {
 import { createEncryptedImageTagFromFile } from './lib/imagePull';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
-import { orderInjectedWalletOptions } from './lib/walletOptions';
+import { filterAllowedBrowserWalletOptions, orderInjectedWalletOptions } from './lib/walletOptions';
 import {
   getPathForAppPage,
   resolveAppRouteFromLocation,
@@ -393,7 +394,6 @@ export default function App() {
     processingTradeActionId,
     tradeFeeModeSelection,
     tradeRequiredFeeWei,
-    tradeTokenFeeWei,
     tradeOfferTokenSelection,
     tradeRequestTokenSelection,
     tradeOfferCustomTokenAddress,
@@ -410,7 +410,6 @@ export default function App() {
     setProcessingTradeActionId,
     setTradeFeeModeSelection,
     setTradeRequiredFeeWei,
-    setTradeTokenFeeWei,
     setTradeOfferTokenSelection,
     setTradeRequestTokenSelection,
     setTradeOfferCustomTokenAddress,
@@ -498,8 +497,6 @@ export default function App() {
   const pinnedContactStateRef = useRef<Map<string, { muted?: boolean; hidden?: boolean }>>(new Map());
   const tradeRequiredFeeCacheRef = useRef<bigint | null>(null);
   const tradeRequiredFeeRequestRef = useRef<Promise<bigint> | null>(null);
-  const tradeTokenFeeCacheRef = useRef<bigint | null>(null);
-  const tradeTokenFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const [visibleThreadMessageCount, setVisibleThreadMessageCount] = useState(0);
   const [chatMessagesViewportVersion, setChatMessagesViewportVersion] = useState(0);
   const autoPrefetchedRecentHistoryByContactRef = useRef<Record<string, boolean>>({});
@@ -1502,7 +1499,6 @@ export default function App() {
         rewardTokenBalanceWei,
         privateRewardTokenBalanceWei,
         tradeRequiredFeeWei,
-        tradeTokenFeeWei,
         counterpartyRequired: true,
         missingCounterpartyMessage: 'Select a contact first.',
         selfTradeMessage: 'P2P trades are only available in private chats with another wallet.'
@@ -1533,8 +1529,7 @@ export default function App() {
       tipNativeBalanceWei,
       rewardTokenBalanceWei,
       privateRewardTokenBalanceWei,
-      tradeRequiredFeeWei,
-      tradeTokenFeeWei
+      tradeRequiredFeeWei
     ]
   );
   const activeTradeOffers = useMemo(
@@ -1734,10 +1729,7 @@ export default function App() {
     if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS)) {
       tradeRequiredFeeCacheRef.current = null;
       tradeRequiredFeeRequestRef.current = null;
-      tradeTokenFeeCacheRef.current = null;
-      tradeTokenFeeRequestRef.current = null;
       setTradeRequiredFeeWei(null);
-      setTradeTokenFeeWei(null);
       return;
     }
 
@@ -1747,27 +1739,20 @@ export default function App() {
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
-      const [nativeFeeRaw, tokenFeeRaw] = await Promise.all([
-        contract.feeAmount().catch(() => null),
-        contract.tokenFeeAmount().catch(() => null)
-      ]);
+      const nativeFeeRaw = await contract.feeAmount().catch(() => null);
 
       if (cancelled) {
         return;
       }
 
       const nativeFee = typeof nativeFeeRaw === 'bigint' ? nativeFeeRaw : null;
-      const tokenFee = typeof tokenFeeRaw === 'bigint' ? tokenFeeRaw : null;
       tradeRequiredFeeCacheRef.current = nativeFee;
-      tradeTokenFeeCacheRef.current = tokenFee;
       setTradeRequiredFeeWei(nativeFee);
-      setTradeTokenFeeWei(tokenFee);
     };
 
     loadTradeFees().catch(() => {
       if (!cancelled) {
         setTradeRequiredFeeWei(null);
-        setTradeTokenFeeWei(null);
       }
     });
 
@@ -2895,31 +2880,6 @@ export default function App() {
       return await tradeRequiredFeeRequestRef.current;
     } finally {
       tradeRequiredFeeRequestRef.current = null;
-    }
-  };
-
-  const resolveRequiredTokenFeeForTradeCreate = async (): Promise<bigint> => {
-    if (tradeTokenFeeCacheRef.current !== null) {
-      setTradeTokenFeeWei(tradeTokenFeeCacheRef.current);
-      return tradeTokenFeeCacheRef.current;
-    }
-
-    if (!tradeTokenFeeRequestRef.current) {
-      tradeTokenFeeRequestRef.current = (async () => {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
-        const resolvedFee = (await readContract.tokenFeeAmount()) as bigint;
-        tradeTokenFeeCacheRef.current = resolvedFee;
-        setTradeTokenFeeWei(resolvedFee);
-        return resolvedFee;
-      })();
-    }
-
-    try {
-      return await tradeTokenFeeRequestRef.current;
-    } finally {
-      tradeTokenFeeRequestRef.current = null;
     }
   };
 
@@ -7342,34 +7302,18 @@ export default function App() {
         setProcessingTradeActionId(String(pendingCounterContext.offer.tradeId));
       }
       const { signer, cacheKey } = await getMemoSigner();
-      const nativeFeeWei =
-        tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
-      const tokenFeeAmount =
-        tradeFeeModeSelection === 'token' ? await resolveRequiredTokenFeeForTradeCreate() : 0n;
+      const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
+      let counteredSnapshot: TradeSnapshot | null = null;
 
       if (pendingCounterContext) {
         const parentSnapshot = await resolveTradeSnapshotForOffer(pendingCounterContext.offer);
+        counteredSnapshot = parentSnapshot;
         const isParentMaker = pendingCounterContext.offer.maker.toLowerCase() === requestedWalletKey;
         const isParentTaker = pendingCounterContext.offer.taker.toLowerCase() === requestedWalletKey;
 
         if (!isParentMaker && !isParentTaker) {
           throw new Error('You are no longer a participant in the original trade.');
         }
-
-        const parentTradeStatus = await closeCounterTradeOnChain({
-          signer,
-          tradeId: pendingCounterContext.offer.tradeId,
-          actorRole: isParentMaker ? 'maker' : 'taker'
-        });
-
-        setTradeSnapshotsById((previous) => ({
-          ...previous,
-          [String(pendingCounterContext.offer.tradeId)]: {
-            ...(previous[String(pendingCounterContext.offer.tradeId)] ?? parentSnapshot),
-            status: parentTradeStatus
-          }
-        }));
-        setTradeCounterContext(null);
 
         const counterOnboardInfo = signer.getUserOnboardInfo();
         setSessionOnboardInfo((previous) => ({
@@ -7379,19 +7323,33 @@ export default function App() {
       }
 
       const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
-      const { tradeId } = await createTradeOnChain({
-        signer,
-        makerAddress: requestedWalletAddress,
-        takerAddress: activeContact,
-        offerAsset: selectedTradeOfferToken,
-        offerAmountWei: parsedTradeOfferAmountWei,
-        requestAsset: selectedTradeRequestToken,
-        requestAmountWei: parsedTradeRequestAmountWei,
-        expiresAt,
-        feeMode: tradeFeeModeSelection,
-        nativeFeeWei,
-        tokenFeeAmount
-      });
+      const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
+      const createResult =
+        isCounterReplacement && counteredSnapshot
+          ? await counterTradeAndCloseCounteredTradeOnChain({
+              signer,
+              makerAddress: requestedWalletAddress,
+              counteredTradeId: counteredSnapshot.tradeId,
+              offerAsset: selectedTradeOfferToken,
+              offerAmountWei: parsedTradeOfferAmountWei,
+              requestAsset: selectedTradeRequestToken,
+              requestAmountWei: parsedTradeRequestAmountWei,
+              expiresAt,
+              nativeFeeWei
+            })
+          : await createTradeOnChain({
+              signer,
+              makerAddress: requestedWalletAddress,
+              takerAddress: activeContact,
+              offerAsset: selectedTradeOfferToken,
+              offerAmountWei: parsedTradeOfferAmountWei,
+              requestAsset: selectedTradeRequestToken,
+              requestAmountWei: parsedTradeRequestAmountWei,
+              expiresAt,
+              nativeFeeWei,
+              parentTradeId: tradeCounterParentId ?? undefined
+            });
+      const tradeId = createResult.tradeId;
 
       const createdAt = Math.floor(Date.now() / 1000);
       const tradeMessagePayload: TradeOfferMessagePayload = {
@@ -7407,6 +7365,14 @@ export default function App() {
 
       setTradeSnapshotsById((previous) => ({
         ...previous,
+        ...(isCounterReplacement && counteredSnapshot
+          ? {
+              [String(counteredSnapshot.tradeId)]: {
+                ...(previous[String(counteredSnapshot.tradeId)] ?? counteredSnapshot),
+                status: 'declined' as const
+              }
+            }
+          : {}),
         [String(tradeId)]: {
           tradeId,
           maker: requestedWalletAddress,
@@ -7421,7 +7387,15 @@ export default function App() {
           },
           createdAt,
           expiresAt,
-          status: 'open'
+          status: 'open',
+          parentTradeId: tradeCounterParentId ?? undefined,
+          counterParentTradeId: tradeCounterParentId ?? undefined,
+          fillState: {
+            remainingOfferAmount: parsedTradeOfferAmountWei.toString(),
+            remainingRequestAmount: parsedTradeRequestAmountWei.toString(),
+            filledOfferAmount: '0',
+            filledRequestAmount: '0'
+          }
         }
       }));
 
@@ -7478,23 +7452,54 @@ export default function App() {
     try {
       setProcessingTradeActionId(String(offer.tradeId));
       const snapshot = await resolveTradeSnapshotForOffer(offer);
-      const requestAsset = snapshot.request;
-      const { signer, cacheKey } = await getMemoSigner();
-      const { acceptedTxHash } = await acceptTradeOnChain({
-        signer,
-        ownerAddress: walletAddress,
-        tradeId: offer.tradeId,
-        requestAsset
-      });
-
-      setTradeSnapshotsById((previous) => ({
-        ...previous,
-        [String(offer.tradeId)]: {
-          ...(previous[String(offer.tradeId)] ?? snapshot),
-          status: 'accepted',
-          acceptedTxHash
+      const remainingRequestAmount = (() => {
+        try {
+          return BigInt(snapshot.fillState?.remainingRequestAmount ?? snapshot.request.amount);
+        } catch {
+          return BigInt(snapshot.request.amount);
         }
-      }));
+      })();
+      const requestAsset = {
+        ...snapshot.request,
+        amount: remainingRequestAmount.toString()
+      };
+      const { signer, cacheKey } = await getMemoSigner();
+      const { acceptedTxHash } = snapshot.counterParentTradeId
+        ? await acceptCounterTradeAndCloseParentOnChain({
+            signer,
+            ownerAddress: walletAddress,
+            tradeId: offer.tradeId,
+            requestAsset,
+            requestAmountWei: remainingRequestAmount
+          })
+        : await acceptTradeOnChain({
+            signer,
+            ownerAddress: walletAddress,
+            tradeId: offer.tradeId,
+            requestAsset,
+            requestAmountWei: remainingRequestAmount
+          });
+
+      setTradeSnapshotsById((previous) => {
+        const next = {
+          ...previous,
+          [String(offer.tradeId)]: {
+            ...(previous[String(offer.tradeId)] ?? snapshot),
+            status: 'accepted' as const,
+            acceptedTxHash
+          }
+        };
+        const parentSnapshot = snapshot.counterParentTradeId
+          ? previous[String(snapshot.counterParentTradeId)]
+          : undefined;
+        if (snapshot.counterParentTradeId && parentSnapshot) {
+          next[String(snapshot.counterParentTradeId)] = {
+            ...parentSnapshot,
+            status: 'cancelled'
+          };
+        }
+        return next;
+      });
       setTopUpMetricsNonce((previous) => previous + 1);
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -7657,6 +7662,7 @@ export default function App() {
     };
 
     const snapshot = await resolveTradeSnapshotForOffer(offer);
+    const counterParentId = snapshot.counterParentTradeId ?? offer.parentTradeId ?? offer.tradeId;
 
     applyAssetSelection(
       snapshot.request,
@@ -7670,7 +7676,7 @@ export default function App() {
       setTradeRequestCustomTokenAddress,
       setTradeRequestAmountInput
     );
-    setTradeCounterParentId(offer.tradeId);
+    setTradeCounterParentId(counterParentId);
     setTradeCounterContext({ offer, sourceMessage });
     setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
     setReplyingToMessage(sourceMessage);
@@ -9596,9 +9602,13 @@ export default function App() {
       />
     </Suspense>
   ) : null;
+  const allowedChatBrowserWalletOptions = useMemo(
+    () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
+    [injectedWalletOptions]
+  );
   const orderedChatInjectedWalletOptions = useMemo(
-    () => orderInjectedWalletOptions(injectedWalletOptions, currentInjectedWalletOption?.id ?? '', 'metamask'),
-    [currentInjectedWalletOption?.id, injectedWalletOptions]
+    () => orderInjectedWalletOptions(allowedChatBrowserWalletOptions, currentInjectedWalletOption?.id ?? '', 'metamask'),
+    [allowedChatBrowserWalletOptions, currentInjectedWalletOption?.id]
   );
   const chatWalletAddressCopyKey = walletAddress ? `wallet-address:${walletAddress.toLowerCase()}` : '';
   const chatWalletIsAppWallet = isConnected && activeSignerSource === 'burner';
@@ -9835,7 +9845,7 @@ export default function App() {
               })
             ) : (
               <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                No browser wallet detected
+                MetaMask or CypherTrade not detected
               </button>
             )}
           </div>

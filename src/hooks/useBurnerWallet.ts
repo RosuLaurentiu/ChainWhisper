@@ -8,7 +8,6 @@ import {
   COTI_NETWORK,
   createBurnerWalletVault,
   createCotiBrowserProvider,
-  getDefaultInjectedWalletOption,
   getProviderErrorMessage,
   isBurnerStorageAvailable,
   isWalletAddress,
@@ -670,10 +669,10 @@ export function useBurnerWallet({
       return;
     }
 
-    const walletOption = preferredInjectedWalletOption ?? getDefaultInjectedWalletOption();
+    const walletOption = preferredInjectedWalletOption;
     const provider = walletOption?.provider ?? null;
     if (!provider) {
-      setError('No browser wallet detected. Install a compatible wallet to top up the burner wallet.');
+      setError('MetaMask or CypherTrade is required to top up the app wallet.');
       return;
     }
 

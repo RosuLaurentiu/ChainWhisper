@@ -14,7 +14,6 @@ type InChatTradeState = {
   processingTradeActionId: string;
   tradeFeeModeSelection: TradeFeeModeSelection;
   tradeRequiredFeeWei: bigint | null;
-  tradeTokenFeeWei: bigint | null;
   tradeOfferTokenSelection: TradeTokenPresetKey;
   tradeRequestTokenSelection: TradeTokenPresetKey;
   tradeOfferCustomTokenAddress: string;
@@ -31,7 +30,6 @@ type InChatTradeState = {
   setProcessingTradeActionId: (next: StateUpdate<string>) => void;
   setTradeFeeModeSelection: (next: StateUpdate<TradeFeeModeSelection>) => void;
   setTradeRequiredFeeWei: (next: StateUpdate<bigint | null>) => void;
-  setTradeTokenFeeWei: (next: StateUpdate<bigint | null>) => void;
   setTradeOfferTokenSelection: (next: StateUpdate<TradeTokenPresetKey>) => void;
   setTradeRequestTokenSelection: (next: StateUpdate<TradeTokenPresetKey>) => void;
   setTradeOfferCustomTokenAddress: (next: StateUpdate<string>) => void;
@@ -51,7 +49,6 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
   processingTradeActionId: '',
   tradeFeeModeSelection: 'coti',
   tradeRequiredFeeWei: null,
-  tradeTokenFeeWei: null,
   tradeOfferTokenSelection: 'coti',
   tradeRequestTokenSelection: 'wisp',
   tradeOfferCustomTokenAddress: '',
@@ -72,8 +69,6 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
     set((state) => ({ tradeFeeModeSelection: resolveStateUpdate(next, state.tradeFeeModeSelection) })),
   setTradeRequiredFeeWei: (next) =>
     set((state) => ({ tradeRequiredFeeWei: resolveStateUpdate(next, state.tradeRequiredFeeWei) })),
-  setTradeTokenFeeWei: (next) =>
-    set((state) => ({ tradeTokenFeeWei: resolveStateUpdate(next, state.tradeTokenFeeWei) })),
   setTradeOfferTokenSelection: (next) =>
     set((state) => ({ tradeOfferTokenSelection: resolveStateUpdate(next, state.tradeOfferTokenSelection) })),
   setTradeRequestTokenSelection: (next) =>

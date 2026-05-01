@@ -23,7 +23,26 @@ export type MessageReferenceCandidate = {
   logIndex?: number;
 };
 
-export type TradeTokenPresetKey = 'coti' | 'wisp' | 'pwisp' | 'custom-public' | 'custom-private';
+export type TradeTokenPresetKey = string;
+
+export const VERIFIED_ECOSYSTEM_TOKENS: Array<{ address: string; kind: 'erc20' }> = [
+  { address: '0x7637C7838EC4Ec6b85080F28A678F8E234bB83D1', kind: 'erc20' },
+  { address: '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8', kind: 'erc20' },
+  { address: '0x256353f5B4b515f488876dD1CAc2300c6C6f98B7', kind: 'erc20' },
+  { address: '0x8C39B1fD0e6260fdf20652Fc436d25026832bfEA', kind: 'erc20' },
+  { address: '0xf1Feebc4376c68B7003450ae66343Ae59AB37D3C', kind: 'erc20' },
+  { address: '0xfA6f73446b17A97a56e464256DA54AD43c2Cbc3E', kind: 'erc20' },
+  { address: '0xe757Ca19d2c237AA52eBb1d2E8E4368eeA3eb331', kind: 'erc20' },
+  { address: '0xFc075Bd3e22d337C19b7Ca25635282ad8e24941a', kind: 'erc20' },
+  { address: '0x639aCc80569c5FC83c6FBf2319A6Cc38bBfe26d1', kind: 'erc20' },
+];
+
+const VERIFIED_ECOSYSTEM_TOKEN_ADDRESS_SET = new Set(
+  VERIFIED_ECOSYSTEM_TOKENS.map((t) => t.address.toLowerCase())
+);
+
+export const isVerifiedEcosystemToken = (address: string): boolean =>
+  VERIFIED_ECOSYSTEM_TOKEN_ADDRESS_SET.has(address.toLowerCase());
 
 export type ResolvedTradeToken = Omit<TradeAssetPayload, 'amount'>;
 
@@ -66,7 +85,7 @@ const TRADE_ASSET_TYPE_PRIVATE_ERC20 = 2;
 
 const TRADE_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
   '0xfceb320b': 'This trade needs its full private link before it can be accepted.',
-  '0x025dbdd4': 'Insufficient escrow fee. Check the required COTI or token fee and try again.',
+  '0x025dbdd4': 'Insufficient escrow fee. Check the required COTI fee and try again.',
   '0xe6c4247b': 'Invalid wallet address for this trade action.'
 };
 

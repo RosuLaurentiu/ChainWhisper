@@ -3,14 +3,18 @@ import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import {
   COTI_NETWORK,
   createCotiBrowserProvider,
-  getDefaultInjectedWalletOption,
   getInjectedWalletOptions,
   getProviderErrorMessage,
   mergeOnboardInfo,
   normalizeChainId,
+  rememberInjectedWalletProvider,
   type Eip1193Provider,
   type SignerSource
 } from '../lib/appShared';
+import {
+  filterAllowedBrowserWalletOptions,
+  getPreferredInjectedWalletOption
+} from '../lib/walletOptions';
 
 type UseWalletOnboardingArgs = {
   clearCachedStateBackupMemo: () => void;
@@ -40,17 +44,18 @@ export function useWalletOnboarding({
   const [onboardStatus, setOnboardStatus] = useState('Not onboarded');
   const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
+  const [, setInjectedWalletRefreshNonce] = useState(0);
 
   const activeProviderRef = useRef<Eip1193Provider | null>(null);
   const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
   const currentWalletKeyRef = useRef('');
 
-  const injectedWalletOptions = getInjectedWalletOptions();
-  const preferredInjectedWalletOption =
-    injectedWalletOptions.find((option) => option.id === selectedInjectedWalletId) ??
-    injectedWalletOptions.find((option) => option.provider.isMetaMask && !option.provider.isBraveWallet) ??
-    injectedWalletOptions[0] ??
-    null;
+  const injectedWalletOptions = filterAllowedBrowserWalletOptions(getInjectedWalletOptions());
+  const preferredInjectedWalletOption = getPreferredInjectedWalletOption(
+    injectedWalletOptions,
+    selectedInjectedWalletId,
+    'metamask'
+  );
   const currentInjectedWalletOption =
     (activeProvider ? injectedWalletOptions.find((option) => option.provider === activeProvider) ?? null : null) ??
     injectedWalletOptions.find((option) => option.id === selectedInjectedWalletId) ??
@@ -60,6 +65,36 @@ export function useWalletOnboarding({
     currentWalletKeyRef.current = walletAddress.trim().toLowerCase();
   }, [walletAddress]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const refreshInjectedWalletOptions = () => {
+      setInjectedWalletRefreshNonce((previous) => previous + 1);
+    };
+    const handleProviderAnnouncement = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ provider?: Eip1193Provider; info?: { name?: string; rdns?: string; uuid?: string } }>
+      ).detail;
+      rememberInjectedWalletProvider(detail?.provider, detail?.info);
+      refreshInjectedWalletOptions();
+    };
+
+    refreshInjectedWalletOptions();
+    window.addEventListener('ethereum#initialized', refreshInjectedWalletOptions);
+    window.addEventListener('eip6963:announceProvider', handleProviderAnnouncement);
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+    const refreshTimers = [250, 1000, 2500].map((delay) => window.setTimeout(refreshInjectedWalletOptions, delay));
+
+    return () => {
+      window.removeEventListener('ethereum#initialized', refreshInjectedWalletOptions);
+      window.removeEventListener('eip6963:announceProvider', handleProviderAnnouncement);
+      refreshTimers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
+
   const setConnectedProvider = useCallback((provider: Eip1193Provider | null) => {
     activeProviderRef.current = provider;
     setActiveProvider(provider);
@@ -67,11 +102,11 @@ export function useWalletOnboarding({
 
   const getConnectedProvider = useCallback((): Eip1193Provider | null => {
     if (connectionMethod === 'metamask') {
-      return activeProviderRef.current ?? activeProvider ?? getDefaultInjectedWalletOption()?.provider ?? null;
+      return activeProviderRef.current ?? activeProvider ?? preferredInjectedWalletOption?.provider ?? null;
     }
 
     return activeProviderRef.current ?? activeProvider ?? null;
-  }, [activeProvider, connectionMethod]);
+  }, [activeProvider, connectionMethod, preferredInjectedWalletOption?.provider]);
 
   const ensureCotiNetwork = useCallback(async (provider: Eip1193Provider) => {
     if (!provider) {
@@ -180,7 +215,7 @@ export function useWalletOnboarding({
       const walletLabel = walletOption?.label ?? 'Wallet';
       setConnectingWalletLabel(walletLabel);
       if (!provider) {
-        setError('No browser wallet detected. Install a compatible wallet to continue.');
+        setError('MetaMask or CypherTrade is required to continue.');
         setConnectingMethod(null);
         setConnectingWalletLabel('');
         return;

@@ -10,9 +10,11 @@ import {
   formatTokenAmount,
   isWalletAddress,
   parseTokenAmountInput,
+  shortenAddress,
   type TradeFeeModeSelection
 } from './appShared';
 import {
+  VERIFIED_ECOSYSTEM_TOKENS,
   buildTradeCustomTokenInfoKey,
   isCustomTradeTokenSelection,
   type ResolvedTradeToken,
@@ -49,7 +51,6 @@ type DeriveTradeComposerModelParams = {
   rewardTokenBalanceWei: bigint | null;
   privateRewardTokenBalanceWei: bigint | null;
   tradeRequiredFeeWei: bigint | null;
-  tradeTokenFeeWei: bigint | null;
   counterpartyRequired?: boolean;
   missingCounterpartyMessage?: string;
   selfTradeMessage?: string;
@@ -185,29 +186,53 @@ export const deriveTradeComposerModel = ({
   rewardTokenBalanceWei,
   privateRewardTokenBalanceWei,
   tradeRequiredFeeWei,
-  tradeTokenFeeWei,
   counterpartyRequired = true,
   missingCounterpartyMessage = 'Select a contact first.',
   selfTradeMessage = 'P2P trades are only available in private chats with another wallet.'
 }: DeriveTradeComposerModelParams): TradeComposerModel => {
+  const resolvedTradeFeeModeSelection: TradeFeeModeSelection =
+    tradeFeeModeSelection === 'token' ? 'coti' : tradeFeeModeSelection;
   const normalizedTradeOfferCustomTokenAddress = tradeOfferCustomTokenAddress.trim();
   const normalizedTradeRequestCustomTokenAddress = tradeRequestCustomTokenAddress.trim();
+  const verifiedTokenOptions = VERIFIED_ECOSYSTEM_TOKENS.map(({ address }) => {
+    const key = buildTradeCustomTokenInfoKey('erc20', address);
+    const info = customTradeTokenInfoByAddress[key];
+    const symbol = info?.loading
+      ? `${shortenAddress(address)}…`
+      : (info?.symbol ?? shortenAddress(address));
+    return { value: address.toLowerCase(), label: `✓ ${symbol} (ecosystem)` };
+  });
   const tradeTokenOptions = [
-    { value: 'coti', label: `${TIP_NATIVE_TOKEN_SYMBOL} (native)` },
-    { value: 'wisp', label: `${rewardTokenSymbol} (public)` },
-    { value: 'pwisp', label: `${privateRewardTokenSymbol} (private)` },
+    { value: 'coti', label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)` },
+    { value: 'wisp', label: `✓ ${rewardTokenSymbol} (public)` },
+    { value: 'pwisp', label: `✓ ${privateRewardTokenSymbol} (private)` },
+    ...verifiedTokenOptions,
     { value: 'custom-public', label: 'Custom public token / CA' },
     { value: 'custom-private', label: 'Custom private token / CA' }
   ];
 
-  const tradeCustomOfferTokenKey =
-    normalizedTradeOfferCustomTokenAddress && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
-      ? buildTradeCustomTokenInfoKey(tradeCustomOfferTokenKind, normalizedTradeOfferCustomTokenAddress)
-      : '';
-  const tradeCustomRequestTokenKey =
-    normalizedTradeRequestCustomTokenAddress && isWalletAddress(normalizedTradeRequestCustomTokenAddress)
-      ? buildTradeCustomTokenInfoKey(tradeCustomRequestTokenKind, normalizedTradeRequestCustomTokenAddress)
-      : '';
+  const tradeCustomOfferTokenKey = (() => {
+    if (isCustomTradeTokenSelection(tradeOfferTokenSelection)) {
+      return normalizedTradeOfferCustomTokenAddress && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
+        ? buildTradeCustomTokenInfoKey(tradeCustomOfferTokenKind, normalizedTradeOfferCustomTokenAddress)
+        : '';
+    }
+    if (isWalletAddress(tradeOfferTokenSelection)) {
+      return buildTradeCustomTokenInfoKey('erc20', tradeOfferTokenSelection);
+    }
+    return '';
+  })();
+  const tradeCustomRequestTokenKey = (() => {
+    if (isCustomTradeTokenSelection(tradeRequestTokenSelection)) {
+      return normalizedTradeRequestCustomTokenAddress && isWalletAddress(normalizedTradeRequestCustomTokenAddress)
+        ? buildTradeCustomTokenInfoKey(tradeCustomRequestTokenKind, normalizedTradeRequestCustomTokenAddress)
+        : '';
+    }
+    if (isWalletAddress(tradeRequestTokenSelection)) {
+      return buildTradeCustomTokenInfoKey('erc20', tradeRequestTokenSelection);
+    }
+    return '';
+  })();
 
   const tradeCustomOfferTokenInfo = tradeCustomOfferTokenKey
     ? customTradeTokenInfoByAddress[tradeCustomOfferTokenKey]
@@ -356,8 +381,7 @@ export const deriveTradeComposerModel = ({
     if (tipNativeBalanceWei === null) {
       tradeComposerFieldErrors.offerAmount = 'Unable to read your COTI balance yet.';
     } else {
-      const requiredNativeBalance =
-        (parsedTradeOfferAmountWei as bigint) + (tradeFeeModeSelection === 'coti' ? tradeRequiredFeeWei ?? 0n : 0n);
+      const requiredNativeBalance = (parsedTradeOfferAmountWei as bigint) + (tradeRequiredFeeWei ?? 0n);
       if (requiredNativeBalance > tipNativeBalanceWei) {
         tradeComposerFieldErrors.offerAmount = `Need ${formatTokenAmount(requiredNativeBalance, TIP_NATIVE_TOKEN_DECIMALS, 6)} ${TIP_NATIVE_TOKEN_SYMBOL} to cover the send amount and fee.`;
       }
@@ -370,11 +394,7 @@ export const deriveTradeComposerModel = ({
     }
   }
 
-  if (tradeFeeModeSelection === 'token') {
-    if (tradeTokenFeeWei === null) {
-      tradeComposerFieldErrors.fee = `Loading ${rewardTokenSymbol} fee...`;
-    }
-  } else if (tradeRequiredFeeWei === null) {
+  if (tradeRequiredFeeWei === null) {
     tradeComposerFieldErrors.fee = 'Loading trade fee...';
   } else if (selectedTradeOfferToken?.kind !== 'native') {
     if (tipNativeBalanceWei === null || tipNativeBalanceWei < tradeRequiredFeeWei) {
@@ -413,7 +433,7 @@ export const deriveTradeComposerModel = ({
     if (selectedTradeOfferToken.kind === 'native') {
       if (tipNativeBalanceWei !== null) {
         tradeOfferMaxAmountWei = tipNativeBalanceWei;
-        if (tradeFeeModeSelection === 'coti') {
+        if (resolvedTradeFeeModeSelection === 'coti') {
           tradeOfferMaxAmountWei =
             tradeRequiredFeeWei === null
               ? null
@@ -486,14 +506,9 @@ export const deriveTradeComposerModel = ({
     }
   }
 
-  const tradeFeeSummaryLabel =
-    tradeFeeModeSelection === 'coti'
-      ? `Fee: ${tradeRequiredFeeWei !== null ? `${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL}` : '--'}`
-      : `Fee: ${
-          tradeTokenFeeWei !== null
-            ? `${formatTokenAmount(tradeTokenFeeWei, rewardTokenDecimals, 6)} ${rewardTokenSymbol}`
-            : `-- ${rewardTokenSymbol}`
-        }`;
+  const tradeFeeSummaryLabel = `Fee: ${
+    tradeRequiredFeeWei !== null ? `${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL}` : '--'
+  }`;
 
   return {
     tradeTokenOptions,

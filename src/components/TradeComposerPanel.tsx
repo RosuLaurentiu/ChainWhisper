@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { COTI_NETWORK, TRADE_ESCROW_CONTRACT_ADDRESS, type TradeFeeModeSelection } from '../lib/appShared';
 
 export type TradeComposerTokenOption = {
@@ -60,6 +60,95 @@ type TradeComposerPanelProps = {
   generalError?: string;
   validationMessage?: string;
 };
+
+function ChevronIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" width="14" height="14">
+      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
+function TradeTokenSelect({
+  options,
+  value,
+  onChange,
+  disabled,
+  invalid
+}: {
+  options: TradeComposerTokenOption[];
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  invalid?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selectedLabel = options.find((o) => o.value === value)?.label ?? value;
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={[
+        'trade-token-select',
+        open ? 'open' : '',
+        invalid ? 'invalid' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      <button
+        type="button"
+        className="trade-token-select-trigger"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span>{selectedLabel}</span>
+        <ChevronIcon />
+      </button>
+      {open ? (
+        <ul className="trade-token-select-dropdown" role="listbox">
+          {options.map((option) => {
+            const isVerified = option.label.startsWith('✓');
+            return (
+              <li
+                key={option.value}
+                role="option"
+                aria-selected={option.value === value}
+                className={[
+                  'trade-token-select-option',
+                  option.value === value ? 'selected' : '',
+                  isVerified ? 'verified' : ''
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                {option.label}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 function TradeSwapIcon() {
   return (
@@ -132,7 +221,6 @@ export default function TradeComposerPanel({
   canSend,
   title = 'Trade offer',
   metaLabel = 'Private terms, on-chain escrow',
-  safetyNote = 'Trade terms stay in your encrypted private chat, but the final asset transfers remain visible on-chain.',
   sendLabel = 'Send Trade',
   sendingLabel = 'Creating...',
   sendTitle = 'Create the escrow trade and send the encrypted offer to this chat.',
@@ -169,13 +257,12 @@ export default function TradeComposerPanel({
         </div>
       </div>
 
-      <details className="trade-compose-warning">
-        <summary>Safety note: verify token contracts before sending</summary>
-        <div className="trade-compose-warning-body">
-          <p>Only the escrowed settlement is enforced on-chain. Trade only with people you trust.</p>
-          <p>{safetyNote}</p>
-        </div>
-      </details>
+      <div className="trade-compose-warning" role="alert">
+        <p>
+          <strong>P2P trading risks:</strong> Always verify token contract addresses, amounts, and exchange rates before
+          confirming. Only the escrowed asset transfer is enforced on-chain — only trade with parties you trust.
+        </p>
+      </div>
 
       <div className="trade-compose-grid">
         <section className="trade-compose-section trade-compose-section-sell" aria-label="Asset you are sending">
@@ -199,19 +286,13 @@ export default function TradeComposerPanel({
                 </a>
               ) : null}
             </span>
-            <select
-              className="trade-compose-select"
+            <TradeTokenSelect
+              options={offerTokenOptions}
               value={offerTokenSelection}
-              onChange={(event) => onOfferTokenSelectionChange(event.target.value)}
+              onChange={onOfferTokenSelectionChange}
               disabled={sending}
-              aria-invalid={offerAssetError ? 'true' : 'false'}
-            >
-              {offerTokenOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              invalid={Boolean(offerAssetError)}
+            />
           </label>
           {showOfferCustomToken ? (
             <>
@@ -306,19 +387,13 @@ export default function TradeComposerPanel({
                 </a>
               ) : null}
             </span>
-            <select
-              className="trade-compose-select"
+            <TradeTokenSelect
+              options={requestTokenOptions}
               value={requestTokenSelection}
-              onChange={(event) => onRequestTokenSelectionChange(event.target.value)}
+              onChange={onRequestTokenSelectionChange}
               disabled={sending}
-              aria-invalid={requestAssetError ? 'true' : 'false'}
-            >
-              {requestTokenOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              invalid={Boolean(requestAssetError)}
+            />
           </label>
           {showRequestCustomToken ? (
             <>
@@ -397,7 +472,7 @@ export default function TradeComposerPanel({
               <span className="trade-compose-field-label">Fee</span>
               <strong className="trade-compose-fee-value">{compactFeeSummaryLabel || feeSummaryLabel}</strong>
             </div>
-            <div className="trade-compose-fee-segmented" role="group" aria-label="Trade fee mode">
+            <div className="trade-compose-fee-segmented" role="group" aria-label="Trade fee">
               <button
                 type="button"
                 className={feeMode === 'coti' ? 'trade-compose-fee-toggle active' : 'trade-compose-fee-toggle'}
@@ -406,15 +481,6 @@ export default function TradeComposerPanel({
                 aria-pressed={feeMode === 'coti'}
               >
                 COTI
-              </button>
-              <button
-                type="button"
-                className={feeMode === 'token' ? 'trade-compose-fee-toggle active token' : 'trade-compose-fee-toggle token'}
-                onClick={() => onFeeModeChange('token')}
-                disabled={sending}
-                aria-pressed={feeMode === 'token'}
-              >
-                Token
               </button>
             </div>
             {feeError ? <p className="trade-compose-field-error trade-compose-fee-error">{feeError}</p> : null}

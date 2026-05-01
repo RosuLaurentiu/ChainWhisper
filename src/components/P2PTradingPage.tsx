@@ -36,6 +36,7 @@ import {
   normalizeMnemonicInput,
   normalizePrivateKeyInput,
   normalizeTokenDecimals,
+  parseTokenAmountInput,
   parseBurnerWalletStorageState,
   REALTIME_SYNC_BURST_THROTTLE_MS,
   REALTIME_SYNC_DEBOUNCE_MS,
@@ -67,17 +68,32 @@ import {
 } from '../lib/appChain';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
+  VERIFIED_ECOSYSTEM_TOKENS,
   buildTradeCustomTokenInfoKey,
   getOnChainFailureMessage,
+  isVerifiedEcosystemToken,
   resolveTradePresetKind,
   type ResolvedTradeToken,
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from '../lib/appHelpers';
 import { deriveTradeComposerModel } from '../lib/tradeComposer';
-import { acceptTradeOnChain, cancelTradeOnChain, closeCounterTradeOnChain, createTradeOnChain, declineTradeOnChain } from '../lib/tradeActions';
+import {
+  acceptCounterTradeAndCloseParentOnChain,
+  acceptTradeOnChain,
+  cancelTradeOnChain,
+  counterTradeAndCloseCounteredTradeOnChain,
+  createTradeOnChain,
+  declineTradeOnChain,
+  editTradeOnChain,
+  fillTradeOnChain
+} from '../lib/tradeActions';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
-import { orderInjectedWalletOptions } from '../lib/walletOptions';
+import {
+  filterAllowedBrowserWalletOptions,
+  isPreferredMetaMaskWalletOption,
+  orderInjectedWalletOptions
+} from '../lib/walletOptions';
 import {
   groupWalletTradesByPerspective,
   isZeroTradeTakerAddress,
@@ -220,12 +236,87 @@ const buildOfferFromSnapshot = (snapshot: TradeSnapshot): TradeOfferMessagePaylo
   request: snapshot.request,
   createdAt: snapshot.createdAt,
   expiresAt: snapshot.expiresAt,
-  parentTradeId: snapshot.parentTradeId
+  parentTradeId: snapshot.counterParentTradeId ?? undefined
 });
 
 const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
 
 const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'taker'>): boolean => !isZeroTradeTakerAddress(trade.taker);
+
+const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
+  try {
+    return BigInt(trade.fillState?.remainingRequestAmount ?? trade.request.amount);
+  } catch {
+    return 0n;
+  }
+};
+
+const getRemainingOfferAmount = (trade: TradeSnapshot): bigint => {
+  try {
+    return BigInt(trade.fillState?.remainingOfferAmount ?? trade.offer.amount);
+  } catch {
+    return 0n;
+  }
+};
+
+const hasAnyTradeFill = (trade: TradeSnapshot): boolean => {
+  try {
+    return BigInt(trade.fillState?.filledOfferAmount ?? '0') > 0n || BigInt(trade.fillState?.filledRequestAmount ?? '0') > 0n;
+  } catch {
+    return false;
+  }
+};
+
+const canEditPublicTrade = (trade: TradeSnapshot, walletKey: string): boolean =>
+  Boolean(
+    walletKey &&
+      trade.status === 'open' &&
+      trade.isPublic === true &&
+      trade.maker.toLowerCase() === walletKey &&
+      !hasAnyTradeFill(trade)
+  );
+
+const withTradeAssetAmount = (asset: TradeAssetPayload, amount: bigint): TradeAssetPayload => ({
+  ...asset,
+  amount: amount.toString()
+});
+
+const getTradeDisplayTerms = (trade: TradeSnapshot): { offer: TradeAssetPayload; request: TradeAssetPayload; usingRemaining: boolean } => {
+  const usingRemaining = trade.status === 'open' && hasAnyTradeFill(trade) && getRemainingRequestAmount(trade) > 0n;
+  return {
+    offer: usingRemaining ? withTradeAssetAmount(trade.offer, getRemainingOfferAmount(trade)) : trade.offer,
+    request: usingRemaining ? withTradeAssetAmount(trade.request, getRemainingRequestAmount(trade)) : trade.request,
+    usingRemaining
+  };
+};
+
+const getTradeCompletionSummary = (
+  trade: TradeSnapshot
+): { percent: number; percentLabel: string; filledLabel: string; remainingLabel: string } | null => {
+  if (!hasAnyTradeFill(trade)) {
+    return null;
+  }
+
+  try {
+    const filledRequestAmount = BigInt(trade.fillState?.filledRequestAmount ?? '0');
+    const remainingRequestAmount = getRemainingRequestAmount(trade);
+    const totalRequestAmount = filledRequestAmount + remainingRequestAmount;
+    if (filledRequestAmount <= 0n || totalRequestAmount <= 0n) {
+      return null;
+    }
+
+    const rawPercent = Number((filledRequestAmount * 10_000n) / totalRequestAmount) / 100;
+    const percent = remainingRequestAmount === 0n ? 100 : Math.max(1, Math.min(99, rawPercent));
+    return {
+      percent,
+      percentLabel: `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}% filled`,
+      filledLabel: `${formatTokenAmount(filledRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol} filled`,
+      remainingLabel: `${formatTokenAmount(remainingRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol} remaining`
+    };
+  } catch {
+    return null;
+  }
+};
 
 const createTradeAccessSecret = (): string => {
   const bytes = new Uint8Array(32);
@@ -354,8 +445,10 @@ const resolveTradeLinkInput = (value: string): { tradeId: number; accessSecret?:
   return null;
 };
 
-const formatTradeListTerms = (trade: TradeSnapshot): string =>
-  `${formatTradeAssetDisplayText(trade.offer)} for ${formatTradeAssetDisplayText(trade.request)}`;
+const formatTradeListTerms = (trade: TradeSnapshot): string => {
+  const displayTerms = getTradeDisplayTerms(trade);
+  return `${formatTradeAssetDisplayText(displayTerms.offer)} for ${formatTradeAssetDisplayText(displayTerms.request)}`;
+};
 
 const formatTradeRateText = (baseAsset: TradeAssetPayload, quoteAsset: TradeAssetPayload): string => {
   try {
@@ -404,7 +497,10 @@ const matchesTradeSearch = (trade: TradeSnapshot, query: string): boolean => {
     trade.request.tokenAddress,
     trade.maker,
     trade.taker,
-    trade.parentTradeId ? String(trade.parentTradeId) : ''
+    trade.parentTradeId ? String(trade.parentTradeId) : '',
+    trade.counterParentTradeId ? String(trade.counterParentTradeId) : '',
+    trade.replacesTradeId ? String(trade.replacesTradeId) : '',
+    trade.replacementTradeId ? String(trade.replacementTradeId) : ''
   ]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(normalizedQuery));
@@ -423,6 +519,10 @@ const resolveTradeAssetSelection = (
   }
   if (tokenAddress.toLowerCase() === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
     return { selection: 'pwisp', customAddress: '' };
+  }
+
+  if (isVerifiedEcosystemToken(tokenAddress)) {
+    return { selection: tokenAddress.toLowerCase(), customAddress: '' };
   }
 
   return {
@@ -472,7 +572,6 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
   const [rewardTokenDecimals, setRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
   const [privateRewardTokenDecimals, setPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
   const [tradeRequiredFeeWei, setTradeRequiredFeeWei] = useState<bigint | null>(null);
-  const [tradeTokenFeeWei, setTradeTokenFeeWei] = useState<bigint | null>(null);
   const [publicTrades, setPublicTrades] = useState<TradeSnapshot[]>([]);
   const [myTrades, setMyTrades] = useState<TradeSnapshot[]>([]);
   const [detailTrade, setDetailTrade] = useState<TradeSnapshot | null>(null);
@@ -497,32 +596,30 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     () => loadStoredTradeAccessSecrets()
   );
   const [counterParentTrade, setCounterParentTrade] = useState<TradeSnapshot | null>(null);
+  const [editingTrade, setEditingTrade] = useState<TradeSnapshot | null>(null);
   const [injectedWalletOptions, setInjectedWalletOptions] = useState(() => getInjectedWalletOptions());
 
   const providerRef = useRef<Eip1193Provider | null>(null);
   const burnerWalletRef = useRef<Wallet | null>(null);
   const signerCacheRef = useRef<Record<string, TradeSigner>>({});
   const feeRequestRef = useRef<Promise<bigint> | null>(null);
-  const tokenFeeRequestRef = useRef<Promise<bigint> | null>(null);
   const counterPanelRef = useRef<HTMLDivElement | null>(null);
   const publicTradesRefreshRef = useRef<Promise<void> | null>(null);
   const myTradesRefreshRef = useRef<Promise<void> | null>(null);
   const publicTradesRefreshQueuedRef = useRef(false);
   const myTradesRefreshQueuedRef = useRef(false);
 
-  const nonBraveInjectedWalletOptions = useMemo(
-    () => injectedWalletOptions.filter((option) => !option.provider.isBraveWallet),
+  const allowedBrowserWalletOptions = useMemo(
+    () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
     [injectedWalletOptions]
   );
   const browserWalletOptions = useMemo(
-    () => orderInjectedWalletOptions(nonBraveInjectedWalletOptions, selectedWalletId, 'metamask'),
-    [nonBraveInjectedWalletOptions, selectedWalletId]
+    () => orderInjectedWalletOptions(allowedBrowserWalletOptions, selectedWalletId, 'metamask'),
+    [allowedBrowserWalletOptions, selectedWalletId]
   );
   const preferredWalletOption = useMemo(
-    () =>
-      nonBraveInjectedWalletOptions.find((option) => option.provider.isMetaMask && !option.provider.isBraveWallet) ??
-      null,
-    [nonBraveInjectedWalletOptions]
+    () => allowedBrowserWalletOptions.find(isPreferredMetaMaskWalletOption) ?? allowedBrowserWalletOptions[0] ?? null,
+    [allowedBrowserWalletOptions]
   );
   const onCotiNetwork = chainId === COTI_NETWORK.chainIdDecimal;
   const walletKey = walletAddress.trim().toLowerCase();
@@ -782,7 +879,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       setConnectingWalletId(walletOption?.id ?? 'wallet');
 
       if (!provider) {
-        setWalletError('No browser wallet detected.');
+        setWalletError('MetaMask or CypherTrade is required to connect a browser wallet.');
         setConnectingWalletId('');
         return;
       }
@@ -989,8 +1086,10 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       setInjectedWalletOptions(getInjectedWalletOptions());
     };
     const handleProviderAnnouncement = (event: Event) => {
-      const detail = (event as CustomEvent<{ provider?: Eip1193Provider }>).detail;
-      rememberInjectedWalletProvider(detail?.provider);
+      const detail = (
+        event as CustomEvent<{ provider?: Eip1193Provider; info?: { name?: string; rdns?: string; uuid?: string } }>
+      ).detail;
+      rememberInjectedWalletProvider(detail?.provider, detail?.info);
       refreshInjectedWalletOptions();
     };
 
@@ -1118,29 +1217,6 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       feeRequestRef.current = null;
     }
   }, [tradeRequiredFeeWei]);
-
-  const resolveRequiredTokenFeeForTradeCreate = useCallback(async (): Promise<bigint> => {
-    if (tradeTokenFeeWei !== null) {
-      return tradeTokenFeeWei;
-    }
-
-    if (!tokenFeeRequestRef.current) {
-      tokenFeeRequestRef.current = (async () => {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
-        return (await readContract.tokenFeeAmount()) as bigint;
-      })();
-    }
-
-    try {
-      const tokenFee = await tokenFeeRequestRef.current;
-      setTradeTokenFeeWei(tokenFee);
-      return tokenFee;
-    } finally {
-      tokenFeeRequestRef.current = null;
-    }
-  }, [tradeTokenFeeWei]);
 
   const refreshPublicTrades = useCallback(async () => {
     if (publicTradesRefreshRef.current) {
@@ -1319,7 +1395,6 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         rewardTokenBalanceWei,
         privateRewardTokenBalanceWei,
         tradeRequiredFeeWei,
-        tradeTokenFeeWei,
         counterpartyRequired: false
       }),
     [
@@ -1342,7 +1417,6 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       tradeRequestCustomTokenAddress,
       tradeRequestTokenSelection,
       tradeRequiredFeeWei,
-      tradeTokenFeeWei,
       walletAddress
     ]
   );
@@ -1514,10 +1588,15 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         setTradeActionError('Only open trades can receive counter offers.');
         return;
       }
+      if (snapshot.counterParentTradeId && snapshot.taker.toLowerCase() !== walletKey) {
+        setTradeActionError('Only the recipient of a counter offer can replace it with a new counter.');
+        return;
+      }
 
       const nextOfferSelection = resolveTradeAssetSelection(snapshot.request);
       const nextRequestSelection = resolveTradeAssetSelection(snapshot.offer);
       setCounterParentTrade(snapshot);
+      setEditingTrade(null);
       setTradeVisibility('unlisted');
       setTradeOfferTokenSelection(nextOfferSelection.selection);
       setTradeRequestTokenSelection(nextRequestSelection.selection);
@@ -1534,6 +1613,40 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
 
   const clearCounterTrade = useCallback(() => {
     setCounterParentTrade(null);
+    setTradeActionError('');
+  }, []);
+
+  const beginEditTrade = useCallback(
+    (snapshot: TradeSnapshot) => {
+      if (!walletAddress) {
+        setTradeActionError('Connect the maker wallet before editing.');
+        return;
+      }
+      if (!canEditPublicTrade(snapshot, walletKey)) {
+        setTradeActionError('Only your open, unfilled public trades can be edited.');
+        return;
+      }
+
+      const nextOfferSelection = resolveTradeAssetSelection(snapshot.offer);
+      const nextRequestSelection = resolveTradeAssetSelection(snapshot.request);
+      setEditingTrade(snapshot);
+      setCounterParentTrade(null);
+      setTradeVisibility('public');
+      setTradeOfferTokenSelection(nextOfferSelection.selection);
+      setTradeRequestTokenSelection(nextRequestSelection.selection);
+      setTradeOfferCustomTokenAddress(nextOfferSelection.customAddress);
+      setTradeRequestCustomTokenAddress(nextRequestSelection.customAddress);
+      setTradeOfferAmountInput(formatTradeAmountInput(snapshot.offer));
+      setTradeRequestAmountInput(formatTradeAmountInput(snapshot.request));
+      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeActionError('');
+      navigateToTradePath('/trades/create');
+    },
+    [navigateToTradePath, walletAddress, walletKey]
+  );
+
+  const clearEditTrade = useCallback(() => {
+    setEditingTrade(null);
     setTradeActionError('');
   }, []);
 
@@ -1555,7 +1668,11 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       setTradeActionError('Complete the trade terms first.');
       return;
     }
-    if (tradeVisibility === 'direct') {
+    if (editingTrade && !canEditPublicTrade(editingTrade, walletKey)) {
+      setTradeActionError('Only your open, unfilled public trades can be edited.');
+      return;
+    }
+    if (!editingTrade && tradeVisibility === 'direct') {
       if (!directTradeRecipientIsValid) {
         setTradeActionError('Enter a valid wallet address for the direct trade.');
         return;
@@ -1569,31 +1686,66 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     try {
       setCreatingTrade(true);
       const isCounterTrade = counterParentTrade !== null;
-      const accessSecret = tradeVisibility === 'unlisted' && !isCounterTrade ? createTradeAccessSecret() : '';
+      const isCounterReplacement = Boolean(counterParentTrade?.counterParentTradeId);
+      const editSourceTrade = editingTrade;
+      const isEditTrade = editSourceTrade !== null;
+      const accessSecret = tradeVisibility === 'unlisted' && !isCounterTrade && !isEditTrade ? createTradeAccessSecret() : '';
       const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
       const signer = await getTradeSigner(isPrivateTradeAsset(offerToken));
-      const nativeFeeWei = tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
-      const tokenFeeAmount = tradeFeeModeSelection === 'token' ? await resolveRequiredTokenFeeForTradeCreate() : 0n;
+      const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
       const expiresAt = Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
       const takerAddress =
-        counterParentTrade?.maker ?? (tradeVisibility === 'direct' ? directTradeRecipientNormalized : ZERO_TRADE_TAKER_ADDRESS);
-      const { tradeId } = await createTradeOnChain({
-        signer,
-        makerAddress: walletAddress,
-        takerAddress,
-        offerAsset: offerToken,
-        offerAmountWei: offerAmount,
-        requestAsset: requestToken,
-        requestAmountWei: requestAmount,
-        expiresAt,
-        feeMode: tradeFeeModeSelection,
-        nativeFeeWei,
-        tokenFeeAmount,
-        isPublic: !isCounterTrade && tradeVisibility === 'public',
-        accessHash: accessHash !== ZERO_BYTES32 ? accessHash : undefined,
-        parentTradeId: counterParentTrade?.tradeId
-      });
+        counterParentTrade?.maker ??
+        (isEditTrade
+          ? ZERO_TRADE_TAKER_ADDRESS
+          : tradeVisibility === 'direct'
+            ? directTradeRecipientNormalized
+            : ZERO_TRADE_TAKER_ADDRESS);
+      const createResult = isEditTrade
+        ? await editTradeOnChain({
+            signer,
+            makerAddress: walletAddress,
+            originalTradeId: editSourceTrade.tradeId,
+            takerAddress: ZERO_TRADE_TAKER_ADDRESS,
+            offerAsset: offerToken,
+            offerAmountWei: offerAmount,
+            requestAsset: requestToken,
+            requestAmountWei: requestAmount,
+            expiresAt,
+            nativeFeeWei,
+            isPublic: true
+          })
+        : isCounterReplacement && counterParentTrade
+          ? await counterTradeAndCloseCounteredTradeOnChain({
+              signer,
+              makerAddress: walletAddress,
+              counteredTradeId: counterParentTrade.tradeId,
+              offerAsset: offerToken,
+              offerAmountWei: offerAmount,
+              requestAsset: requestToken,
+              requestAmountWei: requestAmount,
+              expiresAt,
+              nativeFeeWei
+            })
+          : await createTradeOnChain({
+              signer,
+              makerAddress: walletAddress,
+              takerAddress,
+              offerAsset: offerToken,
+              offerAmountWei: offerAmount,
+              requestAsset: requestToken,
+              requestAmountWei: requestAmount,
+              expiresAt,
+              nativeFeeWei,
+              isPublic: !isCounterTrade && tradeVisibility === 'public',
+              accessHash: accessHash !== ZERO_BYTES32 ? accessHash : undefined,
+              parentTradeId: counterParentTrade?.tradeId
+            });
+      const tradeId = createResult.tradeId;
       const createdAt = Math.floor(Date.now() / 1000);
+      const counterParentTradeId = isCounterReplacement
+        ? counterParentTrade?.counterParentTradeId
+        : counterParentTrade?.tradeId;
       const snapshot: TradeSnapshot = {
         tradeId,
         maker: walletAddress,
@@ -1603,16 +1755,38 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         createdAt,
         expiresAt,
         status: 'open',
-        isPublic: !isCounterTrade && tradeVisibility === 'public',
+        isPublic: isEditTrade || (!isCounterTrade && tradeVisibility === 'public'),
         hasAccessHash: Boolean(accessSecret),
-        parentTradeId: counterParentTrade?.tradeId
+        parentTradeId: isEditTrade ? editSourceTrade.tradeId : counterParentTradeId,
+        counterParentTradeId: isCounterTrade ? counterParentTradeId : undefined,
+        replacesTradeId: isEditTrade ? editSourceTrade.tradeId : undefined,
+        fillState: {
+          remainingOfferAmount: offerAmount.toString(),
+          remainingRequestAmount: requestAmount.toString(),
+          filledOfferAmount: '0',
+          filledRequestAmount: '0'
+        }
       };
       const shareUrl = buildTradeShareUrl(tradeId, accessSecret || undefined);
       rememberTradeAccessSecret(tradeId, accessSecret || undefined);
+      if (isEditTrade) {
+        mergeTradeSnapshot({
+          ...editSourceTrade,
+          status: 'cancelled',
+          replacementTradeId: tradeId
+        });
+      }
+      if (isCounterReplacement && counterParentTrade) {
+        mergeTradeSnapshot({
+          ...counterParentTrade,
+          status: 'declined'
+        });
+      }
       mergeTradeSnapshot(snapshot);
       setCreatedTradeId(tradeId);
       setCreatedTradeLink(shareUrl);
       setCounterParentTrade(null);
+      setEditingTrade(null);
       if (tradeVisibility === 'direct') {
         setDirectTradeRecipient('');
       }
@@ -1620,7 +1794,11 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       setTradeRequestAmountInput('');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
       openTrade(tradeId, accessSecret || undefined);
-      await Promise.all([loadWalletBalances(), refreshMyTrades(), tradeVisibility === 'public' ? refreshPublicTrades() : Promise.resolve()]);
+      await Promise.all([
+        loadWalletBalances(),
+        refreshMyTrades(),
+        snapshot.isPublic ? refreshPublicTrades() : Promise.resolve()
+      ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create trade.';
       setTradeActionError(getOnChainFailureMessage(error, message));
@@ -1632,6 +1810,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     counterParentTrade,
     directTradeRecipientIsValid,
     directTradeRecipientNormalized,
+    editingTrade,
     getTradeSigner,
     hashTradeAccessSecret,
     loadWalletBalances,
@@ -1641,11 +1820,10 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     refreshMyTrades,
     refreshPublicTrades,
     resolveRequiredFeeForTradeCreate,
-    resolveRequiredTokenFeeForTradeCreate,
     tradeComposerModel,
-    tradeFeeModeSelection,
     tradeVisibility,
-    walletAddress
+    walletAddress,
+    walletKey
   ]);
 
   const acceptTrade = useCallback(
@@ -1674,13 +1852,28 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         if (latestSnapshot.hasAccessHash && !accessSecret) {
           throw new Error('This trade needs its full private link before it can be accepted.');
         }
-        const { acceptedTxHash } = await acceptTradeOnChain({
-          signer,
-          ownerAddress: walletAddress,
-          tradeId: snapshot.tradeId,
-          requestAsset: latestSnapshot.request,
-          accessSecret: accessSecret || undefined
-        });
+        const remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
+        if (remainingRequestAmount <= 0n) {
+          throw new Error('This trade has no remaining amount to accept.');
+        }
+        const acceptRequestAsset = withTradeAssetAmount(latestSnapshot.request, remainingRequestAmount);
+        const { acceptedTxHash } = latestSnapshot.counterParentTradeId
+          ? await acceptCounterTradeAndCloseParentOnChain({
+              signer,
+              ownerAddress: walletAddress,
+              tradeId: snapshot.tradeId,
+              requestAsset: acceptRequestAsset,
+              requestAmountWei: remainingRequestAmount,
+              accessSecret: accessSecret || undefined
+            })
+          : await acceptTradeOnChain({
+              signer,
+              ownerAddress: walletAddress,
+              tradeId: snapshot.tradeId,
+              requestAsset: acceptRequestAsset,
+              requestAmountWei: remainingRequestAmount,
+              accessSecret: accessSecret || undefined
+            });
         const nextSnapshot: TradeSnapshot = {
           ...latestSnapshot,
           taker:
@@ -1688,45 +1881,22 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
               ? walletAddress
               : latestSnapshot.taker,
           status: 'accepted',
+          fillState: {
+            remainingOfferAmount: '0',
+            remainingRequestAmount: '0',
+            filledOfferAmount: latestSnapshot.offer.amount,
+            filledRequestAmount: latestSnapshot.request.amount
+          },
           acceptedTxHash
         };
         mergeTradeSnapshot(nextSnapshot);
-        let parentCloseWarning = '';
-        if (latestSnapshot.parentTradeId) {
-          try {
-            const parentSnapshot = await refreshTradeDetail(latestSnapshot.parentTradeId);
-            if (!parentSnapshot) {
-              throw new Error('Original trade was not found.');
-            }
-            const parentActorRole =
-              parentSnapshot.maker.toLowerCase() === walletKey
-                ? 'maker'
-                : parentSnapshot.taker.toLowerCase() === walletKey
-                  ? 'taker'
-                  : null;
-            if (parentSnapshot.status === 'open' && parentActorRole) {
-              const parentStatus = await closeCounterTradeOnChain({
-                signer,
-                tradeId: parentSnapshot.tradeId,
-                actorRole: parentActorRole
-              });
-              const closedParentSnapshot = await refreshTradeDetail(parentSnapshot.tradeId).catch(() => null);
-              mergeTradeSnapshot(closedParentSnapshot ?? {
-                ...parentSnapshot,
-                status: parentStatus
-              });
-            }
-          } catch (parentCloseError) {
-            parentCloseWarning = getOnChainFailureMessage(
-              parentCloseError,
-              'Counter accepted, but the original trade could not be closed automatically.'
-            );
+        if (latestSnapshot.counterParentTradeId) {
+          const closedParentSnapshot = await refreshTradeDetail(latestSnapshot.counterParentTradeId).catch(() => null);
+          if (closedParentSnapshot) {
+            mergeTradeSnapshot(closedParentSnapshot);
           }
         }
         await Promise.all([loadWalletBalances(), refreshMyTrades(), refreshPublicTrades()]);
-        if (parentCloseWarning) {
-          setTradeActionError(parentCloseWarning);
-        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to accept trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
@@ -1747,6 +1917,99 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       walletAddress,
       connectedWithBurner,
       walletKey
+    ]
+  );
+
+  const partialFillTrade = useCallback(
+    async (snapshot: TradeSnapshot, amountInput: string) => {
+      if (!walletAddress) {
+        setTradeActionError('Connect a wallet first.');
+        return;
+      }
+      if (snapshot.counterParentTradeId) {
+        setTradeActionError('Counter offers must be accepted in full so the original trade can close atomically.');
+        return;
+      }
+
+      const requestedAmount = parseTokenAmountInput(amountInput, snapshot.request.decimals);
+      if (requestedAmount === null || requestedAmount <= 0n) {
+        setTradeActionError(`Enter a valid ${snapshot.request.symbol} amount to fill.`);
+        return;
+      }
+
+      setTradeActionError('');
+      try {
+        setProcessingTradeActionId(String(snapshot.tradeId));
+        const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId)) ?? snapshot;
+        if (latestSnapshot.counterParentTradeId) {
+          throw new Error('Counter offers must be accepted in full so the original trade can close atomically.');
+        }
+        const remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
+        if (requestedAmount > remainingRequestAmount) {
+          throw new Error(
+            `Only ${formatTokenAmount(remainingRequestAmount, latestSnapshot.request.decimals, 6)} ${latestSnapshot.request.symbol} remains.`
+          );
+        }
+        const accessSecret =
+          route.tradeId === snapshot.tradeId && resolvedRouteAccessSecret
+            ? resolvedRouteAccessSecret
+            : resolveKnownTradeAccessSecret(snapshot.tradeId);
+        if (latestSnapshot.hasAccessHash && !accessSecret) {
+          throw new Error('This trade needs its full private link before it can be filled.');
+        }
+
+        const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
+        await fillTradeOnChain({
+          signer,
+          ownerAddress: walletAddress,
+          tradeId: snapshot.tradeId,
+          requestAsset: withTradeAssetAmount(latestSnapshot.request, requestedAmount),
+          requestAmountWei: requestedAmount,
+          accessSecret: accessSecret || undefined
+        });
+        const refreshedSnapshot = await refreshTradeDetail(snapshot.tradeId).catch(() => null);
+        if (refreshedSnapshot) {
+          mergeTradeSnapshot(refreshedSnapshot);
+        } else {
+          const remainingAfterFill =
+            requestedAmount >= remainingRequestAmount ? 0n : remainingRequestAmount - requestedAmount;
+          const remainingOfferBeforeFill = getRemainingOfferAmount(latestSnapshot);
+          const offerAmountOut =
+            remainingAfterFill === 0n
+              ? remainingOfferBeforeFill
+              : (requestedAmount * remainingOfferBeforeFill) / remainingRequestAmount;
+          const remainingOfferAfterFill =
+            offerAmountOut >= remainingOfferBeforeFill ? 0n : remainingOfferBeforeFill - offerAmountOut;
+          mergeTradeSnapshot({
+            ...latestSnapshot,
+            status: remainingAfterFill === 0n ? 'accepted' : latestSnapshot.status,
+            fillState: {
+              remainingOfferAmount: remainingOfferAfterFill.toString(),
+              remainingRequestAmount: remainingAfterFill.toString(),
+              filledOfferAmount: (BigInt(latestSnapshot.fillState?.filledOfferAmount ?? '0') + offerAmountOut).toString(),
+              filledRequestAmount: (BigInt(latestSnapshot.fillState?.filledRequestAmount ?? '0') + requestedAmount).toString()
+            }
+          });
+        }
+        await Promise.all([loadWalletBalances(), refreshMyTrades(), refreshPublicTrades()]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to fill trade.';
+        setTradeActionError(getOnChainFailureMessage(error, message));
+      } finally {
+        setProcessingTradeActionId('');
+      }
+    },
+    [
+      getTradeSigner,
+      loadWalletBalances,
+      mergeTradeSnapshot,
+      refreshMyTrades,
+      refreshPublicTrades,
+      refreshTradeDetail,
+      resolveKnownTradeAccessSecret,
+      resolvedRouteAccessSecret,
+      route.tradeId,
+      walletAddress
     ]
   );
 
@@ -1814,10 +2077,15 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         shareCopied={lastCopiedKey === shareKey}
         onCopyShareLink={shareUrl ? () => copyWithFeedback(shareUrl, shareKey).catch(() => {}) : undefined}
         showCounterAction={snapshot.status === 'open'}
+        showEditAction={canEditPublicTrade(snapshot, walletKey)}
         onAccept={() => acceptTrade(snapshot).catch(() => {})}
+        onPartialFill={
+          snapshot.counterParentTradeId ? undefined : (amountInput) => partialFillTrade(snapshot, amountInput).catch(() => {})
+        }
         onDecline={() => declineTrade(snapshot).catch(() => {})}
         onCounter={() => beginCounterTrade(snapshot)}
         onCancel={() => cancelTrade(snapshot).catch(() => {})}
+        onEdit={() => beginEditTrade(snapshot)}
       />
     );
   };
@@ -1881,8 +2149,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
 
   useEffect(() => {
     resolveRequiredFeeForTradeCreate().catch(() => {});
-    resolveRequiredTokenFeeForTradeCreate().catch(() => {});
-  }, [resolveRequiredFeeForTradeCreate, resolveRequiredTokenFeeForTradeCreate]);
+  }, [resolveRequiredFeeForTradeCreate]);
 
   useEffect(() => {
     loadWalletBalances().catch(() => {});
@@ -2105,6 +2372,16 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
   ]);
 
   useEffect(() => {
+    for (const token of VERIFIED_ECOSYSTEM_TOKENS) {
+      const key = buildTradeCustomTokenInfoKey(token.kind, token.address);
+      const existing = customTradeTokenInfoByAddress[key];
+      if (!existing || existing.walletKey !== walletKey) {
+        loadCustomTokenInfo(token).catch(() => {});
+      }
+    }
+  }, [customTradeTokenInfoByAddress, loadCustomTokenInfo, walletKey]);
+
+  useEffect(() => {
     if (routeView !== 'trade' || routeTradeId === null) {
       setDetailTrade(null);
       setDetailTradeError(routeError);
@@ -2165,9 +2442,17 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
 
   const tradeComposer = (
     <TradeComposerPanel
-      title={counterParentTrade ? `Counter trade #${counterParentTrade.tradeId}` : 'Create trade'}
+      title={
+        editingTrade
+          ? `Edit public trade #${editingTrade.tradeId}`
+          : counterParentTrade
+            ? `Counter trade #${counterParentTrade.tradeId}`
+            : 'Create trade'
+      }
       metaLabel={
-        counterParentTrade
+        editingTrade
+          ? 'Cancel and replace public listing'
+          : counterParentTrade
           ? `Linked counter to ${shortenAddress(counterParentTrade.maker)}`
           : tradeVisibility === 'public'
             ? 'Listed escrow trade'
@@ -2178,13 +2463,21 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
               : 'Unlisted escrow trade'
       }
       safetyNote={
-        counterParentTrade
+        editingTrade
+          ? 'Editing creates a new public trade and cancels the original listing in the same transaction.'
+          : counterParentTrade
           ? 'The counter offer is created as a linked private trade for the original maker.'
           : 'Escrow settlement and trade terms are stored on-chain.'
       }
-      sendLabel={counterParentTrade ? 'Send Counter' : 'Create Trade'}
+      sendLabel={editingTrade ? 'Save Edit' : counterParentTrade ? 'Send Counter' : 'Create Trade'}
       sendingLabel="Creating..."
-      sendTitle={counterParentTrade ? 'Create a linked counter trade on chain.' : 'Create the escrow trade on chain.'}
+      sendTitle={
+        editingTrade
+          ? 'Cancel the old public listing and create the replacement trade.'
+          : counterParentTrade
+            ? 'Create a linked counter trade on chain.'
+            : 'Create the escrow trade on chain.'
+      }
       feeMode={tradeFeeModeSelection}
       onFeeModeChange={setTradeFeeModeSelection}
       feeSummaryLabel={tradeComposerModel.tradeFeeSummaryLabel}
@@ -2248,8 +2541,21 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
   );
 
   const renderTradeOverviewCard = (trade: TradeSnapshot) => {
-    const perspective = resolveTradePerspective(trade, walletAddress);
-    const canCounter = trade.isPublic === false && walletKey.length > 0 && !perspective.isMaker && trade.status === 'open';
+    const displayTerms = getTradeDisplayTerms(trade);
+    const displayTrade = {
+      ...trade,
+      offer: displayTerms.offer,
+      request: displayTerms.request
+    };
+    const perspective = resolveTradePerspective(displayTrade, walletAddress);
+    const isCounterTrade = Boolean(trade.counterParentTradeId);
+    const canCounter =
+      walletKey.length > 0 &&
+      !perspective.isMaker &&
+      trade.status === 'open' &&
+      (!isCounterTrade || trade.taker.toLowerCase() === walletKey);
+    const canEdit = canEditPublicTrade(trade, walletKey);
+    const completionSummary = getTradeCompletionSummary(trade);
     const accessSecret =
       route.tradeId === trade.tradeId && resolvedRouteAccessSecret
         ? resolvedRouteAccessSecret
@@ -2281,12 +2587,12 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     const acceptedTxExplorerUrl = buildTransactionExplorerUrl(trade.acceptedTxHash);
     const isFinishedTrade = trade.status !== 'open';
     const leftSide = perspective.sendSide ?? {
-      asset: trade.request,
+      asset: displayTerms.request,
       label: perspective.showTakerPerspective ? 'You send' : 'Requested',
       tone: 'send' as const
     };
     const rightSide = perspective.receiveSide ?? {
-      asset: trade.offer,
+      asset: displayTerms.offer,
       label: perspective.showTakerPerspective ? 'You receive' : 'Offered',
       tone: 'receive' as const
     };
@@ -2299,8 +2605,22 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     const tradeRateText = isRateReversed
       ? formatTradeRateText(rightSide.asset, leftSide.asset)
       : formatTradeRateText(leftSide.asset, rightSide.asset);
-    const leftMetaLabel = leftSide.asset === trade.offer ? (trade.status === 'open' ? 'Available now' : statusLabel) : takerLabel;
-    const rightMetaLabel = rightSide.asset === trade.offer ? (trade.status === 'open' ? 'Available now' : statusLabel) : takerLabel;
+    const leftMetaLabel =
+      leftSide.asset === displayTerms.offer
+        ? displayTerms.usingRemaining
+          ? 'Remaining now'
+          : trade.status === 'open'
+            ? 'Available now'
+            : statusLabel
+        : takerLabel;
+    const rightMetaLabel =
+      rightSide.asset === displayTerms.offer
+        ? displayTerms.usingRemaining
+          ? 'Remaining now'
+          : trade.status === 'open'
+            ? 'Available now'
+            : statusLabel
+        : takerLabel;
     const expiryParts = formatTradeExpiryParts(trade.expiresAt);
     const expiryCountdown = trade.status === 'open' ? formatExpiryCountdown(trade.expiresAt) : null;
 
@@ -2311,7 +2631,9 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
             <h3 title={formatTradeListTerms(trade)}>{pairLabel}</h3>
             <p>
               #{trade.tradeId}
-              {trade.parentTradeId ? <span>Counter to #{trade.parentTradeId}</span> : null}
+              {trade.counterParentTradeId ? <span>Counter to #{trade.counterParentTradeId}</span> : null}
+              {trade.replacesTradeId ? <span>Edited from #{trade.replacesTradeId}</span> : null}
+              {trade.replacementTradeId ? <span>Replaced by #{trade.replacementTradeId}</span> : null}
             </p>
           </div>
           <strong className={`p2p-offer-status ${statusClassName}`}>{statusLabel}</strong>
@@ -2329,7 +2651,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
             ) : null}
           </div>
           <div className="p2p-offer-term-link" aria-hidden="true">
-            for
+            →
           </div>
           <div className={`p2p-offer-term p2p-offer-term-requested ${rightToneClass}`}>
             <span>{rightSide.label}</span>
@@ -2342,6 +2664,22 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
             ) : null}
           </div>
         </div>
+
+        {completionSummary ? (
+          <div className="p2p-offer-completion" aria-label={completionSummary.percentLabel}>
+            <div className="p2p-offer-completion-head">
+              <span>Completion</span>
+              <strong>{completionSummary.percentLabel}</strong>
+            </div>
+            <div className="p2p-offer-completion-bar">
+              <span style={{ width: `${completionSummary.percent}%` }} />
+            </div>
+            <div className="p2p-offer-completion-meta">
+              <span>{completionSummary.filledLabel}</span>
+              <span>{completionSummary.remainingLabel}</span>
+            </div>
+          </div>
+        ) : null}
 
         <div className="p2p-offer-facts">
           <div>
@@ -2408,10 +2746,10 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
             <>
               <span>{perspective.isMaker ? 'Created by you' : perspective.isTaker ? 'Reserved for you' : 'Ready to open'}</span>
               <div>
-                <button type="button" onClick={() => openTradeSnapshot(trade)} title="Open trade">
+                <button type="button" className="p2p-offer-open-btn" onClick={() => openTradeSnapshot(trade)} title="Open trade">
                   Open
                 </button>
-                {shareUrl ? (
+                {shareUrl && (perspective.isMaker || accessSecret) ? (
                   <button
                     type="button"
                     className={lastCopiedKey === shareKey ? 'copied' : undefined}
@@ -2424,6 +2762,11 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
                 {canCounter ? (
                   <button type="button" className="p2p-offer-counter-btn" onClick={() => beginCounterTrade(trade)}>
                     Counter
+                  </button>
+                ) : null}
+                {canEdit ? (
+                  <button type="button" className="p2p-offer-counter-btn" onClick={() => beginEditTrade(trade)}>
+                    Edit
                   </button>
                 ) : null}
                 {perspective.isMaker ? (
@@ -2462,8 +2805,8 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         : walletAddress
             ? shortenAddress(walletAddress)
             : preferredWalletOption
-              ? 'Connect MetaMask'
-              : 'MetaMask unavailable';
+              ? `Connect ${preferredWalletOption.label}`
+              : 'Wallet unavailable';
   const walletAddressCopyKey = walletAddress ? `trade-wallet-address:${walletAddress.toLowerCase()}` : '';
   const handleWalletPrimaryAction = useCallback(() => {
     if (walletAddress && !onCotiNetwork) {
@@ -2581,7 +2924,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
                 })
               ) : (
                 <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                  No browser wallet detected
+                  MetaMask or CypherTrade not detected
                 </button>
               )}
             </div>
@@ -2687,6 +3030,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
           className={route.view === 'create' ? 'active' : undefined}
           onClick={() => {
             clearCounterTrade();
+            clearEditTrade();
             navigateToTradePath('/trades/create');
           }}
         >
@@ -2700,7 +3044,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         </button>
       </nav>
     ),
-    [clearCounterTrade, navigateToTradePath, route.view]
+    [clearCounterTrade, clearEditTrade, navigateToTradePath, route.view]
   );
   useEffect(() => {
     onHeaderNavigationControlChange?.(tradeHeaderNavigationControl);
@@ -2854,8 +3198,13 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
           <div className="standalone-trades-section-head">
             <div>
               <p className="landing-eyebrow">Create</p>
-              <h2>New trade</h2>
+              <h2>{editingTrade ? `Edit public trade #${editingTrade.tradeId}` : 'New trade'}</h2>
             </div>
+            {editingTrade ? (
+              <button type="button" className="standalone-trade-secondary-btn" onClick={clearEditTrade}>
+                Cancel Edit
+              </button>
+            ) : (
             <div className="standalone-trade-visibility" role="group" aria-label="Trade visibility">
               <button
                 type="button"
@@ -2882,8 +3231,9 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
                 Direct
               </button>
             </div>
+            )}
           </div>
-          {tradeVisibility === 'direct' ? (
+          {!editingTrade && tradeVisibility === 'direct' ? (
             <label className="standalone-trade-recipient p2p-direct-recipient">
               <span>Recipient wallet</span>
               <input
@@ -2898,7 +3248,9 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
           <div className="standalone-trade-access-summary">
             <span>Access</span>
             <strong>
-              {tradeVisibility === 'public'
+              {editingTrade
+                ? 'Replacement will be listed publicly'
+                : tradeVisibility === 'public'
                 ? 'Listed publicly while open'
                 : tradeVisibility === 'direct'
                   ? directTradeRecipientIsValid
@@ -2907,9 +3259,13 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
                   : 'Full private link required to accept'}
             </strong>
             <p>
-              {tradeVisibility === 'direct'
-                ? 'Direct trades are not public listings. The recipient can find the offer under received trades.'
-                : 'Unlisted trades are not shown in the public directory. On-chain terms remain public to direct contract reads.'}
+              {editingTrade
+                ? 'The original public listing is cancelled and the replacement keeps a link back to it.'
+                : tradeVisibility === 'direct'
+                  ? 'Direct trades are not public listings. The recipient can find the offer under received trades.'
+                  : tradeVisibility === 'public'
+                    ? 'Public trades appear in the directory while open. On-chain terms remain public to direct contract reads.'
+                    : 'Unlisted trades are not shown in the public directory. On-chain terms remain public to direct contract reads.'}
             </p>
           </div>
           {tradeComposer}
@@ -2949,6 +3305,12 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
               Browse Public
             </button>
           </div>
+          <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
+            <p>
+              <strong>P2P trading risks:</strong> Always verify token contract addresses, amounts, and exchange rates before
+              confirming. Only the escrowed asset transfer is enforced on-chain — only trade with parties you trust.
+            </p>
+          </div>
           {counterParentTrade ? (
             <div className="p2p-counter-panel" ref={counterPanelRef} tabIndex={-1}>
               <div className="p2p-counter-panel-head">
@@ -2961,7 +3323,9 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
                 </button>
               </div>
               <p className="p2p-counter-note">
-                This creates a linked private trade for the original maker. They can accept it from My Trades or the copied link.
+                {counterParentTrade.counterParentTradeId
+                  ? 'This creates a new counter against the original trade and cancels the counter you are replying to in the same transaction.'
+                  : 'This creates a linked private trade for the original maker. They can accept it from My Trades or the copied link.'}
               </p>
               {tradeComposer}
             </div>
@@ -3046,13 +3410,11 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       ) : null}
 
       <div className="p2p-footer-links">
-        <span>
-          Balance: {nativeBalanceWei !== null ? `${formatCotiAmount(nativeBalanceWei)} ${TIP_NATIVE_TOKEN_SYMBOL}` : '--'} |{' '}
-          {rewardTokenBalanceWei !== null ? `${formatTokenAmount(rewardTokenBalanceWei, rewardTokenDecimals, 4)} ${rewardTokenSymbol}` : `-- ${rewardTokenSymbol}`} |{' '}
-          {privateRewardTokenBalanceWei !== null
-            ? `${formatTokenAmount(privateRewardTokenBalanceWei, privateRewardTokenDecimals, 4)} ${privateRewardTokenSymbol}`
-            : `-- ${privateRewardTokenSymbol}`}
-        </span>
+        <div className="p2p-footer-balances">
+          <span>{nativeBalanceWei !== null ? `${formatCotiAmount(nativeBalanceWei)} ${TIP_NATIVE_TOKEN_SYMBOL}` : `-- ${TIP_NATIVE_TOKEN_SYMBOL}`}</span>
+          <span>{rewardTokenBalanceWei !== null ? `${formatTokenAmount(rewardTokenBalanceWei, rewardTokenDecimals, 4)} ${rewardTokenSymbol}` : `-- ${rewardTokenSymbol}`}</span>
+          <span>{privateRewardTokenBalanceWei !== null ? `${formatTokenAmount(privateRewardTokenBalanceWei, privateRewardTokenDecimals, 4)} ${privateRewardTokenSymbol}` : `-- ${privateRewardTokenSymbol}`}</span>
+        </div>
         <a href={`${COTI_NETWORK.blockExplorerUrl}/address/${TRADE_ESCROW_CONTRACT_ADDRESS}`} target="_blank" rel="noreferrer">
           Escrow contract
         </a>

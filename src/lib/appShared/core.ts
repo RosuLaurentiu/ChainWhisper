@@ -5,6 +5,7 @@ declare global {
   interface Window {
     ethereum?: InjectedEthereumProvider;
     __cotiAnnouncedEthereumProviders?: InjectedEthereumProvider[];
+    __cotiAnnouncedEthereumProviderInfo?: InjectedEthereumProviderInfoEntry[];
   }
 }
 
@@ -19,6 +20,9 @@ export type Eip1193Provider = {
 export type InjectedEthereumProvider = Eip1193Provider & {
   isMetaMask?: boolean;
   isBraveWallet?: boolean;
+  isCypher?: boolean;
+  isCypherTrade?: boolean;
+  isCypherWallet?: boolean;
   isCoinbaseWallet?: boolean;
   isRabby?: boolean;
   isTrust?: boolean;
@@ -31,13 +35,27 @@ export type InjectedEthereumProvider = Eip1193Provider & {
   providers?: InjectedEthereumProvider[];
 };
 
+export type InjectedEthereumProviderInfo = {
+  name?: string;
+  rdns?: string;
+  uuid?: string;
+};
+
+type InjectedEthereumProviderInfoEntry = {
+  provider: InjectedEthereumProvider;
+  info: InjectedEthereumProviderInfo;
+};
+
 export type InjectedWalletOption = {
   id: string;
   label: string;
   provider: InjectedEthereumProvider;
 };
 
-export const rememberInjectedWalletProvider = (provider?: InjectedEthereumProvider | null): void => {
+export const rememberInjectedWalletProvider = (
+  provider?: InjectedEthereumProvider | null,
+  info?: InjectedEthereumProviderInfo | null
+): void => {
   if (typeof window === 'undefined' || !provider) {
     return;
   }
@@ -46,6 +64,21 @@ export const rememberInjectedWalletProvider = (provider?: InjectedEthereumProvid
   if (!providers.includes(provider)) {
     window.__cotiAnnouncedEthereumProviders = [...providers, provider];
   }
+
+  if (!info) {
+    return;
+  }
+
+  const providerInfo = window.__cotiAnnouncedEthereumProviderInfo ?? [];
+  const existingIndex = providerInfo.findIndex((entry) => entry.provider === provider);
+  if (existingIndex >= 0) {
+    window.__cotiAnnouncedEthereumProviderInfo = providerInfo.map((entry, index) =>
+      index === existingIndex ? { provider, info } : entry
+    );
+    return;
+  }
+
+  window.__cotiAnnouncedEthereumProviderInfo = [...providerInfo, { provider, info }];
 };
 
 export type Contact = {
@@ -412,6 +445,13 @@ export type TradeOfferMessagePayload = {
   parentTradeId?: number;
 };
 
+export type TradeFillStatePayload = {
+  remainingOfferAmount: string;
+  remainingRequestAmount: string;
+  filledOfferAmount: string;
+  filledRequestAmount: string;
+};
+
 export type TradeResponseMessagePayload = {
   version: 1;
   tradeId: number;
@@ -433,6 +473,10 @@ export type TradeSnapshot = {
   isPublic?: boolean;
   hasAccessHash?: boolean;
   parentTradeId?: number;
+  counterParentTradeId?: number;
+  replacementTradeId?: number;
+  replacesTradeId?: number;
+  fillState?: TradeFillStatePayload;
   acceptedTxHash?: string;
 };
 
@@ -611,32 +655,56 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
 
-export const TRADE_ESCROW_CONTRACT_ADDRESS = '0xeEE933f31Ba7dA6Cea3b30eE7BaaE2E88cb3d6f2';
+export const TRADE_ESCROW_CONTRACT_ADDRESS = '0x7Ff60527677156a4c20419Ec862355A6137F8D47';
 export const TRADE_ESCROW_CONTRACT_ABI = [
   'function feeRecipient() view returns (address)',
   'function feeAmount() view returns (uint256)',
-  'function tokenFeeAmount() view returns (uint256)',
-  'function publicFeeToken() view returns (address)',
-  'function privateFeeToken() view returns (address)',
+  'function chargeFeeOnEdit() view returns (bool)',
+  'function minPartialFillBps() view returns (uint16)',
   'function nextTradeId() view returns (uint256)',
-  'function createTrade((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, uint8 feeMode) payable returns (uint256 tradeId)',
-  'function createTradeAdvanced((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, uint8 feeMode, bool isPublic, bytes32 accessHash, uint256 parentTradeId) payable returns (uint256 tradeId)',
+  'function contractVersion() pure returns (string)',
+  'function createTrade((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt) payable returns (uint256 tradeId)',
+  'function createTradeAdvanced((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, uint256 parentTradeId) payable returns (uint256 tradeId)',
   'function acceptTrade(uint256 tradeId) payable',
   'function acceptTradeWithSecret(uint256 tradeId, bytes32 accessSecret) payable',
+  'function fillTrade(uint256 tradeId, uint256 requestAmountIn, uint256 minOfferAmountOut) payable returns (uint256 offerAmountOut)',
+  'function fillTradeAdvanced(uint256 tradeId, uint256 requestAmountIn, uint256 minOfferAmountOut, bytes32 accessSecret) payable returns (uint256 offerAmountOut)',
+  'function acceptCounterTradeAndCloseParent(uint256 counterTradeId) payable',
+  'function acceptCounterTradeAdvancedAndCloseParent(uint256 counterTradeId, bytes32 accessSecret) payable',
+  'function counterTradeAndCloseCounteredTrade(uint256 counteredTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 expiresAt) payable returns (uint256 newCounterTradeId)',
   'function cancelTrade(uint256 tradeId)',
   'function declineTrade(uint256 tradeId)',
   'function reclaimExpiredTrade(uint256 tradeId)',
+  'function extendTradeExpiry(uint256 tradeId, uint64 nextExpiresAt)',
+  'function cancelAndReplaceTrade(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash) payable returns (uint256 tradeId)',
+  'function editTrade(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash) payable returns (uint256 tradeId)',
   'function getTrade(uint256 tradeId) view returns (address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt)',
-  'function getTradeMetadata(uint256 tradeId) view returns (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint8 feeMode, address feeToken, uint256 feePaid)',
+  'function getTradeMetadata(uint256 tradeId) view returns (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid)',
+  'function getTradeFillState(uint256 tradeId) view returns (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount)',
+  'function getTradeFillForAccount(uint256 tradeId, address account) view returns (uint256 offerAmountReceived, uint256 requestAmountPaid)',
+  'function counterParentTradeId(uint256 tradeId) view returns (uint256)',
+  'function replacementTradeId(uint256 tradeId) view returns (uint256)',
+  'function replacesTradeId(uint256 tradeId) view returns (uint256)',
+  'function getCounterTradeIds(uint256 parentTradeId, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getOpenPublicTradeIds(uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getRecentTradeIds(uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForMaker(address maker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForTaker(address taker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
+  'function getTradeIdsForFiller(address filler, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'event TradeOpened(uint256 indexed tradeId, address indexed maker, address indexed taker, uint8 offerAssetType, address offerToken, uint256 offerAmount, uint8 requestAssetType, address requestToken, uint256 requestAmount, uint64 createdAt, uint64 expiresAt)',
   'event TradeAccepted(uint256 indexed tradeId, address indexed taker)',
   'event TradeCancelled(uint256 indexed tradeId, address indexed maker)',
   'event TradeDeclined(uint256 indexed tradeId, address indexed taker)',
-  'event TradeExpired(uint256 indexed tradeId, address indexed maker, address indexed actor)'
+  'event TradeOpenedV2(uint256 indexed tradeId, address indexed maker, address indexed taker, bool isPublic, bool hasAccessHash, uint256 parentTradeId, uint256 feePaid)',
+  'event TradeAcceptedV2(uint256 indexed tradeId, address indexed taker, bool wasOpenPublicTrade)',
+  'event TradeExpired(uint256 indexed tradeId, address indexed maker, address indexed actor)',
+  'event TradeReplaced(uint256 indexed originalTradeId, uint256 indexed replacementTradeId)',
+  'event TradeEdited(uint256 indexed originalTradeId, uint256 indexed replacementTradeId)',
+  'event TradePartiallyFilled(uint256 indexed tradeId, address indexed filler, uint256 requestAmountIn, uint256 offerAmountOut, uint256 remainingOfferAmount, uint256 remainingRequestAmount)',
+  'event TradeFilled(uint256 indexed tradeId)',
+  'event CounterTradeAccepted(uint256 indexed counterTradeId, uint256 indexed parentTradeId, address indexed taker)',
+  'event CounterTradeRegistered(uint256 indexed parentTradeId, uint256 indexed counterTradeId)',
+  'event CounterTradeSuperseded(uint256 indexed parentTradeId, uint256 indexed previousCounterTradeId, uint256 indexed nextCounterTradeId)'
 ] as const;
 
 export const ERC20_TOKEN_ABI = [
@@ -1194,7 +1262,43 @@ export const normalizeChainId = (chainId: string | number): number => {
   return chainId.startsWith('0x') ? parseInt(chainId, 16) : Number(chainId);
 };
 
-const getInjectedWalletProviderId = (provider: InjectedEthereumProvider): string => {
+const getRememberedInjectedWalletProviderInfo = (
+  provider: InjectedEthereumProvider
+): InjectedEthereumProviderInfo | undefined => {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+
+  return window.__cotiAnnouncedEthereumProviderInfo?.find((entry) => entry.provider === provider)?.info;
+};
+
+const normalizeWalletIdentityText = (...values: Array<string | undefined>): string =>
+  values
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const isCypherTradeProvider = (
+  provider: InjectedEthereumProvider,
+  info?: InjectedEthereumProviderInfo
+): boolean => {
+  const providerWithFlags = provider as InjectedEthereumProvider & { isCypher?: boolean };
+  if (providerWithFlags.isCypherTrade || providerWithFlags.isCypherWallet || providerWithFlags.isCypher) {
+    return true;
+  }
+
+  const identityText = normalizeWalletIdentityText(info?.name, info?.rdns, info?.uuid);
+  return identityText.includes('cyphertrade') || identityText.includes('cypherwallet');
+};
+
+const getInjectedWalletProviderId = (
+  provider: InjectedEthereumProvider,
+  info?: InjectedEthereumProviderInfo
+): string => {
+  if (isCypherTradeProvider(provider, info)) {
+    return 'cyphertrade';
+  }
   if (provider.isRabby) {
     return 'rabby';
   }
@@ -1228,7 +1332,13 @@ const getInjectedWalletProviderId = (provider: InjectedEthereumProvider): string
   return 'browser-wallet';
 };
 
-export const getInjectedWalletLabel = (provider: InjectedEthereumProvider): string => {
+export const getInjectedWalletLabel = (
+  provider: InjectedEthereumProvider,
+  info?: InjectedEthereumProviderInfo
+): string => {
+  if (isCypherTradeProvider(provider, info)) {
+    return 'CypherTrade';
+  }
   if (provider.isRabby) {
     return 'Rabby';
   }
@@ -1290,10 +1400,11 @@ export const getInjectedWalletOptions = (): InjectedWalletOption[] => {
 
   const optionCounts = new Map<string, number>();
   return uniqueProviders.map((provider) => {
-    const baseId = getInjectedWalletProviderId(provider);
+    const providerInfo = getRememberedInjectedWalletProviderInfo(provider);
+    const baseId = getInjectedWalletProviderId(provider, providerInfo);
     const duplicateCount = optionCounts.get(baseId) ?? 0;
     optionCounts.set(baseId, duplicateCount + 1);
-    const label = getInjectedWalletLabel(provider);
+    const label = getInjectedWalletLabel(provider, providerInfo);
     const suffix = duplicateCount > 0 ? ` ${duplicateCount + 1}` : '';
 
     return {

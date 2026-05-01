@@ -54,6 +54,43 @@ const parseTradeAccessMetadata = (metadataRaw: unknown): TradeAccessMetadata => 
   };
 };
 
+const toBigintString = (value: unknown, fallback = '0'): string => {
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+  const stringValue = String(value ?? '').trim();
+  return /^\d+$/.test(stringValue) ? stringValue : fallback;
+};
+
+const parseOptionalTradeId = (value: unknown): number | undefined => {
+  const tradeId = toSafeNumber(value);
+  return tradeId > 0 ? tradeId : undefined;
+};
+
+const parseTradeFillState = (
+  fillStateRaw: unknown,
+  offerAmount: unknown,
+  requestAmount: unknown
+): NonNullable<TradeSnapshot['fillState']> => {
+  const fillState = fillStateRaw as
+    | {
+        remainingOfferAmount?: unknown;
+        remainingRequestAmount?: unknown;
+        filledOfferAmount?: unknown;
+        filledRequestAmount?: unknown;
+      }
+    | null
+    | undefined;
+  const indexedFillState = fillStateRaw as { [key: number]: unknown } | null | undefined;
+
+  return {
+    remainingOfferAmount: toBigintString(fillState?.remainingOfferAmount ?? indexedFillState?.[0], toBigintString(offerAmount)),
+    remainingRequestAmount: toBigintString(fillState?.remainingRequestAmount ?? indexedFillState?.[1], toBigintString(requestAmount)),
+    filledOfferAmount: toBigintString(fillState?.filledOfferAmount ?? indexedFillState?.[2]),
+    filledRequestAmount: toBigintString(fillState?.filledRequestAmount ?? indexedFillState?.[3])
+  };
+};
+
 const decryptPrivateUintValue = async (
   encryptedValue: unknown,
   signer: Wallet | JsonRpcSigner
@@ -247,7 +284,13 @@ export const fetchTradeSnapshotById = async (
   const readProvider = await loadCotiReadProvider(true);
   const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
   const tradeRaw = await contract.getTrade(tradeId);
-  const metadataRaw = await contract.getTradeMetadata?.(tradeId).catch(() => null);
+  const [metadataRaw, fillStateRaw, counterParentRaw, replacementRaw, replacesRaw] = await Promise.all([
+    contract.getTradeMetadata?.(tradeId).catch(() => null),
+    contract.getTradeFillState?.(tradeId).catch(() => null),
+    contract.counterParentTradeId?.(tradeId).catch(() => null),
+    contract.replacementTradeId?.(tradeId).catch(() => null),
+    contract.replacesTradeId?.(tradeId).catch(() => null)
+  ]);
   const maker = String((tradeRaw as { maker?: unknown }).maker ?? tradeRaw?.[0] ?? '').trim();
   const taker = String((tradeRaw as { taker?: unknown }).taker ?? tradeRaw?.[1] ?? '').trim();
   const statusRaw = (tradeRaw as { status?: unknown }).status ?? tradeRaw?.[2];
@@ -262,6 +305,10 @@ export const fetchTradeSnapshotById = async (
   const requestToken = (requestAssetRaw as { token?: unknown })?.token ?? requestAssetRaw?.[1] ?? '';
   const requestAmount = (requestAssetRaw as { amount?: unknown })?.amount ?? requestAssetRaw?.[2] ?? 0n;
   const { isPublic, hasAccessHash, parentTradeId } = parseTradeAccessMetadata(metadataRaw);
+  const fillState = parseTradeFillState(fillStateRaw, offerAmount, requestAmount);
+  const counterParentTradeId = parseOptionalTradeId(counterParentRaw);
+  const replacementTradeId = parseOptionalTradeId(replacementRaw);
+  const replacesTradeId = parseOptionalTradeId(replacesRaw);
 
   const [offer, request] = await Promise.all([
     resolveTradeAssetSnapshot(
@@ -319,6 +366,10 @@ export const fetchTradeSnapshotById = async (
     isPublic,
     hasAccessHash,
     parentTradeId,
+    counterParentTradeId,
+    replacementTradeId,
+    replacesTradeId,
+    fillState,
     acceptedTxHash
   };
 };
@@ -398,9 +449,10 @@ export const fetchWalletTradeSnapshots = async (
   const readProvider = await loadCotiReadProvider(true);
   const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
   const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 80)));
-  const [makerIdsRaw, takerIdsRaw] = await Promise.all([
+  const [makerIdsRaw, takerIdsRaw, fillerIdsRaw] = await Promise.all([
     contract.getTradeIdsForMaker(walletAddress, 0, safeLimit).catch(() => null),
-    contract.getTradeIdsForTaker(walletAddress, 0, safeLimit).catch(() => null)
+    contract.getTradeIdsForTaker(walletAddress, 0, safeLimit).catch(() => null),
+    contract.getTradeIdsForFiller?.(walletAddress, 0, safeLimit).catch(() => null)
   ]);
   const resolveIds = (raw: unknown): number[] => {
     const idsRaw = Array.isArray(raw) ? raw[0] : null;
@@ -408,7 +460,7 @@ export const fetchWalletTradeSnapshots = async (
       ? idsRaw.map((value: unknown) => toSafeNumber(value)).filter((value: number) => value > 0)
       : [];
   };
-  const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw)]))
+  const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw), ...resolveIds(fillerIdsRaw)]))
     .sort((left, right) => right - left)
     .slice(0, safeLimit);
   const snapshots = await Promise.all(
