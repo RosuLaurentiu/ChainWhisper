@@ -2092,9 +2092,12 @@ body {
 .standalone-trade-detail-section > .standalone-trades-section-head,
 .standalone-trade-detail-section > .standalone-trade-created,
 .standalone-trade-detail-section > .standalone-trade-error,
-.standalone-trade-detail-section > .standalone-trade-state,
-.standalone-trade-detail-section > .p2p-counter-panel {
+.standalone-trade-detail-section > .standalone-trade-state {
   width: 100%;
+}
+
+.standalone-trade-detail-section > .p2p-counter-panel {
+  width: min(100%, 760px);
 }
 
 .standalone-trade-detail-section > .trade-card {
