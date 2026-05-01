@@ -213,6 +213,14 @@ const buildOfferFromSnapshot = (snapshot: TradeSnapshot): TradeOfferMessagePaylo
 
 const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
 
+const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'isPublic' | 'taker' | 'parentTradeId'>): boolean =>
+  trade.isPublic === false && !trade.parentTradeId && !isZeroTradeTakerAddress(trade.taker);
+
+const canAcceptDirectWalletTradeWithoutSecret = (
+  trade: Pick<TradeSnapshot, 'isPublic' | 'taker' | 'parentTradeId'>,
+  walletAddress: string
+): boolean => isDirectWalletTrade(trade) && trade.taker.toLowerCase() === walletAddress.trim().toLowerCase();
+
 const createTradeAccessSecret = (): string => {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -1598,7 +1606,8 @@ export default function P2PTradingPage() {
           route.tradeId === snapshot.tradeId && resolvedRouteAccessSecret
             ? resolvedRouteAccessSecret
             : resolveKnownTradeAccessSecret(snapshot.tradeId);
-        if (latestSnapshot.hasAccessHash && !accessSecret) {
+        const canAcceptWithoutSecret = canAcceptDirectWalletTradeWithoutSecret(latestSnapshot, walletAddress);
+        if (latestSnapshot.hasAccessHash && !accessSecret && !canAcceptWithoutSecret) {
           throw new Error('This trade needs its full private link before it can be accepted.');
         }
         const { acceptedTxHash } = await acceptTradeOnChain({
@@ -2130,14 +2139,17 @@ export default function P2PTradingPage() {
       trade.isPublic === false && trade.hasAccessHash && !accessSecret
         ? ''
         : buildTradeShareUrl(trade.tradeId, accessSecret || undefined);
+    const isDirectTrade = isDirectWalletTrade(trade);
     const shareKey = `offer-trade-link:${trade.tradeId}:${accessSecret ? 'secret' : 'public'}`;
     const visibilityLabel =
       trade.isPublic === false
-        ? trade.hasAccessHash
+        ? isDirectTrade
+          ? 'Direct offer'
+          : trade.hasAccessHash
           ? accessSecret
             ? 'Private link saved'
             : 'Private link'
-          : 'Direct offer'
+          : 'Unlisted offer'
         : 'Public listing';
     const takerLabel = isZeroTradeTakerAddress(trade.taker) ? 'Any wallet' : shortenAddress(trade.taker);
     const statusLabel =
