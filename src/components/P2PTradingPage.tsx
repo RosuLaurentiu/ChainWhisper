@@ -215,11 +215,6 @@ const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): bo
 
 const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'taker'>): boolean => !isZeroTradeTakerAddress(trade.taker);
 
-const canAcceptDirectWalletTradeWithoutSecret = (
-  trade: Pick<TradeSnapshot, 'taker'>,
-  walletAddress: string
-): boolean => isDirectWalletTrade(trade) && trade.taker.toLowerCase() === walletAddress.trim().toLowerCase();
-
 const createTradeAccessSecret = (): string => {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -1501,7 +1496,7 @@ export default function P2PTradingPage() {
     try {
       setCreatingTrade(true);
       const isCounterTrade = counterParentTrade !== null;
-      const accessSecret = tradeVisibility === 'unlisted' || isCounterTrade ? createTradeAccessSecret() : '';
+      const accessSecret = tradeVisibility === 'unlisted' && !isCounterTrade ? createTradeAccessSecret() : '';
       const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
       const signer = await getTradeSigner(isPrivateTradeAsset(offerToken));
       const nativeFeeWei = tradeFeeModeSelection === 'coti' ? await resolveRequiredFeeForTradeCreate() : 0n;
@@ -1605,8 +1600,7 @@ export default function P2PTradingPage() {
           route.tradeId === snapshot.tradeId && resolvedRouteAccessSecret
             ? resolvedRouteAccessSecret
             : resolveKnownTradeAccessSecret(snapshot.tradeId);
-        const canAcceptWithoutSecret = canAcceptDirectWalletTradeWithoutSecret(latestSnapshot, walletAddress);
-        if (latestSnapshot.hasAccessHash && !accessSecret && !canAcceptWithoutSecret) {
+        if (latestSnapshot.hasAccessHash && !accessSecret) {
           throw new Error('This trade needs its full private link before it can be accepted.');
         }
         const { acceptedTxHash } = await acceptTradeOnChain({
