@@ -1409,7 +1409,7 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   border: 1px solid rgba(74, 64, 112, 0.68);
   border-radius: 12px;
   background: rgba(17, 17, 27, 0.88);
@@ -1424,7 +1424,7 @@ body {
   max-width: none;
   justify-self: end;
   display: grid;
-  grid-template-columns: minmax(190px, auto) minmax(0, auto);
+  grid-template-columns: minmax(260px, auto) minmax(0, auto);
   align-items: center;
   justify-content: end;
   gap: 10px;
@@ -1455,7 +1455,8 @@ body {
 }
 
 .p2p-wallet-status {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(132px, auto) minmax(92px, auto) auto;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
@@ -1469,7 +1470,7 @@ body {
 .p2p-wallet-status-text {
   display: grid;
   gap: 2px;
-  min-width: 92px;
+  min-width: 96px;
   text-align: left;
 }
 
@@ -1485,6 +1486,36 @@ body {
   color: var(--text);
   font-size: 0.78rem;
   line-height: 1.1;
+}
+
+.p2p-wallet-status-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.p2p-wallet-aes-action {
+  border: 1px solid rgba(139, 92, 246, 0.46);
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: rgba(139, 92, 246, 0.14);
+  color: #f5f3ff;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.p2p-wallet-aes-action:hover:not(:disabled) {
+  border-color: rgba(196, 181, 253, 0.68);
+  background: rgba(139, 92, 246, 0.24);
+}
+
+.p2p-wallet-aes-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .p2p-wallet-menu-wrap {
@@ -1600,6 +1631,7 @@ body {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  justify-self: start;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -8183,6 +8215,17 @@ body {
   .p2p-wallet-status-text strong {
     font-size: 0.7rem;
     line-height: 1.05;
+  }
+
+  .p2p-wallet-status-actions {
+    grid-column: 1 / -1;
+    justify-content: end;
+  }
+
+  .p2p-wallet-aes-action {
+    min-height: 28px;
+    padding: 5px 9px;
+    font-size: 0.68rem;
   }
 
   .p2p-wallet-menu-wrap {

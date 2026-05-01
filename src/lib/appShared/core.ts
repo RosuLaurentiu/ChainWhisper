@@ -4,6 +4,7 @@ import { unzlibSync, zlibSync } from 'fflate';
 declare global {
   interface Window {
     ethereum?: InjectedEthereumProvider;
+    __cotiAnnouncedEthereumProviders?: InjectedEthereumProvider[];
   }
 }
 
@@ -34,6 +35,17 @@ export type InjectedWalletOption = {
   id: string;
   label: string;
   provider: InjectedEthereumProvider;
+};
+
+export const rememberInjectedWalletProvider = (provider?: InjectedEthereumProvider | null): void => {
+  if (typeof window === 'undefined' || !provider) {
+    return;
+  }
+
+  const providers = window.__cotiAnnouncedEthereumProviders ?? [];
+  if (!providers.includes(provider)) {
+    window.__cotiAnnouncedEthereumProviders = [...providers, provider];
+  }
 };
 
 export type Contact = {
@@ -1253,12 +1265,15 @@ export const getInjectedWalletOptions = (): InjectedWalletOption[] => {
   }
 
   const injected = window.ethereum;
-  if (!injected) {
+  const announcedProviders = window.__cotiAnnouncedEthereumProviders ?? [];
+  if (!injected && announcedProviders.length === 0) {
     return [];
   }
 
-  const candidates =
-    Array.isArray(injected.providers) && injected.providers.length > 0 ? injected.providers : [injected];
+  const candidates = [
+    ...announcedProviders,
+    ...(injected ? (Array.isArray(injected.providers) && injected.providers.length > 0 ? injected.providers : [injected]) : [])
+  ];
   const uniqueProviders: InjectedEthereumProvider[] = [];
   const seenProviders = new Set<InjectedEthereumProvider>();
 

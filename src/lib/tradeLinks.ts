@@ -1,5 +1,6 @@
 const TRADE_LINK_MAGIC = 0x54;
 const TRADE_LINK_VERSION = 1;
+const TRADE_LINK_VERSION_COMPACT_ID = 2;
 const TRADE_LINK_HAS_SECRET = 1;
 const TRADE_LINK_ID_BYTES = 6;
 const TRADE_LINK_SECRET_BYTES = 32;
@@ -32,17 +33,32 @@ const fromBase64Url = (value: string): Uint8Array | null => {
   }
 };
 
-const writeTradeId = (bytes: Uint8Array, offset: number, tradeId: number): void => {
+const writeTradeIdWithLength = (bytes: Uint8Array, offset: number, tradeId: number, byteLength: number): void => {
   let remaining = BigInt(tradeId);
-  for (let index = TRADE_LINK_ID_BYTES - 1; index >= 0; index -= 1) {
+  for (let index = byteLength - 1; index >= 0; index -= 1) {
     bytes[offset + index] = Number(remaining & 0xffn);
     remaining >>= 8n;
   }
 };
 
-const readTradeId = (bytes: Uint8Array, offset: number): number | null => {
+const getTradeIdByteLength = (tradeId: number): number => {
+  let remaining = BigInt(tradeId);
+  let byteLength = 0;
+  do {
+    byteLength += 1;
+    remaining >>= 8n;
+  } while (remaining > 0n);
+
+  return Math.min(byteLength, TRADE_LINK_ID_BYTES);
+};
+
+const readTradeIdWithLength = (bytes: Uint8Array, offset: number, byteLength: number): number | null => {
+  if (byteLength <= 0 || byteLength > TRADE_LINK_ID_BYTES || offset + byteLength > bytes.length) {
+    return null;
+  }
+
   let tradeId = 0n;
-  for (let index = 0; index < TRADE_LINK_ID_BYTES; index += 1) {
+  for (let index = 0; index < byteLength; index += 1) {
     tradeId = (tradeId << 8n) + BigInt(bytes[offset + index]);
   }
 
@@ -79,12 +95,13 @@ export const encodeTradeLink = (tradeId: number, accessSecret?: string): string 
 
   const secretBytes = parseAccessSecretBytes(accessSecret);
   const hasSecret = Boolean(secretBytes);
-  const bytes = new Uint8Array(2 + TRADE_LINK_ID_BYTES + (hasSecret ? TRADE_LINK_SECRET_BYTES : 0));
-  bytes[0] = TRADE_LINK_MAGIC | TRADE_LINK_VERSION;
-  bytes[1] = hasSecret ? TRADE_LINK_HAS_SECRET : 0;
-  writeTradeId(bytes, 2, tradeId);
+  const tradeIdByteLength = getTradeIdByteLength(tradeId);
+  const bytes = new Uint8Array(2 + tradeIdByteLength + (hasSecret ? TRADE_LINK_SECRET_BYTES : 0));
+  bytes[0] = TRADE_LINK_MAGIC | TRADE_LINK_VERSION_COMPACT_ID;
+  bytes[1] = (hasSecret ? TRADE_LINK_HAS_SECRET : 0) | ((tradeIdByteLength - 1) << 1);
+  writeTradeIdWithLength(bytes, 2, tradeId, tradeIdByteLength);
   if (secretBytes) {
-    bytes.set(secretBytes, 2 + TRADE_LINK_ID_BYTES);
+    bytes.set(secretBytes, 2 + tradeIdByteLength);
   }
 
   return toBase64Url(bytes);
@@ -92,27 +109,31 @@ export const encodeTradeLink = (tradeId: number, accessSecret?: string): string 
 
 export const decodeTradeLink = (code: string): EncodedTradeLink | null => {
   const bytes = fromBase64Url(code);
-  if (!bytes || bytes.length < 2 + TRADE_LINK_ID_BYTES) {
+  if (!bytes || bytes.length < 3) {
     return null;
   }
 
-  if (bytes[0] !== (TRADE_LINK_MAGIC | TRADE_LINK_VERSION)) {
+  if (bytes[0] !== (TRADE_LINK_MAGIC | TRADE_LINK_VERSION) && bytes[0] !== (TRADE_LINK_MAGIC | TRADE_LINK_VERSION_COMPACT_ID)) {
     return null;
   }
 
   const hasSecret = (bytes[1] & TRADE_LINK_HAS_SECRET) === TRADE_LINK_HAS_SECRET;
-  const expectedLength = 2 + TRADE_LINK_ID_BYTES + (hasSecret ? TRADE_LINK_SECRET_BYTES : 0);
+  const tradeIdByteLength =
+    bytes[0] === (TRADE_LINK_MAGIC | TRADE_LINK_VERSION_COMPACT_ID)
+      ? ((bytes[1] >> 1) & 0x07) + 1
+      : TRADE_LINK_ID_BYTES;
+  const expectedLength = 2 + tradeIdByteLength + (hasSecret ? TRADE_LINK_SECRET_BYTES : 0);
   if (bytes.length !== expectedLength) {
     return null;
   }
 
-  const tradeId = readTradeId(bytes, 2);
+  const tradeId = readTradeIdWithLength(bytes, 2, tradeIdByteLength);
   if (!tradeId) {
     return null;
   }
 
   return {
     tradeId,
-    accessSecret: hasSecret ? formatAccessSecret(bytes, 2 + TRADE_LINK_ID_BYTES) : undefined
+    accessSecret: hasSecret ? formatAccessSecret(bytes, 2 + tradeIdByteLength) : undefined
   };
 };
