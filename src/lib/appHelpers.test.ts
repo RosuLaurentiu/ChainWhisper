@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildMessageReferenceKeys, messageReferencesMatch } from './appHelpers';
-import { buildMessageWithReactionPayload, parseChatMessagePayload } from './appShared';
+import { buildMessageReferenceKeys, messageReferencesMatch, sanitizeOutgoingMessagePlainText } from './appHelpers';
+import {
+  buildMessageWithReactionPayload,
+  buildMessageWithReplyPayload,
+  decodeMemoPlaintextStrict,
+  encodeCompactMemoPlaintext,
+  encodeMemoPlaintext,
+  parseChatMessagePayload
+} from './appShared';
 
 describe('message reference helpers', () => {
   it('matches shared tx references with case-sensitive base64url prefixes', () => {
@@ -38,5 +45,31 @@ describe('message reference helpers', () => {
         { txHash, blockNumber, logIndex }
       )
     ).toBe(true);
+  });
+
+  it('preserves user-authored message line breaks', () => {
+    const plain = 'first line\nsecond line';
+    const payload = buildMessageWithReplyPayload(plain);
+
+    expect(sanitizeOutgoingMessagePlainText(plain)).toBe(plain);
+    expect(parseChatMessagePayload(payload).cleanText).toBe(plain);
+  });
+});
+
+describe('memo plaintext decoding', () => {
+  it('accepts encoded ChainWhisper memos', () => {
+    const plain = 'hello private chat';
+
+    expect(decodeMemoPlaintextStrict(encodeMemoPlaintext(plain))).toBe(plain);
+  });
+
+  it('accepts compact compressed ChainWhisper memos', () => {
+    const plain = 'private history '.repeat(80);
+
+    expect(decodeMemoPlaintextStrict(encodeCompactMemoPlaintext(plain))).toBe(plain);
+  });
+
+  it('rejects wrong-key decoder output with replacement/control characters', () => {
+    expect(decodeMemoPlaintextStrict('2&#\uFFFD~kh\u0004random')).toBeNull();
   });
 });

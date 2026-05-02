@@ -11,6 +11,7 @@ import {
   type Eip1193Provider,
   type SignerSource
 } from '../lib/appShared';
+import { saveWalletPreference } from '../lib/appStorage';
 import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption
@@ -23,6 +24,18 @@ type UseWalletOnboardingArgs = {
   runPostConnectDataSyncUntilAppliedRef: MutableRefObject<(address: string) => Promise<void>>;
   setError: Dispatch<SetStateAction<string>>;
   setMyNickname: Dispatch<SetStateAction<string>>;
+};
+
+type BrowserWalletSession = {
+  address: string;
+  chainId: number | null;
+  provider: Eip1193Provider;
+  walletId: string;
+  walletLabel: string;
+};
+
+type BrowserWalletActivationOptions = {
+  preparePrivacy?: boolean;
 };
 
 export function useWalletOnboarding({
@@ -44,9 +57,11 @@ export function useWalletOnboarding({
   const [onboardStatus, setOnboardStatus] = useState('Not onboarded');
   const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
+  const [browserWalletSession, setBrowserWalletSessionState] = useState<BrowserWalletSession | null>(null);
   const [, setInjectedWalletRefreshNonce] = useState(0);
 
   const activeProviderRef = useRef<Eip1193Provider | null>(null);
+  const browserWalletSessionRef = useRef<BrowserWalletSession | null>(null);
   const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
   const currentWalletKeyRef = useRef('');
 
@@ -100,12 +115,17 @@ export function useWalletOnboarding({
     setActiveProvider(provider);
   }, []);
 
+  const setBrowserWalletSession = useCallback((session: BrowserWalletSession | null) => {
+    browserWalletSessionRef.current = session;
+    setBrowserWalletSessionState(session);
+  }, []);
+
   const getConnectedProvider = useCallback((): Eip1193Provider | null => {
     if (connectionMethod === 'metamask') {
       return activeProviderRef.current ?? activeProvider ?? preferredInjectedWalletOption?.provider ?? null;
     }
 
-    return activeProviderRef.current ?? activeProvider ?? null;
+    return null;
   }, [activeProvider, connectionMethod, preferredInjectedWalletOption?.provider]);
 
   const ensureCotiNetwork = useCallback(async (provider: Eip1193Provider) => {
@@ -204,7 +224,7 @@ export function useWalletOnboarding({
   );
 
   const connectAndOnboard = useCallback(
-    async (walletId?: string) => {
+    async (walletId?: string, options?: BrowserWalletActivationOptions): Promise<OnboardInfo | null> => {
       setError('');
       setConnectingMethod('metamask');
 
@@ -218,7 +238,7 @@ export function useWalletOnboarding({
         setError('MetaMask or CypherTrade is required to continue.');
         setConnectingMethod(null);
         setConnectingWalletLabel('');
-        return;
+        return null;
       }
 
       try {
@@ -237,11 +257,20 @@ export function useWalletOnboarding({
         setConnectionMethod('metamask');
         setActiveSignerSource('metamask');
         setWalletAddress(selected);
+        saveWalletPreference({ kind: 'browser', browserWalletId: walletOption?.id });
 
-        await onboardAddressAes(selected, provider);
         const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
-        setChainId(normalizeChainId(currentChain));
+        const normalizedChainId = normalizeChainId(currentChain);
+        setChainId(normalizedChainId);
+        setBrowserWalletSession({
+          address: selected,
+          chainId: normalizedChainId,
+          provider,
+          walletId: walletOption?.id ?? walletId ?? '',
+          walletLabel
+        });
         setStatus(`Connected (${walletLabel})`);
+        const onboardInfo = options?.preparePrivacy ? await onboardAddressAes(selected, provider) : null;
         const selectedWalletKey = selected.toLowerCase();
         window.setTimeout(() => {
           void (async () => {
@@ -260,11 +289,13 @@ export function useWalletOnboarding({
             }
           })();
         }, 0);
+        return onboardInfo;
       } catch (connectionError) {
         const message = getProviderErrorMessage(connectionError, 'Failed to connect wallet.');
         setError(message);
         setStatus('Disconnected');
         setOnboardStatus('Not onboarded');
+        return null;
       } finally {
         setConnectingMethod(null);
         setConnectingWalletLabel('');
@@ -276,6 +307,91 @@ export function useWalletOnboarding({
       onboardAddressAes,
       preferredInjectedWalletOption,
       runPostConnectDataSyncUntilAppliedRef,
+      setBrowserWalletSession,
+      setConnectedProvider,
+      setError,
+      setMyNickname
+    ]
+  );
+
+  const activateBrowserWalletSession = useCallback(
+    async (walletId?: string, options?: BrowserWalletActivationOptions) => {
+      const storedSession = browserWalletSessionRef.current;
+      const targetSession =
+        storedSession && (!walletId || storedSession.walletId === walletId)
+          ? storedSession
+          : null;
+
+      if (!targetSession) {
+        return connectAndOnboard(walletId, options);
+      }
+
+      setError('');
+      setConnectingMethod('metamask');
+      setConnectingWalletLabel(targetSession.walletLabel);
+
+      try {
+        const accounts = (await targetSession.provider.request({ method: 'eth_accounts' })) as string[];
+        const selected =
+          accounts.find((account) => account.toLowerCase() === targetSession.address.toLowerCase()) ?? accounts[0] ?? '';
+        if (!selected) {
+          setConnectingMethod(null);
+          setConnectingWalletLabel('');
+          return connectAndOnboard(targetSession.walletId || walletId, options);
+        }
+
+        setConnectedProvider(targetSession.provider);
+        setConnectionMethod('metamask');
+        setActiveSignerSource('metamask');
+        setSelectedInjectedWalletId(targetSession.walletId);
+        setWalletAddress(selected);
+        saveWalletPreference({ kind: 'browser', browserWalletId: targetSession.walletId });
+
+        const currentChain = (await targetSession.provider.request({ method: 'eth_chainId' })) as string | number;
+        const normalizedChainId = normalizeChainId(currentChain);
+        setChainId(normalizedChainId);
+        const nextSession = {
+          ...targetSession,
+          address: selected,
+          chainId: normalizedChainId
+        };
+        setBrowserWalletSession(nextSession);
+        setStatus(`Connected (${targetSession.walletLabel})`);
+        const onboardInfo = options?.preparePrivacy ? await onboardAddressAes(selected, targetSession.provider) : null;
+
+        const selectedWalletKey = selected.toLowerCase();
+        window.setTimeout(() => {
+          void (async () => {
+            try {
+              const nickname = await loadMyNicknameFromChainRef.current(selected);
+              if (currentWalletKeyRef.current !== selectedWalletKey) {
+                return;
+              }
+              setMyNickname(nickname);
+            } catch {
+            } finally {
+              if (currentWalletKeyRef.current === selectedWalletKey) {
+                runPostConnectDataSyncUntilAppliedRef.current(selected).catch(() => {});
+              }
+            }
+          })();
+        }, 0);
+        return onboardInfo;
+      } catch (connectionError) {
+        const message = getProviderErrorMessage(connectionError, 'Failed to activate wallet.');
+        setError(message);
+        return null;
+      } finally {
+        setConnectingMethod(null);
+        setConnectingWalletLabel('');
+      }
+    },
+    [
+      connectAndOnboard,
+      loadMyNicknameFromChainRef,
+      onboardAddressAes,
+      runPostConnectDataSyncUntilAppliedRef,
+      setBrowserWalletSession,
       setConnectedProvider,
       setError,
       setMyNickname
@@ -309,9 +425,18 @@ export function useWalletOnboarding({
     setOnboardStatus('Not onboarded');
     setSessionOnboardInfo({});
     setConnectedProvider(null);
+    setBrowserWalletSession(null);
     signerCacheRef.current = {};
     clearCachedStateBackupMemo();
-  }, [clearCachedStateBackupMemo, connectionMethod, getConnectedProvider, resetBurnerSessionRef, setConnectedProvider, setError]);
+  }, [
+    clearCachedStateBackupMemo,
+    connectionMethod,
+    getConnectedProvider,
+    resetBurnerSessionRef,
+    setBrowserWalletSession,
+    setConnectedProvider,
+    setError
+  ]);
 
   useEffect(() => {
     const provider = getConnectedProvider();
@@ -352,6 +477,8 @@ export function useWalletOnboarding({
   return {
     activeProvider,
     activeSignerSource,
+    activateBrowserWalletSession,
+    browserWalletSession,
     chainId,
     connectAndOnboard,
     connectingMethod,

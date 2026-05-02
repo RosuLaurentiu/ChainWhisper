@@ -125,13 +125,13 @@ export const formatTradeRatioLabel = (baseAsset?: TradeAssetPayload, quoteAsset?
     const baseAmount = BigInt(baseAsset.amount);
     const quoteAmount = BigInt(quoteAsset.amount);
     if (baseAmount <= 0n || quoteAmount <= 0n) {
-      return `${baseAsset.symbol} / ${quoteAsset.symbol}`;
+      return `${quoteAsset.symbol}/${baseAsset.symbol}`;
     }
 
     const scaledQuoteAmount = (quoteAmount * 10n ** BigInt(baseAsset.decimals)) / baseAmount;
-    return `1 ${baseAsset.symbol} = ${formatTokenAmount(scaledQuoteAmount, quoteAsset.decimals, 6)} ${quoteAsset.symbol}`;
+    return `${formatTokenAmount(scaledQuoteAmount, quoteAsset.decimals, 6)} ${quoteAsset.symbol}/${baseAsset.symbol}`;
   } catch {
-    return `${baseAsset?.symbol ?? 'Asset'} / ${quoteAsset?.symbol ?? 'Asset'}`;
+    return `${quoteAsset?.symbol ?? 'Asset'}/${baseAsset?.symbol ?? 'Asset'}`;
   }
 };
 
@@ -168,7 +168,7 @@ export const resolveTradeOrderSummary = (
     secondarySide: isBuyerView ? offerSide : paymentSide,
     offerSide,
     paymentSide,
-    pairLabel: `${trade.offer.symbol} / ${trade.request.symbol}`,
+    pairLabel: `${trade.offer.symbol}/${trade.request.symbol}`,
     actionLabel: isBuyerView ? `Buy ${trade.offer.symbol}` : `Sell ${trade.offer.symbol}`,
     directionLabel,
     ratioLabel: formatTradeRatioLabel(trade.offer, trade.request),

@@ -19,6 +19,7 @@ type TokenToolsState = {
   rewardsCallerAllowed: boolean | null;
   rewardsPublicPerInteractionWei: bigint | null;
   rewardsPublicReserveWei: bigint | null;
+  shieldVaultTokenBalanceWei: bigint | null;
   rewardTokenBalanceWei: bigint | null;
   privateRewardTokenBalanceWei: bigint | null;
   rewardTokenSymbol: string;
@@ -44,6 +45,7 @@ type TokenToolsState = {
   setRewardsCallerAllowed: (next: StateUpdate<boolean | null>) => void;
   setRewardsPublicPerInteractionWei: (next: StateUpdate<bigint | null>) => void;
   setRewardsPublicReserveWei: (next: StateUpdate<bigint | null>) => void;
+  setShieldVaultTokenBalanceWei: (next: StateUpdate<bigint | null>) => void;
   setRewardTokenBalanceWei: (next: StateUpdate<bigint | null>) => void;
   setPrivateRewardTokenBalanceWei: (next: StateUpdate<bigint | null>) => void;
   setRewardTokenSymbol: (next: StateUpdate<string>) => void;
@@ -72,6 +74,7 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   rewardsCallerAllowed: null,
   rewardsPublicPerInteractionWei: null,
   rewardsPublicReserveWei: null,
+  shieldVaultTokenBalanceWei: null,
   rewardTokenBalanceWei: null,
   privateRewardTokenBalanceWei: null,
   rewardTokenSymbol: FALLBACK_REWARD_TOKEN_SYMBOL,
@@ -108,6 +111,8 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
     })),
   setRewardsPublicReserveWei: (next) =>
     set((state) => ({ rewardsPublicReserveWei: resolveStateUpdate(next, state.rewardsPublicReserveWei) })),
+  setShieldVaultTokenBalanceWei: (next) =>
+    set((state) => ({ shieldVaultTokenBalanceWei: resolveStateUpdate(next, state.shieldVaultTokenBalanceWei) })),
   setRewardTokenBalanceWei: (next) =>
     set((state) => ({ rewardTokenBalanceWei: resolveStateUpdate(next, state.rewardTokenBalanceWei) })),
   setPrivateRewardTokenBalanceWei: (next) =>

@@ -1,3 +1,6 @@
+import { useRef } from 'react';
+import { useModalA11y } from '../hooks/useModalA11y';
+
 type BurnerImportModalProps = {
   isOpen: boolean;
   initializingBurner: boolean;
@@ -17,6 +20,10 @@ export default function BurnerImportModal({
   onClose,
   onImport
 }: BurnerImportModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeDisabled = initializingBurner;
+  useModalA11y({ closeDisabled, dialogRef, isOpen, onClose });
+
   if (!isOpen) {
     return null;
   }
@@ -30,8 +37,16 @@ export default function BurnerImportModal({
         }
       }}
     >
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-        <h3>Import Burner Wallet</h3>
+      <div
+        ref={dialogRef}
+        className="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="burner-import-title"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="burner-import-title">Import Burner Wallet</h3>
         <input
           value={burnerImportInput}
           onChange={(event) => onBurnerImportInputChange(event.target.value)}

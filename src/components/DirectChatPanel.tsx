@@ -523,7 +523,7 @@ function DirectChatPanel({
                   ) : parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
                   ) : messageDisplayText ? (
-                    <div>{renderMessageTextWithLinks(messageDisplayText)}</div>
+                    <div className="message-text">{renderMessageTextWithLinks(messageDisplayText)}</div>
                   ) : null}
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">

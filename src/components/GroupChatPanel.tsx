@@ -2,6 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useMemo, useRef, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import GroupChatCompose from './GroupChatCompose';
 import ChatImage from './ChatImage';
+import { closeDetailsOnEscape } from './a11y';
 import { parseImageTag } from '../lib/imagePull';
 import {
   DEFAULT_REACTION_EMOJIS,
@@ -51,6 +52,7 @@ type GroupChatPanelProps = {
   onRefreshGroup: () => void;
   chatMessagesRef: Ref<HTMLDivElement>;
   activeGroupMessages: ChatMessage[];
+  messageLoadPhase: 'initial' | 'history' | null;
   isReactionOnlyMessage: (message: ChatMessage) => boolean;
   getReactionsForMessage: (message: ChatMessage) => MessageReactionSummary[];
   reactionPickerMessageId: string | null;
@@ -128,6 +130,7 @@ export default function GroupChatPanel({
   onRefreshGroup,
   chatMessagesRef,
   activeGroupMessages,
+  messageLoadPhase,
   isReactionOnlyMessage,
   getReactionsForMessage,
   reactionPickerMessageId,
@@ -194,6 +197,8 @@ export default function GroupChatPanel({
     () => activeGroupMessages.filter((message) => !isReactionOnlyMessage(message)),
     [activeGroupMessages, isReactionOnlyMessage]
   );
+  const showInitialMessageSkeleton = messageLoadPhase !== null && renderableMessages.length === 0;
+  const showHistorySyncIndicator = messageLoadPhase !== null && renderableMessages.length > 0;
   const messageVirtualizer = useVirtualizer({
     count: renderableMessages.length,
     getScrollElement: () => chatMessagesNodeRef.current,
@@ -216,7 +221,7 @@ export default function GroupChatPanel({
             </span>
           </div>
           <div className="group-meta-dropdowns">
-            <details className="group-members-dropdown">
+            <details className="group-members-dropdown" onKeyDown={closeDetailsOnEscape}>
               <summary>
                 Members {activeGroupMemberCount}
               </summary>
@@ -272,7 +277,6 @@ export default function GroupChatPanel({
                 )}
               </ul>
             </details>
-            {!isMobileNav ? desktopJoinCodeList : null}
           </div>
         </div>
         <div className="group-header-controls">
@@ -301,7 +305,18 @@ export default function GroupChatPanel({
               </button>
             </>
           ) : (
-            desktopInviteMenu
+            <>
+              {desktopInviteMenu}
+              {desktopJoinCodeList}
+              <button
+                type="button"
+                className="contact group-refresh-button group-desktop-refresh-btn"
+                onClick={onRefreshGroup}
+                disabled={syncingGroups}
+              >
+                {syncingGroups ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </>
           )}
         </div>
         {isMobileNav && mobileGroupOptionsOpen ? (
@@ -317,7 +332,9 @@ export default function GroupChatPanel({
             <div className="group-mobile-section group-mobile-section-actions">
               <div className="group-mobile-section-header">
                 <span className="group-mobile-section-title">Group actions</span>
-                <span className="group-mobile-section-subtitle">Rename, leave, or close group</span>
+                <span className="group-mobile-section-subtitle">
+                  {isActiveGroupAdmin ? 'Rename, leave, or close group' : 'Leave group'}
+                </span>
               </div>
               <div className="group-mobile-options-actions group-mobile-options-actions-secondary">
                 {mobileGroupActions}
@@ -330,7 +347,27 @@ export default function GroupChatPanel({
       </div>
 
       <div className="chat-messages" ref={setChatMessagesNode}>
-        {renderableMessages.length === 0 ? (
+        {showHistorySyncIndicator ? (
+          <div className="group-message-sync-indicator" role="status" aria-live="polite">
+            <span className="inline-spinner" aria-hidden="true" />
+            <span>{messageLoadPhase === 'initial' ? 'Syncing recent messages' : 'Syncing history'}</span>
+          </div>
+        ) : null}
+        {showInitialMessageSkeleton ? (
+          <div className="group-message-skeleton-list" role="status" aria-live="polite" aria-label="Loading group messages">
+            {[0, 1, 2, 3, 4].map((index) => (
+              <div
+                key={`group-message-skeleton-${index}`}
+                className={index % 3 === 1 ? 'group-message-skeleton-row outgoing' : 'group-message-skeleton-row incoming'}
+              >
+                <div className="group-message-skeleton-bubble">
+                  <span />
+                  <span />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : renderableMessages.length === 0 ? (
           <p className="chat-empty">No group messages yet.</p>
         ) : (
           <div
@@ -482,7 +519,7 @@ export default function GroupChatPanel({
                   {parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
                   ) : messageDisplayText ? (
-                    <div>{messageDisplayText}</div>
+                    <div className="message-text">{messageDisplayText}</div>
                   ) : null}
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">

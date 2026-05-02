@@ -3,6 +3,7 @@ import ChatSendIcon from './ChatSendIcon';
 import ChatImageIcon from './ChatImageIcon';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
 import { CHAT_IMAGE_FILE_ACCEPT } from '../lib/imagePull';
+import { insertChatComposerLineBreak, syncChatComposerText } from './chatComposeText';
 
 type DirectChatComposeProps = {
   replyPreviewText: string;
@@ -195,23 +196,29 @@ export default function DirectChatCompose({
             contentEditable
             suppressContentEditableWarning
             role="textbox"
-            aria-multiline={isMobileNav}
+            aria-multiline={true}
             aria-label="Message"
             data-placeholder="Type a message"
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !isMobileNav) {
+              if (event.key !== 'Enter') {
+                return;
+              }
+
+              if (event.shiftKey) {
+                event.preventDefault();
+                const nextValue = insertChatComposerLineBreak(event.currentTarget, maxMessageLength);
+                onMessageInputChange(nextValue);
+                setMsgLength(nextValue.length);
+                return;
+              }
+
+              if (!isMobileNav) {
                 event.preventDefault();
                 onSendMessage();
               }
             }}
             onInput={(event) => {
-              const raw = event.currentTarget.textContent ?? '';
-              const normalized = raw.replace(/\r/g, '');
-              const nextValue = isMobileNav ? normalized : normalized.replace(/\n/g, '');
-              const capped = nextValue.slice(0, maxMessageLength);
-              if (capped !== raw) {
-                event.currentTarget.textContent = capped;
-              }
+              const capped = syncChatComposerText(event.currentTarget, maxMessageLength);
               onMessageInputChange(capped);
               setMsgLength(capped.length);
             }}

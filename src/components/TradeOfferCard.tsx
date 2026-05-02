@@ -34,6 +34,7 @@ type TradeOfferCardProps = {
   shareUrl?: string;
   shareLabel?: string;
   shareCopied?: boolean;
+  tradeWindowLayout?: boolean;
   onCopyShareLink?: () => void;
   showCounterAction?: boolean;
   showEditAction?: boolean;
@@ -256,6 +257,7 @@ export default function TradeOfferCard({
   shareUrl,
   shareLabel = 'Share Link',
   shareCopied = false,
+  tradeWindowLayout = false,
   onCopyShareLink,
   showCounterAction = true,
   showEditAction = false,
@@ -267,11 +269,10 @@ export default function TradeOfferCard({
   onCancel,
   onEdit
 }: TradeOfferCardProps) {
-  const [partialFillPercent, setPartialFillPercent] = useState(50);
-  const [privateFillPayInput, setPrivateFillPayInput] = useState('');
-  const [privateFillBuyInput, setPrivateFillBuyInput] = useState('');
-  const [privateFillInputSide, setPrivateFillInputSide] = useState<'pay' | 'buy'>('pay');
-  const [showReverseHiddenRate, setShowReverseHiddenRate] = useState(false);
+  const [fillPayInput, setFillPayInput] = useState('');
+  const [fillBuyInput, setFillBuyInput] = useState('');
+  const [fillInputSide, setFillInputSide] = useState<'pay' | 'buy'>('pay');
+  const [showReverseRate, setShowReverseRate] = useState(false);
   const walletKey = currentWalletAddress?.trim().toLowerCase() ?? '';
   const isMaker = walletKey.length > 0 && offer.maker.toLowerCase() === walletKey;
   const isTaker = walletKey.length > 0 && offer.taker.toLowerCase() === walletKey;
@@ -348,12 +349,14 @@ export default function TradeOfferCard({
     assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[0]?.asset, assetPanels[1]?.asset) : null;
   const reverseRateLabel =
     assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[1]?.asset, assetPanels[0]?.asset) : null;
-  const hiddenForwardRateLabel = hiddenLiquidity ? defaultRateLabel : null;
-  const hiddenReverseRateLabel = hiddenLiquidity ? reverseRateLabel : null;
-  const visibleHiddenRateLabel =
-    showReverseHiddenRate && hiddenReverseRateLabel ? hiddenReverseRateLabel : hiddenForwardRateLabel;
-  const tradeRateLabel =
-    !hiddenLiquidity && defaultRateLabel ? `Price: ${defaultRateLabel}` : null;
+  const showRatioCard = Boolean((hiddenLiquidity || tradeWindowLayout) && defaultRateLabel);
+  const visibleRatioLabel =
+    showRatioCard && showReverseRate && reverseRateLabel ? reverseRateLabel : showRatioCard ? defaultRateLabel : null;
+  const tradeRateLabel = !hiddenLiquidity && !tradeWindowLayout && defaultRateLabel ? `Price: ${defaultRateLabel}` : null;
+  const visibleOrderValueLabel =
+    tradeWindowLayout && !hiddenLiquidity && assetPanels.length >= 2
+      ? `${assetPanels[0].displayText} for ${assetPanels[1].displayText}`
+      : '';
   const filledRequestAmount = hiddenLiquidity ? 0n : parseFillAmount(snapshot?.fillState?.filledRequestAmount);
   const remainingRequestAmount = hiddenLiquidity
     ? parseFillAmount(baseRequest?.amount)
@@ -434,77 +437,57 @@ export default function TradeOfferCard({
       remainingRequestAmount > 0n &&
       !snapshot?.counterParentTradeId
   );
-  const partialFillRequestAmount =
-    remainingRequestAmount <= 0n
-      ? 0n
-      : partialFillPercent >= 100
-        ? remainingRequestAmount
-        : (remainingRequestAmount * BigInt(partialFillPercent)) / 100n || 1n;
-  const partialFillOfferAmount =
-    remainingRequestAmount <= 0n || remainingOfferAmount <= 0n
-      ? 0n
-      : partialFillRequestAmount >= remainingRequestAmount
-        ? remainingOfferAmount
-        : (partialFillRequestAmount * remainingOfferAmount) / remainingRequestAmount;
-  const partialFillRequestLabel =
-    baseRequest && partialFillRequestAmount > 0n
-      ? `${formatTokenAmount(partialFillRequestAmount, baseRequest.decimals, 6)} ${baseRequest.symbol}`
-      : '--';
-  const partialFillOfferLabel =
-    baseOffer && partialFillOfferAmount > 0n
-      ? `${formatTokenAmount(partialFillOfferAmount, baseOffer.decimals, 6)} ${baseOffer.symbol}`
-      : '--';
-  const partialFillAmountInput =
-    baseRequest && partialFillRequestAmount > 0n ? formatExactTokenAmount(partialFillRequestAmount, baseRequest.decimals) : '';
   const partialFillDisabled = actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept);
-  const privateFillOfferUnitAmount = baseOffer ? parseFillAmount(baseOffer.amount) : 0n;
-  const privateFillRequestUnitAmount = baseRequest ? parseFillAmount(baseRequest.amount) : 0n;
-  const privateFillPayInputAmount =
-    hiddenLiquidity && baseRequest ? parseTokenAmountInput(privateFillPayInput, baseRequest.decimals) : null;
-  const privateFillBuyInputAmount =
-    hiddenLiquidity && baseOffer ? parseTokenAmountInput(privateFillBuyInput, baseOffer.decimals) : null;
-  const privateFillRequestAmount =
-    hiddenLiquidity && privateFillInputSide === 'buy' && privateFillBuyInputAmount !== null
-      ? quoteRequestAmountForOffer(privateFillBuyInputAmount, privateFillOfferUnitAmount, privateFillRequestUnitAmount)
-      : privateFillPayInputAmount;
-  const privateFillReceiveAmount =
-    hiddenLiquidity && privateFillInputSide === 'buy' && privateFillBuyInputAmount !== null
-      ? privateFillBuyInputAmount
-      : hiddenLiquidity &&
-          privateFillRequestAmount !== null &&
-          privateFillOfferUnitAmount > 0n &&
-          privateFillRequestUnitAmount > 0n
-        ? (privateFillRequestAmount * privateFillOfferUnitAmount) / privateFillRequestUnitAmount
-        : 0n;
-  const privateFillPayDisplayValue =
-    privateFillInputSide === 'buy'
-      ? baseRequest && privateFillRequestAmount !== null && privateFillRequestAmount > 0n
-        ? formatExactTokenAmount(privateFillRequestAmount, baseRequest.decimals)
-        : ''
-      : privateFillPayInput;
-  const privateFillBuyDisplayValue =
-    privateFillInputSide === 'pay'
-      ? baseOffer && privateFillReceiveAmount > 0n
-        ? formatExactTokenAmount(privateFillReceiveAmount, baseOffer.decimals)
-        : ''
-      : privateFillBuyInput;
-  const privateFillSubmitInput =
-    baseRequest && privateFillRequestAmount !== null && privateFillRequestAmount > 0n
-      ? formatExactTokenAmount(privateFillRequestAmount, baseRequest.decimals)
-      : privateFillPayInput;
-  const privateFillCanSubmit =
-    privateFillRequestAmount !== null && privateFillRequestAmount > 0n;
   const showPrivateFillInline = Boolean(canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest);
+  const showVisibleFillInline = Boolean(canShowPartialFill && !hiddenLiquidity && tradeWindowLayout && baseOffer && baseRequest);
+  const showInlineFill = showPrivateFillInline || showVisibleFillInline;
+  const fillOfferUnitAmount = showPrivateFillInline && baseOffer ? parseFillAmount(baseOffer.amount) : remainingOfferAmount;
+  const fillRequestUnitAmount = showPrivateFillInline && baseRequest ? parseFillAmount(baseRequest.amount) : remainingRequestAmount;
+  const fillPayInputAmount = showInlineFill && baseRequest ? parseTokenAmountInput(fillPayInput, baseRequest.decimals) : null;
+  const fillBuyInputAmount = showInlineFill && baseOffer ? parseTokenAmountInput(fillBuyInput, baseOffer.decimals) : null;
+  const fillRequestAmount =
+    showInlineFill && fillInputSide === 'buy' && fillBuyInputAmount !== null
+      ? quoteRequestAmountForOffer(fillBuyInputAmount, fillOfferUnitAmount, fillRequestUnitAmount)
+      : fillPayInputAmount;
+  const fillReceiveAmount =
+    showInlineFill && fillInputSide === 'buy' && fillBuyInputAmount !== null
+      ? fillBuyInputAmount
+      : showInlineFill && fillRequestAmount !== null && fillOfferUnitAmount > 0n && fillRequestUnitAmount > 0n
+        ? (fillRequestAmount * fillOfferUnitAmount) / fillRequestUnitAmount
+        : 0n;
+  const visibleFillTooHigh =
+    showVisibleFillInline && fillRequestAmount !== null && fillRequestAmount > remainingRequestAmount;
+  const fillPayDisplayValue =
+    fillInputSide === 'buy'
+      ? baseRequest && fillRequestAmount !== null && fillRequestAmount > 0n
+        ? formatExactTokenAmount(fillRequestAmount, baseRequest.decimals)
+        : ''
+      : fillPayInput;
+  const fillBuyDisplayValue =
+    fillInputSide === 'pay'
+      ? baseOffer && fillReceiveAmount > 0n
+        ? formatExactTokenAmount(fillReceiveAmount, baseOffer.decimals)
+        : ''
+      : fillBuyInput;
+  const fillSubmitInput =
+    baseRequest && fillRequestAmount !== null && fillRequestAmount > 0n
+      ? formatExactTokenAmount(fillRequestAmount, baseRequest.decimals)
+      : fillPayInput;
+  const fillCanSubmit = fillRequestAmount !== null && fillRequestAmount > 0n && !visibleFillTooHigh;
+  const defaultVisibleFillPayInput =
+    showVisibleFillInline && baseRequest && remainingRequestAmount > 0n
+      ? formatExactTokenAmount(remainingRequestAmount, baseRequest.decimals)
+      : '';
   const ratioResetKey = `${offer.escrowContract}:${offer.tradeId}:${baseOffer?.symbol ?? ''}:${
     baseOffer?.amount ?? ''
-  }:${baseRequest?.symbol ?? ''}:${baseRequest?.amount ?? ''}`;
+  }:${baseRequest?.symbol ?? ''}:${baseRequest?.amount ?? ''}:${remainingOfferAmount.toString()}:${remainingRequestAmount.toString()}`;
 
   useEffect(() => {
-    setShowReverseHiddenRate(false);
-    setPrivateFillPayInput('');
-    setPrivateFillBuyInput('');
-    setPrivateFillInputSide('pay');
-  }, [ratioResetKey]);
+    setShowReverseRate(false);
+    setFillPayInput(defaultVisibleFillPayInput);
+    setFillBuyInput('');
+    setFillInputSide('pay');
+  }, [defaultVisibleFillPayInput, ratioResetKey]);
 
   return (
     <div className={collapsed ? 'trade-card collapsed' : 'trade-card'}>
@@ -556,16 +539,16 @@ export default function TradeOfferCard({
       </div>
 
       {collapsed ? (
-        hiddenLiquidity && visibleHiddenRateLabel ? (
+        visibleRatioLabel ? (
           <button
             type="button"
             className="trade-card-ratio-card"
-            onClick={() => setShowReverseHiddenRate((value) => !value)}
+            onClick={() => setShowReverseRate((value) => !value)}
             title="Flip price ratio"
             aria-label="Flip price ratio"
           >
             <span>Price ratio</span>
-            <strong>{visibleHiddenRateLabel}</strong>
+            <strong>{visibleRatioLabel}</strong>
           </button>
         ) : assetPanels.length > 0 ? (
           <div className="trade-card-summary">
@@ -591,32 +574,38 @@ export default function TradeOfferCard({
 
       {!collapsed ? (
         <>
-          {hiddenLiquidity && visibleHiddenRateLabel ? (
+          {visibleRatioLabel ? (
             <button
               type="button"
               className="trade-card-ratio-card"
-              onClick={() => setShowReverseHiddenRate((value) => !value)}
+              onClick={() => setShowReverseRate((value) => !value)}
               title="Flip price ratio"
               aria-label="Flip price ratio"
             >
               <span>Price ratio</span>
-              <strong>{visibleHiddenRateLabel}</strong>
+              <strong>{visibleRatioLabel}</strong>
             </button>
+          ) : null}
+          {visibleOrderValueLabel ? (
+            <div className="trade-card-order-value">
+              <span>Order value</span>
+              <strong>{visibleOrderValueLabel}</strong>
+            </div>
           ) : null}
 
           {assetPanels.length > 0 ? (
             <div className="trade-card-grid">
               {assetPanels.map((panel) => {
-                const isPrivateFillPayPanel = showPrivateFillInline && panel.role === 'payment';
-                const isPrivateFillBuyPanel = showPrivateFillInline && panel.role === 'offer';
-                const isPrivateFillPanel = isPrivateFillPayPanel || isPrivateFillBuyPanel;
-                const showPanelMetaText = Boolean(panel.metaText && !isPrivateFillPanel);
+                const isInlineFillPayPanel = showInlineFill && panel.role === 'payment';
+                const isInlineFillBuyPanel = showInlineFill && panel.role === 'offer';
+                const isInlineFillPanel = isInlineFillPayPanel || isInlineFillBuyPanel;
+                const showPanelMetaText = Boolean(panel.metaText && !isInlineFillPanel);
 
                 return (
                   <div
                     key={`${panel.label}-${panel.asset.symbol}-${panel.asset.amount}`}
                     className={`trade-card-asset trade-card-asset-${panel.tone}${
-                      isPrivateFillPanel ? ' trade-card-asset-private-fill' : ''
+                      isInlineFillPanel ? ' trade-card-asset-private-fill trade-card-asset-inline-fill' : ''
                     }`}
                   >
                     <div className="trade-card-asset-head">
@@ -638,23 +627,23 @@ export default function TradeOfferCard({
                         </a>
                       ) : null}
                     </div>
-                    <strong>{panel.displayText}</strong>
-                    {isPrivateFillPayPanel && baseRequest ? (
+                    <strong>{showVisibleFillInline ? panel.asset.symbol : panel.displayText}</strong>
+                    {isInlineFillPayPanel && baseRequest ? (
                       <label className="trade-card-inline-private-input">
                         <span>Amount to pay</span>
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={privateFillPayDisplayValue}
+                          value={fillPayDisplayValue}
                           onFocus={() => {
-                            if (privateFillInputSide !== 'pay') {
-                              setPrivateFillPayInput(privateFillPayDisplayValue);
-                              setPrivateFillInputSide('pay');
+                            if (fillInputSide !== 'pay') {
+                              setFillPayInput(fillPayDisplayValue);
+                              setFillInputSide('pay');
                             }
                           }}
                           onChange={(event) => {
-                            setPrivateFillInputSide('pay');
-                            setPrivateFillPayInput(sanitizeTokenAmountInput(event.target.value));
+                            setFillInputSide('pay');
+                            setFillPayInput(sanitizeTokenAmountInput(event.target.value));
                           }}
                           placeholder={`0 ${baseRequest.symbol}`}
                           disabled={partialFillDisabled}
@@ -662,22 +651,22 @@ export default function TradeOfferCard({
                         />
                       </label>
                     ) : null}
-                    {isPrivateFillBuyPanel && baseOffer ? (
+                    {isInlineFillBuyPanel && baseOffer ? (
                       <label className="trade-card-inline-private-input trade-card-inline-private-input-buy">
                         <span>Amount to buy</span>
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={privateFillBuyDisplayValue}
+                          value={fillBuyDisplayValue}
                           onFocus={() => {
-                            if (privateFillInputSide !== 'buy') {
-                              setPrivateFillBuyInput(privateFillBuyDisplayValue);
-                              setPrivateFillInputSide('buy');
+                            if (fillInputSide !== 'buy') {
+                              setFillBuyInput(fillBuyDisplayValue);
+                              setFillInputSide('buy');
                             }
                           }}
                           onChange={(event) => {
-                            setPrivateFillInputSide('buy');
-                            setPrivateFillBuyInput(sanitizeTokenAmountInput(event.target.value));
+                            setFillInputSide('buy');
+                            setFillBuyInput(sanitizeTokenAmountInput(event.target.value));
                           }}
                           placeholder={`0 ${baseOffer.symbol}`}
                           disabled={partialFillDisabled}
@@ -737,26 +726,18 @@ export default function TradeOfferCard({
                 <button
                   type="button"
                   className="trade-card-action trade-card-action-accept"
-                  onClick={onAccept}
-                  disabled={actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)}
+                  onClick={showVisibleFillInline ? () => onPartialFill?.(fillSubmitInput) : onAccept}
+                  disabled={
+                    showVisibleFillInline
+                      ? partialFillDisabled || !fillCanSubmit
+                      : actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)
+                  }
                 >
                   {actionPending
                     ? 'Processing...'
                     : hasWalletForOpenAccept
-                      ? hasFillProgress
-                        ? 'Buy Rest'
-                        : 'Buy'
-                      : 'Connect wallet to buy'}
-                </button>
-              ) : null}
-              {isTaker ? (
-                <button
-                  type="button"
-                  className="trade-card-action trade-card-action-refuse"
-                  onClick={onDecline}
-                  disabled={actionPending}
-                >
-                  Refuse
+                      ? 'Buy'
+                    : 'Connect wallet to buy'}
                 </button>
               ) : null}
               {(isTaker || canAcceptOpenTakerTrade) &&
@@ -771,14 +752,24 @@ export default function TradeOfferCard({
                   Counter
                 </button>
               ) : null}
+              {isTaker ? (
+                <button
+                  type="button"
+                  className="trade-card-action trade-card-action-refuse"
+                  onClick={onDecline}
+                  disabled={actionPending}
+                >
+                  Refuse
+                </button>
+              ) : null}
               {canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest ? (
                 <div className="trade-card-private-fill-actions">
                   <div className="trade-card-private-fill-action-row">
                     <button
                       type="button"
                       className="trade-card-action trade-card-action-accept trade-card-partial-fill-submit"
-                      onClick={() => onPartialFill?.(privateFillSubmitInput)}
-                      disabled={partialFillDisabled || !privateFillCanSubmit}
+                      onClick={() => onPartialFill?.(fillSubmitInput)}
+                      disabled={partialFillDisabled || !fillCanSubmit}
                     >
                       {actionPending ? 'Processing...' : hasWalletForOpenAccept ? 'Pay & fill' : 'Connect wallet to buy'}
                     </button>
@@ -796,44 +787,6 @@ export default function TradeOfferCard({
                   <p className="trade-card-private-fill-note">
                     Private liquidity may fill partially. The contract settles what is available at this ratio and returns any unspent private payment.
                   </p>
-                </div>
-              ) : canShowPartialFill ? (
-                <div className="trade-card-partial-fill">
-                  <div className="trade-card-partial-fill-head">
-                    <span>Partial fill</span>
-                    <strong>{partialFillPercent}%</strong>
-                  </div>
-                  <div className="trade-card-partial-fill-terms">
-                    <div className="trade-card-partial-fill-term trade-card-partial-fill-send">
-                      <span>You send</span>
-                      <strong>{partialFillRequestLabel}</strong>
-                    </div>
-                    <div className="trade-card-partial-fill-link" aria-hidden="true">
-                      for
-                    </div>
-                    <div className="trade-card-partial-fill-term trade-card-partial-fill-receive">
-                      <span>You receive</span>
-                      <strong>{partialFillOfferLabel}</strong>
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="100"
-                    step="1"
-                    value={partialFillPercent}
-                    onChange={(event) => setPartialFillPercent(Number.parseInt(event.target.value, 10))}
-                    disabled={partialFillDisabled}
-                    aria-label="Partial fill percentage"
-                  />
-                  <button
-                    type="button"
-                    className="trade-card-action trade-card-action-counter trade-card-partial-fill-submit"
-                    onClick={() => onPartialFill?.(partialFillAmountInput)}
-                    disabled={partialFillDisabled || !partialFillAmountInput}
-                  >
-                    Fill Selected
-                  </button>
                 </div>
               ) : null}
             </div>

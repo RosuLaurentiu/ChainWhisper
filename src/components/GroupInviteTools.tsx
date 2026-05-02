@@ -5,6 +5,7 @@ import {
   shortenAddress,
   type ActiveGroupJoinCode
 } from '../lib/appShared';
+import { closeDetailsOnEscape } from './a11y';
 
 type GroupInviteMode = 'invite' | 'code';
 type GroupJoinCodeMode = 'single' | 'multi';
@@ -287,14 +288,21 @@ export function GroupInviteMenu({
   hasAesReady,
   isActiveGroupAdmin
 }: GroupInviteMenuProps) {
-  const menuClassName = mobile ? 'group-invite-menu group-invite-menu-mobile' : 'group-invite-menu';
+  const menuClassName = [
+    mobile ? 'group-invite-menu group-invite-menu-mobile' : 'group-invite-menu',
+    canInviteToActiveGroup ? '' : 'locked'
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const summaryLabel = canInviteToActiveGroup ? 'Invite' : 'Invite locked';
 
   return (
     <details
       className={menuClassName}
       key={`group-invite-menu:${mobile ? 'mobile' : 'desktop'}:${activeGroupId ?? 'none'}:${walletAddress.trim().toLowerCase()}`}
+      onKeyDown={closeDetailsOnEscape}
     >
-      <summary>Invite</summary>
+      <summary>{summaryLabel}</summary>
       <div className="group-invite-menu-panel">
         {canManageActiveGroupJoinCodes ? (
           <>
@@ -380,11 +388,11 @@ export function ActiveJoinCodeList({
     ? 'group-active-codes-dropdown group-active-codes-dropdown-mobile'
     : 'group-active-codes-dropdown';
   const summaryLabel = loadingActiveGroupJoinCodes
-    ? 'Active codes (loading...)'
-    : `Active codes ${activeGroupJoinCodes.length}`;
+    ? 'Codes loading...'
+    : `Codes ${activeGroupJoinCodes.length}`;
 
   return (
-    <details className={dropdownClassName}>
+    <details className={dropdownClassName} onKeyDown={closeDetailsOnEscape}>
       <summary>{summaryLabel}</summary>
       {loadingActiveGroupJoinCodes ? (
         <ul className="group-active-codes-list">

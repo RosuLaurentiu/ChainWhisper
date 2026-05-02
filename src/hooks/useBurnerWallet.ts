@@ -34,6 +34,7 @@ import {
   type SensitiveAction,
   type SignerSource
 } from '../lib/appShared';
+import { saveWalletPreference } from '../lib/appStorage';
 
 type UseBurnerWalletArgs = {
   activeSignerSource: SignerSource;
@@ -365,6 +366,7 @@ export function useBurnerWallet({
           setPendingBurnerInit(null);
           setPendingSensitiveAction(null);
           setBurnerPinInput('');
+          saveWalletPreference({ kind: 'app' });
           return 'needs-funding';
         }
 
@@ -397,6 +399,7 @@ export function useBurnerWallet({
         setPendingBurnerInit(null);
         setPendingSensitiveAction(null);
         setBurnerPinInput('');
+        saveWalletPreference({ kind: 'app' });
         const connectedAddress = burnerWallet.address;
         const connectedWalletKey = connectedAddress.toLowerCase();
         window.setTimeout(() => {

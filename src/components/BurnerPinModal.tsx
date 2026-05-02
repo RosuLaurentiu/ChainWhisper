@@ -1,4 +1,6 @@
+import { useRef } from 'react';
 import type { BurnerPinMode } from '../lib/appShared';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 type BurnerPinModalProps = {
   isOpen: boolean;
@@ -23,14 +25,25 @@ export default function BurnerPinModal({
   onClose,
   onSubmit
 }: BurnerPinModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalA11y({ dialogRef, isOpen, onClose });
+
   if (!isOpen) {
     return null;
   }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-        <h3>{burnerPinMode === 'set' ? 'Set PIN' : 'Unlock Wallet'}</h3>
+      <div
+        ref={dialogRef}
+        className="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="burner-pin-title"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="burner-pin-title">{burnerPinMode === 'set' ? 'Set PIN' : 'Unlock Wallet'}</h3>
         {error ? <p className="error">{error}</p> : null}
         <input
           value={burnerPinInput}

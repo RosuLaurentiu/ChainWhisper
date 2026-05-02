@@ -8,7 +8,7 @@ import {
   COTI_NETWORK,
   createStateBackupFingerprint,
   debugLog,
-  decodeMemoPlaintext,
+  decodeMemoPlaintextStrict,
   extractUserCiphertext,
   isWalletAddress,
   loadCotiEthersModule,
@@ -264,7 +264,10 @@ export function useStateBackupSync({
               try {
                 const decrypted = await signer.decryptValue(candidate as never);
                 const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-                const plain = decodeMemoPlaintext(raw);
+                const plain = decodeMemoPlaintextStrict(raw);
+                if (plain === null) {
+                  continue;
+                }
                 const parsed = parseStateBackupText(plain);
                 if (parsed) {
                   latestPayload = parsed;

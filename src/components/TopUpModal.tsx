@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI,
   BURNER_TOP_UP_MAX_MESSAGE_TARGET,
@@ -5,6 +6,7 @@ import {
   formatCotiAmount,
   formatTokenAmount
 } from '../lib/appShared';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 type TopUpModalProps = {
   isOpen: boolean;
@@ -35,6 +37,9 @@ export default function TopUpModal({
   onTopUpBurnerWithWallet,
   onClose
 }: TopUpModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalA11y({ dialogRef, isOpen, onClose });
+
   if (!isOpen) {
     return null;
   }
@@ -44,8 +49,16 @@ export default function TopUpModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card topup-modal" onClick={(event) => event.stopPropagation()}>
-        <h3>Top Up App Wallet</h3>
+      <div
+        ref={dialogRef}
+        className="modal-card topup-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="topup-modal-title"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="topup-modal-title">Top Up App Wallet</h3>
         <div className="topup-stats-grid">
           <div className="topup-stat">
             <span>Balance</span>

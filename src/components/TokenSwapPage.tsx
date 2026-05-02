@@ -7,15 +7,10 @@ import {
 
 type TokenSwapPageProps = {
   tokenToolsSummary: string;
-  groupRewardsContractAddress: string;
-  rewardsEnabled: boolean;
-  rewardsIndicatorLabel: string;
-  rewardsPublicReserveWei: bigint | null;
-  rewardsPublicPerInteractionWei: bigint | null;
+  shieldVaultTokenBalanceWei: bigint | null;
   rewardTokenDecimals: number;
   rewardTokenSymbol: string;
   privateRewardTokenSymbol: string;
-  rewardsLowReserve: boolean;
   swapAmountInput: string;
   onSwapAmountInputChange: (value: string) => void;
   swappingTokens: boolean;
@@ -36,23 +31,16 @@ type TokenSwapPageProps = {
 
 export default function TokenSwapPage({
   tokenToolsSummary,
-  groupRewardsContractAddress,
-  rewardsEnabled,
-  rewardsIndicatorLabel,
-  rewardsPublicReserveWei,
-  rewardsPublicPerInteractionWei,
+  shieldVaultTokenBalanceWei,
   rewardTokenDecimals,
   rewardTokenSymbol,
   privateRewardTokenSymbol,
-  rewardsLowReserve,
   swapAmountInput,
   onSwapAmountInputChange,
   swappingTokens,
   swapInputSymbol,
   swapDirection,
   onSwapDirectionChange,
-  swapFeeModeSelection,
-  onSwapFeeModeChange,
   loadingRewardBalances,
   swapFeeWei,
   swapTokenFeeAmount,
@@ -62,71 +50,41 @@ export default function TokenSwapPage({
   swapStatusMessage,
   error
 }: TokenSwapPageProps) {
+  const swapOutputSymbol = swapDirection === 'shield' ? privateRewardTokenSymbol : rewardTokenSymbol;
+  const routeLabel = swapDirection === 'shield' ? 'Public -> Private' : 'Private -> Public';
+  const receivePreview = swapAmountInput.trim() ? swapAmountInput : '0';
+  const shieldVaultBalanceLabel =
+    shieldVaultTokenBalanceWei !== null
+      ? `${formatTokenAmount(shieldVaultTokenBalanceWei, rewardTokenDecimals, 6)} ${rewardTokenSymbol}`
+      : loadingRewardBalances
+        ? 'Loading...'
+        : '--';
+  const shieldVaultStatusLabel =
+    shieldVaultTokenBalanceWei !== null ? 'Live reserve' : loadingRewardBalances ? 'Loading' : 'Unavailable';
+  const nativeFeeLabel =
+    swapFeeWei !== null ? `${formatCotiAmount(swapFeeWei)} COTI` : loadingRewardBalances ? 'Loading...' : '--';
+  const feeQuoteLabel = loadingRewardBalances
+    ? 'Loading...'
+    : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
+        swapTokenFeeAmount !== null ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6) : '--'
+      }`;
+
   return (
     <main className="swap-page-shell">
-      <section className="swap-page-panel wallet-meta">
-        <div className="wallet-section-header">
-          <div>
-            <span className="wallet-section-label">Token swap</span>
-            <h1 className="swap-page-title">Swap to private token</h1>
+      <section className="swap-page-panel">
+        <div className="swap-page-hero">
+          <div className="swap-page-heading">
+            <h1 className="swap-page-title">Whisper Shield</h1>
+            <p>Swap reward tokens between public and private balances on COTI Mainnet.</p>
           </div>
-          <span className="wallet-section-hint">{tokenToolsSummary}</span>
+          <div className="swap-balance-pill">
+            <span>Balance</span>
+            <strong>{tokenToolsSummary}</strong>
+          </div>
         </div>
 
-        <div className="swap-meta wallet-disclosure-body">
-          {groupRewardsContractAddress ? (
-            <div className="wallet-section-hint wallet-section-hint-note reward-summary">
-              <div className="reward-summary-row">
-                <span className="reward-line-label">
-                  Contract status
-                  <span
-                    className={rewardsEnabled ? 'reward-state-dot enabled' : 'reward-state-dot'}
-                    title={rewardsIndicatorLabel}
-                    aria-label={rewardsIndicatorLabel}
-                  />
-                </span>
-                <strong>
-                  {rewardsPublicReserveWei !== null
-                    ? `${formatTokenAmount(rewardsPublicReserveWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
-                    : '--'}
-                </strong>
-              </div>
-              <div className="reward-summary-row">
-                <span>Per message</span>
-                <strong>
-                  {rewardsPublicPerInteractionWei !== null
-                    ? `${formatTokenAmount(rewardsPublicPerInteractionWei * 2n, rewardTokenDecimals, 6)} ${rewardTokenSymbol}/${privateRewardTokenSymbol}`
-                    : '--'}
-                </strong>
-              </div>
-            </div>
-          ) : (
-            <p className="wallet-section-hint wallet-section-hint-note">
-              Rewards contract info is not available for this session yet.
-            </p>
-          )}
-          {rewardsLowReserve ? (
-            <p className="wallet-section-hint wallet-section-hint-note">
-              Rewards warning: insufficient public token rewards in rewards contract.
-            </p>
-          ) : null}
-
-          <div className="swap-field">
-            <label className="swap-label-sr" htmlFor="swap-page-amount-input">
-              Amount
-            </label>
-            <input
-              id="swap-page-amount-input"
-              type="text"
-              inputMode="decimal"
-              value={swapAmountInput}
-              onChange={(event) => onSwapAmountInputChange(event.target.value)}
-              placeholder={`0.0 ${swapInputSymbol}`}
-              disabled={swappingTokens}
-            />
-          </div>
-
-          <div className="swap-field">
+        <div className="swap-card">
+          <div className="swap-field swap-field-route">
             <span id="swap-page-direction-label" className="swap-label-sr">
               Swap direction
             </span>
@@ -138,7 +96,7 @@ export default function TokenSwapPage({
                 disabled={swappingTokens}
                 aria-pressed={swapDirection === 'shield'}
               >
-                {`${rewardTokenSymbol} to ${privateRewardTokenSymbol}`}
+                Shield
               </button>
               <button
                 type="button"
@@ -147,53 +105,52 @@ export default function TokenSwapPage({
                 disabled={swappingTokens}
                 aria-pressed={swapDirection === 'unshield'}
               >
-                {`${privateRewardTokenSymbol} to ${rewardTokenSymbol}`}
+                Unshield
               </button>
             </div>
           </div>
 
-          <div className="swap-field">
-            <div className="swap-field-label">
-              Fee payment
-              <span
-                className="swap-info-tip"
-                title={`Token mode tries ${privateRewardTokenSymbol} first, then ${rewardTokenSymbol}, then COTI fallback. COTI mode pays native fee only.`}
-                aria-label="Fee mode info"
-              >
-                i
-              </span>
+          <div className="swap-flow">
+            <div className="swap-asset-panel">
+              <div className="swap-panel-head">
+                <span>You pay</span>
+                <span>{swapInputSymbol}</span>
+              </div>
+              <div className="swap-panel-main">
+                <label className="swap-label-sr" htmlFor="swap-page-amount-input">
+                  Amount
+                </label>
+                <input
+                  id="swap-page-amount-input"
+                  type="text"
+                  inputMode="decimal"
+                  value={swapAmountInput}
+                  onChange={(event) => onSwapAmountInputChange(event.target.value)}
+                  placeholder="0.0"
+                  disabled={swappingTokens}
+                />
+                <span className="swap-token-chip">{swapInputSymbol}</span>
+              </div>
+              <p>Wallet: {tokenToolsSummary}</p>
             </div>
-            <div className="swap-pill-switch" role="group" aria-label="Fee payment mode">
-              <button
-                type="button"
-                className={swapFeeModeSelection === 'token' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => onSwapFeeModeChange('token')}
-                disabled={swappingTokens}
-                aria-pressed={swapFeeModeSelection === 'token'}
-              >
-                Token
-              </button>
-              <button
-                type="button"
-                className={swapFeeModeSelection === 'coti' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => onSwapFeeModeChange('coti')}
-                disabled={swappingTokens}
-                aria-pressed={swapFeeModeSelection === 'coti'}
-              >
-                COTI
-              </button>
+
+            <div className="swap-route-chip">{routeLabel}</div>
+
+            <div className="swap-asset-panel swap-asset-panel-output">
+              <div className="swap-panel-head">
+                <span>You receive</span>
+                <span>Estimated</span>
+              </div>
+              <div className="swap-panel-main swap-panel-main-readonly">
+                <strong>{receivePreview}</strong>
+                <span className="swap-token-chip swap-token-chip-output">{swapOutputSymbol}</span>
+              </div>
             </div>
           </div>
 
           <div className="swap-quote-row">
             <span>Fee quote</span>
-            <strong>
-              {loadingRewardBalances
-                ? 'Loading...'
-                : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
-                    swapTokenFeeAmount !== null ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6) : '--'
-                  }`}
-            </strong>
+            <strong>{feeQuoteLabel}</strong>
           </div>
 
           <button
@@ -206,8 +163,40 @@ export default function TokenSwapPage({
           >
             {swapButtonLabel}
           </button>
-          {swapStatusMessage ? <p className="wallet-section-hint wallet-section-hint-note swap-status-note">{swapStatusMessage}</p> : null}
-          {error ? <p className="error">{error}</p> : null}
+
+          {swapStatusMessage ? <p className="swap-status-note">{swapStatusMessage}</p> : null}
+          {error ? <p className="error swap-error">{error}</p> : null}
+
+          <div className="swap-stats-header">
+            <span>Shield vault</span>
+            <strong>{shieldVaultStatusLabel}</strong>
+          </div>
+
+          <div className="swap-mini-stats">
+            <div>
+              <span className="reward-line-label">
+                Reserve status
+                <span
+                  className={shieldVaultTokenBalanceWei !== null ? 'reward-state-dot enabled' : 'reward-state-dot'}
+                  title={shieldVaultStatusLabel}
+                  aria-label={shieldVaultStatusLabel}
+                />
+              </span>
+              <strong>{shieldVaultStatusLabel}</strong>
+            </div>
+            <div>
+              <span>{`${rewardTokenSymbol} in shield vault`}</span>
+              <strong>{shieldVaultBalanceLabel}</strong>
+            </div>
+            <div>
+              <span>COTI fee</span>
+              <strong>{nativeFeeLabel}</strong>
+            </div>
+            <div>
+              <span>Route</span>
+              <strong>{routeLabel}</strong>
+            </div>
+          </div>
         </div>
       </section>
     </main>

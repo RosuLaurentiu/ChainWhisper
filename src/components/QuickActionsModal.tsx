@@ -1,4 +1,5 @@
-import type { FormEvent } from 'react';
+import { useRef, type FormEvent } from 'react';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 type QuickActionTab = 'contact' | 'create-group' | 'join-group';
 
@@ -51,17 +52,30 @@ export default function QuickActionsModal({
   onJoinGroupWithCode,
   error
 }: QuickActionsModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalA11y({ dialogRef, isOpen, onClose });
+
   if (!isOpen) {
     return null;
   }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card quick-actions-modal" onClick={(event) => event.stopPropagation()}>
-        <h3>New</h3>
-        <div className="quick-actions-tabs">
+      <div
+        ref={dialogRef}
+        className="modal-card quick-actions-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="quick-actions-title"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="quick-actions-title">New</h3>
+        <div className="quick-actions-tabs" role="tablist" aria-label="Quick actions">
           <button
             type="button"
+            role="tab"
+            aria-selected={quickActionTab === 'contact'}
             className={quickActionTab === 'contact' ? 'active' : undefined}
             onClick={() => onSelectTab('contact')}
           >
@@ -69,6 +83,8 @@ export default function QuickActionsModal({
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={quickActionTab === 'create-group'}
             className={quickActionTab === 'create-group' ? 'active' : undefined}
             onClick={() => onSelectTab('create-group')}
           >
@@ -76,6 +92,8 @@ export default function QuickActionsModal({
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={quickActionTab === 'join-group'}
             className={quickActionTab === 'join-group' ? 'active' : undefined}
             onClick={() => onSelectTab('join-group')}
           >

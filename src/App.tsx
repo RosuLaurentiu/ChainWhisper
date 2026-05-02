@@ -7,9 +7,11 @@ import HomePage from './components/HomePage';
 import { ActiveJoinCodeList, GroupInviteMenu } from './components/GroupInviteTools';
 import MobileBottomNav from './components/MobileBottomNav';
 import WalletHeaderPanel from './components/WalletHeaderPanel';
+import { readChatComposerText } from './components/chatComposeText';
 import { useBurnerWallet } from './hooks/useBurnerWallet';
 import { useNotificationSound } from './hooks/useNotificationSound';
 import { useStateBackupSync } from './hooks/useStateBackupSync';
+import { useStoredWalletPreference } from './hooks/useStoredWalletPreference';
 import { useWalletOnboarding } from './hooks/useWalletOnboarding';
 import {
   buildMessageReferenceKey,
@@ -72,12 +74,17 @@ import {
 } from './lib/appLookup';
 import {
   getStoredGroupRemovalNoticeMarker as getStoredGroupRemovalNoticeMarkerStorage,
+  getPreferredBrowserWalletId,
   setStoredGroupRemovalNoticeMarker as setStoredGroupRemovalNoticeMarkerStorage
 } from './lib/appStorage';
 import { createEncryptedImageTagFromFile } from './lib/imagePull';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
-import { filterAllowedBrowserWalletOptions, orderInjectedWalletOptions } from './lib/walletOptions';
+import {
+  filterAllowedBrowserWalletOptions,
+  getPreferredInjectedWalletOption,
+  orderInjectedWalletOptions
+} from './lib/walletOptions';
 import {
   getPathForAppPage,
   resolveAppRouteFromLocation,
@@ -116,7 +123,7 @@ import {
   COTI_NETWORK,
   createCotiBrowserProvider,
   debugLog,
-  decodeMemoPlaintext,
+  decodeMemoPlaintextStrict,
   encodeCompactMemoPlaintext,
   DEFAULT_GROUP_JOIN_CODE_MULTI_USES,
   DEFAULT_NICKNAME_MAX_BYTES,
@@ -225,6 +232,8 @@ const BACKGROUND_DEEP_SYNC_DELAY_MS = 500;
 const GROUP_MESSAGE_PREFETCH_LIMIT = 6;
 const GROUP_MESSAGE_PREFETCH_BATCH_SIZE = 2;
 
+type GroupMessageLoadPhase = 'initial' | 'history';
+
 const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   !offer.hiddenLiquidity &&
   offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
@@ -241,6 +250,7 @@ export default function App() {
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
   const [messagesByGroup, setMessagesByGroup] = useState<Record<string, ChatMessage[]>>({});
+  const [groupMessageLoadPhaseByGroup, setGroupMessageLoadPhaseByGroup] = useState<Record<string, GroupMessageLoadPhase>>({});
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
   const {
@@ -347,12 +357,7 @@ export default function App() {
     topUpAmountWei,
     requiredFeeWei,
     tipNativeBalanceWei,
-    groupRewardsContractAddress,
-    groupRewardsPaused,
-    rewardsContractPaused,
-    rewardsCallerAllowed,
-    rewardsPublicPerInteractionWei,
-    rewardsPublicReserveWei,
+    shieldVaultTokenBalanceWei,
     rewardTokenBalanceWei,
     privateRewardTokenBalanceWei,
     rewardTokenSymbol,
@@ -378,6 +383,7 @@ export default function App() {
     setRewardsCallerAllowed,
     setRewardsPublicPerInteractionWei,
     setRewardsPublicReserveWei,
+    setShieldVaultTokenBalanceWei,
     setRewardTokenBalanceWei,
     setPrivateRewardTokenBalanceWei,
     setRewardTokenSymbol,
@@ -635,6 +641,10 @@ export default function App() {
   const groupRemovalNoticeMarkersLoadedRef = useRef(false);
   const conversationDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
   const groupDeepBackfillDoneRef = useRef<Record<string, boolean>>({});
+  const memoAesRecoveryAttemptedRef = useRef<Record<string, boolean>>({});
+  const messagesByGroupRef = useRef<Record<string, ChatMessage[]>>({});
+  const groupMessageLoadPhaseByGroupRef = useRef<Record<string, GroupMessageLoadPhase>>({});
+  const prefetchedGroupMessagesRef = useRef<Record<string, boolean>>({});
   const groupsRef = useRef<GroupSummary[]>([]);
   const groupInvitesRef = useRef<GroupInvite[]>([]);
   const activeGroupIdRef = useRef<number | null>(null);
@@ -651,6 +661,38 @@ export default function App() {
   const encodeMemoForActiveSignerRef = useRef<(plain: string) => string>((plain) => plain);
   const clearCachedStateBackupMemo = useCallback(() => {
     clearCachedStateBackupMemoRef.current();
+  }, []);
+  const setGroupMessageLoadPhase = useCallback((groupId: number, phase: GroupMessageLoadPhase) => {
+    if (!Number.isFinite(groupId) || groupId <= 0) {
+      return;
+    }
+
+    const groupKey = String(Math.floor(groupId));
+    if (groupMessageLoadPhaseByGroupRef.current[groupKey] === phase) {
+      return;
+    }
+
+    const nextPhases = {
+      ...groupMessageLoadPhaseByGroupRef.current,
+      [groupKey]: phase
+    };
+    groupMessageLoadPhaseByGroupRef.current = nextPhases;
+    setGroupMessageLoadPhaseByGroup(nextPhases);
+  }, []);
+  const clearGroupMessageLoadPhase = useCallback((groupId: number) => {
+    if (!Number.isFinite(groupId) || groupId <= 0) {
+      return;
+    }
+
+    const groupKey = String(Math.floor(groupId));
+    if (!groupMessageLoadPhaseByGroupRef.current[groupKey]) {
+      return;
+    }
+
+    const nextPhases = { ...groupMessageLoadPhaseByGroupRef.current };
+    delete nextPhases[groupKey];
+    groupMessageLoadPhaseByGroupRef.current = nextPhases;
+    setGroupMessageLoadPhaseByGroup(nextPhases);
   }, []);
   const loadMyNicknameFromChainRef = useRef<(address: string) => Promise<string>>(async () => '');
   const runPostConnectDataSyncUntilAppliedRef = useRef<(address: string) => Promise<void>>(async () => {});
@@ -670,10 +712,14 @@ export default function App() {
       } catch {}
     }, 300);
   }, []);
+  const walletPreference = useStoredWalletPreference();
+  const preferredBrowserWalletId = getPreferredBrowserWalletId(walletPreference);
   const {
+    activeProvider,
     activeSignerSource,
+    activateBrowserWalletSession,
+    browserWalletSession,
     chainId,
-    connectAndOnboard,
     connectingMethod,
     connectingWalletLabel,
     connectionMethod,
@@ -765,6 +811,12 @@ export default function App() {
   resetBurnerSessionRef.current = resetBurnerSession;
 
   useEffect(() => {
+    if (preferredBrowserWalletId) {
+      setSelectedInjectedWalletId(preferredBrowserWalletId);
+    }
+  }, [preferredBrowserWalletId, setSelectedInjectedWalletId]);
+
+  useEffect(() => {
     const prev = previousWalletAddressRef.current || '';
     const next = (walletAddress || '').trim();
     const prevKey = prev.toLowerCase();
@@ -779,6 +831,10 @@ export default function App() {
     }
     previousWalletAddressRef.current = next;
   }, [walletAddress]);
+
+  useEffect(() => {
+    messagesByGroupRef.current = messagesByGroup;
+  }, [messagesByGroup]);
 
   useEffect(() => {
     groupsRef.current = groups;
@@ -947,6 +1003,12 @@ export default function App() {
     }
     return messagesByGroup[String(activeGroupId)] ?? [];
   }, [activeGroupId, messagesByGroup]);
+  const activeGroupMessageLoadPhase = useMemo(() => {
+    if (activeGroupId === null) {
+      return null;
+    }
+    return groupMessageLoadPhaseByGroup[String(activeGroupId)] ?? null;
+  }, [activeGroupId, groupMessageLoadPhaseByGroup]);
   const activeThreadKey = useMemo(() => {
     if (activeGroupId !== null) {
       return `group:${activeGroupId}`;
@@ -1854,28 +1916,6 @@ export default function App() {
       cancelled = true;
     };
   }, [activeTradeOffers, privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
-  const rewardsConfigured = Boolean(groupRewardsContractAddress);
-  const rewardsEnabled =
-    groupRewardsPaused === false && rewardsContractPaused === false && rewardsCallerAllowed === true;
-  const rewardsLowReserve = Boolean(
-    groupRewardsContractAddress &&
-      rewardsPublicReserveWei !== null &&
-      rewardsPublicPerInteractionWei !== null &&
-      rewardsPublicPerInteractionWei > 0n &&
-      rewardsPublicReserveWei < rewardsPublicPerInteractionWei
-  );
-  const rewardsIndicatorLabel = !rewardsConfigured
-    ? 'Rewards not configured on-chain.'
-    : groupRewardsPaused === true
-      ? 'Rewards paused by group contract.'
-      : rewardsContractPaused === true
-        ? 'Rewards paused by rewards contract.'
-        : rewardsCallerAllowed === false
-          ? 'Group contract is not allowed in rewards contract.'
-          : rewardsEnabled
-            ? 'Rewards enabled.'
-            : 'Rewards configured.';
-
   const groupRemovalNoticeMarkerStorage = {
     groupRemovalNoticeMarkersLoadedRef,
     groupRemovalNoticeMarkersRef,
@@ -2800,6 +2840,79 @@ export default function App() {
   };
   encodeMemoForActiveSignerRef.current = encodeMemoForActiveSigner;
 
+  const decodeDecryptedMemoPlaintext = (decrypted: string | bigint): string => {
+    const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
+    const plain = decodeMemoPlaintextStrict(raw);
+    if (plain === null) {
+      throw new Error('Decrypted memo is not a valid ChainWhisper payload.');
+    }
+    return plain;
+  };
+
+  const tryRecoverRegisteredMemoAes = async (
+    signer: Wallet | JsonRpcSigner,
+    cacheKey: string,
+    previousError: unknown
+  ): Promise<boolean> => {
+    if (activeSignerSource !== 'metamask' || memoAesRecoveryAttemptedRef.current[cacheKey]) {
+      return false;
+    }
+
+    memoAesRecoveryAttemptedRef.current[cacheKey] = true;
+    const previousOnboardInfo = signer.getUserOnboardInfo();
+    try {
+      signer.clearUserOnboardInfo();
+      setOnboardStatus('Recovering COTI AES key...');
+      await signer.generateOrRecoverAes();
+      const recoveredOnboardInfo = signer.getUserOnboardInfo();
+      if (!recoveredOnboardInfo?.aesKey) {
+        throw previousError instanceof Error ? previousError : new Error('AES key recovery did not return a key.');
+      }
+
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], recoveredOnboardInfo)
+      }));
+      setOnboardStatus('AES key ready');
+      return true;
+    } catch {
+      signer.clearUserOnboardInfo();
+      if (previousOnboardInfo) {
+        signer.setUserOnboardInfo(previousOnboardInfo);
+      }
+      setOnboardStatus(previousOnboardInfo?.aesKey ? 'AES key ready' : 'Not onboarded');
+      return false;
+    }
+  };
+
+  const decryptMemoPlaintextWithRecovery = async (
+    signer: Wallet | JsonRpcSigner,
+    cacheKey: string,
+    ciphertext: unknown
+  ): Promise<string> => {
+    try {
+      const decrypted = await signer.decryptValue(ciphertext as never);
+      return decodeDecryptedMemoPlaintext(decrypted);
+    } catch (firstError) {
+      const recovered = await tryRecoverRegisteredMemoAes(signer, cacheKey, firstError);
+      if (!recovered) {
+        throw firstError;
+      }
+
+      const decrypted = await signer.decryptValue(ciphertext as never);
+      return decodeDecryptedMemoPlaintext(decrypted);
+    }
+  };
+
+  const parseEncryptedChatMessagePayload = async (
+    signer: Wallet | JsonRpcSigner,
+    cacheKey: string,
+    ciphertext: unknown
+  ): Promise<ReturnType<typeof parseChatMessagePayload>> => {
+    const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, ciphertext);
+    return parseChatMessagePayload(plain);
+  };
+
   const resolveSubmitSelector = async (): Promise<string> => {
     if (submitSelectorRef.current) {
       return submitSelectorRef.current;
@@ -3292,9 +3405,7 @@ export default function App() {
           let isSystemSelfMessage = false;
           if (selfCiphertext && selfCiphertext.value.length > 0) {
             try {
-              const decrypted = await signer.decryptValue(selfCiphertext as never);
-              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const plain = decodeMemoPlaintext(raw);
+              const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, selfCiphertext);
               const backupPayload = parseStateBackupText(plain);
               if (backupPayload) {
                 isSystemSelfMessage = true;
@@ -3360,10 +3471,7 @@ export default function App() {
           let reactionEmoji: string | undefined;
           if (userCiphertext && userCiphertext.value.length > 0) {
             try {
-              const decrypted = await signer.decryptValue(userCiphertext as never);
-              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const plain = decodeMemoPlaintext(raw);
-              const parsedMessage = parseChatMessagePayload(plain);
+              const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
               messageText = parsedMessage.cleanText;
               replyToMessageId = parsedMessage.replyToMessageId;
               replyToText = parsedMessage.replyToText;
@@ -3430,10 +3538,7 @@ export default function App() {
         let reactionEmoji: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
-            const decrypted = await signer.decryptValue(userCiphertext as never);
-            const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-            const plain = decodeMemoPlaintext(raw);
-            const parsedMessage = parseChatMessagePayload(plain);
+            const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
             messageText = parsedMessage.cleanText;
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
@@ -3497,9 +3602,7 @@ export default function App() {
           const selfCiphertext = extractUserCiphertext(args?.messageForSender);
           if (selfCiphertext && selfCiphertext.value.length > 0) {
             try {
-              const decrypted = await signer.decryptValue(selfCiphertext as never);
-              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const plain = decodeMemoPlaintext(raw);
+              const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, selfCiphertext);
               const backupPayload = parseStateBackupText(plain);
               if (backupPayload) {
                 if (
@@ -3554,10 +3657,7 @@ export default function App() {
           let reactionEmoji: string | undefined;
           if (userCiphertext && userCiphertext.value.length > 0) {
             try {
-              const decrypted = await signer.decryptValue(userCiphertext as never);
-              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const plain = decodeMemoPlaintext(raw);
-              const parsedMessage = parseChatMessagePayload(plain);
+              const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
               messageText = parsedMessage.cleanText;
               replyToMessageId = parsedMessage.replyToMessageId;
               replyToText = parsedMessage.replyToText;
@@ -3623,10 +3723,7 @@ export default function App() {
         let reactionEmoji: string | undefined;
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
-            const decrypted = await signer.decryptValue(userCiphertext as never);
-            const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-            const plain = decodeMemoPlaintext(raw);
-            const parsedMessage = parseChatMessagePayload(plain);
+            const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
             messageText = parsedMessage.cleanText;
             replyToMessageId = parsedMessage.replyToMessageId;
             replyToText = parsedMessage.replyToText;
@@ -4221,9 +4318,7 @@ export default function App() {
 
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
-            const decrypted = await signer.decryptValue(userCiphertext as never);
-            const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-            const plain = decodeMemoPlaintext(raw);
+            const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, userCiphertext);
             if (from.toLowerCase() === walletKey) {
               const backupPayload = parseStateBackupText(plain);
               if (backupPayload) {
@@ -4298,9 +4393,7 @@ export default function App() {
 
         if (userCiphertext && userCiphertext.value.length > 0) {
           try {
-            const decrypted = await signer.decryptValue(userCiphertext as never);
-            const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-            const plain = decodeMemoPlaintext(raw);
+            const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, userCiphertext);
             if (recipient.toLowerCase() === walletKey) {
               const backupPayload = parseStateBackupText(plain);
               // self-message logs are also present in incoming logs; skip here to avoid duplicates
@@ -4485,6 +4578,74 @@ export default function App() {
     });
   }, [activeContact, activeGroupId, activeMessages.length, walletAddress, hasAesReady]);
 
+  const getTrackedGroupMessageLoad = (options?: SyncGroupOptions): { groupId: number; phase: GroupMessageLoadPhase } | null => {
+    const selectedGroupId = activeGroupIdRef.current;
+    if (
+      selectedGroupId === null ||
+      options?.prefetchGroupId ||
+      (options?.overviewOnly && !options?.activeMessagesOnly)
+    ) {
+      return null;
+    }
+
+    const tracksActiveGroupMessages = Boolean(options?.activeMessagesOnly || options?.deep);
+    if (!tracksActiveGroupMessages) {
+      return null;
+    }
+
+    const groupKey = String(selectedGroupId);
+    const hasLoadedMessages = (messagesByGroupRef.current[groupKey]?.length ?? 0) > 0;
+    return {
+      groupId: selectedGroupId,
+      phase: options?.deep || hasLoadedMessages ? 'history' : 'initial'
+    };
+  };
+
+  const isSameTrackedGroupMessageLoad = (
+    current: { groupId: number; phase: GroupMessageLoadPhase } | null,
+    next: { groupId: number; phase: GroupMessageLoadPhase } | null
+  ): boolean => Boolean(current && next && current.groupId === next.groupId);
+
+  const isGroupEntryBeforeMessage = (entry: GroupMessageEntry, message: ChatMessage): boolean => {
+    const entryBlock = toSafeNumber(entry.blockNumber);
+    const messageBlock = toSafeNumber(message.blockNumber);
+    if (entryBlock > 0 && messageBlock > 0) {
+      if (entryBlock !== messageBlock) {
+        return entryBlock < messageBlock;
+      }
+      return toSafeNumber(entry.logIndex) < toSafeNumber(message.logIndex);
+    }
+
+    const entryTimestamp = toSafeNumber(entry.timestamp);
+    const messageTimestamp = toSafeNumber(message.timestamp);
+    return entryTimestamp > 0 && messageTimestamp > 0 && entryTimestamp < messageTimestamp;
+  };
+
+  const preserveActiveGroupScrollForPrependedEntries = (groupId: number, entries: GroupMessageEntry[]) => {
+    if (activeGroupIdRef.current !== groupId || stickToBottomRef.current || entries.length === 0) {
+      return;
+    }
+
+    const container = chatMessagesRef.current;
+    const groupKey = String(groupId);
+    const oldestExistingMessage = (messagesByGroupRef.current[groupKey] ?? []).find(
+      (message) => toSafeNumber(message.blockNumber) > 0 || toSafeNumber(message.timestamp) > 0
+    );
+    if (!container || !oldestExistingMessage) {
+      return;
+    }
+
+    const hasPrependedEntry = entries.some((entry) => isGroupEntryBeforeMessage(entry, oldestExistingMessage));
+    if (!hasPrependedEntry) {
+      return;
+    }
+
+    pendingThreadWindowScrollRestoreRef.current = {
+      threadKey: `group:${groupId}`,
+      previousHeight: container.scrollHeight
+    };
+  };
+
   const syncGroupData = async (options?: SyncGroupOptions) => {
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
@@ -4492,10 +4653,25 @@ export default function App() {
       return;
     }
 
+    const trackedGroupLoad = getTrackedGroupMessageLoad(options);
+    if (trackedGroupLoad) {
+      setGroupMessageLoadPhase(trackedGroupLoad.groupId, trackedGroupLoad.phase);
+    }
+
     if (syncGroupDataInFlightRef.current) {
       const pending = pendingGroupSyncOptionsRef.current;
       const mergedDeep = Boolean(options?.deep || pending?.deep);
       const mergedActiveMessagesOnly = !mergedDeep && Boolean(options?.activeMessagesOnly || pending?.activeMessagesOnly);
+      const nextPrefetchGroupId = toSafeNumber(options?.prefetchGroupId);
+      const pendingPrefetchGroupId = toSafeNumber(pending?.prefetchGroupId);
+      const mergedPrefetchGroupId =
+        !mergedDeep && !mergedActiveMessagesOnly
+          ? nextPrefetchGroupId > 0
+            ? nextPrefetchGroupId
+            : pendingPrefetchGroupId > 0
+              ? pendingPrefetchGroupId
+              : undefined
+          : undefined;
       pendingGroupSyncOptionsRef.current = {
         deep: mergedDeep,
         background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
@@ -4504,7 +4680,9 @@ export default function App() {
           : pending
             ? Boolean(options?.overviewOnly && pending.overviewOnly)
             : Boolean(options?.overviewOnly),
-        activeMessagesOnly: mergedActiveMessagesOnly
+        activeMessagesOnly: mergedActiveMessagesOnly,
+        wideLoad: Boolean(options?.wideLoad || pending?.wideLoad),
+        prefetchGroupId: mergedPrefetchGroupId
       };
       return;
     }
@@ -4526,6 +4704,7 @@ export default function App() {
         return;
       }
       const selectedActiveGroupId = activeGroupIdRef.current;
+      const requestedPrefetchGroupId = toSafeNumber(options?.prefetchGroupId);
 
       const syncActiveGroupMessagesFast = async (
         groupId: number,
@@ -4639,10 +4818,7 @@ export default function App() {
           let reactionEmoji: string | undefined;
           if (userCiphertext && userCiphertext.value.length > 0) {
             try {
-              const decrypted = await signer.decryptValue(userCiphertext as never);
-              const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-              const plain = decodeMemoPlaintext(raw);
-              const parsedMessage = parseChatMessagePayload(plain);
+              const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
               messageText = parsedMessage.cleanText;
               replyToMessageId = parsedMessage.replyToMessageId;
               replyToText = parsedMessage.replyToText;
@@ -4720,7 +4896,8 @@ export default function App() {
 
         if (entries.length > 0) {
           const activeGroupKey = String(groupId);
-          const existingGroupMessages = messagesByGroup[activeGroupKey] ?? [];
+          preserveActiveGroupScrollForPrependedEntries(groupId, entries);
+          const existingGroupMessages = messagesByGroupRef.current[activeGroupKey] ?? [];
           if (!fastOptions?.prefetch && (stickToBottomRef.current || existingGroupMessages.length === 0)) {
             pendingForcedBottomAnchorThreadKeyRef.current = `group:${groupId}`;
           }
@@ -4781,6 +4958,26 @@ export default function App() {
         groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = groupToBlock;
         return latestIncomingByGroup;
       };
+
+      if (requestedPrefetchGroupId > 0) {
+        const prefetchGroupMeta = groupsRef.current.find((group) => group.id === requestedPrefetchGroupId);
+        await syncActiveGroupMessagesFast(
+          requestedPrefetchGroupId,
+          {
+            knownLastBlock: prefetchGroupMeta?.lastBlock && prefetchGroupMeta.lastBlock > 0
+              ? prefetchGroupMeta.lastBlock
+              : undefined,
+            prefetch: true,
+            wideLoad: options?.wideLoad
+          }
+        );
+        const nextOnboardInfo = signer.getUserOnboardInfo();
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+        }));
+        return;
+      }
 
       if (options?.activeMessagesOnly && selectedActiveGroupId !== null) {
         const activeGroupMeta = groupsRef.current.find((g) => g.id === selectedActiveGroupId);
@@ -5379,10 +5576,7 @@ export default function App() {
             let reactionEmoji: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
-                const decrypted = await signer.decryptValue(userCiphertext as never);
-                const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-                const plain = decodeMemoPlaintext(raw);
-                const parsedMessage = parseChatMessagePayload(plain);
+                const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
                 messageText = parsedMessage.cleanText;
                 replyToMessageId = parsedMessage.replyToMessageId;
                 replyToText = parsedMessage.replyToText;
@@ -5441,10 +5635,7 @@ export default function App() {
             let reactionEmoji: string | undefined;
             if (userCiphertext && userCiphertext.value.length > 0) {
               try {
-                const decrypted = await signer.decryptValue(userCiphertext as never);
-                const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-                const plain = decodeMemoPlaintext(raw);
-                const parsedMessage = parseChatMessagePayload(plain);
+                const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
                 messageText = parsedMessage.cleanText;
                 replyToMessageId = parsedMessage.replyToMessageId;
                 replyToText = parsedMessage.replyToText;
@@ -5563,7 +5754,8 @@ export default function App() {
             }
             if (selectedActiveGroupId === groupId) {
               const activeGroupKey = String(groupId);
-              const existingGroupMessages = messagesByGroup[activeGroupKey] ?? [];
+              preserveActiveGroupScrollForPrependedEntries(groupId, entries);
+              const existingGroupMessages = messagesByGroupRef.current[activeGroupKey] ?? [];
               if (stickToBottomRef.current || existingGroupMessages.length === 0) {
                 pendingForcedBottomAnchorThreadKeyRef.current = `group:${groupId}`;
               }
@@ -5728,6 +5920,10 @@ export default function App() {
 
       const pendingOptions = pendingGroupSyncOptionsRef.current;
       pendingGroupSyncOptionsRef.current = null;
+      const pendingTrackedGroupLoad = getTrackedGroupMessageLoad(pendingOptions ?? undefined);
+      if (trackedGroupLoad && !isSameTrackedGroupMessageLoad(trackedGroupLoad, pendingTrackedGroupLoad)) {
+        clearGroupMessageLoadPhase(trackedGroupLoad.groupId);
+      }
       if (pendingOptions) {
         syncGroupData(pendingOptions).catch(() => {});
       }
@@ -5751,6 +5947,54 @@ export default function App() {
       setActiveMobileView('chat');
     }
   }, [isMobileNav, markGroupConversationAsRead]);
+
+  const prefetchGroupBeforeOpen = useCallback((groupId: number) => {
+    if (
+      !Number.isFinite(groupId) ||
+      groupId <= 0 ||
+      !walletAddress ||
+      !hasAesReady ||
+      chainId !== COTI_NETWORK.chainIdDecimal
+    ) {
+      return;
+    }
+
+    const normalizedGroupId = Math.floor(groupId);
+    const group = groupsRef.current.find((entry) => entry.id === normalizedGroupId);
+    const groupVersion = group?.lastBlock && group.lastBlock > 0
+      ? group.lastBlock
+      : group?.lastTimestamp && group.lastTimestamp > 0
+        ? group.lastTimestamp
+        : 0;
+    const prefetchKey = `${walletAddress.trim().toLowerCase()}:${normalizedGroupId}:${groupVersion}`;
+    if (prefetchedGroupMessagesRef.current[prefetchKey]) {
+      return;
+    }
+
+    prefetchedGroupMessagesRef.current[prefetchKey] = true;
+    syncGroupDataRef.current({
+      background: true,
+      prefetchGroupId: normalizedGroupId,
+      wideLoad: true
+    }).catch(() => {
+      delete prefetchedGroupMessagesRef.current[prefetchKey];
+    });
+  }, [walletAddress, hasAesReady, chainId]);
+
+  useEffect(() => {
+    if (activeGroupId !== null || sortedGroups.length === 0 || !walletAddress || !hasAesReady) {
+      return;
+    }
+
+    const mostRecentGroup = sortedGroups[0];
+    const prefetchTimerId = window.setTimeout(() => {
+      prefetchGroupBeforeOpen(mostRecentGroup.id);
+    }, 300);
+
+    return () => {
+      window.clearTimeout(prefetchTimerId);
+    };
+  }, [activeGroupId, sortedGroups, walletAddress, hasAesReady, prefetchGroupBeforeOpen]);
 
   const loadActiveJoinCodesForGroup = useCallback(
     async (groupId: number, options?: { silent?: boolean }) => {
@@ -7953,6 +8197,11 @@ export default function App() {
     setLoadingActiveGroupJoinCodes(false);
     setRevokingGroupJoinCodeHash('');
     setMessagesByGroup({});
+    memoAesRecoveryAttemptedRef.current = {};
+    messagesByGroupRef.current = {};
+    groupMessageLoadPhaseByGroupRef.current = {};
+    prefetchedGroupMessagesRef.current = {};
+    setGroupMessageLoadPhaseByGroup({});
     setGeneratedGroupInviteCode('');
     setGeneratedGroupJoinCodeHash('');
     setGroupJoinCodeInput('');
@@ -8266,7 +8515,7 @@ export default function App() {
     }
 
     const nextValue = messageInput;
-    if ((chatComposerRef.current.textContent ?? '') !== nextValue) {
+    if (readChatComposerText(chatComposerRef.current) !== nextValue) {
       chatComposerRef.current.textContent = nextValue;
     }
   }, [messageInput]);
@@ -8338,7 +8587,7 @@ export default function App() {
         container.scrollTop += delta;
       }
     });
-  }, [activeThreadKey, visibleThreadMessageCount, chatMessagesViewportVersion]);
+  }, [activeThreadKey, visibleThreadMessageCount, activeThreadMessages.length, chatMessagesViewportVersion]);
 
   useEffect(() => {
     return () => {
@@ -8599,6 +8848,53 @@ export default function App() {
       cancelled = true;
     };
   }, [activeSignerSource, burnerAddress, walletAddress, chainId, topUpMetricsNonce, tipComposerOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadShieldVaultReserve = async () => {
+      try {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
+        const swapVaultContract = new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, readProvider);
+        const [rewardSymbolRaw, rewardDecimalsRaw, swapFeeRaw, swapTokenFeeRaw, shieldVaultTokenBalanceRaw] =
+          await Promise.all([
+            rewardTokenContract.symbol().catch(() => null),
+            rewardTokenContract.decimals().catch(() => null),
+            swapVaultContract.swapFeeWei().catch(() => null),
+            swapVaultContract.getTokenFeeAmount().catch(() => null),
+            rewardTokenContract.balanceOf(SWAP_VAULT_CONTRACT_ADDRESS).catch(() => null)
+          ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (typeof rewardSymbolRaw === 'string' && rewardSymbolRaw.trim()) {
+          setRewardTokenSymbol(rewardSymbolRaw.trim().slice(0, 12));
+        }
+        if (typeof rewardDecimalsRaw === 'number' || typeof rewardDecimalsRaw === 'bigint') {
+          setRewardTokenDecimals(normalizeTokenDecimals(Number(rewardDecimalsRaw)));
+        }
+        setSwapFeeWei(typeof swapFeeRaw === 'bigint' ? swapFeeRaw : null);
+        setSwapTokenFeeAmount(typeof swapTokenFeeRaw === 'bigint' ? swapTokenFeeRaw : null);
+        setShieldVaultTokenBalanceWei(
+          typeof shieldVaultTokenBalanceRaw === 'bigint' ? shieldVaultTokenBalanceRaw : null
+        );
+      } catch {
+        if (!cancelled) {
+          setShieldVaultTokenBalanceWei(null);
+        }
+      }
+    };
+
+    loadShieldVaultReserve().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [topUpMetricsNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -9558,6 +9854,7 @@ export default function App() {
       onGroupRenameInputChange={setGroupRenameInput}
       canSubmitGroupRename={canSubmitGroupRename}
       processingGroupAction={processingGroupAction}
+      variant="mobile"
       onBeginRename={beginRenameActiveGroup}
       onCancelRename={cancelRenameActiveGroup}
       onSubmitRename={() => {
@@ -9582,8 +9879,7 @@ export default function App() {
       onGroupRenameInputChange={setGroupRenameInput}
       canSubmitGroupRename={canSubmitGroupRename}
       processingGroupAction={processingGroupAction}
-      includeRefresh
-      syncingGroups={syncingGroups}
+      variant="desktop"
       onBeginRename={beginRenameActiveGroup}
       onCancelRename={cancelRenameActiveGroup}
       onSubmitRename={() => {
@@ -9597,9 +9893,6 @@ export default function App() {
       }}
       onDisband={() => {
         disbandActiveGroup().catch(() => {});
-      }}
-      onRefresh={() => {
-        syncGroupData({ deep: true }).catch(() => {});
       }}
     />
   );
@@ -9682,15 +9975,23 @@ export default function App() {
     () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
     [injectedWalletOptions]
   );
+  const chatPreferredBrowserWalletOption = useMemo(
+    () => getPreferredInjectedWalletOption(allowedChatBrowserWalletOptions, preferredBrowserWalletId, 'metamask'),
+    [allowedChatBrowserWalletOptions, preferredBrowserWalletId]
+  );
+  const chatBrowserWalletSortId = currentInjectedWalletOption?.id ?? preferredBrowserWalletId;
   const orderedChatInjectedWalletOptions = useMemo(
-    () => orderInjectedWalletOptions(allowedChatBrowserWalletOptions, currentInjectedWalletOption?.id ?? '', 'metamask'),
-    [allowedChatBrowserWalletOptions, currentInjectedWalletOption?.id]
+    () => orderInjectedWalletOptions(allowedChatBrowserWalletOptions, chatBrowserWalletSortId, 'metamask'),
+    [allowedChatBrowserWalletOptions, chatBrowserWalletSortId]
   );
   const chatWalletAddressCopyKey = walletAddress ? `wallet-address:${walletAddress.toLowerCase()}` : '';
   const chatWalletIsAppWallet = isConnected && activeSignerSource === 'burner';
+  const chatPrimaryConnectsBrowserWallet = !walletAddress && burnerStorageBlocked && Boolean(chatPreferredBrowserWalletOption);
   const chatWalletPrimaryConnectLabel =
-    burnerStorageBlocked && preferredInjectedWalletOption
-      ? `Connect ${preferredInjectedWalletOption.label}`
+    chatPrimaryConnectsBrowserWallet && chatPreferredBrowserWalletOption
+      ? `Connect ${chatPreferredBrowserWalletOption.label}`
+      : burnerStorageBlocked
+        ? 'Wallet unavailable'
       : hasSavedBurnerWallet
         ? 'Connect app wallet'
         : 'Generate app wallet';
@@ -9705,11 +10006,7 @@ export default function App() {
             ? shortenAddress(walletAddress)
             : chatWalletPrimaryConnectLabel;
   const chatWalletPrimaryMetaLabel =
-    walletAddress && onCotiNetwork
-      ? lastCopiedKey === chatWalletAddressCopyKey
-        ? 'Copied'
-        : 'Copy'
-      : undefined;
+    walletAddress && onCotiNetwork && lastCopiedKey === chatWalletAddressCopyKey ? 'Copied' : undefined;
   const chatWalletPrimaryButtonClass =
     `${!walletAddress || !onCotiNetwork ? 'connect-btn wallet-inline-btn wallet-primary-action' : 'connect-btn wallet-inline-btn'} p2p-wallet-address${
       lastCopiedKey === chatWalletAddressCopyKey ? ' copied' : ''
@@ -9717,21 +10014,120 @@ export default function App() {
   const chatWalletPrimaryDisabled =
     connectingMethod !== null ||
     initializingBurner ||
-    (!walletAddress && burnerStorageBlocked && !preferredInjectedWalletOption);
-  const chatWalletModeLabel = walletAddress
-    ? chatWalletIsAppWallet
-      ? 'App wallet'
-      : currentInjectedWalletOption?.label ?? preferredInjectedWalletOption?.label ?? 'Browser wallet'
-    : 'No wallet connected';
+    (!walletAddress && chatPrimaryConnectsBrowserWallet && !chatPreferredBrowserWalletOption) ||
+    (!walletAddress && !chatPrimaryConnectsBrowserWallet && burnerStorageBlocked);
   const chatWalletStatusLabel = !walletAddress
     ? 'Disconnected'
     : !onCotiNetwork
       ? 'Switch network'
       : hasAesReady
         ? 'Ready'
-        : 'Connected';
+        : 'Privacy locked';
+  const chatWarmBrowserWalletLabel = browserWalletSession?.walletLabel ?? chatPreferredBrowserWalletOption?.label ?? 'Browser wallet';
+  const chatWarmAppWallet = burnerWalletRef.current;
+  const chatDisplayBrowserWalletLabel =
+    activeSignerSource === 'metamask'
+      ? currentInjectedWalletOption?.label ?? chatWarmBrowserWalletLabel
+      : chatWarmBrowserWalletLabel;
+  const chatWalletDisplayModeLabel = walletAddress
+    ? chatWalletIsAppWallet
+      ? browserWalletSession
+        ? `App + ${chatWarmBrowserWalletLabel}`
+        : 'App wallet'
+      : chatWarmAppWallet
+        ? `${chatDisplayBrowserWalletLabel} + app`
+        : chatDisplayBrowserWalletLabel
+    : 'No wallet connected';
   const showChangeBurnerPinButton = hasSavedBurnerWallet && chatWalletIsAppWallet && Boolean(burnerRecordRef.current);
   const showBackupBurnerButton = chatWalletIsAppWallet && Boolean(burnerMnemonicBackup);
+  const showChatDisconnectedBrowserAction =
+    Boolean(!walletAddress && !burnerStorageBlocked && chatPreferredBrowserWalletOption);
+  const showChatBrowserSwitchAction =
+    Boolean(walletAddress && onCotiNetwork && chatWalletIsAppWallet && chatPreferredBrowserWalletOption);
+  const showChatAppSwitchAction =
+    Boolean(walletAddress && onCotiNetwork && activeSignerSource === 'metamask' && !burnerStorageBlocked && hasSavedBurnerWallet);
+  const showChatAppCreateAction =
+    Boolean(walletAddress && onCotiNetwork && activeSignerSource === 'metamask' && !burnerStorageBlocked && !hasSavedBurnerWallet);
+  const unlockChatPrivacy = useCallback(async () => {
+    const provider = getConnectedProvider();
+    if (!walletAddress || !provider) {
+      setError('Connect a browser wallet first.');
+      return;
+    }
+
+    setError('');
+    try {
+      await activateBrowserWalletSession(
+        currentInjectedWalletOption?.id ?? chatPreferredBrowserWalletOption?.id,
+        { preparePrivacy: true }
+      );
+    } catch (privacyError) {
+      setError(getProviderErrorMessage(privacyError, 'Privacy unlock was not completed.'));
+    }
+  }, [
+    activateBrowserWalletSession,
+    chatPreferredBrowserWalletOption?.id,
+    currentInjectedWalletOption?.id,
+    getConnectedProvider,
+    setError,
+    walletAddress
+  ]);
+  const chatPrivacyActionLabel =
+    connectingMethod === 'metamask'
+      ? 'Unlocking...'
+      : 'Unlock privacy';
+  const chatWalletPrivacyAction =
+    isConnected && activeSignerSource === 'metamask' && onCotiNetwork && !hasAesReady ? (
+      <button
+        type="button"
+        className="p2p-wallet-aes-action"
+        onClick={() => {
+          unlockChatPrivacy().catch(() => {});
+        }}
+        disabled={connectingMethod !== null}
+        title="Run COTI onboarding once so encrypted chat and private balances can work."
+      >
+        {chatPrivacyActionLabel}
+      </button>
+    ) : null;
+  const chatWalletSwitchAction =
+    (showChatBrowserSwitchAction || showChatDisconnectedBrowserAction) && chatPreferredBrowserWalletOption ? (
+      <button
+        type="button"
+        className="p2p-wallet-aes-action wallet-switch-action"
+        onClick={() => {
+          activateBrowserWalletSession(chatPreferredBrowserWalletOption.id).catch(() => {});
+        }}
+        disabled={connectingMethod !== null || initializingBurner}
+        title={`Use ${chatPreferredBrowserWalletOption.label} for this app`}
+      >
+        {chatPreferredBrowserWalletOption.label}
+      </button>
+    ) : showChatAppSwitchAction ? (
+      <button
+        type="button"
+        className="p2p-wallet-aes-action wallet-switch-action"
+        onClick={() => {
+          beginBurnerPinFlow('stored').catch(() => {});
+        }}
+        disabled={connectingMethod !== null || initializingBurner}
+        title="Use the app wallet for this app"
+      >
+        App wallet
+      </button>
+    ) : showChatAppCreateAction ? (
+      <button
+        type="button"
+        className="p2p-wallet-aes-action wallet-switch-action"
+        onClick={() => {
+          beginBurnerPinFlow('generate').catch(() => {});
+        }}
+        disabled={connectingMethod !== null || initializingBurner}
+        title="Create an app wallet so you can switch between wallet types"
+      >
+        Add app wallet
+      </button>
+    ) : null;
   const handleChatWalletPrimaryAction = () => {
     if (walletAddress && !onCotiNetwork) {
       const provider = getConnectedProvider();
@@ -9748,13 +10144,15 @@ export default function App() {
       return;
     }
 
-    if (!burnerStorageBlocked) {
-      beginBurnerPinFlow(hasSavedBurnerWallet ? 'stored' : 'generate').catch(() => {});
+    if (chatPrimaryConnectsBrowserWallet) {
+      if (chatPreferredBrowserWalletOption) {
+        activateBrowserWalletSession(chatPreferredBrowserWalletOption.id).catch(() => {});
+      }
       return;
     }
 
-    if (preferredInjectedWalletOption) {
-      connectAndOnboard(preferredInjectedWalletOption.id).catch(() => {});
+    if (!burnerStorageBlocked) {
+      beginBurnerPinFlow(hasSavedBurnerWallet ? 'stored' : 'generate').catch(() => {});
     }
   };
   const chatWalletHeaderControl = (
@@ -9762,24 +10160,17 @@ export default function App() {
       primaryButtonClassName={chatWalletPrimaryButtonClass}
       primaryButtonLabel={chatWalletPrimaryButtonLabel}
       primaryMetaLabel={chatWalletPrimaryMetaLabel}
-      primaryButtonTitle={walletAddress || undefined}
+      primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
       primaryDisabled={chatWalletPrimaryDisabled}
       onPrimaryAction={handleChatWalletPrimaryAction}
-      modeLabel={chatWalletModeLabel}
+      modeLabel={chatWalletDisplayModeLabel}
       statusLabel={chatWalletStatusLabel}
       action={
-        isConnected && activeSignerSource === 'metamask' && onCotiNetwork && !hasAesReady ? (
-          <button
-            type="button"
-            className="p2p-wallet-aes-action"
-            onClick={() => {
-              connectAndOnboard(currentInjectedWalletOption?.id ?? preferredInjectedWalletOption?.id).catch(() => {});
-            }}
-            disabled={connectingMethod !== null}
-            title="Sign once to unlock encrypted chat and private balances."
-          >
-            {connectingMethod === 'metamask' ? 'Signing...' : 'Sign AES key'}
-          </button>
+        chatWalletPrivacyAction || chatWalletSwitchAction ? (
+          <>
+            {chatWalletPrivacyAction}
+            {chatWalletSwitchAction}
+          </>
         ) : null
       }
       menuOpen={chatWalletMenuOpen}
@@ -9904,7 +10295,7 @@ export default function App() {
                     className={isCurrentWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
                     onClick={() => {
                       setChatWalletMenuOpen(false);
-                      connectAndOnboard(option.id).catch(() => {});
+                      activateBrowserWalletSession(option.id).catch(() => {});
                     }}
                     disabled={connectingMethod !== null}
                     role="menuitem"
@@ -9941,6 +10332,39 @@ export default function App() {
         </>
       }
     />
+  );
+  const sharedTradeWalletSession = useMemo(
+    () => ({
+      activeSignerSource,
+      browserProvider: activeProvider ?? browserWalletSession?.provider ?? null,
+      browserWalletId: currentInjectedWalletOption?.id ?? browserWalletSession?.walletId ?? preferredBrowserWalletId,
+      browserWalletLabel:
+        currentInjectedWalletOption?.label ??
+        browserWalletSession?.walletLabel ??
+        chatPreferredBrowserWalletOption?.label ??
+        preferredInjectedWalletOption?.label ??
+        'Browser wallet',
+      burnerWallet: burnerWalletRef.current,
+      chainId,
+      sessionOnboardInfo,
+      walletAddress
+    }),
+    [
+      activeProvider,
+      activeSignerSource,
+      burnerAddress,
+      browserWalletSession?.provider,
+      browserWalletSession?.walletId,
+      browserWalletSession?.walletLabel,
+      chainId,
+      chatPreferredBrowserWalletOption?.label,
+      currentInjectedWalletOption?.id,
+      currentInjectedWalletOption?.label,
+      preferredBrowserWalletId,
+      preferredInjectedWalletOption?.label,
+      sessionOnboardInfo,
+      walletAddress
+    ]
   );
   // --- Stable callbacks for ContactsSidebar ---
   const saveMyNicknameOnChainRef = useRef(saveMyNicknameOnChain);
@@ -10171,6 +10595,7 @@ export default function App() {
             messagesByGroup={messagesByGroup}
             unreadGroupMap={readStateFeaturesEnabled ? unreadGroupMap : {}}
             onActivateGroup={activateGroup}
+            onPrefetchGroup={prefetchGroupBeforeOpen}
             error={error}
           />
 
@@ -10204,6 +10629,7 @@ export default function App() {
                 }}
                 chatMessagesRef={setChatMessagesContainerRef}
                 activeGroupMessages={visibleActiveGroupMessages}
+                messageLoadPhase={activeGroupMessageLoadPhase}
                 isReactionOnlyMessage={isReactionOnlyMessage}
                 getReactionsForMessage={getReactionsForMessage}
                 reactionPickerMessageId={reactionPickerMessageId}
@@ -10434,6 +10860,8 @@ export default function App() {
             }
           >
             <P2PTradingPage
+              sharedWalletSession={sharedTradeWalletSession}
+              onDisconnectWallet={disconnectWallet}
               onHeaderWalletControlChange={setTradeHeaderWalletControl}
               onHeaderNavigationControlChange={setTradeHeaderNavigationControl}
             />
@@ -10469,33 +10897,28 @@ export default function App() {
             }
           >
             <TokenSwapPage
-            tokenToolsSummary={tokenToolsSummary}
-            groupRewardsContractAddress={groupRewardsContractAddress}
-            rewardsEnabled={rewardsEnabled}
-            rewardsIndicatorLabel={rewardsIndicatorLabel}
-            rewardsPublicReserveWei={rewardsPublicReserveWei}
-            rewardsPublicPerInteractionWei={rewardsPublicPerInteractionWei}
-            rewardTokenDecimals={rewardTokenDecimals}
-            rewardTokenSymbol={rewardTokenSymbol}
-            privateRewardTokenSymbol={privateRewardTokenSymbol}
-            rewardsLowReserve={rewardsLowReserve}
-            swapAmountInput={swapAmountInput}
-            onSwapAmountInputChange={(value) => setSwapAmountInput(sanitizeTokenAmountInput(value))}
-            swappingTokens={swappingTokens}
-            swapInputSymbol={swapInputSymbol}
-            swapDirection={swapDirection}
-            onSwapDirectionChange={setSwapDirection}
-            swapFeeModeSelection={swapFeeModeSelection}
-            onSwapFeeModeChange={setSwapFeeModeSelection}
-            loadingRewardBalances={loadingRewardBalances}
-            swapFeeWei={swapFeeWei}
-            swapTokenFeeAmount={swapTokenFeeAmount}
-            canSwapRewardTokens={canSwapRewardTokens}
-            swapButtonLabel={swapButtonLabel}
-            onSwapRewardTokens={swapRewardTokens}
-            swapStatusMessage={swapStatusMessage}
-            error={error}
-          />
+              tokenToolsSummary={tokenToolsSummary}
+              shieldVaultTokenBalanceWei={shieldVaultTokenBalanceWei}
+              rewardTokenDecimals={rewardTokenDecimals}
+              rewardTokenSymbol={rewardTokenSymbol}
+              privateRewardTokenSymbol={privateRewardTokenSymbol}
+              swapAmountInput={swapAmountInput}
+              onSwapAmountInputChange={(value) => setSwapAmountInput(sanitizeTokenAmountInput(value))}
+              swappingTokens={swappingTokens}
+              swapInputSymbol={swapInputSymbol}
+              swapDirection={swapDirection}
+              onSwapDirectionChange={setSwapDirection}
+              swapFeeModeSelection={swapFeeModeSelection}
+              onSwapFeeModeChange={setSwapFeeModeSelection}
+              loadingRewardBalances={loadingRewardBalances}
+              swapFeeWei={swapFeeWei}
+              swapTokenFeeAmount={swapTokenFeeAmount}
+              canSwapRewardTokens={canSwapRewardTokens}
+              swapButtonLabel={swapButtonLabel}
+              onSwapRewardTokens={swapRewardTokens}
+              swapStatusMessage={swapStatusMessage}
+              error={error}
+            />
           </Suspense>
         </AppErrorBoundary>
       </div>

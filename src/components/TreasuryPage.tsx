@@ -3,7 +3,6 @@ import {
   CartesianGrid,
   Line,
   LineChart,
-  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -20,11 +19,10 @@ import {
 
 const REFRESH_INTERVAL_MS = 60_000;
 const SECONDS_PER_DAY = 86_400;
-const SNAPSHOT_DOT_COLOR = '#8b5cf6';
-const LIVE_PULSE_COLOR = '#f5edff';
-const HORIZONTAL_GRID_STROKE = 'rgba(74, 64, 112, 0.38)';
-const VERTICAL_GRID_STROKE = 'rgba(139, 92, 246, 0.14)';
-const CURSOR_LINE_STROKE = 'rgba(216, 180, 254, 0.18)';
+const CHART_SURFACE_COLOR = '#0d1020';
+const HORIZONTAL_GRID_STROKE = 'rgba(111, 112, 148, 0.26)';
+const VERTICAL_GRID_STROKE = 'rgba(111, 112, 148, 0.12)';
+const CURSOR_LINE_STROKE = 'rgba(203, 213, 225, 0.22)';
 
 const TIMEFRAME_OPTIONS = [
   { key: '30d', label: '30D', days: 30 },
@@ -37,28 +35,43 @@ type TimeframeKey = (typeof TIMEFRAME_OPTIONS)[number]['key'];
 
 const METRIC_OPTIONS = {
   activeGcoti: {
-    color: '#22c55e',
+    color: '#34d399',
     label: 'Active gCOTI',
+    lineStart: '#86efac',
+    lineEnd: '#22c55e',
+    shadowColor: 'rgba(34, 197, 94, 0.26)',
     valueFormatter: (value: number) => formatCompact(value, 1)
   },
   cotiInPool: {
-    color: '#60a5fa',
+    color: '#38bdf8',
     label: 'COTI in pool',
+    lineStart: '#93c5fd',
+    lineEnd: '#2563eb',
+    shadowColor: 'rgba(56, 189, 248, 0.28)',
     valueFormatter: (value: number) => formatCompact(value, 1)
   },
+  maxTotalApy: {
+    color: '#c084fc',
+    label: 'Total APY',
+    lineStart: '#f0abfc',
+    lineEnd: '#8b5cf6',
+    shadowColor: 'rgba(192, 132, 252, 0.24)',
+    valueFormatter: (value: number) => `${value.toFixed(2)}%`
+  },
   maxApy: {
-    color: '#38bdf8',
+    color: '#7dd3fc',
     label: 'Base APY',
+    lineStart: '#bae6fd',
+    lineEnd: '#0ea5e9',
+    shadowColor: 'rgba(14, 165, 233, 0.24)',
     valueFormatter: (value: number) => `${value.toFixed(2)}%`
   },
   maxBoostApy: {
-    color: '#c4b5fd',
+    color: '#a78bfa',
     label: 'Boost APY',
-    valueFormatter: (value: number) => `${value.toFixed(2)}%`
-  },
-  maxTotalApy: {
-    color: '#8b5cf6',
-    label: 'Total APY',
+    lineStart: '#ddd6fe',
+    lineEnd: '#8b5cf6',
+    shadowColor: 'rgba(139, 92, 246, 0.25)',
     valueFormatter: (value: number) => `${value.toFixed(2)}%`
   }
 } as const;
@@ -90,6 +103,7 @@ type CrosshairCursorProps = {
 };
 
 type DotProps = {
+  color?: string;
   cx?: number;
   cy?: number;
 };
@@ -159,7 +173,7 @@ function formatAxisDate(value: number, spanDays: number): string {
 }
 
 function getSelectedTimeframe(timeframeKey: TimeframeKey) {
-  return TIMEFRAME_OPTIONS.find((option) => option.key === timeframeKey) || TIMEFRAME_OPTIONS[1];
+  return TIMEFRAME_OPTIONS.find((option) => option.key === timeframeKey) || TIMEFRAME_OPTIONS[0];
 }
 
 function filterGraphData(points: TreasuryChartPoint[], timeframeKey: TimeframeKey): TreasuryChartPoint[] {
@@ -428,32 +442,16 @@ function CrosshairCursor({ className, height = 0, left = 0, payload, points, top
   );
 }
 
-function HoverActiveDot({ cx, cy }: DotProps) {
+function HoverActiveDot({ color = METRIC_OPTIONS.cotiInPool.color, cx, cy }: DotProps) {
   if (cx == null || cy == null) {
     return null;
   }
 
   return (
     <g pointerEvents="none">
-      <circle cx={cx} cy={cy} r={9} fill="rgba(139, 92, 246, 0.08)" stroke="rgba(216, 180, 254, 0.18)" strokeWidth={1} />
-      <circle cx={cx} cy={cy} r={5.5} fill="#0d0818" stroke={SNAPSHOT_DOT_COLOR} strokeWidth={1.75} />
-      <circle cx={cx} cy={cy} r={2.4} fill={SNAPSHOT_DOT_COLOR} />
-    </g>
-  );
-}
-
-function LivePulseDot({ cx, cy }: DotProps) {
-  if (cx == null || cy == null) {
-    return null;
-  }
-
-  return (
-    <g pointerEvents="none">
-      <circle cx={cx} cy={cy} r={6} fill={LIVE_PULSE_COLOR} opacity={0.72}>
-        <animate attributeName="r" values="6;13;6" dur="1.8s" repeatCount="indefinite" />
-        <animate attributeName="opacity" values="0.72;0.08;0.72" dur="1.8s" repeatCount="indefinite" />
-      </circle>
-      <circle cx={cx} cy={cy} r={4.5} fill={SNAPSHOT_DOT_COLOR} stroke={LIVE_PULSE_COLOR} strokeWidth={2} />
+      <circle cx={cx} cy={cy} r={11} fill={color} opacity={0.14} />
+      <circle cx={cx} cy={cy} r={6} fill={CHART_SURFACE_COLOR} stroke={color} strokeWidth={2} />
+      <circle cx={cx} cy={cy} r={2.6} fill={color} />
     </g>
   );
 }
@@ -526,7 +524,7 @@ function TreasuryMetaCard({
 
 export default function TreasuryPage({ isCompactLayout = false }: { isCompactLayout?: boolean }) {
   const [metric, setMetric] = useState<MetricKey>('cotiInPool');
-  const [timeframe, setTimeframe] = useState<TimeframeKey>('90d');
+  const [timeframe, setTimeframe] = useState<TimeframeKey>('30d');
   const [livePoint, setLivePoint] = useState<TreasurySnapshot | null>(null);
   const [snapshots, setSnapshots] = useState<TreasurySnapshot[]>([]);
   const [status, setStatus] = useState<TreasuryStatus>('loading');
@@ -605,21 +603,15 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
   const visibleSpanDays = useMemo(() => getVisibleSpanDays(xAxisDomain), [xAxisDomain]);
   const yAxisConfig = useMemo(() => getMetricAxisConfig(filteredGraphData, metric), [filteredGraphData, metric]);
   const isApyMetric = metric.toLowerCase().includes('apy');
+  const metricOption = METRIC_OPTIONS[metric];
   const chartMargin = useMemo(
-    () => (isCompactLayout ? { top: 12, right: 4, bottom: 0, left: -4 } : { top: 14, right: 12, bottom: 6, left: 0 }),
+    () => (isCompactLayout ? { top: 12, right: 16, bottom: 0, left: 4 } : { top: 14, right: 12, bottom: 6, left: 0 }),
     [isCompactLayout]
   );
-  const yAxisWidth = isCompactLayout ? (isApyMetric ? 50 : 46) : isApyMetric ? 76 : 90;
+  const yAxisWidth = isCompactLayout ? (isApyMetric ? 54 : 58) : isApyMetric ? 76 : 90;
   const selectedTimeframe = useMemo(() => getSelectedTimeframe(timeframe), [timeframe]);
   const contractAddress = useMemo(() => getOnchainContractAddress(), []);
   const contractExplorerUrl = useMemo(() => getOnchainContractExplorerUrl(), []);
-  const savedVisiblePoints = useMemo(
-    () =>
-      filteredGraphData.filter(
-        (point) => !point.isLive && Number.isFinite(Number(point.capturedAtUnix)) && Number.isFinite(Number(point[metric]))
-      ),
-    [filteredGraphData, metric]
-  );
 
   const latestSaved = chartData[chartData.length - 1];
   const currentPoint = liveChartPoint || latestSaved;
@@ -658,12 +650,13 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
             label="Current COTI"
             value={currentPoint ? formatNumber(currentPoint.cotiInPool) : '--'}
             detail={liveChartPoint ? 'Live treasury feed' : 'Latest saved snapshot'}
-            tone="treasury-stat-card-primary"
+            tone="treasury-stat-card-coti"
           />
           <TreasuryStatCard
             label="Current gCOTI"
             value={currentPoint ? formatNumber(currentPoint.activeGcoti) : '--'}
             detail={liveChartPoint ? 'Live treasury feed' : 'Latest saved snapshot'}
+            tone="treasury-stat-card-gcoti"
           />
           <TreasuryStatCard
             label="Total APY"
@@ -684,6 +677,7 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
               {Object.entries(METRIC_OPTIONS).map(([key, option]) => (
                 <button
                   key={key}
+                  data-metric={key}
                   className={key === metric ? 'treasury-pill-button active' : 'treasury-pill-button'}
                   onClick={() => setMetric(key as MetricKey)}
                   type="button"
@@ -750,32 +744,26 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
                   type="monotone"
                   dataKey={metric}
                   dot={false}
-                  activeDot={(props: DotProps) => <HoverActiveDot {...props} />}
-                  stroke={METRIC_OPTIONS[metric].color}
-                  strokeWidth={3}
+                  activeDot={false}
+                  stroke={metricOption.color}
+                  strokeOpacity={0.18}
+                  strokeWidth={isCompactLayout ? 7 : 8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  isAnimationActive={false}
                 />
-                {savedVisiblePoints.map((point) => (
-                  <ReferenceDot
-                    key={`snapshot-dot-${point.day}-${point.capturedAtUnix}`}
-                    x={point.capturedAtUnix}
-                    y={point[metric]}
-                    r={4.5}
-                    fill={SNAPSHOT_DOT_COLOR}
-                    stroke="none"
-                    isFront
-                  />
-                ))}
-                {liveChartPoint && Number.isFinite(Number(liveChartPoint[metric])) ? (
-                  <ReferenceDot
-                    x={liveChartPoint.capturedAtUnix}
-                    y={liveChartPoint[metric]}
-                    r={13}
-                    fill="none"
-                    stroke="none"
-                    isFront
-                    shape={(props: DotProps) => <LivePulseDot {...props} />}
-                  />
-                ) : null}
+                <Line
+                  type="monotone"
+                  dataKey={metric}
+                  dot={false}
+                  activeDot={(props: DotProps) => <HoverActiveDot {...props} color={metricOption.color} />}
+                  stroke={metricOption.color}
+                  strokeWidth={isCompactLayout ? 2.4 : 2.9}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ filter: `drop-shadow(0 8px 13px ${metricOption.shadowColor})` }}
+                  isAnimationActive={false}
+                />
               </LineChart>
             </ResponsiveContainer>
           ) : null}
@@ -847,8 +835,8 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
                 {recentRows.map((row) => (
                   <tr key={row.day}>
                     <td>{row.label}</td>
-                    <td>{formatNumber(row.cotiInPool, 2, 2)}</td>
-                    <td>{formatNumber(row.activeGcoti, 2, 2)}</td>
+                    <td>{formatNumber(row.cotiInPool)}</td>
+                    <td>{formatNumber(row.activeGcoti)}</td>
                     <td>{row.maxTotalApy.toFixed(2)}%</td>
                     <td>
                       {row.onchain?.txHash ? (

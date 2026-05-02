@@ -21,6 +21,7 @@ export default function MobileBottomNav({
         <button
           type="button"
           className={activeMobileView === 'contacts' ? 'active' : undefined}
+          aria-current={activeMobileView === 'contacts' ? 'page' : undefined}
           onClick={() => onSelectView('contacts')}
         >
           Contacts
@@ -30,6 +31,7 @@ export default function MobileBottomNav({
         <button
           type="button"
           className={activeMobileView === 'chat' ? 'active' : undefined}
+          aria-current={activeMobileView === 'chat' ? 'page' : undefined}
           onClick={() => onSelectView('chat')}
         >
           {chatLabel}

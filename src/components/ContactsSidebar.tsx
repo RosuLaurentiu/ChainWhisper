@@ -60,6 +60,7 @@ type ContactsSidebarProps = {
   messagesByGroup: Record<string, ChatMessage[]>;
   unreadGroupMap: Record<string, boolean>;
   onActivateGroup: (groupId: number) => void;
+  onPrefetchGroup: (groupId: number) => void;
   error: string;
 };
 
@@ -109,6 +110,7 @@ function ContactsSidebar({
   messagesByGroup,
   unreadGroupMap,
   onActivateGroup,
+  onPrefetchGroup,
   error
 }: ContactsSidebarProps) {
   const syncInProgress = syncingHistory || syncingGroups;
@@ -523,6 +525,8 @@ function ContactsSidebar({
                   className={isActive ? 'contact-card active' : 'contact-card'}
                   role="button"
                   tabIndex={0}
+                  onPointerEnter={() => onPrefetchGroup(group.id)}
+                  onFocus={() => onPrefetchGroup(group.id)}
                   onClick={() => onActivateGroup(group.id)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {

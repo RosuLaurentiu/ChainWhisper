@@ -84,7 +84,7 @@ describe('resolveTradeOrderSummary', () => {
     expect(summary.directionLabel).toBe('Sell AAA for BBB');
     expect(summary.primarySide).toMatchObject({ label: 'You sell', role: 'offer', tone: 'send' });
     expect(summary.secondarySide).toMatchObject({ label: 'Buyer pays', role: 'payment', tone: 'receive' });
-    expect(summary.ratioLabel).toBe('1 AAA = 1 BBB');
+    expect(summary.ratioLabel).toBe('1 BBB/AAA');
   });
 
   it('describes the taker view as a buy order with payment first', () => {
@@ -98,7 +98,7 @@ describe('resolveTradeOrderSummary', () => {
   it('formats reversible ratios without exposing totals', () => {
     const base = asset('AAA');
     const quote = { ...asset('BBB'), amount: '2500000000000000000' };
-    expect(formatTradeRatioLabel(base, quote)).toBe('1 AAA = 2.5 BBB');
-    expect(formatTradeRatioLabel(quote, base)).toBe('1 BBB = 0.4 AAA');
+    expect(formatTradeRatioLabel(base, quote)).toBe('2.5 BBB/AAA');
+    expect(formatTradeRatioLabel(quote, base)).toBe('0.4 AAA/BBB');
   });
 });

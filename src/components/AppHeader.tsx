@@ -60,6 +60,7 @@ export default function AppHeader({
       className="sound-toggle-btn"
       onClick={onToggleSound}
       title={soundEnabled ? 'Disable sound' : 'Enable sound'}
+      aria-label={soundEnabled ? 'Disable notification sound' : 'Enable notification sound'}
       aria-pressed={soundEnabled}
     >
       {soundEnabled ? (
@@ -155,7 +156,7 @@ export default function AppHeader({
               aria-expanded={mobileLinksOpen}
               aria-controls="top-navigation-links-mobile"
               onClick={onToggleMobileLinksOpen}
-              aria-label="Open ecosystem links menu"
+              aria-label={mobileLinksOpen ? 'Close ecosystem links menu' : 'Open ecosystem links menu'}
             >
               {'\u2630'}
             </button>

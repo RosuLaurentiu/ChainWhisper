@@ -300,6 +300,7 @@ const MEMO_RAW_PREFIX = '[[coti-memo-raw:v1]]';
 const MEMO_COMPRESSED_PREFIX = '[[coti-memo-z:v1]]';
 export const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
 const UTF8_FATAL_DECODER = new TextDecoder('utf-8', { fatal: true });
+const MEMO_BASE64_REGEX = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 const isAsciiOnly = (value: string): boolean => {
   for (let index = 0; index < value.length; index += 1) {
@@ -351,6 +352,33 @@ const repairUtf8MojibakeSegments = (value: string): string => {
   }
 
   return changed ? repaired : value;
+};
+
+const decodeUtf8Strict = (bytes: Uint8Array): string | null => {
+  try {
+    return UTF8_FATAL_DECODER.decode(bytes);
+  } catch {
+    return null;
+  }
+};
+
+const isPlausibleMemoPlaintext = (value: string): boolean => {
+  if (value.includes('\uFFFD')) {
+    return false;
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index) ?? 0;
+    if (codePoint > 0xffff) {
+      index += 1;
+    }
+
+    if (codePoint < 0x20 && codePoint !== 0x09 && codePoint !== 0x0a && codePoint !== 0x0d) {
+      return false;
+    }
+  }
+
+  return true;
 };
 export const EXTERNAL_REPLY_TXHASH_REGEX = /^\[r:(0x[a-fA-F0-9]{64})\]\s*/;
 export const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🫡', '🤯', '🌭', '✍️', '🤷‍♂️', '🤪', '💯'] as const;
@@ -518,6 +546,7 @@ export type SyncGroupOptions = {
   overviewOnly?: boolean;
   activeMessagesOnly?: boolean;
   wideLoad?: boolean;
+  prefetchGroupId?: number;
 };
 
 export type StateBackupPayload = {
@@ -1756,6 +1785,42 @@ export const decodeMemoPlaintext = (raw: string): string => {
   } catch {
     return raw;
   }
+};
+
+export const decodeMemoPlaintextStrict = (raw: string): string | null => {
+  if (raw.startsWith(MEMO_RAW_PREFIX)) {
+    const plain = repairUtf8MojibakeSegments(raw.slice(MEMO_RAW_PREFIX.length));
+    return isPlausibleMemoPlaintext(plain) ? plain : null;
+  }
+
+  if (raw.startsWith(MEMO_COMPRESSED_PREFIX)) {
+    try {
+      const encodedCompressed = raw.slice(MEMO_COMPRESSED_PREFIX.length);
+      const compressedBytes = base64ToBytes(encodedCompressed);
+      const inflatedBytes = unzlibSync(compressedBytes);
+      const plain = decodeUtf8Strict(inflatedBytes);
+      return plain !== null && isPlausibleMemoPlaintext(plain) ? plain : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (raw === '') {
+    return '';
+  }
+
+  if (raw.trim() === raw && raw.length % 4 === 0 && MEMO_BASE64_REGEX.test(raw)) {
+    try {
+      const plain = decodeUtf8Strict(base64ToBytes(raw));
+      if (plain !== null && isPlausibleMemoPlaintext(plain)) {
+        return plain;
+      }
+    } catch {
+    }
+  }
+
+  const legacyPlain = repairUtf8MojibakeSegments(raw);
+  return isPlausibleMemoPlaintext(legacyPlain) ? legacyPlain : null;
 };
 
 export const formatMessageTimestamp = (timestamp?: number): string => {
