@@ -3,6 +3,7 @@ import type { TradeAssetPayload, TradeSnapshot } from './appShared';
 import {
   formatTradeRatioLabel,
   groupWalletTradesByPerspective,
+  hasPartialTradeFill,
   resolveTradeOrderSummary,
   resolveTradePerspective,
   ZERO_TRADE_TAKER_ADDRESS
@@ -73,6 +74,47 @@ describe('groupWalletTradesByPerspective', () => {
       needsAction: [needsAction],
       myActiveOffers: [myActiveOffer],
       history: [history]
+    });
+  });
+
+  it('keeps partially filled maker trades active while also showing them in history', () => {
+    const partialMakerTrade = trade({
+      tradeId: 4,
+      maker: taker,
+      taker: ZERO_TRADE_TAKER_ADDRESS,
+      fillState: {
+        remainingOfferAmount: '500000000000000000',
+        remainingRequestAmount: '500000000000000000',
+        filledOfferAmount: '500000000000000000',
+        filledRequestAmount: '500000000000000000'
+      }
+    });
+
+    expect(hasPartialTradeFill(partialMakerTrade)).toBe(true);
+    expect(groupWalletTradesByPerspective([partialMakerTrade], taker)).toEqual({
+      needsAction: [],
+      myActiveOffers: [partialMakerTrade],
+      history: [partialMakerTrade]
+    });
+  });
+
+  it('shows wallet-scoped public partial fills in history even before the trade is fully filled', () => {
+    const fillerPartialTrade = trade({
+      tradeId: 5,
+      maker,
+      taker: ZERO_TRADE_TAKER_ADDRESS,
+      fillState: {
+        remainingOfferAmount: '750000000000000000',
+        remainingRequestAmount: '750000000000000000',
+        filledOfferAmount: '250000000000000000',
+        filledRequestAmount: '250000000000000000'
+      }
+    });
+
+    expect(groupWalletTradesByPerspective([fillerPartialTrade], taker)).toEqual({
+      needsAction: [],
+      myActiveOffers: [],
+      history: [fillerPartialTrade]
     });
   });
 });

@@ -3209,6 +3209,15 @@ export default function P2PTradingPage({
     const statusClassName = `p2p-offer-status-${trade.status}`;
     const acceptedTxExplorerUrl = buildTransactionExplorerUrl(trade.acceptedTxHash);
     const isFinishedTrade = trade.status !== 'open';
+    const openActionLabel = isFinishedTrade
+      ? 'Details'
+      : perspective.isMaker
+        ? 'Manage'
+        : perspective.isTaker
+          ? 'Review offer'
+          : trade.hiddenLiquidity
+            ? 'Review ratio'
+            : 'Review & fill';
     const leftSide = orderSummary.primarySide;
     const rightSide = orderSummary.secondarySide;
     const leftExplorerUrl = buildTradeAssetExplorerUrl(leftSide.asset);
@@ -3410,7 +3419,7 @@ export default function P2PTradingPage({
               <span>{perspective.isMaker ? 'Created by you' : perspective.isTaker ? 'Reserved for you' : 'Open order'}</span>
               <div>
                 <button type="button" className="p2p-offer-open-btn" onClick={() => openTradeSnapshot(trade)} title="Open trade">
-                  Open
+                  {openActionLabel}
                 </button>
                 {canRevealMakerPrivateProgress ? (
                   <button
@@ -3461,13 +3470,23 @@ export default function P2PTradingPage({
     );
   };
 
-  const renderTradeList = (trades: TradeSnapshot[], emptyLabel: string, gridClassName = '') =>
+  const renderP2PEmptyState = (title: string, description: string, actions?: ReactNode) => (
+    <div className="p2p-empty-state">
+      <div>
+        <strong>{title}</strong>
+        <p>{description}</p>
+      </div>
+      {actions ? <div className="p2p-empty-actions">{actions}</div> : null}
+    </div>
+  );
+
+  const renderTradeList = (trades: TradeSnapshot[], emptyLabel: string, gridClassName = '', emptyState?: ReactNode) =>
     trades.length > 0 ? (
       <div className={`p2p-offer-grid${gridClassName ? ` ${gridClassName}` : ''}`}>
         {trades.map((trade) => renderTradeOverviewCard(trade))}
       </div>
     ) : (
-      <p className="standalone-trade-state">{emptyLabel}</p>
+      emptyState ?? <p className="standalone-trade-state">{emptyLabel}</p>
     );
   const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
   const tradePrimaryConnectsAppWallet =
@@ -3911,16 +3930,25 @@ export default function P2PTradingPage({
   ];
   const selectedMyTradeGroup =
     myTradeGroupOptions.find((group) => group.id === myTradeGroupView) ?? myTradeGroupOptions[0];
+  const showTradeSearch = route.view === 'public' || (route.view === 'mine' && Boolean(walletAddress));
   const tradeSearchPlaceholder =
     route.view === 'mine'
       ? 'Search your trades by token, wallet, status, or id'
       : 'Search public offers by token, pair, wallet, status, or id';
+  const tradeSearchSummary =
+    route.view === 'mine'
+      ? `${selectedMyTradeGroup.trades.length} ${selectedMyTradeGroup.label.toLowerCase()}`
+      : `${filteredPublicTrades.length} of ${openPublicTradeCount} open`;
   const createdTradeCopyKey = 'created-trade-link';
 
   return (
     <main className="standalone-trades-shell p2p-trading-shell">
       {route.view !== 'create' ? (
-        <section className={`p2p-market-overview p2p-market-overview-${route.view}`}>
+        <section
+          className={`p2p-market-overview p2p-market-overview-${route.view}${
+            route.view === 'mine' && !showTradeSearch ? ' p2p-market-overview-summary-only' : ''
+          }`}
+        >
           {route.view === 'public' || route.view === 'mine' ? (
             <div className="p2p-stats-strip" aria-label="P2P trading statistics">
               {route.view === 'public' ? (
@@ -3948,15 +3976,25 @@ export default function P2PTradingPage({
             </div>
           ) : null}
 
-          {route.view === 'public' || route.view === 'mine' ? (
+          {showTradeSearch ? (
             <label className="p2p-token-search">
-              <span>Search trades</span>
-              <input
-                type="search"
-                value={tradeSearchInput}
-                onChange={(event) => setTradeSearchInput(event.target.value)}
-                placeholder={tradeSearchPlaceholder}
-              />
+              <span className="p2p-token-search-head">
+                <span className="p2p-token-search-label">Search trades</span>
+                <small>{tradeSearchSummary}</small>
+              </span>
+              <span className="p2p-token-search-input-wrap">
+                <input
+                  type="search"
+                  value={tradeSearchInput}
+                  onChange={(event) => setTradeSearchInput(event.target.value)}
+                  placeholder={tradeSearchPlaceholder}
+                />
+                {tradeSearchInput ? (
+                  <button type="button" onClick={() => setTradeSearchInput('')} aria-label="Clear trade search">
+                    Clear
+                  </button>
+                ) : null}
+              </span>
             </label>
           ) : null}
 
@@ -3985,6 +4023,19 @@ export default function P2PTradingPage({
               <h2>Open public trades</h2>
             </div>
             <div className="standalone-trades-toolbar">
+              <button
+                type="button"
+                className="standalone-trade-secondary-btn"
+                onClick={() => {
+                  setTradeVisibility('public');
+                  startFreshTrade();
+                }}
+              >
+                Create Trade
+              </button>
+              <button type="button" className="standalone-trade-secondary-btn" onClick={() => navigateToTradePath('/trades/open')}>
+                Open Link
+              </button>
               <button type="button" className="standalone-trade-secondary-btn" onClick={() => refreshPublicTrades().catch(() => {})}>
                 {loadingPublicTrades ? 'Refreshing...' : 'Refresh'}
               </button>
@@ -3996,7 +4047,36 @@ export default function P2PTradingPage({
             ? renderTradeList(
               filteredPublicTrades,
               tradeSearchInput ? 'No public trades match that search.' : 'No open public trades found.',
-              'p2p-public-trade-grid'
+              'p2p-public-trade-grid',
+              renderP2PEmptyState(
+                tradeSearchInput ? 'No matching public offers' : 'No public offers right now',
+                tradeSearchInput
+                  ? 'Try a token symbol, wallet address, status, or trade id.'
+                  : 'The directory is live, but there are no open public listings to review yet.',
+                <>
+                  {tradeSearchInput ? (
+                    <button type="button" onClick={() => setTradeSearchInput('')}>
+                      Clear search
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTradeVisibility('public');
+                        startFreshTrade();
+                      }}
+                    >
+                      Create public trade
+                    </button>
+                  )}
+                  <button type="button" onClick={() => navigateToTradePath('/trades/open')}>
+                    Open link
+                  </button>
+                  <button type="button" onClick={() => refreshPublicTrades().catch(() => {})}>
+                    Refresh
+                  </button>
+                </>
+              )
             )
             : null}
         </section>
@@ -4167,7 +4247,18 @@ export default function P2PTradingPage({
           ) : null}
           {!tradeAccessBlocked && detailTrade ? renderTradeCard(detailTrade) : null}
           {!loadingDetailTrade && !detailTrade && !tradeAccessBlocked && !route.routeError && !detailTradeError ? (
-            <p className="standalone-trade-state">Paste a trade link or open a public trade from the directory.</p>
+            renderP2PEmptyState(
+              'Open a trade window',
+              'Paste a shared trade link, compact code, or trade id above. You can also browse public listings or create a new offer.',
+              <>
+                <button type="button" onClick={() => navigateToTradePath('/trades')}>
+                  Browse market
+                </button>
+                <button type="button" onClick={startFreshTrade}>
+                  Create trade
+                </button>
+              </>
+            )
           ) : null}
           {tradeActionError ? <p className="standalone-trade-error">{tradeActionError}</p> : null}
         </section>
@@ -4189,7 +4280,19 @@ export default function P2PTradingPage({
               {loadingMyTrades ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
-          {!walletAddress ? <p className="standalone-trade-state">Connect a wallet to view your trades.</p> : null}
+          {!walletAddress
+            ? renderP2PEmptyState(
+              'Connect to see your trades',
+              'Received offers, active listings, counters, and history are grouped here once your trading wallet is connected.',
+              <button
+                type="button"
+                onClick={handleWalletPrimaryAction}
+                disabled={Boolean(connectingWalletId) || (!preferredWalletOption && !tradePrimaryConnectsAppWallet)}
+              >
+                {walletPrimaryButtonLabel}
+              </button>
+            )
+            : null}
           {myTradesError ? <p className="standalone-trade-error">{myTradesError}</p> : null}
           {walletAddress && loadingMyTrades && myTrades.length === 0 ? <p className="standalone-trade-state">Loading your trades...</p> : null}
           {walletAddress && (!loadingMyTrades || myTrades.length > 0) ? (
@@ -4213,7 +4316,37 @@ export default function P2PTradingPage({
                 {renderTradeList(
                   selectedMyTradeGroup.trades,
                   tradeSearchInput ? selectedMyTradeGroup.emptySearchMessage : selectedMyTradeGroup.emptyMessage,
-                  'p2p-wallet-trade-grid'
+                  'p2p-wallet-trade-grid',
+                  renderP2PEmptyState(
+                    tradeSearchInput ? `No ${selectedMyTradeGroup.label.toLowerCase()} match` : selectedMyTradeGroup.emptyMessage,
+                    tradeSearchInput
+                      ? 'Clear the search or try another token, wallet, status, or id.'
+                      : selectedMyTradeGroup.id === 'received'
+                        ? 'Direct and counter offers sent to this wallet will appear here for review.'
+                        : selectedMyTradeGroup.id === 'active'
+                          ? 'Create a public, private-link, or direct offer to start tracking it here.'
+                          : 'Settled, cancelled, declined, and expired trades will collect here.',
+                    <>
+                      {tradeSearchInput ? (
+                        <button type="button" onClick={() => setTradeSearchInput('')}>
+                          Clear search
+                        </button>
+                      ) : selectedMyTradeGroup.id === 'active' ? (
+                        <button type="button" onClick={startFreshTrade}>
+                          Create trade
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => refreshMyTrades().catch(() => {})}>
+                          Refresh
+                        </button>
+                      )}
+                      {selectedMyTradeGroup.id !== 'active' ? (
+                        <button type="button" onClick={() => navigateToTradePath('/trades/open')}>
+                          Open link
+                        </button>
+                      ) : null}
+                    </>
+                  )
                 )}
               </section>
             </div>

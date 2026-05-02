@@ -2186,6 +2186,10 @@ body {
   grid-template-columns: auto minmax(420px, 1fr);
 }
 
+.p2p-market-overview-summary-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .p2p-stats-strip {
   min-width: 0;
   display: grid;
@@ -2250,12 +2254,38 @@ body {
   gap: 7px;
 }
 
-.p2p-token-search span {
+.p2p-token-search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.p2p-token-search-label {
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.p2p-token-search-head small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(196, 181, 253, 0.78);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-token-search-input-wrap {
+  position: relative;
+  display: grid;
+  min-width: 0;
 }
 
 .p2p-action-open-form {
@@ -2273,6 +2303,32 @@ body {
   color: var(--text);
   padding: 13px 16px;
   font-size: 0.94rem;
+}
+
+.p2p-token-search-input-wrap input {
+  padding-right: 78px;
+}
+
+.p2p-token-search-input-wrap button {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  border: 1px solid rgba(121, 95, 184, 0.48);
+  border-radius: 999px;
+  background: rgba(24, 24, 40, 0.92);
+  color: #d9d3ff;
+  padding: 6px 11px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.p2p-token-search-input-wrap button:hover {
+  border-color: rgba(167, 139, 250, 0.62);
+  background: rgba(139, 92, 246, 0.18);
+  color: var(--text);
 }
 
 .p2p-link-open-form button {
@@ -2648,6 +2704,71 @@ body {
 .standalone-trade-error {
   border-color: rgba(244, 63, 94, 0.42);
   color: #ffb1c0;
+}
+
+.p2p-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px dashed rgba(121, 95, 184, 0.56);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(18, 18, 30, 0.62), rgba(10, 10, 18, 0.46));
+  padding: 14px;
+}
+
+.p2p-empty-state strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.94rem;
+  line-height: 1.2;
+}
+
+.p2p-empty-state p {
+  max-width: 48rem;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.p2p-empty-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.p2p-empty-actions button {
+  border: 1px solid rgba(74, 64, 112, 0.68);
+  border-radius: 8px;
+  background: rgba(16, 16, 26, 0.84);
+  color: var(--text);
+  min-height: 34px;
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.p2p-empty-actions button:first-child {
+  border-color: rgba(139, 92, 246, 0.56);
+  background: rgba(139, 92, 246, 0.18);
+  color: #f5f3ff;
+}
+
+.p2p-empty-actions button:hover:not(:disabled) {
+  border-color: rgba(167, 139, 250, 0.7);
+  background: rgba(139, 92, 246, 0.24);
+}
+
+.p2p-empty-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
 }
 
 .standalone-trade-detail-section {
@@ -6232,6 +6353,7 @@ body {
   font-size: 0.9rem;
 }
 
+.chat-message-sync-indicator,
 .group-message-sync-indicator {
   position: sticky;
   top: 0;
@@ -6252,25 +6374,30 @@ body {
   font-size: 0.78rem;
 }
 
+.chat-message-skeleton-list,
 .group-message-skeleton-list {
   display: grid;
   gap: 10px;
   padding: 2px 0 8px;
 }
 
+.chat-message-skeleton-row,
 .group-message-skeleton-row {
   display: flex;
   width: 100%;
 }
 
+.chat-message-skeleton-row.incoming,
 .group-message-skeleton-row.incoming {
   justify-content: flex-start;
 }
 
+.chat-message-skeleton-row.outgoing,
 .group-message-skeleton-row.outgoing {
   justify-content: flex-end;
 }
 
+.chat-message-skeleton-bubble,
 .group-message-skeleton-bubble {
   position: relative;
   display: grid;
@@ -6286,10 +6413,12 @@ body {
     rgba(20, 20, 34, 0.92);
 }
 
+.chat-message-skeleton-row.outgoing .chat-message-skeleton-bubble,
 .group-message-skeleton-row.outgoing .group-message-skeleton-bubble {
   width: min(58%, 460px);
 }
 
+.chat-message-skeleton-bubble::before,
 .group-message-skeleton-bubble::before {
   content: '';
   position: absolute;
@@ -6299,6 +6428,7 @@ body {
   animation: chat-image-shimmer 1.35s ease-in-out infinite;
 }
 
+.chat-message-skeleton-bubble span,
 .group-message-skeleton-bubble span {
   display: block;
   height: 10px;
@@ -6306,15 +6436,18 @@ body {
   background: rgba(235, 229, 255, 0.1);
 }
 
+.chat-message-skeleton-bubble span:first-child,
 .group-message-skeleton-bubble span:first-child {
   width: 42%;
 }
 
+.chat-message-skeleton-bubble span:last-child,
 .group-message-skeleton-bubble span:last-child {
   width: 82%;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-message-skeleton-bubble::before,
   .group-message-skeleton-bubble::before {
     animation: none;
   }
@@ -9545,10 +9678,27 @@ body {
     max-height: none;
     width: 100vw;
     min-width: 100vw;
-    padding: 10px;
+    padding: 10px 10px 12px;
     gap: 10px;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .contacts-sidebar .contact-profile-card {
+    padding: 9px 10px;
+    gap: 8px;
+  }
+
+  .contacts-sidebar .contact-profile-card-fixed {
+    flex: 0 0 auto;
+  }
+
+  .contacts-sidebar .contact-profile-editor {
+    min-height: 38px;
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
 
   .contacts-sidebar .contact-profile-card .contacts-list {
@@ -9556,8 +9706,9 @@ body {
   }
 
   .contacts-sidebar .contact-profile-card-scroll {
-    flex: 1 1 0 !important;
-    min-height: 0;
+    flex-basis: min(260px, 32dvh);
+    flex-shrink: 1;
+    min-height: min(248px, 31dvh);
     overflow: hidden;
   }
 
@@ -9576,11 +9727,17 @@ body {
   }
 
   .contact-actions-grid {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
   }
 
   .contacts-sidebar .groups-invites-list {
     max-height: 34%;
+  }
+
+  .contacts-sidebar .contact-action-btn {
+    min-height: 32px;
+    padding: 7px 9px;
   }
 
   .chat-panel {
@@ -10290,6 +10447,24 @@ body {
     justify-content: stretch;
   }
 
+  .p2p-empty-state {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 11px;
+    padding: 12px;
+  }
+
+  .p2p-empty-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .p2p-empty-actions button {
+    width: 100%;
+  }
+
   .p2p-footer-links,
   .p2p-link-open-form {
     grid-template-columns: minmax(0, 1fr);
@@ -10439,6 +10614,16 @@ body {
   .p2p-stats-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  .p2p-token-search-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .p2p-token-search-head small {
+    text-align: left;
   }
 
   .standalone-trades-section-head,
@@ -10959,6 +11144,10 @@ body {
   .p2p-token-search input {
     padding: 10px 12px;
     font-size: 0.84rem;
+  }
+
+  .p2p-token-search .p2p-token-search-input-wrap input {
+    padding-right: 70px;
   }
 
   .p2p-link-open-form button {
@@ -11611,6 +11800,56 @@ body {
   .top-header .top-header-mobile-wallet .p2p-wallet-menu-trigger,
   .p2p-wallet-menu-trigger {
     min-width: 88px;
+  }
+}
+
+@media (max-width: 520px) {
+  .top-header .top-header-mobile-wallet {
+    padding: 6px 8px 7px;
+  }
+
+  .top-header .top-header-mobile-wallet .wallet-header-panel {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "identity actions menu";
+    align-content: center;
+    align-items: center;
+    gap: 6px;
+    min-height: 0;
+  }
+
+  .top-header .top-header-mobile-wallet .p2p-wallet-status {
+    display: contents;
+  }
+
+  .top-header .top-header-mobile-wallet .p2p-wallet-identity {
+    grid-area: identity;
+    width: auto;
+    grid-template-columns: minmax(0, 1fr) minmax(58px, max-content);
+  }
+
+  .top-header .top-header-mobile-wallet .p2p-wallet-status-actions {
+    grid-area: actions;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .top-header .top-header-mobile-wallet .p2p-wallet-menu-wrap {
+    grid-area: menu;
+    align-self: center;
+    justify-content: flex-end;
+  }
+
+  .top-header .top-header-mobile-wallet .p2p-wallet-menu-trigger {
+    min-width: 78px;
+  }
+
+  .top-header .top-header-mobile-wallet .p2p-wallet-aes-action.wallet-switch-action {
+    max-width: min(96px, 24vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 

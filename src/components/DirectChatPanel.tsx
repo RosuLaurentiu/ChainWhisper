@@ -68,6 +68,8 @@ const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   !offer.hiddenLiquidity &&
   offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
+const DIRECT_MESSAGE_SKELETON_ROWS = [0, 1, 2, 3, 4];
+
 const renderMessageTextWithLinks = (text: string): ReactNode => {
   const rendered: ReactNode[] = [];
   let lastIndex = 0;
@@ -327,6 +329,8 @@ function DirectChatPanel({
     overscan: 12,
     getItemKey: (index) => renderableMessages[index]?.id ?? index
   });
+  const showHistorySyncIndicator = loadingOlderHistory && renderableMessages.length > 0;
+  const showInitialMessageSkeleton = loadingOlderHistory && renderableMessages.length === 0;
 
   return (
     <div className="chat-shell">
@@ -371,8 +375,27 @@ function DirectChatPanel({
       </div>
 
       <div className="chat-messages" ref={setChatMessagesNode} onClick={() => markConversationAsRead(activeContact)}>
-        {loadingOlderHistory ? <p className="chat-empty">Loading older messages...</p> : null}
-        {renderableMessages.length === 0 ? (
+        {showHistorySyncIndicator ? (
+          <div className="chat-message-sync-indicator" role="status" aria-live="polite">
+            <span className="inline-spinner" aria-hidden="true" />
+            <span>Loading older messages</span>
+          </div>
+        ) : null}
+        {showInitialMessageSkeleton ? (
+          <div className="chat-message-skeleton-list" role="status" aria-live="polite" aria-label="Loading direct messages">
+            {DIRECT_MESSAGE_SKELETON_ROWS.map((index) => (
+              <div
+                key={`direct-message-skeleton-${index}`}
+                className={index % 3 === 1 ? 'chat-message-skeleton-row outgoing' : 'chat-message-skeleton-row incoming'}
+              >
+                <div className="chat-message-skeleton-bubble">
+                  <span />
+                  <span />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : renderableMessages.length === 0 ? (
           <p className="chat-empty">No messages yet.</p>
         ) : (
           <div

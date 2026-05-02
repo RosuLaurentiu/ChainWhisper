@@ -52,12 +52,43 @@ export type TradeOrderSummary = {
 
 type TradePerspectiveInput = Pick<TradeSnapshot, 'maker' | 'taker' | 'offer' | 'request'> & {
   status?: TradeOnChainStatus;
+  fillState?: TradeSnapshot['fillState'];
+  makerPrivateProgress?: TradeSnapshot['makerPrivateProgress'];
 };
 
 const normalizeAddress = (value?: string | null): string => value?.trim().toLowerCase() ?? '';
 
+const parsePositiveAmount = (value?: string | null): bigint => {
+  const normalizedValue = value?.trim() ?? '';
+  return /^\d+$/.test(normalizedValue) ? BigInt(normalizedValue) : 0n;
+};
+
 export const isZeroTradeTakerAddress = (value?: string | null): boolean =>
   normalizeAddress(value) === ZERO_TRADE_TAKER_ADDRESS;
+
+export const hasPartialTradeFill = (trade: TradePerspectiveInput): boolean => {
+  const filledOfferAmount = parsePositiveAmount(trade.fillState?.filledOfferAmount);
+  const filledRequestAmount = parsePositiveAmount(trade.fillState?.filledRequestAmount);
+  const remainingOfferAmount = parsePositiveAmount(trade.fillState?.remainingOfferAmount);
+  const remainingRequestAmount = parsePositiveAmount(trade.fillState?.remainingRequestAmount);
+  const hasVisiblePartialFill =
+    (filledOfferAmount > 0n || filledRequestAmount > 0n) &&
+    (remainingOfferAmount > 0n || remainingRequestAmount > 0n);
+
+  if (hasVisiblePartialFill) {
+    return true;
+  }
+
+  const makerFilledOfferAmount = parsePositiveAmount(trade.makerPrivateProgress?.filledOfferAmount);
+  const makerRemainingOfferAmount = parsePositiveAmount(trade.makerPrivateProgress?.remainingOfferAmount);
+  const makerInitialOfferAmount = parsePositiveAmount(trade.makerPrivateProgress?.initialOfferAmount);
+
+  return (
+    makerFilledOfferAmount > 0n &&
+    makerRemainingOfferAmount > 0n &&
+    (makerInitialOfferAmount === 0n || makerInitialOfferAmount > makerRemainingOfferAmount)
+  );
+};
 
 export const resolveTradePerspective = (
   trade: TradePerspectiveInput,
@@ -96,6 +127,7 @@ export const resolveTradePerspective = (
   const needsAction = isOpen && isTaker;
   const isMyActiveOffer = isOpen && isMaker;
   const isParticipant = isMaker || isTaker;
+  const isPartiallyFilled = hasPartialTradeFill(trade);
 
   return {
     walletKey,
@@ -112,7 +144,7 @@ export const resolveTradePerspective = (
     canAccept,
     needsAction,
     isMyActiveOffer,
-    isHistory: isParticipant && !isOpen
+    isHistory: isParticipant && (!isOpen || isPartiallyFilled)
   };
 };
 
@@ -187,7 +219,15 @@ export const groupWalletTradesByPerspective = (trades: TradeSnapshot[], walletAd
       needsAction.push(trade);
     } else if (perspective.isMyActiveOffer) {
       myActiveOffers.push(trade);
-    } else if (perspective.isHistory) {
+    }
+
+    const isWalletScopedPartialFill =
+      perspective.walletKey.length > 0 &&
+      perspective.isOpenTakerTrade &&
+      !perspective.isParticipant &&
+      hasPartialTradeFill(trade);
+
+    if (perspective.isHistory || isWalletScopedPartialFill) {
       history.push(trade);
     }
   }
