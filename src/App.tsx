@@ -16,6 +16,7 @@ import {
   buildMessageReferenceKeys,
   buildTradeCustomTokenInfoKey,
   DEFAULT_TRADE_EXPIRY_HOURS,
+  getVerifiedEcosystemToken,
   getOnChainFailureMessage,
   isCustomTradeTokenSelection,
   messageReferencesMatch,
@@ -96,6 +97,7 @@ import {
   AUTO_STATE_BACKUP_RETRY_BLOCKS,
   AUTO_SYNC_INTERVAL_MS,
   BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI,
+  buildTradeSnapshotKey,
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
   buildTradeOfferMessagePayload,
@@ -173,6 +175,7 @@ import {
   parseTokenAmountInput,
   parseWalletAddressListInput,
   PRIVATE_REWARD_TOKEN_ADDRESS,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TOKEN_BALANCE_ABI,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   REALTIME_SYNC_BURST_THROTTLE_MS,
@@ -221,6 +224,10 @@ const VISIBLE_THREAD_MESSAGE_CHUNK = 120;
 const BACKGROUND_DEEP_SYNC_DELAY_MS = 500;
 const GROUP_MESSAGE_PREFETCH_LIMIT = 6;
 const GROUP_MESSAGE_PREFETCH_BATCH_SIZE = 2;
+
+const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
+  !offer.hiddenLiquidity &&
+  offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
@@ -418,6 +425,7 @@ export default function App() {
     setTradeOfferAmountInput,
     setTradeRequestAmountInput,
     setTradeExpiryHoursInput,
+    setTradeHidePrivateLiquidity,
     setTradeCounterParentId,
     setTradeCounterContext,
     setTradeSnapshotsById
@@ -1460,6 +1468,10 @@ export default function App() {
     tradeOfferAmountSummaryLabel,
     tradeRequestAmountSummaryLabel,
     tradeOfferBalanceSummaryLabel,
+    tradeOfferAmountLabel,
+    tradeRequestAmountLabel,
+    tradeOfferAmountPlaceholder,
+    tradeRequestAmountPlaceholder,
     tradeOfferVerifyUrl,
     tradeRequestVerifyUrl,
     parsedTradeExpiryHours,
@@ -1467,6 +1479,7 @@ export default function App() {
     canUseTradeOfferMax,
     tradePreviewLabel,
     tradeRateLabel,
+    tradeReverseRateLabel,
     tradeFeeSummaryLabel,
     tradeOfferCustomMetaLabel,
     tradeRequestCustomMetaLabel
@@ -1491,6 +1504,8 @@ export default function App() {
         tradeOfferAmountInput,
         tradeRequestAmountInput,
         tradeExpiryHoursInput,
+        tradeHidePrivateLiquidity: false,
+        hiddenLiquidityUnavailableMessage: '',
         rewardTokenSymbol,
         rewardTokenDecimals,
         privateRewardTokenSymbol,
@@ -1536,7 +1551,7 @@ export default function App() {
     () =>
       activeMessages
         .map((message) => parseTradeOfferMessagePayload(message.text))
-        .filter((message): message is TradeOfferMessagePayload => message !== null),
+        .filter((message): message is TradeOfferMessagePayload => message !== null && isInChatTradeOffer(message)),
     [activeMessages]
   );
   useEffect(() => {
@@ -1544,6 +1559,7 @@ export default function App() {
     setTradeOfferAmountInput('');
     setTradeRequestAmountInput('');
     setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+    setTradeHidePrivateLiquidity(false);
     setTradeCounterParentId(null);
     setTradeCounterContext(null);
   }, [activeContact]);
@@ -1558,11 +1574,31 @@ export default function App() {
                 kind: tradeCustomOfferTokenKind
               }
             : null,
+          isWalletAddress(tradeOfferTokenSelection)
+            ? {
+                key: buildTradeCustomTokenInfoKey(
+                  getVerifiedEcosystemToken(tradeOfferTokenSelection)?.kind ?? 'erc20',
+                  tradeOfferTokenSelection
+                ),
+                address: tradeOfferTokenSelection.trim().toLowerCase(),
+                kind: getVerifiedEcosystemToken(tradeOfferTokenSelection)?.kind ?? 'erc20'
+              }
+            : null,
           isCustomTradeTokenSelection(tradeRequestTokenSelection) && isWalletAddress(normalizedTradeRequestCustomTokenAddress)
             ? {
                 key: buildTradeCustomTokenInfoKey(tradeCustomRequestTokenKind, normalizedTradeRequestCustomTokenAddress),
                 address: normalizedTradeRequestCustomTokenAddress.trim().toLowerCase(),
                 kind: tradeCustomRequestTokenKind
+              }
+            : null,
+          isWalletAddress(tradeRequestTokenSelection)
+            ? {
+                key: buildTradeCustomTokenInfoKey(
+                  getVerifiedEcosystemToken(tradeRequestTokenSelection)?.kind ?? 'erc20',
+                  tradeRequestTokenSelection
+                ),
+                address: tradeRequestTokenSelection.trim().toLowerCase(),
+                kind: getVerifiedEcosystemToken(tradeRequestTokenSelection)?.kind ?? 'erc20'
               }
             : null
         ]
@@ -1598,6 +1634,7 @@ export default function App() {
           balanceWei: previousEntry?.balanceWei ?? null,
           loading: true,
           walletKey,
+          aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
           error: undefined
         };
       }
@@ -1651,6 +1688,7 @@ export default function App() {
               balanceWei: typeof balanceWei === 'bigint' ? balanceWei : null,
               loading: false,
               walletKey,
+              aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
               error
             } satisfies TradeCustomTokenInfo;
           } catch {
@@ -1662,6 +1700,7 @@ export default function App() {
               balanceWei: null,
               loading: false,
               walletKey,
+              aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
               error: 'Unable to load token metadata.'
             } satisfies TradeCustomTokenInfo;
           }
@@ -1705,6 +1744,7 @@ export default function App() {
             balanceWei: null,
             loading: false,
             walletKey,
+            aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
             error: 'Unable to load token metadata.'
           };
         }
@@ -1723,6 +1763,7 @@ export default function App() {
     tradeOfferTokenSelection,
     tradeRequestTokenSelection,
     walletAddress,
+    hasAesReady,
     topUpMetricsNonce
   ]);
   useEffect(() => {
@@ -1769,13 +1810,21 @@ export default function App() {
 
     const loadTradeSnapshots = async () => {
       const nextSnapshots = await Promise.all(
-        Array.from(new Set(activeTradeOffers.map((offer) => offer.tradeId))).map(async (tradeId) => {
+        Array.from(
+          new Map(
+            activeTradeOffers.map((offer) => [
+              buildTradeSnapshotKey(offer.tradeId, offer.escrowContract),
+              offer
+            ])
+          ).values()
+        ).map(async (offer) => {
           try {
-            return await fetchTradeSnapshotById(tradeId, {
+            return await fetchTradeSnapshotById(offer.tradeId, {
               rewardTokenSymbol,
               rewardTokenDecimals,
               privateRewardTokenSymbol,
-              privateRewardTokenDecimals
+              privateRewardTokenDecimals,
+              escrowContract: offer.escrowContract
             });
           } catch {
             return null;
@@ -1793,7 +1842,7 @@ export default function App() {
           if (!snapshot) {
             continue;
           }
-          next[String(snapshot.tradeId)] = snapshot;
+          next[buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract)] = snapshot;
         }
         return next;
       });
@@ -2884,7 +2933,8 @@ export default function App() {
   };
 
   const resolveTradeSnapshotForOffer = async (offerMessage: TradeOfferMessagePayload): Promise<TradeSnapshot> => {
-    const existingSnapshot = tradeSnapshotsById[String(offerMessage.tradeId)];
+    const tradeKey = buildTradeSnapshotKey(offerMessage.tradeId, offerMessage.escrowContract);
+    const existingSnapshot = tradeSnapshotsById[tradeKey];
     if (existingSnapshot) {
       return existingSnapshot;
     }
@@ -2893,11 +2943,12 @@ export default function App() {
       rewardTokenSymbol,
       rewardTokenDecimals,
       privateRewardTokenSymbol,
-      privateRewardTokenDecimals
+      privateRewardTokenDecimals,
+      escrowContract: offerMessage.escrowContract
     });
     setTradeSnapshotsById((previous) => ({
       ...previous,
-      [String(offerMessage.tradeId)]: nextSnapshot
+      [tradeKey]: nextSnapshot
     }));
     return nextSnapshot;
   };
@@ -7299,7 +7350,9 @@ export default function App() {
     try {
       setCreatingTrade(true);
       if (pendingCounterContext) {
-        setProcessingTradeActionId(String(pendingCounterContext.offer.tradeId));
+        setProcessingTradeActionId(
+          buildTradeSnapshotKey(pendingCounterContext.offer.tradeId, pendingCounterContext.offer.escrowContract)
+        );
       }
       const { signer, cacheKey } = await getMemoSigner();
       const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
@@ -7324,6 +7377,7 @@ export default function App() {
 
       const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
       const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
+      const publicOfferAmount = parsedTradeOfferAmountWei;
       const createResult =
         isCounterReplacement && counteredSnapshot
           ? await counterTradeAndCloseCounteredTradeOnChain({
@@ -7331,7 +7385,7 @@ export default function App() {
               makerAddress: requestedWalletAddress,
               counteredTradeId: counteredSnapshot.tradeId,
               offerAsset: selectedTradeOfferToken,
-              offerAmountWei: parsedTradeOfferAmountWei,
+              offerAmountWei: publicOfferAmount,
               requestAsset: selectedTradeRequestToken,
               requestAmountWei: parsedTradeRequestAmountWei,
               expiresAt,
@@ -7342,7 +7396,7 @@ export default function App() {
               makerAddress: requestedWalletAddress,
               takerAddress: activeContact,
               offerAsset: selectedTradeOfferToken,
-              offerAmountWei: parsedTradeOfferAmountWei,
+              offerAmountWei: publicOfferAmount,
               requestAsset: selectedTradeRequestToken,
               requestAmountWei: parsedTradeRequestAmountWei,
               expiresAt,
@@ -7350,12 +7404,13 @@ export default function App() {
               parentTradeId: tradeCounterParentId ?? undefined
             });
       const tradeId = createResult.tradeId;
+      const tradeKey = buildTradeSnapshotKey(tradeId, createResult.escrowContract);
 
       const createdAt = Math.floor(Date.now() / 1000);
       const tradeMessagePayload: TradeOfferMessagePayload = {
         version: 2,
         tradeId,
-        escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+        escrowContract: createResult.escrowContract,
         maker: requestedWalletAddress,
         taker: activeContact,
         createdAt,
@@ -7367,19 +7422,21 @@ export default function App() {
         ...previous,
         ...(isCounterReplacement && counteredSnapshot
           ? {
-              [String(counteredSnapshot.tradeId)]: {
-                ...(previous[String(counteredSnapshot.tradeId)] ?? counteredSnapshot),
+              [buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)]: {
+                ...(previous[buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)] ??
+                  counteredSnapshot),
                 status: 'declined' as const
               }
             }
           : {}),
-        [String(tradeId)]: {
+        [tradeKey]: {
           tradeId,
+          escrowContract: createResult.escrowContract,
           maker: requestedWalletAddress,
           taker: activeContact,
           offer: {
             ...selectedTradeOfferToken,
-            amount: parsedTradeOfferAmountWei.toString()
+            amount: publicOfferAmount.toString()
           },
           request: {
             ...selectedTradeRequestToken,
@@ -7413,6 +7470,7 @@ export default function App() {
       setTradeOfferAmountInput('');
       setTradeRequestAmountInput('');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeHidePrivateLiquidity(false);
       setTradeCounterParentId(null);
       setTradeCounterContext(null);
       setTradeComposerOpen(false);
@@ -7450,8 +7508,12 @@ export default function App() {
     }
 
     try {
-      setProcessingTradeActionId(String(offer.tradeId));
+      const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
+      setProcessingTradeActionId(tradeKey);
       const snapshot = await resolveTradeSnapshotForOffer(offer);
+      if (snapshot.hiddenLiquidity) {
+        throw new Error('Open the shared P2P trade link to fill hidden-liquidity trades.');
+      }
       const remainingRequestAmount = (() => {
         try {
           return BigInt(snapshot.fillState?.remainingRequestAmount ?? snapshot.request.amount);
@@ -7464,36 +7526,37 @@ export default function App() {
         amount: remainingRequestAmount.toString()
       };
       const { signer, cacheKey } = await getMemoSigner();
-      const { acceptedTxHash } = snapshot.counterParentTradeId
-        ? await acceptCounterTradeAndCloseParentOnChain({
-            signer,
-            ownerAddress: walletAddress,
-            tradeId: offer.tradeId,
-            requestAsset,
-            requestAmountWei: remainingRequestAmount
-          })
-        : await acceptTradeOnChain({
-            signer,
-            ownerAddress: walletAddress,
-            tradeId: offer.tradeId,
-            requestAsset,
-            requestAmountWei: remainingRequestAmount
-          });
+      const { acceptedTxHash } =
+        snapshot.counterParentTradeId
+            ? await acceptCounterTradeAndCloseParentOnChain({
+                signer,
+                ownerAddress: walletAddress,
+                tradeId: offer.tradeId,
+                requestAsset,
+                requestAmountWei: remainingRequestAmount
+              })
+            : await acceptTradeOnChain({
+                signer,
+                ownerAddress: walletAddress,
+                tradeId: offer.tradeId,
+                requestAsset,
+                requestAmountWei: remainingRequestAmount
+              });
 
       setTradeSnapshotsById((previous) => {
         const next = {
           ...previous,
-          [String(offer.tradeId)]: {
-            ...(previous[String(offer.tradeId)] ?? snapshot),
+          [tradeKey]: {
+            ...(previous[tradeKey] ?? snapshot),
             status: 'accepted' as const,
             acceptedTxHash
           }
         };
         const parentSnapshot = snapshot.counterParentTradeId
-          ? previous[String(snapshot.counterParentTradeId)]
+          ? previous[buildTradeSnapshotKey(snapshot.counterParentTradeId, snapshot.escrowContract)]
           : undefined;
         if (snapshot.counterParentTradeId && parentSnapshot) {
-          next[String(snapshot.counterParentTradeId)] = {
+          next[buildTradeSnapshotKey(snapshot.counterParentTradeId, parentSnapshot.escrowContract ?? snapshot.escrowContract)] = {
             ...parentSnapshot,
             status: 'cancelled'
           };
@@ -7512,6 +7575,7 @@ export default function App() {
         buildTradeResponseMessagePayload({
           version: 1,
           tradeId: offer.tradeId,
+          escrowContract: offer.escrowContract,
           action: 'accepted',
           actor: walletAddress,
           createdAt: Math.floor(Date.now() / 1000)
@@ -7537,18 +7601,20 @@ export default function App() {
     }
 
     try {
-      setProcessingTradeActionId(String(offer.tradeId));
+      const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
+      setProcessingTradeActionId(tradeKey);
       const snapshot = await resolveTradeSnapshotForOffer(offer);
       const { signer, cacheKey } = await getMemoSigner();
       await declineTradeOnChain({
         signer,
-        tradeId: offer.tradeId
+        tradeId: offer.tradeId,
+        escrowContract: snapshot.escrowContract
       });
 
       setTradeSnapshotsById((previous) => ({
         ...previous,
-        [String(offer.tradeId)]: {
-          ...(previous[String(offer.tradeId)] ?? snapshot),
+        [tradeKey]: {
+          ...(previous[tradeKey] ?? snapshot),
           status: 'declined'
         }
       }));
@@ -7564,6 +7630,7 @@ export default function App() {
         buildTradeResponseMessagePayload({
           version: 1,
           tradeId: offer.tradeId,
+          escrowContract: offer.escrowContract,
           action: 'declined',
           actor: walletAddress,
           createdAt: Math.floor(Date.now() / 1000)
@@ -7589,18 +7656,20 @@ export default function App() {
     }
 
     try {
-      setProcessingTradeActionId(String(offer.tradeId));
+      const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
+      setProcessingTradeActionId(tradeKey);
       const snapshot = await resolveTradeSnapshotForOffer(offer);
       const { signer, cacheKey } = await getMemoSigner();
       await cancelTradeOnChain({
         signer,
-        tradeId: offer.tradeId
+        tradeId: offer.tradeId,
+        escrowContract: snapshot.escrowContract
       });
 
       setTradeSnapshotsById((previous) => ({
         ...previous,
-        [String(offer.tradeId)]: {
-          ...(previous[String(offer.tradeId)] ?? snapshot),
+        [tradeKey]: {
+          ...(previous[tradeKey] ?? snapshot),
           status: 'cancelled'
         }
       }));
@@ -7616,6 +7685,7 @@ export default function App() {
         buildTradeResponseMessagePayload({
           version: 1,
           tradeId: offer.tradeId,
+          escrowContract: offer.escrowContract,
           action: 'cancelled',
           actor: walletAddress,
           createdAt: Math.floor(Date.now() / 1000)
@@ -7679,6 +7749,7 @@ export default function App() {
     setTradeCounterParentId(counterParentId);
     setTradeCounterContext({ offer, sourceMessage });
     setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+    setTradeHidePrivateLiquidity(false);
     setReplyingToMessage(sourceMessage);
     setTipComposerOpen(false);
     setTradeComposerOpen(true);
@@ -9578,6 +9649,10 @@ export default function App() {
         onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
         requestAmountInput={tradeRequestAmountInput}
         onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
+        offerAmountLabel={tradeOfferAmountLabel}
+        requestAmountLabel={tradeRequestAmountLabel}
+        offerAmountPlaceholder={tradeOfferAmountPlaceholder}
+        requestAmountPlaceholder={tradeRequestAmountPlaceholder}
         offerAmountError={tradeComposerFieldErrors.offerAmount}
         requestAmountError={tradeComposerFieldErrors.requestAmount}
         canUseMaxOfferAmount={canUseTradeOfferMax}
@@ -9589,6 +9664,7 @@ export default function App() {
         swapDisabled={creatingTrade}
         tradePreviewLabel={tradePreviewLabel}
         tradeRateLabel={tradeRateLabel}
+        tradeReverseRateLabel={tradeReverseRateLabel}
         expiresHoursInput={tradeExpiryHoursInput}
         onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
         expiryError={tradeComposerFieldErrors.expiry}

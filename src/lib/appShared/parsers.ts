@@ -57,6 +57,7 @@ import {
   SubmitMemoPayload,
   TEXT_DECODER,
   TEXT_ENCODER,
+  TRADE_ESCROW_CONTRACT_ADDRESS,
   TRADE_OFFER_MESSAGE_PREFIX,
   TRADE_RESPONSE_MESSAGE_PREFIX,
   TradeAssetPayload,
@@ -1980,7 +1981,7 @@ export const parseTradeOfferMessagePayload = (text: string): TradeOfferMessagePa
   const escrowContract =
     typeof parsed.escrowContract === 'string' && isWalletAddress(parsed.escrowContract)
       ? parsed.escrowContract
-      : undefined;
+      : TRADE_ESCROW_CONTRACT_ADDRESS;
   const maker = typeof parsed.maker === 'string' && isWalletAddress(parsed.maker) ? parsed.maker : undefined;
   const taker = typeof parsed.taker === 'string' && isWalletAddress(parsed.taker) ? parsed.taker : undefined;
   const offer = normalizeTradeAssetPayload(parsed.offer);
@@ -1992,7 +1993,6 @@ export const parseTradeOfferMessagePayload = (text: string): TradeOfferMessagePa
     createdAt <= 0 ||
     parsed.expiresAt === undefined ||
     parsed.expiresAt === null ||
-    !escrowContract ||
     !maker ||
     !taker
   ) {
@@ -2013,7 +2013,8 @@ export const parseTradeOfferMessagePayload = (text: string): TradeOfferMessagePa
     request: request ?? undefined,
     createdAt,
     expiresAt,
-    parentTradeId: parentTradeId > 0 ? parentTradeId : undefined
+    parentTradeId: parentTradeId > 0 ? parentTradeId : undefined,
+    hiddenLiquidity: parsed.hiddenLiquidity === true
   };
 };
 
@@ -2029,6 +2030,10 @@ export const parseTradeResponseMessagePayload = (text: string): TradeResponseMes
   const tradeId = toSafeNumber(parsed.tradeId);
   const createdAt = toSafeNumber(parsed.createdAt);
   const counterTradeId = toSafeNumber(parsed.counterTradeId);
+  const escrowContract =
+    typeof parsed.escrowContract === 'string' && isWalletAddress(parsed.escrowContract)
+      ? parsed.escrowContract
+      : TRADE_ESCROW_CONTRACT_ADDRESS;
   const actor = typeof parsed.actor === 'string' && isWalletAddress(parsed.actor) ? parsed.actor : undefined;
   const action =
     parsed.action === 'accepted' ||
@@ -2045,6 +2050,7 @@ export const parseTradeResponseMessagePayload = (text: string): TradeResponseMes
   return {
     version: 1,
     tradeId,
+    escrowContract,
     action,
     actor,
     createdAt,
@@ -2063,6 +2069,9 @@ export const formatTradeOfferDisplayText = (
   const offerLabel = formatTradeAssetDisplayText(payload.offer);
   const requestLabel = formatTradeAssetDisplayText(payload.request);
   const prefix = direction === 'outgoing' ? 'Trade offer sent' : 'Trade offer';
+  if (payload.hiddenLiquidity) {
+    return `${prefix}: hidden liquidity at ${requestLabel} per ${offerLabel}.`;
+  }
   return `${prefix}: ${offerLabel} for ${requestLabel}.`;
 };
 

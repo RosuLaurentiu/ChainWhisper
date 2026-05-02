@@ -9,6 +9,8 @@ import {
   MAX_ERC20_APPROVAL,
   PRIVATE_ERC20_TOKEN_ABI,
   PRIVATE_REWARD_TOKEN_ADDRESS,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TOKEN_BALANCE_ABI,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   REWARD_TOKEN_ADDRESS,
@@ -29,6 +31,33 @@ import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHel
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const ACCEPTED_TX_LOOKBACK_BLOCKS = 100_000;
+const PRIVATE_TOKEN_WRITE_GAS_LIMIT = 4_000_000n;
+
+type TradeEscrowConfig = {
+  address: string;
+  abi: typeof TRADE_ESCROW_CONTRACT_ABI | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI;
+  hiddenOnly: boolean;
+};
+
+const normalizeEscrowAddress = (value?: string | null): string =>
+  typeof value === 'string' && isWalletAddress(value) ? value : TRADE_ESCROW_CONTRACT_ADDRESS;
+
+export const resolveTradeEscrowContractConfig = (escrowContract?: string | null): TradeEscrowConfig => {
+  const address = normalizeEscrowAddress(escrowContract);
+  if (address.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    return {
+      address: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+      abi: PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
+      hiddenOnly: true
+    };
+  }
+
+  return {
+    address: TRADE_ESCROW_CONTRACT_ADDRESS,
+    abi: TRADE_ESCROW_CONTRACT_ABI,
+    hiddenOnly: false
+  };
+};
 
 export type TradeAccessMetadata = {
   isPublic?: boolean;
@@ -158,6 +187,41 @@ export const readPrivateTokenBalanceWei = async (
   return decryptPrivateUintValue(encryptedBalanceRaw, signer);
 };
 
+export const readPrivateTradeRemainingOfferWei = async ({
+  tradeId,
+  escrowContract,
+  makerAddress,
+  signer
+}: {
+  tradeId: number;
+  escrowContract?: string;
+  makerAddress: string;
+  signer: Wallet | JsonRpcSigner;
+}): Promise<bigint | null> => {
+  if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(makerAddress)) {
+    return null;
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const config = resolveTradeEscrowContractConfig(escrowContract);
+  if (!config.hiddenOnly) {
+    return null;
+  }
+
+  const privateTradeInterface = new cotiEthers.Interface(config.abi);
+  const callData = privateTradeInterface.encodeFunctionData('offboardPrivateFixedPriceRemainingForMaker', [tradeId]);
+  const rawResult = await readProvider.call({
+    from: makerAddress,
+    to: config.address,
+    data: callData
+  });
+  const decoded = privateTradeInterface.decodeFunctionResult('offboardPrivateFixedPriceRemainingForMaker', rawResult);
+  const encryptedRemainingRaw = decoded?.[0] as { userCiphertext?: unknown; [key: number]: unknown } | null | undefined;
+  const userCiphertext = encryptedRemainingRaw?.userCiphertext ?? encryptedRemainingRaw?.[1] ?? encryptedRemainingRaw;
+  return decryptPrivateUintValue(userCiphertext, signer);
+};
+
 const readPrivateTokenAllowanceWei = async (
   tokenAddress: string,
   ownerAddress: string,
@@ -263,10 +327,14 @@ const resolveTradeAssetSnapshot = async (
   }
 };
 
-export const fetchTradeAccessMetadataById = async (tradeId: number): Promise<TradeAccessMetadata> => {
+export const fetchTradeAccessMetadataById = async (
+  tradeId: number,
+  escrowContract?: string
+): Promise<TradeAccessMetadata> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+  const config = resolveTradeEscrowContractConfig(escrowContract);
+  const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
   const metadataRaw = await contract.getTradeMetadata(tradeId);
   return parseTradeAccessMetadata(metadataRaw);
 };
@@ -278,11 +346,13 @@ export const fetchTradeSnapshotById = async (
     rewardTokenDecimals: number;
     privateRewardTokenSymbol: string;
     privateRewardTokenDecimals: number;
+    escrowContract?: string;
   }
 ): Promise<TradeSnapshot> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
+  const config = resolveTradeEscrowContractConfig(options.escrowContract);
+  const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
   const tradeRaw = await contract.getTrade(tradeId);
   const [metadataRaw, fillStateRaw, counterParentRaw, replacementRaw, replacesRaw] = await Promise.all([
     contract.getTradeMetadata?.(tradeId).catch(() => null),
@@ -331,6 +401,14 @@ export const fetchTradeSnapshotById = async (
     )
   ]);
   const resolvedStatus = resolveTradeSnapshotStatus(statusRaw, expiresAt);
+  const hiddenLiquidity =
+    config.hiddenOnly ||
+    offer.kind === 'private-erc20' &&
+    request.kind === 'private-erc20' &&
+    fillState.remainingOfferAmount === '0' &&
+    fillState.remainingRequestAmount === '0' &&
+    fillState.filledOfferAmount === '0' &&
+    fillState.filledRequestAmount === '0';
   let acceptedTxHash: string | undefined;
 
   if (resolvedStatus === 'accepted') {
@@ -356,6 +434,7 @@ export const fetchTradeSnapshotById = async (
 
   return {
     tradeId,
+    escrowContract: config.address,
     maker,
     taker,
     offer,
@@ -370,7 +449,8 @@ export const fetchTradeSnapshotById = async (
     replacementTradeId,
     replacesTradeId,
     fillState,
-    acceptedTxHash
+    acceptedTxHash,
+    hiddenLiquidity
   };
 };
 
@@ -385,50 +465,64 @@ export const fetchRecentTradeSnapshots = async (
 ): Promise<TradeSnapshot[]> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
   const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 48)));
-  const publicTradeIdsRaw = await contract.getOpenPublicTradeIds?.(0, safeLimit).catch(() => null);
-  const publicTradeIdsResult = Array.isArray(publicTradeIdsRaw) ? publicTradeIdsRaw[0] : null;
-  const publicTradeIds = Array.isArray(publicTradeIdsResult)
-    ? publicTradeIdsResult
-        .map((value: unknown) => toSafeNumber(value))
-        .filter((value: number) => value > 0)
-    : [];
+  const configs = [
+    resolveTradeEscrowContractConfig(TRADE_ESCROW_CONTRACT_ADDRESS),
+    resolveTradeEscrowContractConfig(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS)
+  ];
 
-  if (publicTradeIdsRaw !== null) {
-    const publicSnapshots = await Promise.all(
-      publicTradeIds.map((tradeId: number) =>
-        fetchTradeSnapshotById(tradeId, {
-          rewardTokenSymbol: options.rewardTokenSymbol,
-          rewardTokenDecimals: options.rewardTokenDecimals,
-          privateRewardTokenSymbol: options.privateRewardTokenSymbol,
-          privateRewardTokenDecimals: options.privateRewardTokenDecimals
-        }).catch(() => null)
-      )
-    );
-    return publicSnapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
-  }
+  const snapshotGroups = await Promise.all(
+    configs.map(async (config) => {
+      const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
+      const publicTradeIdsRaw = await contract.getOpenPublicTradeIds?.(0, safeLimit).catch(() => null);
+      const publicTradeIdsResult = Array.isArray(publicTradeIdsRaw) ? publicTradeIdsRaw[0] : null;
+      const publicTradeIds = Array.isArray(publicTradeIdsResult)
+        ? publicTradeIdsResult
+            .map((value: unknown) => toSafeNumber(value))
+            .filter((value: number) => value > 0)
+        : [];
 
-  const nextTradeIdRaw = await contract.nextTradeId();
-  const nextTradeId = toSafeNumber(nextTradeIdRaw);
-  const tradeIds: number[] = [];
+      if (publicTradeIdsRaw !== null) {
+        return Promise.all(
+          publicTradeIds.map((tradeId: number) =>
+            fetchTradeSnapshotById(tradeId, {
+              rewardTokenSymbol: options.rewardTokenSymbol,
+              rewardTokenDecimals: options.rewardTokenDecimals,
+              privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+              privateRewardTokenDecimals: options.privateRewardTokenDecimals,
+              escrowContract: config.address
+            }).catch(() => null)
+          )
+        );
+      }
 
-  for (let tradeId = nextTradeId - 1; tradeId > 0 && tradeIds.length < safeLimit; tradeId -= 1) {
-    tradeIds.push(tradeId);
-  }
+      const nextTradeIdRaw = await contract.nextTradeId();
+      const nextTradeId = toSafeNumber(nextTradeIdRaw);
+      const tradeIds: number[] = [];
 
-  const snapshots = await Promise.all(
-    tradeIds.map((tradeId) =>
-      fetchTradeSnapshotById(tradeId, {
-        rewardTokenSymbol: options.rewardTokenSymbol,
-        rewardTokenDecimals: options.rewardTokenDecimals,
-        privateRewardTokenSymbol: options.privateRewardTokenSymbol,
-        privateRewardTokenDecimals: options.privateRewardTokenDecimals
-      }).catch(() => null)
-    )
+      for (let tradeId = nextTradeId - 1; tradeId > 0 && tradeIds.length < safeLimit; tradeId -= 1) {
+        tradeIds.push(tradeId);
+      }
+
+      return Promise.all(
+        tradeIds.map((tradeId) =>
+          fetchTradeSnapshotById(tradeId, {
+            rewardTokenSymbol: options.rewardTokenSymbol,
+            rewardTokenDecimals: options.rewardTokenDecimals,
+            privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+            privateRewardTokenDecimals: options.privateRewardTokenDecimals,
+            escrowContract: config.address
+          }).catch(() => null)
+        )
+      );
+    })
   );
 
-  return snapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
+  return snapshotGroups
+    .flat()
+    .filter((snapshot): snapshot is TradeSnapshot => snapshot !== null)
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, safeLimit);
 };
 
 export const fetchWalletTradeSnapshots = async (
@@ -447,34 +541,47 @@ export const fetchWalletTradeSnapshots = async (
 
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
   const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 80)));
-  const [makerIdsRaw, takerIdsRaw, fillerIdsRaw] = await Promise.all([
-    contract.getTradeIdsForMaker(walletAddress, 0, safeLimit).catch(() => null),
-    contract.getTradeIdsForTaker(walletAddress, 0, safeLimit).catch(() => null),
-    contract.getTradeIdsForFiller?.(walletAddress, 0, safeLimit).catch(() => null)
-  ]);
   const resolveIds = (raw: unknown): number[] => {
     const idsRaw = Array.isArray(raw) ? raw[0] : null;
     return Array.isArray(idsRaw)
       ? idsRaw.map((value: unknown) => toSafeNumber(value)).filter((value: number) => value > 0)
       : [];
   };
-  const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw), ...resolveIds(fillerIdsRaw)]))
-    .sort((left, right) => right - left)
-    .slice(0, safeLimit);
-  const snapshots = await Promise.all(
-    tradeIds.map((tradeId) =>
-      fetchTradeSnapshotById(tradeId, {
-        rewardTokenSymbol: options.rewardTokenSymbol,
-        rewardTokenDecimals: options.rewardTokenDecimals,
-        privateRewardTokenSymbol: options.privateRewardTokenSymbol,
-        privateRewardTokenDecimals: options.privateRewardTokenDecimals
-      }).catch(() => null)
-    )
+  const configs = [
+    resolveTradeEscrowContractConfig(TRADE_ESCROW_CONTRACT_ADDRESS),
+    resolveTradeEscrowContractConfig(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS)
+  ];
+  const snapshotGroups = await Promise.all(
+    configs.map(async (config) => {
+      const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
+      const [makerIdsRaw, takerIdsRaw, fillerIdsRaw] = await Promise.all([
+        contract.getTradeIdsForMaker(walletAddress, 0, safeLimit).catch(() => null),
+        contract.getTradeIdsForTaker(walletAddress, 0, safeLimit).catch(() => null),
+        contract.getTradeIdsForFiller?.(walletAddress, 0, safeLimit).catch(() => null)
+      ]);
+      const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw), ...resolveIds(fillerIdsRaw)]))
+        .sort((left, right) => right - left)
+        .slice(0, safeLimit);
+      return Promise.all(
+        tradeIds.map((tradeId) =>
+          fetchTradeSnapshotById(tradeId, {
+            rewardTokenSymbol: options.rewardTokenSymbol,
+            rewardTokenDecimals: options.rewardTokenDecimals,
+            privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+            privateRewardTokenDecimals: options.privateRewardTokenDecimals,
+            escrowContract: config.address
+          }).catch(() => null)
+        )
+      );
+    })
   );
 
-  return snapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
+  return snapshotGroups
+    .flat()
+    .filter((snapshot): snapshot is TradeSnapshot => snapshot !== null)
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, safeLimit);
 };
 
 export const ensureTradeTokenAllowance = async (
@@ -482,9 +589,10 @@ export const ensureTradeTokenAllowance = async (
   ownerAddress: string,
   tokenAddress: string,
   requiredAmount: bigint,
-  kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'> = 'erc20'
+  kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'> = 'erc20',
+  spenderAddress = TRADE_ESCROW_CONTRACT_ADDRESS
 ): Promise<void> => {
-  if (requiredAmount <= 0n || !isWalletAddress(tokenAddress)) {
+  if (requiredAmount <= 0n || !isWalletAddress(tokenAddress) || !isWalletAddress(spenderAddress)) {
     return;
   }
 
@@ -496,7 +604,7 @@ export const ensureTradeTokenAllowance = async (
     const allowance = await readPrivateTokenAllowanceWei(
       tokenAddress,
       ownerAddress,
-      TRADE_ESCROW_CONTRACT_ADDRESS,
+      spenderAddress,
       signer
     ).catch(() => null);
     if (allowance !== null && allowance >= requiredAmount) {
@@ -516,20 +624,22 @@ export const ensureTradeTokenAllowance = async (
       tokenAddress,
       approveSelector
     );
-    const approveTx = await privateTokenContract.approve(TRADE_ESCROW_CONTRACT_ADDRESS, encryptedApproval);
+    const approveTx = await privateTokenContract.approve(spenderAddress, encryptedApproval, {
+      gasLimit: PRIVATE_TOKEN_WRITE_GAS_LIMIT
+    });
     await approveTx.wait();
     return;
   }
 
   const cotiEthers = await loadCotiEthersModule();
   const tokenContract = new cotiEthers.Contract(tokenAddress, ERC20_TOKEN_ABI, signer);
-  const allowanceRaw = await tokenContract.allowance(ownerAddress, TRADE_ESCROW_CONTRACT_ADDRESS).catch(() => null);
+  const allowanceRaw = await tokenContract.allowance(ownerAddress, spenderAddress).catch(() => null);
   const allowance = typeof allowanceRaw === 'bigint' ? allowanceRaw : 0n;
   if (allowance >= requiredAmount) {
     return;
   }
 
-  const approveTx = await tokenContract.approve(TRADE_ESCROW_CONTRACT_ADDRESS, MAX_ERC20_APPROVAL);
+  const approveTx = await tokenContract.approve(spenderAddress, MAX_ERC20_APPROVAL);
   await approveTx.wait();
 };
 

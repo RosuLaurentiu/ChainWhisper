@@ -6,10 +6,12 @@ import TradeOfferCard from './TradeOfferCard';
 import { parseImageTag } from '../lib/imagePull';
 import {
   DEFAULT_REACTION_EMOJIS,
+  buildTradeSnapshotKey,
   formatMessageTimestamp,
   getMessageDisplayText,
   parseTradeOfferMessagePayload,
   parseTradeResponseMessagePayload,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   shortenAddress,
   type ChatMessage,
   type Contact,
@@ -23,6 +25,91 @@ type MessageReactionSummary = {
   emoji: string;
   count: number;
   reactedByMe: boolean;
+};
+
+const MESSAGE_LINK_PATTERN = /(https?:\/\/[^\s<>"']+|\/trades\/l\/[^\s<>"']+)/gi;
+const TRAILING_LINK_PUNCTUATION_PATTERN = /[),.!?;:]+$/;
+
+const splitTrailingLinkPunctuation = (value: string): { linkText: string; trailingText: string } => {
+  const trailingMatch = value.match(TRAILING_LINK_PUNCTUATION_PATTERN);
+  if (!trailingMatch) {
+    return { linkText: value, trailingText: '' };
+  }
+
+  const trailingText = trailingMatch[0];
+  return {
+    linkText: value.slice(0, -trailingText.length),
+    trailingText
+  };
+};
+
+const resolveMessageLinkHref = (value: string): { href: string; external: boolean } | null => {
+  if (value.startsWith('/trades/l/')) {
+    return { href: value, external: false };
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null;
+    }
+
+    if (typeof window !== 'undefined' && url.origin === window.location.origin && url.pathname.startsWith('/trades/')) {
+      return { href: `${url.pathname}${url.search}${url.hash}`, external: false };
+    }
+
+    return { href: url.toString(), external: true };
+  } catch {
+    return null;
+  }
+};
+
+const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
+  !offer.hiddenLiquidity &&
+  offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+
+const renderMessageTextWithLinks = (text: string): ReactNode => {
+  const rendered: ReactNode[] = [];
+  let lastIndex = 0;
+  MESSAGE_LINK_PATTERN.lastIndex = 0;
+
+  for (const match of text.matchAll(MESSAGE_LINK_PATTERN)) {
+    const rawMatch = match[0];
+    const matchIndex = match.index ?? 0;
+    const { linkText, trailingText } = splitTrailingLinkPunctuation(rawMatch);
+    const link = resolveMessageLinkHref(linkText);
+    if (!link || linkText.length === 0) {
+      continue;
+    }
+
+    if (matchIndex > lastIndex) {
+      rendered.push(text.slice(lastIndex, matchIndex));
+    }
+    rendered.push(
+      <a
+        key={`message-link-${matchIndex}-${linkText}`}
+        className="message-text-link"
+        href={link.href}
+        target={link.external ? '_blank' : undefined}
+        rel={link.external ? 'noreferrer' : undefined}
+      >
+        {linkText}
+      </a>
+    );
+    if (trailingText) {
+      rendered.push(trailingText);
+    }
+    lastIndex = matchIndex + rawMatch.length;
+  }
+
+  if (lastIndex === 0) {
+    return text;
+  }
+  if (lastIndex < text.length) {
+    rendered.push(text.slice(lastIndex));
+  }
+
+  return rendered;
 };
 
 type DirectChatPanelProps = {
@@ -199,18 +286,21 @@ function DirectChatPanel({
     const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
     const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
 
-    if (parsedTradeOffer) {
-      const tradeId = String(parsedTradeOffer.tradeId);
-      visibleTradeOfferIds.add(tradeId);
+    if (parsedTradeOffer && isInChatTradeOffer(parsedTradeOffer)) {
+      const tradeKey = buildTradeSnapshotKey(parsedTradeOffer.tradeId, parsedTradeOffer.escrowContract);
+      visibleTradeOfferIds.add(tradeKey);
     }
 
     if (parsedTradeResponse) {
-      latestTradeResponsesById[String(parsedTradeResponse.tradeId)] = parsedTradeResponse;
+      latestTradeResponsesById[buildTradeSnapshotKey(parsedTradeResponse.tradeId, parsedTradeResponse.escrowContract)] =
+        parsedTradeResponse;
     }
   });
   const latestTradeId = activeMessages.reduce<number>((max, message) => {
     const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
-    return parsedTradeOffer && parsedTradeOffer.tradeId > max ? parsedTradeOffer.tradeId : max;
+    return parsedTradeOffer && isInChatTradeOffer(parsedTradeOffer) && parsedTradeOffer.tradeId > max
+      ? parsedTradeOffer.tradeId
+      : max;
   }, -1);
   const renderableMessages = useMemo(
     () =>
@@ -222,10 +312,10 @@ function DirectChatPanel({
         const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
         return !(
           parsedTradeResponse &&
-          (visibleTradeOfferIds.has(String(parsedTradeResponse.tradeId)) ||
+          (visibleTradeOfferIds.has(buildTradeSnapshotKey(parsedTradeResponse.tradeId, parsedTradeResponse.escrowContract)) ||
             (parsedTradeResponse.action === 'countered' &&
               typeof parsedTradeResponse.counterTradeId === 'number' &&
-              visibleTradeOfferIds.has(String(parsedTradeResponse.counterTradeId))))
+              visibleTradeOfferIds.has(buildTradeSnapshotKey(parsedTradeResponse.counterTradeId, parsedTradeResponse.escrowContract))))
         );
       }),
     [activeMessages, isReactionOnlyMessage, visibleTradeOfferIds]
@@ -293,7 +383,9 @@ function DirectChatPanel({
             const message = renderableMessages[virtualItem.index];
             if (!message) return null;
 
-            const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
+            const parsedTradeOfferRaw = parseTradeOfferMessagePayload(message.text);
+            const parsedTradeOffer =
+              parsedTradeOfferRaw && isInChatTradeOffer(parsedTradeOfferRaw) ? parsedTradeOfferRaw : null;
             const messageDisplayText = getMessageDisplayText(message.text, message.direction);
             const parsedImageTag = parseImageTag(message.text);
             const messageReactions = getReactionsForMessage(message);
@@ -392,11 +484,11 @@ function DirectChatPanel({
                   ) : null}
                   {parsedTradeOffer ? (
                     (() => {
-                      const tradeId = String(parsedTradeOffer.tradeId);
-                      const snapshot = tradeSnapshotsById[tradeId] ?? null;
-                      const latestResponse = latestTradeResponsesById[tradeId] ?? null;
+                      const tradeKey = buildTradeSnapshotKey(parsedTradeOffer.tradeId, parsedTradeOffer.escrowContract);
+                      const snapshot = tradeSnapshotsById[tradeKey] ?? null;
+                      const latestResponse = latestTradeResponsesById[tradeKey] ?? null;
                       const defaultExpanded = parsedTradeOffer.tradeId === latestTradeId;
-                      const expanded = tradeCardExpandedState[tradeId] ?? defaultExpanded;
+                      const expanded = tradeCardExpandedState[tradeKey] ?? defaultExpanded;
 
                       return (
                         <TradeOfferCard
@@ -404,13 +496,13 @@ function DirectChatPanel({
                           snapshot={snapshot}
                           latestResponse={latestResponse}
                           currentWalletAddress={walletAddress}
-                          actionPending={processingTradeActionId === tradeId}
+                          actionPending={processingTradeActionId === tradeKey}
                           collapsed={!expanded}
                           canToggleCollapsed={true}
                           onToggleCollapsed={() => {
                             setTradeCardExpandedState((previous) => ({
                               ...previous,
-                              [tradeId]: !(previous[tradeId] ?? defaultExpanded)
+                              [tradeKey]: !(previous[tradeKey] ?? defaultExpanded)
                             }));
                           }}
                           onAccept={() => {
@@ -431,7 +523,7 @@ function DirectChatPanel({
                   ) : parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
                   ) : messageDisplayText ? (
-                    <div>{messageDisplayText}</div>
+                    <div>{renderMessageTextWithLinks(messageDisplayText)}</div>
                   ) : null}
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">

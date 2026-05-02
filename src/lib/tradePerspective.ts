@@ -1,4 +1,4 @@
-import type { TradeAssetPayload, TradeOnChainStatus, TradeSnapshot } from './appShared';
+import { formatTokenAmount, type TradeAssetPayload, type TradeOnChainStatus, type TradeSnapshot } from './appShared';
 
 export const ZERO_TRADE_TAKER_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -27,6 +27,27 @@ export type TradePerspective = {
   needsAction: boolean;
   isMyActiveOffer: boolean;
   isHistory: boolean;
+};
+
+export type TradeOrderSideRole = 'offer' | 'payment';
+
+export type TradeOrderSide = TradePerspectiveSide & {
+  role: TradeOrderSideRole;
+};
+
+export type TradeOrderSummary = {
+  perspective: TradePerspective;
+  offerAsset: TradeAssetPayload;
+  paymentAsset: TradeAssetPayload;
+  primarySide: TradeOrderSide;
+  secondarySide: TradeOrderSide;
+  offerSide: TradeOrderSide;
+  paymentSide: TradeOrderSide;
+  pairLabel: string;
+  actionLabel: string;
+  directionLabel: string;
+  ratioLabel: string | null;
+  reverseRatioLabel: string | null;
 };
 
 type TradePerspectiveInput = Pick<TradeSnapshot, 'maker' | 'taker' | 'offer' | 'request'> & {
@@ -92,6 +113,66 @@ export const resolveTradePerspective = (
     needsAction,
     isMyActiveOffer,
     isHistory: isParticipant && !isOpen
+  };
+};
+
+export const formatTradeRatioLabel = (baseAsset?: TradeAssetPayload, quoteAsset?: TradeAssetPayload): string | null => {
+  if (!baseAsset || !quoteAsset) {
+    return null;
+  }
+
+  try {
+    const baseAmount = BigInt(baseAsset.amount);
+    const quoteAmount = BigInt(quoteAsset.amount);
+    if (baseAmount <= 0n || quoteAmount <= 0n) {
+      return `${baseAsset.symbol} / ${quoteAsset.symbol}`;
+    }
+
+    const scaledQuoteAmount = (quoteAmount * 10n ** BigInt(baseAsset.decimals)) / baseAmount;
+    return `1 ${baseAsset.symbol} = ${formatTokenAmount(scaledQuoteAmount, quoteAsset.decimals, 6)} ${quoteAsset.symbol}`;
+  } catch {
+    return `${baseAsset?.symbol ?? 'Asset'} / ${quoteAsset?.symbol ?? 'Asset'}`;
+  }
+};
+
+export const resolveTradeOrderSummary = (
+  trade: TradePerspectiveInput,
+  walletAddress?: string | null
+): TradeOrderSummary => {
+  const perspective = resolveTradePerspective(trade, walletAddress);
+  const isBuyerView = perspective.showTakerPerspective;
+  const isMakerView = perspective.isMaker;
+
+  const offerSide: TradeOrderSide = {
+    asset: trade.offer,
+    label: isBuyerView ? 'You buy' : isMakerView ? 'You sell' : 'Seller sells',
+    tone: isBuyerView ? 'receive' : isMakerView ? 'send' : 'receive',
+    role: 'offer'
+  };
+  const paymentSide: TradeOrderSide = {
+    asset: trade.request,
+    label: isBuyerView ? 'You pay' : isMakerView ? 'Buyer pays' : 'Buyer pays',
+    tone: isBuyerView ? 'send' : isMakerView ? 'receive' : 'send',
+    role: 'payment'
+  };
+
+  const directionLabel = isBuyerView
+    ? `Buy ${trade.offer.symbol} with ${trade.request.symbol}`
+    : `Sell ${trade.offer.symbol} for ${trade.request.symbol}`;
+
+  return {
+    perspective,
+    offerAsset: trade.offer,
+    paymentAsset: trade.request,
+    primarySide: isBuyerView ? paymentSide : offerSide,
+    secondarySide: isBuyerView ? offerSide : paymentSide,
+    offerSide,
+    paymentSide,
+    pairLabel: `${trade.offer.symbol} / ${trade.request.symbol}`,
+    actionLabel: isBuyerView ? `Buy ${trade.offer.symbol}` : `Sell ${trade.offer.symbol}`,
+    directionLabel,
+    ratioLabel: formatTradeRatioLabel(trade.offer, trade.request),
+    reverseRatioLabel: formatTradeRatioLabel(trade.request, trade.offer)
   };
 };
 

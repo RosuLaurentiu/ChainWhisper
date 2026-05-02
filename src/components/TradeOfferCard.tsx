@@ -7,6 +7,8 @@ import {
   formatMessageTimestamp,
   formatTokenAmount,
   formatTradeAssetDisplayText,
+  parseTokenAmountInput,
+  sanitizeTokenAmountInput,
   shortenAddress,
   type TradeAssetPayload,
   type TradeOfferMessagePayload,
@@ -14,7 +16,7 @@ import {
   type TradeSnapshot
 } from '../lib/appShared';
 import { isVerifiedEcosystemToken } from '../lib/appHelpers';
-import { isZeroTradeTakerAddress, resolveTradePerspective } from '../lib/tradePerspective';
+import { isZeroTradeTakerAddress, resolveTradeOrderSummary } from '../lib/tradePerspective';
 
 type TradeOfferCardProps = {
   offer: TradeOfferMessagePayload;
@@ -42,6 +44,8 @@ type TradeOfferCardProps = {
 type TradeCardAssetPanel = {
   asset: TradeAssetPayload;
   label: string;
+  displayText: string;
+  metaText?: string;
   tone: 'send' | 'receive' | 'neutral';
   verifyUrl?: string;
   scopeLabel: string | null;
@@ -86,6 +90,13 @@ const resolveTradeStatus = (
   latestResponse?: TradeResponseMessagePayload | null
 ): string => {
   if (snapshot?.status && snapshot.status !== 'unknown') {
+    if (
+      (snapshot.hiddenLiquidity || offer.hiddenLiquidity) &&
+      snapshot.status === 'open' &&
+      latestResponse?.action === 'accepted'
+    ) {
+      return 'Open';
+    }
     if (snapshot.status === 'expired') {
       return 'Expired';
     }
@@ -194,26 +205,6 @@ const buildTradeStatusDisplayLabel = (
   return statusLabel;
 };
 
-const buildTradeRateLabel = (sendAsset?: TradeAssetPayload, receiveAsset?: TradeAssetPayload): string | null => {
-  if (!sendAsset || !receiveAsset) {
-    return null;
-  }
-
-  try {
-    const sendAmount = BigInt(sendAsset.amount);
-    const receiveAmount = BigInt(receiveAsset.amount);
-
-    if (sendAmount <= 0n || receiveAmount <= 0n) {
-      return null;
-    }
-
-    const scaledReceiveAmount = (receiveAmount * 10n ** BigInt(sendAsset.decimals)) / sendAmount;
-    return `Rate: 1 ${sendAsset.symbol} ~= ${formatTokenAmount(scaledReceiveAmount, receiveAsset.decimals, 6)} ${receiveAsset.symbol}`;
-  } catch {
-    return null;
-  }
-};
-
 const parseFillAmount = (value?: string): bigint => {
   try {
     return BigInt(value ?? '0');
@@ -234,6 +225,18 @@ const formatExactTokenAmount = (amount: bigint, decimals: number): string => {
   const whole = amount / base;
   const fraction = (amount % base).toString().padStart(decimals, '0').replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : whole.toString();
+};
+
+const quoteRequestAmountForOffer = (
+  offerAmountOut: bigint,
+  offerUnitAmount: bigint,
+  requestUnitAmount: bigint
+): bigint => {
+  if (offerAmountOut <= 0n || offerUnitAmount <= 0n || requestUnitAmount <= 0n) {
+    return 0n;
+  }
+
+  return (offerAmountOut * requestUnitAmount + offerUnitAmount - 1n) / offerUnitAmount;
 };
 
 export default function TradeOfferCard({
@@ -259,10 +262,13 @@ export default function TradeOfferCard({
   onEdit
 }: TradeOfferCardProps) {
   const [partialFillPercent, setPartialFillPercent] = useState(50);
+  const [privateFillReceiveInput, setPrivateFillReceiveInput] = useState('');
+  const [showReverseHiddenRate, setShowReverseHiddenRate] = useState(false);
   const walletKey = currentWalletAddress?.trim().toLowerCase() ?? '';
   const isMaker = walletKey.length > 0 && offer.maker.toLowerCase() === walletKey;
   const isTaker = walletKey.length > 0 && offer.taker.toLowerCase() === walletKey;
   const isOpenTakerTrade = isZeroTradeTakerAddress(offer.taker);
+  const hiddenLiquidity = Boolean(snapshot?.hiddenLiquidity || offer.hiddenLiquidity);
   const statusLabel = resolveTradeStatus(offer, snapshot, latestResponse);
   const statusClassName = statusLabel.toLowerCase().replace(/\s+/g, '-');
   const isOpen = statusLabel === 'Open' || statusLabel === 'Pending sync';
@@ -272,7 +278,8 @@ export default function TradeOfferCard({
   const baseOffer = snapshot?.offer ?? offer.offer;
   const baseRequest = snapshot?.request ?? offer.request;
   const useRemainingTerms = Boolean(
-    isOpen &&
+    !hiddenLiquidity &&
+      isOpen &&
       snapshot?.fillState &&
       parseFillAmount(snapshot.fillState.filledRequestAmount) > 0n &&
       parseFillAmount(snapshot.fillState.remainingRequestAmount) > 0n
@@ -295,9 +302,9 @@ export default function TradeOfferCard({
   const counterpartyExplorerUrl = hasCounterpartyAddress ? buildAddressExplorerUrl(counterpartyAddress) : undefined;
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
   const requestScopeLabel = resolvedRequest ? resolveAssetScopeLabel(resolvedRequest.kind) : null;
-  const tradePerspective =
+  const tradeOrderSummary =
     resolvedOffer && resolvedRequest
-      ? resolveTradePerspective(
+      ? resolveTradeOrderSummary(
           {
             maker: offer.maker,
             taker: offer.taker,
@@ -309,25 +316,42 @@ export default function TradeOfferCard({
         )
       : null;
   const assetPanels: TradeCardAssetPanel[] =
-    resolvedOffer && resolvedRequest && tradePerspective
-      ? (tradePerspective.showTakerPerspective
-          ? [tradePerspective.requestSide, tradePerspective.offerSide]
-          : [tradePerspective.offerSide, tradePerspective.requestSide]
-        ).map((side) => ({
-          asset: side.asset,
-          label: side.label,
-          tone: side.tone,
-          verifyUrl: side.asset === resolvedOffer ? offerVerifyUrl : requestVerifyUrl,
-          scopeLabel: side.asset === resolvedOffer ? offerScopeLabel : requestScopeLabel,
-          custom: Boolean(side.asset.custom),
-          verified: isVerifiedAsset(side.asset)
-        }))
+    resolvedOffer && resolvedRequest && tradeOrderSummary
+      ? [tradeOrderSummary.primarySide, tradeOrderSummary.secondarySide].map((side) => {
+          const isOfferSide = side.role === 'offer';
+          return {
+            asset: side.asset,
+            label: side.label,
+            displayText:
+              hiddenLiquidity
+                ? side.asset.symbol
+                : formatTradeAssetDisplayText(side.asset),
+            metaText: hiddenLiquidity ? 'Amount hidden' : undefined,
+            tone: side.tone,
+            verifyUrl: isOfferSide ? offerVerifyUrl : requestVerifyUrl,
+            scopeLabel: isOfferSide ? offerScopeLabel : requestScopeLabel,
+            custom: Boolean(side.asset.custom),
+            verified: isVerifiedAsset(side.asset)
+          };
+        })
       : [];
+  const hiddenForwardRateLabel = hiddenLiquidity ? tradeOrderSummary?.ratioLabel ?? null : null;
+  const hiddenReverseRateLabel = hiddenLiquidity ? tradeOrderSummary?.reverseRatioLabel ?? null : null;
+  const visibleHiddenRateLabel =
+    showReverseHiddenRate && hiddenReverseRateLabel ? hiddenReverseRateLabel : hiddenForwardRateLabel;
   const tradeRateLabel =
-    assetPanels.length >= 2 ? buildTradeRateLabel(assetPanels[0]?.asset, assetPanels[1]?.asset) : null;
-  const filledRequestAmount = parseFillAmount(snapshot?.fillState?.filledRequestAmount);
-  const remainingRequestAmount = parseFillAmount(snapshot?.fillState?.remainingRequestAmount ?? baseRequest?.amount);
-  const remainingOfferAmount = parseFillAmount(snapshot?.fillState?.remainingOfferAmount ?? baseOffer?.amount);
+    !hiddenLiquidity && tradeOrderSummary?.ratioLabel ? `Price: ${tradeOrderSummary.ratioLabel}` : null;
+  const hiddenDirectionLabel =
+    hiddenLiquidity && tradeOrderSummary
+      ? tradeOrderSummary.directionLabel
+      : '';
+  const filledRequestAmount = hiddenLiquidity ? 0n : parseFillAmount(snapshot?.fillState?.filledRequestAmount);
+  const remainingRequestAmount = hiddenLiquidity
+    ? parseFillAmount(baseRequest?.amount)
+    : parseFillAmount(snapshot?.fillState?.remainingRequestAmount ?? baseRequest?.amount);
+  const remainingOfferAmount = hiddenLiquidity
+    ? parseFillAmount(baseOffer?.amount)
+    : parseFillAmount(snapshot?.fillState?.remainingOfferAmount ?? baseOffer?.amount);
   const totalRequestAmount =
     filledRequestAmount + remainingRequestAmount > 0n
       ? filledRequestAmount + remainingRequestAmount
@@ -349,9 +373,57 @@ export default function TradeOfferCard({
     hasFillProgress && baseRequest
       ? `${formatTokenAmount(remainingRequestAmount, baseRequest.decimals, 6)} ${baseRequest.symbol} remaining`
       : '';
+  const makerPrivateProgressSummary =
+    hiddenLiquidity && isMaker && snapshot?.makerPrivateProgress && baseOffer
+      ? (() => {
+          try {
+            const remainingOfferAmount = BigInt(snapshot.makerPrivateProgress?.remainingOfferAmount ?? '0');
+            const initialOfferAmountRaw = snapshot.makerPrivateProgress?.initialOfferAmount;
+            const initialOfferAmount =
+              initialOfferAmountRaw && /^\d+$/.test(initialOfferAmountRaw) ? BigInt(initialOfferAmountRaw) : null;
+            const filledOfferAmount =
+              initialOfferAmount !== null && initialOfferAmount >= remainingOfferAmount
+                ? initialOfferAmount - remainingOfferAmount
+                : snapshot.makerPrivateProgress?.filledOfferAmount &&
+                    /^\d+$/.test(snapshot.makerPrivateProgress.filledOfferAmount)
+                  ? BigInt(snapshot.makerPrivateProgress.filledOfferAmount)
+                  : null;
+            const percent =
+              initialOfferAmount !== null && initialOfferAmount > 0n && filledOfferAmount !== null
+                ? Number((filledOfferAmount * 10_000n) / initialOfferAmount) / 100
+                : 0;
+            const safePercent = Math.max(0, Math.min(100, percent));
+
+            return {
+              percent: safePercent,
+              percentLabel:
+                initialOfferAmount !== null && filledOfferAmount !== null
+                  ? `${safePercent.toFixed(safePercent % 1 === 0 ? 0 : 1)}% filled`
+                  : 'Live remaining',
+              filledLabel:
+                filledOfferAmount !== null
+                  ? `${formatTokenAmount(filledOfferAmount, baseOffer.decimals, 6)} ${baseOffer.symbol} filled`
+                  : 'Filled amount unavailable',
+              remainingLabel: `${formatTokenAmount(remainingOfferAmount, baseOffer.decimals, 6)} ${baseOffer.symbol} remaining`,
+              totalLabel:
+                initialOfferAmount !== null
+                  ? `${formatTokenAmount(initialOfferAmount, baseOffer.decimals, 6)} ${baseOffer.symbol} total`
+                  : `${formatTokenAmount(remainingOfferAmount, baseOffer.decimals, 6)} ${baseOffer.symbol} remaining`
+            };
+          } catch {
+            return null;
+          }
+        })()
+      : null;
   const counterParentTradeId = snapshot?.counterParentTradeId ?? offer.parentTradeId;
   const canShowPartialFill = Boolean(
-    onPartialFill && isOpen && (isTaker || canAcceptOpenTakerTrade) && baseOffer && baseRequest && remainingRequestAmount > 0n
+    onPartialFill &&
+      isOpen &&
+      (isTaker || canAcceptOpenTakerTrade) &&
+      baseOffer &&
+      baseRequest &&
+      remainingRequestAmount > 0n &&
+      !snapshot?.counterParentTradeId
   );
   const partialFillRequestAmount =
     remainingRequestAmount <= 0n
@@ -376,6 +448,26 @@ export default function TradeOfferCard({
   const partialFillAmountInput =
     baseRequest && partialFillRequestAmount > 0n ? formatExactTokenAmount(partialFillRequestAmount, baseRequest.decimals) : '';
   const partialFillDisabled = actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept);
+  const privateFillReceiveAmount =
+    hiddenLiquidity && baseOffer ? parseTokenAmountInput(privateFillReceiveInput, baseOffer.decimals) : null;
+  const privateFillRequestAmount =
+    hiddenLiquidity && privateFillReceiveAmount !== null && baseOffer && baseRequest
+      ? quoteRequestAmountForOffer(
+          privateFillReceiveAmount,
+          parseFillAmount(baseOffer.amount),
+          parseFillAmount(baseRequest.amount)
+        )
+      : 0n;
+  const privateFillRequestLabel =
+    baseRequest && privateFillRequestAmount > 0n
+      ? `${formatTokenAmount(privateFillRequestAmount, baseRequest.decimals, 6)} ${baseRequest.symbol}`
+      : '--';
+  const privateFillReceiveLabel =
+    baseOffer && privateFillReceiveAmount !== null && privateFillReceiveAmount > 0n
+      ? `${formatTokenAmount(privateFillReceiveAmount, baseOffer.decimals, 6)} ${baseOffer.symbol}`
+      : '--';
+  const privateFillCanSubmit =
+    privateFillReceiveAmount !== null && privateFillReceiveAmount > 0n && privateFillRequestAmount > 0n;
 
   return (
     <div className={collapsed ? 'trade-card collapsed' : 'trade-card'}>
@@ -383,7 +475,8 @@ export default function TradeOfferCard({
         <div className="trade-card-title-wrap">
           <div className="trade-card-title-row">
             <div className="trade-card-title">
-              <strong>Escrow Trade #{offer.tradeId}</strong>
+              <strong>{tradeOrderSummary?.directionLabel ?? `Escrow trade #${offer.tradeId}`}</strong>
+              <span className="trade-card-id">Trade #{offer.tradeId}</span>
               <span className={`trade-card-status ${statusClassName}`}>{statusDisplayLabel}</span>
             </div>
             {canToggleCollapsed ? (
@@ -402,6 +495,7 @@ export default function TradeOfferCard({
           {isMaker ? <span className="trade-card-parent">Your offer</span> : null}
           {isTaker ? <span className="trade-card-parent incoming">Incoming offer</span> : null}
           {canAcceptOpenTakerTrade ? <span className="trade-card-parent incoming">Open offer</span> : null}
+          {hiddenLiquidity ? <span className="trade-card-parent">Hidden liquidity</span> : null}
           {counterParentTradeId ? <span className="trade-card-parent">Counter to #{counterParentTradeId}</span> : null}
           {snapshot?.replacesTradeId ? <span className="trade-card-parent">Edited from #{snapshot.replacesTradeId}</span> : null}
           {snapshot?.replacementTradeId ? <span className="trade-card-parent">Replaced by #{snapshot.replacementTradeId}</span> : null}
@@ -423,7 +517,19 @@ export default function TradeOfferCard({
       </div>
 
       {collapsed ? (
-        assetPanels.length > 0 ? (
+        hiddenLiquidity && visibleHiddenRateLabel ? (
+          <button
+            type="button"
+            className="trade-card-ratio-card"
+            onClick={() => setShowReverseHiddenRate((value) => !value)}
+            title="Flip price ratio"
+            aria-label="Flip price ratio"
+          >
+            <span>Price ratio</span>
+            <strong>{visibleHiddenRateLabel}</strong>
+            {hiddenDirectionLabel ? <small>{hiddenDirectionLabel}. Liquidity and fill amounts stay private.</small> : null}
+          </button>
+        ) : assetPanels.length > 0 ? (
           <div className="trade-card-summary">
             {assetPanels.map((panel) => (
               <div
@@ -431,7 +537,7 @@ export default function TradeOfferCard({
                 className={`trade-card-summary-item trade-card-summary-item-${panel.tone}`}
               >
                 <span className="trade-card-summary-label">{panel.label}</span>
-                <strong>{formatTradeAssetDisplayText(panel.asset)}</strong>
+                <strong>{panel.displayText}</strong>
               </div>
             ))}
           </div>
@@ -447,6 +553,20 @@ export default function TradeOfferCard({
 
       {!collapsed ? (
         <>
+          {hiddenLiquidity && visibleHiddenRateLabel ? (
+            <button
+              type="button"
+              className="trade-card-ratio-card"
+              onClick={() => setShowReverseHiddenRate((value) => !value)}
+              title="Flip price ratio"
+              aria-label="Flip price ratio"
+            >
+              <span>Price ratio</span>
+              <strong>{visibleHiddenRateLabel}</strong>
+              {hiddenDirectionLabel ? <small>{hiddenDirectionLabel}. Liquidity and fill amounts stay private.</small> : null}
+            </button>
+          ) : null}
+
           {assetPanels.length > 0 ? (
             <div className="trade-card-grid">
               {assetPanels.map((panel) => (
@@ -469,8 +589,9 @@ export default function TradeOfferCard({
                       </a>
                     ) : null}
                   </div>
-                  <strong>{formatTradeAssetDisplayText(panel.asset)}</strong>
+                  <strong>{panel.displayText}</strong>
                   <div className="trade-card-flags">
+                    {panel.metaText ? <span className="trade-card-flag">{panel.metaText}</span> : null}
                     {panel.scopeLabel ? <span className="trade-card-flag">{panel.scopeLabel}</span> : null}
                     {panel.verified ? (
                       <span className="trade-card-flag trade-card-flag-verified">✓ Verified</span>
@@ -490,8 +611,21 @@ export default function TradeOfferCard({
             </div>
           )}
 
-          {tradeRateLabel ? <p className="trade-card-rate">{tradeRateLabel}</p> : null}
-          {hasFillProgress ? (
+          {tradeRateLabel && !hiddenLiquidity ? <p className="trade-card-rate">{tradeRateLabel}</p> : null}
+          {makerPrivateProgressSummary ? (
+            <div className="trade-card-fill-progress" aria-label={makerPrivateProgressSummary.percentLabel}>
+              <div>
+                <span>Your liquidity</span>
+                <strong>{makerPrivateProgressSummary.totalLabel}</strong>
+              </div>
+              <div className="trade-card-fill-bar">
+                <span style={{ width: `${makerPrivateProgressSummary.percent}%` }} />
+              </div>
+              <small>
+                {makerPrivateProgressSummary.filledLabel} / {makerPrivateProgressSummary.remainingLabel}
+              </small>
+            </div>
+          ) : hasFillProgress ? (
             <div className="trade-card-fill-progress" aria-label={fillProgressLabel}>
               <div>
                 <span>Fill progress</span>
@@ -503,7 +637,11 @@ export default function TradeOfferCard({
               <small>{fillProgressLabel}</small>
             </div>
           ) : null}
-          <p className="trade-card-note">On-chain escrow. Verify token contracts before accepting.</p>
+          <p className="trade-card-note">
+            {hiddenLiquidity
+              ? 'Private settlement. Liquidity amount is hidden; only the fixed price is public.'
+              : 'On-chain escrow. Verify token contracts before accepting.'}
+          </p>
           <div className="trade-card-counterparty">
             <span>Counterparty</span>
             {counterpartyExplorerUrl ? (
@@ -517,20 +655,22 @@ export default function TradeOfferCard({
 
           {isOpen && (isTaker || canAcceptOpenTakerTrade) ? (
             <div className="trade-card-actions">
-              <button
-                type="button"
-                className="trade-card-action trade-card-action-accept"
-                onClick={onAccept}
-                disabled={actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)}
-              >
-                {actionPending
-                  ? 'Processing...'
-                  : hasWalletForOpenAccept
-                    ? hasFillProgress
-                      ? 'Accept Rest'
-                      : 'Accept'
-                    : 'Connect wallet to accept'}
-              </button>
+              {!hiddenLiquidity ? (
+                <button
+                  type="button"
+                  className="trade-card-action trade-card-action-accept"
+                  onClick={onAccept}
+                  disabled={actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)}
+                >
+                  {actionPending
+                    ? 'Processing...'
+                    : hasWalletForOpenAccept
+                      ? hasFillProgress
+                        ? 'Buy Rest'
+                        : 'Buy'
+                      : 'Connect wallet to buy'}
+                </button>
+              ) : null}
               {isTaker ? (
                 <button
                   type="button"
@@ -551,7 +691,46 @@ export default function TradeOfferCard({
                   Counter
                 </button>
               ) : null}
-              {canShowPartialFill ? (
+              {canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest ? (
+                <div className="trade-card-partial-fill trade-card-private-fill">
+                  <div className="trade-card-partial-fill-head">
+                    <span>Buy amount</span>
+                    <strong>{baseOffer.symbol}</strong>
+                  </div>
+                  <label className="trade-card-private-fill-input">
+                    <span>You buy</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={privateFillReceiveInput}
+                      onChange={(event) => setPrivateFillReceiveInput(sanitizeTokenAmountInput(event.target.value))}
+                      placeholder={`0 ${baseOffer.symbol}`}
+                      disabled={partialFillDisabled}
+                    />
+                  </label>
+                  <div className="trade-card-partial-fill-terms">
+                    <div className="trade-card-partial-fill-term trade-card-partial-fill-send">
+                      <span>Max pay</span>
+                      <strong>{privateFillRequestLabel}</strong>
+                    </div>
+                    <div className="trade-card-partial-fill-link" aria-hidden="true">
+                      for
+                    </div>
+                    <div className="trade-card-partial-fill-term trade-card-partial-fill-receive">
+                      <span>Receive</span>
+                      <strong>{privateFillReceiveLabel}</strong>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="trade-card-action trade-card-action-accept trade-card-partial-fill-submit"
+                    onClick={() => onPartialFill?.(privateFillReceiveInput)}
+                    disabled={partialFillDisabled || !privateFillCanSubmit}
+                  >
+                    {actionPending ? 'Processing...' : hasWalletForOpenAccept ? 'Buy' : 'Connect wallet to buy'}
+                  </button>
+                </div>
+              ) : canShowPartialFill ? (
                 <div className="trade-card-partial-fill">
                   <div className="trade-card-partial-fill-head">
                     <span>Partial fill</span>

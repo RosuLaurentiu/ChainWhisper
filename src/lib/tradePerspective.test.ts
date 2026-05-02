@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { TradeAssetPayload, TradeSnapshot } from './appShared';
-import { groupWalletTradesByPerspective, resolveTradePerspective, ZERO_TRADE_TAKER_ADDRESS } from './tradePerspective';
+import {
+  formatTradeRatioLabel,
+  groupWalletTradesByPerspective,
+  resolveTradeOrderSummary,
+  resolveTradePerspective,
+  ZERO_TRADE_TAKER_ADDRESS
+} from './tradePerspective';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const taker = '0x2222222222222222222222222222222222222222';
@@ -68,5 +74,31 @@ describe('groupWalletTradesByPerspective', () => {
       myActiveOffers: [myActiveOffer],
       history: [history]
     });
+  });
+});
+
+describe('resolveTradeOrderSummary', () => {
+  it('describes the maker view as a sell order', () => {
+    const summary = resolveTradeOrderSummary(trade(), maker);
+    expect(summary.actionLabel).toBe('Sell AAA');
+    expect(summary.directionLabel).toBe('Sell AAA for BBB');
+    expect(summary.primarySide).toMatchObject({ label: 'You sell', role: 'offer', tone: 'send' });
+    expect(summary.secondarySide).toMatchObject({ label: 'Buyer pays', role: 'payment', tone: 'receive' });
+    expect(summary.ratioLabel).toBe('1 AAA = 1 BBB');
+  });
+
+  it('describes the taker view as a buy order with payment first', () => {
+    const summary = resolveTradeOrderSummary(trade({ taker: ZERO_TRADE_TAKER_ADDRESS }), other);
+    expect(summary.actionLabel).toBe('Buy AAA');
+    expect(summary.directionLabel).toBe('Buy AAA with BBB');
+    expect(summary.primarySide).toMatchObject({ label: 'You pay', role: 'payment', tone: 'send' });
+    expect(summary.secondarySide).toMatchObject({ label: 'You buy', role: 'offer', tone: 'receive' });
+  });
+
+  it('formats reversible ratios without exposing totals', () => {
+    const base = asset('AAA');
+    const quote = { ...asset('BBB'), amount: '2500000000000000000' };
+    expect(formatTradeRatioLabel(base, quote)).toBe('1 AAA = 2.5 BBB');
+    expect(formatTradeRatioLabel(quote, base)).toBe('1 BBB = 0.4 AAA');
   });
 });

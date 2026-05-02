@@ -9,6 +9,7 @@ import {
   formatCotiAmount,
   formatTokenAmount,
   isWalletAddress,
+  normalizeTokenDecimals,
   parseTokenAmountInput,
   shortenAddress,
   type TradeFeeModeSelection
@@ -16,6 +17,7 @@ import {
 import {
   VERIFIED_ECOSYSTEM_TOKENS,
   buildTradeCustomTokenInfoKey,
+  getVerifiedEcosystemToken,
   isCustomTradeTokenSelection,
   type ResolvedTradeToken,
   type TradeComposerFieldErrors,
@@ -43,6 +45,8 @@ type DeriveTradeComposerModelParams = {
   tradeRequestAmountInput: string;
   tradeExpiryHoursInput: string;
   tradeHasNoExpiry?: boolean;
+  tradeHidePrivateLiquidity?: boolean;
+  hiddenLiquidityUnavailableMessage?: string;
   rewardTokenSymbol: string;
   rewardTokenDecimals: number;
   privateRewardTokenSymbol: string;
@@ -68,6 +72,10 @@ export type TradeComposerModel = {
   tradeOfferAmountSummaryLabel: string;
   tradeRequestAmountSummaryLabel: string;
   tradeOfferBalanceSummaryLabel: string;
+  tradeOfferAmountLabel: string;
+  tradeRequestAmountLabel: string;
+  tradeOfferAmountPlaceholder: string;
+  tradeRequestAmountPlaceholder: string;
   tradeOfferVerifyUrl?: string;
   tradeRequestVerifyUrl?: string;
   parsedTradeExpiryHours: number;
@@ -83,6 +91,11 @@ export type TradeComposerModel = {
   tradeFeeSummaryLabel: string;
   tradeOfferCustomMetaLabel: string;
   tradeRequestCustomMetaLabel: string;
+  canHidePrivateLiquidity: boolean;
+  hiddenLiquidityActive: boolean;
+  hiddenLiquidityUnavailableMessage: string;
+  hiddenPriceOfferAmountWei: bigint | null;
+  hiddenPriceRequestAmountWei: bigint | null;
 };
 
 const resolveSelectedTradeToken = ({
@@ -178,6 +191,8 @@ export const deriveTradeComposerModel = ({
   tradeRequestAmountInput,
   tradeExpiryHoursInput,
   tradeHasNoExpiry = false,
+  tradeHidePrivateLiquidity = false,
+  hiddenLiquidityUnavailableMessage = '',
   rewardTokenSymbol,
   rewardTokenDecimals,
   privateRewardTokenSymbol,
@@ -194,19 +209,26 @@ export const deriveTradeComposerModel = ({
     tradeFeeModeSelection === 'token' ? 'coti' : tradeFeeModeSelection;
   const normalizedTradeOfferCustomTokenAddress = tradeOfferCustomTokenAddress.trim();
   const normalizedTradeRequestCustomTokenAddress = tradeRequestCustomTokenAddress.trim();
-  const verifiedTokenOptions = VERIFIED_ECOSYSTEM_TOKENS.map(({ address }) => {
-    const key = buildTradeCustomTokenInfoKey('erc20', address);
+  const verifiedTokenOptions = VERIFIED_ECOSYSTEM_TOKENS.map(({ address, kind }) => {
+    const key = buildTradeCustomTokenInfoKey(kind, address);
     const info = customTradeTokenInfoByAddress[key];
     const symbol = info?.loading
       ? `${shortenAddress(address)}…`
       : (info?.symbol ?? shortenAddress(address));
     return { value: address.toLowerCase(), label: `✓ ${symbol} (ecosystem)` };
   });
+  const privateVerifiedTokenOptions = verifiedTokenOptions.filter(
+    (option) => getVerifiedEcosystemToken(option.value)?.kind === 'private-erc20'
+  ).map((option) => ({ ...option, label: option.label.replace('(ecosystem)', '(private)') }));
+  const publicVerifiedTokenOptions = verifiedTokenOptions.filter(
+    (option) => getVerifiedEcosystemToken(option.value)?.kind !== 'private-erc20'
+  );
   const tradeTokenOptions = [
     { value: 'coti', label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)` },
     { value: 'wisp', label: `✓ ${rewardTokenSymbol} (public)` },
     { value: 'pwisp', label: `✓ ${privateRewardTokenSymbol} (private)` },
-    ...verifiedTokenOptions,
+    ...privateVerifiedTokenOptions,
+    ...publicVerifiedTokenOptions,
     { value: 'custom-public', label: 'Custom public token / CA' },
     { value: 'custom-private', label: 'Custom private token / CA' }
   ];
@@ -218,7 +240,10 @@ export const deriveTradeComposerModel = ({
         : '';
     }
     if (isWalletAddress(tradeOfferTokenSelection)) {
-      return buildTradeCustomTokenInfoKey('erc20', tradeOfferTokenSelection);
+      return buildTradeCustomTokenInfoKey(
+        getVerifiedEcosystemToken(tradeOfferTokenSelection)?.kind ?? 'erc20',
+        tradeOfferTokenSelection
+      );
     }
     return '';
   })();
@@ -229,7 +254,10 @@ export const deriveTradeComposerModel = ({
         : '';
     }
     if (isWalletAddress(tradeRequestTokenSelection)) {
-      return buildTradeCustomTokenInfoKey('erc20', tradeRequestTokenSelection);
+      return buildTradeCustomTokenInfoKey(
+        getVerifiedEcosystemToken(tradeRequestTokenSelection)?.kind ?? 'erc20',
+        tradeRequestTokenSelection
+      );
     }
     return '';
   })();
@@ -288,6 +316,26 @@ export const deriveTradeComposerModel = ({
   const parsedTradeRequestAmountWei = selectedTradeRequestToken
     ? parseTokenAmountInput(tradeRequestAmountInput, selectedTradeRequestToken.decimals)
     : null;
+  const privatePairSelected =
+    selectedTradeOfferToken?.kind === 'private-erc20' && selectedTradeRequestToken?.kind === 'private-erc20';
+  const hiddenLiquidityPairMessage = privatePairSelected ? '' : 'Hidden liquidity needs private tokens on both sides.';
+  const canHidePrivateLiquidity = privatePairSelected && !hiddenLiquidityUnavailableMessage;
+  const hiddenLiquidityActive = Boolean(tradeHidePrivateLiquidity && canHidePrivateLiquidity);
+  const resolvedHiddenLiquidityUnavailableMessage =
+    hiddenLiquidityUnavailableMessage || hiddenLiquidityPairMessage;
+  const hiddenPriceOfferAmountWei = selectedTradeOfferToken
+    ? 10n ** BigInt(normalizeTokenDecimals(selectedTradeOfferToken.decimals))
+    : null;
+  const hiddenPriceRequestAmountWei =
+    hiddenLiquidityActive &&
+    hiddenPriceOfferAmountWei !== null &&
+    parsedTradeOfferAmountWei !== null &&
+    parsedTradeRequestAmountWei !== null &&
+    parsedTradeOfferAmountWei > 0n &&
+    parsedTradeRequestAmountWei > 0n
+      ? (parsedTradeRequestAmountWei * hiddenPriceOfferAmountWei + parsedTradeOfferAmountWei - 1n) /
+        parsedTradeOfferAmountWei
+      : null;
 
   const tradeOfferAmountSummaryLabel =
     parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n && selectedTradeOfferToken
@@ -338,6 +386,9 @@ export const deriveTradeComposerModel = ({
       ? 'Load a valid token to receive.'
       : 'Select a token to receive.';
   }
+  if (tradeHidePrivateLiquidity && !canHidePrivateLiquidity) {
+    tradeComposerFieldErrors.general = resolvedHiddenLiquidityUnavailableMessage;
+  }
 
   if (selectedTradeOfferToken && (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n)) {
     tradeComposerFieldErrors.offerAmount = `Enter a valid ${selectedTradeOfferToken.symbol} amount to send.`;
@@ -371,6 +422,22 @@ export const deriveTradeComposerModel = ({
       selectedTradeRequestToken.decimals,
       6
     )} ${selectedTradeRequestToken.symbol}.`;
+  }
+  if (
+    hiddenLiquidityActive &&
+    selectedTradeOfferToken &&
+    hiddenPriceOfferAmountWei !== null &&
+    hiddenPriceOfferAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+  ) {
+    tradeComposerFieldErrors.general = `${selectedTradeOfferToken.symbol} decimals are too large for hidden private settlement.`;
+  }
+  if (
+    hiddenLiquidityActive &&
+    selectedTradeRequestToken &&
+    hiddenPriceRequestAmountWei !== null &&
+    hiddenPriceRequestAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+  ) {
+    tradeComposerFieldErrors.requestAmount = `The implied ${selectedTradeRequestToken.symbol} ratio is too large for hidden private settlement.`;
   }
 
   const offerAmountValid = selectedTradeOfferToken !== null && parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n;
@@ -473,7 +540,7 @@ export const deriveTradeComposerModel = ({
     parsedTradeOfferAmountWei <= 0n ||
     parsedTradeRequestAmountWei <= 0n
       ? ''
-      : `Send ${tradeOfferAmountSummaryLabel} for ${tradeRequestAmountSummaryLabel}`;
+      : `Sell ${tradeOfferAmountSummaryLabel} for ${tradeRequestAmountSummaryLabel}`;
 
   let tradeRateLabel = '';
   let tradeReverseRateLabel = '';
@@ -488,14 +555,14 @@ export const deriveTradeComposerModel = ({
     try {
       const scaledRequestAmount =
         (parsedTradeRequestAmountWei * 10n ** BigInt(selectedTradeOfferToken.decimals)) / parsedTradeOfferAmountWei;
-      tradeRateLabel = `1 ${selectedTradeOfferToken.symbol} \u2248 ${formatTokenAmount(
+      tradeRateLabel = `1 ${selectedTradeOfferToken.symbol} = ${formatTokenAmount(
         scaledRequestAmount,
         selectedTradeRequestToken.decimals,
         6
       )} ${selectedTradeRequestToken.symbol}`;
       const scaledOfferAmount =
         (parsedTradeOfferAmountWei * 10n ** BigInt(selectedTradeRequestToken.decimals)) / parsedTradeRequestAmountWei;
-      tradeReverseRateLabel = `1 ${selectedTradeRequestToken.symbol} \u2248 ${formatTokenAmount(
+      tradeReverseRateLabel = `1 ${selectedTradeRequestToken.symbol} = ${formatTokenAmount(
         scaledOfferAmount,
         selectedTradeOfferToken.decimals,
         6
@@ -522,6 +589,10 @@ export const deriveTradeComposerModel = ({
     tradeOfferAmountSummaryLabel,
     tradeRequestAmountSummaryLabel,
     tradeOfferBalanceSummaryLabel,
+    tradeOfferAmountLabel: 'Sell amount',
+    tradeRequestAmountLabel: 'Buy amount',
+    tradeOfferAmountPlaceholder: 'Amount you sell',
+    tradeRequestAmountPlaceholder: 'Amount you buy',
     tradeOfferVerifyUrl,
     tradeRequestVerifyUrl,
     parsedTradeExpiryHours: safeParsedTradeExpiryHours,
@@ -542,6 +613,11 @@ export const deriveTradeComposerModel = ({
     tradeRequestCustomMetaLabel: buildTradeCustomMetaLabel(
       normalizedTradeRequestCustomTokenAddress,
       tradeCustomRequestTokenInfo
-    )
+    ),
+    canHidePrivateLiquidity,
+    hiddenLiquidityActive,
+    hiddenLiquidityUnavailableMessage: resolvedHiddenLiquidityUnavailableMessage,
+    hiddenPriceOfferAmountWei,
+    hiddenPriceRequestAmountWei
   };
 };

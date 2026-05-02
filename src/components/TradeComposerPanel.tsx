@@ -31,6 +31,10 @@ type TradeComposerPanelProps = {
   onOfferAmountInputChange: (value: string) => void;
   requestAmountInput: string;
   onRequestAmountInputChange: (value: string) => void;
+  offerAmountLabel?: string;
+  requestAmountLabel?: string;
+  offerAmountPlaceholder?: string;
+  requestAmountPlaceholder?: string;
   offerAmountError?: string;
   requestAmountError?: string;
   canUseMaxOfferAmount?: boolean;
@@ -48,6 +52,10 @@ type TradeComposerPanelProps = {
   expiresNever?: boolean;
   onExpiresNeverChange?: (value: boolean) => void;
   expiryError?: string;
+  hidePrivateLiquidity?: boolean;
+  canHidePrivateLiquidity?: boolean;
+  hiddenLiquidityUnavailableMessage?: string;
+  onHidePrivateLiquidityChange?: (value: boolean) => void;
   sending: boolean;
   canSend: boolean;
   title?: string;
@@ -200,6 +208,10 @@ export default function TradeComposerPanel({
   onOfferAmountInputChange,
   requestAmountInput,
   onRequestAmountInputChange,
+  offerAmountLabel = 'Amount',
+  requestAmountLabel = 'Amount',
+  offerAmountPlaceholder = 'Amount to send',
+  requestAmountPlaceholder = 'Amount you want',
   offerAmountError,
   requestAmountError,
   canUseMaxOfferAmount,
@@ -217,6 +229,10 @@ export default function TradeComposerPanel({
   expiresNever = false,
   onExpiresNeverChange,
   expiryError,
+  hidePrivateLiquidity = false,
+  canHidePrivateLiquidity = false,
+  hiddenLiquidityUnavailableMessage = '',
+  onHidePrivateLiquidityChange,
   sending,
   canSend,
   title = 'Trade offer',
@@ -235,6 +251,7 @@ export default function TradeComposerPanel({
   const escrowContractUrl = `${COTI_NETWORK.blockExplorerUrl}/address/${TRADE_ESCROW_CONTRACT_ADDRESS}`;
   const [showReverseRate, setShowReverseRate] = useState(false);
   const visibleTradeRateLabel = showReverseRate && tradeReverseRateLabel ? tradeReverseRateLabel : tradeRateLabel;
+  const showHiddenLiquidityToggle = Boolean(onHidePrivateLiquidityChange);
 
   useEffect(() => {
     setShowReverseRate(false);
@@ -267,7 +284,7 @@ export default function TradeComposerPanel({
       <div className="trade-compose-grid">
         <section className="trade-compose-section trade-compose-section-sell" aria-label="Asset you are sending">
           <div className="trade-compose-section-header">
-            <strong>You send</strong>
+            <strong>You sell</strong>
             <span>Balance: {offerBalanceSummaryLabel}</span>
           </div>
           <label className="trade-compose-field">
@@ -328,7 +345,7 @@ export default function TradeComposerPanel({
           {offerAssetError ? <p className="trade-compose-field-error">{offerAssetError}</p> : null}
           <label className="trade-compose-field">
             <span className="trade-compose-field-head">
-              <span className="trade-compose-field-label">Amount</span>
+              <span className="trade-compose-field-label">{offerAmountLabel}</span>
               <span className="trade-compose-field-tools">
                 <strong className="trade-compose-field-value">{offerAmountSummaryLabel}</strong>
                 <button
@@ -347,7 +364,7 @@ export default function TradeComposerPanel({
               inputMode="decimal"
               value={offerAmountInput}
               onChange={(event) => onOfferAmountInputChange(event.target.value)}
-              placeholder="Amount to send"
+              placeholder={offerAmountPlaceholder}
               disabled={sending}
               aria-invalid={offerAmountError ? 'true' : 'false'}
             />
@@ -368,7 +385,7 @@ export default function TradeComposerPanel({
 
         <section className="trade-compose-section trade-compose-section-buy" aria-label="Asset you want back">
           <div className="trade-compose-section-header">
-            <strong>You receive</strong>
+            <strong>You buy</strong>
             <span>Counterparty sends this</span>
           </div>
           <label className="trade-compose-field">
@@ -429,7 +446,7 @@ export default function TradeComposerPanel({
           {requestAssetError ? <p className="trade-compose-field-error">{requestAssetError}</p> : null}
           <label className="trade-compose-field">
             <span className="trade-compose-field-head">
-              <span className="trade-compose-field-label">Amount</span>
+              <span className="trade-compose-field-label">{requestAmountLabel}</span>
               <strong className="trade-compose-field-value">{requestAmountSummaryLabel}</strong>
             </span>
             <input
@@ -438,7 +455,7 @@ export default function TradeComposerPanel({
               inputMode="decimal"
               value={requestAmountInput}
               onChange={(event) => onRequestAmountInputChange(event.target.value)}
-              placeholder="Amount you want"
+              placeholder={requestAmountPlaceholder}
               disabled={sending}
               aria-invalid={requestAmountError ? 'true' : 'false'}
             />
@@ -459,11 +476,37 @@ export default function TradeComposerPanel({
                 title="Flip rate"
                 aria-label="Flip displayed trade rate"
               >
-                <span>Rate</span>
+                <span>Price ratio</span>
                 <strong>{visibleTradeRateLabel}</strong>
               </button>
             ) : null}
           </div>
+        ) : null}
+
+        {showHiddenLiquidityToggle ? (
+          <label
+            className={
+              hidePrivateLiquidity
+                ? 'trade-compose-privacy-row trade-compose-privacy-row-active'
+                : 'trade-compose-privacy-row'
+            }
+            title={canHidePrivateLiquidity ? 'Publish only the ratio; keep trade amounts private' : hiddenLiquidityUnavailableMessage}
+          >
+            <input
+              type="checkbox"
+              checked={hidePrivateLiquidity}
+              onChange={(event) => onHidePrivateLiquidityChange?.(event.target.checked)}
+              disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
+            />
+            <span>Hidden liquidity</span>
+            <strong>
+              {hidePrivateLiquidity
+                ? 'Ratio public, amounts private'
+                : canHidePrivateLiquidity
+                  ? 'Off'
+                  : hiddenLiquidityUnavailableMessage}
+            </strong>
+          </label>
         ) : null}
 
         <div className="trade-compose-footer">

@@ -22,6 +22,7 @@ type InChatTradeState = {
   tradeOfferAmountInput: string;
   tradeRequestAmountInput: string;
   tradeExpiryHoursInput: string;
+  tradeHidePrivateLiquidity: boolean;
   tradeCounterParentId: number | null;
   tradeCounterContext: PendingTradeCounterContext | null;
   tradeSnapshotsById: Record<string, TradeSnapshot>;
@@ -38,6 +39,7 @@ type InChatTradeState = {
   setTradeOfferAmountInput: (next: StateUpdate<string>) => void;
   setTradeRequestAmountInput: (next: StateUpdate<string>) => void;
   setTradeExpiryHoursInput: (next: StateUpdate<string>) => void;
+  setTradeHidePrivateLiquidity: (next: StateUpdate<boolean>) => void;
   setTradeCounterParentId: (next: StateUpdate<number | null>) => void;
   setTradeCounterContext: (next: StateUpdate<PendingTradeCounterContext | null>) => void;
   setTradeSnapshotsById: (next: StateUpdate<Record<string, TradeSnapshot>>) => void;
@@ -57,6 +59,7 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
   tradeOfferAmountInput: '',
   tradeRequestAmountInput: '',
   tradeExpiryHoursInput: DEFAULT_TRADE_EXPIRY_HOURS,
+  tradeHidePrivateLiquidity: false,
   tradeCounterParentId: null,
   tradeCounterContext: null,
   tradeSnapshotsById: {},
@@ -89,6 +92,8 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
     set((state) => ({ tradeRequestAmountInput: resolveStateUpdate(next, state.tradeRequestAmountInput) })),
   setTradeExpiryHoursInput: (next) =>
     set((state) => ({ tradeExpiryHoursInput: resolveStateUpdate(next, state.tradeExpiryHoursInput) })),
+  setTradeHidePrivateLiquidity: (next) =>
+    set((state) => ({ tradeHidePrivateLiquidity: resolveStateUpdate(next, state.tradeHidePrivateLiquidity) })),
   setTradeCounterParentId: (next) =>
     set((state) => ({ tradeCounterParentId: resolveStateUpdate(next, state.tradeCounterParentId) })),
   setTradeCounterContext: (next) =>
