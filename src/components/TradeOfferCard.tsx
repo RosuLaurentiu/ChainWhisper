@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   COTI_NETWORK,
   PRIVATE_REWARD_TOKEN_ADDRESS,
@@ -16,7 +16,12 @@ import {
   type TradeSnapshot
 } from '../lib/appShared';
 import { isVerifiedEcosystemToken } from '../lib/appHelpers';
-import { isZeroTradeTakerAddress, resolveTradeOrderSummary } from '../lib/tradePerspective';
+import {
+  formatTradeRatioLabel,
+  isZeroTradeTakerAddress,
+  resolveTradeOrderSummary,
+  type TradeOrderSideRole
+} from '../lib/tradePerspective';
 
 type TradeOfferCardProps = {
   offer: TradeOfferMessagePayload;
@@ -47,6 +52,7 @@ type TradeCardAssetPanel = {
   displayText: string;
   metaText?: string;
   tone: 'send' | 'receive' | 'neutral';
+  role: TradeOrderSideRole;
   verifyUrl?: string;
   scopeLabel: string | null;
   custom: boolean;
@@ -262,7 +268,9 @@ export default function TradeOfferCard({
   onEdit
 }: TradeOfferCardProps) {
   const [partialFillPercent, setPartialFillPercent] = useState(50);
-  const [privateFillReceiveInput, setPrivateFillReceiveInput] = useState('');
+  const [privateFillPayInput, setPrivateFillPayInput] = useState('');
+  const [privateFillBuyInput, setPrivateFillBuyInput] = useState('');
+  const [privateFillInputSide, setPrivateFillInputSide] = useState<'pay' | 'buy'>('pay');
   const [showReverseHiddenRate, setShowReverseHiddenRate] = useState(false);
   const walletKey = currentWalletAddress?.trim().toLowerCase() ?? '';
   const isMaker = walletKey.length > 0 && offer.maker.toLowerCase() === walletKey;
@@ -328,6 +336,7 @@ export default function TradeOfferCard({
                 : formatTradeAssetDisplayText(side.asset),
             metaText: hiddenLiquidity ? 'Amount hidden' : undefined,
             tone: side.tone,
+            role: side.role,
             verifyUrl: isOfferSide ? offerVerifyUrl : requestVerifyUrl,
             scopeLabel: isOfferSide ? offerScopeLabel : requestScopeLabel,
             custom: Boolean(side.asset.custom),
@@ -335,16 +344,16 @@ export default function TradeOfferCard({
           };
         })
       : [];
-  const hiddenForwardRateLabel = hiddenLiquidity ? tradeOrderSummary?.ratioLabel ?? null : null;
-  const hiddenReverseRateLabel = hiddenLiquidity ? tradeOrderSummary?.reverseRatioLabel ?? null : null;
+  const defaultRateLabel =
+    assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[0]?.asset, assetPanels[1]?.asset) : null;
+  const reverseRateLabel =
+    assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[1]?.asset, assetPanels[0]?.asset) : null;
+  const hiddenForwardRateLabel = hiddenLiquidity ? defaultRateLabel : null;
+  const hiddenReverseRateLabel = hiddenLiquidity ? reverseRateLabel : null;
   const visibleHiddenRateLabel =
     showReverseHiddenRate && hiddenReverseRateLabel ? hiddenReverseRateLabel : hiddenForwardRateLabel;
   const tradeRateLabel =
-    !hiddenLiquidity && tradeOrderSummary?.ratioLabel ? `Price: ${tradeOrderSummary.ratioLabel}` : null;
-  const hiddenDirectionLabel =
-    hiddenLiquidity && tradeOrderSummary
-      ? tradeOrderSummary.directionLabel
-      : '';
+    !hiddenLiquidity && defaultRateLabel ? `Price: ${defaultRateLabel}` : null;
   const filledRequestAmount = hiddenLiquidity ? 0n : parseFillAmount(snapshot?.fillState?.filledRequestAmount);
   const remainingRequestAmount = hiddenLiquidity
     ? parseFillAmount(baseRequest?.amount)
@@ -448,26 +457,54 @@ export default function TradeOfferCard({
   const partialFillAmountInput =
     baseRequest && partialFillRequestAmount > 0n ? formatExactTokenAmount(partialFillRequestAmount, baseRequest.decimals) : '';
   const partialFillDisabled = actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept);
-  const privateFillReceiveAmount =
-    hiddenLiquidity && baseOffer ? parseTokenAmountInput(privateFillReceiveInput, baseOffer.decimals) : null;
+  const privateFillOfferUnitAmount = baseOffer ? parseFillAmount(baseOffer.amount) : 0n;
+  const privateFillRequestUnitAmount = baseRequest ? parseFillAmount(baseRequest.amount) : 0n;
+  const privateFillPayInputAmount =
+    hiddenLiquidity && baseRequest ? parseTokenAmountInput(privateFillPayInput, baseRequest.decimals) : null;
+  const privateFillBuyInputAmount =
+    hiddenLiquidity && baseOffer ? parseTokenAmountInput(privateFillBuyInput, baseOffer.decimals) : null;
   const privateFillRequestAmount =
-    hiddenLiquidity && privateFillReceiveAmount !== null && baseOffer && baseRequest
-      ? quoteRequestAmountForOffer(
-          privateFillReceiveAmount,
-          parseFillAmount(baseOffer.amount),
-          parseFillAmount(baseRequest.amount)
-        )
-      : 0n;
-  const privateFillRequestLabel =
-    baseRequest && privateFillRequestAmount > 0n
-      ? `${formatTokenAmount(privateFillRequestAmount, baseRequest.decimals, 6)} ${baseRequest.symbol}`
-      : '--';
-  const privateFillReceiveLabel =
-    baseOffer && privateFillReceiveAmount !== null && privateFillReceiveAmount > 0n
-      ? `${formatTokenAmount(privateFillReceiveAmount, baseOffer.decimals, 6)} ${baseOffer.symbol}`
-      : '--';
+    hiddenLiquidity && privateFillInputSide === 'buy' && privateFillBuyInputAmount !== null
+      ? quoteRequestAmountForOffer(privateFillBuyInputAmount, privateFillOfferUnitAmount, privateFillRequestUnitAmount)
+      : privateFillPayInputAmount;
+  const privateFillReceiveAmount =
+    hiddenLiquidity && privateFillInputSide === 'buy' && privateFillBuyInputAmount !== null
+      ? privateFillBuyInputAmount
+      : hiddenLiquidity &&
+          privateFillRequestAmount !== null &&
+          privateFillOfferUnitAmount > 0n &&
+          privateFillRequestUnitAmount > 0n
+        ? (privateFillRequestAmount * privateFillOfferUnitAmount) / privateFillRequestUnitAmount
+        : 0n;
+  const privateFillPayDisplayValue =
+    privateFillInputSide === 'buy'
+      ? baseRequest && privateFillRequestAmount !== null && privateFillRequestAmount > 0n
+        ? formatExactTokenAmount(privateFillRequestAmount, baseRequest.decimals)
+        : ''
+      : privateFillPayInput;
+  const privateFillBuyDisplayValue =
+    privateFillInputSide === 'pay'
+      ? baseOffer && privateFillReceiveAmount > 0n
+        ? formatExactTokenAmount(privateFillReceiveAmount, baseOffer.decimals)
+        : ''
+      : privateFillBuyInput;
+  const privateFillSubmitInput =
+    baseRequest && privateFillRequestAmount !== null && privateFillRequestAmount > 0n
+      ? formatExactTokenAmount(privateFillRequestAmount, baseRequest.decimals)
+      : privateFillPayInput;
   const privateFillCanSubmit =
-    privateFillReceiveAmount !== null && privateFillReceiveAmount > 0n && privateFillRequestAmount > 0n;
+    privateFillRequestAmount !== null && privateFillRequestAmount > 0n;
+  const showPrivateFillInline = Boolean(canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest);
+  const ratioResetKey = `${offer.escrowContract}:${offer.tradeId}:${baseOffer?.symbol ?? ''}:${
+    baseOffer?.amount ?? ''
+  }:${baseRequest?.symbol ?? ''}:${baseRequest?.amount ?? ''}`;
+
+  useEffect(() => {
+    setShowReverseHiddenRate(false);
+    setPrivateFillPayInput('');
+    setPrivateFillBuyInput('');
+    setPrivateFillInputSide('pay');
+  }, [ratioResetKey]);
 
   return (
     <div className={collapsed ? 'trade-card collapsed' : 'trade-card'}>
@@ -477,42 +514,44 @@ export default function TradeOfferCard({
             <div className="trade-card-title">
               <strong>{tradeOrderSummary?.directionLabel ?? `Escrow trade #${offer.tradeId}`}</strong>
               <span className="trade-card-id">Trade #{offer.tradeId}</span>
-              <span className={`trade-card-status ${statusClassName}`}>{statusDisplayLabel}</span>
             </div>
-            {canToggleCollapsed ? (
-              <button
-                type="button"
-                className="trade-card-toggle"
-                onClick={onToggleCollapsed}
-                aria-expanded={!collapsed}
-              >
-                {collapsed ? 'Show details' : 'Hide details'}
-              </button>
-            ) : null}
+            <div className="trade-card-header-actions">
+              <span className={`trade-card-status ${statusClassName}`}>{statusDisplayLabel}</span>
+              {shareUrl ? (
+                <button
+                  type="button"
+                  className={shareCopied ? 'trade-card-link-button copied' : 'trade-card-link-button'}
+                  onClick={onCopyShareLink}
+                >
+                  {shareCopied ? 'Copied' : shareLabel}
+                </button>
+              ) : null}
+              {acceptedTransactionUrl ? (
+                <a className="trade-card-link-button" href={acceptedTransactionUrl} target="_blank" rel="noreferrer">
+                  Accepted Tx
+                </a>
+              ) : null}
+              {canToggleCollapsed ? (
+                <button
+                  type="button"
+                  className="trade-card-toggle"
+                  onClick={onToggleCollapsed}
+                  aria-expanded={!collapsed}
+                >
+                  {collapsed ? 'Show details' : 'Hide details'}
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="trade-card-header-tags">
           {isMaker ? <span className="trade-card-parent">Your offer</span> : null}
           {isTaker ? <span className="trade-card-parent incoming">Incoming offer</span> : null}
           {canAcceptOpenTakerTrade ? <span className="trade-card-parent incoming">Open offer</span> : null}
-          {hiddenLiquidity ? <span className="trade-card-parent">Hidden liquidity</span> : null}
+          {hiddenLiquidity ? <span className="trade-card-parent">Private liquidity</span> : null}
           {counterParentTradeId ? <span className="trade-card-parent">Counter to #{counterParentTradeId}</span> : null}
           {snapshot?.replacesTradeId ? <span className="trade-card-parent">Edited from #{snapshot.replacesTradeId}</span> : null}
           {snapshot?.replacementTradeId ? <span className="trade-card-parent">Replaced by #{snapshot.replacementTradeId}</span> : null}
-          {shareUrl ? (
-            <button
-              type="button"
-              className={shareCopied ? 'trade-card-link-button copied' : 'trade-card-link-button'}
-              onClick={onCopyShareLink}
-            >
-              {shareCopied ? 'Copied' : shareLabel}
-            </button>
-          ) : null}
-          {acceptedTransactionUrl ? (
-            <a className="trade-card-link-button" href={acceptedTransactionUrl} target="_blank" rel="noreferrer">
-              Accepted Tx
-            </a>
-          ) : null}
         </div>
       </div>
 
@@ -527,7 +566,6 @@ export default function TradeOfferCard({
           >
             <span>Price ratio</span>
             <strong>{visibleHiddenRateLabel}</strong>
-            {hiddenDirectionLabel ? <small>{hiddenDirectionLabel}. Liquidity and fill amounts stay private.</small> : null}
           </button>
         ) : assetPanels.length > 0 ? (
           <div className="trade-card-summary">
@@ -563,44 +601,100 @@ export default function TradeOfferCard({
             >
               <span>Price ratio</span>
               <strong>{visibleHiddenRateLabel}</strong>
-              {hiddenDirectionLabel ? <small>{hiddenDirectionLabel}. Liquidity and fill amounts stay private.</small> : null}
             </button>
           ) : null}
 
           {assetPanels.length > 0 ? (
             <div className="trade-card-grid">
-              {assetPanels.map((panel) => (
-                <div
-                  key={`${panel.label}-${panel.asset.symbol}-${panel.asset.amount}`}
-                  className={`trade-card-asset trade-card-asset-${panel.tone}`}
-                >
-                  <div className="trade-card-asset-head">
-                    <span className="trade-card-label">{panel.label}</span>
-                    {panel.asset.tokenAddress ? (
-                      <a
-                        className="trade-card-contract-link"
-                        href={panel.verifyUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={panel.asset.tokenAddress}
-                      >
-                        {shortenAddress(panel.asset.tokenAddress)}
-                        {panel.verified ? <span className="trade-card-contract-verified">✓</span> : null}
-                      </a>
+              {assetPanels.map((panel) => {
+                const isPrivateFillPayPanel = showPrivateFillInline && panel.role === 'payment';
+                const isPrivateFillBuyPanel = showPrivateFillInline && panel.role === 'offer';
+                const isPrivateFillPanel = isPrivateFillPayPanel || isPrivateFillBuyPanel;
+                const showPanelMetaText = Boolean(panel.metaText && !isPrivateFillPanel);
+
+                return (
+                  <div
+                    key={`${panel.label}-${panel.asset.symbol}-${panel.asset.amount}`}
+                    className={`trade-card-asset trade-card-asset-${panel.tone}${
+                      isPrivateFillPanel ? ' trade-card-asset-private-fill' : ''
+                    }`}
+                  >
+                    <div className="trade-card-asset-head">
+                      <span className="trade-card-label">{panel.label}</span>
+                      {panel.asset.tokenAddress ? (
+                        <a
+                          className="trade-card-contract-link"
+                          href={panel.verifyUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={panel.asset.tokenAddress}
+                        >
+                          {shortenAddress(panel.asset.tokenAddress)}
+                          {panel.verified ? (
+                            <span className="trade-card-contract-verified" aria-label="Verified contract">
+                              &#10003;
+                            </span>
+                          ) : null}
+                        </a>
+                      ) : null}
+                    </div>
+                    <strong>{panel.displayText}</strong>
+                    {isPrivateFillPayPanel && baseRequest ? (
+                      <label className="trade-card-inline-private-input">
+                        <span>Amount to pay</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={privateFillPayDisplayValue}
+                          onFocus={() => {
+                            if (privateFillInputSide !== 'pay') {
+                              setPrivateFillPayInput(privateFillPayDisplayValue);
+                              setPrivateFillInputSide('pay');
+                            }
+                          }}
+                          onChange={(event) => {
+                            setPrivateFillInputSide('pay');
+                            setPrivateFillPayInput(sanitizeTokenAmountInput(event.target.value));
+                          }}
+                          placeholder={`0 ${baseRequest.symbol}`}
+                          disabled={partialFillDisabled}
+                          aria-label={`Amount to pay in ${baseRequest.symbol}`}
+                        />
+                      </label>
                     ) : null}
-                  </div>
-                  <strong>{panel.displayText}</strong>
-                  <div className="trade-card-flags">
-                    {panel.metaText ? <span className="trade-card-flag">{panel.metaText}</span> : null}
-                    {panel.scopeLabel ? <span className="trade-card-flag">{panel.scopeLabel}</span> : null}
-                    {panel.verified ? (
-                      <span className="trade-card-flag trade-card-flag-verified">✓ Verified</span>
-                    ) : panel.custom ? (
-                      <span className="trade-card-flag">Custom token</span>
+                    {isPrivateFillBuyPanel && baseOffer ? (
+                      <label className="trade-card-inline-private-input trade-card-inline-private-input-buy">
+                        <span>Amount to buy</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={privateFillBuyDisplayValue}
+                          onFocus={() => {
+                            if (privateFillInputSide !== 'buy') {
+                              setPrivateFillBuyInput(privateFillBuyDisplayValue);
+                              setPrivateFillInputSide('buy');
+                            }
+                          }}
+                          onChange={(event) => {
+                            setPrivateFillInputSide('buy');
+                            setPrivateFillBuyInput(sanitizeTokenAmountInput(event.target.value));
+                          }}
+                          placeholder={`0 ${baseOffer.symbol}`}
+                          disabled={partialFillDisabled}
+                          aria-label={`Amount to buy in ${baseOffer.symbol}`}
+                        />
+                      </label>
                     ) : null}
+                    <div className="trade-card-flags">
+                      {showPanelMetaText ? <span className="trade-card-flag">{panel.metaText}</span> : null}
+                      {panel.scopeLabel ? <span className="trade-card-flag">{panel.scopeLabel}</span> : null}
+                      {!panel.verified && panel.custom ? (
+                        <span className="trade-card-flag">Custom token</span>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="trade-card-grid">
@@ -615,7 +709,7 @@ export default function TradeOfferCard({
           {makerPrivateProgressSummary ? (
             <div className="trade-card-fill-progress" aria-label={makerPrivateProgressSummary.percentLabel}>
               <div>
-                <span>Your liquidity</span>
+                <span>Your private liquidity</span>
                 <strong>{makerPrivateProgressSummary.totalLabel}</strong>
               </div>
               <div className="trade-card-fill-bar">
@@ -637,22 +731,6 @@ export default function TradeOfferCard({
               <small>{fillProgressLabel}</small>
             </div>
           ) : null}
-          <p className="trade-card-note">
-            {hiddenLiquidity
-              ? 'Private settlement. Liquidity amount is hidden; only the fixed price is public.'
-              : 'On-chain escrow. Verify token contracts before accepting.'}
-          </p>
-          <div className="trade-card-counterparty">
-            <span>Counterparty</span>
-            {counterpartyExplorerUrl ? (
-              <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
-                {shortenAddress(counterpartyAddress)}
-              </a>
-            ) : (
-              <strong>Any wallet</strong>
-            )}
-          </div>
-
           {isOpen && (isTaker || canAcceptOpenTakerTrade) ? (
             <div className="trade-card-actions">
               {!hiddenLiquidity ? (
@@ -681,7 +759,9 @@ export default function TradeOfferCard({
                   Refuse
                 </button>
               ) : null}
-              {(isTaker || canAcceptOpenTakerTrade) && showCounterAction ? (
+              {(isTaker || canAcceptOpenTakerTrade) &&
+              showCounterAction &&
+              !(canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest) ? (
                 <button
                   type="button"
                   className="trade-card-action trade-card-action-counter"
@@ -692,43 +772,30 @@ export default function TradeOfferCard({
                 </button>
               ) : null}
               {canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest ? (
-                <div className="trade-card-partial-fill trade-card-private-fill">
-                  <div className="trade-card-partial-fill-head">
-                    <span>Buy amount</span>
-                    <strong>{baseOffer.symbol}</strong>
+                <div className="trade-card-private-fill-actions">
+                  <div className="trade-card-private-fill-action-row">
+                    <button
+                      type="button"
+                      className="trade-card-action trade-card-action-accept trade-card-partial-fill-submit"
+                      onClick={() => onPartialFill?.(privateFillSubmitInput)}
+                      disabled={partialFillDisabled || !privateFillCanSubmit}
+                    >
+                      {actionPending ? 'Processing...' : hasWalletForOpenAccept ? 'Pay & fill' : 'Connect wallet to buy'}
+                    </button>
+                    {(isTaker || canAcceptOpenTakerTrade) && showCounterAction ? (
+                      <button
+                        type="button"
+                        className="trade-card-action trade-card-action-counter"
+                        onClick={onCounter}
+                        disabled={actionPending}
+                      >
+                        Counter
+                      </button>
+                    ) : null}
                   </div>
-                  <label className="trade-card-private-fill-input">
-                    <span>You buy</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={privateFillReceiveInput}
-                      onChange={(event) => setPrivateFillReceiveInput(sanitizeTokenAmountInput(event.target.value))}
-                      placeholder={`0 ${baseOffer.symbol}`}
-                      disabled={partialFillDisabled}
-                    />
-                  </label>
-                  <div className="trade-card-partial-fill-terms">
-                    <div className="trade-card-partial-fill-term trade-card-partial-fill-send">
-                      <span>Max pay</span>
-                      <strong>{privateFillRequestLabel}</strong>
-                    </div>
-                    <div className="trade-card-partial-fill-link" aria-hidden="true">
-                      for
-                    </div>
-                    <div className="trade-card-partial-fill-term trade-card-partial-fill-receive">
-                      <span>Receive</span>
-                      <strong>{privateFillReceiveLabel}</strong>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="trade-card-action trade-card-action-accept trade-card-partial-fill-submit"
-                    onClick={() => onPartialFill?.(privateFillReceiveInput)}
-                    disabled={partialFillDisabled || !privateFillCanSubmit}
-                  >
-                    {actionPending ? 'Processing...' : hasWalletForOpenAccept ? 'Buy' : 'Connect wallet to buy'}
-                  </button>
+                  <p className="trade-card-private-fill-note">
+                    Private liquidity may fill partially. The contract settles what is available at this ratio and returns any unspent private payment.
+                  </p>
                 </div>
               ) : canShowPartialFill ? (
                 <div className="trade-card-partial-fill">
@@ -794,6 +861,23 @@ export default function TradeOfferCard({
               </button>
             </div>
           ) : null}
+          {!showPrivateFillInline ? (
+            <p className="trade-card-note">
+              {hiddenLiquidity
+                ? 'Private settlement. Public users see only the price ratio; amounts and fills stay private.'
+                : 'On-chain escrow. Verify token contracts before accepting.'}
+            </p>
+          ) : null}
+          <div className="trade-card-counterparty">
+            <span>Counterparty</span>
+            {counterpartyExplorerUrl ? (
+              <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
+                {shortenAddress(counterpartyAddress)}
+              </a>
+            ) : (
+              <strong>Any wallet</strong>
+            )}
+          </div>
         </>
       ) : null}
 

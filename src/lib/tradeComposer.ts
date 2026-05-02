@@ -318,7 +318,7 @@ export const deriveTradeComposerModel = ({
     : null;
   const privatePairSelected =
     selectedTradeOfferToken?.kind === 'private-erc20' && selectedTradeRequestToken?.kind === 'private-erc20';
-  const hiddenLiquidityPairMessage = privatePairSelected ? '' : 'Hidden liquidity needs private tokens on both sides.';
+  const hiddenLiquidityPairMessage = privatePairSelected ? '' : 'Private liquidity needs private tokens on both sides.';
   const canHidePrivateLiquidity = privatePairSelected && !hiddenLiquidityUnavailableMessage;
   const hiddenLiquidityActive = Boolean(tradeHidePrivateLiquidity && canHidePrivateLiquidity);
   const resolvedHiddenLiquidityUnavailableMessage =
@@ -429,7 +429,7 @@ export const deriveTradeComposerModel = ({
     hiddenPriceOfferAmountWei !== null &&
     hiddenPriceOfferAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
   ) {
-    tradeComposerFieldErrors.general = `${selectedTradeOfferToken.symbol} decimals are too large for hidden private settlement.`;
+    tradeComposerFieldErrors.general = `${selectedTradeOfferToken.symbol} decimals are too large for private liquidity settlement.`;
   }
   if (
     hiddenLiquidityActive &&
@@ -437,7 +437,7 @@ export const deriveTradeComposerModel = ({
     hiddenPriceRequestAmountWei !== null &&
     hiddenPriceRequestAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
   ) {
-    tradeComposerFieldErrors.requestAmount = `The implied ${selectedTradeRequestToken.symbol} ratio is too large for hidden private settlement.`;
+    tradeComposerFieldErrors.requestAmount = `The implied ${selectedTradeRequestToken.symbol} ratio is too large for private liquidity settlement.`;
   }
 
   const offerAmountValid = selectedTradeOfferToken !== null && parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n;

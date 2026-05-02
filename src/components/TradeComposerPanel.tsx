@@ -77,6 +77,19 @@ function ChevronIcon() {
   );
 }
 
+type TradeTokenScope = 'public' | 'private';
+
+const stripTokenCheckmark = (value: string): string => value.replace(/^[\s✓]+/, '').trim();
+
+const resolveTokenOptionScope = (option?: TradeComposerTokenOption): TradeTokenScope => {
+  if (!option) return 'public';
+  const label = option.label.toLowerCase();
+  if (option.value === 'pwisp' || option.value === 'custom-private' || label.includes('(private)')) {
+    return 'private';
+  }
+  return 'public';
+};
+
 function TradeTokenSelect({
   options,
   value,
@@ -91,8 +104,25 @@ function TradeTokenSelect({
   invalid?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [activeScope, setActiveScope] = useState<TradeTokenScope>('public');
   const containerRef = useRef<HTMLDivElement>(null);
-  const selectedLabel = options.find((o) => o.value === value)?.label ?? value;
+  const selectedOption = options.find((o) => o.value === value);
+  const selectedLabel = selectedOption?.label ?? value;
+  const normalizedSearch = searchInput.trim().toLowerCase();
+  const publicCount = options.filter((option) => resolveTokenOptionScope(option) === 'public').length;
+  const privateCount = options.filter((option) => resolveTokenOptionScope(option) === 'private').length;
+  const filteredOptions = options.filter((option) => {
+    if (resolveTokenOptionScope(option) !== activeScope) return false;
+    if (!normalizedSearch) return true;
+    return `${option.label} ${option.value}`.toLowerCase().includes(normalizedSearch);
+  });
+  const selectOption = (option: TradeComposerTokenOption) => {
+    onChange(option.value);
+    setOpen(false);
+    setSearchInput('');
+    setActiveScope(resolveTokenOptionScope(option));
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -104,6 +134,12 @@ function TradeTokenSelect({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setSearchInput('');
+    setActiveScope(resolveTokenOptionScope(selectedOption));
+  }, [open, selectedOption?.value]);
 
   return (
     <div
@@ -128,31 +164,83 @@ function TradeTokenSelect({
         <ChevronIcon />
       </button>
       {open ? (
-        <ul className="trade-token-select-dropdown" role="listbox">
-          {options.map((option) => {
-            const isVerified = option.label.startsWith('✓');
-            return (
-              <li
-                key={option.value}
-                role="option"
-                aria-selected={option.value === value}
-                className={[
-                  'trade-token-select-option',
-                  option.value === value ? 'selected' : '',
-                  isVerified ? 'verified' : ''
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
+        <div className="trade-token-select-dropdown">
+          <div className="trade-token-select-search">
+            <input
+              type="search"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder={`Search ${activeScope} tokens`}
+              autoFocus
+              aria-label="Search trade tokens"
+            />
+            <div className="trade-token-select-tabs" role="tablist" aria-label="Token type">
+              <button
+                type="button"
+                className={activeScope === 'public' ? 'active' : undefined}
+                onClick={() => setActiveScope('public')}
+                role="tab"
+                aria-selected={activeScope === 'public'}
               >
-                {option.label}
-              </li>
-            );
-          })}
-        </ul>
+                Public <span>{publicCount}</span>
+              </button>
+              <button
+                type="button"
+                className={activeScope === 'private' ? 'active' : undefined}
+                onClick={() => setActiveScope('private')}
+                role="tab"
+                aria-selected={activeScope === 'private'}
+              >
+                Private <span>{privateCount}</span>
+              </button>
+            </div>
+          </div>
+          <ul className="trade-token-select-list" role="listbox">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option) => {
+                const isVerified = option.label.trim().startsWith('✓');
+                return (
+                  <li
+                    key={option.value}
+                    role="option"
+                    tabIndex={0}
+                    aria-selected={option.value === value}
+                    className={[
+                      'trade-token-select-option',
+                      option.value === value ? 'selected' : '',
+                      isVerified ? 'verified' : ''
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      selectOption(option);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        selectOption(option);
+                      }
+                    }}
+                  >
+                    {isVerified ? (
+                      <>
+                        <span className="trade-token-select-check" aria-hidden="true">
+                          ✓
+                        </span>
+                        <span>{stripTokenCheckmark(option.label)}</span>
+                      </>
+                    ) : (
+                      <span>{option.label}</span>
+                    )}
+                  </li>
+                );
+              })
+            ) : (
+              <li className="trade-token-select-empty">No {activeScope} tokens match that search.</li>
+            )}
+          </ul>
+        </div>
       ) : null}
     </div>
   );
@@ -274,20 +362,13 @@ export default function TradeComposerPanel({
         </div>
       </div>
 
-      <div className="trade-compose-warning" role="alert">
-        <p>
-          <strong>P2P trading risks:</strong> Always verify token contract addresses, amounts, and exchange rates before
-          confirming. Only the escrowed asset transfer is enforced on-chain — only trade with parties you trust.
-        </p>
-      </div>
-
       <div className="trade-compose-grid">
         <section className="trade-compose-section trade-compose-section-sell" aria-label="Asset you are sending">
           <div className="trade-compose-section-header">
             <strong>You sell</strong>
             <span>Balance: {offerBalanceSummaryLabel}</span>
           </div>
-          <label className="trade-compose-field">
+          <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
               {!showOfferCustomToken && offerVerifyUrl ? (
@@ -343,7 +424,7 @@ export default function TradeComposerPanel({
             </>
           ) : null}
           {offerAssetError ? <p className="trade-compose-field-error">{offerAssetError}</p> : null}
-          <label className="trade-compose-field">
+          <label className="trade-compose-field trade-compose-amount-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">{offerAmountLabel}</span>
               <span className="trade-compose-field-tools">
@@ -388,7 +469,7 @@ export default function TradeComposerPanel({
             <strong>You buy</strong>
             <span>Counterparty sends this</span>
           </div>
-          <label className="trade-compose-field">
+          <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
               {!showRequestCustomToken && requestVerifyUrl ? (
@@ -444,7 +525,7 @@ export default function TradeComposerPanel({
             </>
           ) : null}
           {requestAssetError ? <p className="trade-compose-field-error">{requestAssetError}</p> : null}
-          <label className="trade-compose-field">
+          <label className="trade-compose-field trade-compose-amount-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">{requestAmountLabel}</span>
               <strong className="trade-compose-field-value">{requestAmountSummaryLabel}</strong>
@@ -467,7 +548,7 @@ export default function TradeComposerPanel({
       <div className={hasTradePreview ? 'trade-compose-bottom' : 'trade-compose-bottom trade-compose-bottom-compact'}>
         {hasTradePreview ? (
           <div className="trade-compose-preview" aria-live="polite">
-            {tradePreviewLabel ? <strong>{tradePreviewLabel}</strong> : null}
+            {tradePreviewLabel && !visibleTradeRateLabel ? <strong>{tradePreviewLabel}</strong> : null}
             {visibleTradeRateLabel ? (
               <button
                 type="button"
@@ -490,7 +571,7 @@ export default function TradeComposerPanel({
                 ? 'trade-compose-privacy-row trade-compose-privacy-row-active'
                 : 'trade-compose-privacy-row'
             }
-            title={canHidePrivateLiquidity ? 'Publish only the ratio; keep trade amounts private' : hiddenLiquidityUnavailableMessage}
+            title={canHidePrivateLiquidity ? 'Publish only the ratio; keep amounts and fills private' : hiddenLiquidityUnavailableMessage}
           >
             <input
               type="checkbox"
@@ -498,10 +579,10 @@ export default function TradeComposerPanel({
               onChange={(event) => onHidePrivateLiquidityChange?.(event.target.checked)}
               disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
             />
-            <span>Hidden liquidity</span>
+            <span>Private liquidity</span>
             <strong>
               {hidePrivateLiquidity
-                ? 'Ratio public, amounts private'
+                ? 'Price public, amounts private'
                 : canHidePrivateLiquidity
                   ? 'Off'
                   : hiddenLiquidityUnavailableMessage}
@@ -575,6 +656,12 @@ export default function TradeComposerPanel({
             {sending ? sendingLabel : sendLabel}
           </button>
         </div>
+      </div>
+      <div className="trade-compose-warning" role="alert">
+        <p>
+          <strong>P2P trading risks:</strong> Always verify token contract addresses, amounts, and exchange rates before
+          confirming. Only the escrowed asset transfer is enforced on-chain — only trade with parties you trust.
+        </p>
       </div>
       {expiryError ? <p className="trade-compose-field-error">{expiryError}</p> : null}
 

@@ -580,7 +580,7 @@ const resolveTradeLinkInput = (value: string): { tradeId: number; escrowContract
 const formatTradeListTerms = (trade: TradeSnapshot): string => {
   const displayTerms = getTradeDisplayTerms(trade);
   if (trade.hiddenLiquidity) {
-    return `Hidden liquidity; price ratio ${formatTradeRatioLabel(displayTerms.offer, displayTerms.request) ?? 'unavailable'}`;
+    return `Private liquidity; price ratio ${formatTradeRatioLabel(displayTerms.offer, displayTerms.request) ?? 'unavailable'}`;
   }
   return `${formatTradeAssetDisplayText(displayTerms.offer)} for ${formatTradeAssetDisplayText(displayTerms.request)}`;
 };
@@ -1567,11 +1567,11 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         setRevealingPrivateTradeKey(tradeKey);
         const revealedSnapshot = await enrichMakerPrivateProgress(snapshot, true);
         if (!revealedSnapshot.makerPrivateProgress) {
-          throw new Error('Unable to reveal this trade liquidity. Make sure this is your trade and your wallet AES key is available.');
+          throw new Error('Unable to reveal this private liquidity. Make sure this is your trade and your wallet AES key is available.');
         }
         mergeTradeSnapshot(revealedSnapshot);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to reveal this trade liquidity.';
+        const message = error instanceof Error ? error.message : 'Unable to reveal this private liquidity.';
         setTradeActionError(message);
       } finally {
         setRevealingPrivateTradeKey('');
@@ -1654,9 +1654,9 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         tradeHidePrivateLiquidity,
         hiddenLiquidityUnavailableMessage:
           counterParentTrade
-            ? 'Hidden liquidity is only available for fixed-price listings.'
+            ? 'Private liquidity is only available for fixed-price listings.'
             : editingTrade && !editingTrade.hiddenLiquidity
-              ? 'Hidden liquidity cannot be added to a visible-liquidity edit.'
+              ? 'Private liquidity cannot be added to a visible-liquidity edit.'
               : '',
         rewardTokenSymbol,
         rewardTokenDecimals,
@@ -2019,7 +2019,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
           (!isEditTrade || editSourceTrade?.hiddenLiquidity)
       );
       if (isEditTrade && editSourceTrade.hiddenLiquidity && !hiddenLiquidity) {
-        setTradeActionError('Hidden-liquidity trades must stay hidden when edited. Cancel the edit to create a visible-liquidity trade.');
+        setTradeActionError('Private liquidity trades must stay private when edited. Cancel the edit to create a visible-liquidity trade.');
         return;
       }
       const accessSecret = tradeVisibility === 'unlisted' && !isCounterTrade && !isEditTrade ? createTradeAccessSecret() : '';
@@ -2334,15 +2334,11 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         let requestedAmount: bigint;
         let remainingRequestAmount = 0n;
         if (latestSnapshot.hiddenLiquidity) {
-          const desiredOfferAmount = parseTokenAmountInput(amountInput, latestSnapshot.offer.decimals);
-          if (desiredOfferAmount === null || desiredOfferAmount <= 0n) {
-            throw new Error(`Enter a valid ${latestSnapshot.offer.symbol} amount to fill.`);
+          const parsedRequestAmount = parseTokenAmountInput(amountInput, latestSnapshot.request.decimals);
+          if (parsedRequestAmount === null || parsedRequestAmount <= 0n) {
+            throw new Error(`Enter a valid ${latestSnapshot.request.symbol} amount to pay.`);
           }
-          requestedAmount = quotePrivateRequestAmountForOffer(
-            desiredOfferAmount,
-            BigInt(latestSnapshot.offer.amount),
-            BigInt(latestSnapshot.request.amount)
-          );
+          requestedAmount = parsedRequestAmount;
           if (requestedAmount <= 0n) {
             throw new Error('This trade price cannot be filled.');
           }
@@ -3048,22 +3044,24 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     const rightSide = orderSummary.secondarySide;
     const leftExplorerUrl = buildTradeAssetExplorerUrl(leftSide.asset);
     const rightExplorerUrl = buildTradeAssetExplorerUrl(rightSide.asset);
-    const pairLabel = trade.hiddenLiquidity ? orderSummary.actionLabel : orderSummary.directionLabel;
+    const pairLabel = orderSummary.directionLabel;
     const leftToneClass = `p2p-offer-term-${leftSide.tone}`;
     const rightToneClass = `p2p-offer-term-${rightSide.tone}`;
     const isRateReversed = Boolean(reversedRateTradeIds[tradeKey]);
+    const defaultRatioLabel = formatTradeRatioLabel(leftSide.asset, rightSide.asset);
+    const reverseRatioLabel = formatTradeRatioLabel(rightSide.asset, leftSide.asset);
     const hiddenFixedPriceTerms = trade.hiddenLiquidity
       ? isRateReversed
-        ? orderSummary.reverseRatioLabel ?? formatHiddenFixedPriceTerms(displayTerms.request, displayTerms.offer)
-        : orderSummary.ratioLabel ?? formatHiddenFixedPriceTerms(displayTerms.offer, displayTerms.request)
+        ? reverseRatioLabel ?? formatHiddenFixedPriceTerms(rightSide.asset, leftSide.asset)
+        : defaultRatioLabel ?? formatHiddenFixedPriceTerms(leftSide.asset, rightSide.asset)
       : '';
     const showHiddenPriceSummary = Boolean(trade.hiddenLiquidity);
     const showExplorerHiddenPriceOnly = route.view === 'public' && Boolean(trade.hiddenLiquidity);
     const tradeRateText = trade.hiddenLiquidity
       ? hiddenFixedPriceTerms
       : isRateReversed
-        ? orderSummary.reverseRatioLabel ?? formatTradeRateText(displayTerms.request, displayTerms.offer)
-        : orderSummary.ratioLabel ?? formatTradeRateText(displayTerms.offer, displayTerms.request);
+        ? reverseRatioLabel ?? formatTradeRateText(rightSide.asset, leftSide.asset)
+        : defaultRatioLabel ?? formatTradeRateText(leftSide.asset, rightSide.asset);
     const hiddenDirectionLabel = trade.hiddenLiquidity ? orderSummary.directionLabel : '';
     const formatVisibleTermText = (asset: TradeAssetPayload): string =>
       trade.hiddenLiquidity
@@ -3093,13 +3091,22 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
     const expiryCountdown = trade.status === 'open' ? formatExpiryCountdown(trade.expiresAt) : null;
 
     return (
-      <article key={tradeKey} className={`p2p-offer-card p2p-offer-card-${trade.status}`}>
+      <article
+        key={tradeKey}
+        className={[
+          'p2p-offer-card',
+          `p2p-offer-card-${trade.status}`,
+          trade.hiddenLiquidity ? 'p2p-offer-card-private-liquidity' : ''
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
         <div className="p2p-offer-card-head">
           <div className="p2p-offer-title">
             <h3 title={formatTradeListTerms(trade)}>{pairLabel}</h3>
             <p>
               #{trade.tradeId}
-              {trade.hiddenLiquidity ? <span>Hidden liquidity</span> : null}
+              {trade.hiddenLiquidity ? <span>Private liquidity</span> : null}
               {trade.counterParentTradeId ? <span>Counter to #{trade.counterParentTradeId}</span> : null}
               {trade.replacesTradeId ? <span>Edited from #{trade.replacesTradeId}</span> : null}
               {trade.replacementTradeId ? <span>Replaced by #{trade.replacementTradeId}</span> : null}
@@ -3118,7 +3125,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
           >
             <span>Price ratio</span>
             <strong>{hiddenFixedPriceTerms}</strong>
-            <small>{hiddenDirectionLabel}. Liquidity and fill amounts stay private.</small>
+            <small>{hiddenDirectionLabel}. Amounts and fills stay private.</small>
           </button>
         ) : null}
 
@@ -3153,7 +3160,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
         {visibleCompletionSummary ? (
           <div className="p2p-offer-completion" aria-label={visibleCompletionSummary.percentLabel}>
             <div className="p2p-offer-completion-head">
-              <span>{makerPrivateProgressSummary ? 'Your liquidity' : 'Completion'}</span>
+              <span>{makerPrivateProgressSummary ? 'Your private liquidity' : 'Completion'}</span>
               <strong>{makerPrivateProgressSummary?.totalLabel ?? visibleCompletionSummary.percentLabel}</strong>
             </div>
             <div className="p2p-offer-completion-bar">
@@ -3242,7 +3249,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
                     className="p2p-offer-counter-btn"
                     onClick={() => revealMakerPrivateProgress(trade).catch(() => {})}
                     disabled={revealingPrivateTradeKey === tradeKey}
-                    title="Reveal your hidden liquidity with your wallet AES key"
+                    title="Reveal your private liquidity with your wallet AES key"
                   >
                     {revealingPrivateTradeKey === tradeKey ? 'Revealing...' : 'Reveal Liquidity'}
                   </button>
@@ -3698,34 +3705,60 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
               <button type="button" className="standalone-trade-secondary-btn" onClick={clearEditTrade}>
                 Cancel Edit
               </button>
-            ) : (
-            <div className="standalone-trade-visibility" role="group" aria-label="Trade visibility">
-              <button
-                type="button"
-                className={tradeVisibility === 'public' ? 'active' : undefined}
-                onClick={() => setTradeVisibility('public')}
-                aria-pressed={tradeVisibility === 'public'}
-              >
-                Public
-              </button>
-              <button
-                type="button"
-                className={tradeVisibility === 'unlisted' ? 'active' : undefined}
-                onClick={() => setTradeVisibility('unlisted')}
-                aria-pressed={tradeVisibility === 'unlisted'}
-              >
-                Private Link
-              </button>
-              <button
-                type="button"
-                className={tradeVisibility === 'direct' ? 'active' : undefined}
-                onClick={() => setTradeVisibility('direct')}
-                aria-pressed={tradeVisibility === 'direct'}
-              >
-                Direct
-              </button>
+            ) : null}
+          </div>
+          <div className="standalone-trade-options">
+            {!editingTrade ? (
+              <div className="standalone-trade-visibility" role="group" aria-label="Trade visibility">
+                <button
+                  type="button"
+                  className={tradeVisibility === 'public' ? 'active' : undefined}
+                  onClick={() => setTradeVisibility('public')}
+                  aria-pressed={tradeVisibility === 'public'}
+                >
+                  Public
+                </button>
+                <button
+                  type="button"
+                  className={tradeVisibility === 'unlisted' ? 'active' : undefined}
+                  onClick={() => setTradeVisibility('unlisted')}
+                  aria-pressed={tradeVisibility === 'unlisted'}
+                >
+                  Private Link
+                </button>
+                <button
+                  type="button"
+                  className={tradeVisibility === 'direct' ? 'active' : undefined}
+                  onClick={() => setTradeVisibility('direct')}
+                  aria-pressed={tradeVisibility === 'direct'}
+                >
+                  Direct
+                </button>
+              </div>
+            ) : null}
+            <div className="standalone-trade-access-summary">
+              <span>Access</span>
+              <strong>
+                {editingTrade
+                  ? 'Replacement will be listed publicly'
+                  : tradeVisibility === 'public'
+                  ? 'Listed publicly while open'
+                  : tradeVisibility === 'direct'
+                    ? directTradeRecipientIsValid
+                      ? `Sent to ${shortenAddress(directTradeRecipientNormalized)}`
+                      : 'Visible in the recipient wallet inbox'
+                    : 'Full private link required to accept'}
+              </strong>
+              <p>
+                {editingTrade
+                  ? 'The original public listing is cancelled and the replacement keeps a link back to it.'
+                  : tradeVisibility === 'direct'
+                    ? 'Direct trades are not public listings. The recipient can find the offer under received trades.'
+                    : tradeVisibility === 'public'
+                      ? 'Public trades appear in the directory while open. On-chain terms remain public to direct contract reads.'
+                      : 'Unlisted trades are not shown in the public directory. On-chain terms remain public to direct contract reads.'}
+              </p>
             </div>
-            )}
           </div>
           {!editingTrade && tradeVisibility === 'direct' ? (
             <label className="standalone-trade-recipient p2p-direct-recipient">
@@ -3739,29 +3772,6 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
               />
             </label>
           ) : null}
-          <div className="standalone-trade-access-summary">
-            <span>Access</span>
-            <strong>
-              {editingTrade
-                ? 'Replacement will be listed publicly'
-                : tradeVisibility === 'public'
-                ? 'Listed publicly while open'
-                : tradeVisibility === 'direct'
-                  ? directTradeRecipientIsValid
-                    ? `Sent to ${shortenAddress(directTradeRecipientNormalized)}`
-                    : 'Visible in the recipient wallet inbox'
-                  : 'Full private link required to accept'}
-            </strong>
-            <p>
-              {editingTrade
-                ? 'The original public listing is cancelled and the replacement keeps a link back to it.'
-                : tradeVisibility === 'direct'
-                  ? 'Direct trades are not public listings. The recipient can find the offer under received trades.'
-                  : tradeVisibility === 'public'
-                    ? 'Public trades appear in the directory while open. On-chain terms remain public to direct contract reads.'
-                    : 'Unlisted trades are not shown in the public directory. On-chain terms remain public to direct contract reads.'}
-            </p>
-          </div>
           {tradeComposer}
           {createdTradeLink ? (
             <div className="standalone-trade-created">

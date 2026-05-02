@@ -219,10 +219,10 @@ export const createTradeOnChain = async ({
 }): Promise<{ tradeId: number; escrowContract: string }> => {
   if (hidePrivateLiquidity) {
     if (parentTradeId) {
-      throw new Error('Hidden-liquidity trades cannot be linked as counter offers yet.');
+      throw new Error('Private liquidity trades cannot be linked as counter offers yet.');
     }
     if (offerAsset.kind !== 'private-erc20' || requestAsset.kind !== 'private-erc20') {
-      throw new Error('Hidden-liquidity trades require private tokens on both sides.');
+      throw new Error('Private liquidity trades require private tokens on both sides.');
     }
 
     const resolvedHiddenOfferAmountWei = hiddenOfferAmountWei ?? offerAmountWei;
@@ -430,7 +430,7 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
   accessSecret?: string;
 }): Promise<{ filledTxHash?: string; fullyFilled: boolean }> => {
   if (requestAsset.kind !== 'private-erc20') {
-    throw new Error('Hidden-liquidity fills require a private payment token.');
+    throw new Error('Private liquidity fills require a private payment token.');
   }
 
   const resolvedEscrowContract = escrowContract ?? PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
@@ -496,7 +496,7 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
   termsHash?: string;
 }): Promise<{ tradeId: number; escrowContract: string }> => {
   if (offerAsset.kind !== 'private-erc20' || requestAsset.kind !== 'private-erc20') {
-    throw new Error('Hidden-liquidity trades require private tokens on both sides.');
+    throw new Error('Private liquidity trades require private tokens on both sides.');
   }
 
   const resolvedHiddenOfferAmountWei = hiddenOfferAmountWei ?? offerAmountWei;

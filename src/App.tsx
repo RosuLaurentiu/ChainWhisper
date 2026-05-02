@@ -7512,7 +7512,7 @@ export default function App() {
       setProcessingTradeActionId(tradeKey);
       const snapshot = await resolveTradeSnapshotForOffer(offer);
       if (snapshot.hiddenLiquidity) {
-        throw new Error('Open the shared P2P trade link to fill hidden-liquidity trades.');
+        throw new Error('Open the shared P2P trade link to fill private liquidity trades.');
       }
       const remainingRequestAmount = (() => {
         try {

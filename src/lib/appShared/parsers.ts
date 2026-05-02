@@ -2070,7 +2070,7 @@ export const formatTradeOfferDisplayText = (
   const requestLabel = formatTradeAssetDisplayText(payload.request);
   const prefix = direction === 'outgoing' ? 'Trade offer sent' : 'Trade offer';
   if (payload.hiddenLiquidity) {
-    return `${prefix}: hidden liquidity at ${requestLabel} per ${offerLabel}.`;
+    return `${prefix}: private liquidity at ${requestLabel} per ${offerLabel}.`;
   }
   return `${prefix}: ${offerLabel} for ${requestLabel}.`;
 };
