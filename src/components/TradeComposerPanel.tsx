@@ -79,6 +79,8 @@ function ChevronIcon() {
 
 type TradeTokenScope = 'public' | 'private';
 
+const FEE_VARIANCE_NOTE = 'Fee may vary before submit.';
+
 const stripTokenCheckmark = (value: string): string => value.replace(/^[\s✓]+/, '').trim();
 
 const resolveTokenOptionScope = (option?: TradeComposerTokenOption): TradeTokenScope => {
@@ -595,6 +597,7 @@ export default function TradeComposerPanel({
             <div className="trade-compose-fee-copy">
               <span className="trade-compose-field-label">Fee</span>
               <strong className="trade-compose-fee-value">{compactFeeSummaryLabel || feeSummaryLabel}</strong>
+              <span className="trade-compose-fee-note">{FEE_VARIANCE_NOTE}</span>
             </div>
             <div className="trade-compose-fee-segmented" role="group" aria-label="Trade fee">
               <button

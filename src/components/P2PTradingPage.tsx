@@ -3235,11 +3235,7 @@ export default function P2PTradingPage({
       ? 'Details'
       : perspective.isMaker
         ? 'Manage'
-        : perspective.isTaker
-          ? 'Review offer'
-          : trade.hiddenLiquidity
-            ? 'Review ratio'
-            : 'Review & fill';
+        : 'Open trade';
     const leftSide = orderSummary.primarySide;
     const rightSide = orderSummary.secondarySide;
     const leftExplorerUrl = buildTradeAssetExplorerUrl(leftSide.asset);
@@ -4096,19 +4092,6 @@ export default function P2PTradingPage({
               <h2>Open public trades</h2>
             </div>
             <div className="standalone-trades-toolbar">
-              <button
-                type="button"
-                className="standalone-trade-secondary-btn"
-                onClick={() => {
-                  setTradeVisibility('public');
-                  startFreshTrade();
-                }}
-              >
-                Create Trade
-              </button>
-              <button type="button" className="standalone-trade-secondary-btn" onClick={() => navigateToTradePath('/trades/open')}>
-                Open Link
-              </button>
               <button type="button" className="standalone-trade-secondary-btn" onClick={() => refreshPublicTrades().catch(() => {})}>
                 {loadingPublicTrades ? 'Refreshing...' : 'Refresh'}
               </button>
@@ -4126,29 +4109,11 @@ export default function P2PTradingPage({
                 tradeSearchInput
                   ? 'Try a token symbol, wallet address, status, or trade id.'
                   : 'The directory is live, but there are no open public listings to review yet.',
-                <>
-                  {tradeSearchInput ? (
-                    <button type="button" onClick={() => setTradeSearchInput('')}>
-                      Clear search
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTradeVisibility('public');
-                        startFreshTrade();
-                      }}
-                    >
-                      Create public trade
-                    </button>
-                  )}
-                  <button type="button" onClick={() => navigateToTradePath('/trades/open')}>
-                    Open link
+                tradeSearchInput ? (
+                  <button type="button" onClick={() => setTradeSearchInput('')}>
+                    Clear search
                   </button>
-                  <button type="button" onClick={() => refreshPublicTrades().catch(() => {})}>
-                    Refresh
-                  </button>
-                </>
+                ) : undefined
               )
             )
             : null}
@@ -4266,9 +4231,6 @@ export default function P2PTradingPage({
               <p className="landing-eyebrow">Trade Window</p>
               <h2>{route.tradeId ? 'Review trade' : 'Open a trade link'}</h2>
             </div>
-            <button type="button" className="standalone-trade-secondary-btn" onClick={() => navigateToTradePath('/trades')}>
-              Browse Public
-            </button>
           </div>
           <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
             <p>
@@ -4322,15 +4284,7 @@ export default function P2PTradingPage({
           {!loadingDetailTrade && !detailTrade && !tradeAccessBlocked && !route.routeError && !detailTradeError ? (
             renderP2PEmptyState(
               'Open a trade window',
-              'Paste a shared trade link, compact code, or trade id above. You can also browse public listings or create a new offer.',
-              <>
-                <button type="button" onClick={() => navigateToTradePath('/trades')}>
-                  Browse market
-                </button>
-                <button type="button" onClick={startFreshTrade}>
-                  Create trade
-                </button>
-              </>
+              'Paste a shared trade link, compact code, or trade id above.'
             )
           ) : null}
           {tradeActionError ? <p className="standalone-trade-error">{tradeActionError}</p> : null}
@@ -4399,26 +4353,11 @@ export default function P2PTradingPage({
                         : selectedMyTradeGroup.id === 'active'
                           ? 'Create a public, private-link, or direct offer to start tracking it here.'
                           : 'Settled, cancelled, declined, and expired trades will collect here.',
-                    <>
-                      {tradeSearchInput ? (
-                        <button type="button" onClick={() => setTradeSearchInput('')}>
-                          Clear search
-                        </button>
-                      ) : selectedMyTradeGroup.id === 'active' ? (
-                        <button type="button" onClick={startFreshTrade}>
-                          Create trade
-                        </button>
-                      ) : (
-                        <button type="button" onClick={() => refreshMyTrades().catch(() => {})}>
-                          Refresh
-                        </button>
-                      )}
-                      {selectedMyTradeGroup.id !== 'active' ? (
-                        <button type="button" onClick={() => navigateToTradePath('/trades/open')}>
-                          Open link
-                        </button>
-                      ) : null}
-                    </>
+                    tradeSearchInput ? (
+                      <button type="button" onClick={() => setTradeSearchInput('')}>
+                        Clear search
+                      </button>
+                    ) : undefined
                   )
                 )}
               </section>

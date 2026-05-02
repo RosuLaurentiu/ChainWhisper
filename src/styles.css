@@ -8379,6 +8379,13 @@ body {
   line-height: 1.1;
 }
 
+.trade-compose-fee-note {
+  color: rgba(253, 230, 138, 0.9);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
 .trade-compose-fee-toggle {
   min-width: 64px;
   min-height: 28px;
@@ -9270,6 +9277,11 @@ body {
 
 .trade-compose-fee-row-inline .trade-compose-fee-value {
   font-size: 0.8rem;
+}
+
+.trade-compose-fee-row-inline .trade-compose-fee-note {
+  flex-basis: 100%;
+  font-size: 0.62rem;
 }
 
 .trade-compose-fee-row-inline .trade-compose-fee-segmented {
