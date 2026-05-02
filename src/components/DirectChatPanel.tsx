@@ -4,6 +4,7 @@ import DirectChatCompose from './DirectChatCompose';
 import ChatImage from './ChatImage';
 import TradeOfferCard from './TradeOfferCard';
 import { parseImageTag } from '../lib/imagePull';
+import useVirtualizedPrependScrollAnchor from '../hooks/useVirtualizedPrependScrollAnchor';
 import {
   DEFAULT_REACTION_EMOJIS,
   buildTradeSnapshotKey,
@@ -281,29 +282,36 @@ function DirectChatPanel({
   const activeContactLabel = activeContactMeta?.name
     ? `${activeContactMeta.name} (${shortenAddress(activeContact)})`
     : shortenAddress(activeContact);
-  const visibleTradeOfferIds = new Set<string>();
-  const latestTradeResponsesById: Record<string, TradeResponseMessagePayload> = {};
+  const { visibleTradeOfferIds, latestTradeResponsesById, latestTradeId } = useMemo(() => {
+    const nextVisibleTradeOfferIds = new Set<string>();
+    const nextLatestTradeResponsesById: Record<string, TradeResponseMessagePayload> = {};
+    let nextLatestTradeId = -1;
 
-  activeMessages.forEach((message) => {
-    const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
-    const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
+    for (const message of activeMessages) {
+      const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
+      const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
 
-    if (parsedTradeOffer && isInChatTradeOffer(parsedTradeOffer)) {
-      const tradeKey = buildTradeSnapshotKey(parsedTradeOffer.tradeId, parsedTradeOffer.escrowContract);
-      visibleTradeOfferIds.add(tradeKey);
+      if (parsedTradeOffer && isInChatTradeOffer(parsedTradeOffer)) {
+        const tradeKey = buildTradeSnapshotKey(parsedTradeOffer.tradeId, parsedTradeOffer.escrowContract);
+        nextVisibleTradeOfferIds.add(tradeKey);
+        if (parsedTradeOffer.tradeId > nextLatestTradeId) {
+          nextLatestTradeId = parsedTradeOffer.tradeId;
+        }
+      }
+
+      if (parsedTradeResponse) {
+        nextLatestTradeResponsesById[
+          buildTradeSnapshotKey(parsedTradeResponse.tradeId, parsedTradeResponse.escrowContract)
+        ] = parsedTradeResponse;
+      }
     }
 
-    if (parsedTradeResponse) {
-      latestTradeResponsesById[buildTradeSnapshotKey(parsedTradeResponse.tradeId, parsedTradeResponse.escrowContract)] =
-        parsedTradeResponse;
-    }
-  });
-  const latestTradeId = activeMessages.reduce<number>((max, message) => {
-    const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
-    return parsedTradeOffer && isInChatTradeOffer(parsedTradeOffer) && parsedTradeOffer.tradeId > max
-      ? parsedTradeOffer.tradeId
-      : max;
-  }, -1);
+    return {
+      visibleTradeOfferIds: nextVisibleTradeOfferIds,
+      latestTradeResponsesById: nextLatestTradeResponsesById,
+      latestTradeId: nextLatestTradeId
+    };
+  }, [activeMessages]);
   const renderableMessages = useMemo(
     () =>
       activeMessages.filter((message) => {
@@ -328,6 +336,13 @@ function DirectChatPanel({
     estimateSize: () => 108,
     overscan: 12,
     getItemKey: (index) => renderableMessages[index]?.id ?? index
+  });
+  const messageVirtualizerTotalSize = messageVirtualizer.getTotalSize();
+  useVirtualizedPrependScrollAnchor({
+    messages: renderableMessages,
+    scrollElementRef: chatMessagesNodeRef,
+    threadKey: `direct:${activeContact.trim().toLowerCase()}`,
+    totalSize: messageVirtualizerTotalSize
   });
   const showHistorySyncIndicator = loadingOlderHistory && renderableMessages.length > 0;
   const showInitialMessageSkeleton = loadingOlderHistory && renderableMessages.length === 0;
@@ -400,7 +415,7 @@ function DirectChatPanel({
         ) : (
           <div
             className="virtual-message-list"
-            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+            style={{ height: `${messageVirtualizerTotalSize}px` }}
           >
             {messageVirtualizer.getVirtualItems().map((virtualItem) => {
             const message = renderableMessages[virtualItem.index];

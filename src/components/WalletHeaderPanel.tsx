@@ -9,6 +9,7 @@ type WalletHeaderPanelProps = {
   modeLabel: string;
   onPrimaryAction: () => void;
   onToggleMenu: () => void;
+  primaryAddon?: ReactNode;
   primaryButtonClassName: string;
   primaryButtonLabel: string;
   primaryButtonTitle?: string;
@@ -40,6 +41,7 @@ export default function WalletHeaderPanel({
   modeLabel,
   onPrimaryAction,
   onToggleMenu,
+  primaryAddon,
   primaryButtonClassName,
   primaryButtonLabel,
   primaryButtonTitle,
@@ -62,17 +64,20 @@ export default function WalletHeaderPanel({
     >
       <div className="p2p-wallet-status">
         <div className="p2p-wallet-identity">
-          <button
-            type="button"
-            className={primaryButtonClassName}
-            onClick={onPrimaryAction}
-            disabled={primaryDisabled}
-            title={primaryButtonTitle}
-            aria-label={primaryButtonTitle ?? primaryButtonLabel}
-          >
-            <span>{primaryButtonLabel}</span>
-            {primaryMetaLabel ? <small>{primaryMetaLabel}</small> : null}
-          </button>
+          <div className={primaryAddon ? 'p2p-wallet-primary-wrap has-addon' : 'p2p-wallet-primary-wrap'}>
+            <button
+              type="button"
+              className={primaryButtonClassName}
+              onClick={onPrimaryAction}
+              disabled={primaryDisabled}
+              title={primaryButtonTitle}
+              aria-label={primaryButtonTitle ?? primaryButtonLabel}
+            >
+              <span>{primaryButtonLabel}</span>
+              {primaryMetaLabel ? <small>{primaryMetaLabel}</small> : null}
+            </button>
+            {primaryAddon ? <div className="p2p-wallet-primary-addon">{primaryAddon}</div> : null}
+          </div>
           <div className={`p2p-wallet-status-text p2p-wallet-status-${statusTone}`}>
             <span>{modeLabel}</span>
             <strong>

@@ -1836,6 +1836,91 @@ body {
   color: #d9d3ff;
 }
 
+.p2p-wallet-primary-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.p2p-wallet-primary-wrap .connect-btn {
+  flex: 1 1 auto;
+}
+
+.p2p-wallet-primary-addon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.p2p-wallet-icon-action {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border: 1px solid rgba(121, 95, 184, 0.62);
+  border-radius: 999px;
+  background: rgba(139, 92, 246, 0.14);
+  color: #f5f3ff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.p2p-wallet-icon-action:hover:not(:disabled) {
+  border-color: rgba(196, 181, 253, 0.78);
+  background: rgba(139, 92, 246, 0.24);
+}
+
+.p2p-wallet-icon-action.active {
+  border-color: rgba(196, 181, 253, 0.78);
+  background: rgba(139, 92, 246, 0.28);
+}
+
+.p2p-wallet-icon-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.p2p-wallet-icon-action svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.p2p-app-wallet-switch-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.p2p-app-wallet-switch-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 34;
+  display: grid;
+  gap: 6px;
+  width: min(226px, calc(100vw - 32px));
+  border: 1px solid rgba(74, 64, 112, 0.74);
+  border-radius: 10px;
+  background: rgba(13, 13, 22, 0.98);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  padding: 9px;
+}
+
+.p2p-app-wallet-switch-menu > span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .p2p-wallet-status {
   display: flex;
   align-items: center;
@@ -2060,16 +2145,20 @@ body {
   max-width: none;
 }
 
-.p2p-wallet-menu .p2p-wallet-action {
+.p2p-wallet-menu .p2p-wallet-action,
+.p2p-app-wallet-switch-menu .p2p-wallet-action {
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 7px;
   border-radius: 7px;
   text-align: left;
+  width: 100%;
+  max-width: none;
 }
 
-.p2p-wallet-menu .p2p-wallet-action.active::before {
+.p2p-wallet-menu .p2p-wallet-action.active::before,
+.p2p-app-wallet-switch-menu .p2p-wallet-action.active::before {
   content: "";
   width: 7px;
   height: 7px;
@@ -9563,6 +9652,16 @@ body {
     font-size: 0.7rem;
   }
 
+  .top-header .top-header-mobile-wallet .p2p-wallet-primary-wrap {
+    gap: 3px;
+  }
+
+  .top-header .top-header-mobile-wallet .p2p-wallet-icon-action {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+  }
+
   .top-header .top-header-mobile-wallet .p2p-wallet-panel .connect-btn span {
     min-width: 0;
     overflow: hidden;
@@ -11851,6 +11950,7 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
 }
 
 button:focus-visible,

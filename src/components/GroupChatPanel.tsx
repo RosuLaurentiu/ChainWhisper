@@ -4,6 +4,7 @@ import GroupChatCompose from './GroupChatCompose';
 import ChatImage from './ChatImage';
 import { closeDetailsOnEscape } from './a11y';
 import { parseImageTag } from '../lib/imagePull';
+import useVirtualizedPrependScrollAnchor from '../hooks/useVirtualizedPrependScrollAnchor';
 import {
   DEFAULT_REACTION_EMOJIS,
   formatMessageTimestamp,
@@ -206,6 +207,13 @@ export default function GroupChatPanel({
     overscan: 12,
     getItemKey: (index) => renderableMessages[index]?.id ?? index
   });
+  const messageVirtualizerTotalSize = messageVirtualizer.getTotalSize();
+  useVirtualizedPrependScrollAnchor({
+    messages: renderableMessages,
+    scrollElementRef: chatMessagesNodeRef,
+    threadKey: `group:${activeGroupId}`,
+    totalSize: messageVirtualizerTotalSize
+  });
 
   return (
     <div className="chat-shell">
@@ -372,7 +380,7 @@ export default function GroupChatPanel({
         ) : (
           <div
             className="virtual-message-list"
-            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+            style={{ height: `${messageVirtualizerTotalSize}px` }}
           >
             {messageVirtualizer.getVirtualItems().map((virtualItem) => {
             const message = renderableMessages[virtualItem.index];

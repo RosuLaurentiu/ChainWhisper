@@ -111,6 +111,7 @@ import {
 } from '../lib/tradePerspective';
 import BurnerImportModal from './BurnerImportModal';
 import BurnerPinModal from './BurnerPinModal';
+import AppWalletSwitchButton from './AppWalletSwitchButton';
 import TradeComposerPanel from './TradeComposerPanel';
 import TradeOfferCard from './TradeOfferCard';
 import WalletHeaderPanel from './WalletHeaderPanel';
@@ -122,11 +123,14 @@ type PendingBurnerWalletAction = 'connect' | 'generate' | 'import';
 
 type SharedWalletSession = {
   activeSignerSource: SignerSource;
+  activeBurnerWalletId?: string;
   browserProvider: Eip1193Provider | null;
   browserWalletId: string;
   browserWalletLabel: string;
   burnerWallet: Wallet | null;
+  burnerWallets?: BurnerWalletRecord[];
   chainId: number | null;
+  onSwitchActiveBurnerWallet?: (walletId: string) => Promise<void> | void;
   sessionOnboardInfo: Record<string, OnboardInfo>;
   walletAddress: string;
 };
@@ -751,6 +755,7 @@ export default function P2PTradingPage({
   const [showBurnerPinModal, setShowBurnerPinModal] = useState(false);
   const [unlockingBurner, setUnlockingBurner] = useState(false);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  const [appWalletMenuOpen, setAppWalletMenuOpen] = useState(false);
   const [onboardInfoByAddress, setOnboardInfoByAddress] = useState<Record<string, OnboardInfo>>({});
   const [tradeFeeModeSelection, setTradeFeeModeSelection] = useState<TradeFeeModeSelection>('coti');
   const [tradeVisibility, setTradeVisibility] = useState<TradeVisibility>('public');
@@ -861,7 +866,16 @@ export default function P2PTradingPage({
     if (!sharedAddress) {
       skippedSharedWalletKeyRef.current = '';
     }
-    if (!sharedAddress || walletAddress || connectingWalletId || skippedSharedWalletKeyRef.current === sharedWalletKey) {
+    const shouldApplySharedWallet =
+      !walletAddress ||
+      (sharedWalletSession?.activeSignerSource === 'burner' && connectedWithBurner && walletKey !== sharedWalletKey);
+
+    if (
+      !sharedAddress ||
+      !shouldApplySharedWallet ||
+      connectingWalletId ||
+      skippedSharedWalletKeyRef.current === sharedWalletKey
+    ) {
       return;
     }
 
@@ -899,6 +913,10 @@ export default function P2PTradingPage({
       burnerWalletRef.current = sharedWalletSession.burnerWallet;
       providerRef.current = null;
       signerCacheRef.current = { [sharedWalletKey]: sharedWalletSession.burnerWallet };
+      if (sharedWalletSession.burnerWallets?.length) {
+        setBurnerWallets(sharedWalletSession.burnerWallets);
+      }
+      setSelectedBurnerWalletId(sharedWalletSession.activeBurnerWalletId ?? '');
       setWalletAddress(sharedAddress);
       setChainId(COTI_NETWORK.chainIdDecimal);
       setConnectedWalletLabel('App wallet');
@@ -909,15 +927,19 @@ export default function P2PTradingPage({
     }
   }, [
     connectingWalletId,
+    connectedWithBurner,
     sharedWalletSession?.activeSignerSource,
+    sharedWalletSession?.activeBurnerWalletId,
     sharedWalletSession?.browserProvider,
     sharedWalletSession?.browserWalletId,
     sharedWalletSession?.browserWalletLabel,
     sharedWalletSession?.burnerWallet,
+    sharedWalletSession?.burnerWallets,
     sharedWalletSession?.chainId,
     sharedWalletSession?.sessionOnboardInfo,
     sharedWalletSession?.walletAddress,
-    walletAddress
+    walletAddress,
+    walletKey
   ]);
 
   const toggleTradeRateDirection = useCallback((tradeId: number, escrowContract?: string) => {
@@ -3488,6 +3510,42 @@ export default function P2PTradingPage({
     ) : (
       emptyState ?? <p className="standalone-trade-state">{emptyLabel}</p>
     );
+  const visibleAppWallets =
+    sharedWalletSession?.burnerWallets?.length ? sharedWalletSession.burnerWallets : burnerWallets;
+  const connectedAppWalletId =
+    visibleAppWallets.find((walletRecord) => walletRecord.address?.toLowerCase() === walletKey)?.id ?? '';
+  const currentAppWalletSelectionId =
+    connectedAppWalletId || selectedBurnerWalletId || sharedWalletSession?.activeBurnerWalletId || '';
+  const getTradeAppWalletDisplayName = useCallback(
+    (walletRecord: BurnerWalletRecord, index: number): string =>
+      walletRecord.name?.trim() || (walletRecord.address ? shortenAddress(walletRecord.address) : `Wallet ${index + 1}`),
+    []
+  );
+  const handleSwitchTradeAppWallet = useCallback(
+    (walletId: string) => {
+      if (!walletId || walletId === currentAppWalletSelectionId) {
+        return;
+      }
+
+      setWalletMenuOpen(false);
+      setAppWalletMenuOpen(false);
+      if (sharedWalletSession?.onSwitchActiveBurnerWallet && connectedWithBurner) {
+        Promise.resolve(sharedWalletSession.onSwitchActiveBurnerWallet(walletId)).catch(() => {
+          setWalletError('Failed to switch app wallet.');
+        });
+        return;
+      }
+
+      setSelectedBurnerWalletId(walletId);
+      connectBurnerWallet(walletId).catch(() => {});
+    },
+    [
+      connectBurnerWallet,
+      connectedWithBurner,
+      currentAppWalletSelectionId,
+      sharedWalletSession?.onSwitchActiveBurnerWallet
+    ]
+  );
   const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
   const tradePrimaryConnectsAppWallet =
     !walletAddress && tradeHasSavedAppWallet && (tradePrimaryWalletKind === 'app' || !preferredWalletOption);
@@ -3523,7 +3581,7 @@ export default function P2PTradingPage({
     }
 
     if (tradePrimaryConnectsAppWallet) {
-      connectBurnerWallet(selectedBurnerWalletId || undefined).catch(() => {});
+      connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {});
       return;
     }
 
@@ -3533,9 +3591,9 @@ export default function P2PTradingPage({
     connectWallet,
     copyWithFeedback,
     ensureCotiNetwork,
+    currentAppWalletSelectionId,
     onCotiNetwork,
     preferredWalletOption?.id,
-    selectedBurnerWalletId,
     tradePrimaryConnectsAppWallet,
     walletAddress,
     walletAddressCopyKey
@@ -3609,6 +3667,31 @@ export default function P2PTradingPage({
     Boolean(walletAddress && onCotiNetwork && !connectedWithBurner && tradeHasSavedAppWallet);
   const showTradeAppCreateAction =
     Boolean(walletAddress && onCotiNetwork && !connectedWithBurner && !tradeHasSavedAppWallet);
+  const showTradeAppWalletSwitchButton =
+    Boolean(walletAddress && onCotiNetwork && connectedWithBurner && visibleAppWallets.length > 1);
+  const tradeAppWalletSwitchButton = showTradeAppWalletSwitchButton ? (
+    <AppWalletSwitchButton
+      menuOpen={appWalletMenuOpen}
+      onToggleMenu={() => {
+        setWalletMenuOpen(false);
+        setAppWalletMenuOpen((previous) => !previous);
+      }}
+      onSelectWallet={handleSwitchTradeAppWallet}
+      options={visibleAppWallets.map((walletRecord, index) => {
+        const walletId = walletRecord.id ?? '';
+        const isSelected = walletId.length > 0 && walletId === currentAppWalletSelectionId;
+        const displayName = getTradeAppWalletDisplayName(walletRecord, index);
+        return {
+          active: isSelected,
+          disabled: Boolean(connectingWalletId) || !walletId || isSelected,
+          id: walletId,
+          key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
+          label: isSelected ? `${displayName} active` : displayName
+        };
+      })}
+      disabled={Boolean(connectingWalletId)}
+    />
+  ) : null;
   const tradePrivacyActionLabel =
     connectingWalletId === 'aes'
       ? 'Unlocking...'
@@ -3650,7 +3733,7 @@ export default function P2PTradingPage({
       <button
         type="button"
         className="p2p-wallet-aes-action wallet-switch-action"
-        onClick={() => connectBurnerWallet(selectedBurnerWalletId || undefined).catch(() => {})}
+        onClick={() => connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {})}
         disabled={Boolean(connectingWalletId)}
         title="Use the app wallet for this app"
       >
@@ -3679,8 +3762,8 @@ export default function P2PTradingPage({
     connectBurnerWallet,
     connectWallet,
     connectingWalletId,
+    currentAppWalletSelectionId,
     preferredWalletOption,
-    selectedBurnerWalletId,
     showTradeAppCreateAction,
     showTradeAppSwitchAction,
     showTradeBrowserSwitchAction
@@ -3694,6 +3777,7 @@ export default function P2PTradingPage({
             : `${walletPrimaryButtonClass} p2p-wallet-address`
         }
         primaryButtonLabel={walletPrimaryButtonLabel}
+        primaryAddon={tradeAppWalletSwitchButton}
         primaryMetaLabel={walletPrimaryButtonIsAddress && walletPrimaryButtonCopied ? 'Copied' : undefined}
         primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
         primaryDisabled={Boolean(connectingWalletId) || (!walletAddress && !preferredWalletOption && !tradePrimaryConnectsAppWallet)}
@@ -3709,7 +3793,10 @@ export default function P2PTradingPage({
           ) : null
         }
         menuOpen={walletMenuOpen}
-        onToggleMenu={() => setWalletMenuOpen((previous) => !previous)}
+        onToggleMenu={() => {
+          setAppWalletMenuOpen(false);
+          setWalletMenuOpen((previous) => !previous);
+        }}
         menuDisabled={Boolean(connectingWalletId)}
         menu={
           <>
@@ -3749,32 +3836,13 @@ export default function P2PTradingPage({
                 className={connectedWithBurner ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
                 onClick={() => {
                   setWalletMenuOpen(false);
-                  connectBurnerWallet(selectedBurnerWalletId || undefined).catch(() => {});
+                  connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {});
                 }}
                 disabled={Boolean(connectingWalletId)}
                 role="menuitem"
               >
                 {connectingWalletId === 'burner' ? 'Unlocking...' : 'Connect app wallet'}
               </button>
-              {burnerWallets.length > 1 ? (
-                <select
-                  className="p2p-wallet-select"
-                  value={selectedBurnerWalletId}
-                  onChange={(event) => {
-                    setSelectedBurnerWalletId(event.target.value);
-                    setWalletMenuOpen(false);
-                    connectBurnerWallet(event.target.value).catch(() => {});
-                  }}
-                  disabled={Boolean(connectingWalletId)}
-                  aria-label="Switch burner wallet"
-                >
-                  {burnerWallets.map((walletRecord, index) => (
-                    <option key={walletRecord.id ?? `${walletRecord.privateKey}-${index}`} value={walletRecord.id ?? ''}>
-                      {walletRecord.name?.trim() || (walletRecord.address ? shortenAddress(walletRecord.address) : `Wallet ${index + 1}`)}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
               <button type="button" className="p2p-wallet-action" onClick={beginGenerateBurnerWallet} role="menuitem">
                 Generate wallet
               </button>
@@ -3808,17 +3876,22 @@ export default function P2PTradingPage({
       connectWallet,
       connectedWithBurner,
       connectingWalletId,
+      currentAppWalletSelectionId,
       disconnectWallet,
+      getTradeAppWalletDisplayName,
       handleWalletPrimaryAction,
+      handleSwitchTradeAppWallet,
       preferredWalletOption,
       selectedBurnerWalletId,
       selectedWalletId,
       showTradeAppCreateAction,
       showTradeAppSwitchAction,
       showTradeBrowserSwitchAction,
+      tradeAppWalletSwitchButton,
       tradeWalletPrivacyAction,
       tradeWalletSwitchAction,
       tradePrimaryConnectsAppWallet,
+      visibleAppWallets,
       walletAddress,
       walletMenuOpen,
       walletModeLabel,

@@ -7,7 +7,7 @@ type HomePageProps = {
 };
 
 const CORE_APPS = [
-  { label: 'Chat', description: 'Encrypted direct and group messaging' },
+  { label: 'Chat', description: 'Private direct and group messaging' },
   { label: 'Trades', description: 'P2P escrow orders and private liquidity' },
   { label: 'Shield', description: 'Public/private reward-token swaps' },
   { label: 'Treasury', description: 'Read-only COTI and gCOTI analytics' }
@@ -30,7 +30,7 @@ export default function HomePage({ onLaunchChat, onOpenSwap, onOpenTreasury, onO
               className="landing-action-btn landing-action-btn-primary landing-action-btn-main"
               onClick={onLaunchChat}
             >
-              Launch Chat App
+              Open Chat
             </button>
             <button type="button" className="landing-action-btn landing-action-btn-secondary" onClick={onOpenTrades}>
               Open Trades
@@ -81,7 +81,7 @@ export default function HomePage({ onLaunchChat, onOpenSwap, onOpenTreasury, onO
             <h3>P2P Trades</h3>
             <p>Browse public orders, create escrow trades, share direct links, and manage private liquidity.</p>
             <button type="button" className="landing-module-cta" onClick={onOpenTrades}>
-              Open P2P Trades
+              Open Trades
             </button>
           </article>
 
@@ -90,7 +90,7 @@ export default function HomePage({ onLaunchChat, onOpenSwap, onOpenTreasury, onO
             <h3>Whisper Shield</h3>
             <p>Swap reward tokens between public and private balances through the Shield vault.</p>
             <button type="button" className="landing-module-cta" onClick={onOpenSwap}>
-              Open Whisper Shield
+              Open Shield
             </button>
           </article>
 
@@ -99,7 +99,7 @@ export default function HomePage({ onLaunchChat, onOpenSwap, onOpenTreasury, onO
             <h3>Treasury Data</h3>
             <p>Read live treasury metrics, historical snapshots, COTI pool data, and gCOTI context.</p>
             <button type="button" className="landing-module-cta" onClick={onOpenTreasury}>
-              Open Treasury Data
+              Open Treasury
             </button>
           </article>
         </div>
