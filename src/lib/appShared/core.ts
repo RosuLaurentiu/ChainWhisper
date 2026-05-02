@@ -20,6 +20,9 @@ export type Eip1193Provider = {
 export type InjectedEthereumProvider = Eip1193Provider & {
   isMetaMask?: boolean;
   isBraveWallet?: boolean;
+  isCipher?: boolean;
+  isCipherTrade?: boolean;
+  isCipherWallet?: boolean;
   isCypher?: boolean;
   isCypherTrade?: boolean;
   isCypherWallet?: boolean;
@@ -1337,25 +1340,36 @@ const normalizeWalletIdentityText = (...values: Array<string | undefined>): stri
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
 
-const isCypherTradeProvider = (
+const isCipherTradeProvider = (
   provider: InjectedEthereumProvider,
   info?: InjectedEthereumProviderInfo
 ): boolean => {
-  const providerWithFlags = provider as InjectedEthereumProvider & { isCypher?: boolean };
-  if (providerWithFlags.isCypherTrade || providerWithFlags.isCypherWallet || providerWithFlags.isCypher) {
+  if (
+    provider.isCipherTrade ||
+    provider.isCipherWallet ||
+    provider.isCipher ||
+    provider.isCypherTrade ||
+    provider.isCypherWallet ||
+    provider.isCypher
+  ) {
     return true;
   }
 
   const identityText = normalizeWalletIdentityText(info?.name, info?.rdns, info?.uuid);
-  return identityText.includes('cyphertrade') || identityText.includes('cypherwallet');
+  return (
+    identityText.includes('ciphertrade') ||
+    identityText.includes('cipherwallet') ||
+    identityText.includes('cyphertrade') ||
+    identityText.includes('cypherwallet')
+  );
 };
 
 const getInjectedWalletProviderId = (
   provider: InjectedEthereumProvider,
   info?: InjectedEthereumProviderInfo
 ): string => {
-  if (isCypherTradeProvider(provider, info)) {
-    return 'cyphertrade';
+  if (isCipherTradeProvider(provider, info)) {
+    return 'ciphertrade';
   }
   if (provider.isRabby) {
     return 'rabby';
@@ -1394,8 +1408,8 @@ export const getInjectedWalletLabel = (
   provider: InjectedEthereumProvider,
   info?: InjectedEthereumProviderInfo
 ): string => {
-  if (isCypherTradeProvider(provider, info)) {
-    return 'CypherTrade';
+  if (isCipherTradeProvider(provider, info)) {
+    return 'CipherTrade';
   }
   if (provider.isRabby) {
     return 'Rabby';

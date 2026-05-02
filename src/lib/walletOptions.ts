@@ -13,16 +13,31 @@ const normalizeWalletOptionText = (...values: string[]): string =>
 
 export const isCypherTradeWalletOption = (option: InjectedWalletOption): boolean => {
   const providerWithFlags = option.provider as typeof option.provider & {
+    isCipher?: boolean;
+    isCipherTrade?: boolean;
+    isCipherWallet?: boolean;
     isCypher?: boolean;
     isCypherTrade?: boolean;
     isCypherWallet?: boolean;
   };
-  if (providerWithFlags.isCypherTrade || providerWithFlags.isCypherWallet || providerWithFlags.isCypher) {
+  if (
+    providerWithFlags.isCipherTrade ||
+    providerWithFlags.isCipherWallet ||
+    providerWithFlags.isCipher ||
+    providerWithFlags.isCypherTrade ||
+    providerWithFlags.isCypherWallet ||
+    providerWithFlags.isCypher
+  ) {
     return true;
   }
 
   const identityText = normalizeWalletOptionText(option.id, option.label);
-  return identityText.includes('cyphertrade') || identityText.includes('cypherwallet');
+  return (
+    identityText.includes('ciphertrade') ||
+    identityText.includes('cipherwallet') ||
+    identityText.includes('cyphertrade') ||
+    identityText.includes('cypherwallet')
+  );
 };
 
 export const isAllowedBrowserWalletOption = (option: InjectedWalletOption): boolean =>

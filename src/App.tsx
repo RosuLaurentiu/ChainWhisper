@@ -9921,7 +9921,7 @@ export default function App() {
               })
             ) : (
               <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                MetaMask or CypherTrade not detected
+                MetaMask or CipherTrade not detected
               </button>
             )}
           </div>

@@ -1046,7 +1046,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
       setConnectingWalletId(walletOption?.id ?? 'wallet');
 
       if (!provider) {
-        setWalletError('MetaMask or CypherTrade is required to connect a browser wallet.');
+        setWalletError('MetaMask or CipherTrade is required to connect a browser wallet.');
         setConnectingWalletId('');
         return;
       }
@@ -3422,7 +3422,7 @@ export default function P2PTradingPage({ onHeaderWalletControlChange, onHeaderNa
                 })
               ) : (
                 <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                  MetaMask or CypherTrade not detected
+                  MetaMask or CipherTrade not detected
                 </button>
               )}
             </div>
