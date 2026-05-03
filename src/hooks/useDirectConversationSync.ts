@@ -3,6 +3,11 @@ import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import { messageReferencesMatch } from '../lib/appHelpers';
 import { resolveRecentPeersWithMeta } from '../lib/appLookup';
 import {
+  mergeDirectSyncOptions,
+  resolveDirectSyncRange,
+  resolveOlderDirectHistoryRange
+} from '../lib/directSyncPlan';
+import {
   applyConversationPreferenceStateToContact,
   AUTO_STATE_BACKUP_BLOCK_DISTANCE,
   AUTO_STATE_BACKUP_RETRY_BLOCKS,
@@ -177,43 +182,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     }
 
     if (syncingHistoryRef.current) {
-      const pending = pendingSyncOptionsRef.current;
-      const mergedDeep = Boolean(options?.deep || pending?.deep);
-      const mergedContactsOnly = mergedDeep
-        ? false
-        : Boolean(options?.contactsOnly || pending?.contactsOnly);
-      const mergedPreviewPerContact = mergedContactsOnly
-        ? Boolean(options?.previewPerContact || pending?.previewPerContact)
-        : false;
-      pendingSyncOptionsRef.current = {
-        ...pending,
-        ...options,
-        deep: mergedDeep,
-        contactsOnly: mergedContactsOnly,
-        previewPerContact: mergedPreviewPerContact,
-        updateHead: Boolean(options?.updateHead || pending?.updateHead || mergedDeep),
-        lookbackBlocks: mergedDeep
-          ? undefined
-          : typeof options?.lookbackBlocks === 'number' && typeof pending?.lookbackBlocks === 'number'
-            ? Math.max(options.lookbackBlocks, pending.lookbackBlocks)
-            : typeof options?.lookbackBlocks === 'number'
-              ? options.lookbackBlocks
-              : pending?.lookbackBlocks,
-        background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
-        fromBlock: mergedDeep
-          ? undefined
-          : typeof options?.fromBlock === 'number' && typeof pending?.fromBlock === 'number'
-            ? Math.min(options.fromBlock, pending.fromBlock)
-            : typeof options?.fromBlock === 'number'
-              ? options.fromBlock
-              : pending?.fromBlock,
-        toBlock:
-          typeof options?.toBlock === 'number' && typeof pending?.toBlock === 'number'
-            ? Math.max(options.toBlock, pending.toBlock)
-            : typeof options?.toBlock === 'number'
-              ? options.toBlock
-              : pending?.toBlock
-      };
+      pendingSyncOptionsRef.current = mergeDirectSyncOptions(options, pendingSyncOptionsRef.current);
       return;
     }
 
@@ -234,22 +203,16 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       }
 
       const walletKey = requestedWalletKey;
-      const lastSyncedBlock = lastSyncedBlockRef.current[walletKey];
-      const toBlock = typeof options?.toBlock === 'number' ? Math.min(options.toBlock, latestBlock) : latestBlock;
-      const fromBlock =
-        typeof options?.fromBlock === 'number'
-          ? Math.max(0, options.fromBlock)
-          : options?.deep
-            ? 0
-            : typeof options?.lookbackBlocks === 'number'
-              ? Math.max(0, toBlock - Math.max(0, Math.floor(options.lookbackBlocks)))
-              : typeof lastSyncedBlock === 'number'
-                ? lastSyncedBlock + 1
-                : Math.max(0, toBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
-
-      if (fromBlock > toBlock) {
+      const syncRange = resolveDirectSyncRange({
+        initialLookbackBlocks: INITIAL_SYNC_LOOKBACK_BLOCKS,
+        latestBlock,
+        lastSyncedBlock: lastSyncedBlockRef.current[walletKey],
+        options
+      });
+      if (!syncRange.shouldQuery) {
         return;
       }
+      const { fromBlock, toBlock } = syncRange;
 
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
@@ -1241,34 +1204,20 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         return;
       }
 
-      const knownEarliest = oldestLoadedBlockByContactRef.current[contactKey];
-      const knownMessages = messagesByContact[contactKey] ?? [];
-      const knownEarliestFromMessages = knownMessages.reduce<number | undefined>((min, message) => {
-        if (typeof message.blockNumber !== 'number') {
-          return min;
-        }
-
-        if (typeof min !== 'number' || message.blockNumber < min) {
-          return message.blockNumber;
-        }
-
-        return min;
-      }, undefined);
-
-      const upperExclusive =
-        typeof knownEarliest === 'number'
-          ? knownEarliest
-          : typeof knownEarliestFromMessages === 'number'
-            ? knownEarliestFromMessages
-            : cappedConversationLastBlock + 1;
-
-      const toBlock = upperExclusive - 1;
-      if (toBlock < conversationFirstBlock) {
+      const historyRange = resolveOlderDirectHistoryRange({
+        conversationFirstBlock: resolvedConversationRange.firstBlock,
+        conversationLastBlock: resolvedConversationRange.lastBlock,
+        historyWindowBlocks: HISTORY_PAGINATION_BLOCK_WINDOW,
+        knownEarliestBlock: oldestLoadedBlockByContactRef.current[contactKey],
+        knownMessages: messagesByContact[contactKey] ?? [],
+        latestBlock
+      });
+      if (!historyRange.shouldQuery) {
         hasOlderHistoryByContactRef.current[contactKey] = false;
         return;
       }
 
-      const fromBlock = Math.max(conversationFirstBlock, toBlock - HISTORY_PAGINATION_BLOCK_WINDOW + 1);
+      const { fromBlock, toBlock } = historyRange;
 
       const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, contactAddress);
       const outgoingFilter = contract.filters.MessageSubmitted(contactAddress, requestedWalletAddress);
@@ -1281,7 +1230,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       }
 
       oldestLoadedBlockByContactRef.current[contactKey] = fromBlock;
-      if (fromBlock <= conversationFirstBlock) {
+      if (historyRange.hasReachedStart) {
         hasOlderHistoryByContactRef.current[contactKey] = false;
       }
 

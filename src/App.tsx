@@ -105,6 +105,7 @@ import {
   resolveNavigationPathFromLocation,
   type AppPage
 } from './shell/routing';
+import { getAppWalletPolicy } from './shell/walletPolicy';
 import { attachWsDisconnectListeners } from './shell/realtimeConnection';
 import { useAppShellStore } from './state/appShellStore';
 import { useChatUiStore } from './state/chatUiStore';
@@ -8756,6 +8757,12 @@ export default function App() {
     sendTipToActiveContactRef.current(token, amount).catch(() => {});
   }, []);
 
+  const activePageWalletPolicy = getAppWalletPolicy(activePage);
+  const activeChatWalletControl =
+    activePageWalletPolicy.walletControlKind === 'chat' ? chatWalletHeaderControl : null;
+  const activeTradeWalletControl =
+    activePageWalletPolicy.walletControlKind === 'trades' ? tradeHeaderWalletControl : null;
+
   const headerHomeAction =
     activePage !== 'home' ? (
       <button
@@ -9168,7 +9175,7 @@ export default function App() {
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
           navigationControl={tradeHeaderNavigationControl}
-          walletControl={tradeHeaderWalletControl}
+          walletControl={activeTradeWalletControl}
           subtitle="P2P Trades"
           showSoundToggle
         />
@@ -9204,7 +9211,7 @@ export default function App() {
           onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
-          walletControl={chatWalletHeaderControl}
+          walletControl={activeChatWalletControl}
           subtitle="Shield"
           showSoundToggle
         />
@@ -9294,7 +9301,7 @@ export default function App() {
         onCloseMobileLinks={() => setMobileLinksOpen(false)}
         debugControl={debugControl}
         brandActions={chatBrandActions}
-        walletControl={chatWalletHeaderControl}
+        walletControl={activeChatWalletControl}
         subtitle="Chat"
         showSoundToggle={readStateFeaturesEnabled}
       />
