@@ -4,6 +4,7 @@ import { COTI_NETWORK } from './appShared/core';
 import {
   hasSessionAesKey,
   resolveWalletBlockedActionLabel,
+  resolveWalletHeaderActionVisibility,
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
@@ -101,6 +102,83 @@ describe('wallet header labels', () => {
     expect(resolveWalletBlockedActionLabel({ hasAesReady: false, onCotiNetwork: true, walletAddress: '0xabc' })).toBe(
       'Unlock privacy'
     );
+  });
+});
+
+describe('resolveWalletHeaderActionVisibility', () => {
+  const walletOptions = [
+    { id: 'metamask', label: 'MetaMask' },
+    { id: 'ciphertrade', label: 'CipherTrade' }
+  ];
+
+  it('shows the preferred browser quick action while disconnected when the primary action is app wallet', () => {
+    const result = resolveWalletHeaderActionVisibility({
+      appWalletCount: 1,
+      browserWalletOptions: walletOptions,
+      connectedWithAppWallet: false,
+      hasSavedAppWallet: true,
+      isConnected: false,
+      isOnCotiNetwork: false,
+      preferredBrowserWalletId: 'metamask',
+      showDisconnectedBrowserAction: true
+    });
+
+    expect(result.showBrowserQuickAction).toBe(true);
+    expect(result.showDisconnectedBrowserAction).toBe(true);
+    expect(result.quickBrowserWalletId).toBe('metamask');
+    expect(result.menuBrowserWalletOptions.map((option) => option.id)).toEqual(['ciphertrade']);
+  });
+
+  it('keeps the preferred browser wallet out of the menu when it is already a quick switch action', () => {
+    const result = resolveWalletHeaderActionVisibility({
+      appWalletCount: 2,
+      browserWalletOptions: walletOptions,
+      connectedWithAppWallet: true,
+      hasSavedAppWallet: true,
+      isConnected: true,
+      isOnCotiNetwork: true,
+      preferredBrowserWalletId: 'metamask',
+      showDisconnectedBrowserAction: false
+    });
+
+    expect(result.showBrowserQuickAction).toBe(true);
+    expect(result.showBrowserSwitchAction).toBe(true);
+    expect(result.showAppWalletSwitchButton).toBe(true);
+    expect(result.menuBrowserWalletOptions.map((option) => option.id)).toEqual(['ciphertrade']);
+  });
+
+  it('offers app wallet switch or creation only from a connected browser wallet on COTI', () => {
+    expect(
+      resolveWalletHeaderActionVisibility({
+        appWalletCount: 1,
+        browserWalletOptions: walletOptions,
+        connectedWithAppWallet: false,
+        hasSavedAppWallet: true,
+        isConnected: true,
+        isOnCotiNetwork: true,
+        preferredBrowserWalletId: 'metamask',
+        showDisconnectedBrowserAction: false
+      })
+    ).toMatchObject({
+      showAppCreateAction: false,
+      showAppSwitchAction: true
+    });
+
+    expect(
+      resolveWalletHeaderActionVisibility({
+        appWalletCount: 0,
+        browserWalletOptions: walletOptions,
+        connectedWithAppWallet: false,
+        hasSavedAppWallet: false,
+        isConnected: true,
+        isOnCotiNetwork: true,
+        preferredBrowserWalletId: 'metamask',
+        showDisconnectedBrowserAction: false
+      })
+    ).toMatchObject({
+      showAppCreateAction: true,
+      showAppSwitchAction: false
+    });
   });
 });
 

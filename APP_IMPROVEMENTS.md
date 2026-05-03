@@ -2,75 +2,57 @@
 
 This file tracks proposals from a deep read of the current ChainWhisper app. It is advisory only: no runtime APIs, schemas, contract calls, or routes are changed by this document.
 
-## Active Backlog
+Last reviewed: May 3, 2026, after the wallet/session, group-sync, chat-link, and image-attachment improvement passes.
 
-### High Impact
+## Current App Priorities
 
-#### Continue splitting oversized app surfaces
+Keep this list focused on improvements that can be handled inside the React app. Smart contract or protocol changes belong in `SMART_CONTRACT_IMPROVEMENTS.md`.
 
-- `src/App.tsx` still owns app shell routing, wallet session orchestration, chat sync, group sync, read-state backup, token balances, trade actions, modals, and page rendering.
-- Continue extracting cohesive hooks or components where they reduce risk and match the existing app boundaries.
-- Good next extraction targets: chat trade actions, group admin/actions, realtime subscription setup, and remaining page-local wallet session mutation.
-- `src/components/P2PTradingPage.tsx` still owns wallet vault/AES onboarding, composer form state, and dense view rendering.
-- Continue splitting P2P into wallet session, composer state, and view components.
-- `src/styles.css` is over 10k lines. Split by shell/chat/trades/swap/treasury/shared tokens to reduce accidental style regressions.
+### 1. Split The Largest App Files
 
-#### Continue wallet/session consolidation
+- Keep reducing `src/App.tsx`, `src/components/P2PTradingPage.tsx`, `src/hooks/useDirectConversationSync.ts`, and `src/styles.css`.
+- Prefer small helper/hooks/components with tests over broad rewrites.
+- Best next targets: in-chat trade actions, group admin actions, direct-chat sync planning, P2P local storage helpers, and route-specific CSS sections.
 
-- Keep page-specific defaults: Chat and Shield prefer app wallets; Trades prefers MetaMask/CipherTrade; Home and Treasury stay wallet-free.
-- Preserve the rule that navigating between apps never disconnects or re-prompts an already connected wallet.
-- Continue extracting remaining page-local wallet session state into shared hooks once the oversized page files are split further.
+### 2. Continue Wallet UX Regression Coverage
 
-#### Reduce initial and route bundle weight
+- Keep the current wallet defaults: Chat and Shield prefer app wallets; Trades prefers MetaMask/CipherTrade; Home and Treasury stay wallet-free.
+- Add higher-level UI/browser smoke coverage for switching saved app wallets on Trades, zero-balance app wallet selection, quick MetaMask/CipherTrade button visibility, no duplicate wallet menu actions, and route changes that keep the connected wallet.
+- Continue sharing wallet helpers only where it keeps Chat, Trades, and Shield behavior consistent.
 
-- Current production build still shows large chunks for `coti-ethers`, `charts-vendor`, `web3-vendor`, `supabase-vendor`, and the main `index` chunk.
-- Audit broad imports from `src/lib/appShared.ts`; direct imports from narrower modules can avoid pulling parsers, ABIs, provider helpers, and unrelated constants into routes that do not need them.
-- Keep Recharts isolated to the Treasury route and Supabase/image logic isolated to image attachment flows.
-- Consider preloading route chunks on Home hover/focus for Chat, Trades, Shield, and Treasury to improve perceived navigation speed without changing route behavior.
+### 3. Clean Up Sensitive Trade Storage
 
-#### Continue group sync speed hardening
+- Move private trade access-secret and private-liquidity local-storage code out of `P2PTradingPage.tsx` into a small tested helper.
+- Add a clear saved trade links/secrets action in the P2P wallet/settings area.
+- Keep using `buildTradeSnapshotKey(tradeId, escrowContract)` anywhere private liquidity or link state is keyed.
+- Long-term removal of local trade secrets depends on future contract support and is tracked in `SMART_CONTRACT_IMPROVEMENTS.md`.
 
-- Keep group sync split between overview, active-message, and active-member ranges as more group features are added.
-- Add broader integration tests around full group invite and join-code user flows once contract mocking is available.
-- Continue moving remaining contract-read and merge orchestration out of `src/App.tsx` in small helper-backed steps.
+### 4. Keep Sync Fast And Predictable
 
-#### Harden trade identity and sensitive storage
+- Continue hardening group sync now that overview, active-message, and active-member ranges are separated.
+- Add higher-level tests for group invites, join codes, member changes, and active-message-only sync when mocks are practical.
+- Split direct-chat sync planning and cache restore logic into smaller tested helpers.
 
-- Continue keying private liquidity, links, fetches, and UI state by `buildTradeSnapshotKey(tradeId, escrowContract)`.
-- Add a visible "clear saved trade links/secrets" affordance in the P2P wallet or settings area.
-- Prefer removing persistent local storage for trade access secrets once maker recovery can be handled through encrypted on-chain metadata.
-- See `SMART_CONTRACT_IMPROVEMENTS.md` for the encrypted maker recovery note proposal.
-- Add tests that private liquidity public/detail views never expose hidden amounts or fill amounts.
+### 5. Reduce Perceived Load Time
 
-### Medium Impact
+- Keep Treasury route-lazy and quiet; do not re-add verbose source-status panels.
+- Add compact skeletons where they improve perceived loading without adding clutter.
+- Watch bundle weight around `coti-ethers`, Recharts, Supabase, and broad `appShared` imports.
+- Keep route preloading limited to interactions that make the app feel faster, such as Home hover/focus.
 
-#### Expand focused test coverage
+### 6. Keep UX Polish Practical
 
-- Routing: canonical route paths and aliases for `/`, `/home`, `/chat`, `/shield`, `/swap`, `/trades/...`, and `/treasury-data`.
-- Trade links: compact code parsing with escrow contract hints, legacy IDs, full URLs, and GitHub Pages redirect query handling.
-- Wallet behavior: saved app wallet preference, browser wallet preference, Brave filtering, and preserving connected sessions across route changes.
-- Private liquidity: public explorer/detail privacy, maker-only reveal, partial fill labels, and contract-local trade IDs.
-- Chat sync: global read-state timestamp behavior, restore cache, hidden/muted conversation state, and group overview/active-message sync.
+- Keep P2P cards concise: clear buy/sell direction, price ratio, short actions, and low visual noise.
+- Preserve Escape-to-close, focus restoration, `aria-live`, and accessible icon labels for menus, modals, image previews, and message actions.
+- Check mobile layouts after CSS moves: wallet header, P2P cards/tabs, group tools, image previews, and Treasury chart controls.
+- Keep Supabase image work limited to encrypted chat attachments; only add upload progress/compression if large attachments become common.
 
-### Polish
+### 7. Keep Docs Focused
 
-
-#### Accessibility and keyboard follow-ups
-
-- Continue using `aria-live` for syncing, sending, and loading states.
-- Keep Escape-to-close behavior for menus, details, image lightbox, and modals.
-- Continue checking focus restoration when new popovers or dialogs are added.
-
-#### Supabase image attachment follow-ups
-
-- Keep Supabase usage limited to encrypted chat image attachments.
-- Consider upload progress, cancel before send, and image compression if larger attachments become common.
-
-#### Documentation hygiene
-
-- Keep `README.md` focused on current user/developer setup.
-- Keep `AGENTS.md` focused on rules future agents must preserve.
-- Keep this file as the proposal backlog, updating priorities as improvements are implemented.
+- `README.md`: current setup and developer workflow.
+- `AGENTS.md`: rules future agents must preserve.
+- `APP_IMPROVEMENTS.md`: practical app backlog and completed app work.
+- `SMART_CONTRACT_IMPROVEMENTS.md`: future contract/protocol ideas.
 
 ## Completed Work
 
@@ -118,6 +100,12 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 - Secondary wallet choices stay in the header menu.
 - Kept saved app-wallet selection in the separate switch control and made selection use the wallet address as a stable fallback for older vaults with regenerated wallet IDs.
 - Kept the quick preferred browser-wallet chip visible, including the disconnected app-wallet-primary state in Trades, while removing that same wallet from the dropdown menu to avoid duplicate MetaMask/CipherTrade actions.
+
+### Wallet/Session Convergence - Quick Action Coverage Pass
+
+- Moved shared wallet quick-action and wallet-menu visibility decisions into `resolveWalletHeaderActionVisibility`.
+- Chat and Trades now use the same helper for preferred browser quick actions, app-wallet switch/create actions, and duplicate menu filtering.
+- Added focused tests for disconnected app-wallet-primary quick browser actions, connected app-wallet browser switch actions, duplicate menu filtering, saved app-wallet switch visibility, and app-wallet creation visibility.
 
 ### Trading Dashboard Clarity - Initial Pass
 

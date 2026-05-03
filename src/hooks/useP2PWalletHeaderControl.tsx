@@ -12,6 +12,7 @@ import {
 } from '../lib/appShared';
 import {
   resolveWalletModeLabel,
+  resolveWalletHeaderActionVisibility,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
   resolveWalletPrivacyActionLabel,
@@ -221,28 +222,37 @@ export default function useP2PWalletHeaderControl({
   });
   const walletStatusLabel = walletReadiness.statusLabel;
   const walletStatusTone = walletReadiness.statusTone;
-  const showTradeBrowserSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && connectedWithBurner && preferredWalletOption);
-  const showTradeDisconnectedBrowserAction =
-    Boolean(!walletAddress && tradePrimaryConnectsAppWallet && preferredWalletOption);
-  const showTradeBrowserQuickAction = showTradeBrowserSwitchAction || showTradeDisconnectedBrowserAction;
-  const showTradeAppSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && !connectedWithBurner && tradeHasSavedAppWallet);
-  const showTradeAppCreateAction =
-    Boolean(walletAddress && onCotiNetwork && !connectedWithBurner && !tradeHasSavedAppWallet);
-  const showTradeAppWalletSwitchButton =
-    Boolean(walletAddress && onCotiNetwork && connectedWithBurner && visibleAppWallets.length > 1);
-  const quickTradeBrowserWalletId =
-    showTradeBrowserQuickAction && preferredWalletOption ? preferredWalletOption.id : '';
-  const tradeMenuBrowserWalletOptions = useMemo(
+  const tradeWalletActions = useMemo(
     () =>
-      quickTradeBrowserWalletId
-        ? browserWalletOptions.filter((option) => option.id !== quickTradeBrowserWalletId)
-        : browserWalletOptions,
-    [browserWalletOptions, quickTradeBrowserWalletId]
+      resolveWalletHeaderActionVisibility({
+        appWalletCount: visibleAppWallets.length,
+        browserWalletOptions,
+        connectedWithAppWallet: connectedWithBurner,
+        hasSavedAppWallet: tradeHasSavedAppWallet,
+        isConnected: Boolean(walletAddress),
+        isOnCotiNetwork: onCotiNetwork,
+        preferredBrowserWalletId: preferredWalletOption?.id,
+        showDisconnectedBrowserAction: tradePrimaryConnectsAppWallet
+      }),
+    [
+      browserWalletOptions,
+      connectedWithBurner,
+      onCotiNetwork,
+      preferredWalletOption?.id,
+      tradeHasSavedAppWallet,
+      tradePrimaryConnectsAppWallet,
+      visibleAppWallets.length,
+      walletAddress
+    ]
   );
-  const showTradeBrowserWalletMenuSection =
-    tradeMenuBrowserWalletOptions.length > 0 || (browserWalletOptions.length === 0 && !quickTradeBrowserWalletId);
+  const {
+    menuBrowserWalletOptions: tradeMenuBrowserWalletOptions,
+    showAppCreateAction: showTradeAppCreateAction,
+    showAppSwitchAction: showTradeAppSwitchAction,
+    showAppWalletSwitchButton: showTradeAppWalletSwitchButton,
+    showBrowserQuickAction: showTradeBrowserQuickAction,
+    showBrowserWalletMenuSection: showTradeBrowserWalletMenuSection
+  } = tradeWalletActions;
   const tradeAppWalletSwitchButton = showTradeAppWalletSwitchButton ? (
     <AppWalletSwitchButton
       menuOpen={appWalletMenuOpen}

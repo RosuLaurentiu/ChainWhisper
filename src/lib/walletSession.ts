@@ -31,6 +31,22 @@ export type WalletReadiness = {
   statusTone: WalletStatusTone;
 };
 
+type WalletOptionLike = {
+  id: string;
+};
+
+export type WalletHeaderActionVisibility<TWalletOption extends WalletOptionLike> = {
+  menuBrowserWalletOptions: TWalletOption[];
+  quickBrowserWalletId: string;
+  showAppCreateAction: boolean;
+  showAppSwitchAction: boolean;
+  showAppWalletSwitchButton: boolean;
+  showBrowserQuickAction: boolean;
+  showBrowserSwitchAction: boolean;
+  showBrowserWalletMenuSection: boolean;
+  showDisconnectedBrowserAction: boolean;
+};
+
 export const WALLET_STATUS_LABEL = {
   disconnected: 'Disconnected',
   wrongNetwork: 'Wrong network',
@@ -224,4 +240,47 @@ export const resolveWalletBlockedActionLabel = ({
     return unlockPrivacyLabel;
   }
   return null;
+};
+
+export const resolveWalletHeaderActionVisibility = <TWalletOption extends WalletOptionLike>({
+  appWalletCount,
+  browserWalletOptions,
+  connectedWithAppWallet,
+  hasSavedAppWallet,
+  isConnected,
+  isOnCotiNetwork,
+  preferredBrowserWalletId,
+  showDisconnectedBrowserAction
+}: {
+  appWalletCount: number;
+  browserWalletOptions: TWalletOption[];
+  connectedWithAppWallet: boolean;
+  hasSavedAppWallet: boolean;
+  isConnected: boolean;
+  isOnCotiNetwork: boolean;
+  preferredBrowserWalletId?: string;
+  showDisconnectedBrowserAction: boolean;
+}): WalletHeaderActionVisibility<TWalletOption> => {
+  const quickBrowserWalletId =
+    ((isConnected && isOnCotiNetwork && connectedWithAppWallet) ||
+      (!isConnected && showDisconnectedBrowserAction)) &&
+    preferredBrowserWalletId
+      ? preferredBrowserWalletId
+      : '';
+  const menuBrowserWalletOptions = quickBrowserWalletId
+    ? browserWalletOptions.filter((option) => option.id !== quickBrowserWalletId)
+    : browserWalletOptions;
+
+  return {
+    menuBrowserWalletOptions,
+    quickBrowserWalletId,
+    showAppCreateAction: Boolean(isConnected && isOnCotiNetwork && !connectedWithAppWallet && !hasSavedAppWallet),
+    showAppSwitchAction: Boolean(isConnected && isOnCotiNetwork && !connectedWithAppWallet && hasSavedAppWallet),
+    showAppWalletSwitchButton: Boolean(isConnected && isOnCotiNetwork && connectedWithAppWallet && appWalletCount > 1),
+    showBrowserQuickAction: Boolean(quickBrowserWalletId),
+    showBrowserSwitchAction: Boolean(isConnected && isOnCotiNetwork && connectedWithAppWallet && preferredBrowserWalletId),
+    showBrowserWalletMenuSection:
+      menuBrowserWalletOptions.length > 0 || (browserWalletOptions.length === 0 && !quickBrowserWalletId),
+    showDisconnectedBrowserAction: Boolean(!isConnected && showDisconnectedBrowserAction && preferredBrowserWalletId)
+  };
 };

@@ -16,6 +16,7 @@ import {
   orderInjectedWalletOptions
 } from '../lib/walletOptions';
 import {
+  resolveWalletHeaderActionVisibility,
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
@@ -194,29 +195,37 @@ export default function useChatWalletHeaderControl({
   });
   const showChangeBurnerPinButton = hasSavedBurnerWallet && chatWalletIsAppWallet && burnerRecordReady;
   const showBackupBurnerButton = chatWalletIsAppWallet && Boolean(burnerMnemonicBackup);
-  const showChatDisconnectedBrowserAction =
-    Boolean(!walletAddress && !burnerStorageBlocked && chatPreferredBrowserWalletOption);
-  const showChatBrowserSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && chatWalletIsAppWallet && chatPreferredBrowserWalletOption);
-  const showChatAppSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && activeSignerSource === 'metamask' && !burnerStorageBlocked && hasSavedBurnerWallet);
-  const showChatAppCreateAction =
-    Boolean(walletAddress && onCotiNetwork && activeSignerSource === 'metamask' && !burnerStorageBlocked && !hasSavedBurnerWallet);
-  const showChatAppWalletSwitchButton =
-    chatWalletIsAppWallet && walletAddress && onCotiNetwork && burnerWallets.length > 1 && !burnerStorageBlocked;
-  const quickChatBrowserWalletId =
-    (showChatBrowserSwitchAction || showChatDisconnectedBrowserAction) && chatPreferredBrowserWalletOption
-      ? chatPreferredBrowserWalletOption.id
-      : '';
-  const chatMenuBrowserWalletOptions = useMemo(
+  const chatWalletActions = useMemo(
     () =>
-      quickChatBrowserWalletId
-        ? orderedChatInjectedWalletOptions.filter((option) => option.id !== quickChatBrowserWalletId)
-        : orderedChatInjectedWalletOptions,
-    [orderedChatInjectedWalletOptions, quickChatBrowserWalletId]
+      resolveWalletHeaderActionVisibility({
+        appWalletCount: burnerStorageBlocked ? 0 : burnerWallets.length,
+        browserWalletOptions: orderedChatInjectedWalletOptions,
+        connectedWithAppWallet: chatWalletIsAppWallet,
+        hasSavedAppWallet: !burnerStorageBlocked && hasSavedBurnerWallet,
+        isConnected,
+        isOnCotiNetwork: onCotiNetwork,
+        preferredBrowserWalletId: chatPreferredBrowserWalletOption?.id,
+        showDisconnectedBrowserAction: !burnerStorageBlocked
+      }),
+    [
+      burnerStorageBlocked,
+      burnerWallets.length,
+      chatPreferredBrowserWalletOption?.id,
+      chatWalletIsAppWallet,
+      hasSavedBurnerWallet,
+      isConnected,
+      onCotiNetwork,
+      orderedChatInjectedWalletOptions
+    ]
   );
-  const showChatBrowserWalletMenuSection =
-    chatMenuBrowserWalletOptions.length > 0 || (orderedChatInjectedWalletOptions.length === 0 && !quickChatBrowserWalletId);
+  const {
+    menuBrowserWalletOptions: chatMenuBrowserWalletOptions,
+    showAppCreateAction: showChatAppCreateAction,
+    showAppSwitchAction: showChatAppSwitchAction,
+    showAppWalletSwitchButton: showChatAppWalletSwitchButton,
+    showBrowserQuickAction: showChatBrowserQuickAction,
+    showBrowserWalletMenuSection: showChatBrowserWalletMenuSection
+  } = chatWalletActions;
 
   const chatAppWalletSwitchButton = showChatAppWalletSwitchButton ? (
     <AppWalletSwitchButton
@@ -277,7 +286,7 @@ export default function useChatWalletHeaderControl({
   const chatPrivacyActionLabel = resolveWalletPrivacyActionLabel(connectingMethod === 'metamask');
   const showChatPrivacyStatusAction = isConnected && activeSignerSource === 'metamask' && onCotiNetwork && !hasAesReady;
   const chatWalletSwitchAction =
-    (showChatBrowserSwitchAction || showChatDisconnectedBrowserAction) && chatPreferredBrowserWalletOption ? (
+    showChatBrowserQuickAction && chatPreferredBrowserWalletOption ? (
       <button
         type="button"
         className="p2p-wallet-aes-action wallet-switch-action"
