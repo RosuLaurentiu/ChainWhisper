@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from 'react';
+import { resolveWalletStatusTone, type WalletStatusTone } from '../lib/walletSession';
 
 type WalletHeaderPanelProps = {
   action?: ReactNode;
@@ -15,21 +16,12 @@ type WalletHeaderPanelProps = {
   primaryButtonTitle?: string;
   primaryDisabled?: boolean;
   primaryMetaLabel?: string;
+  statusActionDisabled?: boolean;
+  statusActionLabel?: string;
+  statusActionTitle?: string;
   statusLabel: string;
-};
-
-const resolveStatusTone = (statusLabel: string): 'ready' | 'warning' | 'locked' | 'muted' => {
-  const normalized = statusLabel.toLowerCase();
-  if (normalized.includes('ready')) {
-    return 'ready';
-  }
-  if (normalized.includes('network') || normalized.includes('switch')) {
-    return 'warning';
-  }
-  if (normalized.includes('locked') || normalized.includes('privacy')) {
-    return 'locked';
-  }
-  return 'muted';
+  statusTone?: WalletStatusTone;
+  onStatusAction?: () => void;
 };
 
 export default function WalletHeaderPanel({
@@ -47,10 +39,16 @@ export default function WalletHeaderPanel({
   primaryButtonTitle,
   primaryDisabled = false,
   primaryMetaLabel,
-  statusLabel
+  statusActionDisabled = false,
+  statusActionLabel,
+  statusActionTitle,
+  statusLabel,
+  statusTone,
+  onStatusAction
 }: WalletHeaderPanelProps) {
-  const statusTone = resolveStatusTone(statusLabel);
+  const resolvedStatusTone = statusTone ?? resolveWalletStatusTone(statusLabel);
   const menuId = useId();
+  const hasStatusAction = Boolean(statusActionLabel && onStatusAction);
 
   return (
     <div
@@ -78,12 +76,25 @@ export default function WalletHeaderPanel({
             </button>
             {primaryAddon ? <div className="p2p-wallet-primary-addon">{primaryAddon}</div> : null}
           </div>
-          <div className={`p2p-wallet-status-text p2p-wallet-status-${statusTone}`}>
+          <div className={`p2p-wallet-status-text p2p-wallet-status-${resolvedStatusTone}`}>
             <span>{modeLabel}</span>
-            <strong>
-              <i aria-hidden="true" />
-              {statusLabel}
-            </strong>
+            {hasStatusAction ? (
+              <button
+                type="button"
+                className="p2p-wallet-status-button"
+                onClick={onStatusAction}
+                disabled={statusActionDisabled}
+                title={statusActionTitle}
+              >
+                <i aria-hidden="true" />
+                {statusActionLabel}
+              </button>
+            ) : (
+              <strong>
+                <i aria-hidden="true" />
+                {statusLabel}
+              </strong>
+            )}
           </div>
         </div>
         {action ? <div className="p2p-wallet-status-actions">{action}</div> : null}

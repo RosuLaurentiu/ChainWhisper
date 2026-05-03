@@ -1,5 +1,10 @@
-import { useEffect, useState, useCallback, memo } from 'react';
-import { parseImageTag, fetchAndDecryptToUrl, isChatImageExpiredError } from '../lib/imagePull';
+import { useEffect, useState, useCallback, memo, useRef } from 'react';
+import {
+  parseImageTag,
+  fetchAndDecryptToUrl,
+  getChatImageLoadErrorMessage,
+  isChatImageExpiredError
+} from '../lib/imagePull';
 import type { ParsedImageTag } from '../lib/imagePull';
 
 type Props = { tag: string; parsed?: ParsedImageTag; messageTimestamp?: number };
@@ -22,6 +27,9 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [expired, setExpired] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const imageTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const lightboxCloseRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -81,7 +89,7 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
           setError(null);
           return;
         }
-        setError('Unable to load image.');
+        setError(getChatImageLoadErrorMessage(loadError));
       }
     })();
 
@@ -97,13 +105,17 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
         imageUrlCache.delete(activeCacheKey);
       }
     };
-  }, [tag, parsed, messageTimestamp]);
+  }, [tag, parsed, messageTimestamp, retryNonce]);
 
   const openLightbox = useCallback(() => setLightboxOpen(true), []);
-  const closeLightbox = useCallback(() => setLightboxOpen(false), []);
+  const closeLightbox = useCallback(() => {
+    setLightboxOpen(false);
+    window.requestAnimationFrame(() => imageTriggerRef.current?.focus());
+  }, []);
 
   useEffect(() => {
     if (!lightboxOpen) return;
+    window.requestAnimationFrame(() => lightboxCloseRef.current?.focus());
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeLightbox();
     };
@@ -112,7 +124,16 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   }, [lightboxOpen, closeLightbox]);
 
   if (expired) return <div className="chat-image-expired">This image expired after 24 hours.</div>;
-  if (error) return <div className="chat-image-error">{error}</div>;
+  if (error) {
+    return (
+      <div className="chat-image-error">
+        <span>{error}</span>
+        <button type="button" onClick={() => setRetryNonce((current) => current + 1)}>
+          Retry
+        </button>
+      </div>
+    );
+  }
   if (!url) {
     return (
       <div className="chat-image-loading" role="status" aria-label="Decrypting image">
@@ -123,11 +144,34 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
 
   return (
     <>
-      <img src={url} alt="Image" className="chat-image" onClick={openLightbox} />
+      <button
+        ref={imageTriggerRef}
+        type="button"
+        className="chat-image-button"
+        onClick={openLightbox}
+        aria-label="Open image preview"
+      >
+        <img src={url} alt="Image" className="chat-image" />
+      </button>
       {lightboxOpen ? (
-        <div className="image-lightbox-backdrop" onClick={closeLightbox} role="dialog" aria-modal="true">
+        <div
+          className="image-lightbox-backdrop"
+          onClick={closeLightbox}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image preview"
+        >
           <div className="image-lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <img src={url} alt="Image enlarged" onClick={closeLightbox} />
+            <button
+              ref={lightboxCloseRef}
+              type="button"
+              className="image-lightbox-close"
+              onClick={closeLightbox}
+              aria-label="Close image preview"
+            >
+              Close
+            </button>
+            <img src={url} alt="Image enlarged" />
           </div>
         </div>
       ) : null}

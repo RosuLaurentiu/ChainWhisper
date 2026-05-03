@@ -1,86 +1,94 @@
 # ChainWhisper
 
-ChainWhisper is a browser-based COTI app suite. It started as an encrypted messaging app and now includes app-like pages for chat, P2P escrow trades, Whisper Shield token swaps, Treasury Data, and the home launcher.
+ChainWhisper is a browser-based COTI Mainnet app suite for private coordination. It combines a home launcher, encrypted chat, P2P escrow trading, Whisper Shield token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
 
-The project is built with Vite, React, TypeScript, `@coti-io/coti-ethers`, `viem`, Recharts, and Supabase Storage for temporary encrypted chat images.
+The app uses `@coti-io/coti-ethers`, `viem`, Recharts, Zustand, TanStack Virtual, and Supabase Storage for temporary encrypted chat image blobs.
 
-## Current Apps
+This is a documentation-only description of the current app. Runtime routes, contract calls, schemas, and public interfaces are owned by the source files listed below.
 
-### Home (`/home`)
+## Routes And Apps
 
-The home page is the launcher for the project. It explains the recommended first-run flow and routes in-place to Chat, P2P Trades, Whisper Shield, and Treasury Data so the wallet session is preserved.
+Current route behavior is intentional and should stay as-is unless a future change explicitly updates `src/shell/routing.ts` and its tests.
 
-The Home page does not expose wallet controls because it is only a launcher.
+- `/` - canonical Home launcher. `/home` is accepted as an alias.
+- `/chat` - ChainWhisper Chat. `/messages` and `/messenger` are accepted aliases.
+- `/trades` and `/trades/...` - P2P trading workspace and deep trade routes.
+- `/shield` - canonical Whisper Shield swap page. `/swap` and `/whisper-shield` are accepted aliases.
+- `/treasury` - Treasury Data. `/treasury-data` is accepted as an alias.
 
-### ChainWhisper Chat (`/` and `/chat`)
+### Home (`/`)
 
-The main app is a wallet-native encrypted messenger for COTI.
+The home page launches the app suite and routes in-place to Chat, P2P Trades, Whisper Shield, and Treasury Data so the wallet session can remain available across pages.
+
+Home does not show wallet controls because it is a launcher rather than an interactive contract page.
+
+### ChainWhisper Chat (`/chat`)
+
+The chat app is a wallet-native encrypted messenger for COTI.
 
 - Direct wallet-to-wallet encrypted messages.
-- Group chat with on-chain group creation, invites, join codes, member removal, admin leave/handoff, rename, leave, and disband flows.
+- Group chat with on-chain group creation, invites, join codes, member removal, admin handoff, rename, leave, and disband flows.
 - Client-side AES onboarding through `@coti-io/coti-ethers`.
-- MetaMask, CipherTrade, or local PIN-protected burner wallet sessions.
-- Contact aliases, hidden and muted conversations, replies, reactions, read-state backup, notification sound, and wallet-to-wallet tips.
+- App wallet, MetaMask, and CipherTrade wallet sessions.
+- Contact aliases, hidden and muted conversations, replies, emoji reactions, read-state backup, notification sound, and wallet-to-wallet tips.
 - Encrypted image attachments uploaded to Supabase Storage and cleaned up after 24 hours.
-- Inline P2P trade offers inside private chats using the same trade composer and escrow action logic as the standalone trades app.
+- Inline P2P trade offers inside private chats using the shared trade composer and escrow action logic.
 - Contacts are the first chat workspace on desktop and mobile; wallet actions live in the top header wallet menu.
 
 ### P2P Trades (`/trades`)
 
-The standalone P2P app is a separate trading workspace backed by COTI escrow contracts.
+The standalone P2P app is a trading workspace backed by COTI escrow contracts.
 
 - Public trade directory with search and refresh.
 - Create public, private-link, direct-recipient, and counter trades.
-- Normal trades use the standard escrow contract and support public/private/direct/counter flows.
-- Private liquidity trades use the private fixed-price escrow contract, require private tokens on both sides, and keep liquidity and fill amounts private while showing the price ratio.
-- Private liquidity orders behave like buy/sell orders at a fixed ratio: the taker enters how much they want to pay, the contract settles the fill privately, and any unspent amount is returned by the contract path.
-- Public private liquidity listings show the order direction, price ratio, expiry, and access type, not token amounts.
+- Normal trades use the standard escrow contract and support public, private-link, direct, counter, partial fill, cancel, decline, and edit-by-replace flows.
+- Private liquidity trades use the private fixed-price escrow contract, require private tokens on both sides, and hide liquidity and fill amounts while showing price ratio, direction, expiry, and access type.
 - Makers can reveal their own private liquidity and fill progress from My Trades after AES is available.
-- Private liquidity offers are not auto-posted into chat, but share links can be copied and pasted into a conversation.
+- Private liquidity offers are not auto-posted into chat, but copied share links can be pasted into conversations.
 - Open compact trade links, full URLs, legacy trade IDs, or redirected GitHub Pages links.
-- Accept, fill, decline, cancel, edit by cancel-and-replace, and close counter-trade chains.
 - A completed counter trade cancels the parent/initial trade automatically.
-- My Trades view groups received offers, active offers, and history.
-- Top-header wallet control prioritizes MetaMask and CipherTrade, excludes Brave from the trading wallet list, and still exposes app wallet options.
-- Reuses shared trade logic from `src/lib/tradeComposer.ts`, `src/lib/tradeActions.ts`, `src/lib/tradeLinks.ts`, `src/lib/tradePerspective.ts`, and `src/lib/appChain.ts`.
+- My Trades groups received offers, active offers, and history.
+- The top-header wallet control prioritizes MetaMask and CipherTrade, excludes Brave Wallet from the trading wallet list, and still exposes app wallet options.
 
-### Whisper Shield (`/swap`)
+### Whisper Shield (`/shield`)
 
 Whisper Shield is a compact reward-token swap page.
 
 - Swaps reward tokens into private token form and back through the reward swap vault.
-- Uses the same app-wallet-focused header wallet control as chat.
+- Uses the app-wallet-focused header wallet behavior shared with chat.
 - Keeps top-up, app wallet backup, PIN change, import, generate, and disconnect actions in the wallet menu.
 
 ### Treasury Data (`/treasury`)
 
-The Treasury Data app is an analytics dashboard for COTI treasury metrics.
+Treasury Data is a read-only analytics dashboard for COTI treasury metrics.
 
 - Loads live treasury totals from the Treasury API.
-- Loads historical snapshots from `public/snapshots.json`, an optional `VITE_API_BASE_URL`, and on-chain snapshot sources.
+- Loads historical snapshots from `public/snapshots.json`, optional API history sources, and on-chain snapshot sources.
 - Reads the snapshot store contract and explorer transaction history.
 - Displays timeframe filters, metric switching, chart tooltips, saved snapshot counts, live values, and on-chain references.
+- Does not require wallet interaction.
 
 ## Shared Logic
 
-The app pages should remain visually distinct where the workflow needs it, but shared behavior should live in shared modules:
+App pages should remain visually distinct where workflow density requires it, but shared behavior should live in shared modules.
 
-- `src/shell/routing.ts` owns top-level app routing and keeps navigation client-side.
-- `src/lib/appShared.ts` re-exports shared COTI constants, provider loading, wallet helpers, memo encoding, parsers, formatters, and common types.
-- `src/hooks/useWalletOnboarding.ts` manages browser wallet connection, COTI network switching, and AES onboarding for the main chat app.
-- `src/hooks/useBurnerWallet.ts` manages the PIN-protected local burner wallet vault used by the chat app.
-- `src/components/WalletHeaderPanel.tsx` is the shared compact header wallet surface. Chat and Whisper Shield prefer app wallets; P2P Trades prefers MetaMask/CipherTrade. Home and Treasury do not show wallet controls.
+- `src/shell/routing.ts` owns top-level route parsing, canonical paths, aliases, and browser location sync.
+- `src/App.tsx` owns the app shell, shared chat wallet state, top-level page composition, and lazy loading of page apps.
+- `src/lib/appShared.ts` re-exports shared COTI constants, provider loading, wallet helpers, memo encoding, parsers, formatters, and common types from `src/lib/appShared/`.
+- `src/hooks/useWalletOnboarding.ts` manages browser wallet connection, COTI network switching, and AES onboarding for the main app wallet context.
+- `src/hooks/useBurnerWallet.ts` manages the PIN-protected local app-wallet vault.
+- `src/components/WalletHeaderPanel.tsx` is the shared compact header wallet surface.
 - `src/components/TradeComposerPanel.tsx` is the shared trade creation/editing surface.
 - `src/components/TradeOfferCard.tsx` renders trade links and in-chat trade cards.
-- `src/lib/tradeComposer.ts` derives trade composer state, validation, labels, balances, and fee summaries.
+- `src/lib/tradeComposer.ts` derives trade composer state, validation, labels, balances, fees, and private-liquidity availability.
 - `src/lib/tradeActions.ts` submits escrow create, accept, fill, decline, cancel, edit, and counter-close transactions.
 - `src/lib/tradeLinks.ts` encodes and decodes compact trade links.
 - `src/lib/tradePerspective.ts` resolves maker/taker/open-trade perspective, buy/sell order semantics, ratio labels, and My Trades grouping.
 - `src/lib/appChain.ts` reads trade snapshots from both escrow contracts and normalizes private-token metadata.
 - `src/lib/treasuryData.ts` normalizes live, feed, explorer, and on-chain Treasury Data sources.
-- `src/lib/imagePull.ts` encrypts/decrypts image attachments before Supabase upload/read.
+- `src/lib/imagePull.ts` encrypts and decrypts image attachments before Supabase upload/read.
 
-See `AGENTS.md` for future-maintenance notes and consistency rules.
+See `AGENTS.md` for future-maintenance rules and `APP_IMPROVEMENTS.md` for proposed follow-up work found during the app review.
 
 ## Network And Contracts
 
@@ -95,11 +103,13 @@ See `AGENTS.md` for future-maintenance notes and consistency rules.
 - Reward swap vault: `0x5C35CD3659991051F4Fb04F2C4120643739b7BdE`.
 - Treasury snapshot store default: `0x25975eda0B0Ef3E5D86787Cb89D0A3468C17Bece`.
 
-## Data Model
+## Data And Storage
 
-- On-chain: encrypted direct messages, encrypted group messages, group membership/invites/join-code state, nickname records, read-state backup memos, standard P2P escrow trades, private fixed-price private liquidity trades, token fees, and Treasury snapshot history.
-- Browser storage: UI state, cached decrypted timelines, unread maps, notification preference, known trade access secrets, known maker-side private liquidity, selected wallet IDs, and encrypted burner wallet vaults.
-- Supabase Storage and Edge Functions: encrypted chat image blobs in the `chat-images` bucket, plus scheduled cleanup.
+- On-chain: encrypted direct messages, encrypted group messages, group membership/invite/join-code state, nickname records, read-state backup memos, standard P2P escrow trades, private fixed-price liquidity trades, token fees, and Treasury snapshot history.
+- Browser storage: UI state, cached decrypted timelines, unread maps, notification preference, wallet preference, known trade access secrets, known maker-side private liquidity, selected wallet IDs, and encrypted app-wallet vaults.
+- Supabase Storage and Edge Functions: encrypted chat image blobs in the `chat-images` bucket plus scheduled cleanup.
+
+Sensitive local data should stay minimized. Private trade access secrets and maker-side liquidity records are convenience caches and should not be treated as public app state.
 
 ## Local Development
 
@@ -114,6 +124,14 @@ Other scripts:
 - `npm run test` - run Vitest tests.
 - `npm run build` - type-check and produce a production build.
 - `npm run preview` - preview the built app.
+
+Before finishing changes, run:
+
+```bash
+npm run lint
+npm run test
+npm run build
+```
 
 ## Environment
 

@@ -26,7 +26,7 @@ type UseWalletOnboardingArgs = {
   setMyNickname: Dispatch<SetStateAction<string>>;
 };
 
-type BrowserWalletSession = {
+export type BrowserWalletSession = {
   address: string;
   chainId: number | null;
   provider: Eip1193Provider;

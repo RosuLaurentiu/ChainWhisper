@@ -352,7 +352,8 @@ export default function TradeOfferCard({
   const showRatioCard = Boolean((hiddenLiquidity || tradeWindowLayout) && defaultRateLabel);
   const visibleRatioLabel =
     showRatioCard && showReverseRate && reverseRateLabel ? reverseRateLabel : showRatioCard ? defaultRateLabel : null;
-  const tradeRateLabel = !hiddenLiquidity && !tradeWindowLayout && defaultRateLabel ? `Price: ${defaultRateLabel}` : null;
+  const visibleRatioAriaLabel = `Flip price ratio. Current ratio: ${visibleRatioLabel ?? 'unavailable'}.`;
+  const tradeRateLabel = !hiddenLiquidity && !tradeWindowLayout && defaultRateLabel ? `Price ratio: ${defaultRateLabel}` : null;
   const visibleOrderValueLabel =
     tradeWindowLayout && !hiddenLiquidity && assetPanels.length >= 2
       ? `${assetPanels[0].displayText} for ${assetPanels[1].displayText}`
@@ -545,9 +546,9 @@ export default function TradeOfferCard({
             className="trade-card-ratio-card"
             onClick={() => setShowReverseRate((value) => !value)}
             title="Flip price ratio"
-            aria-label="Flip price ratio"
+            aria-label={visibleRatioAriaLabel}
           >
-            <span>Price ratio</span>
+            <span className="trade-card-ratio-title">Price ratio</span>
             <strong>{visibleRatioLabel}</strong>
           </button>
         ) : assetPanels.length > 0 ? (
@@ -580,9 +581,9 @@ export default function TradeOfferCard({
               className="trade-card-ratio-card"
               onClick={() => setShowReverseRate((value) => !value)}
               title="Flip price ratio"
-              aria-label="Flip price ratio"
+              aria-label={visibleRatioAriaLabel}
             >
-              <span>Price ratio</span>
+              <span className="trade-card-ratio-title">Price ratio</span>
               <strong>{visibleRatioLabel}</strong>
             </button>
           ) : null}
@@ -630,7 +631,7 @@ export default function TradeOfferCard({
                     <strong>{showVisibleFillInline ? panel.asset.symbol : panel.displayText}</strong>
                     {isInlineFillPayPanel && baseRequest ? (
                       <label className="trade-card-inline-private-input">
-                        <span>Amount to pay</span>
+                        <span>Buyer pays</span>
                         <input
                           type="text"
                           inputMode="decimal"
@@ -647,13 +648,13 @@ export default function TradeOfferCard({
                           }}
                           placeholder={`0 ${baseRequest.symbol}`}
                           disabled={partialFillDisabled}
-                          aria-label={`Amount to pay in ${baseRequest.symbol}`}
+                          aria-label={`Buyer pays in ${baseRequest.symbol}`}
                         />
                       </label>
                     ) : null}
                     {isInlineFillBuyPanel && baseOffer ? (
                       <label className="trade-card-inline-private-input trade-card-inline-private-input-buy">
-                        <span>Amount to buy</span>
+                        <span>You buy</span>
                         <input
                           type="text"
                           inputMode="decimal"
@@ -670,7 +671,7 @@ export default function TradeOfferCard({
                           }}
                           placeholder={`0 ${baseOffer.symbol}`}
                           disabled={partialFillDisabled}
-                          aria-label={`Amount to buy in ${baseOffer.symbol}`}
+                          aria-label={`You buy in ${baseOffer.symbol}`}
                         />
                       </label>
                     ) : null}
@@ -801,7 +802,7 @@ export default function TradeOfferCard({
                   onClick={onEdit}
                   disabled={actionPending}
                 >
-                  Edit Public Trade
+                  Edit
                 </button>
               ) : null}
               <button

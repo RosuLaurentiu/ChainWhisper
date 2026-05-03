@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { ChatImageExpiredError, isChatImageExpiredError, parseImageTag } from './imagePull';
+import {
+  ChatImageBlobTooLargeError,
+  ChatImageDecryptError,
+  ChatImageExpiredError,
+  MAX_IMAGE_PLAINTEXT_BYTES,
+  formatImageFileSize,
+  getChatImageLoadErrorMessage,
+  getImageFileValidationError,
+  isChatImageExpiredError,
+  parseImageTag
+} from './imagePull';
 
 describe('parseImageTag', () => {
   it('parses a valid image tag', () => {
@@ -35,5 +45,41 @@ describe('isChatImageExpiredError', () => {
   it('recognizes expired image errors', () => {
     expect(isChatImageExpiredError(new ChatImageExpiredError())).toBe(true);
     expect(isChatImageExpiredError(new Error('Blob 404'))).toBe(false);
+  });
+});
+
+describe('formatImageFileSize', () => {
+  it('formats image sizes for attachment feedback', () => {
+    expect(formatImageFileSize(0)).toBe('0 bytes');
+    expect(formatImageFileSize(512)).toBe('512 bytes');
+    expect(formatImageFileSize(1536)).toBe('1.5 KB');
+    expect(formatImageFileSize(20 * 1024)).toBe('20 KB');
+    expect(formatImageFileSize(MAX_IMAGE_PLAINTEXT_BYTES)).toBe('8.0 MB');
+  });
+});
+
+describe('getImageFileValidationError', () => {
+  it('accepts supported image files', () => {
+    expect(getImageFileValidationError({ size: 1024, type: ' image/PNG ' })).toBeNull();
+  });
+
+  it('rejects unsupported, empty, and oversized files with user-facing messages', () => {
+    expect(getImageFileValidationError({ size: 1024, type: 'image/svg+xml' })).toBe(
+      'Unsupported image format. Use JPEG, PNG, WEBP, GIF, or AVIF.'
+    );
+    expect(getImageFileValidationError({ size: 0, type: 'image/png' })).toBe('The selected image is empty.');
+    expect(getImageFileValidationError({ size: MAX_IMAGE_PLAINTEXT_BYTES + 1, type: 'image/jpeg' })).toContain(
+      'The limit is 8.0 MB before encryption.'
+    );
+  });
+});
+
+describe('getChatImageLoadErrorMessage', () => {
+  it('maps image load failures to clearer chat messages', () => {
+    expect(getChatImageLoadErrorMessage(new ChatImageDecryptError())).toContain('could not be decrypted');
+    expect(getChatImageLoadErrorMessage(new ChatImageBlobTooLargeError())).toContain('larger than the app can safely display');
+    expect(getChatImageLoadErrorMessage(new Error('Network failed'))).toBe(
+      'Unable to download the encrypted image. Check your connection and try again.'
+    );
   });
 });

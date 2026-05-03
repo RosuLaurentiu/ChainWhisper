@@ -133,7 +133,7 @@ describe('resolveTradeOrderSummary', () => {
     const summary = resolveTradeOrderSummary(trade({ taker: ZERO_TRADE_TAKER_ADDRESS }), other);
     expect(summary.actionLabel).toBe('Buy AAA');
     expect(summary.directionLabel).toBe('Buy AAA with BBB');
-    expect(summary.primarySide).toMatchObject({ label: 'You pay', role: 'payment', tone: 'send' });
+    expect(summary.primarySide).toMatchObject({ label: 'Buyer pays', role: 'payment', tone: 'send' });
     expect(summary.secondarySide).toMatchObject({ label: 'You buy', role: 'offer', tone: 'receive' });
   });
 

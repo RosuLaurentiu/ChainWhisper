@@ -1,18 +1,18 @@
 import { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import AppHeader from './components/AppHeader';
-import AppWalletSwitchButton from './components/AppWalletSwitchButton';
 import ContactsSidebar from './components/ContactsSidebar';
 import GroupActionControls from './components/GroupActionControls';
 import HomePage from './components/HomePage';
 import { ActiveJoinCodeList, GroupInviteMenu } from './components/GroupInviteTools';
 import MobileBottomNav from './components/MobileBottomNav';
-import WalletHeaderPanel from './components/WalletHeaderPanel';
 import { readChatComposerText } from './components/chatComposeText';
 import useBlockTimestampCache from './hooks/useBlockTimestampCache';
 import { useBurnerWallet } from './hooks/useBurnerWallet';
+import useChatWalletHeaderControl from './hooks/useChatWalletHeaderControl';
 import useDirectConversationSync from './hooks/useDirectConversationSync';
 import { useNotificationSound } from './hooks/useNotificationSound';
+import useImageAttachmentStatus from './hooks/useImageAttachmentStatus';
 import { useStateBackupSync } from './hooks/useStateBackupSync';
 import { useStoredWalletPreference } from './hooks/useStoredWalletPreference';
 import { useWalletOnboarding } from './hooks/useWalletOnboarding';
@@ -79,14 +79,14 @@ import {
   getPreferredBrowserWalletId,
   setStoredGroupRemovalNoticeMarker as setStoredGroupRemovalNoticeMarkerStorage
 } from './lib/appStorage';
-import { createEncryptedImageTagFromFile } from './lib/imagePull';
+import { sendChatImageAttachment } from './lib/chatImageAttachment';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import {
-  filterAllowedBrowserWalletOptions,
-  getPreferredInjectedWalletOption,
-  orderInjectedWalletOptions
-} from './lib/walletOptions';
+  hasSessionAesKey,
+  resolveWalletBlockedActionLabel,
+  type SharedWalletSession
+} from './lib/walletSession';
 import {
   getPathForAppPage,
   resolveAppRouteFromLocation,
@@ -211,7 +211,21 @@ const P2PTradingPage = lazy(() => import('./components/P2PTradingPage'));
 const QuickActionsModal = lazy(() => import('./components/QuickActionsModal'));
 const TokenSwapPage = lazy(() => import('./components/TokenSwapPage'));
 const TopUpModal = lazy(() => import('./components/TopUpModal'));
-const TreasuryPage = lazy(() => import('./components/TreasuryPage'));
+let treasuryPageModulePromise: Promise<typeof import('./components/TreasuryPage')> | null = null;
+let treasuryDataModulePromise: Promise<typeof import('./lib/treasuryData')> | null = null;
+const loadTreasuryPage = () => {
+  treasuryPageModulePromise ??= import('./components/TreasuryPage');
+  return treasuryPageModulePromise;
+};
+const preloadTreasuryDashboardData = () => {
+  treasuryDataModulePromise ??= import('./lib/treasuryData');
+  void treasuryDataModulePromise.then(({ preloadDashboardData }) => preloadDashboardData()).catch(() => {});
+};
+const preloadTreasuryPage = () => {
+  void loadTreasuryPage();
+  preloadTreasuryDashboardData();
+};
+const TreasuryPage = lazy(loadTreasuryPage);
 const TradeComposerPanel = lazy(() => import('./components/TradeComposerPanel'));
 
 const INITIAL_VISIBLE_THREAD_MESSAGE_COUNT = 160;
@@ -241,6 +255,11 @@ export default function App() {
   const [groupMessageLoadPhaseByGroup, setGroupMessageLoadPhaseByGroup] = useState<Record<string, GroupMessageLoadPhase>>({});
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
+  const {
+    clearImageAttachmentStatus,
+    imageAttachmentStatus,
+    showImageAttachmentStatus
+  } = useImageAttachmentStatus();
   const {
     newContact,
     newContactName,
@@ -506,6 +525,7 @@ export default function App() {
       setChatMessagesViewportVersion((current) => current + 1);
     }
   }, []);
+
   useEffect(() => {
     lastReadAllTsRef.current = normalizeLastReadAllTs(lastReadAllTs);
   }, [lastReadAllTs]);
@@ -634,6 +654,7 @@ export default function App() {
   const prefetchedGroupMessagesRef = useRef<Record<string, boolean>>({});
   const groupsRef = useRef<GroupSummary[]>([]);
   const groupInvitesRef = useRef<GroupInvite[]>([]);
+  const activeContactRef = useRef<string | null>(null);
   const activeGroupIdRef = useRef<number | null>(null);
   const clearCachedStateBackupMemoRef = useRef<() => void>(() => {});
   const getMemoSignerRef = useRef<() => Promise<{ signer: Wallet | JsonRpcSigner; cacheKey: string }>>(async () => {
@@ -830,6 +851,10 @@ export default function App() {
   useEffect(() => {
     groupInvitesRef.current = groupInvites;
   }, [groupInvites]);
+
+  useEffect(() => {
+    activeContactRef.current = activeContact;
+  }, [activeContact]);
 
   useEffect(() => {
     activeGroupIdRef.current = activeGroupId;
@@ -1338,7 +1363,7 @@ export default function App() {
     [activeContact, walletAddress]
   );
   const hasAesReady = useMemo(
-    () => (walletAddress ? Boolean(sessionOnboardInfo[walletAddress.toLowerCase()]?.aesKey) : false),
+    () => hasSessionAesKey(walletAddress, sessionOnboardInfo),
     [walletAddress, sessionOnboardInfo]
   );
   const canManageActiveGroupJoinCodes = useMemo(() => {
@@ -1445,19 +1470,20 @@ export default function App() {
     hasAesReady &&
     parsedSwapAmount !== null &&
     parsedSwapAmount > 0n;
+  const swapBlockedActionLabel = resolveWalletBlockedActionLabel({
+    hasAesReady,
+    onCotiNetwork,
+    walletAddress
+  });
   const swapButtonLabel = swappingTokens
     ? 'Swapping...'
-    : !walletAddress
-      ? 'Connect wallet'
-      : !onCotiNetwork
-        ? 'Switch to COTI network'
-        : !hasAesReady
-          ? 'AES required'
-          : parsedSwapAmount === null || parsedSwapAmount <= 0n
-            ? `Enter ${swapInputSymbol} amount`
-            : swapDirection === 'shield'
-              ? `Shield to ${privateRewardTokenSymbol}`
-              : `Unshield to ${rewardTokenSymbol}`;
+    : swapBlockedActionLabel
+      ? swapBlockedActionLabel
+      : parsedSwapAmount === null || parsedSwapAmount <= 0n
+        ? `Enter ${swapInputSymbol} amount`
+        : swapDirection === 'shield'
+          ? `Shield to ${privateRewardTokenSymbol}`
+          : `Unshield to ${rewardTokenSymbol}`;
   const topUpAmountLabel = useMemo(() => {
     if (topUpAmountWei !== null) {
       return `${formatCotiAmount(topUpAmountWei, 3)} COTI`;
@@ -5241,61 +5267,43 @@ export default function App() {
   };
 
   const sendDirectImageMessage = async (file: File) => {
-    setError('');
-    if (uploadingImage) {
-      return;
-    }
-
     const targetContact = activeContact;
     const replyTarget = browserWalletLiteMode ? null : replyingToMessage;
-    if (!targetContact) {
-      setError('Select a contact first.');
-      return;
-    }
-
-    try {
-      setUploadingImage(true);
-      const imageTag = await createEncryptedImageTagFromFile(file, 'direct');
-      if (activeContact !== targetContact) {
-        throw new Error('Conversation changed while the image was uploading. Please attach the image again.');
-      }
-
-      await sendMessage(imageTag, replyTarget);
-    } catch (imageError) {
-      const message = imageError instanceof Error ? imageError.message : 'Failed to send image.';
-      setError(message);
-    } finally {
-      setUploadingImage(false);
-    }
+    await sendChatImageAttachment({
+      clearImageAttachmentStatus,
+      failureFallbackMessage: 'Failed to send image.',
+      file,
+      isTargetCurrent: () => activeContactRef.current === targetContact,
+      kind: 'direct',
+      missingTargetMessage: 'Select a contact first.',
+      sendImageTag: (imageTag) => sendMessage(imageTag, replyTarget),
+      setError,
+      setUploadingImage,
+      showImageAttachmentStatus,
+      targetChangedMessage: 'Conversation changed while the image was uploading. Please attach the image again.',
+      targetMissing: !targetContact,
+      uploadingImage
+    });
   };
 
   const sendGroupImageMessage = async (file: File) => {
-    setError('');
-    if (uploadingImage) {
-      return;
-    }
-
     const targetGroupId = activeGroupId;
     const replyTarget = browserWalletLiteMode ? null : replyingToMessage;
-    if (targetGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-
-    try {
-      setUploadingImage(true);
-      const imageTag = await createEncryptedImageTagFromFile(file, 'group');
-      if (activeGroupId !== targetGroupId) {
-        throw new Error('Group changed while the image was uploading. Please attach the image again.');
-      }
-
-      await sendGroupMessage(imageTag, replyTarget);
-    } catch (imageError) {
-      const message = imageError instanceof Error ? imageError.message : 'Failed to send group image.';
-      setError(message);
-    } finally {
-      setUploadingImage(false);
-    }
+    await sendChatImageAttachment({
+      clearImageAttachmentStatus,
+      failureFallbackMessage: 'Failed to send group image.',
+      file,
+      isTargetCurrent: () => activeGroupIdRef.current === targetGroupId,
+      kind: 'group',
+      missingTargetMessage: 'Select a group first.',
+      sendImageTag: (imageTag) => sendGroupMessage(imageTag, replyTarget),
+      setError,
+      setUploadingImage,
+      showImageAttachmentStatus,
+      targetChangedMessage: 'Group changed while the image was uploading. Please attach the image again.',
+      targetMissing: targetGroupId === null,
+      uploadingImage
+    });
   };
 
   const sendGroupMessage = async (overrideMessageText?: string, overrideReplyTarget?: ChatMessage | null) => {
@@ -7015,6 +7023,15 @@ export default function App() {
   }, [activeMobileView, activePage]);
 
   useEffect(() => {
+    if (activePage !== 'home') {
+      return;
+    }
+
+    const timerId = window.setTimeout(preloadTreasuryPage, 1_200);
+    return () => window.clearTimeout(timerId);
+  }, [activePage]);
+
+  useEffect(() => {
     if (typeof document === 'undefined') {
       return;
     }
@@ -7075,7 +7092,8 @@ export default function App() {
     setMessageInput('');
     setReplyingToMessage(null);
     setHighlightedMessageId(null);
-  }, [activeContact, activeGroupId]);
+    clearImageAttachmentStatus();
+  }, [activeContact, activeGroupId, clearImageAttachmentStatus]);
 
   useEffect(() => {
     if (!chatComposerRef.current) {
@@ -8521,383 +8539,57 @@ export default function App() {
       />
     </Suspense>
   ) : null;
-  const allowedChatBrowserWalletOptions = useMemo(
-    () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
-    [injectedWalletOptions]
-  );
-  const chatPreferredBrowserWalletOption = useMemo(
-    () => getPreferredInjectedWalletOption(allowedChatBrowserWalletOptions, preferredBrowserWalletId, 'metamask'),
-    [allowedChatBrowserWalletOptions, preferredBrowserWalletId]
-  );
-  const chatBrowserWalletSortId = currentInjectedWalletOption?.id ?? preferredBrowserWalletId;
-  const orderedChatInjectedWalletOptions = useMemo(
-    () => orderInjectedWalletOptions(allowedChatBrowserWalletOptions, chatBrowserWalletSortId, 'metamask'),
-    [allowedChatBrowserWalletOptions, chatBrowserWalletSortId]
-  );
-  const chatWalletAddressCopyKey = walletAddress ? `wallet-address:${walletAddress.toLowerCase()}` : '';
-  const chatWalletIsAppWallet = isConnected && activeSignerSource === 'burner';
-  const chatPrimaryConnectsBrowserWallet = !walletAddress && burnerStorageBlocked && Boolean(chatPreferredBrowserWalletOption);
-  const chatWalletPrimaryConnectLabel =
-    chatPrimaryConnectsBrowserWallet && chatPreferredBrowserWalletOption
-      ? `Connect ${chatPreferredBrowserWalletOption.label}`
-      : burnerStorageBlocked
-        ? 'Wallet unavailable'
-      : hasSavedBurnerWallet
-        ? 'Connect app wallet'
-        : 'Generate app wallet';
-  const chatWalletPrimaryButtonLabel =
-    connectingMethod === 'metamask'
-      ? `Connecting ${connectingWalletLabel || preferredInjectedWalletOption?.label || 'Wallet'}...`
-      : initializingBurner
-        ? 'Unlocking...'
-        : walletAddress && !onCotiNetwork
-          ? 'Switch to COTI'
-          : walletAddress
-            ? shortenAddress(walletAddress)
-            : chatWalletPrimaryConnectLabel;
-  const chatWalletPrimaryMetaLabel =
-    walletAddress && onCotiNetwork && lastCopiedKey === chatWalletAddressCopyKey ? 'Copied' : undefined;
-  const chatWalletPrimaryButtonClass =
-    `${!walletAddress || !onCotiNetwork ? 'connect-btn wallet-inline-btn wallet-primary-action' : 'connect-btn wallet-inline-btn'} p2p-wallet-address${
-      lastCopiedKey === chatWalletAddressCopyKey ? ' copied' : ''
-    }`;
-  const chatWalletPrimaryDisabled =
-    connectingMethod !== null ||
-    initializingBurner ||
-    (!walletAddress && chatPrimaryConnectsBrowserWallet && !chatPreferredBrowserWalletOption) ||
-    (!walletAddress && !chatPrimaryConnectsBrowserWallet && burnerStorageBlocked);
-  const chatWalletStatusLabel = !walletAddress
-    ? 'Disconnected'
-    : !onCotiNetwork
-      ? 'Switch network'
-      : hasAesReady
-        ? 'Ready'
-        : 'Privacy locked';
-  const chatWarmBrowserWalletLabel = browserWalletSession?.walletLabel ?? chatPreferredBrowserWalletOption?.label ?? 'Browser wallet';
-  const chatWarmAppWallet = burnerWalletRef.current;
-  const chatDisplayBrowserWalletLabel =
-    activeSignerSource === 'metamask'
-      ? currentInjectedWalletOption?.label ?? chatWarmBrowserWalletLabel
-      : chatWarmBrowserWalletLabel;
-  const chatWalletDisplayModeLabel = walletAddress
-    ? chatWalletIsAppWallet
-      ? browserWalletSession
-        ? `App + ${chatWarmBrowserWalletLabel}`
-        : 'App wallet'
-      : chatWarmAppWallet
-        ? `${chatDisplayBrowserWalletLabel} + app`
-        : chatDisplayBrowserWalletLabel
-    : 'No wallet connected';
-  const showChangeBurnerPinButton = hasSavedBurnerWallet && chatWalletIsAppWallet && Boolean(burnerRecordRef.current);
-  const showBackupBurnerButton = chatWalletIsAppWallet && Boolean(burnerMnemonicBackup);
-  const showChatDisconnectedBrowserAction =
-    Boolean(!walletAddress && !burnerStorageBlocked && chatPreferredBrowserWalletOption);
-  const showChatBrowserSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && chatWalletIsAppWallet && chatPreferredBrowserWalletOption);
-  const showChatAppSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && activeSignerSource === 'metamask' && !burnerStorageBlocked && hasSavedBurnerWallet);
-  const showChatAppCreateAction =
-    Boolean(walletAddress && onCotiNetwork && activeSignerSource === 'metamask' && !burnerStorageBlocked && !hasSavedBurnerWallet);
-  const showChatAppWalletSwitchButton =
-    chatWalletIsAppWallet && walletAddress && onCotiNetwork && burnerWallets.length > 1 && !burnerStorageBlocked;
-  const chatAppWalletSwitchButton = showChatAppWalletSwitchButton ? (
-    <AppWalletSwitchButton
-      menuOpen={chatAppWalletMenuOpen}
-      onToggleMenu={() => {
-        setChatWalletMenuOpen(false);
-        setChatAppWalletMenuOpen((previous) => !previous);
-      }}
-      onSelectWallet={(walletId) => {
-        setChatAppWalletMenuOpen(false);
-        handleSwitchActiveBurnerWallet(walletId);
-      }}
-      options={burnerWallets.map((walletRecord, index) => {
-        const walletId = walletRecord.id ?? '';
-        const isSelected = walletId.length > 0 && walletId === burnerWalletSelectionValue;
-        const displayName = getBurnerWalletDisplayName(walletRecord);
-        return {
-          active: isSelected,
-          disabled: initializingBurner || !walletId || isSelected,
-          id: walletId,
-          key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
-          label: isSelected ? `${displayName} active` : displayName
-        };
-      })}
-      disabled={initializingBurner}
-    />
-  ) : null;
-  const unlockChatPrivacy = useCallback(async () => {
-    const provider = getConnectedProvider();
-    if (!walletAddress || !provider) {
-      setError('Connect a browser wallet first.');
-      return;
-    }
-
-    setError('');
-    try {
-      await activateBrowserWalletSession(
-        currentInjectedWalletOption?.id ?? chatPreferredBrowserWalletOption?.id,
-        { preparePrivacy: true }
-      );
-    } catch (privacyError) {
-      setError(getProviderErrorMessage(privacyError, 'Privacy unlock was not completed.'));
-    }
-  }, [
+  const {
+    chatPreferredBrowserWalletOption,
+    chatWalletHeaderControl,
+    chatWarmAppWallet
+  } = useChatWalletHeaderControl({
+    activeSignerSource,
+    appWallet: burnerWalletRef.current,
     activateBrowserWalletSession,
-    chatPreferredBrowserWalletOption?.id,
-    currentInjectedWalletOption?.id,
+    beginBurnerPinFlow,
+    beginRevealBurnerBackup,
+    browserWalletSession,
+    burnerAddress,
+    burnerMnemonicBackup,
+    burnerRecordReady: Boolean(burnerRecordRef.current),
+    burnerStorageBlocked,
+    burnerWalletSelectionValue,
+    burnerWallets,
+    chainId,
+    chatAppWalletMenuOpen,
+    chatWalletMenuOpen,
+    connectingMethod,
+    connectingWalletLabel,
+    connectionMethod,
+    copyWithFeedback,
+    currentInjectedWalletOption,
+    disconnectWallet,
+    ensureCotiNetwork,
+    getBurnerWalletDisplayName,
     getConnectedProvider,
+    handleSwitchActiveBurnerWallet,
+    hasAesReady,
+    hasSavedBurnerWallet,
+    injectedWalletOptions,
+    initializingBurner,
+    isConnected,
+    lastCopiedKey,
+    loadingTopUpQuote,
+    onCotiNetwork,
+    openChangeBurnerPin,
+    preferredBrowserWalletId,
+    preferredInjectedWalletOption,
+    setChatAppWalletMenuOpen,
+    setChatWalletMenuOpen,
     setError,
+    setShowBurnerImportModal,
+    setShowTopUpModal,
+    topUpAmountLabel,
+    topUpAmountWei,
     walletAddress
-  ]);
-  const chatPrivacyActionLabel =
-    connectingMethod === 'metamask'
-      ? 'Unlocking...'
-      : 'Unlock privacy';
-  const chatWalletPrivacyAction =
-    isConnected && activeSignerSource === 'metamask' && onCotiNetwork && !hasAesReady ? (
-      <button
-        type="button"
-        className="p2p-wallet-aes-action"
-        onClick={() => {
-          unlockChatPrivacy().catch(() => {});
-        }}
-        disabled={connectingMethod !== null}
-        title="Run COTI onboarding once so encrypted chat and private balances can work."
-      >
-        {chatPrivacyActionLabel}
-      </button>
-    ) : null;
-  const chatWalletSwitchAction =
-    (showChatBrowserSwitchAction || showChatDisconnectedBrowserAction) && chatPreferredBrowserWalletOption ? (
-      <button
-        type="button"
-        className="p2p-wallet-aes-action wallet-switch-action"
-        onClick={() => {
-          activateBrowserWalletSession(chatPreferredBrowserWalletOption.id).catch(() => {});
-        }}
-        disabled={connectingMethod !== null || initializingBurner}
-        title={`Use ${chatPreferredBrowserWalletOption.label} for this app`}
-      >
-        {chatPreferredBrowserWalletOption.label}
-      </button>
-    ) : showChatAppSwitchAction ? (
-      <button
-        type="button"
-        className="p2p-wallet-aes-action wallet-switch-action"
-        onClick={() => {
-          beginBurnerPinFlow('stored').catch(() => {});
-        }}
-        disabled={connectingMethod !== null || initializingBurner}
-        title="Use the app wallet for this app"
-      >
-        App wallet
-      </button>
-    ) : showChatAppCreateAction ? (
-      <button
-        type="button"
-        className="p2p-wallet-aes-action wallet-switch-action"
-        onClick={() => {
-          beginBurnerPinFlow('generate').catch(() => {});
-        }}
-        disabled={connectingMethod !== null || initializingBurner}
-        title="Create an app wallet so you can switch between wallet types"
-      >
-        Add app wallet
-      </button>
-    ) : null;
-  const handleChatWalletPrimaryAction = () => {
-    if (walletAddress && !onCotiNetwork) {
-      const provider = getConnectedProvider();
-      if (provider) {
-        ensureCotiNetwork(provider).catch((providerError) => {
-          setError(getProviderErrorMessage(providerError, 'Failed to switch network.'));
-        });
-      }
-      return;
-    }
-
-    if (walletAddress) {
-      copyWithFeedback(walletAddress, chatWalletAddressCopyKey).catch(() => {});
-      return;
-    }
-
-    if (chatPrimaryConnectsBrowserWallet) {
-      if (chatPreferredBrowserWalletOption) {
-        activateBrowserWalletSession(chatPreferredBrowserWalletOption.id).catch(() => {});
-      }
-      return;
-    }
-
-    if (!burnerStorageBlocked) {
-      beginBurnerPinFlow(hasSavedBurnerWallet ? 'stored' : 'generate').catch(() => {});
-    }
-  };
-  const chatWalletHeaderControl = (
-    <WalletHeaderPanel
-      primaryButtonClassName={chatWalletPrimaryButtonClass}
-      primaryButtonLabel={chatWalletPrimaryButtonLabel}
-      primaryAddon={chatAppWalletSwitchButton}
-      primaryMetaLabel={chatWalletPrimaryMetaLabel}
-      primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
-      primaryDisabled={chatWalletPrimaryDisabled}
-      onPrimaryAction={handleChatWalletPrimaryAction}
-      modeLabel={chatWalletDisplayModeLabel}
-      statusLabel={chatWalletStatusLabel}
-      action={
-        chatWalletPrivacyAction || chatWalletSwitchAction ? (
-          <>
-            {chatWalletPrivacyAction}
-            {chatWalletSwitchAction}
-          </>
-        ) : null
-      }
-      menuOpen={chatWalletMenuOpen}
-      onToggleMenu={() => {
-        setChatAppWalletMenuOpen(false);
-        setChatWalletMenuOpen((previous) => !previous);
-      }}
-      menuDisabled={connectingMethod !== null || initializingBurner}
-      menu={
-        <>
-          <div className="p2p-wallet-menu-section">
-            <span>App wallet</span>
-            <button
-              type="button"
-              className={chatWalletIsAppWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-              onClick={() => {
-                setChatWalletMenuOpen(false);
-                beginBurnerPinFlow('stored').catch(() => {});
-              }}
-              disabled={initializingBurner || burnerStorageBlocked || !hasSavedBurnerWallet}
-              role="menuitem"
-            >
-              {hasSavedBurnerWallet ? 'Connect app wallet' : 'No saved app wallet'}
-            </button>
-            <button
-              type="button"
-              className="p2p-wallet-action"
-              onClick={() => {
-                setChatWalletMenuOpen(false);
-                beginBurnerPinFlow('generate').catch(() => {});
-              }}
-              disabled={initializingBurner || burnerStorageBlocked}
-              role="menuitem"
-            >
-              Generate wallet
-            </button>
-            <button
-              type="button"
-              className="p2p-wallet-action"
-              onClick={() => {
-                setChatWalletMenuOpen(false);
-                setShowBurnerImportModal(true);
-              }}
-              disabled={initializingBurner || burnerStorageBlocked}
-              role="menuitem"
-            >
-              Import wallet
-            </button>
-            {showChangeBurnerPinButton ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  openChangeBurnerPin();
-                }}
-                disabled={initializingBurner}
-                role="menuitem"
-              >
-                Change PIN
-              </button>
-            ) : null}
-            {chatWalletIsAppWallet ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  setShowTopUpModal(true);
-                }}
-                disabled={initializingBurner || !burnerAddress}
-                role="menuitem"
-                title={topUpAmountWei !== null ? `Top up ${topUpAmountLabel}` : 'Top up app wallet'}
-              >
-                {loadingTopUpQuote ? 'Top up loading...' : `Top up ${topUpAmountLabel}`}
-              </button>
-            ) : null}
-            {showBackupBurnerButton ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  beginRevealBurnerBackup();
-                }}
-                disabled={initializingBurner}
-                role="menuitem"
-              >
-                Backup wallet
-              </button>
-            ) : null}
-          </div>
-
-          <div className="p2p-wallet-menu-section">
-            <span>Browser wallet</span>
-            {orderedChatInjectedWalletOptions.length > 0 ? (
-              orderedChatInjectedWalletOptions.map((option) => {
-                const isCurrentWallet =
-                  activeSignerSource === 'metamask' &&
-                  connectionMethod === 'metamask' &&
-                  currentInjectedWalletOption?.id === option.id &&
-                  isConnected;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={isCurrentWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                    onClick={() => {
-                      setChatWalletMenuOpen(false);
-                      activateBrowserWalletSession(option.id).catch(() => {});
-                    }}
-                    disabled={connectingMethod !== null}
-                    role="menuitem"
-                  >
-                    {connectingMethod === 'metamask' && connectingWalletLabel === option.label
-                      ? 'Connecting...'
-                      : isCurrentWallet
-                        ? hasAesReady
-                          ? `${option.label} ready`
-                          : `Sign ${option.label}`
-                        : `Connect ${option.label}`}
-                  </button>
-                );
-              })
-            ) : (
-              <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                MetaMask or CipherTrade not detected
-              </button>
-            )}
-          </div>
-
-          <button
-            type="button"
-            className="p2p-wallet-action danger"
-            onClick={() => {
-              setChatWalletMenuOpen(false);
-              disconnectWallet().catch(() => {});
-            }}
-            disabled={connectingMethod !== null || !walletAddress}
-            role="menuitem"
-          >
-            Disconnect
-          </button>
-        </>
-      }
-    />
-  );
-  const sharedTradeWalletSession = useMemo(
+  });
+  const sharedTradeWalletSession = useMemo<SharedWalletSession>(
     () => ({
       activeSignerSource,
       browserProvider: activeProvider ?? browserWalletSession?.provider ?? null,
@@ -9272,8 +8964,10 @@ export default function App() {
                   sendGroupImageMessage(file).catch(() => {});
                 }}
                 uploadingImage={uploadingImage}
+                imageAttachmentStatus={imageAttachmentStatus}
                 imageAttachDisabled={uploadingImage || sendingGroupMessage || processingGroupAction}
                 imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
+                onDismissImageAttachmentStatus={clearImageAttachmentStatus}
                 onSendMessage={() => {
                   sendGroupMessage().catch(() => {});
                 }}
@@ -9343,8 +9037,10 @@ export default function App() {
                 isMobileNav={isMobileNav}
                 onSendImage={handleSendImage}
                 uploadingImage={uploadingImage}
+                imageAttachmentStatus={imageAttachmentStatus}
                 imageAttachDisabled={uploadingImage || sending || tipping}
                 imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
+                onDismissImageAttachmentStatus={clearImageAttachmentStatus}
                 onSendMessage={handleSendMessage}
                 maxMessageLength={MAX_MESSAGE_LENGTH}
                 onMessageInputChange={handleMessageInputChange}
@@ -9412,6 +9108,7 @@ export default function App() {
           onLaunchChat={() => navigateToPage('chat')}
           onOpenSwap={() => navigateToPage('swap')}
           onOpenTreasury={() => navigateToPage('treasury')}
+          onPrefetchTreasury={preloadTreasuryPage}
           onOpenTrades={() => navigateToPage('trades')}
           isConnected={isConnected}
         />

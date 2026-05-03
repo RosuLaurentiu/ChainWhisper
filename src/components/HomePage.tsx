@@ -2,6 +2,7 @@ type HomePageProps = {
   onLaunchChat: () => void;
   onOpenSwap: () => void;
   onOpenTreasury: () => void;
+  onPrefetchTreasury?: () => void;
   onOpenTrades: () => void;
   isConnected: boolean;
 };
@@ -13,7 +14,14 @@ const CORE_APPS = [
   { label: 'Treasury', description: 'Read-only COTI and gCOTI analytics' }
 ] as const;
 
-export default function HomePage({ onLaunchChat, onOpenSwap, onOpenTreasury, onOpenTrades, isConnected }: HomePageProps) {
+export default function HomePage({
+  onLaunchChat,
+  onOpenSwap,
+  onOpenTreasury,
+  onOpenTrades,
+  onPrefetchTreasury,
+  isConnected
+}: HomePageProps) {
   return (
     <main className="landing-shell">
       <section className="landing-hero">
@@ -98,7 +106,13 @@ export default function HomePage({ onLaunchChat, onOpenSwap, onOpenTreasury, onO
             <span className="landing-module-kicker">Analytics</span>
             <h3>Treasury Data</h3>
             <p>Read live treasury metrics, historical snapshots, COTI pool data, and gCOTI context.</p>
-            <button type="button" className="landing-module-cta" onClick={onOpenTreasury}>
+            <button
+              type="button"
+              className="landing-module-cta"
+              onClick={onOpenTreasury}
+              onFocus={onPrefetchTreasury}
+              onPointerEnter={onPrefetchTreasury}
+            >
               Open Treasury
             </button>
           </article>

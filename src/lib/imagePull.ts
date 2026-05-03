@@ -23,6 +23,8 @@ export const CHAT_IMAGE_FILE_ACCEPT = Array.from(ALLOWED_IMAGE_MIME_TYPES).join(
 
 const CHAT_IMAGES_BUCKET = 'chat-images';
 
+type ImageFileLike = Pick<File, 'size' | 'type'>;
+
 export class ChatImageExpiredError extends Error {
   constructor() {
     super('This image has expired.');
@@ -30,8 +32,46 @@ export class ChatImageExpiredError extends Error {
   }
 }
 
+export class ChatImageDecryptError extends Error {
+  constructor() {
+    super('This image could not be decrypted.');
+    this.name = 'ChatImageDecryptError';
+  }
+}
+
+export class ChatImageBlobTooLargeError extends Error {
+  constructor() {
+    super('Encrypted image blob exceeds the supported size limit.');
+    this.name = 'ChatImageBlobTooLargeError';
+  }
+}
+
 export const isChatImageExpiredError = (error: unknown): error is ChatImageExpiredError =>
   error instanceof ChatImageExpiredError;
+
+export const isChatImageDecryptError = (error: unknown): error is ChatImageDecryptError =>
+  error instanceof ChatImageDecryptError;
+
+export const isChatImageBlobTooLargeError = (error: unknown): error is ChatImageBlobTooLargeError =>
+  error instanceof ChatImageBlobTooLargeError;
+
+export const formatImageFileSize = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 bytes';
+  }
+
+  if (bytes < 1024) {
+    return `${Math.round(bytes)} bytes`;
+  }
+
+  const kib = bytes / 1024;
+  if (kib < 1024) {
+    return `${kib >= 10 ? Math.round(kib) : kib.toFixed(1)} KB`;
+  }
+
+  const mib = kib / 1024;
+  return `${mib >= 10 ? Math.round(mib) : mib.toFixed(1)} MB`;
+};
 
 const getSecureWebCrypto = (): { webCrypto: Crypto; subtle: SubtleCrypto } => {
   const webCrypto = globalThis.crypto;
@@ -102,22 +142,73 @@ function normalizeImageMimeType(mime: string): string {
   return mime.trim().toLowerCase();
 }
 
-function validateImageFile(file: File): { mime: string; sizeBytes: number } {
+export function getImageFileValidationError(file: ImageFileLike): string | null {
   const mime = normalizeImageMimeType(file.type);
   if (!ALLOWED_IMAGE_MIME_TYPES.has(mime)) {
-    throw new Error('Unsupported image format. Use JPEG, PNG, WEBP, GIF, or AVIF.');
+    return 'Unsupported image format. Use JPEG, PNG, WEBP, GIF, or AVIF.';
   }
 
   const sizeBytes = Math.floor(file.size);
   if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
-    throw new Error('The selected image is empty.');
+    return 'The selected image is empty.';
   }
   if (sizeBytes > MAX_IMAGE_PLAINTEXT_BYTES) {
-    throw new Error('Image is too large. The 8 MB limit applies before encryption.');
+    return `Image is too large (${formatImageFileSize(sizeBytes)}). The limit is ${formatImageFileSize(MAX_IMAGE_PLAINTEXT_BYTES)} before encryption.`;
   }
 
+  return null;
+}
+
+function validateImageFile(file: ImageFileLike): { mime: string; sizeBytes: number } {
+  const validationError = getImageFileValidationError(file);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const mime = normalizeImageMimeType(file.type);
+  const sizeBytes = Math.floor(file.size);
   return { mime, sizeBytes };
 }
+
+const getStorageErrorStatusCode = (error: unknown): number | null => {
+  const rawStatus =
+    error && typeof error === 'object'
+      ? (error as { statusCode?: unknown; status?: unknown }).statusCode ?? (error as { status?: unknown }).status
+      : null;
+  const parsedStatus = Number(rawStatus);
+  return Number.isFinite(parsedStatus) ? parsedStatus : null;
+};
+
+const getStorageUploadErrorMessage = (error: unknown): string => {
+  const rawMessage =
+    error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
+      ? (error as { message: string }).message
+      : '';
+  const normalizedMessage = rawMessage.toLowerCase();
+  const statusCode = getStorageErrorStatusCode(error);
+
+  if (statusCode === 413 || normalizedMessage.includes('file size') || normalizedMessage.includes('too large')) {
+    return `Encrypted upload was rejected by Supabase Storage because it is too large. Try an image under ${formatImageFileSize(MAX_IMAGE_PLAINTEXT_BYTES)}.`;
+  }
+  if (
+    statusCode === 401 ||
+    statusCode === 403 ||
+    normalizedMessage.includes('row-level security') ||
+    normalizedMessage.includes('permission')
+  ) {
+    return 'Supabase Storage upload is blocked by policy. Apply the storage policy migration first.';
+  }
+  if (statusCode === 404 || normalizedMessage.includes('bucket not found')) {
+    return 'Supabase Storage bucket "chat-images" does not exist yet.';
+  }
+  if (normalizedMessage.includes('network') || normalizedMessage.includes('fetch')) {
+    return 'Encrypted image upload failed. Check your connection and try again.';
+  }
+
+  return rawMessage
+    ? `Encrypted image upload failed: ${rawMessage}`
+    : 'Encrypted image upload failed. Try again in a moment.';
+};
 
 async function uploadEncryptedBlob(
   blobId: string,
@@ -139,14 +230,7 @@ async function uploadEncryptedBlob(
     }
   });
   if (error) {
-    const normalizedMessage = error.message.toLowerCase();
-    if (normalizedMessage.includes('row-level security')) {
-      throw new Error('Supabase Storage upload is blocked by policy. Apply the storage policy migration first.');
-    }
-    if (normalizedMessage.includes('bucket not found')) {
-      throw new Error('Supabase Storage bucket "chat-images" does not exist yet.');
-    }
-    throw new Error(error.message || 'Failed to upload the encrypted image.');
+    throw new Error(getStorageUploadErrorMessage(error));
   }
 }
 
@@ -173,7 +257,7 @@ async function encryptImageToBlob(file: File): Promise<{ blobId: string; encrypt
   );
 
   if ((encrypted as ArrayBuffer).byteLength > MAX_IMAGE_ENCRYPTED_BYTES) {
-    throw new Error('Encrypted image blob exceeds the supported size limit.');
+    throw new ChatImageBlobTooLargeError();
   }
 
   return {
@@ -201,20 +285,23 @@ export async function fetchEncryptedBlob(blobId: string, signal?: AbortSignal): 
     if (resp.status === 404 || resp.status === 410) {
       throw new ChatImageExpiredError();
     }
-    throw new Error(`Blob ${resp.status}`);
+    if (resp.status === 413) {
+      throw new ChatImageBlobTooLargeError();
+    }
+    throw new Error(`Encrypted image download failed with HTTP ${resp.status}.`);
   }
 
   const contentLengthHeader = resp.headers.get('content-length');
   if (contentLengthHeader) {
     const contentLength = Number(contentLengthHeader);
     if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_ENCRYPTED_BYTES) {
-      throw new Error('Encrypted image blob is too large.');
+      throw new ChatImageBlobTooLargeError();
     }
   }
 
   const encrypted = await resp.arrayBuffer();
   if (encrypted.byteLength > MAX_IMAGE_ENCRYPTED_BYTES) {
-    throw new Error('Encrypted image blob exceeds limit.');
+    throw new ChatImageBlobTooLargeError();
   }
   return encrypted;
 }
@@ -226,7 +313,7 @@ export async function decryptBlobToObjectUrl(
   mime?: string
 ): Promise<string> {
   if (encrypted.byteLength > MAX_IMAGE_ENCRYPTED_BYTES) {
-    throw new Error('Encrypted image blob exceeds limit.');
+    throw new ChatImageBlobTooLargeError();
   }
 
   const { subtle } = getSecureWebCrypto();
@@ -239,13 +326,33 @@ export async function decryptBlobToObjectUrl(
     false,
     ['decrypt']
   );
-  const pt = await subtle.decrypt({ name: 'AES-GCM', iv: ivBytes as unknown as BufferSource }, cryptoKey, encrypted);
+  let pt: ArrayBuffer;
+  try {
+    pt = (await subtle.decrypt(
+      { name: 'AES-GCM', iv: ivBytes as unknown as BufferSource },
+      cryptoKey,
+      encrypted
+    )) as ArrayBuffer;
+  } catch {
+    throw new ChatImageDecryptError();
+  }
   if ((pt as ArrayBuffer).byteLength > MAX_IMAGE_PLAINTEXT_BYTES) {
-    throw new Error('Decrypted image exceeds size limit.');
+    throw new ChatImageBlobTooLargeError();
   }
   const blob = new Blob([pt], { type: mime ?? 'application/octet-stream' });
   return URL.createObjectURL(blob);
 }
+
+export const getChatImageLoadErrorMessage = (error: unknown): string => {
+  if (isChatImageDecryptError(error)) {
+    return 'This image could not be decrypted. The message may be corrupted or missing its image key.';
+  }
+  if (isChatImageBlobTooLargeError(error)) {
+    return 'This encrypted image is larger than the app can safely display.';
+  }
+
+  return 'Unable to download the encrypted image. Check your connection and try again.';
+};
 
 export async function fetchAndDecryptToUrl(
   blobId: string,

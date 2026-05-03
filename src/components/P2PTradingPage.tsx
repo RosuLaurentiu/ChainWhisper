@@ -2,17 +2,9 @@ import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   COTI_NETWORK,
-  ERC20_TOKEN_ABI,
-  FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL,
-  FALLBACK_REWARD_TOKEN_DECIMALS,
-  FALLBACK_REWARD_TOKEN_SYMBOL,
-  PRIVATE_REWARD_TOKEN_ADDRESS,
-  PRIVATE_TOKEN_BALANCE_ABI,
-  REWARD_TOKEN_ADDRESS,
   TIP_NATIVE_TOKEN_SYMBOL,
   TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
-  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   BURNER_PIN_MIN_LENGTH,
   buildTradeSnapshotKey,
   createBurnerWalletVault,
@@ -28,7 +20,6 @@ import {
   isWalletAddress,
   loadBurnerWalletVaultFromStorage,
   loadCotiEthersModule,
-  loadCotiReadProvider,
   loadCotiWsProvider,
   looksLikePrivateKeyInput,
   markCotiWsHealthyNow,
@@ -37,8 +28,6 @@ import {
   normalizeImportInput,
   normalizeMnemonicInput,
   normalizePrivateKeyInput,
-  normalizeTokenDecimals,
-  parseTokenAmountInput,
   parseBurnerWalletStorageState,
   REALTIME_SYNC_BURST_THROTTLE_MS,
   REALTIME_SYNC_DEBOUNCE_MS,
@@ -49,7 +38,6 @@ import {
   sanitizeTokenAmountInput,
   shortenAddress,
   upsertBurnerWalletInVault,
-  withTimeout,
   WS_HEALTHCHECK_TTL_MS,
   WS_RETRY_COOLDOWN_MS,
   type BurnerInitMode,
@@ -59,81 +47,43 @@ import {
   type TradeAssetPayload,
   type TradeFeeModeSelection,
   type TradeOfferMessagePayload,
-  type TradeSnapshot,
-  type SignerSource
+  type TradeSnapshot
 } from '../lib/appShared';
 import { getPreferredBrowserWalletId, saveWalletPreference } from '../lib/appStorage';
-import {
-  fetchRecentTradeSnapshots,
-  fetchTradeAccessMetadataById,
-  fetchTradeSnapshotById,
-  fetchWalletTradeSnapshots,
-  readPrivateTradeRemainingOfferWei,
-  readPrivateTokenBalanceWei
-} from '../lib/appChain';
+import { readPrivateTradeRemainingOfferWei } from '../lib/appChain';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
-  VERIFIED_ECOSYSTEM_TOKENS,
-  buildTradeCustomTokenInfoKey,
-  getOnChainFailureMessage,
-  isVerifiedEcosystemToken,
   resolveTradePresetKind,
-  type ResolvedTradeToken,
-  type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from '../lib/appHelpers';
 import { deriveTradeComposerModel } from '../lib/tradeComposer';
-import {
-  acceptCounterTradeAndCloseParentOnChain,
-  acceptTradeOnChain,
-  cancelTradeOnChain,
-  counterTradeAndCloseCounteredTradeOnChain,
-  createTradeOnChain,
-  declineTradeOnChain,
-  editTradeOnChain,
-  fillPrivateFixedPriceTradeOnChain,
-  fillTradeOnChain,
-  replacePrivateFixedPriceTradeOnChain
-} from '../lib/tradeActions';
-import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption,
   orderInjectedWalletOptions
 } from '../lib/walletOptions';
+import { hasSessionAesKey, type SharedWalletSession } from '../lib/walletSession';
+import useP2PWalletHeaderControl from '../hooks/useP2PWalletHeaderControl';
+import useP2PTradeRoute, { normalizeAccessSecret, resolveTradeLinkInput } from '../hooks/useP2PTradeRoute';
+import useP2PTradeData from '../hooks/useP2PTradeData';
+import useP2PTradeActions from '../hooks/useP2PTradeActions';
+import useP2PTradeComposerActions from '../hooks/useP2PTradeComposerActions';
+import useP2PTradeTokenData from '../hooks/useP2PTradeTokenData';
 import { useStoredWalletPreference } from '../hooks/useStoredWalletPreference';
 import {
   formatTradeRatioLabel,
   groupWalletTradesByPerspective,
   isZeroTradeTakerAddress,
-  resolveTradeOrderSummary,
-  ZERO_TRADE_TAKER_ADDRESS
+  resolveTradeOrderSummary
 } from '../lib/tradePerspective';
 import BurnerImportModal from './BurnerImportModal';
 import BurnerPinModal from './BurnerPinModal';
-import AppWalletSwitchButton from './AppWalletSwitchButton';
 import TradeComposerPanel from './TradeComposerPanel';
 import TradeOfferCard from './TradeOfferCard';
-import WalletHeaderPanel from './WalletHeaderPanel';
 
-type TradePageView = 'public' | 'create' | 'trade' | 'mine';
 type TradeVisibility = 'public' | 'unlisted' | 'direct';
 type MyTradeGroupView = 'received' | 'active' | 'history';
 type PendingBurnerWalletAction = 'connect' | 'generate' | 'import';
-
-type SharedWalletSession = {
-  activeSignerSource: SignerSource;
-  activeBurnerWalletId?: string;
-  browserProvider: Eip1193Provider | null;
-  browserWalletId: string;
-  browserWalletLabel: string;
-  burnerWallet: Wallet | null;
-  burnerWallets?: BurnerWalletRecord[];
-  chainId: number | null;
-  onSwitchActiveBurnerWallet?: (walletId: string) => Promise<void> | void;
-  sessionOnboardInfo: Record<string, OnboardInfo>;
-  walletAddress: string;
-};
 
 type P2PTradingPageProps = {
   sharedWalletSession?: SharedWalletSession;
@@ -142,19 +92,9 @@ type P2PTradingPageProps = {
   onHeaderNavigationControlChange?: (navigationControl: ReactNode | null) => void;
 };
 
-type TradeRouteState = {
-  view: TradePageView;
-  tradeId: number | null;
-  escrowContract?: string;
-  accessSecret: string;
-  routeError: string;
-};
-
-const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const WALLET_STATUS_STORAGE_KEY = 'coti-trade-last-wallet-id';
 const TRADE_ACCESS_SECRET_STORAGE_KEY = 'coti-trade-access-secrets-v1';
 const PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY = 'coti-private-trade-liquidity-v1';
-const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 10_000;
 type TradeSigner = JsonRpcSigner | Wallet;
 
@@ -208,119 +148,6 @@ const readLegacyTradeBrowserWalletId = (): string => {
 
 const readInitialTradeBrowserWalletId = (): string => getPreferredBrowserWalletId() || readLegacyTradeBrowserWalletId();
 
-const normalizeTradePathname = (value: string): string => {
-  const normalized = value.trim().replace(/\/+$/, '');
-  return normalized || '/';
-};
-
-const normalizeTradeSearch = (value: string): string => {
-  if (!value.trim()) {
-    return '';
-  }
-  return value.startsWith('?') ? value : `?${value}`;
-};
-
-const normalizeTradeHash = (value: string): string => value.replace(/^#/, '').trim();
-
-const normalizeAccessSecret = (value?: string | null): string => {
-  const secret = value?.trim() ?? '';
-  return /^0x[a-fA-F0-9]{64}$/.test(secret) ? secret : '';
-};
-
-const resolveLegacyTradeSecret = (searchValue = '', hashValue = ''): string => {
-  const searchSecret = new URLSearchParams(normalizeTradeSearch(searchValue)).get('secret')?.trim() ?? '';
-  const normalizedHash = normalizeTradeHash(hashValue);
-  const hashSecret =
-    normalizedHash.startsWith('secret=')
-      ? new URLSearchParams(normalizedHash).get('secret')?.trim() ?? ''
-      : normalizedHash;
-  return normalizeAccessSecret(searchSecret || hashSecret);
-};
-
-const resolveRouteEscrowContract = (searchValue = ''): string | undefined => {
-  const params = new URLSearchParams(normalizeTradeSearch(searchValue));
-  const raw = params.get('escrow')?.trim() || params.get('contract')?.trim() || '';
-  if (!raw) {
-    return undefined;
-  }
-  if (raw.toLowerCase() === 'private') {
-    return PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
-  }
-  if (raw.toLowerCase() === 'v2') {
-    return TRADE_ESCROW_CONTRACT_ADDRESS;
-  }
-  return isWalletAddress(raw) ? raw : undefined;
-};
-
-const resolveTradeRouteFromParts = (pathnameValue: string, searchValue = '', hashValue = ''): TradeRouteState => {
-  const pathname = normalizeTradePathname(pathnameValue);
-  const lowerPathname = pathname.toLowerCase();
-  const escrowContract = resolveRouteEscrowContract(searchValue);
-
-  if (lowerPathname === '/trades/create') {
-    return { view: 'create', tradeId: null, accessSecret: '', routeError: '' };
-  }
-  if (lowerPathname === '/trades/mine') {
-    return { view: 'mine', tradeId: null, accessSecret: '', routeError: '' };
-  }
-  if (lowerPathname === '/trades/open') {
-    return { view: 'trade', tradeId: null, accessSecret: '', routeError: '' };
-  }
-
-  const encodedMatch = pathname.match(/^\/trades\/l\/([^/?#]+)$/i);
-  if (encodedMatch) {
-    let linkCode = encodedMatch[1];
-    try {
-      linkCode = decodeURIComponent(linkCode);
-    } catch {
-      return { view: 'trade', tradeId: null, accessSecret: '', routeError: 'This trade link is not valid.' };
-    }
-    const decoded = decodeTradeLink(linkCode);
-    if (!decoded) {
-      return { view: 'trade', tradeId: null, accessSecret: '', routeError: 'This trade link is not valid.' };
-    }
-    return {
-      view: 'trade',
-      tradeId: decoded.tradeId,
-      escrowContract,
-      accessSecret: decoded.accessSecret ?? '',
-      routeError: ''
-    };
-  }
-
-  const legacyMatch = pathname.match(/^\/trades\/(\d+)$/i);
-  if (legacyMatch) {
-    const tradeId = Number.parseInt(legacyMatch[1], 10);
-    return Number.isSafeInteger(tradeId) && tradeId > 0
-      ? { view: 'trade', tradeId, escrowContract, accessSecret: resolveLegacyTradeSecret(searchValue, hashValue), routeError: '' }
-      : { view: 'trade', tradeId: null, accessSecret: '', routeError: 'This trade id is not valid.' };
-  }
-
-  return { view: 'public', tradeId: null, accessSecret: '', routeError: '' };
-};
-
-const resolveTradeRouteFromLocation = (): TradeRouteState => {
-  if (typeof window === 'undefined') {
-    return { view: 'public', tradeId: null, accessSecret: '', routeError: '' };
-  }
-
-  const redirectedPath = new URLSearchParams(window.location.search).get('p');
-  if (redirectedPath) {
-    try {
-      const redirectedUrl = new URL(redirectedPath, window.location.origin);
-      return resolveTradeRouteFromParts(
-        redirectedUrl.pathname,
-        redirectedUrl.search || window.location.search,
-        redirectedUrl.hash || window.location.hash
-      );
-    } catch {
-      return resolveTradeRouteFromParts(redirectedPath, window.location.search, window.location.hash);
-    }
-  }
-
-  return resolveTradeRouteFromParts(window.location.pathname, window.location.search, window.location.hash);
-};
-
 const buildOfferFromSnapshot = (snapshot: TradeSnapshot): TradeOfferMessagePayload => ({
   version: 2,
   tradeId: snapshot.tradeId,
@@ -334,8 +161,6 @@ const buildOfferFromSnapshot = (snapshot: TradeSnapshot): TradeOfferMessagePaylo
   parentTradeId: snapshot.counterParentTradeId ?? undefined,
   hiddenLiquidity: snapshot.hiddenLiquidity
 });
-
-const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
 
 const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'taker'>): boolean => !isZeroTradeTakerAddress(trade.taker);
 
@@ -389,18 +214,6 @@ const withTradeAssetAmount = (asset: TradeAssetPayload, amount: bigint): TradeAs
   amount: amount.toString()
 });
 
-const quotePrivateRequestAmountForOffer = (
-  offerAmountOut: bigint,
-  offerUnitAmount: bigint,
-  requestUnitAmount: bigint
-): bigint => {
-  if (offerAmountOut <= 0n || offerUnitAmount <= 0n || requestUnitAmount <= 0n) {
-    return 0n;
-  }
-
-  return (offerAmountOut * requestUnitAmount + offerUnitAmount - 1n) / offerUnitAmount;
-};
-
 const getTradeDisplayTerms = (trade: TradeSnapshot): { offer: TradeAssetPayload; request: TradeAssetPayload; usingRemaining: boolean } => {
   const usingRemaining = trade.status === 'open' && hasAnyTradeFill(trade) && getRemainingRequestAmount(trade) > 0n;
   return {
@@ -436,12 +249,6 @@ const getTradeCompletionSummary = (
   } catch {
     return null;
   }
-};
-
-const createTradeAccessSecret = (): string => {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 };
 
 const loadStoredTradeAccessSecrets = (): Record<string, string> => {
@@ -546,17 +353,6 @@ const storeTradeAccessSecrets = (secrets: Record<string, string>): void => {
   window.localStorage.setItem(TRADE_ACCESS_SECRET_STORAGE_KEY, JSON.stringify(secrets));
 };
 
-const sortTrades = (trades: TradeSnapshot[]): TradeSnapshot[] =>
-  [...trades].sort((left, right) => {
-    if (left.status === 'open' && right.status !== 'open') {
-      return -1;
-    }
-    if (left.status !== 'open' && right.status === 'open') {
-      return 1;
-    }
-    return right.tradeId - left.tradeId;
-  });
-
 const formatTradeExpiryParts = (expiresAt: number): { date: string; time: string; title: string } => {
   if (expiresAt <= 0) {
     return { date: 'No expiration', time: '', title: 'No expiration' };
@@ -581,72 +377,6 @@ const formatTradeExpiryParts = (expiresAt: number): { date: string; time: string
   };
 };
 
-const resolveTradeLinkInput = (value: string): { tradeId: number; escrowContract?: string; accessSecret?: string } | null => {
-  const raw = value.trim();
-  if (!raw) {
-    return null;
-  }
-
-  const decodedDirect = decodeTradeLink(raw);
-  if (decodedDirect) {
-    return decodedDirect;
-  }
-
-  const resolveFromRoute = (
-    pathname: string,
-    search = '',
-    hash = ''
-  ): { tradeId: number; escrowContract?: string; accessSecret?: string } | null => {
-    const redirectedPath = new URLSearchParams(normalizeTradeSearch(search)).get('p');
-    if (redirectedPath) {
-      try {
-        const redirectedUrl = new URL(redirectedPath, typeof window === 'undefined' ? 'https://chainwhisper.chat' : window.location.origin);
-        return resolveFromRoute(redirectedUrl.pathname, redirectedUrl.search || search, redirectedUrl.hash || hash);
-      } catch {
-        return resolveFromRoute(redirectedPath, search, hash);
-      }
-    }
-
-    const parsedRoute = resolveTradeRouteFromParts(pathname, search, hash);
-    return parsedRoute.view === 'trade' && parsedRoute.tradeId
-      ? {
-          tradeId: parsedRoute.tradeId,
-          escrowContract: parsedRoute.escrowContract,
-          accessSecret: parsedRoute.accessSecret || undefined
-        }
-      : null;
-  };
-
-  try {
-    const parsedUrl = new URL(raw, typeof window === 'undefined' ? 'https://chainwhisper.chat' : window.location.origin);
-    const parsedFromUrl = resolveFromRoute(parsedUrl.pathname, parsedUrl.search, parsedUrl.hash);
-    if (parsedFromUrl) {
-      return parsedFromUrl;
-    }
-  } catch {
-  }
-
-  if (raw.startsWith('?') || raw.startsWith('p=')) {
-    const parsedFromSearch = resolveFromRoute('/', raw.startsWith('?') ? raw : `?${raw}`);
-    if (parsedFromSearch) {
-      return parsedFromSearch;
-    }
-  }
-
-  const parsedFromBarePath = resolveFromRoute(raw.startsWith('/') ? raw : `/${raw}`);
-  if (parsedFromBarePath) {
-    return parsedFromBarePath;
-  }
-
-  const legacyIdMatch = raw.match(/^#?(\d+)$/);
-  if (legacyIdMatch) {
-    const tradeId = Number.parseInt(legacyIdMatch[1], 10);
-    return Number.isSafeInteger(tradeId) && tradeId > 0 ? { tradeId } : null;
-  }
-
-  return null;
-};
-
 const formatTradeListTerms = (trade: TradeSnapshot): string => {
   const displayTerms = getTradeDisplayTerms(trade);
   if (trade.hiddenLiquidity) {
@@ -661,14 +391,6 @@ const formatHiddenFixedPriceTerms = (offer: TradeAssetPayload, request: TradeAss
 
 const formatTradeRateText = (baseAsset: TradeAssetPayload, quoteAsset: TradeAssetPayload): string => {
   return formatTradeRatioLabel(baseAsset, quoteAsset) ?? 'Rate unavailable';
-};
-
-const formatTradeAmountInput = (asset: TradeAssetPayload): string => {
-  try {
-    return formatTokenAmount(BigInt(asset.amount), asset.decimals, 18);
-  } catch {
-    return '';
-  }
 };
 
 const buildTradeAssetExplorerUrl = (asset: TradeAssetPayload): string => {
@@ -704,38 +426,13 @@ const matchesTradeSearch = (trade: TradeSnapshot, query: string): boolean => {
     .some((value) => String(value).toLowerCase().includes(normalizedQuery));
 };
 
-const resolveTradeAssetSelection = (
-  asset: TradeAssetPayload
-): { selection: TradeTokenPresetKey; customAddress: string } => {
-  if (asset.kind === 'native') {
-    return { selection: 'coti', customAddress: '' };
-  }
-
-  const tokenAddress = asset.tokenAddress?.trim() ?? '';
-  if (tokenAddress.toLowerCase() === REWARD_TOKEN_ADDRESS.toLowerCase()) {
-    return { selection: 'wisp', customAddress: '' };
-  }
-  if (tokenAddress.toLowerCase() === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
-    return { selection: 'pwisp', customAddress: '' };
-  }
-
-  if (isVerifiedEcosystemToken(tokenAddress)) {
-    return { selection: tokenAddress.toLowerCase(), customAddress: '' };
-  }
-
-  return {
-    selection: asset.kind === 'private-erc20' ? 'custom-private' : 'custom-public',
-    customAddress: tokenAddress
-  };
-};
-
 export default function P2PTradingPage({
   sharedWalletSession,
   onDisconnectWallet,
   onHeaderWalletControlChange,
   onHeaderNavigationControlChange
 }: P2PTradingPageProps) {
-  const [route, setRoute] = useState<TradeRouteState>(() => resolveTradeRouteFromLocation());
+  const { buildTradeShareUrl, navigateToTradePath, openTrade, route, showEmptyTradeRoute } = useP2PTradeRoute();
   const walletPreference = useStoredWalletPreference();
   const preferredBrowserWalletId = getPreferredBrowserWalletId(walletPreference);
   const [walletAddress, setWalletAddress] = useState('');
@@ -768,28 +465,8 @@ export default function P2PTradingPage({
   const [tradeRequestAmountInput, setTradeRequestAmountInput] = useState('');
   const [tradeExpiryHoursInput, setTradeExpiryHoursInput] = useState(DEFAULT_TRADE_EXPIRY_HOURS);
   const [tradeHidePrivateLiquidity, setTradeHidePrivateLiquidity] = useState(false);
-  const [customTradeTokenInfoByAddress, setCustomTradeTokenInfoByAddress] = useState<Record<string, TradeCustomTokenInfo>>({});
-  const [nativeBalanceWei, setNativeBalanceWei] = useState<bigint | null>(null);
-  const [rewardTokenBalanceWei, setRewardTokenBalanceWei] = useState<bigint | null>(null);
-  const [privateRewardTokenBalanceWei, setPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
-  const [rewardTokenSymbol, setRewardTokenSymbol] = useState(FALLBACK_REWARD_TOKEN_SYMBOL);
-  const [privateRewardTokenSymbol, setPrivateRewardTokenSymbol] = useState(FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL);
-  const [rewardTokenDecimals, setRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
-  const [privateRewardTokenDecimals, setPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
-  const [tradeRequiredFeeWei, setTradeRequiredFeeWei] = useState<bigint | null>(null);
-  const [publicTrades, setPublicTrades] = useState<TradeSnapshot[]>([]);
-  const [myTrades, setMyTrades] = useState<TradeSnapshot[]>([]);
-  const [detailTrade, setDetailTrade] = useState<TradeSnapshot | null>(null);
-  const [loadingPublicTrades, setLoadingPublicTrades] = useState(false);
-  const [loadingMyTrades, setLoadingMyTrades] = useState(false);
-  const [loadingDetailTrade, setLoadingDetailTrade] = useState(false);
-  const [tradeAccessBlocked, setTradeAccessBlocked] = useState(false);
-  const [publicTradesError, setPublicTradesError] = useState('');
-  const [myTradesError, setMyTradesError] = useState('');
-  const [detailTradeError, setDetailTradeError] = useState('');
   const [tradeActionError, setTradeActionError] = useState('');
   const [creatingTrade, setCreatingTrade] = useState(false);
-  const [processingTradeActionId, setProcessingTradeActionId] = useState('');
   const [revealingPrivateTradeKey, setRevealingPrivateTradeKey] = useState('');
   const [createdTradeId, setCreatedTradeId] = useState<number | null>(null);
   const [createdTradeLink, setCreatedTradeLink] = useState('');
@@ -811,13 +488,8 @@ export default function P2PTradingPage({
   const providerRef = useRef<Eip1193Provider | null>(null);
   const burnerWalletRef = useRef<Wallet | null>(null);
   const signerCacheRef = useRef<Record<string, TradeSigner>>({});
-  const feeRequestRef = useRef<Promise<bigint> | null>(null);
   const skippedSharedWalletKeyRef = useRef('');
   const counterPanelRef = useRef<HTMLDivElement | null>(null);
-  const publicTradesRefreshRef = useRef<Promise<void> | null>(null);
-  const myTradesRefreshRef = useRef<Promise<void> | null>(null);
-  const publicTradesRefreshQueuedRef = useRef(false);
-  const myTradesRefreshQueuedRef = useRef(false);
 
   const allowedBrowserWalletOptions = useMemo(
     () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
@@ -835,9 +507,8 @@ export default function P2PTradingPage({
   const onCotiNetwork = chainId === COTI_NETWORK.chainIdDecimal;
   const walletKey = walletAddress.trim().toLowerCase();
   const connectedWithBurner = Boolean(burnerWalletRef.current && walletKey === burnerWalletRef.current.address.toLowerCase());
-  const walletHasAes = Boolean(walletKey && onboardInfoByAddress[walletKey]?.aesKey);
+  const walletHasAes = hasSessionAesKey(walletAddress, onboardInfoByAddress);
   const tradePrimaryWalletKind = walletPreference?.kind === 'app' ? 'app' : 'browser';
-  const openPublicTradeCount = publicTrades.filter((trade) => trade.status === 'open').length;
   const routeView = route.view;
   const routeTradeId = route.tradeId;
   const routeEscrowContract = route.escrowContract;
@@ -948,38 +619,6 @@ export default function P2PTradingPage({
       ...current,
       [key]: !current[key]
     }));
-  }, []);
-
-  const navigateToTradePath = useCallback((path: string) => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const targetUrl = new URL(path, window.location.origin);
-    const nextUrl = new URL(window.location.href);
-    nextUrl.pathname = targetUrl.pathname;
-    nextUrl.search = targetUrl.search;
-    nextUrl.hash = targetUrl.hash;
-    window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
-    setRoute(resolveTradeRouteFromLocation());
-  }, []);
-
-  const buildTradeShareUrl = useCallback((tradeId: number, accessSecret?: string, escrowContract?: string): string => {
-    const code = encodeTradeLink(tradeId, accessSecret);
-    const path = `/trades/l/${code}`;
-    const search =
-      escrowContract && escrowContract.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
-        ? '?escrow=private'
-        : '';
-    if (typeof window === 'undefined') {
-      return `${path}${search}`;
-    }
-
-    const nextUrl = new URL(window.location.href);
-    nextUrl.pathname = path;
-    nextUrl.search = search;
-    nextUrl.hash = '';
-    return nextUrl.toString();
   }, []);
 
   const rememberTradeAccessSecret = useCallback((tradeId: number, accessSecret?: string, escrowContract?: string) => {
@@ -1552,28 +1191,29 @@ export default function P2PTradingPage({
     [chainId, connectedWalletLabel, ensureCotiNetwork, onboardInfoByAddress, walletAddress]
   );
 
-  const resolveRequiredFeeForTradeCreate = useCallback(async (): Promise<bigint> => {
-    if (tradeRequiredFeeWei !== null) {
-      return tradeRequiredFeeWei;
-    }
-
-    if (!feeRequestRef.current) {
-      feeRequestRef.current = (async () => {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
-        return (await readContract.feeAmount()) as bigint;
-      })();
-    }
-
-    try {
-      const fee = await feeRequestRef.current;
-      setTradeRequiredFeeWei(fee);
-      return fee;
-    } finally {
-      feeRequestRef.current = null;
-    }
-  }, [tradeRequiredFeeWei]);
+  const {
+    clearWalletBalances,
+    customTradeTokenInfoByAddress,
+    loadWalletBalances,
+    nativeBalanceWei,
+    privateRewardTokenBalanceWei,
+    privateRewardTokenDecimals,
+    privateRewardTokenSymbol,
+    resolveRequiredFeeForTradeCreate,
+    rewardTokenBalanceWei,
+    rewardTokenDecimals,
+    rewardTokenSymbol,
+    tradeRequiredFeeWei
+  } = useP2PTradeTokenData({
+    getTradeSigner,
+    tradeOfferCustomTokenAddress,
+    tradeOfferTokenSelection,
+    tradeRequestCustomTokenAddress,
+    tradeRequestTokenSelection,
+    walletAddress,
+    walletHasAes,
+    walletKey
+  });
 
   const enrichMakerPrivateProgress = useCallback(
     async (snapshot: TradeSnapshot, forceReveal = false): Promise<TradeSnapshot> => {
@@ -1619,135 +1259,40 @@ export default function P2PTradingPage({
     [getTradeSigner, knownPrivateLiquidityByTrade, walletHasAes, walletKey]
   );
 
-  const enrichMakerPrivateProgressForList = useCallback(
-    async (snapshots: TradeSnapshot[]): Promise<TradeSnapshot[]> =>
-      Promise.all(snapshots.map((snapshot) => enrichMakerPrivateProgress(snapshot))),
-    [enrichMakerPrivateProgress]
-  );
-
-  const refreshPublicTrades = useCallback(async () => {
-    if (publicTradesRefreshRef.current) {
-      publicTradesRefreshQueuedRef.current = true;
-      return publicTradesRefreshRef.current;
-    }
-
-    const refreshRequest = (async () => {
-      do {
-        publicTradesRefreshQueuedRef.current = false;
-        setLoadingPublicTrades(true);
-        setPublicTradesError('');
-        try {
-          const snapshots = await fetchRecentTradeSnapshots({
-            rewardTokenSymbol,
-            rewardTokenDecimals,
-            privateRewardTokenSymbol,
-            privateRewardTokenDecimals,
-            limit: 80
-          });
-          setPublicTrades(sortTrades(snapshots));
-        } catch {
-          setPublicTradesError('Failed to load public trades.');
-        } finally {
-          setLoadingPublicTrades(false);
-        }
-      } while (publicTradesRefreshQueuedRef.current);
-
-      publicTradesRefreshRef.current = null;
-    })();
-
-    publicTradesRefreshRef.current = refreshRequest;
-    return refreshRequest;
-  }, [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
-
-  const refreshMyTrades = useCallback(async () => {
-    if (!walletAddress) {
-      setMyTrades([]);
-      return;
-    }
-    if (myTradesRefreshRef.current) {
-      myTradesRefreshQueuedRef.current = true;
-      return myTradesRefreshRef.current;
-    }
-
-    const refreshRequest = (async () => {
-      do {
-        myTradesRefreshQueuedRef.current = false;
-        setLoadingMyTrades(true);
-        setMyTradesError('');
-        try {
-          const snapshotsRaw = await fetchWalletTradeSnapshots(walletAddress, {
-            rewardTokenSymbol,
-            rewardTokenDecimals,
-            privateRewardTokenSymbol,
-            privateRewardTokenDecimals,
-            limit: 80
-          });
-          const snapshots = await enrichMakerPrivateProgressForList(snapshotsRaw);
-          setMyTrades(sortTrades(snapshots));
-        } catch {
-          setMyTradesError('Failed to load your trades.');
-        } finally {
-          setLoadingMyTrades(false);
-        }
-      } while (myTradesRefreshQueuedRef.current);
-
-      myTradesRefreshRef.current = null;
-    })();
-
-    myTradesRefreshRef.current = refreshRequest;
-    return refreshRequest;
-  }, [
-    enrichMakerPrivateProgressForList,
+  const {
+    clearMyTrades,
+    detailTrade,
+    detailTradeError,
+    hasActiveListRefresh,
+    loadingDetailTrade,
+    loadingMyTrades,
+    loadingPublicTrades,
+    mergeTradeSnapshot,
+    myTrades,
+    myTradesError,
+    publicTrades,
+    publicTradesError,
+    refreshMyTrades,
+    refreshPublicTrades,
+    refreshTradeDetail,
+    setDetailTrade,
+    setDetailTradeError,
+    tradeAccessBlocked
+  } = useP2PTradeData({
+    enrichMakerPrivateProgress,
     privateRewardTokenDecimals,
     privateRewardTokenSymbol,
+    resolvedRouteAccessSecret,
     rewardTokenDecimals,
     rewardTokenSymbol,
-    walletAddress
-  ]);
-
-  const mergeTradeSnapshot = useCallback(
-    (snapshot: TradeSnapshot) => {
-      const snapshotKey = getSnapshotKey(snapshot);
-      setDetailTrade((current) => (current && getSnapshotKey(current) === snapshotKey ? snapshot : current));
-      setPublicTrades((previous) => {
-        const withoutCurrent = previous.filter((trade) => getSnapshotKey(trade) !== snapshotKey);
-        if (snapshot.isPublic && snapshot.status === 'open') {
-          return sortTrades([snapshot, ...withoutCurrent]);
-        }
-        return sortTrades(withoutCurrent);
-      });
-      if (walletKey && [snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey)) {
-        setMyTrades((previous) => {
-          const withoutCurrent = previous.filter((trade) => getSnapshotKey(trade) !== snapshotKey);
-          return sortTrades([snapshot, ...withoutCurrent]);
-        });
-      }
-    },
-    [walletKey]
-  );
-
-  const refreshTradeDetail = useCallback(
-    async (tradeId: number, escrowContract?: string): Promise<TradeSnapshot | null> => {
-      const snapshotRaw = await fetchTradeSnapshotById(tradeId, {
-        rewardTokenSymbol,
-        rewardTokenDecimals,
-        privateRewardTokenSymbol,
-        privateRewardTokenDecimals,
-        escrowContract
-      });
-      const snapshot = await enrichMakerPrivateProgress(snapshotRaw);
-      mergeTradeSnapshot(snapshot);
-      return snapshot;
-    },
-    [
-      enrichMakerPrivateProgress,
-      mergeTradeSnapshot,
-      privateRewardTokenDecimals,
-      privateRewardTokenSymbol,
-      rewardTokenDecimals,
-      rewardTokenSymbol
-    ]
-  );
+    routeError,
+    routeEscrowContract,
+    routeTradeId,
+    routeView,
+    walletAddress,
+    walletKey
+  });
+  const openPublicTradeCount = publicTrades.filter((trade) => trade.status === 'open').length;
 
   const revealMakerPrivateProgress = useCallback(
     async (snapshot: TradeSnapshot) => {
@@ -1770,18 +1315,6 @@ export default function P2PTradingPage({
     [enrichMakerPrivateProgress, mergeTradeSnapshot]
   );
 
-  const openTrade = useCallback(
-    (tradeId: number, accessSecret?: string, escrowContract?: string) => {
-      const code = encodeTradeLink(tradeId, accessSecret);
-      const search =
-        escrowContract && escrowContract.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
-          ? '?escrow=private'
-          : '';
-      navigateToTradePath(`/trades/l/${code}${search}`);
-    },
-    [navigateToTradePath]
-  );
-
   const openTradeSnapshot = useCallback(
     (snapshot: TradeSnapshot, accessSecret?: string) => {
       const knownAccessSecret =
@@ -1801,7 +1334,7 @@ export default function P2PTradingPage({
       const parsedLink = resolveTradeLinkInput(tradeLinkInput);
       if (!parsedLink) {
         setDetailTradeError(tradeLinkInput.trim() ? 'Paste a valid trade link, compact code, or trade id.' : '');
-        setRoute({ view: 'trade', tradeId: null, accessSecret: '', routeError: '' });
+        showEmptyTradeRoute();
         return;
       }
 
@@ -1810,7 +1343,7 @@ export default function P2PTradingPage({
       openTrade(parsedLink.tradeId, parsedLink.accessSecret, parsedLink.escrowContract);
       setTradeLinkInput('');
     },
-    [openTrade, rememberTradeAccessSecret, tradeLinkInput]
+    [openTrade, rememberTradeAccessSecret, showEmptyTradeRoute, tradeLinkInput]
   );
 
   const hashTradeAccessSecret = useCallback(async (accessSecret: string): Promise<string> => {
@@ -1885,52 +1418,6 @@ export default function P2PTradingPage({
     ]
   );
 
-  const loadWalletBalances = useCallback(async () => {
-    const readProvider = await loadCotiReadProvider(true);
-    const cotiEthers = await loadCotiEthersModule();
-    const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
-    const privateTokenContract = new cotiEthers.Contract(PRIVATE_REWARD_TOKEN_ADDRESS, PRIVATE_TOKEN_BALANCE_ABI, readProvider);
-
-    const [rewardSymbolRaw, rewardDecimalsRaw, privateSymbolRaw, privateDecimalsRaw] = await Promise.all([
-      rewardTokenContract.symbol().catch(() => null),
-      rewardTokenContract.decimals().catch(() => null),
-      privateTokenContract.symbol().catch(() => null),
-      privateTokenContract.decimals().catch(() => null)
-    ]);
-
-    setRewardTokenSymbol(typeof rewardSymbolRaw === 'string' && rewardSymbolRaw.trim() ? rewardSymbolRaw.trim().slice(0, 12) : FALLBACK_REWARD_TOKEN_SYMBOL);
-    setPrivateRewardTokenSymbol(
-      typeof privateSymbolRaw === 'string' && privateSymbolRaw.trim()
-        ? privateSymbolRaw.trim().slice(0, 12)
-        : FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL
-    );
-    setRewardTokenDecimals(normalizeTokenDecimals(Number(rewardDecimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS)));
-    setPrivateRewardTokenDecimals(normalizeTokenDecimals(Number(privateDecimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS)));
-
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
-      setNativeBalanceWei(null);
-      setRewardTokenBalanceWei(null);
-      setPrivateRewardTokenBalanceWei(null);
-      return;
-    }
-
-    const [nativeBalanceRaw, rewardBalanceRaw] = await Promise.all([
-      readProvider.getBalance(walletAddress).catch(() => null),
-      rewardTokenContract.balanceOf(walletAddress).catch(() => null)
-    ]);
-    setNativeBalanceWei(typeof nativeBalanceRaw === 'bigint' ? nativeBalanceRaw : null);
-    setRewardTokenBalanceWei(typeof rewardBalanceRaw === 'bigint' ? rewardBalanceRaw : null);
-
-    if (walletHasAes) {
-      const signer = await getTradeSigner(false).catch(() => null);
-      const privateBalance =
-        signer !== null ? await readPrivateTokenBalanceWei(PRIVATE_REWARD_TOKEN_ADDRESS, walletAddress, signer).catch(() => null) : null;
-      setPrivateRewardTokenBalanceWei(privateBalance);
-    } else {
-      setPrivateRewardTokenBalanceWei(null);
-    }
-  }, [getTradeSigner, walletAddress, walletHasAes]);
-
   const refreshTradeDataInBackground = useCallback(
     (tradeId?: number, escrowContract?: string) => {
       void Promise.allSettled([
@@ -1971,400 +1458,16 @@ export default function P2PTradingPage({
     }
   }, [getTradeSigner, loadWalletBalances, onboardTradeWalletAes, walletAddress]);
 
-  const loadCustomTokenInfo = useCallback(
-    async (token: { address: string; kind: Extract<ResolvedTradeToken['kind'], 'erc20' | 'private-erc20'> }) => {
-      const normalizedAddress = token.address.trim();
-      if (!isWalletAddress(normalizedAddress)) {
-        return;
-      }
-
-      const tokenKey = buildTradeCustomTokenInfoKey(token.kind, normalizedAddress);
-      setCustomTradeTokenInfoByAddress((previous) => ({
-        ...previous,
-        [tokenKey]: {
-          kind: token.kind,
-          address: normalizedAddress,
-          symbol: shortenAddress(normalizedAddress),
-          decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
-          balanceWei: null,
-          loading: true,
-          walletKey,
-          aesReady: token.kind === 'private-erc20' ? walletHasAes : undefined
-        }
-      }));
-
-      try {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const tokenAbi = token.kind === 'private-erc20' ? PRIVATE_TOKEN_BALANCE_ABI : ERC20_TOKEN_ABI;
-        const tokenContract = new cotiEthers.Contract(normalizedAddress, tokenAbi, readProvider);
-        const [symbolRaw, decimalsRaw] = await Promise.all([
-          tokenContract.symbol().catch(() => null),
-          tokenContract.decimals().catch(() => null)
-        ]);
-        const symbol =
-          typeof symbolRaw === 'string' && symbolRaw.trim() ? symbolRaw.trim().slice(0, 16) : shortenAddress(normalizedAddress);
-        const decimals =
-          typeof decimalsRaw === 'number' || typeof decimalsRaw === 'bigint'
-            ? normalizeTokenDecimals(Number(decimalsRaw))
-            : FALLBACK_REWARD_TOKEN_DECIMALS;
-        let balanceWei: bigint | null = null;
-        if (walletAddress) {
-          if (token.kind === 'private-erc20') {
-            const signer = walletHasAes ? await getTradeSigner(false).catch(() => null) : null;
-            balanceWei =
-              signer !== null ? await readPrivateTokenBalanceWei(normalizedAddress, walletAddress, signer).catch(() => null) : null;
-          } else {
-            const rawBalance = await tokenContract.balanceOf(walletAddress).catch(() => null);
-            balanceWei = typeof rawBalance === 'bigint' ? rawBalance : null;
-          }
-        }
-
-        setCustomTradeTokenInfoByAddress((previous) => ({
-          ...previous,
-          [tokenKey]: {
-            kind: token.kind,
-            address: normalizedAddress,
-            symbol,
-            decimals,
-            balanceWei,
-            loading: false,
-            walletKey,
-            aesReady: token.kind === 'private-erc20' ? walletHasAes : undefined
-          }
-        }));
-      } catch {
-        setCustomTradeTokenInfoByAddress((previous) => ({
-          ...previous,
-          [tokenKey]: {
-            kind: token.kind,
-            address: normalizedAddress,
-            symbol: shortenAddress(normalizedAddress),
-            decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
-            balanceWei: null,
-            loading: false,
-            error: 'Unable to load token.',
-            walletKey,
-            aesReady: token.kind === 'private-erc20' ? walletHasAes : undefined
-          }
-        }));
-      }
-    },
-    [getTradeSigner, walletAddress, walletHasAes, walletKey]
-  );
-
-  const beginCounterTrade = useCallback(
-    (snapshot: TradeSnapshot) => {
-      if (!walletAddress) {
-        setTradeActionError('Connect a wallet before countering.');
-        return;
-      }
-      if (snapshot.maker.toLowerCase() === walletKey) {
-        setTradeActionError('This is your offer. Cancel it and create a new one to change the terms.');
-        return;
-      }
-      if (snapshot.status !== 'open') {
-        setTradeActionError('Only open trades can receive counter offers.');
-        return;
-      }
-      if (snapshot.counterParentTradeId && snapshot.taker.toLowerCase() !== walletKey) {
-        setTradeActionError('Only the recipient of a counter offer can replace it with a new counter.');
-        return;
-      }
-
-      const nextOfferSelection = resolveTradeAssetSelection(snapshot.request);
-      const nextRequestSelection = resolveTradeAssetSelection(snapshot.offer);
-      setCounterParentTrade(snapshot);
-      setEditingTrade(null);
-      setTradeVisibility('unlisted');
-      setTradeOfferTokenSelection(nextOfferSelection.selection);
-      setTradeRequestTokenSelection(nextRequestSelection.selection);
-      setTradeOfferCustomTokenAddress(nextOfferSelection.customAddress);
-      setTradeRequestCustomTokenAddress(nextRequestSelection.customAddress);
-      setTradeOfferAmountInput(formatTradeAmountInput(snapshot.request));
-      setTradeRequestAmountInput(formatTradeAmountInput(snapshot.offer));
-      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-      setTradeHidePrivateLiquidity(false);
-      setTradeActionError('');
-      openTradeSnapshot(snapshot);
-    },
-    [openTradeSnapshot, walletAddress, walletKey]
-  );
-
-  const clearCounterTrade = useCallback(() => {
-    setCounterParentTrade(null);
-    setTradeHidePrivateLiquidity(false);
-    setTradeActionError('');
-  }, []);
-
-  const beginEditTrade = useCallback(
-    (snapshot: TradeSnapshot) => {
-      if (!walletAddress) {
-        setTradeActionError('Connect the maker wallet before editing.');
-        return;
-      }
-      if (!canEditPublicTrade(snapshot, walletKey)) {
-        setTradeActionError('Only your open, unfilled public trades can be edited.');
-        return;
-      }
-
-      const nextOfferSelection = resolveTradeAssetSelection(snapshot.offer);
-      const nextRequestSelection = resolveTradeAssetSelection(snapshot.request);
-      setEditingTrade(snapshot);
-      setCounterParentTrade(null);
-      setTradeVisibility('public');
-      setTradeOfferTokenSelection(nextOfferSelection.selection);
-      setTradeRequestTokenSelection(nextRequestSelection.selection);
-      setTradeOfferCustomTokenAddress(nextOfferSelection.customAddress);
-      setTradeRequestCustomTokenAddress(nextRequestSelection.customAddress);
-      if (snapshot.hiddenLiquidity) {
-        const hiddenOfferAmountRaw =
-          snapshot.makerPrivateProgress?.remainingOfferAmount ?? snapshot.makerPrivateProgress?.initialOfferAmount;
-        const hiddenOfferAmount =
-          hiddenOfferAmountRaw && /^\d+$/.test(hiddenOfferAmountRaw) ? BigInt(hiddenOfferAmountRaw) : null;
-        const hiddenRequestAmount =
-          hiddenOfferAmount !== null
-            ? quotePrivateRequestAmountForOffer(
-                hiddenOfferAmount,
-                BigInt(snapshot.offer.amount),
-                BigInt(snapshot.request.amount)
-              )
-            : null;
-        setTradeOfferAmountInput(
-          hiddenOfferAmount !== null ? formatTokenAmount(hiddenOfferAmount, snapshot.offer.decimals, 18) : ''
-        );
-        setTradeRequestAmountInput(
-          hiddenRequestAmount !== null ? formatTokenAmount(hiddenRequestAmount, snapshot.request.decimals, 18) : ''
-        );
-      } else {
-        setTradeOfferAmountInput(formatTradeAmountInput(snapshot.offer));
-        setTradeRequestAmountInput(formatTradeAmountInput(snapshot.request));
-      }
-      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-      setTradeHidePrivateLiquidity(Boolean(snapshot.hiddenLiquidity));
-      setTradeActionError('');
-      navigateToTradePath('/trades/create');
-    },
-    [navigateToTradePath, walletAddress, walletKey]
-  );
-
-  const clearEditTrade = useCallback(() => {
-    setEditingTrade(null);
-    setTradeHidePrivateLiquidity(false);
-    setTradeActionError('');
-  }, []);
-
-  const startFreshTrade = useCallback(() => {
-    clearCounterTrade();
-    clearEditTrade();
-    setTradeHidePrivateLiquidity(false);
-    navigateToTradePath('/trades/create');
-  }, [clearCounterTrade, clearEditTrade, navigateToTradePath]);
-
-  const createTrade = useCallback(async () => {
-    setTradeActionError('');
-    setCreatedTradeId(null);
-    setCreatedTradeLink('');
-
-    if (tradeComposerModel.tradeComposerValidationMessage) {
-      setTradeActionError(tradeComposerModel.tradeComposerValidationMessage);
-      return;
-    }
-
-    const offerToken = tradeComposerModel.selectedTradeOfferToken;
-    const requestToken = tradeComposerModel.selectedTradeRequestToken;
-    const offerAmount = tradeComposerModel.parsedTradeOfferAmountWei;
-    const requestAmount = tradeComposerModel.parsedTradeRequestAmountWei;
-    if (!offerToken || !requestToken || !offerAmount || !requestAmount) {
-      setTradeActionError('Complete the trade terms first.');
-      return;
-    }
-    if (editingTrade && !canEditPublicTrade(editingTrade, walletKey)) {
-      setTradeActionError('Only your open, unfilled public trades can be edited.');
-      return;
-    }
-    if (!editingTrade && tradeVisibility === 'direct') {
-      if (!directTradeRecipientIsValid) {
-        setTradeActionError('Enter a valid wallet address for the direct trade.');
-        return;
-      }
-      if (directTradeRecipientNormalized.toLowerCase() === walletAddress.toLowerCase()) {
-        setTradeActionError('Choose a different wallet for the direct trade.');
-        return;
-      }
-    }
-
-    try {
-      setCreatingTrade(true);
-      const isCounterTrade = counterParentTrade !== null;
-      const isCounterReplacement = Boolean(counterParentTrade?.counterParentTradeId);
-      const editSourceTrade = editingTrade;
-      const isEditTrade = editSourceTrade !== null;
-      const hiddenLiquidity = Boolean(
-        tradeHidePrivateLiquidity &&
-        tradeComposerModel.hiddenLiquidityActive &&
-          tradeComposerModel.hiddenPriceOfferAmountWei !== null &&
-          tradeComposerModel.hiddenPriceRequestAmountWei !== null &&
-          !isCounterTrade &&
-          (!isEditTrade || editSourceTrade?.hiddenLiquidity)
-      );
-      if (isEditTrade && editSourceTrade.hiddenLiquidity && !hiddenLiquidity) {
-        setTradeActionError('Private liquidity trades must stay private when edited. Cancel the edit to create a visible-liquidity trade.');
-        return;
-      }
-      const accessSecret = tradeVisibility === 'unlisted' && !isCounterTrade && !isEditTrade ? createTradeAccessSecret() : '';
-      const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
-      const signer = await getTradeSigner(isPrivateTradeAsset(offerToken));
-      const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
-      const expiresAt = Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
-      const publicOfferAmount = hiddenLiquidity ? tradeComposerModel.hiddenPriceOfferAmountWei! : offerAmount;
-      const publicRequestAmount = hiddenLiquidity ? tradeComposerModel.hiddenPriceRequestAmountWei! : requestAmount;
-      const takerAddress =
-        counterParentTrade?.maker ??
-        (isEditTrade
-          ? ZERO_TRADE_TAKER_ADDRESS
-          : tradeVisibility === 'direct'
-            ? directTradeRecipientNormalized
-            : ZERO_TRADE_TAKER_ADDRESS);
-      const createResult = isEditTrade
-        ? hiddenLiquidity
-          ? await replacePrivateFixedPriceTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              originalTradeId: editSourceTrade.tradeId,
-              takerAddress: ZERO_TRADE_TAKER_ADDRESS,
-              offerAsset: offerToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: requestToken,
-              requestAmountWei: publicRequestAmount,
-              expiresAt,
-              nativeFeeWei,
-              isPublic: true,
-              hiddenOfferAmountWei: offerAmount,
-              publicOfferAmountWei: publicOfferAmount
-            })
-          : await editTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              originalTradeId: editSourceTrade.tradeId,
-              takerAddress: ZERO_TRADE_TAKER_ADDRESS,
-              offerAsset: offerToken,
-              offerAmountWei: offerAmount,
-              requestAsset: requestToken,
-              requestAmountWei: requestAmount,
-              expiresAt,
-              nativeFeeWei,
-              isPublic: true
-            })
-        : isCounterReplacement && counterParentTrade
-          ? await counterTradeAndCloseCounteredTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              counteredTradeId: counterParentTrade.tradeId,
-              offerAsset: offerToken,
-              offerAmountWei: offerAmount,
-              requestAsset: requestToken,
-              requestAmountWei: requestAmount,
-              expiresAt,
-              nativeFeeWei
-            })
-          : await createTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              takerAddress,
-              offerAsset: offerToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: requestToken,
-              requestAmountWei: publicRequestAmount,
-              expiresAt,
-              nativeFeeWei,
-              isPublic: !isCounterTrade && tradeVisibility === 'public',
-              accessHash: accessHash !== ZERO_BYTES32 ? accessHash : undefined,
-              parentTradeId: counterParentTrade?.tradeId,
-              hidePrivateLiquidity: hiddenLiquidity,
-              hiddenOfferAmountWei: hiddenLiquidity ? offerAmount : undefined,
-              publicOfferAmountWei: hiddenLiquidity ? publicOfferAmount : undefined
-            });
-      const tradeId = createResult.tradeId;
-      if (hiddenLiquidity) {
-        rememberPrivateTradeLiquidity(tradeId, createResult.escrowContract, offerAmount);
-      }
-      const createdAt = Math.floor(Date.now() / 1000);
-      const counterParentTradeId = isCounterReplacement
-        ? counterParentTrade?.counterParentTradeId
-        : counterParentTrade?.tradeId;
-      const snapshot: TradeSnapshot = {
-        tradeId,
-        escrowContract: createResult.escrowContract,
-        maker: walletAddress,
-        taker: takerAddress,
-        offer: { ...offerToken, amount: publicOfferAmount.toString() },
-        request: { ...requestToken, amount: publicRequestAmount.toString() },
-        createdAt,
-        expiresAt,
-        status: 'open',
-        isPublic: isEditTrade || (!isCounterTrade && tradeVisibility === 'public'),
-        hasAccessHash: Boolean(accessSecret),
-        parentTradeId: isEditTrade ? editSourceTrade.tradeId : counterParentTradeId,
-        counterParentTradeId: isCounterTrade ? counterParentTradeId : undefined,
-        replacesTradeId: isEditTrade ? editSourceTrade.tradeId : undefined,
-        fillState: {
-          remainingOfferAmount: hiddenLiquidity ? '0' : offerAmount.toString(),
-          remainingRequestAmount: hiddenLiquidity ? '0' : requestAmount.toString(),
-          filledOfferAmount: '0',
-          filledRequestAmount: '0'
-        },
-        hiddenLiquidity,
-        makerPrivateProgress: hiddenLiquidity
-          ? {
-              initialOfferAmount: offerAmount.toString(),
-              remainingOfferAmount: offerAmount.toString(),
-              filledOfferAmount: '0'
-            }
-          : undefined
-      };
-      const shareUrl = buildTradeShareUrl(tradeId, accessSecret || undefined, createResult.escrowContract);
-      rememberTradeAccessSecret(tradeId, accessSecret || undefined, createResult.escrowContract);
-      if (isEditTrade) {
-        mergeTradeSnapshot({
-          ...editSourceTrade,
-          status: 'cancelled',
-          replacementTradeId: tradeId
-        });
-      }
-      if (isCounterReplacement && counterParentTrade) {
-        mergeTradeSnapshot({
-          ...counterParentTrade,
-          status: 'declined'
-        });
-      }
-      mergeTradeSnapshot(snapshot);
-      setDetailTrade(snapshot);
-      setCreatedTradeId(tradeId);
-      setCreatedTradeLink(shareUrl);
-      setCounterParentTrade(null);
-      setEditingTrade(null);
-      if (tradeVisibility === 'direct') {
-        setDirectTradeRecipient('');
-      }
-      setTradeOfferAmountInput('');
-      setTradeRequestAmountInput('');
-      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-      setTradeHidePrivateLiquidity(false);
-      openTrade(tradeId, accessSecret || undefined, createResult.escrowContract);
-      await Promise.all([
-        loadWalletBalances(),
-        refreshMyTrades(),
-        snapshot.isPublic ? refreshPublicTrades() : Promise.resolve()
-      ]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to create trade.';
-      setTradeActionError(getOnChainFailureMessage(error, message));
-    } finally {
-      setCreatingTrade(false);
-    }
-  }, [
+  const {
+    beginCounterTrade,
+    beginEditTrade,
+    clearCounterTrade,
+    clearEditTrade,
+    createTrade,
+    startFreshTrade
+  } = useP2PTradeComposerActions({
     buildTradeShareUrl,
+    canEditPublicTrade,
     counterParentTrade,
     directTradeRecipientIsValid,
     directTradeRecipientNormalized,
@@ -2373,304 +1476,57 @@ export default function P2PTradingPage({
     hashTradeAccessSecret,
     loadWalletBalances,
     mergeTradeSnapshot,
+    navigateToTradePath,
     openTrade,
-    rememberPrivateTradeLiquidity,
-    rememberTradeAccessSecret,
+    openTradeSnapshot,
     refreshMyTrades,
     refreshPublicTrades,
+    rememberPrivateTradeLiquidity,
+    rememberTradeAccessSecret,
     resolveRequiredFeeForTradeCreate,
+    setCounterParentTrade,
+    setCreatedTradeId,
+    setCreatedTradeLink,
+    setCreatingTrade,
+    setDetailTrade,
+    setDirectTradeRecipient,
+    setEditingTrade,
+    setTradeActionError,
+    setTradeExpiryHoursInput,
+    setTradeHidePrivateLiquidity,
+    setTradeOfferAmountInput,
+    setTradeOfferCustomTokenAddress,
+    setTradeOfferTokenSelection,
+    setTradeRequestAmountInput,
+    setTradeRequestCustomTokenAddress,
+    setTradeRequestTokenSelection,
+    setTradeVisibility,
     tradeComposerModel,
     tradeHidePrivateLiquidity,
     tradeVisibility,
     walletAddress,
     walletKey
-  ]);
+  });
 
-  const acceptTrade = useCallback(
-    async (snapshot: TradeSnapshot) => {
-      if (!walletAddress) {
-        setTradeActionError('Connect a wallet first.');
-        return;
-      }
-
-      if (connectedWithBurner) {
-        const confirmed = window.confirm('Accept this trade using your app wallet? This will submit an on-chain transaction.');
-        if (!confirmed) {
-          return;
-        }
-      }
-
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(getSnapshotKey(snapshot));
-        const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
-        const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
-        const accessSecret =
-          route.tradeId === snapshot.tradeId &&
-          buildTradeSnapshotKey(route.tradeId, route.escrowContract) === getSnapshotKey(snapshot) &&
-          resolvedRouteAccessSecret
-            ? resolvedRouteAccessSecret
-            : resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract);
-        if (latestSnapshot.hasAccessHash && !accessSecret) {
-          throw new Error('This trade needs its full private link before it can be accepted.');
-        }
-        const remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
-        if (remainingRequestAmount <= 0n) {
-          throw new Error('This trade has no remaining amount to accept.');
-        }
-        const acceptRequestAsset = withTradeAssetAmount(latestSnapshot.request, remainingRequestAmount);
-        const hiddenFillResult = latestSnapshot.hiddenLiquidity
-          ? await fillPrivateFixedPriceTradeOnChain({
-              signer,
-              ownerAddress: walletAddress,
-              tradeId: snapshot.tradeId,
-              requestAsset: acceptRequestAsset,
-              requestAmountWei: remainingRequestAmount,
-              escrowContract: latestSnapshot.escrowContract,
-              accessSecret: accessSecret || undefined
-            })
-          : null;
-        const { acceptedTxHash } =
-          hiddenFillResult !== null
-            ? { acceptedTxHash: hiddenFillResult.filledTxHash }
-            : latestSnapshot.counterParentTradeId
-              ? await acceptCounterTradeAndCloseParentOnChain({
-                  signer,
-                  ownerAddress: walletAddress,
-                  tradeId: snapshot.tradeId,
-                  requestAsset: acceptRequestAsset,
-                  requestAmountWei: remainingRequestAmount,
-                  accessSecret: accessSecret || undefined
-                })
-              : await acceptTradeOnChain({
-                  signer,
-                  ownerAddress: walletAddress,
-                  tradeId: snapshot.tradeId,
-                  requestAsset: acceptRequestAsset,
-                  requestAmountWei: remainingRequestAmount,
-                  accessSecret: accessSecret || undefined
-                });
-        const nextSnapshot: TradeSnapshot = {
-          ...latestSnapshot,
-          taker:
-            (!latestSnapshot.hiddenLiquidity || hiddenFillResult?.fullyFilled) &&
-            latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
-              ? walletAddress
-              : latestSnapshot.taker,
-          status: latestSnapshot.hiddenLiquidity
-            ? hiddenFillResult?.fullyFilled
-              ? 'accepted'
-              : 'open'
-            : 'accepted',
-          fillState: latestSnapshot.hiddenLiquidity
-            ? latestSnapshot.fillState
-            : {
-                remainingOfferAmount: '0',
-                remainingRequestAmount: '0',
-                filledOfferAmount: latestSnapshot.offer.amount,
-                filledRequestAmount: latestSnapshot.request.amount
-          },
-          acceptedTxHash
-        };
-        mergeTradeSnapshot(nextSnapshot);
-        if (latestSnapshot.counterParentTradeId) {
-          refreshTradeDataInBackground(latestSnapshot.counterParentTradeId);
-        }
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to accept trade.';
-        setTradeActionError(getOnChainFailureMessage(error, message));
-      } finally {
-        setProcessingTradeActionId('');
-      }
-    },
-    [
-      getTradeSigner,
-      loadWalletBalances,
-      mergeTradeSnapshot,
-      refreshTradeDataInBackground,
-      refreshMyTrades,
-      refreshPublicTrades,
-      refreshTradeDetail,
-      resolveKnownTradeAccessSecret,
-      resolvedRouteAccessSecret,
-      route.escrowContract,
-      route.tradeId,
-      walletAddress,
-      connectedWithBurner,
-      walletKey
-    ]
-  );
-
-  const partialFillTrade = useCallback(
-    async (snapshot: TradeSnapshot, amountInput: string) => {
-      if (!walletAddress) {
-        setTradeActionError('Connect a wallet first.');
-        return;
-      }
-      if (snapshot.counterParentTradeId) {
-        setTradeActionError('Counter offers must be accepted in full so the original trade can close atomically.');
-        return;
-      }
-
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(getSnapshotKey(snapshot));
-        const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
-        if (latestSnapshot.counterParentTradeId) {
-          throw new Error('Counter offers must be accepted in full so the original trade can close atomically.');
-        }
-
-        let requestedAmount: bigint;
-        let remainingRequestAmount = 0n;
-        if (latestSnapshot.hiddenLiquidity) {
-          const parsedRequestAmount = parseTokenAmountInput(amountInput, latestSnapshot.request.decimals);
-          if (parsedRequestAmount === null || parsedRequestAmount <= 0n) {
-            throw new Error(`Enter a valid ${latestSnapshot.request.symbol} amount to pay.`);
-          }
-          requestedAmount = parsedRequestAmount;
-          if (requestedAmount <= 0n) {
-            throw new Error('This trade price cannot be filled.');
-          }
-        } else {
-          const parsedRequestAmount = parseTokenAmountInput(amountInput, latestSnapshot.request.decimals);
-          if (parsedRequestAmount === null || parsedRequestAmount <= 0n) {
-            throw new Error(`Enter a valid ${latestSnapshot.request.symbol} amount to fill.`);
-          }
-          requestedAmount = parsedRequestAmount;
-          remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
-          if (requestedAmount > remainingRequestAmount) {
-            throw new Error(
-              `Only ${formatTokenAmount(remainingRequestAmount, latestSnapshot.request.decimals, 6)} ${latestSnapshot.request.symbol} remains.`
-            );
-          }
-        }
-
-        const accessSecret =
-          route.tradeId === snapshot.tradeId &&
-          buildTradeSnapshotKey(route.tradeId, route.escrowContract) === getSnapshotKey(snapshot) &&
-          resolvedRouteAccessSecret
-            ? resolvedRouteAccessSecret
-            : resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract);
-        if (latestSnapshot.hasAccessHash && !accessSecret) {
-          throw new Error('This trade needs its full private link before it can be filled.');
-        }
-
-        const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
-        const fillResult = latestSnapshot.hiddenLiquidity
-          ? await fillPrivateFixedPriceTradeOnChain({
-              signer,
-              ownerAddress: walletAddress,
-              tradeId: snapshot.tradeId,
-              requestAsset: withTradeAssetAmount(latestSnapshot.request, requestedAmount),
-              requestAmountWei: requestedAmount,
-              escrowContract: latestSnapshot.escrowContract,
-              accessSecret: accessSecret || undefined
-            })
-          : await fillTradeOnChain({
-              signer,
-              ownerAddress: walletAddress,
-              tradeId: snapshot.tradeId,
-              requestAsset: withTradeAssetAmount(latestSnapshot.request, requestedAmount),
-              requestAmountWei: requestedAmount,
-              accessSecret: accessSecret || undefined
-            });
-        if (latestSnapshot.hiddenLiquidity) {
-          mergeTradeSnapshot({
-            ...latestSnapshot,
-            taker:
-              'fullyFilled' in fillResult &&
-              fillResult.fullyFilled &&
-              latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
-                ? walletAddress
-                : latestSnapshot.taker,
-            status: 'fullyFilled' in fillResult && fillResult.fullyFilled ? 'accepted' : latestSnapshot.status,
-            acceptedTxHash: fillResult.filledTxHash
-          });
-        } else {
-          const remainingAfterFill =
-            requestedAmount >= remainingRequestAmount ? 0n : remainingRequestAmount - requestedAmount;
-          const remainingOfferBeforeFill = getRemainingOfferAmount(latestSnapshot);
-          const offerAmountOut =
-            remainingAfterFill === 0n
-              ? remainingOfferBeforeFill
-              : (requestedAmount * remainingOfferBeforeFill) / remainingRequestAmount;
-          const remainingOfferAfterFill =
-            offerAmountOut >= remainingOfferBeforeFill ? 0n : remainingOfferBeforeFill - offerAmountOut;
-          mergeTradeSnapshot({
-            ...latestSnapshot,
-            status: remainingAfterFill === 0n ? 'accepted' : latestSnapshot.status,
-            fillState: {
-              remainingOfferAmount: remainingOfferAfterFill.toString(),
-              remainingRequestAmount: remainingAfterFill.toString(),
-              filledOfferAmount: (BigInt(latestSnapshot.fillState?.filledOfferAmount ?? '0') + offerAmountOut).toString(),
-              filledRequestAmount: (BigInt(latestSnapshot.fillState?.filledRequestAmount ?? '0') + requestedAmount).toString()
-            }
-          });
-        }
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to fill trade.';
-        setTradeActionError(getOnChainFailureMessage(error, message));
-      } finally {
-        setProcessingTradeActionId('');
-      }
-    },
-    [
-      getTradeSigner,
-      loadWalletBalances,
-      mergeTradeSnapshot,
-      refreshTradeDataInBackground,
-      refreshMyTrades,
-      refreshPublicTrades,
-      refreshTradeDetail,
-      resolveKnownTradeAccessSecret,
-      resolvedRouteAccessSecret,
-      route.escrowContract,
-      route.tradeId,
-      walletAddress
-    ]
-  );
-
-  const cancelTrade = useCallback(
-    async (snapshot: TradeSnapshot) => {
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(getSnapshotKey(snapshot));
-        const signer = await getTradeSigner(false);
-        await cancelTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
-        const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'cancelled' };
-        mergeTradeSnapshot(nextSnapshot);
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to cancel trade.';
-        setTradeActionError(getOnChainFailureMessage(error, message));
-      } finally {
-        setProcessingTradeActionId('');
-      }
-    },
-    [getTradeSigner, mergeTradeSnapshot, refreshTradeDataInBackground]
-  );
-
-  const declineTrade = useCallback(
-    async (snapshot: TradeSnapshot) => {
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(getSnapshotKey(snapshot));
-        const signer = await getTradeSigner(false);
-        await declineTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
-        const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'declined' };
-        mergeTradeSnapshot(nextSnapshot);
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to refuse trade.';
-        setTradeActionError(getOnChainFailureMessage(error, message));
-      } finally {
-        setProcessingTradeActionId('');
-      }
-    },
-    [getTradeSigner, mergeTradeSnapshot, refreshTradeDataInBackground]
-  );
+  const {
+    acceptTrade,
+    cancelTrade,
+    declineTrade,
+    partialFillTrade,
+    processingTradeActionId
+  } = useP2PTradeActions({
+    connectedWithBurner,
+    getTradeSigner,
+    mergeTradeSnapshot,
+    refreshTradeDataInBackground,
+    refreshTradeDetail,
+    resolveKnownTradeAccessSecret,
+    resolvedRouteAccessSecret,
+    routeEscrowContract,
+    routeTradeId,
+    setTradeActionError,
+    walletAddress
+  });
 
   const renderTradeCard = (snapshot: TradeSnapshot, collapsed = false) => {
     const snapshotKey = getSnapshotKey(snapshot);
@@ -2712,18 +1568,6 @@ export default function P2PTradingPage({
       />
     );
   };
-
-  useEffect(() => {
-    const syncRoute = () => {
-      setRoute(resolveTradeRouteFromLocation());
-    };
-    window.addEventListener('popstate', syncRoute);
-    window.addEventListener('hashchange', syncRoute);
-    return () => {
-      window.removeEventListener('popstate', syncRoute);
-      window.removeEventListener('hashchange', syncRoute);
-    };
-  }, []);
 
   useEffect(() => {
     if (routeTradeId !== null && routeAccessSecret) {
@@ -2771,22 +1615,6 @@ export default function P2PTradingPage({
   }, [walletAddress]);
 
   useEffect(() => {
-    resolveRequiredFeeForTradeCreate().catch(() => {});
-  }, [resolveRequiredFeeForTradeCreate]);
-
-  useEffect(() => {
-    loadWalletBalances().catch(() => {});
-  }, [loadWalletBalances]);
-
-  useEffect(() => {
-    refreshPublicTrades().catch(() => {});
-  }, [refreshPublicTrades]);
-
-  useEffect(() => {
-    refreshMyTrades().catch(() => {});
-  }, [refreshMyTrades]);
-
-  useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
     let pollIntervalId: number | null = null;
@@ -2819,8 +1647,7 @@ export default function P2PTradingPage({
       const elapsedSinceLastDispatch = now - lastRealtimeSyncDispatchAt;
       const canDispatchImmediately =
         elapsedSinceLastDispatch >= REALTIME_SYNC_BURST_THROTTLE_MS &&
-        publicTradesRefreshRef.current === null &&
-        myTradesRefreshRef.current === null &&
+        !hasActiveListRefresh() &&
         realtimeSyncTimerId === null;
       if (canDispatchImmediately) {
         dispatchRealtimeSync();
@@ -2960,113 +1787,7 @@ export default function P2PTradingPage({
         window.clearTimeout(realtimeSyncTimerId);
       }
     };
-  }, [refreshMyTrades, refreshPublicTrades, refreshTradeDetail, routeEscrowContract, routeTradeId, walletAddress]);
-
-  useEffect(() => {
-    const requestedTokens = [
-      {
-        address: tradeOfferCustomTokenAddress,
-        kind: resolveTradePresetKind(tradeOfferTokenSelection) === 'private-erc20' ? 'private-erc20' : 'erc20'
-      },
-      {
-        address: tradeRequestCustomTokenAddress,
-        kind: resolveTradePresetKind(tradeRequestTokenSelection) === 'private-erc20' ? 'private-erc20' : 'erc20'
-      }
-    ].filter(
-      (token): token is { address: string; kind: Extract<ResolvedTradeToken['kind'], 'erc20' | 'private-erc20'> } =>
-        Boolean(token.address.trim()) && isWalletAddress(token.address.trim())
-    );
-
-    for (const token of requestedTokens) {
-      const key = buildTradeCustomTokenInfoKey(token.kind, token.address);
-      const existing = customTradeTokenInfoByAddress[key];
-      const shouldRefreshPrivateBalance =
-        token.kind === 'private-erc20' && existing?.aesReady !== walletHasAes && !existing?.loading;
-      if (!existing || existing.walletKey !== walletKey || shouldRefreshPrivateBalance) {
-        loadCustomTokenInfo(token).catch(() => {});
-      }
-    }
-  }, [
-    customTradeTokenInfoByAddress,
-    loadCustomTokenInfo,
-    tradeOfferCustomTokenAddress,
-    tradeOfferTokenSelection,
-    tradeRequestCustomTokenAddress,
-    tradeRequestTokenSelection,
-    walletHasAes,
-    walletKey
-  ]);
-
-  useEffect(() => {
-    for (const token of VERIFIED_ECOSYSTEM_TOKENS) {
-      const key = buildTradeCustomTokenInfoKey(token.kind, token.address);
-      const existing = customTradeTokenInfoByAddress[key];
-      const shouldRefreshPrivateBalance =
-        token.kind === 'private-erc20' && existing?.aesReady !== walletHasAes && !existing?.loading;
-      if (!existing || existing.walletKey !== walletKey || shouldRefreshPrivateBalance) {
-        loadCustomTokenInfo(token).catch(() => {});
-      }
-    }
-  }, [customTradeTokenInfoByAddress, loadCustomTokenInfo, walletHasAes, walletKey]);
-
-  useEffect(() => {
-    if (routeView !== 'trade' || routeTradeId === null) {
-      setDetailTrade(null);
-      setDetailTradeError(routeError);
-      setTradeAccessBlocked(false);
-      setLoadingDetailTrade(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingDetailTrade(true);
-    setDetailTradeError('');
-    setTradeAccessBlocked(false);
-
-    const loadDetail = async () => {
-      try {
-        const metadata = await withTimeout(
-          fetchTradeAccessMetadataById(routeTradeId, routeEscrowContract),
-          TRADE_DETAIL_LOAD_TIMEOUT_MS,
-          'Timed out while reading trade access.'
-        ).catch(() => null);
-        if (cancelled) {
-          return;
-        }
-
-        const snapshot = await withTimeout(
-          refreshTradeDetail(routeTradeId, routeEscrowContract),
-          TRADE_DETAIL_LOAD_TIMEOUT_MS,
-          'Timed out while loading trade.'
-        );
-        const isParticipant =
-          Boolean(walletKey) &&
-          [snapshot?.maker.toLowerCase(), snapshot?.taker.toLowerCase()].includes(walletKey);
-        const isUnlisted = metadata?.isPublic === false || snapshot?.isPublic === false;
-        if (isUnlisted && !resolvedRouteAccessSecret && !isParticipant) {
-          setTradeAccessBlocked(true);
-          setDetailTrade(null);
-          return;
-        }
-        if (!cancelled) {
-          setDetailTrade(snapshot);
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setDetailTradeError(loadError instanceof Error ? loadError.message : 'Trade was not found on the escrow contract.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingDetailTrade(false);
-        }
-      }
-    };
-
-    loadDetail();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshTradeDetail, resolvedRouteAccessSecret, routeError, routeEscrowContract, routeTradeId, routeView, walletKey]);
+  }, [hasActiveListRefresh, refreshMyTrades, refreshPublicTrades, refreshTradeDetail, routeEscrowContract, routeTradeId, walletAddress]);
 
   const tradeComposer = (
     <TradeComposerPanel
@@ -3258,7 +1979,6 @@ export default function P2PTradingPage({
       : isRateReversed
         ? reverseRatioLabel ?? formatTradeRateText(rightSide.asset, leftSide.asset)
         : defaultRatioLabel ?? formatTradeRateText(leftSide.asset, rightSide.asset);
-    const hiddenDirectionLabel = trade.hiddenLiquidity ? orderSummary.directionLabel : '';
     const formatVisibleTermText = (asset: TradeAssetPayload): string =>
       trade.hiddenLiquidity
         ? asset.symbol
@@ -3317,11 +2037,11 @@ export default function P2PTradingPage({
             className="p2p-hidden-price-card"
             onClick={() => toggleTradeRateDirection(trade.tradeId, trade.escrowContract)}
             title="Flip price ratio"
-            aria-label={`Flip price ratio for trade ${trade.tradeId}. Current ratio: ${hiddenFixedPriceTerms}`}
+            aria-label={`Flip price ratio for trade ${trade.tradeId}. Current ratio: ${hiddenFixedPriceTerms}.`}
           >
             <span>Price ratio</span>
             <strong>{hiddenFixedPriceTerms}</strong>
-            <small>{hiddenDirectionLabel}. Amounts and fills stay private.</small>
+            <small>Amounts and fills stay private.</small>
           </button>
         ) : null}
 
@@ -3378,7 +2098,7 @@ export default function P2PTradingPage({
                 className="p2p-offer-rate-toggle"
                 onClick={() => toggleTradeRateDirection(trade.tradeId, trade.escrowContract)}
                 title="Flip rate"
-                aria-label={`Flip rate for trade ${trade.tradeId}`}
+                aria-label={`Flip rate for trade ${trade.tradeId}. Current ratio: ${tradeRateText}.`}
               >
                 {tradeRateText}
               </button>
@@ -3506,94 +2226,6 @@ export default function P2PTradingPage({
     ) : (
       emptyState ?? <p className="standalone-trade-state">{emptyLabel}</p>
     );
-  const visibleAppWallets =
-    sharedWalletSession?.burnerWallets?.length ? sharedWalletSession.burnerWallets : burnerWallets;
-  const connectedAppWalletId =
-    visibleAppWallets.find((walletRecord) => walletRecord.address?.toLowerCase() === walletKey)?.id ?? '';
-  const currentAppWalletSelectionId =
-    connectedAppWalletId || selectedBurnerWalletId || sharedWalletSession?.activeBurnerWalletId || '';
-  const getTradeAppWalletDisplayName = useCallback(
-    (walletRecord: BurnerWalletRecord, index: number): string =>
-      walletRecord.name?.trim() || (walletRecord.address ? shortenAddress(walletRecord.address) : `Wallet ${index + 1}`),
-    []
-  );
-  const handleSwitchTradeAppWallet = useCallback(
-    (walletId: string) => {
-      if (!walletId || walletId === currentAppWalletSelectionId) {
-        return;
-      }
-
-      setWalletMenuOpen(false);
-      setAppWalletMenuOpen(false);
-      if (sharedWalletSession?.onSwitchActiveBurnerWallet && connectedWithBurner) {
-        Promise.resolve(sharedWalletSession.onSwitchActiveBurnerWallet(walletId)).catch(() => {
-          setWalletError('Failed to switch app wallet.');
-        });
-        return;
-      }
-
-      setSelectedBurnerWalletId(walletId);
-      connectBurnerWallet(walletId).catch(() => {});
-    },
-    [
-      connectBurnerWallet,
-      connectedWithBurner,
-      currentAppWalletSelectionId,
-      sharedWalletSession?.onSwitchActiveBurnerWallet
-    ]
-  );
-  const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
-  const tradePrimaryConnectsAppWallet =
-    !walletAddress && tradeHasSavedAppWallet && (tradePrimaryWalletKind === 'app' || !preferredWalletOption);
-  const walletPrimaryButtonLabel =
-    connectingWalletId === 'aes'
-      ? 'Unlocking...'
-      : connectingWalletId
-        ? 'Connecting...'
-        : walletAddress && !onCotiNetwork
-          ? 'Switch to COTI'
-        : walletAddress
-            ? shortenAddress(walletAddress)
-            : tradePrimaryConnectsAppWallet
-              ? 'Connect app wallet'
-            : preferredWalletOption
-              ? `Connect ${preferredWalletOption.label}`
-              : 'Wallet unavailable';
-  const walletAddressCopyKey = walletAddress ? `trade-wallet-address:${walletAddress.toLowerCase()}` : '';
-  const handleWalletPrimaryAction = useCallback(() => {
-    if (walletAddress && !onCotiNetwork) {
-      const provider = providerRef.current;
-      if (provider) {
-        ensureCotiNetwork(provider).catch((error) => {
-          setWalletError(getProviderErrorMessage(error, 'Failed to switch network.'));
-        });
-      }
-      return;
-    }
-
-    if (walletAddress) {
-      copyWithFeedback(walletAddress, walletAddressCopyKey).catch(() => {});
-      return;
-    }
-
-    if (tradePrimaryConnectsAppWallet) {
-      connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {});
-      return;
-    }
-
-    connectWallet(preferredWalletOption?.id).catch(() => {});
-  }, [
-    connectBurnerWallet,
-    connectWallet,
-    copyWithFeedback,
-    ensureCotiNetwork,
-    currentAppWalletSelectionId,
-    onCotiNetwork,
-    preferredWalletOption?.id,
-    tradePrimaryConnectsAppWallet,
-    walletAddress,
-    walletAddressCopyKey
-  ]);
   const disconnectWallet = useCallback(async () => {
     const currentProvider = providerRef.current;
     skippedSharedWalletKeyRef.current =
@@ -3608,10 +2240,8 @@ export default function P2PTradingPage({
     setSelectedBurnerWalletId('');
     setWalletError('');
     setTradeActionError('');
-    setNativeBalanceWei(null);
-    setRewardTokenBalanceWei(null);
-    setPrivateRewardTokenBalanceWei(null);
-    setMyTrades([]);
+    clearWalletBalances();
+    clearMyTrades();
     try {
       window.localStorage.removeItem(WALLET_STATUS_STORAGE_KEY);
     } catch {
@@ -3633,271 +2263,47 @@ export default function P2PTradingPage({
     } catch {
       // Some injected wallets do not support revoking permissions.
     }
-  }, [onDisconnectWallet, sharedWalletSession?.walletAddress, walletAddress]);
-  const walletPrimaryButtonClass =
-    !walletAddress || !onCotiNetwork
-      ? 'connect-btn wallet-inline-btn wallet-primary-action'
-      : 'connect-btn wallet-inline-btn';
-  const walletPrimaryButtonCopied = lastCopiedKey === walletAddressCopyKey;
-  const walletPrimaryButtonIsAddress = Boolean(walletAddress && onCotiNetwork);
-  const showInlineAesAction = Boolean(walletAddress && onCotiNetwork && !walletHasAes);
-  const walletModeLabel = walletAddress
-    ? connectedWithBurner
-      ? providerRef.current
-        ? 'App + browser'
-        : 'App wallet'
-      : burnerWalletRef.current
-        ? `${connectedWalletLabel} + app`
-        : connectedWalletLabel
-    : 'No wallet connected';
-  const walletStatusLabel = !walletAddress
-    ? 'Disconnected'
-    : !onCotiNetwork
-      ? 'Switch network'
-      : walletHasAes
-        ? 'Ready'
-        : 'Privacy locked';
-  const showTradeBrowserSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && connectedWithBurner && preferredWalletOption);
-  const showTradeAppSwitchAction =
-    Boolean(walletAddress && onCotiNetwork && !connectedWithBurner && tradeHasSavedAppWallet);
-  const showTradeAppCreateAction =
-    Boolean(walletAddress && onCotiNetwork && !connectedWithBurner && !tradeHasSavedAppWallet);
-  const showTradeAppWalletSwitchButton =
-    Boolean(walletAddress && onCotiNetwork && connectedWithBurner && visibleAppWallets.length > 1);
-  const tradeAppWalletSwitchButton = showTradeAppWalletSwitchButton ? (
-    <AppWalletSwitchButton
-      menuOpen={appWalletMenuOpen}
-      onToggleMenu={() => {
-        setWalletMenuOpen(false);
-        setAppWalletMenuOpen((previous) => !previous);
-      }}
-      onSelectWallet={handleSwitchTradeAppWallet}
-      options={visibleAppWallets.map((walletRecord, index) => {
-        const walletId = walletRecord.id ?? '';
-        const isSelected = walletId.length > 0 && walletId === currentAppWalletSelectionId;
-        const displayName = getTradeAppWalletDisplayName(walletRecord, index);
-        return {
-          active: isSelected,
-          disabled: Boolean(connectingWalletId) || !walletId || isSelected,
-          id: walletId,
-          key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
-          label: isSelected ? `${displayName} active` : displayName
-        };
-      })}
-      disabled={Boolean(connectingWalletId)}
-    />
-  ) : null;
-  const tradePrivacyActionLabel =
-    connectingWalletId === 'aes'
-      ? 'Unlocking...'
-      : 'Unlock privacy';
-  const tradeWalletPrivacyAction = useMemo(
-    () =>
-      showInlineAesAction ? (
-        <button
-          type="button"
-          className="p2p-wallet-aes-action"
-          onClick={() => {
-            signAesForCurrentWallet().catch(() => {});
-          }}
-          disabled={Boolean(connectingWalletId)}
-          title="Run COTI onboarding once so encrypted balances and private messaging features can work."
-        >
-          {tradePrivacyActionLabel}
-        </button>
-      ) : null,
-    [connectingWalletId, showInlineAesAction, signAesForCurrentWallet, tradePrivacyActionLabel]
-  );
-  const tradeWalletSwitchAction = useMemo(() => {
-    if (showTradeBrowserSwitchAction && preferredWalletOption) {
-      return (
-      <button
-        type="button"
-        className="p2p-wallet-aes-action wallet-switch-action"
-        onClick={() => connectWallet(preferredWalletOption.id).catch(() => {})}
-        disabled={Boolean(connectingWalletId)}
-        title={`Use ${preferredWalletOption.label} for this app`}
-      >
-        {preferredWalletOption.label}
-      </button>
-      );
-    }
-
-    if (showTradeAppSwitchAction) {
-      return (
-      <button
-        type="button"
-        className="p2p-wallet-aes-action wallet-switch-action"
-        onClick={() => connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {})}
-        disabled={Boolean(connectingWalletId)}
-        title="Use the app wallet for this app"
-      >
-        App wallet
-      </button>
-      );
-    }
-
-    if (showTradeAppCreateAction) {
-      return (
-      <button
-        type="button"
-        className="p2p-wallet-aes-action wallet-switch-action"
-        onClick={beginGenerateBurnerWallet}
-        disabled={Boolean(connectingWalletId)}
-        title="Create an app wallet so you can switch between wallet types"
-      >
-        Add app wallet
-      </button>
-      );
-    }
-
-    return null;
-  }, [
+  }, [clearMyTrades, clearWalletBalances, onDisconnectWallet, sharedWalletSession?.walletAddress, walletAddress]);
+  const getConnectedProvider = useCallback(() => providerRef.current, []);
+  const {
+    handleWalletPrimaryAction,
+    tradePrimaryConnectsAppWallet,
+    tradeWalletHeaderControl,
+    walletPrimaryButtonLabel
+  } = useP2PWalletHeaderControl({
+    appWalletMenuOpen,
     beginGenerateBurnerWallet,
+    beginImportBurnerWallet,
+    browserWalletOptions,
+    burnerWallets,
+    chainId,
+    connectedWalletLabel,
+    connectedWithBurner,
+    connectingWalletId,
     connectBurnerWallet,
     connectWallet,
-    connectingWalletId,
-    currentAppWalletSelectionId,
+    copyWithFeedback,
+    disconnectWallet,
+    ensureCotiNetwork,
+    getConnectedProvider,
+    hasConnectedAppWallet: Boolean(burnerWalletRef.current),
+    hasConnectedBrowserWallet: Boolean(providerRef.current),
+    lastCopiedKey,
+    onCotiNetwork,
     preferredWalletOption,
-    showTradeAppCreateAction,
-    showTradeAppSwitchAction,
-    showTradeBrowserSwitchAction
-  ]);
-  const tradeWalletHeaderControl = useMemo(
-    () => (
-      <WalletHeaderPanel
-        primaryButtonClassName={
-          walletPrimaryButtonCopied
-            ? `${walletPrimaryButtonClass} p2p-wallet-address copied`
-            : `${walletPrimaryButtonClass} p2p-wallet-address`
-        }
-        primaryButtonLabel={walletPrimaryButtonLabel}
-        primaryAddon={tradeAppWalletSwitchButton}
-        primaryMetaLabel={walletPrimaryButtonIsAddress && walletPrimaryButtonCopied ? 'Copied' : undefined}
-        primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
-        primaryDisabled={Boolean(connectingWalletId) || (!walletAddress && !preferredWalletOption && !tradePrimaryConnectsAppWallet)}
-        onPrimaryAction={handleWalletPrimaryAction}
-        modeLabel={walletModeLabel}
-        statusLabel={walletStatusLabel}
-        action={
-          tradeWalletPrivacyAction || tradeWalletSwitchAction ? (
-            <>
-              {tradeWalletPrivacyAction}
-              {tradeWalletSwitchAction}
-            </>
-          ) : null
-        }
-        menuOpen={walletMenuOpen}
-        onToggleMenu={() => {
-          setAppWalletMenuOpen(false);
-          setWalletMenuOpen((previous) => !previous);
-        }}
-        menuDisabled={Boolean(connectingWalletId)}
-        menu={
-          <>
-            <div className="p2p-wallet-menu-section">
-              <span>Browser wallet</span>
-              {browserWalletOptions.length > 0 ? (
-                browserWalletOptions.map((option) => {
-                  const isCurrentBrowserWallet =
-                    !connectedWithBurner && walletAddress && option.id === (selectedWalletId || preferredWalletOption?.id);
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={isCurrentBrowserWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                      onClick={() => {
-                        setWalletMenuOpen(false);
-                        connectWallet(option.id, true).catch(() => {});
-                      }}
-                      disabled={Boolean(connectingWalletId)}
-                      role="menuitem"
-                    >
-                      {connectingWalletId === option.id ? 'Connecting...' : option.label}
-                    </button>
-                  );
-                })
-              ) : (
-                <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                  MetaMask or CipherTrade not detected
-                </button>
-              )}
-            </div>
-
-            <div className="p2p-wallet-menu-section">
-              <span>App wallet</span>
-              <button
-                type="button"
-                className={connectedWithBurner ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                onClick={() => {
-                  setWalletMenuOpen(false);
-                  connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {});
-                }}
-                disabled={Boolean(connectingWalletId)}
-                role="menuitem"
-              >
-                {connectingWalletId === 'burner' ? 'Unlocking...' : 'Connect app wallet'}
-              </button>
-              <button type="button" className="p2p-wallet-action" onClick={beginGenerateBurnerWallet} role="menuitem">
-                Generate wallet
-              </button>
-              <button type="button" className="p2p-wallet-action" onClick={beginImportBurnerWallet} role="menuitem">
-                Import wallet
-              </button>
-            </div>
-
-            <button
-              type="button"
-              className="p2p-wallet-action danger"
-              onClick={() => {
-                setWalletMenuOpen(false);
-                disconnectWallet().catch(() => {});
-              }}
-              disabled={Boolean(connectingWalletId) || !walletAddress}
-              role="menuitem"
-            >
-              Disconnect
-            </button>
-          </>
-        }
-      />
-    ),
-    [
-      beginGenerateBurnerWallet,
-      beginImportBurnerWallet,
-      browserWalletOptions,
-      burnerWallets,
-      connectBurnerWallet,
-      connectWallet,
-      connectedWithBurner,
-      connectingWalletId,
-      currentAppWalletSelectionId,
-      disconnectWallet,
-      getTradeAppWalletDisplayName,
-      handleWalletPrimaryAction,
-      handleSwitchTradeAppWallet,
-      preferredWalletOption,
-      selectedBurnerWalletId,
-      selectedWalletId,
-      showTradeAppCreateAction,
-      showTradeAppSwitchAction,
-      showTradeBrowserSwitchAction,
-      tradeAppWalletSwitchButton,
-      tradeWalletPrivacyAction,
-      tradeWalletSwitchAction,
-      tradePrimaryConnectsAppWallet,
-      visibleAppWallets,
-      walletAddress,
-      walletMenuOpen,
-      walletModeLabel,
-      walletPrimaryButtonClass,
-      walletPrimaryButtonCopied,
-      walletPrimaryButtonIsAddress,
-      walletPrimaryButtonLabel,
-      walletStatusLabel
-    ]
-  );
+    selectedBurnerWalletId,
+    selectedWalletId,
+    setAppWalletMenuOpen,
+    setSelectedBurnerWalletId,
+    setWalletError,
+    setWalletMenuOpen,
+    sharedWalletSession,
+    signAesForCurrentWallet,
+    tradePrimaryWalletKind,
+    walletAddress,
+    walletHasAes,
+    walletMenuOpen
+  });
   useEffect(() => {
     onHeaderWalletControlChange?.(tradeWalletHeaderControl);
     return () => {

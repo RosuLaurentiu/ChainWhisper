@@ -53,8 +53,19 @@ export type TreasuryChartPoint = {
   onchain: TreasuryOnchainReference | null;
 };
 
-type DashboardData = {
+export type TreasurySourceKey = 'snapshotFeed' | 'onchainContract' | 'onchainTransactions' | 'liveTreasury';
+
+export type TreasurySourceStatus = {
+  count: number;
+  error?: string;
+  key: TreasurySourceKey;
+  label: string;
+  status: 'ready' | 'empty' | 'error';
+};
+
+export type DashboardData = {
   livePoint: TreasurySnapshot | null;
+  sources: TreasurySourceStatus[];
   snapshots: TreasurySnapshot[];
 };
 
@@ -99,6 +110,10 @@ const DEFAULT_COTI_EXPLORER_API_URL = `${DEFAULT_COTI_EXPLORER_URL}/api/v2`;
 const DEFAULT_COTI_RPC_URL = 'https://mainnet.coti.io/rpc';
 const COTI_CHAIN_ID = 2632500;
 const REQUIRED_FIELDS = ['totalCotiInPool', 'totalActiveGCoti', 'maxApy', 'maxBoostApy', 'maxTotalApy'] as const;
+const DASHBOARD_DATA_CACHE_TTL_MS = 30_000;
+
+let dashboardDataCache: { data: DashboardData; loadedAt: number } | null = null;
+let dashboardDataRequest: Promise<DashboardData> | null = null;
 
 const TREASURY_SNAPSHOT_STORE_ABI = [
   {
@@ -156,25 +171,58 @@ const cotiChain = defineChain({
   }
 });
 
-export async function loadDashboardData(): Promise<DashboardData> {
+export async function loadDashboardData({ forceRefresh = false }: { forceRefresh?: boolean } = {}): Promise<DashboardData> {
+  const now = Date.now();
+  if (!forceRefresh && dashboardDataCache && now - dashboardDataCache.loadedAt < DASHBOARD_DATA_CACHE_TTL_MS) {
+    return dashboardDataCache.data;
+  }
+
+  if (!forceRefresh && dashboardDataRequest) {
+    return dashboardDataRequest;
+  }
+
+  dashboardDataRequest = fetchDashboardData()
+    .then((data) => {
+      dashboardDataCache = { data, loadedAt: Date.now() };
+      return data;
+    })
+    .finally(() => {
+      dashboardDataRequest = null;
+    });
+
+  return dashboardDataRequest;
+}
+
+export function preloadDashboardData(): Promise<DashboardData> {
+  return loadDashboardData().catch((error) => {
+    console.warn('[dashboard] preload failed', error);
+    throw error;
+  });
+}
+
+async function fetchDashboardData(): Promise<DashboardData> {
   const snapshotUrl = resolveSnapshotUrl();
   const treasuryUrl = resolveTreasuryUrl();
   const onchainConfig = resolveOnchainConfig();
 
   const sources = [
     {
+      key: 'snapshotFeed',
       label: 'snapshot feed',
       promise: loadSnapshotFeed(snapshotUrl)
     },
     {
+      key: 'onchainContract',
       label: 'onchain contract history',
       promise: loadOnchainSnapshots(onchainConfig)
     },
     {
+      key: 'onchainTransactions',
       label: 'onchain transaction history',
       promise: loadOnchainTransactionSnapshots(onchainConfig)
     },
     {
+      key: 'liveTreasury',
       label: 'live treasury',
       promise: loadLiveTreasuryPoint(treasuryUrl)
     }
@@ -185,40 +233,49 @@ export async function loadDashboardData(): Promise<DashboardData> {
   let onchainSnapshots: TreasurySnapshot[] = [];
   let onchainTransactionSnapshots: TreasurySnapshot[] = [];
   let livePoint: TreasurySnapshot | null = null;
-  const errors: string[] = [];
+  const sourceStatuses: TreasurySourceStatus[] = [];
 
   results.forEach((result, index) => {
     const source = sources[index];
 
     if (result.status === 'fulfilled') {
       const resolvedValue = result.value;
+      let count = 0;
       if (source.label === 'snapshot feed') {
         feedSnapshots = resolvedValue as TreasurySnapshot[];
+        count = feedSnapshots.length;
       } else if (source.label === 'onchain contract history') {
         onchainSnapshots = resolvedValue as TreasurySnapshot[];
+        count = onchainSnapshots.length;
       } else if (source.label === 'onchain transaction history') {
         onchainTransactionSnapshots = resolvedValue as TreasurySnapshot[];
+        count = onchainTransactionSnapshots.length;
       } else {
         livePoint = resolvedValue as TreasurySnapshot;
+        count = livePoint ? 1 : 0;
       }
+      sourceStatuses.push({
+        key: source.key,
+        label: source.label,
+        status: count > 0 ? 'ready' : 'empty',
+        count
+      });
       return;
     }
 
     console.warn(`[snapshot-history] ${source.label} load failed`, result.reason);
-    errors.push(`${source.label}: ${toErrorMessage(result.reason)}`);
+    sourceStatuses.push({
+      key: source.key,
+      label: source.label,
+      status: 'error',
+      count: 0,
+      error: toErrorMessage(result.reason)
+    });
   });
 
   const snapshots = mergeSnapshots(feedSnapshots, onchainSnapshots, onchainTransactionSnapshots);
 
-  if (snapshots.length > 0 || livePoint) {
-    return { livePoint, snapshots };
-  }
-
-  if (errors.length > 0) {
-    throw new Error(errors.join(' | '));
-  }
-
-  return { livePoint: null, snapshots: [] };
+  return { livePoint, snapshots, sources: sourceStatuses };
 }
 
 export function toChartPoint(snapshot: TreasurySnapshot, label: string): TreasuryChartPoint {

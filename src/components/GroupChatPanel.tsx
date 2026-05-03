@@ -1,12 +1,13 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useRef, type MutableRefObject, type ReactNode, type Ref } from 'react';
+import { useCallback, useMemo, useRef, type KeyboardEvent, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import GroupChatCompose from './GroupChatCompose';
 import ChatImage from './ChatImage';
+import MessageActions from './MessageActions';
+import type { ImageAttachmentPreviewState } from '../lib/imageAttachmentPreview';
 import { closeDetailsOnEscape } from './a11y';
 import { parseImageTag } from '../lib/imagePull';
 import useVirtualizedPrependScrollAnchor from '../hooks/useVirtualizedPrependScrollAnchor';
 import {
-  DEFAULT_REACTION_EMOJIS,
   formatMessageTimestamp,
   getMessageDisplayText,
   isWalletAddress,
@@ -102,8 +103,10 @@ type GroupChatPanelProps = {
   composerRef: Ref<HTMLDivElement>;
   onSendImage: (file: File) => void;
   uploadingImage: boolean;
+  imageAttachmentStatus?: ImageAttachmentPreviewState | null;
   imageAttachDisabled: boolean;
   imageAttachTitle: string;
+  onDismissImageAttachmentStatus: () => void;
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
@@ -174,13 +177,16 @@ export default function GroupChatPanel({
   composerRef,
   onSendImage,
   uploadingImage,
+  imageAttachmentStatus,
   imageAttachDisabled,
   imageAttachTitle,
+  onDismissImageAttachmentStatus,
   onSendMessage,
   maxMessageLength,
   onMessageInputChange
 }: GroupChatPanelProps) {
   const chatMessagesNodeRef = useRef<HTMLDivElement | null>(null);
+  const mobileGroupToolsButtonRef = useRef<HTMLButtonElement | null>(null);
   const setChatMessagesNode = useCallback(
     (node: HTMLDivElement | null) => {
       chatMessagesNodeRef.current = node;
@@ -214,6 +220,26 @@ export default function GroupChatPanel({
     threadKey: `group:${activeGroupId}`,
     totalSize: messageVirtualizerTotalSize
   });
+  const closeMobileGroupOptions = useCallback(() => {
+    if (!mobileGroupOptionsOpen) {
+      return;
+    }
+
+    onToggleMobileGroupOptions();
+    window.requestAnimationFrame(() => mobileGroupToolsButtonRef.current?.focus());
+  }, [mobileGroupOptionsOpen, onToggleMobileGroupOptions]);
+  const handleMobileGroupOptionsKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      closeMobileGroupOptions();
+    },
+    [closeMobileGroupOptions]
+  );
 
   return (
     <div className="chat-shell">
@@ -299,6 +325,7 @@ export default function GroupChatPanel({
                 {syncingGroups ? 'Refreshing...' : 'Refresh'}
               </button>
               <button
+                ref={mobileGroupToolsButtonRef}
                 type="button"
                 className={
                   mobileGroupOptionsOpen
@@ -328,7 +355,13 @@ export default function GroupChatPanel({
           )}
         </div>
         {isMobileNav && mobileGroupOptionsOpen ? (
-          <div id="group-mobile-tools-panel" className="group-mobile-options-panel">
+          <div
+            id="group-mobile-tools-panel"
+            className="group-mobile-options-panel"
+            role="dialog"
+            aria-label="Group tools"
+            onKeyDown={handleMobileGroupOptionsKeyDown}
+          >
             <div className="group-mobile-section">
               <div className="group-mobile-section-header">
                 <span className="group-mobile-section-title">Invite tools</span>
@@ -450,45 +483,19 @@ export default function GroupChatPanel({
                   className={messageBubbleClassName}
                 >
                   {canReplyToGroupMessage ? (
-                    <>
-                      <button
-                        type="button"
-                        className="message-react-action"
-                        onClick={() => onToggleReactionPicker(message.id)}
-                        aria-label="React to this message"
-                        title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
-                        disabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        className="message-reply-action"
-                        onClick={() => onReplyToMessage(message)}
-                        aria-label="Reply to this message"
-                        title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'Reply'}
-                        disabled={walletPromptSensitiveActionsDisabled}
-                      >
-                        R
-                      </button>
-                      {!walletPromptSensitiveActionsDisabled && reactionPickerMessageId === message.id ? (
-                        <div className="message-reaction-picker" role="dialog" aria-label="Pick reaction">
-                          {DEFAULT_REACTION_EMOJIS.map((emoji) => (
-                            <button
-                              key={`${message.id}-${emoji}`}
-                              type="button"
-                              onClick={() => {
-                                onSendReaction(message, emoji).catch(() => {});
-                              }}
-                              disabled={sendingReaction || reactedEmojiSet.has(emoji)}
-                              title={reactedEmojiSet.has(emoji) ? `Already reacted with ${emoji}` : `React with ${emoji}`}
-                            >
-                              {emoji}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </>
+                    <MessageActions
+                      message={message}
+                      pickerOpen={!walletPromptSensitiveActionsDisabled && reactionPickerMessageId === message.id}
+                      reactedEmojiSet={reactedEmojiSet}
+                      sendingReaction={sendingReaction}
+                      reactionDisabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
+                      reactionTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
+                      replyDisabled={walletPromptSensitiveActionsDisabled}
+                      replyTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'Reply'}
+                      onToggleReactionPicker={onToggleReactionPicker}
+                      onSendReaction={onSendReaction}
+                      onReplyToMessage={onReplyToMessage}
+                    />
                   ) : null}
                   {message.direction === 'incoming' && !isGroupSystemMessage ? (
                     canCopySenderAddress ? (
@@ -610,8 +617,10 @@ export default function GroupChatPanel({
         isMobileNav={isMobileNav}
         onSendImage={onSendImage}
         uploadingImage={uploadingImage}
+        imageAttachmentStatus={imageAttachmentStatus}
         imageAttachDisabled={imageAttachDisabled}
         imageAttachTitle={imageAttachTitle}
+        onDismissImageAttachmentStatus={onDismissImageAttachmentStatus}
         onSendMessage={onSendMessage}
         maxMessageLength={maxMessageLength}
         onMessageInputChange={onMessageInputChange}

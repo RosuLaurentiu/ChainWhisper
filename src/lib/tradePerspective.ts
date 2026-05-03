@@ -183,7 +183,7 @@ export const resolveTradeOrderSummary = (
   };
   const paymentSide: TradeOrderSide = {
     asset: trade.request,
-    label: isBuyerView ? 'You pay' : isMakerView ? 'Buyer pays' : 'Buyer pays',
+    label: 'Buyer pays',
     tone: isBuyerView ? 'send' : isMakerView ? 'receive' : 'send',
     role: 'payment'
   };

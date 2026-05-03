@@ -1,8 +1,10 @@
 import { useRef, useState, type Ref } from 'react';
 import ChatSendIcon from './ChatSendIcon';
 import ChatImageIcon from './ChatImageIcon';
+import ImageAttachmentPreview from './ImageAttachmentPreview';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../lib/appShared';
 import { CHAT_IMAGE_FILE_ACCEPT } from '../lib/imagePull';
+import type { ImageAttachmentPreviewState } from '../lib/imageAttachmentPreview';
 import { insertChatComposerLineBreak, syncChatComposerText } from './chatComposeText';
 
 type GroupTipRecipient = {
@@ -41,8 +43,10 @@ type GroupChatComposeProps = {
   isMobileNav: boolean;
   onSendImage: (file: File) => void;
   uploadingImage: boolean;
+  imageAttachmentStatus?: ImageAttachmentPreviewState | null;
   imageAttachDisabled: boolean;
   imageAttachTitle: string;
+  onDismissImageAttachmentStatus: () => void;
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
@@ -77,8 +81,10 @@ export default function GroupChatCompose({
   isMobileNav,
   onSendImage,
   uploadingImage,
+  imageAttachmentStatus,
   imageAttachDisabled,
   imageAttachTitle,
+  onDismissImageAttachmentStatus,
   onSendMessage,
   maxMessageLength,
   onMessageInputChange
@@ -192,6 +198,9 @@ export default function GroupChatCompose({
             <p className="chat-tip-warning">Amount exceeds available balance.</p>
           ) : null}
         </div>
+      ) : null}
+      {imageAttachmentStatus ? (
+        <ImageAttachmentPreview status={imageAttachmentStatus} onDismiss={onDismissImageAttachmentStatus} />
       ) : null}
       <div className="group-compose-main">
         <div className="group-compose-entry">
