@@ -200,7 +200,12 @@ export default function GroupChatCompose({
         </div>
       ) : null}
       {imageAttachmentStatus ? (
-        <ImageAttachmentPreview status={imageAttachmentStatus} onDismiss={onDismissImageAttachmentStatus} />
+        <ImageAttachmentPreview
+          status={imageAttachmentStatus}
+          onDismiss={onDismissImageAttachmentStatus}
+          onRetry={onSendImage}
+          retryDisabled={imageAttachDisabled}
+        />
       ) : null}
       <div className="group-compose-main">
         <div className="group-compose-entry">

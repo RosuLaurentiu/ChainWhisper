@@ -168,7 +168,12 @@ export default function DirectChatCompose({
       ) : null}
       {tradeComposerOpen ? tradeComposerContent : null}
       {imageAttachmentStatus ? (
-        <ImageAttachmentPreview status={imageAttachmentStatus} onDismiss={onDismissImageAttachmentStatus} />
+        <ImageAttachmentPreview
+          status={imageAttachmentStatus}
+          onDismiss={onDismissImageAttachmentStatus}
+          onRetry={onSendImage}
+          retryDisabled={imageAttachDisabled}
+        />
       ) : null}
       <div className="chat-compose-main">
         <div className="chat-compose-entry">

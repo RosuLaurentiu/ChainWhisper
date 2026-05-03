@@ -14,7 +14,6 @@ import {
   loadDashboardData,
   toChartPoint,
   type TreasuryChartPoint,
-  type TreasurySourceStatus,
   type TreasurySnapshot
 } from '../lib/treasuryData';
 
@@ -80,7 +79,6 @@ const METRIC_OPTIONS = {
 type MetricKey = keyof typeof METRIC_OPTIONS;
 
 type TreasuryStatus = 'loading' | 'ready' | 'error';
-type TreasurySourceTone = 'loading' | 'ready' | 'partial' | 'empty' | 'error';
 
 type TooltipPayloadEntry = {
   value: number;
@@ -144,14 +142,6 @@ function formatTimestamp(value: string): string {
     timeStyle: 'short',
     timeZone: 'UTC'
   });
-}
-
-function formatSourceError(message?: string): string {
-  if (!message) {
-    return 'Source unavailable';
-  }
-
-  return message.length > 90 ? `${message.slice(0, 87)}...` : message;
 }
 
 function shortHash(value: string | null | undefined): string {
@@ -532,111 +522,29 @@ function TreasuryMetaCard({
   );
 }
 
-function TreasurySourceCard({
-  detail,
-  label,
-  tone,
-  value
-}: {
-  detail: string;
-  label: string;
-  tone: TreasurySourceTone;
-  value: string;
-}) {
-  return (
-    <div className={`treasury-source-card treasury-source-card-${tone}`}>
-      <span>{label}</span>
-      <strong>
-        <i className="treasury-status-dot" aria-hidden="true" />
-        {value}
-      </strong>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
-function getLiveSourceSummary(
-  source: TreasurySourceStatus | undefined,
-  livePoint: TreasurySnapshot | null
-): { detail: string; tone: TreasurySourceTone; value: string } {
-  if (!source) {
-    return { value: 'Checking', detail: 'Live totals have not responded yet.', tone: 'loading' };
-  }
-  if (livePoint) {
-    return { value: 'Online', detail: `Updated ${formatTimestamp(livePoint.capturedAt)}`, tone: 'ready' };
-  }
-  if (source.status === 'error') {
-    return { value: 'Unavailable', detail: formatSourceError(source.error), tone: 'error' };
-  }
-  return { value: 'No live point', detail: 'The live endpoint responded without usable totals.', tone: 'empty' };
-}
-
-function getSavedSourceSummary(
-  source: TreasurySourceStatus | undefined,
-  mergedSnapshotCount: number
-): { detail: string; tone: TreasurySourceTone; value: string } {
-  if (!source) {
-    return { value: 'Checking', detail: 'Saved snapshot feed has not responded yet.', tone: 'loading' };
-  }
-  if (source.status === 'error') {
-    return { value: 'Feed failed', detail: formatSourceError(source.error), tone: mergedSnapshotCount > 0 ? 'partial' : 'error' };
-  }
-  if (source.count > 0) {
-    return { value: `${source.count} saved`, detail: `${mergedSnapshotCount} total rows after merging onchain history.`, tone: 'ready' };
-  }
-  return { value: 'No saved rows', detail: 'Snapshot feed responded without saved history.', tone: 'empty' };
-}
-
-function getOnchainSourceSummary(
-  sources: TreasurySourceStatus[]
-): { detail: string; tone: TreasurySourceTone; value: string } {
-  if (sources.length === 0) {
-    return { value: 'Checking', detail: 'Onchain references have not responded yet.', tone: 'loading' };
-  }
-
-  const referenceCount = sources.reduce((total, source) => total + source.count, 0);
-  const errorCount = sources.filter((source) => source.status === 'error').length;
-
-  if (referenceCount > 0 && errorCount > 0) {
-    return {
-      value: `${referenceCount} refs`,
-      detail: `${errorCount} onchain source${errorCount === 1 ? '' : 's'} unavailable.`,
-      tone: 'partial'
-    };
-  }
-  if (referenceCount > 0) {
-    return { value: `${referenceCount} refs`, detail: 'RPC and explorer history are available.', tone: 'ready' };
-  }
-  if (errorCount === sources.length) {
-    return { value: 'Unavailable', detail: formatSourceError(sources.find((source) => source.error)?.error), tone: 'error' };
-  }
-  return { value: 'No refs', detail: 'Onchain sources responded without recorded references.', tone: 'empty' };
-}
-
 export default function TreasuryPage({ isCompactLayout = false }: { isCompactLayout?: boolean }) {
   const [metric, setMetric] = useState<MetricKey>('cotiInPool');
   const [timeframe, setTimeframe] = useState<TimeframeKey>('30d');
   const [livePoint, setLivePoint] = useState<TreasurySnapshot | null>(null);
   const [snapshots, setSnapshots] = useState<TreasurySnapshot[]>([]);
-  const [sourceStatuses, setSourceStatuses] = useState<TreasurySourceStatus[]>([]);
   const [status, setStatus] = useState<TreasuryStatus>('loading');
   const [error, setError] = useState('');
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateSnapshots({ isBackground = false } = {}) {
+    async function hydrateSnapshots({ forceRefresh = false, isBackground = false } = {}) {
       try {
         if (!isBackground) {
           setStatus('loading');
           setError('');
         }
 
-        const dashboardData = await loadDashboardData({ forceRefresh: isBackground });
+        const dashboardData = await loadDashboardData({ forceRefresh: forceRefresh || isBackground });
 
         if (!cancelled) {
           const hasAnyData = Boolean(dashboardData.livePoint || dashboardData.snapshots.length > 0);
-          setSourceStatuses(dashboardData.sources);
 
           if (isBackground && !hasAnyData) {
             setError('Background refresh could not reach any treasury data source. Showing the last loaded data.');
@@ -661,7 +569,7 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
       }
     }
 
-    void hydrateSnapshots();
+    void hydrateSnapshots({ forceRefresh: refreshNonce > 0 });
     const timerId = window.setInterval(() => {
       void hydrateSnapshots({ isBackground: true });
     }, REFRESH_INTERVAL_MS);
@@ -670,7 +578,7 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
       cancelled = true;
       window.clearInterval(timerId);
     };
-  }, []);
+  }, [refreshNonce]);
 
   const chartData = useMemo(
     () => snapshots.map((snapshot) => toChartPoint(snapshot, formatDayLabel(snapshot.day))),
@@ -712,19 +620,13 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
   const selectedTimeframe = useMemo(() => getSelectedTimeframe(timeframe), [timeframe]);
   const contractAddress = useMemo(() => getOnchainContractAddress(), []);
   const contractExplorerUrl = useMemo(() => getOnchainContractExplorerUrl(), []);
-  const sourceStatusByKey = useMemo(
-    () => new Map(sourceStatuses.map((source) => [source.key, source] as const)),
-    [sourceStatuses]
-  );
 
   const latestSaved = chartData[chartData.length - 1];
   const currentPoint = liveChartPoint || latestSaved;
   const recentRows = [...chartData].reverse().slice(0, 8);
-  const liveSourceSummary = getLiveSourceSummary(sourceStatusByKey.get('liveTreasury'), livePoint);
-  const savedSourceSummary = getSavedSourceSummary(sourceStatusByKey.get('snapshotFeed'), snapshots.length);
-  const onchainSourceSummary = getOnchainSourceSummary(
-    sourceStatuses.filter((source) => source.key === 'onchainContract' || source.key === 'onchainTransactions')
-  );
+  const retryTreasuryData = () => {
+    setRefreshNonce((previous) => previous + 1);
+  };
 
   return (
     <main className="treasury-shell">
@@ -742,14 +644,9 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
             <TreasuryMetaCard label="Saved snapshots" value={String(snapshots.length)} />
             <TreasuryMetaCard
               label="Feed"
-              value={liveSourceSummary.value === 'Online' ? 'Live feed online' : 'Live feed unavailable'}
+              value={liveChartPoint ? 'Live feed online' : status === 'loading' ? 'Loading feed' : 'Live feed unavailable'}
               live={Boolean(liveChartPoint)}
             />
-          </div>
-          <div className="treasury-source-grid" aria-label="Treasury data source status">
-            <TreasurySourceCard label="Live totals" {...liveSourceSummary} />
-            <TreasurySourceCard label="Saved snapshots" {...savedSourceSummary} />
-            <TreasurySourceCard label="Onchain references" {...onchainSourceSummary} />
           </div>
         </div>
       </section>
@@ -821,9 +718,23 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
 
         <div className="treasury-chart-surface">
           {status === 'loading' ? <p className="treasury-state-message" aria-live="polite">Loading dashboard...</p> : null}
-          {status === 'error' ? <p className="treasury-state-message" aria-live="polite">Could not load data: {error}</p> : null}
+          {status === 'error' ? (
+            <div className="treasury-state-card treasury-state-card-error" role="status" aria-live="polite">
+              <strong>Treasury data unavailable</strong>
+              <p>{error || 'No treasury data source returned usable data.'}</p>
+              <button type="button" onClick={retryTreasuryData}>
+                Retry
+              </button>
+            </div>
+          ) : null}
           {status === 'ready' && filteredGraphData.length === 0 ? (
-            <p className="treasury-state-message" aria-live="polite">No snapshots yet.</p>
+            <div className="treasury-state-card" role="status" aria-live="polite">
+              <strong>No snapshots yet</strong>
+              <p>Live data may still be available above. Retry if the feed was just updated.</p>
+              <button type="button" onClick={retryTreasuryData}>
+                Retry
+              </button>
+            </div>
           ) : null}
           {status === 'ready' && filteredGraphData.length > 0 ? (
             <ResponsiveContainer width="100%" height={isCompactLayout ? 320 : 400}>
@@ -948,7 +859,11 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
                 </tr>
               </thead>
               <tbody>
-                {recentRows.map((row) => (
+                {recentRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>No saved snapshots yet.</td>
+                  </tr>
+                ) : recentRows.map((row) => (
                   <tr key={row.day}>
                     <td>{row.label}</td>
                     <td>{formatNumber(row.cotiInPool)}</td>

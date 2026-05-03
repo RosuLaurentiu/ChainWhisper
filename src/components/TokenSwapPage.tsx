@@ -22,6 +22,10 @@ type TokenSwapPageProps = {
   loadingRewardBalances: boolean;
   swapFeeWei: bigint | null;
   swapTokenFeeAmount: bigint | null;
+  walletAddress: string;
+  onCotiNetwork: boolean;
+  hasAesReady: boolean;
+  onRefreshRewardBalances: () => void;
   canSwapRewardTokens: boolean;
   swapButtonLabel: string;
   onSwapRewardTokens: () => Promise<void>;
@@ -44,6 +48,10 @@ export default function TokenSwapPage({
   loadingRewardBalances,
   swapFeeWei,
   swapTokenFeeAmount,
+  walletAddress,
+  onCotiNetwork,
+  hasAesReady,
+  onRefreshRewardBalances,
   canSwapRewardTokens,
   swapButtonLabel,
   onSwapRewardTokens,
@@ -68,6 +76,37 @@ export default function TokenSwapPage({
     : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
         swapTokenFeeAmount !== null ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6) : '--'
       }`;
+  const shieldState = !walletAddress
+    ? {
+        title: 'Wallet needed',
+        description: 'Connect from the header to view balances and use Shield.',
+        tone: 'locked'
+      }
+    : !onCotiNetwork
+      ? {
+          title: 'Switch to COTI',
+          description: 'Use the header wallet control to switch networks before swapping.',
+          tone: 'locked'
+        }
+      : !hasAesReady
+        ? {
+            title: 'Privacy locked',
+            description: 'Unlock privacy from the header before viewing private balances.',
+            tone: 'locked'
+          }
+        : loadingRewardBalances
+          ? {
+              title: 'Loading balances',
+              description: 'Checking wallet balances, Shield reserve, and fee quote.',
+              tone: 'loading'
+            }
+          : shieldVaultTokenBalanceWei === null || swapFeeWei === null || swapTokenFeeAmount === null
+            ? {
+                title: 'Quote unavailable',
+                description: 'Some Shield data did not load. Retry before swapping.',
+                tone: 'error'
+              }
+            : null;
 
   return (
     <main className="swap-page-shell">
@@ -84,6 +123,18 @@ export default function TokenSwapPage({
         </div>
 
         <div className="swap-card">
+          {shieldState ? (
+            <div className={`swap-readiness-card swap-readiness-card-${shieldState.tone}`} role="status" aria-live="polite">
+              <strong>{shieldState.title}</strong>
+              <p>{shieldState.description}</p>
+              {shieldState.tone === 'error' ? (
+                <button type="button" onClick={onRefreshRewardBalances} disabled={loadingRewardBalances}>
+                  {loadingRewardBalances ? 'Retrying...' : 'Retry'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="swap-field swap-field-route">
             <span id="swap-page-direction-label" className="swap-label-sr">
               Swap direction

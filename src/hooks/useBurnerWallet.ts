@@ -6,7 +6,6 @@ import {
   BURNER_PIN_MIN_LENGTH,
   calculateEstimatedBurnerTopUpAmount,
   COTI_NETWORK,
-  createBurnerWalletVault,
   createCotiBrowserProvider,
   getProviderErrorMessage,
   isBurnerStorageAvailable,
@@ -14,14 +13,8 @@ import {
   LEGACY_BURNER_PIN_MIN_LENGTH,
   loadBurnerWalletVaultFromStorage,
   loadCotiEthersModule,
-  looksLikePrivateKeyInput,
   mergeOnboardInfo,
-  normalizeImportInput,
-  normalizeMnemonicInput,
-  normalizePrivateKeyInput,
   parseBurnerWalletStorageState,
-  saveEncryptedBurnerWalletVault,
-  upsertBurnerWalletInVault,
   withTimeout,
   type BurnerInitMode,
   type BurnerInitResult,
@@ -35,6 +28,12 @@ import {
   type SignerSource
 } from '../lib/appShared';
 import { saveWalletPreference } from '../lib/appStorage';
+import {
+  buildNewBurnerWalletRecord,
+  loadStoredBurnerWalletRecord,
+  resaveBurnerWalletVaultWithPin,
+  saveBurnerWalletRecordWithPin
+} from '../lib/burnerWalletVault';
 
 type UseBurnerWalletArgs = {
   activeSignerSource: SignerSource;
@@ -200,64 +199,12 @@ export function useBurnerWallet({
       pin?: string,
       preferredWalletId?: string
     ): Promise<{ record: BurnerWalletRecord; vault?: BurnerWalletVault }> => {
-      const normalizedSeed = normalizeImportInput(seedOrPrivateKey ?? '');
-      const cotiEthers = await loadCotiEthersModule();
-
-      if (mode === 'import') {
-        if (normalizedSeed.length === 0) {
-          throw new Error('Enter a mnemonic phrase or private key.');
-        }
-
-        const normalizedPrivateKey = normalizePrivateKeyInput(normalizedSeed);
-        if (normalizedPrivateKey) {
-          return { record: { privateKey: normalizedPrivateKey } };
-        }
-
-        if (looksLikePrivateKeyInput(normalizedSeed)) {
-          throw new Error('Invalid private key. Use exactly 64 hex characters (optionally prefixed with 0x).');
-        }
-
-        const normalizedMnemonic = normalizeMnemonicInput(normalizedSeed);
-        let importedWallet: { privateKey: string };
-        try {
-          importedWallet = cotiEthers.Wallet.fromPhrase(normalizedMnemonic);
-        } catch {
-          throw new Error('Invalid mnemonic phrase.');
-        }
-        return {
-          record: {
-            privateKey: importedWallet.privateKey,
-            mnemonic: normalizedMnemonic
-          }
-        };
-      }
-
       if (mode === 'stored') {
-        const vault = await loadBurnerWalletVaultFromStorage(pin?.trim() ?? '');
-        const selectedWallet =
-          vault.wallets.find((walletRecord) => walletRecord.id === preferredWalletId) ??
-          vault.wallets.find((walletRecord) => walletRecord.id === vault.activeWalletId) ??
-          vault.wallets[0];
-
-        if (!selectedWallet) {
-          throw new Error('No saved burner wallet found. Generate or import one first.');
-        }
-
-        return {
-          record: selectedWallet,
-          vault: {
-            ...vault,
-            activeWalletId: selectedWallet.id as string
-          }
-        };
+        return loadStoredBurnerWalletRecord(pin?.trim() ?? '', preferredWalletId);
       }
 
-      const createdWallet = cotiEthers.Wallet.createRandom();
       return {
-        record: {
-          privateKey: createdWallet.privateKey,
-          mnemonic: createdWallet.mnemonic?.phrase
-        }
+        record: await buildNewBurnerWalletRecord(mode, seedOrPrivateKey)
       };
     },
     []
@@ -277,30 +224,24 @@ export function useBurnerWallet({
       let walletPersisted = false;
 
       try {
-        const storageState = parseBurnerWalletStorageState();
         const sessionPin = pin?.trim() ?? burnerPinRef.current;
 
         const buildResult = await buildBurnerRecord(mode, seedOrPrivateKey, sessionPin, preferredWalletId);
         let burnerRecord = buildResult.record;
         let burnerVault: BurnerWalletVault;
+        if (sessionPin.length < BURNER_PIN_MIN_LENGTH) {
+          throw new Error(`PIN must be at least ${BURNER_PIN_MIN_LENGTH} digits.`);
+        }
 
         if (mode === 'stored') {
           if (!buildResult.vault) {
             throw new Error('No saved burner wallet found. Generate or import one first.');
           }
           burnerVault = buildResult.vault;
-        } else if (storageState.kind === 'none') {
-          burnerVault = await createBurnerWalletVault([burnerRecord]);
         } else {
-          const existingVault = await loadBurnerWalletVaultFromStorage(sessionPin);
-          burnerVault = await upsertBurnerWalletInVault(existingVault, burnerRecord);
+          burnerVault = await saveBurnerWalletRecordWithPin(burnerRecord, sessionPin);
         }
 
-        if (sessionPin.length < BURNER_PIN_MIN_LENGTH) {
-          throw new Error(`PIN must be at least ${BURNER_PIN_MIN_LENGTH} digits.`);
-        }
-
-        await saveEncryptedBurnerWalletVault(burnerVault, sessionPin);
         walletPersisted = true;
         if (mode === 'import') {
           const normalizedImportedPrivateKey = buildResult.record.privateKey.trim().toLowerCase();
@@ -574,11 +515,11 @@ export function useBurnerWallet({
         return;
       }
 
-      const vaultForPinUpdate = await createBurnerWalletVault(
+      await resaveBurnerWalletVaultWithPin(
         burnerWallets,
+        pinForUpdate,
         activeBurnerWalletId || burnerRecordRef.current.id || burnerWallets[0]?.id
       );
-      await saveEncryptedBurnerWalletVault(vaultForPinUpdate, pinForUpdate);
       burnerPinRef.current = pinForUpdate;
       setShowBurnerPinModal(false);
       setBurnerPinInput('');
@@ -641,23 +582,22 @@ export function useBurnerWallet({
   }, [beginBurnerPinFlow, burnerImportInput]);
 
   const switchActiveBurnerWallet = useCallback(
-    async (walletId: string) => {
+    async (walletIdOrAddress: string) => {
       setError('');
-      setActiveBurnerWalletId(walletId);
 
-      if (!walletId) {
+      if (!walletIdOrAddress) {
         return;
       }
 
       if (!burnerPinRef.current) {
-        setPendingBurnerInit({ mode: 'stored', walletId });
+        setPendingBurnerInit({ mode: 'stored', walletId: walletIdOrAddress });
         setBurnerPinMode('unlock');
         setBurnerPinInput('');
         setShowBurnerPinModal(true);
         return;
       }
 
-      await initializeBurnerWallet('stored', undefined, burnerPinRef.current, walletId);
+      await initializeBurnerWallet('stored', undefined, burnerPinRef.current, walletIdOrAddress);
     },
     [initializeBurnerWallet, setError]
   );

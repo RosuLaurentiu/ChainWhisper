@@ -39,7 +39,6 @@ type UseChatWalletHeaderControlArgs = {
   burnerMnemonicBackup: string;
   burnerRecordReady: boolean;
   burnerStorageBlocked: boolean;
-  burnerWalletSelectionValue: string;
   burnerWallets: BurnerWalletRecord[];
   chainId: number | null;
   chatAppWalletMenuOpen: boolean;
@@ -92,7 +91,6 @@ export default function useChatWalletHeaderControl({
   burnerMnemonicBackup,
   burnerRecordReady,
   burnerStorageBlocked,
-  burnerWalletSelectionValue,
   burnerWallets,
   chainId,
   chatAppWalletMenuOpen,
@@ -206,6 +204,19 @@ export default function useChatWalletHeaderControl({
     Boolean(walletAddress && onCotiNetwork && activeSignerSource === 'metamask' && !burnerStorageBlocked && !hasSavedBurnerWallet);
   const showChatAppWalletSwitchButton =
     chatWalletIsAppWallet && walletAddress && onCotiNetwork && burnerWallets.length > 1 && !burnerStorageBlocked;
+  const quickChatBrowserWalletId =
+    (showChatBrowserSwitchAction || showChatDisconnectedBrowserAction) && chatPreferredBrowserWalletOption
+      ? chatPreferredBrowserWalletOption.id
+      : '';
+  const chatMenuBrowserWalletOptions = useMemo(
+    () =>
+      quickChatBrowserWalletId
+        ? orderedChatInjectedWalletOptions.filter((option) => option.id !== quickChatBrowserWalletId)
+        : orderedChatInjectedWalletOptions,
+    [orderedChatInjectedWalletOptions, quickChatBrowserWalletId]
+  );
+  const showChatBrowserWalletMenuSection =
+    chatMenuBrowserWalletOptions.length > 0 || (orderedChatInjectedWalletOptions.length === 0 && !quickChatBrowserWalletId);
 
   const chatAppWalletSwitchButton = showChatAppWalletSwitchButton ? (
     <AppWalletSwitchButton
@@ -214,20 +225,24 @@ export default function useChatWalletHeaderControl({
         setChatWalletMenuOpen(false);
         setChatAppWalletMenuOpen((previous) => !previous);
       }}
-      onSelectWallet={(walletId) => {
+      onSelectWallet={(option) => {
         setChatAppWalletMenuOpen(false);
-        Promise.resolve(handleSwitchActiveBurnerWallet(walletId)).catch(() => {});
+        Promise.resolve(handleSwitchActiveBurnerWallet(option.address || option.walletId || option.id)).catch(() => {});
       }}
       options={burnerWallets.map((walletRecord, index) => {
         const walletId = walletRecord.id ?? '';
-        const isSelected = walletId.length > 0 && walletId === burnerWalletSelectionValue;
+        const walletRecordAddress = walletRecord.address?.trim() ?? '';
+        const switchValue = walletRecordAddress || walletId;
+        const isSelected = walletRecordAddress.toLowerCase() === walletAddress.trim().toLowerCase();
         const displayName = getBurnerWalletDisplayName(walletRecord);
         return {
           active: isSelected,
-          disabled: initializingBurner || !walletId || isSelected,
-          id: walletId,
+          disabled: initializingBurner || !switchValue || isSelected,
+          address: walletRecordAddress,
+          id: switchValue,
           key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
-          label: isSelected ? `${displayName} active` : displayName
+          label: isSelected ? `${displayName} active` : displayName,
+          walletId
         };
       })}
       disabled={initializingBurner}
@@ -442,43 +457,45 @@ export default function useChatWalletHeaderControl({
             ) : null}
           </div>
 
-          <div className="p2p-wallet-menu-section">
-            <span>Browser wallet</span>
-            {orderedChatInjectedWalletOptions.length > 0 ? (
-              orderedChatInjectedWalletOptions.map((option) => {
-                const isCurrentWallet =
-                  activeSignerSource === 'metamask' &&
-                  connectionMethod === 'metamask' &&
-                  currentInjectedWalletOption?.id === option.id &&
-                  isConnected;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={isCurrentWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                    onClick={() => {
-                      setChatWalletMenuOpen(false);
-                      activateBrowserWalletSession(option.id).catch(() => {});
-                    }}
-                    disabled={connectingMethod !== null}
-                    role="menuitem"
-                  >
-                    {connectingMethod === 'metamask' && connectingWalletLabel === option.label
-                      ? 'Connecting...'
-                      : isCurrentWallet
-                        ? hasAesReady
-                          ? `${option.label} ready`
-                          : `Sign ${option.label}`
-                        : `Connect ${option.label}`}
-                  </button>
-                );
-              })
-            ) : (
-              <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                MetaMask or CipherTrade not detected
-              </button>
-            )}
-          </div>
+          {showChatBrowserWalletMenuSection ? (
+            <div className="p2p-wallet-menu-section">
+              <span>Browser wallet</span>
+              {chatMenuBrowserWalletOptions.length > 0 ? (
+                chatMenuBrowserWalletOptions.map((option) => {
+                  const isCurrentWallet =
+                    activeSignerSource === 'metamask' &&
+                    connectionMethod === 'metamask' &&
+                    currentInjectedWalletOption?.id === option.id &&
+                    isConnected;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={isCurrentWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                      onClick={() => {
+                        setChatWalletMenuOpen(false);
+                        activateBrowserWalletSession(option.id).catch(() => {});
+                      }}
+                      disabled={connectingMethod !== null}
+                      role="menuitem"
+                    >
+                      {connectingMethod === 'metamask' && connectingWalletLabel === option.label
+                        ? 'Connecting...'
+                        : isCurrentWallet
+                          ? hasAesReady
+                            ? `${option.label} ready`
+                            : `Sign ${option.label}`
+                          : `Connect ${option.label}`}
+                    </button>
+                  );
+                })
+              ) : (
+                <button type="button" className="p2p-wallet-action" disabled role="menuitem">
+                  MetaMask or CipherTrade not detected
+                </button>
+              )}
+            </div>
+          ) : null}
 
           <button
             type="button"

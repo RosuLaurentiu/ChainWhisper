@@ -2,11 +2,14 @@ import type { ImageAttachmentPreviewState } from '../lib/imageAttachmentPreview'
 
 type ImageAttachmentPreviewProps = {
   onDismiss?: () => void;
+  onRetry?: (file: File) => void;
+  retryDisabled?: boolean;
   status: ImageAttachmentPreviewState;
 };
 
-export default function ImageAttachmentPreview({ onDismiss, status }: ImageAttachmentPreviewProps) {
+export default function ImageAttachmentPreview({ onDismiss, onRetry, retryDisabled = false, status }: ImageAttachmentPreviewProps) {
   const isError = status.tone === 'error';
+  const canRetry = Boolean(isError && status.retryFile && onRetry);
 
   return (
     <div
@@ -29,10 +32,30 @@ export default function ImageAttachmentPreview({ onDismiss, status }: ImageAttac
         <p>{status.fileName}</p>
         <small>{status.detail}</small>
       </div>
-      {isError && onDismiss ? (
-        <button type="button" className="chat-image-attachment-dismiss" onClick={onDismiss} aria-label="Dismiss image error">
-          Clear
-        </button>
+      {isError && (canRetry || onDismiss) ? (
+        <div className="chat-image-attachment-actions">
+          {canRetry && status.retryFile ? (
+            <button
+              type="button"
+              className="chat-image-attachment-retry"
+              onClick={() => onRetry?.(status.retryFile!)}
+              disabled={retryDisabled}
+              aria-label={`Retry sending ${status.fileName}`}
+            >
+              Retry
+            </button>
+          ) : null}
+          {onDismiss ? (
+            <button
+              type="button"
+              className="chat-image-attachment-dismiss"
+              onClick={onDismiss}
+              aria-label="Dismiss image error"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

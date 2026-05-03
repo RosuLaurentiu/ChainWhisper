@@ -2,16 +2,18 @@ import { useId } from 'react';
 
 export type AppWalletSwitchOption = {
   active?: boolean;
+  address?: string;
   disabled?: boolean;
   id: string;
   key: string;
   label: string;
+  walletId?: string;
 };
 
 type AppWalletSwitchButtonProps = {
   disabled?: boolean;
   menuOpen: boolean;
-  onSelectWallet: (walletId: string) => void;
+  onSelectWallet: (option: AppWalletSwitchOption) => void;
   onToggleMenu: () => void;
   options: AppWalletSwitchOption[];
   title?: string;
@@ -64,7 +66,11 @@ export default function AppWalletSwitchButton({
               key={option.key}
               type="button"
               className={option.active ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-              onClick={() => onSelectWallet(option.id)}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onSelectWallet(option);
+              }}
               disabled={disabled || option.disabled || !option.id}
               role="menuitem"
             >

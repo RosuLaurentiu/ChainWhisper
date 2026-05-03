@@ -28,4 +28,17 @@ describe('buildImageAttachmentStatus', () => {
       tone: 'error'
     });
   });
+
+  it('keeps a retry file only when one is provided', () => {
+    const retryFile = { name: 'chart.webp', size: 2048 } as File;
+
+    expect(
+      buildImageAttachmentStatus(retryFile, 'error', 'Image was not sent', 'Try again.', 'blob:retry', retryFile)
+    ).toMatchObject({
+      retryFile
+    });
+    expect(buildImageAttachmentStatus(retryFile, 'error', 'Image was not attached', 'Unsupported file.')).not.toHaveProperty(
+      'retryFile'
+    );
+  });
 });

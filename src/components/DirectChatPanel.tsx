@@ -3,6 +3,7 @@ import { memo, useCallback, useMemo, useRef, useState, type MutableRefObject, ty
 import DirectChatCompose from './DirectChatCompose';
 import ChatImage from './ChatImage';
 import MessageActions from './MessageActions';
+import MessageTextWithLinks from './MessageTextWithLinks';
 import TradeOfferCard from './TradeOfferCard';
 import type { ImageAttachmentPreviewState } from '../lib/imageAttachmentPreview';
 import { parseImageTag } from '../lib/imagePull';
@@ -29,92 +30,11 @@ type MessageReactionSummary = {
   reactedByMe: boolean;
 };
 
-const MESSAGE_LINK_PATTERN = /(https?:\/\/[^\s<>"']+|\/trades\/l\/[^\s<>"']+)/gi;
-const TRAILING_LINK_PUNCTUATION_PATTERN = /[),.!?;:]+$/;
-
-const splitTrailingLinkPunctuation = (value: string): { linkText: string; trailingText: string } => {
-  const trailingMatch = value.match(TRAILING_LINK_PUNCTUATION_PATTERN);
-  if (!trailingMatch) {
-    return { linkText: value, trailingText: '' };
-  }
-
-  const trailingText = trailingMatch[0];
-  return {
-    linkText: value.slice(0, -trailingText.length),
-    trailingText
-  };
-};
-
-const resolveMessageLinkHref = (value: string): { href: string; external: boolean } | null => {
-  if (value.startsWith('/trades/l/')) {
-    return { href: value, external: false };
-  }
-
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      return null;
-    }
-
-    if (typeof window !== 'undefined' && url.origin === window.location.origin && url.pathname.startsWith('/trades/')) {
-      return { href: `${url.pathname}${url.search}${url.hash}`, external: false };
-    }
-
-    return { href: url.toString(), external: true };
-  } catch {
-    return null;
-  }
-};
-
 const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   !offer.hiddenLiquidity &&
   offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
 const DIRECT_MESSAGE_SKELETON_ROWS = [0, 1, 2, 3, 4];
-
-const renderMessageTextWithLinks = (text: string): ReactNode => {
-  const rendered: ReactNode[] = [];
-  let lastIndex = 0;
-  MESSAGE_LINK_PATTERN.lastIndex = 0;
-
-  for (const match of text.matchAll(MESSAGE_LINK_PATTERN)) {
-    const rawMatch = match[0];
-    const matchIndex = match.index ?? 0;
-    const { linkText, trailingText } = splitTrailingLinkPunctuation(rawMatch);
-    const link = resolveMessageLinkHref(linkText);
-    if (!link || linkText.length === 0) {
-      continue;
-    }
-
-    if (matchIndex > lastIndex) {
-      rendered.push(text.slice(lastIndex, matchIndex));
-    }
-    rendered.push(
-      <a
-        key={`message-link-${matchIndex}-${linkText}`}
-        className="message-text-link"
-        href={link.href}
-        target={link.external ? '_blank' : undefined}
-        rel={link.external ? 'noreferrer' : undefined}
-      >
-        {linkText}
-      </a>
-    );
-    if (trailingText) {
-      rendered.push(trailingText);
-    }
-    lastIndex = matchIndex + rawMatch.length;
-  }
-
-  if (lastIndex === 0) {
-    return text;
-  }
-  if (lastIndex < text.length) {
-    rendered.push(text.slice(lastIndex));
-  }
-
-  return rendered;
-};
 
 type DirectChatPanelProps = {
   activeContact: string;
@@ -189,6 +109,7 @@ type DirectChatPanelProps = {
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
+  onOpenInternalAppLink: (href: string) => void;
   sending: boolean;
   tipToggleDisabled: boolean;
   tipToggleTitle: string;
@@ -263,6 +184,7 @@ function DirectChatPanel({
   onSendMessage,
   maxMessageLength,
   onMessageInputChange,
+  onOpenInternalAppLink,
   sending,
   tipToggleDisabled,
   tipToggleTitle,
@@ -416,7 +338,15 @@ function DirectChatPanel({
             ))}
           </div>
         ) : renderableMessages.length === 0 ? (
-          <p className="chat-empty">No messages yet.</p>
+          <div className="chat-empty-state" role="status" aria-live="polite">
+            <strong>No messages yet</strong>
+            <p>Send the first message, or sync history if this conversation already exists on-chain.</p>
+            <div className="chat-empty-actions">
+              <button type="button" onClick={onLoadFullConversationHistory} disabled={syncingHistory}>
+                {syncingHistory ? 'Syncing...' : 'Sync History'}
+              </button>
+            </div>
+          </div>
         ) : (
           <div
             className="virtual-message-list"
@@ -540,7 +470,9 @@ function DirectChatPanel({
                   ) : parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
                   ) : messageDisplayText ? (
-                    <div className="message-text">{renderMessageTextWithLinks(messageDisplayText)}</div>
+                    <div className="message-text">
+                      <MessageTextWithLinks text={messageDisplayText} onOpenInternalLink={onOpenInternalAppLink} />
+                    </div>
                   ) : null}
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">

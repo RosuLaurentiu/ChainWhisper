@@ -513,7 +513,9 @@ function ContactsSidebar({
         ) : null}
 
         <ul className="contacts-list contacts-list-scroll groups-main-list">
-          {sortedGroups.map((group) => {
+          {sortedGroups.length === 0 ? (
+            <li className="contacts-empty-state">No groups yet.</li>
+          ) : sortedGroups.map((group) => {
             const isActive = activeGroupId === group.id;
             const groupTitle = group.title || `Group ${group.id}`;
             const groupKey = String(group.id);

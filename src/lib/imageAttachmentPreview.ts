@@ -4,6 +4,7 @@ export type ImageAttachmentPreviewState = {
   detail: string;
   fileName: string;
   previewUrl?: string;
+  retryFile?: File;
   sizeLabel: string;
   title: string;
   tone: 'pending' | 'error';
@@ -16,11 +17,13 @@ export const buildImageAttachmentStatus = (
   tone: ImageAttachmentPreviewState['tone'],
   title: string,
   detail: string,
-  previewUrl?: string
+  previewUrl?: string,
+  retryFile?: File
 ): ImageAttachmentPreviewState => ({
   detail,
   fileName: file.name.trim() || 'Pasted image',
-  previewUrl,
+  ...(previewUrl ? { previewUrl } : {}),
+  ...(retryFile ? { retryFile } : {}),
   sizeLabel: formatImageFileSize(file.size),
   title,
   tone

@@ -83,6 +83,18 @@ import { sendChatImageAttachment } from './lib/chatImageAttachment';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import {
+  collectGroupIdsFromLogs,
+  collectLatestGroupRemovalEvents,
+  mergeGroupSyncOptions,
+  resolveActiveGroupBackfillPlan,
+  resolveGroupCursorRange,
+  resolveGroupPrefetchPlan,
+  resolveRealtimeGroupSyncOptions,
+  resolveTrackedGroupMessageLoad,
+  trackedGroupMessageLoadsMatch,
+  type GroupMessageLoadPhase
+} from './lib/groupSyncPlan';
+import {
   hasSessionAesKey,
   resolveWalletBlockedActionLabel,
   type SharedWalletSession
@@ -233,8 +245,6 @@ const VISIBLE_THREAD_MESSAGE_CHUNK = 120;
 const BACKGROUND_DEEP_SYNC_DELAY_MS = 500;
 const GROUP_MESSAGE_PREFETCH_LIMIT = 6;
 const GROUP_MESSAGE_PREFETCH_BATCH_SIZE = 2;
-
-type GroupMessageLoadPhase = 'initial' | 'history';
 
 const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   !offer.hiddenLiquidity &&
@@ -643,6 +653,7 @@ export default function App() {
   const pendingGroupSyncOptionsRef = useRef<SyncGroupOptions | null>(null);
   const groupOverviewLastSyncedBlockRef = useRef<Record<string, number>>({});
   const groupMessageLastSyncedBlockRef = useRef<Record<string, number>>({});
+  const groupMemberLastSyncedBlockRef = useRef<Record<string, number>>({});
   const groupRemovalNoticeSeenRef = useRef<Record<string, Set<number>>>({});
   const groupRemovalNoticeMarkersRef = useRef<Record<string, Record<string, string>>>({});
   const groupRemovalNoticeMarkersLoadedRef = useRef(false);
@@ -1407,14 +1418,26 @@ export default function App() {
     return findContactNameForWalletAddress(walletRecord.address) ?? (walletRecord.address ? shortenAddress(walletRecord.address) : 'Unnamed');
   };
   const handleSwitchActiveBurnerWallet = useCallback(
-    (walletId: string) => {
-      if (!walletId || walletId === burnerWalletSelectionValue) {
+    (walletIdOrAddress: string) => {
+      const walletSelector = walletIdOrAddress.trim();
+      const walletSelectorKey = walletSelector.toLowerCase();
+      const selectedWalletRecord = burnerWallets.find(
+        (walletRecord) =>
+          walletRecord.id === walletSelector || walletRecord.address?.toLowerCase() === walletSelectorKey
+      );
+      const selectedWalletKey = selectedWalletRecord?.address?.toLowerCase() ?? '';
+      const currentWalletKey = walletAddress.trim().toLowerCase();
+      const selectorIsCurrentAddress = isWalletAddress(walletSelector) && walletSelectorKey === currentWalletKey;
+      if (
+        !walletSelector ||
+        (activeSignerSource === 'burner' && (selectorIsCurrentAddress || selectedWalletKey === currentWalletKey))
+      ) {
         return;
       }
 
-      switchActiveBurnerWallet(walletId).catch(() => {});
+      switchActiveBurnerWallet(walletSelector).catch(() => {});
     },
-    [burnerWalletSelectionValue, switchActiveBurnerWallet]
+    [activeSignerSource, burnerWallets, switchActiveBurnerWallet, walletAddress]
   );
   const findBurnerWalletDefaultNameForAddress = (address: string): string | undefined => {
     const normalizedAddress = address.toLowerCase();
@@ -3222,33 +3245,15 @@ export default function App() {
   useEffect(() => {
     syncConversationHistoryRef.current = syncConversationHistory;
   }, [syncConversationHistory]);
-  const getTrackedGroupMessageLoad = (options?: SyncGroupOptions): { groupId: number; phase: GroupMessageLoadPhase } | null => {
+  const getTrackedGroupMessageLoad = (options?: SyncGroupOptions) => {
     const selectedGroupId = activeGroupIdRef.current;
-    if (
-      selectedGroupId === null ||
-      options?.prefetchGroupId ||
-      (options?.overviewOnly && !options?.activeMessagesOnly)
-    ) {
-      return null;
-    }
-
-    const tracksActiveGroupMessages = Boolean(options?.activeMessagesOnly || options?.deep);
-    if (!tracksActiveGroupMessages) {
-      return null;
-    }
-
     const groupKey = String(selectedGroupId);
-    const hasLoadedMessages = (messagesByGroupRef.current[groupKey]?.length ?? 0) > 0;
-    return {
-      groupId: selectedGroupId,
-      phase: options?.deep || hasLoadedMessages ? 'history' : 'initial'
-    };
+    return resolveTrackedGroupMessageLoad({
+      activeGroupId: selectedGroupId,
+      activeGroupMessageCount: selectedGroupId === null ? 0 : messagesByGroupRef.current[groupKey]?.length ?? 0,
+      options
+    });
   };
-
-  const isSameTrackedGroupMessageLoad = (
-    current: { groupId: number; phase: GroupMessageLoadPhase } | null,
-    next: { groupId: number; phase: GroupMessageLoadPhase } | null
-  ): boolean => Boolean(current && next && current.groupId === next.groupId);
 
   const syncGroupData = async (options?: SyncGroupOptions) => {
     const requestedWalletAddress = walletAddress.trim();
@@ -3264,30 +3269,7 @@ export default function App() {
 
     if (syncGroupDataInFlightRef.current) {
       const pending = pendingGroupSyncOptionsRef.current;
-      const mergedDeep = Boolean(options?.deep || pending?.deep);
-      const mergedActiveMessagesOnly = !mergedDeep && Boolean(options?.activeMessagesOnly || pending?.activeMessagesOnly);
-      const nextPrefetchGroupId = toSafeNumber(options?.prefetchGroupId);
-      const pendingPrefetchGroupId = toSafeNumber(pending?.prefetchGroupId);
-      const mergedPrefetchGroupId =
-        !mergedDeep && !mergedActiveMessagesOnly
-          ? nextPrefetchGroupId > 0
-            ? nextPrefetchGroupId
-            : pendingPrefetchGroupId > 0
-              ? pendingPrefetchGroupId
-              : undefined
-          : undefined;
-      pendingGroupSyncOptionsRef.current = {
-        deep: mergedDeep,
-        background: Boolean((options?.background ?? true) && (pending?.background ?? true)),
-        overviewOnly: mergedActiveMessagesOnly
-          ? false
-          : pending
-            ? Boolean(options?.overviewOnly && pending.overviewOnly)
-            : Boolean(options?.overviewOnly),
-        activeMessagesOnly: mergedActiveMessagesOnly,
-        wideLoad: Boolean(options?.wideLoad || pending?.wideLoad),
-        prefetchGroupId: mergedPrefetchGroupId
-      };
+      pendingGroupSyncOptionsRef.current = mergeGroupSyncOptions(options, pending);
       return;
     }
 
@@ -3312,11 +3294,13 @@ export default function App() {
 
       const syncActiveGroupMessagesFast = async (
         groupId: number,
-        fastOptions?: { knownLastBlock?: number; prefetch?: boolean; wideLoad?: boolean }
+        fastOptions?: { includeMembershipEvents?: boolean; knownLastBlock?: number; prefetch?: boolean; wideLoad?: boolean }
       ): Promise<Map<string, number>> => {
         const latestIncomingByGroup = new Map<string, number>();
         const groupMessageSyncKey = `${walletKey}:${groupId}`;
+        const groupMemberSyncKey = `${walletKey}:${groupId}`;
         const previousGroupMessageBlock = groupMessageLastSyncedBlockRef.current[groupMessageSyncKey];
+        const previousGroupMemberBlock = groupMemberLastSyncedBlockRef.current[groupMemberSyncKey];
         const knownLastBlock = toSafeNumber(fastOptions?.knownLastBlock);
         const activeGroupLastMessageBlock =
           knownLastBlock > 0
@@ -3326,45 +3310,67 @@ export default function App() {
           return latestIncomingByGroup;
         }
 
-        const hasNewGroupActivity =
-          Boolean(options?.deep) ||
-          Boolean(fastOptions?.wideLoad) ||
-          typeof previousGroupMessageBlock !== 'number' ||
-          activeGroupLastMessageBlock <= 0 ||
-          activeGroupLastMessageBlock > previousGroupMessageBlock;
-        if (!hasNewGroupActivity) {
-          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = latestBlock;
+        const messageRange = resolveGroupCursorRange({
+          deep: options?.deep,
+          initialLookbackBlocks: INITIAL_SYNC_LOOKBACK_BLOCKS,
+          latestBlock,
+          lastActivityBlock: activeGroupLastMessageBlock,
+          prefetch: fastOptions?.prefetch,
+          prefetchLookbackBlocks: FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK,
+          previousSyncedBlock: previousGroupMessageBlock,
+          wideLoad: fastOptions?.wideLoad
+        });
+        const memberRange = fastOptions?.includeMembershipEvents
+          ? resolveGroupCursorRange({
+            deep: options?.deep,
+            initialLookbackBlocks: INITIAL_SYNC_LOOKBACK_BLOCKS,
+            latestBlock,
+            lastActivityBlock: knownLastBlock > 0 ? knownLastBlock : activeGroupLastMessageBlock,
+            previousSyncedBlock: previousGroupMemberBlock,
+            wideLoad: fastOptions?.wideLoad
+          })
+          : null;
+
+        if (!messageRange.shouldQuery) {
+          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = messageRange.advanceToBlock;
+        }
+        if (memberRange && !memberRange.shouldQuery) {
+          groupMemberLastSyncedBlockRef.current[groupMemberSyncKey] = memberRange.advanceToBlock;
+        }
+        if (!messageRange.shouldQuery && (!memberRange || !memberRange.shouldQuery)) {
           return latestIncomingByGroup;
         }
 
-        const groupToBlock =
-          fastOptions?.prefetch && activeGroupLastMessageBlock > 0
-            ? Math.min(activeGroupLastMessageBlock, latestBlock)
-            : latestBlock;
-        const groupFromBlock = options?.deep
-          ? 0
-          : fastOptions?.wideLoad && activeGroupLastMessageBlock > 0
-            ? Math.max(0, activeGroupLastMessageBlock - INITIAL_SYNC_LOOKBACK_BLOCKS)
-            : typeof previousGroupMessageBlock === 'number'
-              ? previousGroupMessageBlock + 1
-              : fastOptions?.prefetch && activeGroupLastMessageBlock > 0
-                ? Math.max(0, activeGroupLastMessageBlock - FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK)
-                : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
-        if (groupFromBlock > groupToBlock) {
-          return latestIncomingByGroup;
-        }
-
-        const [incomingLogs, outgoingLogs] = await Promise.all([
-          contract.queryFilter(
-            contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress),
-            groupFromBlock,
-            groupToBlock
-          ),
-          contract.queryFilter(
-            contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress),
-            groupFromBlock,
-            groupToBlock
-          )
+        const [
+          incomingLogs,
+          outgoingLogs,
+          memberAddedLogs,
+          memberRemovedLogs,
+          memberLeftLogs
+        ] = await Promise.all([
+          messageRange.shouldQuery
+            ? contract.queryFilter(
+              contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress),
+              messageRange.fromBlock,
+              messageRange.toBlock
+            )
+            : Promise.resolve([]),
+          messageRange.shouldQuery
+            ? contract.queryFilter(
+              contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress),
+              messageRange.fromBlock,
+              messageRange.toBlock
+            )
+            : Promise.resolve([]),
+          memberRange?.shouldQuery
+            ? contract.queryFilter(contract.filters.GroupMemberAdded(groupId, null), memberRange.fromBlock, memberRange.toBlock)
+            : Promise.resolve([]),
+          memberRange?.shouldQuery
+            ? contract.queryFilter(contract.filters.GroupMemberRemoved(groupId, null), memberRange.fromBlock, memberRange.toBlock)
+            : Promise.resolve([]),
+          memberRange?.shouldQuery
+            ? contract.queryFilter(contract.filters.GroupMemberLeft(groupId, null), memberRange.fromBlock, memberRange.toBlock)
+            : Promise.resolve([])
         ]);
         if (currentWalletKeyRef.current !== requestedWalletKey) {
           return latestIncomingByGroup;
@@ -3375,6 +3381,15 @@ export default function App() {
           blockNumbers.add(log.blockNumber);
         }
         for (const log of outgoingLogs) {
+          blockNumbers.add(log.blockNumber);
+        }
+        for (const log of memberAddedLogs) {
+          blockNumbers.add(log.blockNumber);
+        }
+        for (const log of memberRemovedLogs) {
+          blockNumbers.add(log.blockNumber);
+        }
+        for (const log of memberLeftLogs) {
           blockNumbers.add(log.blockNumber);
         }
 
@@ -3480,6 +3495,57 @@ export default function App() {
           await appendMessageEntry(log, 'outgoing', requestedWalletAddress, args?.messageForSender, 'group-out');
         }
 
+        for (const log of memberAddedLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const account = String(args?.account ?? '').trim();
+          entries.push({
+            id: `${log.transactionHash}-${log.index}-group-member-added`,
+            groupId,
+            direction: 'incoming',
+            text: formatGroupMembershipEventText('added', account),
+            senderAddress: account,
+            isSystem: true,
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
+            logIndex: log.index,
+            timestamp: blockTimestampMap.get(log.blockNumber)
+          });
+        }
+
+        for (const log of memberRemovedLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const account = String(args?.account ?? '').trim();
+          entries.push({
+            id: `${log.transactionHash}-${log.index}-group-member-removed`,
+            groupId,
+            direction: 'incoming',
+            text: formatGroupMembershipEventText('removed', account),
+            senderAddress: account,
+            isSystem: true,
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
+            logIndex: log.index,
+            timestamp: blockTimestampMap.get(log.blockNumber)
+          });
+        }
+
+        for (const log of memberLeftLogs) {
+          const args = (log as { args?: Record<string, unknown> }).args;
+          const account = String(args?.account ?? '').trim();
+          entries.push({
+            id: `${log.transactionHash}-${log.index}-group-member-left`,
+            groupId,
+            direction: 'incoming',
+            text: formatGroupMembershipEventText('left', account),
+            senderAddress: account,
+            isSystem: true,
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
+            logIndex: log.index,
+            timestamp: blockTimestampMap.get(log.blockNumber)
+          });
+        }
+
         entries.sort((left, right) => {
           if (left.blockNumber !== right.blockNumber) {
             return left.blockNumber - right.blockNumber;
@@ -3535,6 +3601,7 @@ export default function App() {
                 direction: entry.direction,
                 text: entry.text,
                 senderAddress: entry.senderAddress,
+                isSystem: entry.isSystem,
                 replyToMessageId: entry.replyToMessageId,
                 replyToText: entry.replyToText,
                 replyToTxHash: entry.replyToTxHash,
@@ -3558,7 +3625,12 @@ export default function App() {
           });
         }
 
-        groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = groupToBlock;
+        if (messageRange.shouldQuery) {
+          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = messageRange.toBlock;
+        }
+        if (memberRange?.shouldQuery) {
+          groupMemberLastSyncedBlockRef.current[groupMemberSyncKey] = memberRange.toBlock;
+        }
         return latestIncomingByGroup;
       };
 
@@ -3587,6 +3659,7 @@ export default function App() {
         await syncActiveGroupMessagesFast(
           selectedActiveGroupId,
           {
+            includeMembershipEvents: true,
             knownLastBlock: activeGroupMeta?.lastBlock && activeGroupMeta.lastBlock > 0
               ? activeGroupMeta.lastBlock
               : undefined,
@@ -3681,10 +3754,6 @@ export default function App() {
       const toBlock = latestBlock;
       const removedGroupIdsForWallet = new Set<number>();
       const removedGroupEventById = new Map<number, { blockNumber: number; logIndex: number; marker: string }>();
-      const groupIdFromArgs = (value: unknown): number => {
-        const parsed = toSafeNumber(value);
-        return parsed > 0 ? parsed : 0;
-      };
 
       if (hasMemberGroupIndex && fromBlock <= toBlock) {
         const [
@@ -3702,17 +3771,13 @@ export default function App() {
           return;
         }
 
-        for (const log of [
+        for (const groupId of collectGroupIdsFromLogs([
           ...inviteCreatedLogs,
           ...inviteAcceptedForMeLogs,
           ...inviteDeclinedLogs,
           ...inviteRevokedLogs
-        ]) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const groupId = groupIdFromArgs(args?.groupId);
-          if (groupId > 0) {
-            knownGroupIds.add(groupId);
-          }
+        ])) {
+          knownGroupIds.add(groupId);
         }
       } else if (fromBlock <= toBlock) {
         const [
@@ -3742,28 +3807,15 @@ export default function App() {
           return;
         }
 
-        for (const log of memberRemovedLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const groupId = groupIdFromArgs(args?.groupId);
-          if (groupId > 0) {
-            removedGroupIdsForWallet.add(groupId);
-            const nextEvent = {
-              blockNumber: log.blockNumber,
-              logIndex: log.index,
-              marker: `${log.blockNumber}:${log.index}:${log.transactionHash.toLowerCase()}`
-            };
-            const existingEvent = removedGroupEventById.get(groupId);
-            if (
-              !existingEvent ||
-              nextEvent.blockNumber > existingEvent.blockNumber ||
-              (nextEvent.blockNumber === existingEvent.blockNumber && nextEvent.logIndex > existingEvent.logIndex)
-            ) {
-              removedGroupEventById.set(groupId, nextEvent);
-            }
-          }
+        const removalEvents = collectLatestGroupRemovalEvents(memberRemovedLogs);
+        for (const groupId of removalEvents.groupIds) {
+          removedGroupIdsForWallet.add(groupId);
+        }
+        for (const [groupId, event] of removalEvents.eventByGroupId.entries()) {
+          removedGroupEventById.set(groupId, event);
         }
 
-        for (const log of [
+        for (const groupId of collectGroupIdsFromLogs([
           ...createdByMeLogs,
           ...memberAddedLogs,
           ...memberRemovedLogs,
@@ -3774,12 +3826,8 @@ export default function App() {
           ...inviteDeclinedLogs,
           ...inviteRevokedLogs,
           ...joinedWithCodeForMeLogs
-        ]) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const groupId = groupIdFromArgs(args?.groupId);
-          if (groupId > 0) {
-            knownGroupIds.add(groupId);
-          }
+        ])) {
+          knownGroupIds.add(groupId);
         }
       }
 
@@ -4033,7 +4081,9 @@ export default function App() {
 
         for (const removedGroupId of removedGroupIdsForUi) {
           const messageSyncKey = `${walletKey}:${removedGroupId}`;
+          const memberSyncKey = `${walletKey}:${removedGroupId}`;
           delete groupMessageLastSyncedBlockRef.current[messageSyncKey];
+          delete groupMemberLastSyncedBlockRef.current[memberSyncKey];
         }
       }
 
@@ -4523,7 +4573,7 @@ export default function App() {
       const pendingOptions = pendingGroupSyncOptionsRef.current;
       pendingGroupSyncOptionsRef.current = null;
       const pendingTrackedGroupLoad = getTrackedGroupMessageLoad(pendingOptions ?? undefined);
-      if (trackedGroupLoad && !isSameTrackedGroupMessageLoad(trackedGroupLoad, pendingTrackedGroupLoad)) {
+      if (trackedGroupLoad && !trackedGroupMessageLoadsMatch(trackedGroupLoad, pendingTrackedGroupLoad)) {
         clearGroupMessageLoadPhase(trackedGroupLoad.groupId);
       }
       if (pendingOptions) {
@@ -4551,35 +4601,22 @@ export default function App() {
   }, [isMobileNav, markGroupConversationAsRead]);
 
   const prefetchGroupBeforeOpen = useCallback((groupId: number) => {
-    if (
-      !Number.isFinite(groupId) ||
-      groupId <= 0 ||
-      !walletAddress ||
-      !hasAesReady ||
-      chainId !== COTI_NETWORK.chainIdDecimal
-    ) {
+    const prefetchPlan = resolveGroupPrefetchPlan({
+      chainId,
+      groups: groupsRef.current,
+      hasAesReady,
+      prefetchedKeys: prefetchedGroupMessagesRef.current,
+      requestedGroupId: groupId,
+      requiredChainId: COTI_NETWORK.chainIdDecimal,
+      walletAddress
+    });
+    if (!prefetchPlan) {
       return;
     }
 
-    const normalizedGroupId = Math.floor(groupId);
-    const group = groupsRef.current.find((entry) => entry.id === normalizedGroupId);
-    const groupVersion = group?.lastBlock && group.lastBlock > 0
-      ? group.lastBlock
-      : group?.lastTimestamp && group.lastTimestamp > 0
-        ? group.lastTimestamp
-        : 0;
-    const prefetchKey = `${walletAddress.trim().toLowerCase()}:${normalizedGroupId}:${groupVersion}`;
-    if (prefetchedGroupMessagesRef.current[prefetchKey]) {
-      return;
-    }
-
-    prefetchedGroupMessagesRef.current[prefetchKey] = true;
-    syncGroupDataRef.current({
-      background: true,
-      prefetchGroupId: normalizedGroupId,
-      wideLoad: true
-    }).catch(() => {
-      delete prefetchedGroupMessagesRef.current[prefetchKey];
+    prefetchedGroupMessagesRef.current[prefetchPlan.cacheKey] = true;
+    syncGroupDataRef.current(prefetchPlan.options).catch(() => {
+      delete prefetchedGroupMessagesRef.current[prefetchPlan.cacheKey];
     });
   }, [walletAddress, hasAesReady, chainId]);
 
@@ -6965,6 +7002,30 @@ export default function App() {
     }
   }, []);
 
+  const navigateToInternalAppLink = useCallback((href: string) => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(href, window.location.origin);
+    } catch {
+      return;
+    }
+
+    if (targetUrl.origin !== window.location.origin) {
+      return;
+    }
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.pathname = targetUrl.pathname;
+    nextUrl.search = targetUrl.search;
+    nextUrl.hash = targetUrl.hash;
+    window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+    setActivePage(resolveAppRouteFromLocation().page);
+  }, []);
+
   useEffect(() => {
     const syncPageWithLocation = () => {
       const nextRoute = resolveAppRouteFromLocation();
@@ -7989,18 +8050,10 @@ export default function App() {
     let pendingRealtimeSyncOptions: SyncGroupOptions | null = null;
 
     const mergeRealtimeSyncOptions = (options?: SyncGroupOptions): void => {
-      const pending = pendingRealtimeSyncOptions;
-      const nextActiveMessagesOnly = Boolean(options?.activeMessagesOnly || pending?.activeMessagesOnly);
-      pendingRealtimeSyncOptions = {
-        background: true,
-        deep: Boolean(options?.deep || pending?.deep),
-        overviewOnly: nextActiveMessagesOnly
-          ? false
-          : pending
-            ? Boolean(options?.overviewOnly && pending.overviewOnly)
-            : Boolean(options?.overviewOnly),
-        activeMessagesOnly: nextActiveMessagesOnly
-      };
+      pendingRealtimeSyncOptions = mergeGroupSyncOptions(
+        { background: true, ...(options ?? {}) },
+        pendingRealtimeSyncOptions
+      );
     };
 
     const dispatchRealtimeSync = () => {
@@ -8100,23 +8153,6 @@ export default function App() {
       startReconnectFallback();
     };
 
-    const parseGroupIdFromEvent = (value: unknown): number => {
-      const direct = toSafeNumber(value);
-      if (direct > 0) {
-        return direct;
-      }
-
-      if (value && typeof value === 'object') {
-        const maybeArgs = (value as { args?: Record<string, unknown> }).args;
-        const parsedFromArgs = toSafeNumber(maybeArgs?.groupId);
-        if (parsedFromArgs > 0) {
-          return parsedFromArgs;
-        }
-      }
-
-      return 0;
-    };
-
     const setupGroupRealtimeSubscription = async () => {
       try {
         if (cancelled) {
@@ -8133,14 +8169,7 @@ export default function App() {
         const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, wsProvider);
         const handleOverviewEvent = () => scheduleRealtimeSync({ overviewOnly: true });
         const handleMessageEvent = (groupIdValue: unknown) => {
-          const eventGroupId = parseGroupIdFromEvent(groupIdValue);
-          const selectedActiveGroupId = activeGroupIdRef.current;
-          if (selectedActiveGroupId !== null && (eventGroupId <= 0 || eventGroupId === selectedActiveGroupId)) {
-            scheduleRealtimeSync({ activeMessagesOnly: true });
-            return;
-          }
-
-          scheduleRealtimeSync({ overviewOnly: true });
+          scheduleRealtimeSync(resolveRealtimeGroupSyncOptions(groupIdValue, activeGroupIdRef.current));
         };
 
         const createdFilter = contract.filters.GroupCreated(null, walletAddress);
@@ -8249,22 +8278,25 @@ export default function App() {
   }, [walletAddress, chainId, hasAesReady]);
 
   useEffect(() => {
-    if (activeGroupId === null || !walletAddress || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
-      return;
-    }
-
     const walletKey = walletAddress.trim().toLowerCase();
-    if (!isWalletAddress(walletKey)) {
+    const backfillPlan = resolveActiveGroupBackfillPlan({
+      activeGroupId,
+      chainId,
+      completedBackfillKeys: groupDeepBackfillDoneRef.current,
+      hasAesReady,
+      requiredChainId: COTI_NETWORK.chainIdDecimal,
+      walletAddress,
+      walletAddressValid: isWalletAddress(walletKey)
+    });
+    if (!backfillPlan) {
       return;
     }
 
-    const groupBackfillKey = `${walletKey}:${activeGroupId}`;
-    const isFirstOpen = !groupDeepBackfillDoneRef.current[groupBackfillKey];
-    syncGroupDataRef.current({ background: true, activeMessagesOnly: true, wideLoad: isFirstOpen }).catch(() => {});
-    if (isFirstOpen) {
-      groupDeepBackfillDoneRef.current[groupBackfillKey] = true;
-      syncGroupDataRef.current({ background: true, deep: true }).catch(() => {
-        delete groupDeepBackfillDoneRef.current[groupBackfillKey];
+    syncGroupDataRef.current(backfillPlan.fastOptions).catch(() => {});
+    if (backfillPlan.deepOptions) {
+      groupDeepBackfillDoneRef.current[backfillPlan.cacheKey] = true;
+      syncGroupDataRef.current(backfillPlan.deepOptions).catch(() => {
+        delete groupDeepBackfillDoneRef.current[backfillPlan.cacheKey];
       });
     }
   }, [activeGroupId, walletAddress, hasAesReady, chainId]);
@@ -8554,7 +8586,6 @@ export default function App() {
     burnerMnemonicBackup,
     burnerRecordReady: Boolean(burnerRecordRef.current),
     burnerStorageBlocked,
-    burnerWalletSelectionValue,
     burnerWallets,
     chainId,
     chatAppWalletMenuOpen,
@@ -8880,7 +8911,10 @@ export default function App() {
           <AppErrorBoundary fallback={<div className="chat-placeholder">Something went wrong. <button type="button" onClick={() => window.location.reload()}>Reload</button></div>}>
           <Suspense fallback={<div className="chat-placeholder">Loading conversation...</div>}>
             {!isConnected ? (
-              <div className="chat-placeholder">Connect a wallet to start messaging.</div>
+              <div className="chat-placeholder chat-placeholder-state" role="status" aria-live="polite">
+                <strong>Wallet needed</strong>
+                <p>Use the header wallet control to connect or unlock your app wallet.</p>
+              </div>
             ) : activeGroupId !== null ? (
               <GroupChatPanel
                 activeGroupId={activeGroupId!}
@@ -8973,6 +9007,7 @@ export default function App() {
                 }}
                 maxMessageLength={MAX_MESSAGE_LENGTH}
                 onMessageInputChange={handleMessageInputChange}
+                onOpenInternalAppLink={navigateToInternalAppLink}
               />
             ) : activeContact ? (
               <DirectChatPanel
@@ -9044,6 +9079,7 @@ export default function App() {
                 onSendMessage={handleSendMessage}
                 maxMessageLength={MAX_MESSAGE_LENGTH}
                 onMessageInputChange={handleMessageInputChange}
+                onOpenInternalAppLink={navigateToInternalAppLink}
                 sending={sending}
                 tipToggleDisabled={tipping || sending || uploadingImage || !activeContact || isSelfChat}
                 tipToggleTitle={tipComposerOpen ? 'Hide tip options' : 'Open tip options'}
@@ -9051,7 +9087,10 @@ export default function App() {
                 tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
               />
             ) : (
-              <div className="chat-placeholder">Select a contact or group to start messaging.</div>
+              <div className="chat-placeholder chat-placeholder-state">
+                <strong>Select a conversation</strong>
+                <p>Open a contact or group from the sidebar to start messaging.</p>
+              </div>
             )}
           </Suspense>
           </AppErrorBoundary>
@@ -9195,6 +9234,10 @@ export default function App() {
               loadingRewardBalances={loadingRewardBalances}
               swapFeeWei={swapFeeWei}
               swapTokenFeeAmount={swapTokenFeeAmount}
+              walletAddress={walletAddress}
+              onCotiNetwork={onCotiNetwork}
+              hasAesReady={hasAesReady}
+              onRefreshRewardBalances={() => setTopUpMetricsNonce((previous) => previous + 1)}
               canSwapRewardTokens={canSwapRewardTokens}
               swapButtonLabel={swapButtonLabel}
               onSwapRewardTokens={swapRewardTokens}

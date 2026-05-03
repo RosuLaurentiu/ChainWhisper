@@ -19,7 +19,7 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 
 - Keep page-specific defaults: Chat and Shield prefer app wallets; Trades prefers MetaMask/CipherTrade; Home and Treasury stay wallet-free.
 - Preserve the rule that navigating between apps never disconnects or re-prompts an already connected wallet.
-- Continue extracting signer resolution, disconnect handling, and wallet vault mutation into a shared hook once the oversized page files are split.
+- Continue extracting remaining page-local wallet session state into shared hooks once the oversized page files are split further.
 
 #### Reduce initial and route bundle weight
 
@@ -28,12 +28,11 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 - Keep Recharts isolated to the Treasury route and Supabase/image logic isolated to image attachment flows.
 - Consider preloading route chunks on Home hover/focus for Chat, Trades, Shield, and Treasury to improve perceived navigation speed without changing route behavior.
 
-#### Improve group sync speed
+#### Continue group sync speed hardening
 
-- Group sync still does wider scans than direct chat and is called out as slower.
-- Add tighter per-group block cursors and cache separate overview/member/message ranges so opening one group does not force unnecessary overview work.
-- Prefer active-group incremental message fetches after WS `GroupMessageSubmitted`/`GroupMessageDelivered` events, with deep backfill only when entering a group or cache gaps are detected.
-- Add tests around overview-only sync, active-messages-only sync, and no-regression behavior for group invites/join codes.
+- Keep group sync split between overview, active-message, and active-member ranges as more group features are added.
+- Add broader integration tests around full group invite and join-code user flows once contract mocking is available.
+- Continue moving remaining contract-read and merge orchestration out of `src/App.tsx` in small helper-backed steps.
 
 #### Harden trade identity and sensitive storage
 
@@ -45,18 +44,6 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 
 ### Medium Impact
 
-#### Preserve app context for internal trade links
-
-- Direct chat renders `/trades/l/...` links, but anchors can still trigger normal browser navigation behavior depending on how the user opens them.
-- Add an internal navigation helper for same-origin app links so wallet/session state is preserved when opening trade links from chat.
-- Mirror this behavior in group chat once group link rendering is added.
-
-#### Add group-chat link rendering parity
-
-- Direct chat linkifies HTTP(S) URLs and internal trade links; group chat currently displays message text more plainly.
-- Share the direct-chat link renderer or move it to a small helper component.
-- Ensure pasted private liquidity links render only as links, not as auto-posted trade cards.
-
 #### Expand focused test coverage
 
 - Routing: canonical route paths and aliases for `/`, `/home`, `/chat`, `/shield`, `/swap`, `/trades/...`, and `/treasury-data`.
@@ -65,19 +52,8 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 - Private liquidity: public explorer/detail privacy, maker-only reveal, partial fill labels, and contract-local trade IDs.
 - Chat sync: global read-state timestamp behavior, restore cache, hidden/muted conversation state, and group overview/active-message sync.
 
-#### Improve empty, loading, and error states
-
-- Give each page more specific empty states for first-run setup, no wallet, no AES, no COTI network, no public trades, no group messages, and unavailable treasury feeds.
-- Keep messages short and action-oriented: connect, unlock AES, switch network, refresh, open My Trades, or create a trade.
-- Add consistent retry buttons where the app already has a safe refresh action.
-
 ### Polish
 
-#### Trading dashboard follow-ups
-
-- Keep public/private liquidity cards focused on direction and price ratio.
-- Consider a subtle icon-only flip affordance if users miss that the ratio can be reversed.
-- Revisit market-style order headlines such as `Buy WISP at 2 COTI/WISP` only after the wording is designed end-to-end across composer, explorer cards, detail cards, and in-chat cards. The first attempt added too much explanatory text and was reverted.
 
 #### Accessibility and keyboard follow-ups
 
@@ -88,7 +64,7 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 #### Supabase image attachment follow-ups
 
 - Keep Supabase usage limited to encrypted chat image attachments.
-- Consider upload progress, cancel/retry before send, and image compression if larger attachments become common.
+- Consider upload progress, cancel before send, and image compression if larger attachments become common.
 
 #### Documentation hygiene
 
@@ -118,6 +94,20 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 
 - Added a page-neutral wallet session model and shared wallet header/readiness helpers used by Chat, Trades, and Shield.
 - Chat and Trades now derive AES readiness, network status, mode labels, primary wallet labels, and wallet status tones from shared logic.
+- Moved P2P wallet disconnect cleanup into `useP2PWalletDisconnect`, preserving connected-session handoff rules and existing wallet defaults.
+- Moved P2P trade signer resolution into `useP2PTradeSigner`, preserving app-wallet-first and browser-wallet fallback behavior.
+
+### Consolidate Wallet/Session Logic - Vault Mutation Pass
+
+- Moved app-wallet generation, import parsing, saved-wallet selection, encrypted vault upsert, and PIN re-save helpers into `src/lib/burnerWalletVault.ts`.
+- Chat and Trades now use the same vault mutation helpers while keeping their page-specific wallet defaults and AES/funding behavior.
+- Added focused coverage for saved app-wallet selection by id, address, and active-wallet fallback.
+
+### Consolidate Wallet/Session Logic - Browser Wallet Discovery Pass
+
+- Moved injected browser-wallet discovery and EIP-6963 provider announcement handling into `useInjectedWalletOptions`.
+- Chat/shell wallet onboarding and the Trades page now share the same provider refresh behavior while keeping Trades' MetaMask/CipherTrade default.
+- Removed the duplicated provider listener setup from `src/components/P2PTradingPage.tsx` and `src/hooks/useWalletOnboarding.ts`.
 
 ### Make Wallet/AES Readiness Easier To Understand
 
@@ -126,12 +116,16 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 - Moved `Unlock privacy` into the wallet status indicator when privacy is locked, reducing one extra header chip while keeping the action visible.
 - Shield now uses the same privacy wording as Chat and Trades.
 - Secondary wallet choices stay in the header menu.
+- Kept saved app-wallet selection in the separate switch control and made selection use the wallet address as a stable fallback for older vaults with regenerated wallet IDs.
+- Kept the quick preferred browser-wallet chip visible, including the disconnected app-wallet-primary state in Trades, while removing that same wallet from the dropdown menu to avoid duplicate MetaMask/CipherTrade actions.
 
 ### Trading Dashboard Clarity - Initial Pass
 
 - Normalized trade order labels so cards use "You sell", "You buy", and "Buyer pays" consistently across P2P, detail, and in-chat surfaces.
 - Kept reversible price-ratio controls compact so cards show the ratio without extra explanatory copy.
 - Shortened maker edit actions to `Edit` while preserving existing buy, private fill, counter, refuse, and cancel flows.
+- Removed the extra maker list open action because the card already exposes edit, copy, reveal, and cancel actions directly.
+- Expanded history cards with created time, outcome, fill summary, and trade type details inline.
 
 ### Accessibility And Keyboard Polish - Initial Pass
 
@@ -143,12 +137,61 @@ This file tracks proposals from a deep read of the current ChainWhisper app. It 
 ### Treasury UX
 
 - Treasury remains read-only.
-- Added independent status cards for live totals, saved snapshots, and onchain references.
 - Preserved partial source failures from the dashboard loader so the UI can show degraded states without losing usable data.
 - Treasury remains route-lazy and now prefetches from the Home Treasury button on hover/focus.
 - Added cached Treasury module/data preloading so quick opens can reuse warmed route and dashboard work.
+- Removed the verbose live/saved/onchain source-status strip after UX review to keep the page quieter.
 
 ### Supabase Image Attachment UX
 
 - Supabase remains limited to encrypted chat image attachments.
 - Implemented composer previews, clearer upload/load/decrypt/size errors, expired-image copy, and retry for failed image loads.
+- Added retry from the composer preview for failed encrypted image sends in direct and group chat, without retrying invalid file selections.
+
+### Empty, Loading, And Error States - P2P Initial Pass
+
+- Added action-oriented P2P market states for loading, refresh failures, no public offers, and no search matches.
+- Added trade-window recovery actions for failed trade loads, private-link-required states, and empty trade-link input states.
+- Added My Trades loading/error/empty states with retry, connect-wallet, clear-search, and create-trade actions where appropriate.
+
+### Empty, Loading, And Error States - Chat, Shield, And Treasury Pass
+
+- Chat no-wallet and no-selection placeholders now use clearer title/copy without adding extra controls.
+- Direct and group empty message states now explain the next action and keep to one safe sync/refresh button.
+- Shield now shows compact readiness states for wallet needed, wrong network, privacy locked, loading balances, and unavailable quotes.
+- Treasury chart failures and empty data states now show clearer retry cards, and the recent snapshots table handles no rows explicitly.
+- Button additions were kept minimal for this pass: only sync, refresh, or retry where the app already has a safe refresh path.
+
+### Group Sync Speed - Initial Pass
+
+- Added shared group sync planning helpers for pending option merging and block cursor range calculation.
+- Preserved active-message-only deep backfills so opening a group no longer forces a full deep overview sync.
+- Added a separate active-group member-event cursor alongside the existing overview and message cursors.
+- Active group backfills now fetch member system events through the scoped active-group path.
+- Added focused tests for overview-only planning, active-message-only deep backfill planning, caught-up cursors, incremental ranges, and first-open wide-load ranges.
+
+### Group Sync Speed - Event Planning Pass
+
+- Moved group event id extraction, removal-event marker selection, and realtime active-vs-overview sync selection into shared helpers.
+- Covered invite/member/join-code-style overview logs, member removal marker ordering, and realtime active-group routing with focused tests.
+- Kept group sync orchestration in `src/App.tsx` behaviorally unchanged while shrinking the untested decision logic inside it.
+
+### Group Sync Speed - Loading Phase Helper Pass
+
+- Moved active-group loading phase selection into `groupSyncPlan` so overview-only and prefetch syncs do not accidentally trigger message loading UI.
+- Added focused tests for initial active-message loads, history loads, deep active-group sync, overview-only sync, prefetch sync, and pending-load matching.
+- Kept runtime behavior unchanged while reducing another small piece of group sync orchestration inside `src/App.tsx`.
+
+### Group Sync Speed - Prefetch And Backfill Planning Pass
+
+- Moved group prefetch cache-key and sync-option planning into `groupSyncPlan`.
+- Moved active-group first-open fast-sync/deep-backfill planning into `groupSyncPlan`.
+- Added focused tests for prefetch cache versions, duplicate prefetch skips, readiness guards, first-open deep backfill, and repeat-open fast sync.
+
+### Internal Chat Link Navigation And Group Link Parity
+
+- Moved chat URL/link parsing into shared helpers and a shared message text renderer.
+- Direct and group chat now both linkify HTTP(S) URLs and same-origin app trade links.
+- Same-origin app links use app-shell navigation so internal trade links preserve wallet/session context.
+- Modifier-click and new-tab behavior remain normal because only plain left-click internal links are intercepted.
+- Private liquidity links pasted into group chat render as links only, matching direct chat behavior without creating trade cards.

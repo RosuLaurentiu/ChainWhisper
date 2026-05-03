@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, type KeyboardEvent, type MutableRefObject
 import GroupChatCompose from './GroupChatCompose';
 import ChatImage from './ChatImage';
 import MessageActions from './MessageActions';
+import MessageTextWithLinks from './MessageTextWithLinks';
 import type { ImageAttachmentPreviewState } from '../lib/imageAttachmentPreview';
 import { closeDetailsOnEscape } from './a11y';
 import { parseImageTag } from '../lib/imagePull';
@@ -110,6 +111,7 @@ type GroupChatPanelProps = {
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
+  onOpenInternalAppLink: (href: string) => void;
 };
 
 export default function GroupChatPanel({
@@ -183,7 +185,8 @@ export default function GroupChatPanel({
   onDismissImageAttachmentStatus,
   onSendMessage,
   maxMessageLength,
-  onMessageInputChange
+  onMessageInputChange,
+  onOpenInternalAppLink
 }: GroupChatPanelProps) {
   const chatMessagesNodeRef = useRef<HTMLDivElement | null>(null);
   const mobileGroupToolsButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -409,7 +412,15 @@ export default function GroupChatPanel({
             ))}
           </div>
         ) : renderableMessages.length === 0 ? (
-          <p className="chat-empty">No group messages yet.</p>
+          <div className="chat-empty-state" role="status" aria-live="polite">
+            <strong>No group messages yet</strong>
+            <p>Send the first message, or refresh this group if recent messages are still syncing.</p>
+            <div className="chat-empty-actions">
+              <button type="button" onClick={onRefreshGroup} disabled={syncingGroups}>
+                {syncingGroups ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+          </div>
         ) : (
           <div
             className="virtual-message-list"
@@ -534,7 +545,9 @@ export default function GroupChatPanel({
                   {parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
                   ) : messageDisplayText ? (
-                    <div className="message-text">{messageDisplayText}</div>
+                    <div className="message-text">
+                      <MessageTextWithLinks text={messageDisplayText} onOpenInternalLink={onOpenInternalAppLink} />
+                    </div>
                   ) : null}
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">

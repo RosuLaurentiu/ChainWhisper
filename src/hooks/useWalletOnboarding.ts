@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import {
   COTI_NETWORK,
   createCotiBrowserProvider,
-  getInjectedWalletOptions,
   getProviderErrorMessage,
   mergeOnboardInfo,
   normalizeChainId,
-  rememberInjectedWalletProvider,
   type Eip1193Provider,
   type SignerSource
 } from '../lib/appShared';
@@ -16,6 +14,7 @@ import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption
 } from '../lib/walletOptions';
+import useInjectedWalletOptions from './useInjectedWalletOptions';
 
 type UseWalletOnboardingArgs = {
   clearCachedStateBackupMemo: () => void;
@@ -49,7 +48,7 @@ export function useWalletOnboarding({
   const [walletAddress, setWalletAddress] = useState('');
   const [chainId, setChainId] = useState<number | null>(null);
   const [status, setStatus] = useState('Disconnected');
-  const [activeSignerSource, setActiveSignerSource] = useState<SignerSource>('burner');
+  const [activeSignerSource, setActiveSignerSourceState] = useState<SignerSource>('burner');
   const [connectionMethod, setConnectionMethod] = useState<'metamask' | null>(null);
   const [connectingMethod, setConnectingMethod] = useState<'metamask' | null>(null);
   const [connectingWalletLabel, setConnectingWalletLabel] = useState('');
@@ -58,14 +57,18 @@ export function useWalletOnboarding({
   const [sessionOnboardInfo, setSessionOnboardInfo] = useState<Record<string, OnboardInfo>>({});
   const [activeProvider, setActiveProvider] = useState<Eip1193Provider | null>(null);
   const [browserWalletSession, setBrowserWalletSessionState] = useState<BrowserWalletSession | null>(null);
-  const [, setInjectedWalletRefreshNonce] = useState(0);
 
   const activeProviderRef = useRef<Eip1193Provider | null>(null);
   const browserWalletSessionRef = useRef<BrowserWalletSession | null>(null);
   const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
   const currentWalletKeyRef = useRef('');
+  const activeSignerSourceRef = useRef<SignerSource>('burner');
 
-  const injectedWalletOptions = filterAllowedBrowserWalletOptions(getInjectedWalletOptions());
+  const detectedInjectedWalletOptions = useInjectedWalletOptions();
+  const injectedWalletOptions = useMemo(
+    () => filterAllowedBrowserWalletOptions(detectedInjectedWalletOptions),
+    [detectedInjectedWalletOptions]
+  );
   const preferredInjectedWalletOption = getPreferredInjectedWalletOption(
     injectedWalletOptions,
     selectedInjectedWalletId,
@@ -81,33 +84,15 @@ export function useWalletOnboarding({
   }, [walletAddress]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
+    activeSignerSourceRef.current = activeSignerSource;
+  }, [activeSignerSource]);
 
-    const refreshInjectedWalletOptions = () => {
-      setInjectedWalletRefreshNonce((previous) => previous + 1);
-    };
-    const handleProviderAnnouncement = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{ provider?: Eip1193Provider; info?: { name?: string; rdns?: string; uuid?: string } }>
-      ).detail;
-      rememberInjectedWalletProvider(detail?.provider, detail?.info);
-      refreshInjectedWalletOptions();
-    };
-
-    refreshInjectedWalletOptions();
-    window.addEventListener('ethereum#initialized', refreshInjectedWalletOptions);
-    window.addEventListener('eip6963:announceProvider', handleProviderAnnouncement);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-
-    const refreshTimers = [250, 1000, 2500].map((delay) => window.setTimeout(refreshInjectedWalletOptions, delay));
-
-    return () => {
-      window.removeEventListener('ethereum#initialized', refreshInjectedWalletOptions);
-      window.removeEventListener('eip6963:announceProvider', handleProviderAnnouncement);
-      refreshTimers.forEach((timer) => window.clearTimeout(timer));
-    };
+  const setActiveSignerSource = useCallback<Dispatch<SetStateAction<SignerSource>>>((nextSource) => {
+    setActiveSignerSourceState((previousSource) => {
+      const resolvedSource = typeof nextSource === 'function' ? nextSource(previousSource) : nextSource;
+      activeSignerSourceRef.current = resolvedSource;
+      return resolvedSource;
+    });
   }, []);
 
   const setConnectedProvider = useCallback((provider: Eip1193Provider | null) => {
@@ -172,6 +157,9 @@ export function useWalletOnboarding({
       }
 
       const accounts = (await provider.request({ method: 'eth_accounts' })) as string[];
+      if (activeSignerSourceRef.current !== 'metamask' || activeProviderRef.current !== provider) {
+        return;
+      }
       const selected = accounts[0] ?? '';
       setWalletAddress(selected);
 
@@ -450,6 +438,9 @@ export function useWalletOnboarding({
     }
 
     const handleAccountsChanged = (accounts: unknown) => {
+      if (activeSignerSourceRef.current !== 'metamask') {
+        return;
+      }
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
       const selected = nextAccounts[0] ?? '';
       setWalletAddress(selected);
@@ -460,6 +451,9 @@ export function useWalletOnboarding({
     };
 
     const handleChainChanged = (newChainId: unknown) => {
+      if (activeSignerSourceRef.current !== 'metamask') {
+        return;
+      }
       if (typeof newChainId === 'string' || typeof newChainId === 'number') {
         setChainId(normalizeChainId(newChainId));
       }

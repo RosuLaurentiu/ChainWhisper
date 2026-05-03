@@ -100,7 +100,7 @@ export async function sendChatImageAttachment({
     }
     setError(message);
     showImageAttachmentStatus(
-      buildImageAttachmentStatus(file, 'error', 'Image was not sent', message, previewUrl)
+      buildImageAttachmentStatus(file, 'error', 'Image was not sent', message, previewUrl, file)
     );
   } finally {
     setUploadingImage(false);
