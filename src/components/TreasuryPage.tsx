@@ -522,6 +522,20 @@ function TreasuryMetaCard({
   );
 }
 
+function TreasuryChartSkeleton() {
+  return (
+    <div className="treasury-chart-skeleton" role="status" aria-live="polite" aria-label="Loading Treasury chart">
+      <div className="treasury-chart-skeleton-grid" aria-hidden="true">
+        {[0, 1, 2, 3].map((index) => (
+          <span key={`treasury-chart-skeleton-line-${index}`} />
+        ))}
+      </div>
+      <div className="treasury-chart-skeleton-line" aria-hidden="true" />
+      <p>Loading dashboard...</p>
+    </div>
+  );
+}
+
 export default function TreasuryPage({ isCompactLayout = false }: { isCompactLayout?: boolean }) {
   const [metric, setMetric] = useState<MetricKey>('cotiInPool');
   const [timeframe, setTimeframe] = useState<TimeframeKey>('30d');
@@ -717,7 +731,7 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
         </div>
 
         <div className="treasury-chart-surface">
-          {status === 'loading' ? <p className="treasury-state-message" aria-live="polite">Loading dashboard...</p> : null}
+          {status === 'loading' ? <TreasuryChartSkeleton /> : null}
           {status === 'error' ? (
             <div className="treasury-state-card treasury-state-card-error" role="status" aria-live="polite">
               <strong>Treasury data unavailable</strong>

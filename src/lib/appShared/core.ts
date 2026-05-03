@@ -531,6 +531,7 @@ export type PendingBurnerInit = {
 export type SyncConversationOptions = {
   deep?: boolean;
   contactsOnly?: boolean;
+  activeContactOnly?: boolean;
   previewPerContact?: boolean;
   updateHead?: boolean;
   lookbackBlocks?: number;

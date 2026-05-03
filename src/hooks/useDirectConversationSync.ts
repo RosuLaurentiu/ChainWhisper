@@ -107,6 +107,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
   const syncingHistoryRef = useRef(false);
   const pendingSyncOptionsRef = useRef<SyncConversationOptions | null>(null);
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
+  const lastActiveContactSyncedBlockRef = useRef<Record<string, number>>({});
   const oldestLoadedBlockByContactRef = useRef<Record<string, number>>({});
   const hasOlderHistoryByContactRef = useRef<Record<string, boolean>>({});
   const conversationRangeByContactRef = useRef<Record<string, ConversationBlockRange>>({});
@@ -117,6 +118,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
   const resetConversationHistoryCaches = useCallback(() => {
     lastSyncedBlockRef.current = {};
+    lastActiveContactSyncedBlockRef.current = {};
     oldestLoadedBlockByContactRef.current = {};
     hasOlderHistoryByContactRef.current = {};
     conversationRangeByContactRef.current = {};
@@ -203,10 +205,30 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       }
 
       const walletKey = requestedWalletKey;
+      const activeContactAddress = argsRef.current.activeContact?.trim() ?? '';
+      const useActiveContactOnly =
+        Boolean(options?.activeContactOnly) &&
+        !options?.contactsOnly &&
+        !options?.deep &&
+        isWalletAddress(activeContactAddress);
+      const activeContactKey = activeContactAddress.toLowerCase();
+      const activeContactSyncKey = useActiveContactOnly ? `${walletKey}:${activeContactKey}` : '';
+      const activeContactSyncedBlock = useActiveContactOnly
+        ? lastActiveContactSyncedBlockRef.current[activeContactSyncKey]
+        : undefined;
+      const globalSyncedBlock = lastSyncedBlockRef.current[walletKey];
+      const lastSyncedBlockForRange =
+        useActiveContactOnly &&
+        typeof activeContactSyncedBlock === 'number' &&
+        typeof globalSyncedBlock === 'number'
+          ? Math.max(activeContactSyncedBlock, globalSyncedBlock)
+          : useActiveContactOnly
+            ? activeContactSyncedBlock ?? globalSyncedBlock
+            : globalSyncedBlock;
       const syncRange = resolveDirectSyncRange({
         initialLookbackBlocks: INITIAL_SYNC_LOOKBACK_BLOCKS,
         latestBlock,
-        lastSyncedBlock: lastSyncedBlockRef.current[walletKey],
+        lastSyncedBlock: lastSyncedBlockForRange,
         options
       });
       if (!syncRange.shouldQuery) {
@@ -261,16 +283,31 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         }
       };
 
-      const recentPeersWithMeta = await resolveRecentPeersWithMeta(contract, requestedWalletAddress);
-      for (const peer of recentPeersWithMeta) {
-        discoveredContacts.add(peer.address);
+      const recentPeersWithMeta = useActiveContactOnly
+        ? []
+        : await resolveRecentPeersWithMeta(contract, requestedWalletAddress);
+      if (useActiveContactOnly) {
+        discoveredContacts.add(activeContactAddress);
+      } else {
+        for (const peer of recentPeersWithMeta) {
+          discoveredContacts.add(peer.address);
+        }
       }
 
       let incomingLogs: ConversationLog[] = [];
       let outgoingLogs: ConversationLog[] = [];
       const useFastPreviewPath = shouldLoadContactPreviews && recentPeersWithMeta.length > 0;
 
-      if (useFastPreviewPath) {
+      if (useActiveContactOnly) {
+        const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, activeContactAddress);
+        const outgoingFilter = contract.filters.MessageSubmitted(activeContactAddress, requestedWalletAddress);
+        const [incomingLogsRaw, outgoingLogsRaw] = await Promise.all([
+          contract.queryFilter(incomingFilter, fromBlock, toBlock),
+          contract.queryFilter(outgoingFilter, fromBlock, toBlock)
+        ]);
+        incomingLogs = incomingLogsRaw as ConversationLog[];
+        outgoingLogs = outgoingLogsRaw as ConversationLog[];
+      } else if (useFastPreviewPath) {
         const previewCandidates = recentPeersWithMeta.filter(
           (peer) => peer.lastBlock > 0 && peer.lastBlock <= toBlock
         );
@@ -1098,7 +1135,9 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         backupLocalStateToSelf({ force: true, background: true }).catch(() => {});
       }
 
-      if ((options?.updateHead || !options?.contactsOnly) && typeof options?.toBlock !== 'number') {
+      if (useActiveContactOnly && activeContactSyncKey && typeof options?.toBlock !== 'number') {
+        lastActiveContactSyncedBlockRef.current[activeContactSyncKey] = latestBlock;
+      } else if ((options?.updateHead || !options?.contactsOnly) && typeof options?.toBlock !== 'number') {
         lastSyncedBlockRef.current[walletKey] = latestBlock;
       }
       if (currentWalletKeyRef.current !== requestedWalletKey) {

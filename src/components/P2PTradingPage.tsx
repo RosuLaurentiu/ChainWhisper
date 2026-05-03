@@ -15,6 +15,7 @@ import {
   formatTradeAssetDisplayText,
   getCotiWsLastHealthyAt,
   getProviderErrorMessage,
+  hasInsufficientFundsError,
   isWalletAddress,
   loadBurnerWalletVaultFromStorage,
   loadCotiEthersModule,
@@ -65,7 +66,8 @@ import useInjectedWalletOptions from '../hooks/useInjectedWalletOptions';
 import { useStoredWalletPreference } from '../hooks/useStoredWalletPreference';
 import {
   buildNewBurnerWalletRecord,
-  saveBurnerWalletRecordWithPin
+  saveBurnerWalletRecordWithPin,
+  selectBurnerWalletFromVault
 } from '../lib/burnerWalletVault';
 import {
   formatTradeRatioLabel,
@@ -463,7 +465,7 @@ export default function P2PTradingPage({
   const [connectingWalletId, setConnectingWalletId] = useState('');
   const [connectedWalletLabel, setConnectedWalletLabel] = useState('Wallet');
   const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>([]);
-  const [selectedBurnerWalletId, setSelectedBurnerWalletId] = useState('');
+  const [, setSelectedBurnerWalletId] = useState('');
   const [pendingBurnerWalletId, setPendingBurnerWalletId] = useState('');
   const [pendingBurnerAction, setPendingBurnerAction] = useState<PendingBurnerWalletAction>('connect');
   const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
@@ -719,7 +721,7 @@ export default function P2PTradingPage({
     }
     if (storageState.kind === 'legacy-vault') {
       setBurnerWallets(storageState.record.wallets);
-      setSelectedBurnerWalletId(storageState.record.activeWalletId ?? storageState.record.wallets[0]?.id ?? '');
+      setSelectedBurnerWalletId('');
       return;
     }
     if (storageState.kind === 'none') {
@@ -877,13 +879,7 @@ export default function P2PTradingPage({
 
       try {
         const vault = await loadBurnerWalletVaultFromStorage(pin);
-        const walletSelector = walletId?.trim() ?? '';
-        const walletSelectorKey = walletSelector.toLowerCase();
-        const selectedRecord =
-          vault.wallets.find((walletRecord) => walletRecord.id === walletSelector) ??
-          vault.wallets.find((walletRecord) => walletRecord.address?.toLowerCase() === walletSelectorKey) ??
-          vault.wallets.find((walletRecord) => walletRecord.id === vault.activeWalletId) ??
-          vault.wallets[0];
+        const selectedRecord = selectBurnerWalletFromVault(vault, walletId);
         if (!selectedRecord) {
           throw new Error('No saved burner wallet found.');
         }
@@ -930,7 +926,7 @@ export default function P2PTradingPage({
             await signer.generateOrRecoverAes();
           } catch (aesError) {
             const message = aesError instanceof Error ? aesError.message : String(aesError);
-            if (message.includes('Account balance is 0 so user cannot be onboarded')) {
+            if (hasInsufficientFundsError(message)) {
               setWalletError('App wallet selected. Fund it with COTI to unlock privacy and pay gas.');
               return;
             }
@@ -967,11 +963,18 @@ export default function P2PTradingPage({
           walletRecord.id === walletSelector || walletRecord.address?.toLowerCase() === walletSelectorKey
       );
       const selectedWalletKey = selectedWalletRecord?.address?.toLowerCase() ?? '';
+      const firstSavedWalletKey = burnerWallets[0]?.address?.toLowerCase() ?? '';
+      const shouldUseWarmBurnerWallet =
+        Boolean(warmBurnerWallet) &&
+        (
+          !walletSelector
+            ? !firstSavedWalletKey || firstSavedWalletKey === warmBurnerWallet?.address.toLowerCase()
+            : walletSelectorKey === warmBurnerWallet?.address.toLowerCase() ||
+              selectedWalletKey === warmBurnerWallet?.address.toLowerCase()
+        );
       if (
         warmBurnerWallet &&
-        (!walletSelector ||
-          walletSelectorKey === warmBurnerWallet.address.toLowerCase() ||
-          selectedWalletKey === warmBurnerWallet.address.toLowerCase())
+        shouldUseWarmBurnerWallet
       ) {
         const cacheKey = warmBurnerWallet.address.toLowerCase();
         markSharedWalletSkippedAfterLocalAppSwitch(cacheKey);
@@ -2250,7 +2253,6 @@ export default function P2PTradingPage({
     lastCopiedKey,
     onCotiNetwork,
     preferredWalletOption,
-    selectedBurnerWalletId,
     selectedWalletId,
     setAppWalletMenuOpen,
     setSelectedBurnerWalletId,

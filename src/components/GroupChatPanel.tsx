@@ -209,6 +209,9 @@ export default function GroupChatPanel({
   );
   const showInitialMessageSkeleton = messageLoadPhase !== null && renderableMessages.length === 0;
   const showHistorySyncIndicator = messageLoadPhase !== null && renderableMessages.length > 0;
+  const messageLoadLabel = messageLoadPhase === 'initial' ? 'Catching up' : 'Loading older messages';
+  const messageLoadAriaLabel =
+    messageLoadPhase === 'initial' ? 'Catching up group messages' : 'Loading older group messages';
   const messageVirtualizer = useVirtualizer({
     count: renderableMessages.length,
     getScrollElement: () => chatMessagesNodeRef.current,
@@ -394,11 +397,11 @@ export default function GroupChatPanel({
         {showHistorySyncIndicator ? (
           <div className="group-message-sync-indicator" role="status" aria-live="polite">
             <span className="inline-spinner" aria-hidden="true" />
-            <span>{messageLoadPhase === 'initial' ? 'Syncing recent messages' : 'Syncing history'}</span>
+            <span>{messageLoadLabel}</span>
           </div>
         ) : null}
         {showInitialMessageSkeleton ? (
-          <div className="group-message-skeleton-list" role="status" aria-live="polite" aria-label="Loading group messages">
+          <div className="group-message-skeleton-list" role="status" aria-live="polite" aria-label={messageLoadAriaLabel}>
             {[0, 1, 2, 3, 4].map((index) => (
               <div
                 key={`group-message-skeleton-${index}`}

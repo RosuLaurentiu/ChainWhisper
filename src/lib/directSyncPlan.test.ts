@@ -37,6 +37,31 @@ describe('mergeDirectSyncOptions', () => {
       toBlock: 120
     });
   });
+
+  it('keeps active-contact realtime work narrow unless broader contact work is pending', () => {
+    expect(
+      mergeDirectSyncOptions(
+        { activeContactOnly: true },
+        { background: true }
+      )
+    ).toMatchObject({
+      activeContactOnly: true,
+      background: true,
+      contactsOnly: false,
+      previewPerContact: false
+    });
+
+    expect(
+      mergeDirectSyncOptions(
+        { activeContactOnly: true },
+        { contactsOnly: true, previewPerContact: true, background: true }
+      )
+    ).toMatchObject({
+      activeContactOnly: false,
+      contactsOnly: true,
+      previewPerContact: true
+    });
+  });
 });
 
 describe('resolveDirectSyncRange', () => {
@@ -134,4 +159,3 @@ describe('resolveOlderDirectHistoryRange', () => {
     });
   });
 });
-

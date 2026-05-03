@@ -47,6 +47,16 @@ export type WalletHeaderActionVisibility<TWalletOption extends WalletOptionLike>
   showDisconnectedBrowserAction: boolean;
 };
 
+export type AppWalletSwitchOptionModel = {
+  active: boolean;
+  address: string;
+  disabled: boolean;
+  id: string;
+  key: string;
+  label: string;
+  walletId: string;
+};
+
 export const WALLET_STATUS_LABEL = {
   disconnected: 'Disconnected',
   wrongNetwork: 'Wrong network',
@@ -276,11 +286,51 @@ export const resolveWalletHeaderActionVisibility = <TWalletOption extends Wallet
     quickBrowserWalletId,
     showAppCreateAction: Boolean(isConnected && isOnCotiNetwork && !connectedWithAppWallet && !hasSavedAppWallet),
     showAppSwitchAction: Boolean(isConnected && isOnCotiNetwork && !connectedWithAppWallet && hasSavedAppWallet),
-    showAppWalletSwitchButton: Boolean(isConnected && isOnCotiNetwork && connectedWithAppWallet && appWalletCount > 1),
+    showAppWalletSwitchButton: Boolean(
+      appWalletCount > 1 &&
+      (
+        (isConnected && isOnCotiNetwork && connectedWithAppWallet) ||
+        (!isConnected && hasSavedAppWallet)
+      )
+    ),
     showBrowserQuickAction: Boolean(quickBrowserWalletId),
     showBrowserSwitchAction: Boolean(isConnected && isOnCotiNetwork && connectedWithAppWallet && preferredBrowserWalletId),
     showBrowserWalletMenuSection:
       menuBrowserWalletOptions.length > 0 || (browserWalletOptions.length === 0 && !quickBrowserWalletId),
     showDisconnectedBrowserAction: Boolean(!isConnected && showDisconnectedBrowserAction && preferredBrowserWalletId)
   };
+};
+
+export const resolveAppWalletSwitchOptions = ({
+  activeWalletAddress,
+  disabled = false,
+  getDisplayName,
+  wallets
+}: {
+  activeWalletAddress: string;
+  disabled?: boolean;
+  getDisplayName?: (walletRecord: BurnerWalletRecord, index: number) => string;
+  wallets: BurnerWalletRecord[];
+}): AppWalletSwitchOptionModel[] => {
+  const activeWalletKey = normalizeWalletKey(activeWalletAddress);
+  return wallets.map((walletRecord, index) => {
+    const walletId = walletRecord.id ?? '';
+    const walletRecordAddress = walletRecord.address?.trim() ?? '';
+    const switchValue = walletRecordAddress || walletId;
+    const isSelected = Boolean(walletRecordAddress && normalizeWalletKey(walletRecordAddress) === activeWalletKey);
+    const displayName =
+      getDisplayName?.(walletRecord, index) ||
+      walletRecord.name?.trim() ||
+      (walletRecordAddress ? shortenAddress(walletRecordAddress) : `Wallet ${index + 1}`);
+
+    return {
+      active: isSelected,
+      disabled: Boolean(disabled || !switchValue || isSelected),
+      address: walletRecordAddress,
+      id: switchValue,
+      key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
+      label: isSelected ? `${displayName} active` : displayName,
+      walletId
+    };
+  });
 };

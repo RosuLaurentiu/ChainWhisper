@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from 'react';
+import { LockKeyhole } from 'lucide-react';
 import { resolveWalletStatusTone, type WalletStatusTone } from '../lib/walletSession';
 
 type WalletHeaderPanelProps = {
@@ -76,7 +77,11 @@ export default function WalletHeaderPanel({
             </button>
             {primaryAddon ? <div className="p2p-wallet-primary-addon">{primaryAddon}</div> : null}
           </div>
-          <div className={`p2p-wallet-status-text p2p-wallet-status-${resolvedStatusTone}`}>
+          <div
+            className={`p2p-wallet-status-text p2p-wallet-status-${resolvedStatusTone}${
+              hasStatusAction ? ' has-status-action' : ''
+            }`}
+          >
             <span>{modeLabel}</span>
             {hasStatusAction ? (
               <button
@@ -85,9 +90,12 @@ export default function WalletHeaderPanel({
                 onClick={onStatusAction}
                 disabled={statusActionDisabled}
                 title={statusActionTitle}
+                aria-label={statusActionTitle ?? statusActionLabel}
               >
-                <i aria-hidden="true" />
-                {statusActionLabel}
+                <span className="p2p-wallet-status-action-icon" aria-hidden="true">
+                  <LockKeyhole size={12} strokeWidth={2.6} />
+                </span>
+                <span className="p2p-wallet-status-action-label">{statusActionLabel}</span>
               </button>
             ) : (
               <strong>

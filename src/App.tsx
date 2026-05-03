@@ -82,6 +82,7 @@ import {
 import { sendChatImageAttachment } from './lib/chatImageAttachment';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
+import { mergeDirectSyncOptions } from './lib/directSyncPlan';
 import {
   collectGroupIdsFromLogs,
   collectLatestGroupRemovalEvents,
@@ -218,14 +219,30 @@ import {
 const BurnerBackupModal = lazy(() => import('./components/BurnerBackupModal'));
 const BurnerImportModal = lazy(() => import('./components/BurnerImportModal'));
 const BurnerPinModal = lazy(() => import('./components/BurnerPinModal'));
-const DirectChatPanel = lazy(() => import('./components/DirectChatPanel'));
-const GroupChatPanel = lazy(() => import('./components/GroupChatPanel'));
-const P2PTradingPage = lazy(() => import('./components/P2PTradingPage'));
 const QuickActionsModal = lazy(() => import('./components/QuickActionsModal'));
-const TokenSwapPage = lazy(() => import('./components/TokenSwapPage'));
 const TopUpModal = lazy(() => import('./components/TopUpModal'));
+let directChatPanelModulePromise: Promise<typeof import('./components/DirectChatPanel')> | null = null;
+let groupChatPanelModulePromise: Promise<typeof import('./components/GroupChatPanel')> | null = null;
+let p2pTradingPageModulePromise: Promise<typeof import('./components/P2PTradingPage')> | null = null;
+let tokenSwapPageModulePromise: Promise<typeof import('./components/TokenSwapPage')> | null = null;
 let treasuryPageModulePromise: Promise<typeof import('./components/TreasuryPage')> | null = null;
 let treasuryDataModulePromise: Promise<typeof import('./lib/treasuryData')> | null = null;
+const loadDirectChatPanel = () => {
+  directChatPanelModulePromise ??= import('./components/DirectChatPanel');
+  return directChatPanelModulePromise;
+};
+const loadGroupChatPanel = () => {
+  groupChatPanelModulePromise ??= import('./components/GroupChatPanel');
+  return groupChatPanelModulePromise;
+};
+const loadP2PTradingPage = () => {
+  p2pTradingPageModulePromise ??= import('./components/P2PTradingPage');
+  return p2pTradingPageModulePromise;
+};
+const loadTokenSwapPage = () => {
+  tokenSwapPageModulePromise ??= import('./components/TokenSwapPage');
+  return tokenSwapPageModulePromise;
+};
 const loadTreasuryPage = () => {
   treasuryPageModulePromise ??= import('./components/TreasuryPage');
   return treasuryPageModulePromise;
@@ -238,8 +255,50 @@ const preloadTreasuryPage = () => {
   void loadTreasuryPage();
   preloadTreasuryDashboardData();
 };
+const preloadChatPage = () => {
+  void loadDirectChatPanel();
+  void loadGroupChatPanel();
+};
+const preloadTradesPage = () => {
+  void loadP2PTradingPage();
+};
+const preloadSwapPage = () => {
+  void loadTokenSwapPage();
+};
+const DirectChatPanel = lazy(loadDirectChatPanel);
+const GroupChatPanel = lazy(loadGroupChatPanel);
+const P2PTradingPage = lazy(loadP2PTradingPage);
+const TokenSwapPage = lazy(loadTokenSwapPage);
 const TreasuryPage = lazy(loadTreasuryPage);
 const TradeComposerPanel = lazy(() => import('./components/TradeComposerPanel'));
+
+function RouteLoadingFallback({
+  label,
+  shellClassName,
+  variant = 'standard'
+}: {
+  label: string;
+  shellClassName: string;
+  variant?: 'standard' | 'treasury';
+}) {
+  const rowCount = variant === 'treasury' ? 4 : 3;
+
+  return (
+    <main className={shellClassName}>
+      <section className={`route-loading route-loading-${variant}`} role="status" aria-live="polite" aria-label={label}>
+        <div className="route-loading-header">
+          <span className="inline-spinner" aria-hidden="true" />
+          <span>{label}</span>
+        </div>
+        <div className="route-loading-lines" aria-hidden="true">
+          {Array.from({ length: rowCount }, (_, index) => (
+            <span key={`route-loading-line-${index}`} />
+          ))}
+        </div>
+      </section>
+    </main>
+  );
+}
 
 const INITIAL_VISIBLE_THREAD_MESSAGE_COUNT = 160;
 const VISIBLE_THREAD_MESSAGE_CHUNK = 120;
@@ -4130,346 +4189,24 @@ export default function App() {
       }
 
       if (!options?.overviewOnly && selectedActiveGroupId !== null) {
-        const groupId = selectedActiveGroupId;
-        const groupMessageSyncKey = `${walletKey}:${groupId}`;
-        const previousGroupMessageBlock = groupMessageLastSyncedBlockRef.current[groupMessageSyncKey];
-        const activeGroupLastMessageBlock = toSafeNumber(
-          await contract.lastMessageBlockForGroup(groupId).catch(() => null)
-        );
-        if (currentWalletKeyRef.current !== requestedWalletKey) {
-          return;
-        }
-        const hasNewGroupActivity =
-          Boolean(options?.deep) ||
-          typeof previousGroupMessageBlock !== 'number' ||
-          activeGroupLastMessageBlock <= 0 ||
-          activeGroupLastMessageBlock > previousGroupMessageBlock;
-
-        if (!hasNewGroupActivity) {
-          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = latestBlock;
-          if (currentWalletKeyRef.current !== requestedWalletKey) {
-            return;
-          }
-        }
-
-        const groupFromBlock = options?.deep
-          ? 0
-          : typeof previousGroupMessageBlock === 'number'
-            ? previousGroupMessageBlock + 1
-            : Math.max(0, latestBlock - INITIAL_SYNC_LOOKBACK_BLOCKS);
-
-        if (hasNewGroupActivity && groupFromBlock <= latestBlock) {
-          const [incomingLogs, outgoingLogs, memberAddedLogs, memberRemovedLogsForGroup, memberLeftLogs] = await Promise.all([
-            contract.queryFilter(contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress), groupFromBlock, latestBlock),
-            contract.queryFilter(contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress), groupFromBlock, latestBlock),
-            contract.queryFilter(contract.filters.GroupMemberAdded(groupId, null), groupFromBlock, latestBlock),
-            contract.queryFilter(contract.filters.GroupMemberRemoved(groupId, null), groupFromBlock, latestBlock),
-            contract.queryFilter(contract.filters.GroupMemberLeft(groupId, null), groupFromBlock, latestBlock)
-          ]);
-          if (currentWalletKeyRef.current !== requestedWalletKey) {
-            return;
-          }
-
-          const blockNumbers = new Set<number>();
-          for (const log of incomingLogs) {
-            blockNumbers.add(log.blockNumber);
-          }
-          for (const log of outgoingLogs) {
-            blockNumbers.add(log.blockNumber);
-          }
-          for (const log of memberAddedLogs) {
-            blockNumbers.add(log.blockNumber);
-          }
-          for (const log of memberRemovedLogsForGroup) {
-            blockNumbers.add(log.blockNumber);
-          }
-          for (const log of memberLeftLogs) {
-            blockNumbers.add(log.blockNumber);
-          }
-
-          const blockTimestampMap = new Map<number, number>();
-          const blockTimestampCache = blockTimestampCacheRef.current;
-          await Promise.all(
-            Array.from(blockNumbers).map(async (blockNumber) => {
-              const cachedTimestamp = blockTimestampCache.get(blockNumber);
-              if (typeof cachedTimestamp === 'number') {
-                blockTimestampMap.set(blockNumber, cachedTimestamp);
-                return;
-              }
-
-              const block = await readProvider.getBlock(blockNumber);
-              if (block?.timestamp) {
-                const timestamp = Number(block.timestamp);
-                blockTimestampMap.set(blockNumber, timestamp);
-                blockTimestampCache.set(blockNumber, timestamp);
-              }
-            })
-          );
-          if (currentWalletKeyRef.current !== requestedWalletKey) {
-            return;
-          }
-
-          const entries: GroupMessageEntry[] = [];
-          for (const log of incomingLogs) {
-            const args = (log as { args?: Record<string, unknown> }).args;
-            const from = String(args?.from ?? '').trim();
-            if (!isWalletAddress(from)) {
-              continue;
-            }
-
-            const userCiphertext = extractUserCiphertext(args?.messageForRecipient);
-            let messageText = '(Unable to decrypt message)';
-            let replyToMessageId: string | undefined;
-            let replyToText: string | undefined;
-            let replyToTxHash: string | undefined;
-            let replyToBlockNumber: number | undefined;
-            let replyToLogIndex: number | undefined;
-            let reactionToTxHash: string | undefined;
-            let reactionToBlockNumber: number | undefined;
-            let reactionToLogIndex: number | undefined;
-            let reactionEmoji: string | undefined;
-            if (userCiphertext && userCiphertext.value.length > 0) {
-              try {
-                const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
-                messageText = parsedMessage.cleanText;
-                replyToMessageId = parsedMessage.replyToMessageId;
-                replyToText = parsedMessage.replyToText;
-                replyToTxHash = parsedMessage.replyToTxHash;
-                replyToBlockNumber = parsedMessage.replyToBlockNumber;
-                replyToLogIndex = parsedMessage.replyToLogIndex;
-                reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-                reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-                reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-                reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-                if (
-                  messageText.trim().length === 0 &&
-                  (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-                ) {
-                  continue;
-                }
-              } catch {
-                messageText = '(Unable to decrypt message)';
-              }
-            }
-
-            entries.push({
-              id: `${log.transactionHash}-${log.index}-group-in`,
-              groupId,
-              direction: 'incoming',
-              text: messageText,
-              senderAddress: from,
-              replyToMessageId,
-              replyToText,
-              replyToTxHash,
-              replyToBlockNumber,
-              replyToLogIndex,
-              reactionToTxHash,
-              reactionToBlockNumber,
-              reactionToLogIndex,
-              reactionEmoji,
-              txHash: log.transactionHash,
-              blockNumber: log.blockNumber,
-              logIndex: log.index,
-              timestamp: blockTimestampMap.get(log.blockNumber)
-            });
-          }
-
-          for (const log of outgoingLogs) {
-            const args = (log as { args?: Record<string, unknown> }).args;
-            const userCiphertext = extractUserCiphertext(args?.messageForSender);
-            let messageText = '(Unable to decrypt message)';
-            let replyToMessageId: string | undefined;
-            let replyToText: string | undefined;
-            let replyToTxHash: string | undefined;
-            let replyToBlockNumber: number | undefined;
-            let replyToLogIndex: number | undefined;
-            let reactionToTxHash: string | undefined;
-            let reactionToBlockNumber: number | undefined;
-            let reactionToLogIndex: number | undefined;
-            let reactionEmoji: string | undefined;
-            if (userCiphertext && userCiphertext.value.length > 0) {
-              try {
-                const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
-                messageText = parsedMessage.cleanText;
-                replyToMessageId = parsedMessage.replyToMessageId;
-                replyToText = parsedMessage.replyToText;
-                replyToTxHash = parsedMessage.replyToTxHash;
-                replyToBlockNumber = parsedMessage.replyToBlockNumber;
-                replyToLogIndex = parsedMessage.replyToLogIndex;
-                reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-                reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-                reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-                reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-                if (
-                  messageText.trim().length === 0 &&
-                  (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-                ) {
-                  continue;
-                }
-              } catch {
-                messageText = '(Unable to decrypt message)';
-              }
-            }
-
-            entries.push({
-              id: `${log.transactionHash}-${log.index}-group-out`,
-              groupId,
-              direction: 'outgoing',
-              text: messageText,
-              senderAddress: requestedWalletAddress,
-              replyToMessageId,
-              replyToText,
-              replyToTxHash,
-              replyToBlockNumber,
-              replyToLogIndex,
-              reactionToTxHash,
-              reactionToBlockNumber,
-              reactionToLogIndex,
-              reactionEmoji,
-              txHash: log.transactionHash,
-              blockNumber: log.blockNumber,
-              logIndex: log.index,
-              timestamp: blockTimestampMap.get(log.blockNumber)
-            });
-          }
-
-          for (const log of memberAddedLogs) {
-            const args = (log as { args?: Record<string, unknown> }).args;
-            const account = String(args?.account ?? '').trim();
-            entries.push({
-              id: `${log.transactionHash}-${log.index}-group-member-added`,
-              groupId,
-              direction: 'incoming',
-              text: formatGroupMembershipEventText('added', account),
-              senderAddress: account,
-              isSystem: true,
-              txHash: log.transactionHash,
-              blockNumber: log.blockNumber,
-              logIndex: log.index,
-              timestamp: blockTimestampMap.get(log.blockNumber)
-            });
-          }
-
-          for (const log of memberRemovedLogsForGroup) {
-            const args = (log as { args?: Record<string, unknown> }).args;
-            const account = String(args?.account ?? '').trim();
-            entries.push({
-              id: `${log.transactionHash}-${log.index}-group-member-removed`,
-              groupId,
-              direction: 'incoming',
-              text: formatGroupMembershipEventText('removed', account),
-              senderAddress: account,
-              isSystem: true,
-              txHash: log.transactionHash,
-              blockNumber: log.blockNumber,
-              logIndex: log.index,
-              timestamp: blockTimestampMap.get(log.blockNumber)
-            });
-          }
-
-          for (const log of memberLeftLogs) {
-            const args = (log as { args?: Record<string, unknown> }).args;
-            const account = String(args?.account ?? '').trim();
-            entries.push({
-              id: `${log.transactionHash}-${log.index}-group-member-left`,
-              groupId,
-              direction: 'incoming',
-              text: formatGroupMembershipEventText('left', account),
-              senderAddress: account,
-              isSystem: true,
-              txHash: log.transactionHash,
-              blockNumber: log.blockNumber,
-              logIndex: log.index,
-              timestamp: blockTimestampMap.get(log.blockNumber)
-            });
-          }
-
-          entries.sort((left, right) => {
-            if (left.blockNumber !== right.blockNumber) {
-              return left.blockNumber - right.blockNumber;
-            }
-            return left.logIndex - right.logIndex;
+        const activeGroupMeta = nextGroups.find((group) => group.id === selectedActiveGroupId);
+        if (activeGroupMeta) {
+          const activeGroupIncoming = await syncActiveGroupMessagesFast(selectedActiveGroupId, {
+            includeMembershipEvents: true,
+            knownLastBlock: activeGroupMeta.lastBlock > 0 ? activeGroupMeta.lastBlock : undefined,
+            wideLoad: options?.wideLoad
           });
-
-          const latestIncomingFromEntries = entries.reduce((max, entry) => {
-            if (entry.direction !== 'incoming' || typeof entry.timestamp !== 'number') {
-              return max;
-            }
-            const ts = Number(entry.timestamp);
-            return ts > max ? ts : max;
-          }, 0);
-          if (latestIncomingFromEntries > 0) {
-            latestIncomingByGroup.set(String(groupId), latestIncomingFromEntries);
+          if (currentWalletKeyRef.current !== requestedWalletKey) {
+            return;
           }
 
-          if (entries.length > 0) {
-            if (currentWalletKeyRef.current !== requestedWalletKey) {
-              return;
+          for (const [groupKey, timestamp] of activeGroupIncoming.entries()) {
+            const existingTimestamp = latestIncomingByGroup.get(groupKey) ?? 0;
+            if (timestamp > existingTimestamp) {
+              latestIncomingByGroup.set(groupKey, timestamp);
             }
-            if (selectedActiveGroupId === groupId) {
-              const activeGroupKey = String(groupId);
-              const existingGroupMessages = messagesByGroupRef.current[activeGroupKey] ?? [];
-              if (stickToBottomRef.current || existingGroupMessages.length === 0) {
-                pendingForcedBottomAnchorThreadKeyRef.current = `group:${groupId}`;
-              }
-            }
-            setMessagesByGroup((previous) => {
-              const groupKey = String(groupId);
-              const existing = previous[groupKey] ?? [];
-              const confirmedOutgoingTxHashes = new Set(
-                entries
-                  .filter((entry) => entry.direction === 'outgoing')
-                  .map((entry) => entry.txHash.toLowerCase())
-              );
-              const prunedExisting = existing.filter((message) => {
-                if (!message.id.startsWith('local-group-')) {
-                  return true;
-                }
-                if (!message.txHash) {
-                  return true;
-                }
-                return !confirmedOutgoingTxHashes.has(message.txHash.toLowerCase());
-              });
-
-              const nextMessages = [...prunedExisting];
-              const existingIds = new Set(nextMessages.map((message) => message.id));
-              for (const entry of entries) {
-                if (existingIds.has(entry.id)) {
-                  continue;
-                }
-
-                existingIds.add(entry.id);
-                nextMessages.push({
-                  id: entry.id,
-                  direction: entry.direction,
-                  text: entry.text,
-                  senderAddress: entry.senderAddress,
-                  isSystem: entry.isSystem,
-                  replyToMessageId: entry.replyToMessageId,
-                  replyToText: entry.replyToText,
-                  replyToTxHash: entry.replyToTxHash,
-                  replyToBlockNumber: entry.replyToBlockNumber,
-                  replyToLogIndex: entry.replyToLogIndex,
-                  reactionToTxHash: entry.reactionToTxHash,
-                  reactionToBlockNumber: entry.reactionToBlockNumber,
-                  reactionToLogIndex: entry.reactionToLogIndex,
-                  reactionEmoji: entry.reactionEmoji,
-                  timestamp: entry.timestamp,
-                  blockNumber: entry.blockNumber,
-                  logIndex: entry.logIndex,
-                  txHash: entry.txHash
-                });
-              }
-
-              return {
-                ...previous,
-                [groupKey]: sortMessagesChronologically(nextMessages)
-              };
-            });
           }
         }
-
-        groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = latestBlock;
       }
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -4897,7 +4634,7 @@ export default function App() {
       }));
 
       loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
-      await syncGroupData({ background: true });
+      await syncGroupData({ background: true, overviewOnly: true });
     } catch (joinCodeError) {
       const message = getGroupActionErrorMessage(joinCodeError, 'Failed to create join code.');
       setError(message);
@@ -5479,7 +5216,7 @@ export default function App() {
         setMessageInput('');
       }
       setReplyingToMessage(null);
-      await syncGroupData({ background: true });
+      await syncGroupData({ background: true, activeMessagesOnly: true });
       setTopUpMetricsNonce((previous) => previous + 1);
     } catch (sendError) {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
@@ -5817,7 +5554,7 @@ export default function App() {
           [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
         }));
 
-        await syncGroupData({ background: true });
+        await syncGroupData({ background: true, activeMessagesOnly: true });
       } else if (threadContactAddress) {
         const contactKey = threadContactAddress.toLowerCase();
         setMessagesByContact((previous) => ({
@@ -5896,7 +5633,7 @@ export default function App() {
           [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
         }));
 
-        syncConversationHistory({ background: true }).catch(() => {});
+        syncConversationHistory({ background: true, activeContactOnly: true }).catch(() => {});
       }
 
       if (activeSignerSource === 'burner') {
@@ -6139,7 +5876,7 @@ export default function App() {
         setMessageInput('');
       }
       setReplyingToMessage(null);
-      syncConversationHistory().catch(() => {});
+      syncConversationHistory({ background: true, activeContactOnly: true }).catch(() => {});
       if (activeSignerSource === 'burner') {
         setTopUpMetricsNonce((previous) => previous + 1);
       }
@@ -6747,7 +6484,7 @@ export default function App() {
         ...previous,
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
-      syncConversationHistory().catch(() => {});
+      syncConversationHistory({ background: true, activeContactOnly: true }).catch(() => {});
       setTipAmountInput('');
     } catch (tipError) {
       const rawMessage = tipError instanceof Error ? tipError.message : '';
@@ -7083,15 +6820,6 @@ export default function App() {
       setActiveMobileView('chat');
     }
   }, [activeMobileView, activePage]);
-
-  useEffect(() => {
-    if (activePage !== 'home') {
-      return;
-    }
-
-    const timerId = window.setTimeout(preloadTreasuryPage, 1_200);
-    return () => window.clearTimeout(timerId);
-  }, [activePage]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -7827,13 +7555,31 @@ export default function App() {
     let realtimeSyncTimerId: number | null = null;
     let deepConversationSyncTimerId: number | null = null;
     let lastRealtimeSyncDispatchAt = 0;
+    let pendingRealtimeSyncOptions: SyncConversationOptions | null = null;
 
-    const dispatchRealtimeSync = () => {
-      lastRealtimeSyncDispatchAt = Date.now();
-      syncConversationHistoryRef.current({ background: true }).catch(() => {});
+    const mergeRealtimeSyncOptions = (options?: SyncConversationOptions): void => {
+      pendingRealtimeSyncOptions = mergeDirectSyncOptions(
+        { background: true, ...(options ?? {}) },
+        pendingRealtimeSyncOptions
+      );
     };
 
-    const scheduleRealtimeSync = () => {
+    const dispatchRealtimeSync = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const nextOptions = pendingRealtimeSyncOptions;
+      pendingRealtimeSyncOptions = null;
+      lastRealtimeSyncDispatchAt = Date.now();
+      syncConversationHistoryRef.current({
+        background: true,
+        ...(nextOptions ?? {})
+      }).catch(() => {});
+    };
+
+    const scheduleRealtimeSync = (options?: SyncConversationOptions) => {
+      mergeRealtimeSyncOptions(options);
       if (cancelled) {
         return;
       }
@@ -7934,7 +7680,27 @@ export default function App() {
         const incomingFilter = contract.filters.MessageSubmitted(walletAddress, null);
         const outgoingFilter = contract.filters.MessageSubmitted(null, walletAddress);
         const nicknameFilter = contract.filters.NicknameSet();
-        const handleMessageSubmitted = () => scheduleRealtimeSync();
+        const resolveDirectRealtimeSyncOptions = (recipient: unknown, from: unknown): SyncConversationOptions => {
+          const activeContactKey = activeContactRef.current?.trim().toLowerCase() ?? '';
+          const recipientKey = String(recipient ?? '').trim().toLowerCase();
+          const fromKey = String(from ?? '').trim().toLowerCase();
+          if (
+            activeContactKey &&
+            isWalletAddress(activeContactKey) &&
+            (recipientKey === activeContactKey || fromKey === activeContactKey)
+          ) {
+            return { activeContactOnly: true };
+          }
+
+          return {
+            contactsOnly: true,
+            previewPerContact: true,
+            updateHead: true
+          };
+        };
+        const handleMessageSubmitted = (recipient: unknown, from: unknown) => {
+          scheduleRealtimeSync(resolveDirectRealtimeSyncOptions(recipient, from));
+        };
         const handleNicknameSet = (user: unknown, nickname: unknown) => {
           const userAddress = String(user ?? '').trim().toLowerCase();
           if (!isWalletAddress(userAddress)) {
@@ -9154,6 +8920,9 @@ export default function App() {
           onLaunchChat={() => navigateToPage('chat')}
           onOpenSwap={() => navigateToPage('swap')}
           onOpenTreasury={() => navigateToPage('treasury')}
+          onPrefetchChat={preloadChatPage}
+          onPrefetchSwap={preloadSwapPage}
+          onPrefetchTrades={preloadTradesPage}
           onPrefetchTreasury={preloadTreasuryPage}
           onOpenTrades={() => navigateToPage('trades')}
           isConnected={isConnected}
@@ -9182,9 +8951,7 @@ export default function App() {
         <AppErrorBoundary>
           <Suspense
             fallback={
-              <main className="standalone-trades-shell">
-                <p className="standalone-trade-state">Loading trades...</p>
-              </main>
+              <RouteLoadingFallback shellClassName="standalone-trades-shell" label="Loading trades" />
             }
           >
             <P2PTradingPage
@@ -9219,9 +8986,7 @@ export default function App() {
         <AppErrorBoundary>
           <Suspense
             fallback={
-              <main className="swap-page-shell">
-                <p className="standalone-trade-state">Loading token swap...</p>
-              </main>
+              <RouteLoadingFallback shellClassName="swap-page-shell" label="Loading Shield" />
             }
           >
             <TokenSwapPage
@@ -9275,11 +9040,7 @@ export default function App() {
         <AppErrorBoundary>
           <Suspense
             fallback={
-              <main className="treasury-shell">
-                <section className="treasury-panel">
-                  <p className="treasury-state-message">Loading Treasury Data...</p>
-                </section>
-              </main>
+              <RouteLoadingFallback shellClassName="treasury-shell" label="Loading Treasury Data" variant="treasury" />
             }
           >
             <TreasuryPage isCompactLayout={isMobileNav} />

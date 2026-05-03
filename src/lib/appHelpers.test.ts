@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildMessageReferenceKeys, messageReferencesMatch, sanitizeOutgoingMessagePlainText } from './appHelpers';
+import {
+  buildMessageReferenceKeys,
+  getVerifiedEcosystemToken,
+  isVerifiedEcosystemToken,
+  messageReferencesMatch,
+  sanitizeOutgoingMessagePlainText
+} from './appHelpers';
 import {
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
@@ -71,5 +77,17 @@ describe('memo plaintext decoding', () => {
 
   it('rejects wrong-key decoder output with replacement/control characters', () => {
     expect(decodeMemoPlaintextStrict('2&#\uFFFD~kh\u0004random')).toBeNull();
+  });
+});
+
+describe('verified ecosystem tokens', () => {
+  it('includes the added public ecosystem token', () => {
+    const address = '0xe8C3D2248a578e9E020C2447f8148e606090fbfe';
+
+    expect(isVerifiedEcosystemToken(address)).toBe(true);
+    expect(getVerifiedEcosystemToken(address.toUpperCase())).toEqual({
+      address,
+      kind: 'erc20'
+    });
   });
 });

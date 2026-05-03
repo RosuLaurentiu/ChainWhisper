@@ -8,6 +8,7 @@ import {
   COTI_NETWORK,
   createCotiBrowserProvider,
   getProviderErrorMessage,
+  hasInsufficientFundsError,
   isBurnerStorageAvailable,
   isWalletAddress,
   LEGACY_BURNER_PIN_MIN_LENGTH,
@@ -373,7 +374,7 @@ export function useBurnerWallet({
         }
 
         const message = burnerError instanceof Error ? burnerError.message : 'Failed to initialize burner wallet.';
-        if (message.includes('Account balance is 0 so user cannot be onboarded')) {
+        if (hasInsufficientFundsError(message)) {
           setBurnerNeedsFunding(true);
           setStatus('Burner needs funding');
           return 'needs-funding';
@@ -461,18 +462,18 @@ export function useBurnerWallet({
       }
 
       if (mode === 'stored' && storageState.kind === 'encrypted' && burnerPinRef.current) {
-        await initializeBurnerWallet('stored', undefined, burnerPinRef.current, activeBurnerWalletId || undefined);
+        await initializeBurnerWallet('stored', undefined, burnerPinRef.current);
         return;
       }
 
       const nextPinMode: BurnerPinMode = storageState.kind === 'encrypted' ? 'unlock' : 'set';
 
-      setPendingBurnerInit({ mode, seedOrPrivateKey, walletId: activeBurnerWalletId || undefined });
+      setPendingBurnerInit({ mode, seedOrPrivateKey });
       setBurnerPinMode(nextPinMode);
       setBurnerPinInput('');
       setShowBurnerPinModal(true);
     },
-    [activeBurnerWalletId, initializeBurnerWallet, refreshBurnerStorageStatus, setError]
+    [initializeBurnerWallet, refreshBurnerStorageStatus, setError]
   );
 
   const submitBurnerPinAndInitialize = useCallback(async () => {
@@ -651,7 +652,12 @@ export function useBurnerWallet({
       setTopUpMetricsNonce((previous) => previous + 1);
 
       if (burnerPinRef.current) {
-        await initializeBurnerWallet('stored', undefined, burnerPinRef.current);
+        await initializeBurnerWallet(
+          'stored',
+          undefined,
+          burnerPinRef.current,
+          burnerRecordRef.current?.id || burnerAddress
+        );
       } else {
         setStatus('Burner topped up. Unlock burner wallet to continue.');
       }
@@ -677,7 +683,15 @@ export function useBurnerWallet({
     burnerWalletRef.current = null;
     burnerRecordRef.current = null;
     setBurnerNeedsFunding(false);
-    setBurnerWallets([]);
+    setBurnerWallets((previous) =>
+      previous.map((walletRecord) => ({
+        id: walletRecord.id,
+        address: walletRecord.address,
+        name: walletRecord.name,
+        privateKey: '',
+        mnemonic: undefined
+      }))
+    );
     setActiveBurnerWalletId('');
     burnerPinRef.current = '';
   }, []);

@@ -2,59 +2,45 @@
 
 This file tracks proposals from a deep read of the current ChainWhisper app. It is advisory only: no runtime APIs, schemas, contract calls, or routes are changed by this document.
 
-Last reviewed: May 3, 2026, after the wallet/session, sync, browser-smoke, and app-scope review passes.
+Last reviewed: May 3, 2026, after finishing the route preload and perceived-load pass.
 
 ## Current App Priorities
 
-Keep this list focused on improvements that can be handled inside the React app. Smart contract or protocol changes belong in `SMART_CONTRACT_IMPROVEMENTS.md`.
+Keep this list focused on improvements users can feel inside the React app. Smart contract or protocol changes belong in `SMART_CONTRACT_IMPROVEMENTS.md`, and test-only work should stay a maintenance detail instead of a product priority.
 
-### 1. Split The Largest App Files
+### 1. Make The App Easier To Work On
 
 - Keep reducing `src/App.tsx`, `src/components/P2PTradingPage.tsx`, `src/hooks/useDirectConversationSync.ts`, and `src/styles.css`.
-- Prefer small helper/hooks/components with tests over broad rewrites.
-- Best next targets: in-chat trade actions, group admin actions, remaining sync orchestration, and route-specific CSS sections.
+- Only split code when it makes a real app change easier, not just to move lines around.
+- Best next targets: in-chat trade actions, group admin flows, remaining sync orchestration, and route-specific CSS sections that make styling risky.
 
-### 2. Continue Wallet UX Regression Coverage
+### 2. Improve P2P Trading Clarity
 
-- Keep the current wallet defaults: Chat and Shield prefer app wallets; Trades prefers MetaMask/CipherTrade; Home and Treasury stay wallet-free.
-- Keep the existing route policy, pure helper tests, and Playwright smoke tests as the baseline for wallet defaults, header action visibility, duplicate menu filtering, and connected-session preservation.
-- Add deeper wallet-extension/mocked-provider coverage later only if needed, especially for switching saved app wallets on Trades and zero-balance app wallet selection.
-- Continue sharing wallet helpers only where it keeps Chat, Trades, and Shield behavior consistent.
+- Keep cards concise: clear buy/sell direction, price ratio, short actions, and low visual noise.
+- Keep private liquidity views private: no public hidden amounts, no public fill amounts, and clear maker-only reveal states.
+- Keep history useful by showing created time, outcome, fill summary, trade type, and copied-link context where it helps.
+- Maintain verified token options when real tokens are added.
 
-### 3. Keep Sensitive Trade Storage Contract-Gated
+### 3. Keep UX Polish Practical
 
-- Do not expand the current private trade access-secret or private-liquidity browser-cache behavior until the smart contract recovery path is updated.
-- Keep using `buildTradeSnapshotKey(tradeId, escrowContract)` anywhere private liquidity or link state is keyed.
-- Revisit clear-cache UI, helper extraction, and persistent-secret removal after encrypted maker recovery and related contract changes are available.
-- Keep the contract-side plan in `SMART_CONTRACT_IMPROVEMENTS.md`.
-
-### 4. Keep Sync Fast And Predictable
-
-- Continue hardening group sync now that overview, active-message, and active-member ranges are separated.
-- Add higher-level tests for group invites, join codes, member changes, and active-message-only sync when mocks are practical.
-- Continue extracting direct-chat sync merge/apply logic in small helper-backed steps if the hook changes again.
-
-### 5. Reduce Perceived Load Time
-
-- Keep Treasury route-lazy and quiet; do not re-add verbose source-status panels.
-- Add compact skeletons where they improve perceived loading without adding clutter.
-- Watch bundle weight around `coti-ethers`, Recharts, Supabase, and broad `appShared` imports.
-- Keep route preloading limited to interactions that make the app feel faster, such as Home hover/focus.
-
-### 6. Keep UX Polish Practical
-
-- Keep P2P cards concise: clear buy/sell direction, price ratio, short actions, and low visual noise.
-- Preserve Escape-to-close, focus restoration, `aria-live`, and accessible icon labels for menus, modals, image previews, and message actions.
-- Keep the Playwright mobile smoke tests as a baseline for wallet header, P2P tabs, and Treasury chart controls after CSS moves.
-- Add targeted browser checks for group tools or image previews if those areas get another layout pass.
+- Improve empty, loading, and error states only where users get stuck or confused.
+- Preserve Escape-to-close, focus restoration, `aria-live`, and accessible labels for menus, modals, image previews, and message actions.
+- Keep mobile layouts usable for the wallet header, P2P tabs/cards, group tools, image previews, and Treasury controls.
 - Keep Supabase image work limited to encrypted chat attachments; only add upload progress/compression if large attachments become common.
 
-### 7. Keep Docs Focused
+### 4. Keep Docs And Guardrails Lean
 
 - `README.md`: current setup and developer workflow.
 - `AGENTS.md`: rules future agents must preserve.
 - `APP_IMPROVEMENTS.md`: practical app backlog and completed app work.
 - `SMART_CONTRACT_IMPROVEMENTS.md`: future contract/protocol ideas.
+- Keep the existing wallet defaults and route behavior, but do not add new test-only work unless it protects a real bug or risky app change.
+
+## Out Of Scope Until Contracts Change
+
+- Do not expand private trade access-secret or private-liquidity browser-cache behavior until the smart contract recovery path is updated.
+- Revisit clear-cache UI, helper extraction, and persistent-secret removal after encrypted maker recovery and related contract changes are available.
+- Keep contract-side ideas in `SMART_CONTRACT_IMPROVEMENTS.md`.
 
 ## Completed Work
 
@@ -119,7 +105,15 @@ Keep this list focused on improvements that can be handled inside the React app.
 
 - Added Playwright browser smoke tests for the route wallet header policy.
 - Browser smoke now checks that Home and Treasury stay wallet-free, Chat and Shield show app-wallet controls, and Trades shows the wallet header without duplicating the preferred browser wallet action in the menu.
+- Browser smoke also covers route aliases: `/home` stays wallet-free and `/swap` keeps Shield's app-wallet-focused header behavior.
 - Added `npm run test:browser` for focused browser verification.
+
+### Wallet UX Regression Coverage - Saved App Wallet Pass
+
+- Moved saved app-wallet switch option modeling into a shared helper used by Chat and Trades.
+- Added coverage that the active app wallet stays disabled while other saved app wallets remain selectable by address.
+- Covered the zero-balance COTI onboarding error through the shared insufficient-funds matcher, and reused that matcher in Chat and Trades app-wallet onboarding paths.
+- Plain app-wallet reconnect now defaults to the first saved app wallet, while the saved-wallet chooser remains available for selecting a different saved wallet after disconnect.
 
 ### UX Polish - Mobile Browser Smoke Pass
 
@@ -149,6 +143,13 @@ Keep this list focused on improvements that can be handled inside the React app.
 - Treasury remains route-lazy and now prefetches from the Home Treasury button on hover/focus.
 - Added cached Treasury module/data preloading so quick opens can reuse warmed route and dashboard work.
 - Removed the verbose live/saved/onchain source-status strip after UX review to keep the page quieter.
+
+### Perceived Load Time - Route And Bundle Pass
+
+- Kept Treasury route-lazy and moved route preloading to explicit Home hover/focus intent for Chat, Trades, Shield, and Treasury.
+- Added compact route skeleton fallbacks for Trades, Shield, and Treasury instead of plain loading text.
+- Added a quiet Treasury chart skeleton for the data-loading state without reintroducing verbose source-status panels.
+- Deferred Supabase client loading until encrypted image upload/download is actually needed, keeping image storage limited to chat attachments.
 
 ### Supabase Image Attachment UX
 
@@ -201,6 +202,14 @@ Keep this list focused on improvements that can be handled inside the React app.
 - Moved pending direct-sync option merging into `directSyncPlan`.
 - Moved direct sync block-range calculation and older-history pagination range calculation into tested helpers.
 - Added focused tests for deep sync, incremental head sync, caught-up explicit ranges, pending range widening, and older-message pagination before the earliest cached message.
+
+### Sync Speed - Active Thread Completion Pass
+
+- Direct-chat realtime events now prefer the open conversation when the changed event matches the active contact, while non-active events update contact previews.
+- Direct message sends, reactions, and tip notices now refresh the active conversation instead of kicking off broad message-stream work.
+- Group sends and group reactions now refresh active messages only, while join-code/admin actions stay on overview/member sync paths.
+- The post-overview active group refresh now reuses the fast active-group helper with separate message and member cursors instead of duplicating wider scans.
+- Group loading labels now distinguish catching up from loading older history with shorter copy.
 
 ### Internal Chat Link Navigation And Group Link Parity
 

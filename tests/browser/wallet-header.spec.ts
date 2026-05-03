@@ -7,6 +7,9 @@ test.describe('route wallet header policy', () => {
     await page.goto('/');
     await expect(page.locator(walletPanel)).toHaveCount(0);
 
+    await page.goto('/home');
+    await expect(page.locator(walletPanel)).toHaveCount(0);
+
     await page.goto('/treasury');
     await expect(page.getByText('Treasury', { exact: true })).toBeVisible();
     await expect(page.locator(walletPanel)).toHaveCount(0);
@@ -18,6 +21,10 @@ test.describe('route wallet header policy', () => {
     await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
 
     await page.goto('/shield');
+    await expect(page.locator(walletPanel)).toBeVisible();
+    await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
+
+    await page.goto('/swap');
     await expect(page.locator(walletPanel)).toBeVisible();
     await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
   });

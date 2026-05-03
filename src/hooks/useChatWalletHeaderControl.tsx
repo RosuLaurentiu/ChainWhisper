@@ -16,6 +16,7 @@ import {
   orderInjectedWalletOptions
 } from '../lib/walletOptions';
 import {
+  resolveAppWalletSwitchOptions,
   resolveWalletHeaderActionVisibility,
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
@@ -238,21 +239,11 @@ export default function useChatWalletHeaderControl({
         setChatAppWalletMenuOpen(false);
         Promise.resolve(handleSwitchActiveBurnerWallet(option.address || option.walletId || option.id)).catch(() => {});
       }}
-      options={burnerWallets.map((walletRecord, index) => {
-        const walletId = walletRecord.id ?? '';
-        const walletRecordAddress = walletRecord.address?.trim() ?? '';
-        const switchValue = walletRecordAddress || walletId;
-        const isSelected = walletRecordAddress.toLowerCase() === walletAddress.trim().toLowerCase();
-        const displayName = getBurnerWalletDisplayName(walletRecord);
-        return {
-          active: isSelected,
-          disabled: initializingBurner || !switchValue || isSelected,
-          address: walletRecordAddress,
-          id: switchValue,
-          key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
-          label: isSelected ? `${displayName} active` : displayName,
-          walletId
-        };
+      options={resolveAppWalletSwitchOptions({
+        activeWalletAddress: walletAddress,
+        disabled: initializingBurner,
+        getDisplayName: (walletRecord) => getBurnerWalletDisplayName(walletRecord),
+        wallets: burnerWallets
       })}
       disabled={initializingBurner}
     />

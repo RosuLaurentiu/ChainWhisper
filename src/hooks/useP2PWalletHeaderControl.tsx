@@ -12,6 +12,7 @@ import {
 } from '../lib/appShared';
 import {
   resolveWalletModeLabel,
+  resolveAppWalletSwitchOptions,
   resolveWalletHeaderActionVisibility,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
@@ -43,7 +44,6 @@ type UseP2PWalletHeaderControlArgs = {
   lastCopiedKey: string | null;
   onCotiNetwork: boolean;
   preferredWalletOption: InjectedWalletOption | null;
-  selectedBurnerWalletId: string;
   selectedWalletId: string;
   setAppWalletMenuOpen: Dispatch<SetStateAction<boolean>>;
   setSelectedBurnerWalletId: Dispatch<SetStateAction<string>>;
@@ -85,7 +85,6 @@ export default function useP2PWalletHeaderControl({
   lastCopiedKey,
   onCotiNetwork,
   preferredWalletOption,
-  selectedBurnerWalletId,
   selectedWalletId,
   setAppWalletMenuOpen,
   setSelectedBurnerWalletId,
@@ -102,10 +101,6 @@ export default function useP2PWalletHeaderControl({
   const visibleAppWallets = sharedWalletSession?.burnerWallets?.length
     ? sharedWalletSession.burnerWallets
     : burnerWallets;
-  const connectedAppWalletId =
-    visibleAppWallets.find((walletRecord) => walletRecord.address?.toLowerCase() === walletKey)?.id ?? '';
-  const currentAppWalletSelectionId =
-    connectedAppWalletId || selectedBurnerWalletId || sharedWalletSession?.activeBurnerWalletId || '';
   const getTradeAppWalletDisplayName = useCallback(
     (walletRecord: BurnerWalletRecord, index: number): string =>
       walletRecord.name?.trim() || (walletRecord.address ? shortenAddress(walletRecord.address) : `Wallet ${index + 1}`),
@@ -180,7 +175,7 @@ export default function useP2PWalletHeaderControl({
     }
 
     if (tradePrimaryConnectsAppWallet) {
-      connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {});
+      connectBurnerWallet().catch(() => {});
       return;
     }
 
@@ -189,7 +184,6 @@ export default function useP2PWalletHeaderControl({
     connectBurnerWallet,
     connectWallet,
     copyWithFeedback,
-    currentAppWalletSelectionId,
     ensureCotiNetwork,
     getConnectedProvider,
     onCotiNetwork,
@@ -261,21 +255,11 @@ export default function useP2PWalletHeaderControl({
         setAppWalletMenuOpen((previous) => !previous);
       }}
       onSelectWallet={(option) => handleSwitchTradeAppWallet(option.address || option.walletId || option.id)}
-      options={visibleAppWallets.map((walletRecord, index) => {
-        const walletId = walletRecord.id ?? '';
-        const walletRecordAddress = walletRecord.address?.trim() ?? '';
-        const switchValue = walletRecordAddress || walletId;
-        const isSelected = walletRecordAddress.toLowerCase() === walletKey;
-        const displayName = getTradeAppWalletDisplayName(walletRecord, index);
-        return {
-          active: isSelected,
-          disabled: Boolean(connectingWalletId) || !switchValue || isSelected,
-          address: walletRecordAddress,
-          id: switchValue,
-          key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
-          label: isSelected ? `${displayName} active` : displayName,
-          walletId
-        };
+      options={resolveAppWalletSwitchOptions({
+        activeWalletAddress: walletAddress,
+        disabled: Boolean(connectingWalletId),
+        getDisplayName: getTradeAppWalletDisplayName,
+        wallets: visibleAppWallets
       })}
       disabled={Boolean(connectingWalletId)}
     />
@@ -301,7 +285,7 @@ export default function useP2PWalletHeaderControl({
         <button
           type="button"
           className="p2p-wallet-aes-action wallet-switch-action"
-          onClick={() => connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {})}
+          onClick={() => connectBurnerWallet().catch(() => {})}
           disabled={Boolean(connectingWalletId)}
           title="Use the app wallet for this app"
         >
@@ -330,7 +314,6 @@ export default function useP2PWalletHeaderControl({
     connectBurnerWallet,
     connectWallet,
     connectingWalletId,
-    currentAppWalletSelectionId,
     preferredWalletOption,
     showTradeAppCreateAction,
     showTradeAppSwitchAction,
@@ -408,7 +391,7 @@ export default function useP2PWalletHeaderControl({
                 className={connectedWithBurner ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
                 onClick={() => {
                   setWalletMenuOpen(false);
-                  connectBurnerWallet(currentAppWalletSelectionId || undefined).catch(() => {});
+                  connectBurnerWallet().catch(() => {});
                 }}
                 disabled={Boolean(connectingWalletId)}
                 role="menuitem"
@@ -447,7 +430,6 @@ export default function useP2PWalletHeaderControl({
       connectWallet,
       connectedWithBurner,
       connectingWalletId,
-      currentAppWalletSelectionId,
       disconnectWallet,
       handleSwitchTradeAppWallet,
       handleWalletPrimaryAction,

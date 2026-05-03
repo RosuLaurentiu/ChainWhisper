@@ -2,6 +2,9 @@ type HomePageProps = {
   onLaunchChat: () => void;
   onOpenSwap: () => void;
   onOpenTreasury: () => void;
+  onPrefetchChat?: () => void;
+  onPrefetchSwap?: () => void;
+  onPrefetchTrades?: () => void;
   onPrefetchTreasury?: () => void;
   onOpenTrades: () => void;
   isConnected: boolean;
@@ -19,6 +22,9 @@ export default function HomePage({
   onOpenSwap,
   onOpenTreasury,
   onOpenTrades,
+  onPrefetchChat,
+  onPrefetchSwap,
+  onPrefetchTrades,
   onPrefetchTreasury,
   isConnected
 }: HomePageProps) {
@@ -37,10 +43,18 @@ export default function HomePage({
               type="button"
               className="landing-action-btn landing-action-btn-primary landing-action-btn-main"
               onClick={onLaunchChat}
+              onFocus={onPrefetchChat}
+              onPointerEnter={onPrefetchChat}
             >
               Open Chat
             </button>
-            <button type="button" className="landing-action-btn landing-action-btn-secondary" onClick={onOpenTrades}>
+            <button
+              type="button"
+              className="landing-action-btn landing-action-btn-secondary"
+              onClick={onOpenTrades}
+              onFocus={onPrefetchTrades}
+              onPointerEnter={onPrefetchTrades}
+            >
               Open Trades
             </button>
           </div>
@@ -79,7 +93,13 @@ export default function HomePage({
             <span className="landing-module-kicker">Messaging</span>
             <h3>Encrypted Chat</h3>
             <p>Direct messages, group chat, reactions, replies, tips, invites, and private coordination.</p>
-            <button type="button" className="landing-module-cta" onClick={onLaunchChat}>
+            <button
+              type="button"
+              className="landing-module-cta"
+              onClick={onLaunchChat}
+              onFocus={onPrefetchChat}
+              onPointerEnter={onPrefetchChat}
+            >
               Open Chat
             </button>
           </article>
@@ -88,7 +108,13 @@ export default function HomePage({
             <span className="landing-module-kicker">Trading</span>
             <h3>P2P Trades</h3>
             <p>Browse public orders, create escrow trades, share direct links, and manage private liquidity.</p>
-            <button type="button" className="landing-module-cta" onClick={onOpenTrades}>
+            <button
+              type="button"
+              className="landing-module-cta"
+              onClick={onOpenTrades}
+              onFocus={onPrefetchTrades}
+              onPointerEnter={onPrefetchTrades}
+            >
               Open Trades
             </button>
           </article>
@@ -97,7 +123,13 @@ export default function HomePage({
             <span className="landing-module-kicker">Private tokens</span>
             <h3>Whisper Shield</h3>
             <p>Swap reward tokens between public and private balances through the Shield vault.</p>
-            <button type="button" className="landing-module-cta" onClick={onOpenSwap}>
+            <button
+              type="button"
+              className="landing-module-cta"
+              onClick={onOpenSwap}
+              onFocus={onPrefetchSwap}
+              onPointerEnter={onPrefetchSwap}
+            >
               Open Shield
             </button>
           </article>

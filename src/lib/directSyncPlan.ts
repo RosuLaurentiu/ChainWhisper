@@ -52,6 +52,8 @@ export const mergeDirectSyncOptions = (
 ): SyncConversationOptions => {
   const mergedDeep = Boolean(options?.deep || pending?.deep);
   const mergedContactsOnly = mergedDeep ? false : Boolean(options?.contactsOnly || pending?.contactsOnly);
+  const mergedActiveContactOnly =
+    !mergedDeep && !mergedContactsOnly && Boolean(options?.activeContactOnly || pending?.activeContactOnly);
   const mergedPreviewPerContact = mergedContactsOnly
     ? Boolean(options?.previewPerContact || pending?.previewPerContact)
     : false;
@@ -66,6 +68,7 @@ export const mergeDirectSyncOptions = (
     ...options,
     deep: mergedDeep,
     contactsOnly: mergedContactsOnly,
+    activeContactOnly: mergedActiveContactOnly,
     previewPerContact: mergedPreviewPerContact,
     updateHead: Boolean(options?.updateHead || pending?.updateHead || mergedDeep),
     ...(typeof lookbackBlocks === 'number' ? { lookbackBlocks } : {}),
@@ -174,4 +177,3 @@ export const resolveOlderDirectHistoryRange = ({
     toBlock
   };
 };
-

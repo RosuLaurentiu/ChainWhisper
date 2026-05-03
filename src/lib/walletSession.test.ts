@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { OnboardInfo } from '@coti-io/coti-ethers';
-import { COTI_NETWORK } from './appShared/core';
+import { COTI_NETWORK, hasInsufficientFundsError } from './appShared/core';
 import {
   hasSessionAesKey,
+  resolveAppWalletSwitchOptions,
   resolveWalletBlockedActionLabel,
   resolveWalletHeaderActionVisibility,
   resolveWalletModeLabel,
@@ -129,6 +130,36 @@ describe('resolveWalletHeaderActionVisibility', () => {
     expect(result.menuBrowserWalletOptions.map((option) => option.id)).toEqual(['ciphertrade']);
   });
 
+  it('shows the saved app-wallet chooser while disconnected when multiple app wallets are visible', () => {
+    const result = resolveWalletHeaderActionVisibility({
+      appWalletCount: 2,
+      browserWalletOptions: walletOptions,
+      connectedWithAppWallet: false,
+      hasSavedAppWallet: true,
+      isConnected: false,
+      isOnCotiNetwork: false,
+      preferredBrowserWalletId: 'metamask',
+      showDisconnectedBrowserAction: true
+    });
+
+    expect(result.showAppWalletSwitchButton).toBe(true);
+  });
+
+  it('hides the saved app-wallet chooser while disconnected when only one app wallet is visible', () => {
+    const result = resolveWalletHeaderActionVisibility({
+      appWalletCount: 1,
+      browserWalletOptions: walletOptions,
+      connectedWithAppWallet: false,
+      hasSavedAppWallet: true,
+      isConnected: false,
+      isOnCotiNetwork: false,
+      preferredBrowserWalletId: 'metamask',
+      showDisconnectedBrowserAction: true
+    });
+
+    expect(result.showAppWalletSwitchButton).toBe(false);
+  });
+
   it('keeps the preferred browser wallet out of the menu when it is already a quick switch action', () => {
     const result = resolveWalletHeaderActionVisibility({
       appWalletCount: 2,
@@ -179,6 +210,51 @@ describe('resolveWalletHeaderActionVisibility', () => {
       showAppCreateAction: true,
       showAppSwitchAction: false
     });
+  });
+});
+
+describe('resolveAppWalletSwitchOptions', () => {
+  it('keeps the active saved app wallet disabled and other saved wallets selectable by address', () => {
+    const firstAddress = '0x1111111111111111111111111111111111111111';
+    const secondAddress = '0x2222222222222222222222222222222222222222';
+    const options = resolveAppWalletSwitchOptions({
+      activeWalletAddress: firstAddress,
+      wallets: [
+        {
+          id: 'wallet-a',
+          address: firstAddress,
+          name: 'First app wallet',
+          privateKey: `0x${'a'.repeat(64)}`
+        },
+        {
+          id: 'wallet-b',
+          address: secondAddress,
+          name: 'Second app wallet',
+          privateKey: `0x${'b'.repeat(64)}`
+        }
+      ]
+    });
+
+    expect(options[0]).toMatchObject({
+      active: true,
+      disabled: true,
+      id: firstAddress,
+      label: 'First app wallet active',
+      walletId: 'wallet-a'
+    });
+    expect(options[1]).toMatchObject({
+      active: false,
+      disabled: false,
+      id: secondAddress,
+      label: 'Second app wallet',
+      walletId: 'wallet-b'
+    });
+  });
+});
+
+describe('app wallet onboarding funding errors', () => {
+  it('recognizes zero-balance onboarding failures as funding problems', () => {
+    expect(hasInsufficientFundsError('Account balance is 0 so user cannot be onboarded.')).toBe(true);
   });
 });
 

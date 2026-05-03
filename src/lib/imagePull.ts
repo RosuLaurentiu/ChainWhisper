@@ -1,5 +1,3 @@
-import { getSupabaseBrowserClient } from './supabaseClient';
-
 export type ParsedImageTag = {
   blobId: string;
   keyHex: string;
@@ -217,6 +215,7 @@ async function uploadEncryptedBlob(
   sizeBytes: number,
   kind: ChatImageConversationKind
 ): Promise<void> {
+  const { getSupabaseBrowserClient } = await import('./supabaseClient');
   const supabase = getSupabaseBrowserClient();
   const encryptedBlob = new Blob([encrypted], { type: 'application/octet-stream' });
   const { error } = await supabase.storage.from(CHAT_IMAGES_BUCKET).upload(blobId, encryptedBlob, {
@@ -279,6 +278,7 @@ export async function createEncryptedImageTagFromFile(
 }
 
 export async function fetchEncryptedBlob(blobId: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  const { getSupabaseBrowserClient } = await import('./supabaseClient');
   const { data } = getSupabaseBrowserClient().storage.from(CHAT_IMAGES_BUCKET).getPublicUrl(blobId);
   const resp = await fetch(data.publicUrl, { signal });
   if (!resp.ok) {

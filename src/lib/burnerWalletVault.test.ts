@@ -4,7 +4,7 @@ import type { BurnerWalletVault } from './appShared';
 
 const makeVault = (): BurnerWalletVault => ({
   version: 1,
-  activeWalletId: 'wallet-a',
+  activeWalletId: 'wallet-b',
   wallets: [
     {
       id: 'wallet-a',
@@ -28,7 +28,8 @@ describe('burner wallet vault helpers', () => {
     expect(selectBurnerWalletFromVault(makeVault(), '0x2222222222222222222222222222222222222222')?.id).toBe('wallet-b');
   });
 
-  it('falls back to the active wallet', () => {
+  it('falls back to the first saved wallet instead of the previous active wallet', () => {
     expect(selectBurnerWalletFromVault(makeVault(), 'missing')?.id).toBe('wallet-a');
+    expect(selectBurnerWalletFromVault(makeVault())?.id).toBe('wallet-a');
   });
 });

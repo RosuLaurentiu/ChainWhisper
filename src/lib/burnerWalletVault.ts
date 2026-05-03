@@ -22,11 +22,15 @@ export const selectBurnerWalletFromVault = (
 ): BurnerWalletRecord | null => {
   const selector = preferredWalletSelector?.trim() ?? '';
   const selectorKey = selector.toLowerCase();
+  const selectedWallet = selector
+    ? (
+      vault.wallets.find((walletRecord) => walletRecord.id === selector) ??
+      vault.wallets.find((walletRecord) => walletRecord.address?.toLowerCase() === selectorKey)
+    )
+    : null;
 
   return (
-    vault.wallets.find((walletRecord) => walletRecord.id === selector) ??
-    vault.wallets.find((walletRecord) => walletRecord.address?.toLowerCase() === selectorKey) ??
-    vault.wallets.find((walletRecord) => walletRecord.id === vault.activeWalletId) ??
+    selectedWallet ??
     vault.wallets[0] ??
     null
   );
