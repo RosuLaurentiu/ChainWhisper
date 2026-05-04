@@ -397,7 +397,6 @@ export default function P2PTradingPage({
   const storedRouteAccessSecret =
     routeTradeId !== null
       ? knownTradeAccessSecrets[buildTradeSnapshotKey(routeTradeId, routeEscrowContract)] ??
-        knownTradeAccessSecrets[String(routeTradeId)] ??
         ''
       : '';
   const resolvedRouteAccessSecret = routeAccessSecret || storedRouteAccessSecret;
@@ -570,6 +569,24 @@ export default function P2PTradingPage({
     });
   }, []);
 
+  const forgetTradeAccessSecret = useCallback((tradeId: number, escrowContract?: string) => {
+    if (!Number.isSafeInteger(tradeId) || tradeId <= 0) {
+      return;
+    }
+
+    const key = buildTradeSnapshotKey(tradeId, escrowContract);
+    setKnownTradeAccessSecrets((previous) => {
+      if (!previous[key]) {
+        return previous;
+      }
+
+      const next = { ...previous };
+      delete next[key];
+      storeTradeAccessSecrets(next);
+      return next;
+    });
+  }, []);
+
   const rememberPrivateTradeLiquidity = useCallback((tradeId: number, escrowContract: string | undefined, amountWei: bigint) => {
     if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || amountWei <= 0n) {
       return;
@@ -593,7 +610,7 @@ export default function P2PTradingPage({
 
   const resolveKnownTradeAccessSecret = useCallback(
     (tradeId: number, escrowContract?: string): string =>
-      knownTradeAccessSecrets[buildTradeSnapshotKey(tradeId, escrowContract)] ?? knownTradeAccessSecrets[String(tradeId)] ?? '',
+      knownTradeAccessSecrets[buildTradeSnapshotKey(tradeId, escrowContract)] ?? '',
     [knownTradeAccessSecrets]
   );
 
@@ -3439,12 +3456,54 @@ export default function P2PTradingPage({
     walletHasAes,
     walletMenuOpen
   });
+  const tradeWalletHeaderControlRef = useRef(tradeWalletHeaderControl);
+  tradeWalletHeaderControlRef.current = tradeWalletHeaderControl;
+  const tradeWalletHeaderControlKey = useMemo(
+    () =>
+      [
+        isMobileNav ? 'mobile' : 'desktop',
+        walletAddress,
+        chainId ?? '',
+        connectedWalletLabel,
+        connectedWithBurner ? 'app' : 'browser',
+        connectingWalletId,
+        walletHasAes ? 'aes' : 'locked',
+        onCotiNetwork ? 'coti' : 'wrong-network',
+        preferredWalletOption?.id ?? '',
+        selectedWalletId,
+        walletMenuOpen ? 'wallet-menu-open' : 'wallet-menu-closed',
+        appWalletMenuOpen ? 'app-menu-open' : 'app-menu-closed',
+        lastCopiedKey,
+        browserWalletOptions.map((option) => option.id).join(','),
+        burnerWallets.map((wallet) => `${wallet.id}:${wallet.address}`).join(',')
+      ].join('|'),
+    [
+      appWalletMenuOpen,
+      browserWalletOptions,
+      burnerWallets,
+      chainId,
+      connectedWalletLabel,
+      connectedWithBurner,
+      connectingWalletId,
+      isMobileNav,
+      lastCopiedKey,
+      onCotiNetwork,
+      preferredWalletOption?.id,
+      selectedWalletId,
+      walletAddress,
+      walletHasAes,
+      walletMenuOpen
+    ]
+  );
   useEffect(() => {
-    onHeaderWalletControlChange?.(tradeWalletHeaderControl);
-    return () => {
+    onHeaderWalletControlChange?.(tradeWalletHeaderControlRef.current);
+  }, [onHeaderWalletControlChange, tradeWalletHeaderControlKey]);
+  useEffect(
+    () => () => {
       onHeaderWalletControlChange?.(null);
-    };
-  }, [onHeaderWalletControlChange, tradeWalletHeaderControl]);
+    },
+    [onHeaderWalletControlChange]
+  );
   const tradeViewTabs = useMemo(
     () => (
       <nav className="p2p-trade-tabs" aria-label="P2P trade views">

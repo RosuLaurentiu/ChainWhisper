@@ -574,6 +574,7 @@ export type TradeSnapshot = {
   status: TradeOnChainStatus;
   isPublic?: boolean;
   hasAccessHash?: boolean;
+  accessHash?: string;
   parentTradeId?: number;
   counterParentTradeId?: number;
   replacementTradeId?: number;

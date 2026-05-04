@@ -3,6 +3,7 @@ import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
   buildTradeSnapshotKey,
   formatTokenAmount,
+  loadCotiEthersModule,
   parseTokenAmountInput,
   type TradeAssetPayload,
   type TradeSnapshot
@@ -24,6 +25,24 @@ const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContrac
   buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
 
 const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
+const isAccessHash = (value?: string): value is string => /^0x[a-fA-F0-9]{64}$/.test(value ?? '');
+
+const assertAccessSecretMatchesSnapshot = async (snapshot: TradeSnapshot, accessSecret: string): Promise<void> => {
+  if (!snapshot.hasAccessHash) {
+    return;
+  }
+  if (!accessSecret) {
+    throw new Error('This trade needs its full private link before it can be filled.');
+  }
+  if (!isAccessHash(snapshot.accessHash)) {
+    return;
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  if (cotiEthers.keccak256(accessSecret).toLowerCase() !== snapshot.accessHash.toLowerCase()) {
+    throw new Error('This private link does not match this offer. Open the full Share link from the maker and try again.');
+  }
+};
 
 const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
   try {
@@ -119,9 +138,7 @@ export default function useP2PTradeActions({
         const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        if (latestSnapshot.hasAccessHash && !accessSecret) {
-          throw new Error('This trade needs its full private link before it can be accepted.');
-        }
+        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret);
         const remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
         if (remainingRequestAmount <= 0n) {
           throw new Error('This trade has no remaining amount to accept.');
@@ -249,9 +266,7 @@ export default function useP2PTradeActions({
         }
 
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        if (latestSnapshot.hasAccessHash && !accessSecret) {
-          throw new Error('This trade needs its full private link before it can be filled.');
-        }
+        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret);
 
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
         const fillResult = latestSnapshot.hiddenLiquidity

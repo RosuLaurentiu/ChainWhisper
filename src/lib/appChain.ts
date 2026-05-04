@@ -83,6 +83,7 @@ export const resolveTradeEscrowContractConfig = (escrowContract?: string | null)
 export type TradeAccessMetadata = {
   isPublic?: boolean;
   hasAccessHash?: boolean;
+  accessHash?: string;
   parentTradeId?: number;
 };
 
@@ -96,10 +97,14 @@ const parseTradeAccessMetadata = (metadataRaw: unknown): TradeAccessMetadata => 
   const hasAccessHash = /^0x[0-9a-fA-F]{64}$/.test(metadataAccessHash)
     ? metadataAccessHash.toLowerCase() !== ZERO_BYTES32
     : undefined;
+  const accessHash = /^0x[0-9a-fA-F]{64}$/.test(metadataAccessHash)
+    ? metadataAccessHash.toLowerCase()
+    : undefined;
 
   return {
     isPublic,
     hasAccessHash,
+    accessHash,
     parentTradeId: parentTradeId > 0 ? parentTradeId : undefined
   };
 };
@@ -928,6 +933,7 @@ const buildRecurringOrderSnapshotFromView = async (
   const maker = String(orderRaw.maker ?? orderRaw[0] ?? '').trim();
   const taker = String(orderRaw.taker ?? orderRaw[1] ?? '').trim();
   const accessHash = String(orderRaw.accessHash ?? orderRaw[9] ?? '');
+  const normalizedAccessHash = /^0x[0-9a-fA-F]{64}$/.test(accessHash) ? accessHash.toLowerCase() : undefined;
   const isPublicRaw = orderRaw.isPublic ?? orderRaw[8];
   const isPublic = typeof isPublicRaw === 'boolean' ? isPublicRaw : undefined;
   const executionCount = toSafeNumber(orderRaw.executionCount ?? orderRaw[11]);
@@ -949,9 +955,10 @@ const buildRecurringOrderSnapshotFromView = async (
     expiresAt: 0,
     status: resolveRecurringTradeStatus(orderRaw.status ?? orderRaw[2]),
     isPublic,
-    hasAccessHash: /^0x[0-9a-fA-F]{64}$/.test(accessHash)
-      ? accessHash.toLowerCase() !== ZERO_BYTES32
+    hasAccessHash: normalizedAccessHash
+      ? normalizedAccessHash !== ZERO_BYTES32
       : undefined,
+    accessHash: normalizedAccessHash,
     fillState: {
       remainingOfferAmount,
       remainingRequestAmount,
@@ -1054,9 +1061,11 @@ export const fetchTradeAccessMetadataById = async (
     const orderRaw = (view?.order ?? view?.[0]) as RecurringRawOrder | null | undefined;
     const isPublicRaw = orderRaw?.isPublic ?? orderRaw?.[8];
     const accessHash = String(orderRaw?.accessHash ?? orderRaw?.[9] ?? '');
+    const normalizedAccessHash = /^0x[0-9a-fA-F]{64}$/.test(accessHash) ? accessHash.toLowerCase() : undefined;
     return {
       isPublic: typeof isPublicRaw === 'boolean' ? isPublicRaw : undefined,
-      hasAccessHash: /^0x[0-9a-fA-F]{64}$/.test(accessHash) ? accessHash.toLowerCase() !== ZERO_BYTES32 : undefined
+      hasAccessHash: normalizedAccessHash ? normalizedAccessHash !== ZERO_BYTES32 : undefined,
+      accessHash: normalizedAccessHash
     };
   }
 
@@ -1159,7 +1168,7 @@ export const fetchTradeSnapshotById = async (
   const requestAssetType = requestAssetRaw?.assetType ?? requestAssetRaw?.[0] ?? 0;
   const requestToken = requestAssetRaw?.token ?? requestAssetRaw?.[1] ?? '';
   const requestAmount = requestAssetRaw?.amount ?? requestAssetRaw?.[2] ?? 0n;
-  const { isPublic, hasAccessHash, parentTradeId: parsedParentTradeId } = parseTradeAccessMetadata(metadataRaw);
+  const { isPublic, hasAccessHash, accessHash, parentTradeId: parsedParentTradeId } = parseTradeAccessMetadata(metadataRaw);
   const parentTradeId = config.hiddenOnly ? undefined : parsedParentTradeId;
   const fillState = parseTradeFillState(fillStateRaw, offerAmount, requestAmount);
   const counterParentTradeId = parseOptionalTradeId(counterParentRaw);
@@ -1230,6 +1239,7 @@ export const fetchTradeSnapshotById = async (
     status: resolvedStatus,
     isPublic,
     hasAccessHash,
+    accessHash,
     parentTradeId,
     counterParentTradeId,
     replacementTradeId,
