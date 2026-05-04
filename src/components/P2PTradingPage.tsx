@@ -140,6 +140,7 @@ type P2PEmptyStateTone = 'default' | 'error' | 'loading' | 'locked';
 type TradeCreateMode = 'one-off' | 'recurring';
 
 type P2PTradingPageProps = {
+  isMobileNav?: boolean;
   sharedWalletSession?: SharedWalletSession;
   onDisconnectWallet?: () => Promise<void> | void;
   onHeaderWalletControlChange?: (walletControl: ReactNode | null) => void;
@@ -276,6 +277,7 @@ const mergeOnboardInfoByAddress = (
 };
 
 export default function P2PTradingPage({
+  isMobileNav = false,
   sharedWalletSession,
   onDisconnectWallet,
   onHeaderWalletControlChange,
@@ -3414,6 +3416,7 @@ export default function P2PTradingPage({
     connectedWalletLabel,
     connectedWithBurner,
     connectingWalletId,
+    compactMobileWallet: isMobileNav,
     connectBurnerWallet,
     connectWallet,
     copyWithFeedback,

@@ -28,6 +28,7 @@ type UseP2PWalletHeaderControlArgs = {
   browserWalletOptions: InjectedWalletOption[];
   burnerWallets: BurnerWalletRecord[];
   chainId: number | null;
+  compactMobileWallet?: boolean;
   connectedWalletLabel: string;
   connectedWithBurner: boolean;
   connectingWalletId: string;
@@ -68,6 +69,7 @@ export default function useP2PWalletHeaderControl({
   browserWalletOptions,
   burnerWallets,
   chainId,
+  compactMobileWallet = false,
   connectedWalletLabel,
   connectedWithBurner,
   connectingWalletId,
@@ -242,7 +244,25 @@ export default function useP2PWalletHeaderControl({
     showBrowserQuickAction: showTradeBrowserQuickAction,
     showBrowserWalletMenuSection: showTradeBrowserWalletMenuSection
   } = tradeWalletActions;
-  const tradeAppWalletSwitchButton = showTradeAppWalletSwitchButton && !showTradeDisconnectedAppAction ? (
+  const mobileAppWalletSwitchOptions = useMemo(
+    () =>
+      compactMobileWallet
+        ? resolveAppWalletSwitchOptions({
+          activeWalletAddress: walletAddress,
+          disabled: Boolean(connectingWalletId),
+          getDisplayName: getTradeAppWalletDisplayName,
+          wallets: visibleAppWallets
+        })
+        : [],
+    [compactMobileWallet, connectingWalletId, getTradeAppWalletDisplayName, visibleAppWallets, walletAddress]
+  );
+  const visibleTradeMenuBrowserWalletOptions =
+    compactMobileWallet && walletAddress ? browserWalletOptions : tradeMenuBrowserWalletOptions;
+  const visibleShowTradeBrowserWalletMenuSection =
+    compactMobileWallet && walletAddress
+      ? browserWalletOptions.length > 0
+      : showTradeBrowserWalletMenuSection;
+  const tradeAppWalletSwitchButton = showTradeAppWalletSwitchButton && !showTradeDisconnectedAppAction && !compactMobileWallet ? (
     <AppWalletSwitchButton
       menuOpen={appWalletMenuOpen}
       onToggleMenu={() => {
@@ -261,6 +281,10 @@ export default function useP2PWalletHeaderControl({
   ) : null;
   const tradePrivacyActionLabel = resolveWalletPrivacyActionLabel(connectingWalletId === 'aes');
   const tradeWalletSwitchAction = useMemo(() => {
+    if (compactMobileWallet) {
+      return null;
+    }
+
     if (showTradeDisconnectedAppAction) {
       const actionLabel = tradeHasSavedAppWallet ? 'App wallet' : 'Add app wallet';
       return (
@@ -330,6 +354,7 @@ export default function useP2PWalletHeaderControl({
     connectBurnerWallet,
     connectWallet,
     connectingWalletId,
+    compactMobileWallet,
     preferredWalletOption,
     showTradeAppCreateAction,
     showTradeAppSwitchAction,
@@ -371,11 +396,11 @@ export default function useP2PWalletHeaderControl({
         menuDisabled={Boolean(connectingWalletId)}
         menu={
           <>
-            {showTradeBrowserWalletMenuSection ? (
+            {visibleShowTradeBrowserWalletMenuSection ? (
               <div className="p2p-wallet-menu-section">
                 <span>Browser wallet</span>
-                {tradeMenuBrowserWalletOptions.length > 0 ? (
-                  tradeMenuBrowserWalletOptions.map((option) => {
+                {visibleTradeMenuBrowserWalletOptions.length > 0 ? (
+                  visibleTradeMenuBrowserWalletOptions.map((option) => {
                     const isCurrentBrowserWallet =
                       !connectedWithBurner && walletAddress && option.id === (selectedWalletId || preferredWalletOption?.id);
                     return (
@@ -404,18 +429,33 @@ export default function useP2PWalletHeaderControl({
 
             <div className="p2p-wallet-menu-section">
               <span>App wallet</span>
-              <button
-                type="button"
-                className={connectedWithBurner ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                onClick={() => {
-                  setWalletMenuOpen(false);
-                  connectBurnerWallet().catch(() => {});
-                }}
-                disabled={Boolean(connectingWalletId)}
-                role="menuitem"
-              >
-                {connectingWalletId === 'burner' ? 'Unlocking...' : 'Connect app wallet'}
-              </button>
+              {compactMobileWallet && mobileAppWalletSwitchOptions.length > 0
+                ? mobileAppWalletSwitchOptions.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    className={option.active ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                    onClick={() => handleSwitchTradeAppWallet(option.address || option.walletId || option.id)}
+                    disabled={option.disabled}
+                    role="menuitem"
+                  >
+                    {option.label}
+                  </button>
+                ))
+                : (
+                  <button
+                    type="button"
+                    className={connectedWithBurner ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                    onClick={() => {
+                      setWalletMenuOpen(false);
+                      connectBurnerWallet().catch(() => {});
+                    }}
+                    disabled={Boolean(connectingWalletId)}
+                    role="menuitem"
+                  >
+                    {connectingWalletId === 'burner' ? 'Unlocking...' : 'Connect app wallet'}
+                  </button>
+                )}
               <button type="button" className="p2p-wallet-action" onClick={beginGenerateBurnerWallet} role="menuitem">
                 Generate wallet
               </button>
@@ -448,9 +488,11 @@ export default function useP2PWalletHeaderControl({
       connectWallet,
       connectedWithBurner,
       connectingWalletId,
+      compactMobileWallet,
       disconnectWallet,
       handleSwitchTradeAppWallet,
       handleWalletPrimaryAction,
+      mobileAppWalletSwitchOptions,
       preferredWalletOption,
       selectedWalletId,
       setAppWalletMenuOpen,
@@ -458,11 +500,11 @@ export default function useP2PWalletHeaderControl({
       showInlineAesAction,
       signAesForCurrentWallet,
       tradeAppWalletSwitchButton,
-      tradeMenuBrowserWalletOptions,
       tradePrivacyActionLabel,
       tradePrimaryConnectsAppWallet,
       tradeWalletSwitchAction,
-      showTradeBrowserWalletMenuSection,
+      visibleShowTradeBrowserWalletMenuSection,
+      visibleTradeMenuBrowserWalletOptions,
       walletAddress,
       walletMenuOpen,
       walletModeLabel,

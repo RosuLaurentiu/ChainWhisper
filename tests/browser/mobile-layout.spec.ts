@@ -24,12 +24,31 @@ test.describe('mobile layout polish', () => {
     await page.goto('/trades');
 
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
+    const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' });
+    await expect(appMenu).toBeHidden();
+    await page.getByRole('button', { name: 'Show app menu' }).click();
+    await expect(appMenu).toBeVisible();
+    await page.getByRole('button', { name: 'Hide app menu' }).click();
+    await expect(appMenu).toBeHidden();
+
     const tradeTabs = page.getByRole('navigation', { name: 'P2P trade views' });
     await expect(tradeTabs).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Desk' })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Create' })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Open', exact: true })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'My Trades', exact: true })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('opens the mobile trading terminal as focused page content', async ({ page }) => {
+    await page.goto('/trades/open');
+
+    const terminal = page.locator('.standalone-trade-detail-section');
+    await expect(terminal).toBeVisible();
+    await expect(terminal.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
+    await expect(page.locator('.p2p-market-overview')).toBeHidden();
+    await expect(page.locator('.p2p-public-trades-section')).toBeHidden();
+    await expect(page.getByRole('navigation', { name: 'P2P trade views' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 

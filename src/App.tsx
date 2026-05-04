@@ -7737,6 +7737,7 @@ export default function App() {
             }
           >
             <P2PTradingPage
+              isMobileNav={isMobileNav}
               sharedWalletSession={sharedTradeWalletSession}
               onDisconnectWallet={disconnectWallet}
               onHeaderWalletControlChange={setTradeHeaderWalletControl}

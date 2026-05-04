@@ -30,6 +30,12 @@
   background: rgba(139, 92, 246, 0.16);
 }
 
+.header-icon-btn[aria-expanded="true"] {
+  border-color: #d6c8ff;
+  background: rgba(139, 92, 246, 0.2);
+  color: #d6c8ff;
+}
+
 .header-icon-btn svg {
   width: 18px;
   height: 18px;
