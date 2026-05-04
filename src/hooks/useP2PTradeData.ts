@@ -304,7 +304,11 @@ export default function useP2PTradeData({
           Boolean(walletKey) &&
           [snapshot?.maker.toLowerCase(), snapshot?.taker.toLowerCase()].includes(walletKey);
         const isUnlisted = metadata?.isPublic === false || snapshot?.isPublic === false;
-        if (isUnlisted && !resolvedRouteAccessSecret && !isParticipant) {
+        const routeSecretCanAuthorize = Boolean(
+          resolvedRouteAccessSecret &&
+            (metadata?.hasAccessHash === true || snapshot?.hasAccessHash === true)
+        );
+        if (isUnlisted && !routeSecretCanAuthorize && !isParticipant) {
           setTradeAccessBlocked(true);
           setDetailTrade(null);
           return;

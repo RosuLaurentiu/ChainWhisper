@@ -91,6 +91,16 @@ describe('verified ecosystem tokens', () => {
       kind: 'private-erc20'
     });
   });
+
+  it('includes the deployed test private token', () => {
+    const address = '0x23f0AE74466Fd0fc1d32bB947ebB8Cd553BECdA0';
+
+    expect(isVerifiedEcosystemToken(address)).toBe(true);
+    expect(getVerifiedEcosystemToken(address.toUpperCase())).toEqual({
+      address,
+      kind: 'private-erc20'
+    });
+  });
 });
 
 describe('trade on-chain error messages', () => {

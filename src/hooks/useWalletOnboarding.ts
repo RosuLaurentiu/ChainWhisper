@@ -6,10 +6,12 @@ import {
   getProviderErrorMessage,
   mergeOnboardInfo,
   normalizeChainId,
+  PRIVATE_REWARD_TOKEN_ADDRESS,
   type Eip1193Provider,
   type SignerSource
 } from '../lib/appShared';
 import { saveWalletPreference } from '../lib/appStorage';
+import { ensurePrivateTokenAccountEncryptionAddress } from '../lib/appChain';
 import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption
@@ -225,6 +227,13 @@ export function useWalletOnboarding({
       if (!aesKey) {
         throw new Error('AES key was not returned during onboarding.');
       }
+
+      await ensurePrivateTokenAccountEncryptionAddress({
+        signer,
+        tokenAddress: PRIVATE_REWARD_TOKEN_ADDRESS,
+        ownerAddress: address,
+        tokenSymbol: 'pWISP'
+      }).catch(() => {});
 
       setSessionOnboardInfo((previous) => ({
         ...previous,

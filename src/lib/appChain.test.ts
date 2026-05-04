@@ -15,6 +15,7 @@ import {
   __buildRecurringOrderSnapshotFromViewForTest,
   __resolveRecurringIdsFromPagedResultForTest,
   isActiveTradeEscrowContractAddress,
+  resolvePrivateTokenSpendReadiness,
   resolveTradeEscrowContractConfig
 } from './appChain';
 
@@ -117,8 +118,91 @@ describe('trade escrow contract resolution', () => {
     const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
 
     expect(privateTokenInterface.getFunction('allowance(address,address)')?.selector).toBeTruthy();
+    expect(privateTokenInterface.getFunction('accountEncryptionAddress')?.selector).toBeTruthy();
+    expect(privateTokenInterface.getFunction('setAccountEncryptionAddress')?.selector).toBeTruthy();
     expect(privateTokenInterface.getFunction('approve')?.selector).toBeTruthy();
     expect(privateTokenInterface.getFunction('transfer')?.selector).toBeTruthy();
+  });
+
+  it('blocks private token fills when the wallet balance cannot be decrypted', () => {
+    const readiness = resolvePrivateTokenSpendReadiness({
+      requiredAmountWei: 5_000_000n,
+      balanceWei: null,
+      allowanceWei: 10_000_000n,
+      tokenSymbol: 'Hotdog'
+    });
+
+    expect(readiness).toMatchObject({
+      status: 'blocked',
+      reason: 'balance-unavailable'
+    });
+    expect(readiness.status === 'blocked' ? readiness.message : '').toContain("this wallet's private Hotdog balance");
+  });
+
+  it('blocks private token fills when the decrypted balance is too low', () => {
+    expect(
+      resolvePrivateTokenSpendReadiness({
+        requiredAmountWei: 5_000_000n,
+        balanceWei: 4_999_999n,
+        allowanceWei: 10_000_000n,
+        tokenSymbol: 'Hotdog'
+      })
+    ).toMatchObject({
+      status: 'blocked',
+      reason: 'insufficient-balance'
+    });
+  });
+
+  it('requires private token approval when allowance is missing or too low', () => {
+    expect(
+      resolvePrivateTokenSpendReadiness({
+        requiredAmountWei: 5_000_000n,
+        balanceWei: 10_000_000n,
+        allowanceWei: null,
+        tokenSymbol: 'Hotdog'
+      })
+    ).toMatchObject({
+      status: 'needs-approval'
+    });
+
+    expect(
+      resolvePrivateTokenSpendReadiness({
+        requiredAmountWei: 5_000_000n,
+        balanceWei: 10_000_000n,
+        allowanceWei: 1_000_000n,
+        tokenSymbol: 'Hotdog'
+      })
+    ).toMatchObject({
+      status: 'needs-approval'
+    });
+  });
+
+  it('blocks private token fills when approval cannot be confirmed after approval', () => {
+    expect(
+      resolvePrivateTokenSpendReadiness({
+        requiredAmountWei: 5_000_000n,
+        balanceWei: 10_000_000n,
+        allowanceWei: null,
+        tokenSymbol: 'Hotdog',
+        afterApproval: true
+      })
+    ).toMatchObject({
+      status: 'blocked',
+      reason: 'allowance-unavailable-after-approval'
+    });
+
+    expect(
+      resolvePrivateTokenSpendReadiness({
+        requiredAmountWei: 5_000_000n,
+        balanceWei: 10_000_000n,
+        allowanceWei: 4_000_000n,
+        tokenSymbol: 'Hotdog',
+        afterApproval: true
+      })
+    ).toMatchObject({
+      status: 'blocked',
+      reason: 'insufficient-allowance-after-approval'
+    });
   });
 
   it('normalizes recurring V1 order views into recurring trade snapshots', async () => {

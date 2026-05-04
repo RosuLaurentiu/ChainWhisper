@@ -957,6 +957,8 @@ export const PRIVATE_ERC20_TOKEN_ABI = [
   'function decimals() view returns (uint8)',
   'function balanceOf(address account) view returns (uint256)',
   'function balanceOf() returns (uint256)',
+  'function accountEncryptionAddress(address account) view returns (address)',
+  'function setAccountEncryptionAddress(address offBoardAddress) returns (bool)',
   'function allowance(address account, bool isSpender) returns (uint256)',
   'function allowance(address owner, address spender) view returns ((uint256 ciphertext, uint256 ownerCiphertext, uint256 spenderCiphertext))',
   'function approve(address spender, (uint256 ciphertext, bytes signature) value) returns (bool)',

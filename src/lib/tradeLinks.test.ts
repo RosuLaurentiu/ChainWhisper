@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { decodeTradeLink, encodeTradeLink } from './tradeLinks';
+import {
+  decodeTradeLink,
+  doesAccessSecretMatchHash,
+  encodeTradeLink,
+  normalizeAccessHash,
+  PRIVATE_LINK_SECRET_MISMATCH_MESSAGE
+} from './tradeLinks';
 
 const secret = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
@@ -23,5 +29,16 @@ describe('trade links', () => {
       tradeId: 22,
       accessSecret: secret
     });
+  });
+
+  it('normalizes and validates private-link access hashes before a fill can use them', () => {
+    const accessHash = `0x${'ab'.repeat(32)}`;
+    const wrongHash = `0x${'cd'.repeat(32)}`;
+    const hashAccessSecret = (candidate: string) => (candidate === secret ? accessHash.toUpperCase() : wrongHash);
+
+    expect(normalizeAccessHash(accessHash.toUpperCase())).toBe(accessHash);
+    expect(doesAccessSecretMatchHash(secret, accessHash, hashAccessSecret)).toBe(true);
+    expect(doesAccessSecretMatchHash(`0x${'99'.repeat(32)}`, accessHash, hashAccessSecret)).toBe(false);
+    expect(PRIVATE_LINK_SECRET_MISMATCH_MESSAGE).toContain('full Share link');
   });
 });

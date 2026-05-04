@@ -119,6 +119,7 @@ describe('p2pTradeView helpers', () => {
     storeTradeAccessSecrets({
       '7': `0x${'a'.repeat(64)}`,
       bad: `0x${'b'.repeat(64)}`,
+      '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`,
       '0x1111111111111111111111111111111111111111:8': 'nope'
     });
     storePrivateTradeLiquidity({
@@ -127,7 +128,9 @@ describe('p2pTradeView helpers', () => {
       bad: '456'
     });
 
-    expect(loadStoredTradeAccessSecrets()).toEqual({ '7': `0x${'a'.repeat(64)}` });
+    expect(loadStoredTradeAccessSecrets()).toEqual({
+      '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`
+    });
     expect(loadStoredPrivateTradeLiquidity()).toEqual({
       '0x1111111111111111111111111111111111111111:7': '123'
     });

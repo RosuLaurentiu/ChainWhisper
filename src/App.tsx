@@ -153,7 +153,6 @@ import {
   PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TOKEN_BALANCE_ABI,
-  PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   REALTIME_SYNC_BURST_THROTTLE_MS,
   REALTIME_SYNC_DEBOUNCE_MS,
   REALTIME_SYNC_FALLBACK_INTERVAL_MS,
@@ -5963,7 +5962,6 @@ export default function App() {
         const privateTokenContract = new cotiEthers.Contract(PRIVATE_REWARD_TOKEN_ADDRESS, PRIVATE_TOKEN_BALANCE_ABI, readProvider);
         const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
         const swapVaultContract = new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, readProvider);
-        const privateTokenInterface = new cotiEthers.Interface(PRIVATE_TOKEN_BALANCE_ABI);
 
         const [
           rewardBalanceRaw,
@@ -5995,49 +5993,12 @@ export default function App() {
         if (hasAesReady) {
           try {
             const { signer, cacheKey } = await getMemoSigner();
-            let encryptedPrivateBalanceRaw: unknown = null;
-            try {
-              const privateBalanceByAddressCallData = privateTokenInterface.encodeFunctionData('balanceOf(address)', [
-                requestedWalletAddress
-              ]);
-              const privateBalanceByAddressRawResult = await readProvider.call({
-                to: PRIVATE_REWARD_TOKEN_ADDRESS,
-                from: requestedWalletAddress,
-                data: privateBalanceByAddressCallData
-              });
-              const decodedPrivateBalanceByAddress = privateTokenInterface.decodeFunctionResult(
-                'balanceOf(address)',
-                privateBalanceByAddressRawResult
-              );
-              encryptedPrivateBalanceRaw = decodedPrivateBalanceByAddress?.[0] ?? null;
-            } catch {
-              encryptedPrivateBalanceRaw = null;
-            }
-            if (encryptedPrivateBalanceRaw === null) {
-              // Fallback for older private token variants exposing user-bound balanceOf().
-              const privateBalanceCallData = privateTokenInterface.encodeFunctionData('balanceOf()', []);
-              const privateBalanceRawResult = await readProvider.call({
-                to: PRIVATE_REWARD_TOKEN_ADDRESS,
-                from: requestedWalletAddress,
-                data: privateBalanceCallData
-              });
-              const decodedPrivateBalance = privateTokenInterface.decodeFunctionResult('balanceOf()', privateBalanceRawResult);
-              encryptedPrivateBalanceRaw = decodedPrivateBalance?.[0] ?? null;
-            }
-            if (encryptedPrivateBalanceRaw !== null) {
-              const decrypted = await signer.decryptValue(encryptedPrivateBalanceRaw as never);
-              const decryptedAsBigint =
-                typeof decrypted === 'bigint'
-                  ? decrypted
-                  : /^\d+$/.test(String(decrypted).trim())
-                    ? BigInt(String(decrypted).trim())
-                    : null;
-              privateBalanceWei =
-                decryptedAsBigint !== null &&
-                decryptedAsBigint <= PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
-                  ? decryptedAsBigint
-                  : null;
-            }
+            privateBalanceWei = await readPrivateTokenBalanceWei(
+              PRIVATE_REWARD_TOKEN_ADDRESS,
+              requestedWalletAddress,
+              signer,
+              true
+            ).catch(() => null);
 
             const nextOnboardInfo = signer.getUserOnboardInfo();
             setSessionOnboardInfo((previous) => ({

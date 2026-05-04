@@ -39,6 +39,107 @@ const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const ACCEPTED_TX_LOOKBACK_BLOCKS = 100_000;
 const PRIVATE_TOKEN_WRITE_GAS_LIMIT = 4_000_000n;
 
+type PrivateTokenSpendReadinessInput = {
+  requiredAmountWei: bigint;
+  balanceWei: bigint | null;
+  allowanceWei: bigint | null;
+  tokenSymbol?: string;
+  afterApproval?: boolean;
+};
+
+export type PrivateTokenSpendReadiness =
+  | {
+      status: 'ready';
+      balanceWei: bigint;
+      allowanceWei: bigint;
+    }
+  | {
+      status: 'needs-approval';
+      balanceWei: bigint;
+      allowanceWei: bigint | null;
+    }
+  | {
+      status: 'blocked';
+      reason:
+        | 'balance-unavailable'
+        | 'insufficient-balance'
+        | 'allowance-unavailable-after-approval'
+        | 'insufficient-allowance-after-approval';
+      message: string;
+      balanceWei: bigint | null;
+      allowanceWei: bigint | null;
+    };
+
+export const resolvePrivateTokenSpendReadiness = ({
+  requiredAmountWei,
+  balanceWei,
+  allowanceWei,
+  tokenSymbol = 'private token',
+  afterApproval = false
+}: PrivateTokenSpendReadinessInput): PrivateTokenSpendReadiness => {
+  if (requiredAmountWei <= 0n) {
+    return {
+      status: 'ready',
+      balanceWei: balanceWei ?? 0n,
+      allowanceWei: allowanceWei ?? 0n
+    };
+  }
+
+  if (balanceWei === null) {
+    return {
+      status: 'blocked',
+      reason: 'balance-unavailable',
+      message: `The app could not decrypt this wallet's private ${tokenSymbol} balance. Unlock privacy for the connected wallet and refresh the balance before filling.`,
+      balanceWei,
+      allowanceWei
+    };
+  }
+
+  if (balanceWei < requiredAmountWei) {
+    return {
+      status: 'blocked',
+      reason: 'insufficient-balance',
+      message: `Your private ${tokenSymbol} balance is below this fill amount.`,
+      balanceWei,
+      allowanceWei
+    };
+  }
+
+  if (allowanceWei !== null && allowanceWei >= requiredAmountWei) {
+    return {
+      status: 'ready',
+      balanceWei,
+      allowanceWei
+    };
+  }
+
+  if (afterApproval && allowanceWei === null) {
+    return {
+      status: 'blocked',
+      reason: 'allowance-unavailable-after-approval',
+      message: `Private ${tokenSymbol} approval could not be confirmed after the approval transaction. Unlock privacy and try again.`,
+      balanceWei,
+      allowanceWei
+    };
+  }
+
+  if (afterApproval) {
+    return {
+      status: 'blocked',
+      reason: 'insufficient-allowance-after-approval',
+      message: `Private ${tokenSymbol} allowance is still below this fill amount after approval.`,
+      balanceWei,
+      allowanceWei
+    };
+  }
+
+  return {
+    status: 'needs-approval',
+    balanceWei,
+    allowanceWei
+  };
+};
+
 type TradeEscrowConfig = {
   address: string;
   abi: typeof TRADE_ESCROW_CONTRACT_ABI | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI;
@@ -302,7 +403,8 @@ const extractUserCiphertext = (encryptedValue: unknown): unknown => {
 export const readPrivateTokenBalanceWei = async (
   tokenAddress: string,
   ownerAddress: string,
-  signer: Wallet | JsonRpcSigner
+  signer: Wallet | JsonRpcSigner,
+  recoverOnFailure = false
 ): Promise<bigint | null> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
@@ -340,7 +442,7 @@ export const readPrivateTokenBalanceWei = async (
     }
   }
 
-  return decryptPrivateUintValue(encryptedBalanceRaw, signer);
+  return decryptPrivateUintValue(encryptedBalanceRaw, signer, recoverOnFailure);
 };
 
 export const readPrivateTradeRemainingOfferWei = async ({
@@ -750,11 +852,12 @@ export const fetchPrivateOrderFillReceiptsForWallet = async ({
   return filteredReceipts;
 };
 
-const readPrivateTokenAllowanceWei = async (
+export const readPrivateTokenAllowanceWei = async (
   tokenAddress: string,
   ownerAddress: string,
   spenderAddress: string,
-  signer: Wallet | JsonRpcSigner
+  signer: Wallet | JsonRpcSigner,
+  recoverOnFailure = false
 ): Promise<bigint | null> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
@@ -777,7 +880,7 @@ const readPrivateTokenAllowanceWei = async (
     | null
     | undefined;
   const ownerCiphertext = allowance?.ownerCiphertext ?? allowance?.[1] ?? null;
-  return decryptPrivateUintValue(ownerCiphertext, signer);
+  return decryptPrivateUintValue(ownerCiphertext, signer, recoverOnFailure);
 };
 
 const resolveTradeAssetSnapshot = async (
@@ -1458,6 +1561,169 @@ export const fetchWalletTradeSnapshots = async (
     .slice(0, safeLimit);
 };
 
+const approvePrivateTokenSpender = async (
+  signer: Wallet | JsonRpcSigner,
+  tokenAddress: string,
+  spenderAddress: string
+): Promise<void> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
+  const approveSelector = privateTokenInterface.getFunction('approve')?.selector;
+  if (!approveSelector) {
+    throw new Error('Unable to prepare private token approval.');
+  }
+
+  const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_ABI, signer);
+  const encryptedApproval = await signer.encryptValue(
+    PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+    tokenAddress,
+    approveSelector
+  );
+  const approveTx = await privateTokenContract.approve(spenderAddress, encryptedApproval, {
+    gasLimit: PRIVATE_TOKEN_WRITE_GAS_LIMIT
+  });
+  const approveReceipt = await approveTx.wait();
+  if (!approveReceipt || Number((approveReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
+    throw new Error('Private token approval failed on-chain.');
+  }
+};
+
+export const readPrivateTokenAccountEncryptionAddress = async (
+  tokenAddress: string,
+  ownerAddress: string
+): Promise<string | null> => {
+  if (!isWalletAddress(tokenAddress) || !isWalletAddress(ownerAddress)) {
+    return null;
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_ABI, readProvider);
+  const currentAddress = await privateTokenContract.accountEncryptionAddress(ownerAddress).catch(() => null);
+  return typeof currentAddress === 'string' && isWalletAddress(currentAddress) ? currentAddress : null;
+};
+
+export const ensurePrivateTokenAccountEncryptionAddress = async ({
+  signer,
+  tokenAddress,
+  ownerAddress,
+  encryptionAddress = ownerAddress,
+  tokenSymbol = 'private token'
+}: {
+  signer: Wallet | JsonRpcSigner;
+  tokenAddress: string;
+  ownerAddress: string;
+  encryptionAddress?: string;
+  tokenSymbol?: string;
+}): Promise<boolean> => {
+  if (!isWalletAddress(tokenAddress) || !isWalletAddress(ownerAddress) || !isWalletAddress(encryptionAddress)) {
+    return false;
+  }
+
+  const currentAddress = await readPrivateTokenAccountEncryptionAddress(tokenAddress, ownerAddress).catch(() => null);
+  if (currentAddress?.toLowerCase() === encryptionAddress.toLowerCase()) {
+    return false;
+  }
+
+  await refreshPrivateTokenAccountEncryptionAddress(signer, tokenAddress, encryptionAddress, tokenSymbol);
+  return true;
+};
+
+const refreshPrivateTokenAccountEncryptionAddress = async (
+  signer: Wallet | JsonRpcSigner,
+  tokenAddress: string,
+  ownerAddress: string,
+  tokenSymbol = 'private token'
+): Promise<void> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_ABI, signer);
+  const tx = await privateTokenContract.setAccountEncryptionAddress(ownerAddress, {
+    gasLimit: PRIVATE_TOKEN_WRITE_GAS_LIMIT
+  }).catch((error: unknown) => {
+    throw error instanceof Error
+      ? error
+      : new Error(`Unable to refresh private ${tokenSymbol} balance visibility for this wallet.`);
+  });
+  const receipt = await tx.wait();
+  if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
+    throw new Error(`Refreshing private ${tokenSymbol} balance visibility failed on-chain.`);
+  }
+};
+
+export const ensurePrivateTokenSpendReady = async ({
+  signer,
+  ownerAddress,
+  tokenAddress,
+  spenderAddress,
+  requiredAmount,
+  tokenSymbol = 'private token'
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  tokenAddress: string;
+  spenderAddress: string;
+  requiredAmount: bigint;
+  tokenSymbol?: string;
+}): Promise<void> => {
+  if (requiredAmount <= 0n || !isWalletAddress(tokenAddress) || !isWalletAddress(spenderAddress)) {
+    return;
+  }
+
+  if (requiredAmount > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
+    throw new Error('Private token amount exceeds the maximum plaintext size supported by COTI private ERC-20.');
+  }
+
+  let balanceWei = await readPrivateTokenBalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
+  if (balanceWei === null) {
+    await ensurePrivateTokenAccountEncryptionAddress({
+      signer,
+      tokenAddress,
+      ownerAddress,
+      tokenSymbol
+    });
+    balanceWei = await readPrivateTokenBalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
+  }
+  const allowanceWei = await readPrivateTokenAllowanceWei(
+    tokenAddress,
+    ownerAddress,
+    spenderAddress,
+    signer,
+    true
+  ).catch(() => null);
+  const initialReadiness = resolvePrivateTokenSpendReadiness({
+    requiredAmountWei: requiredAmount,
+    balanceWei,
+    allowanceWei,
+    tokenSymbol
+  });
+
+  if (initialReadiness.status === 'blocked') {
+    throw new Error(initialReadiness.message);
+  }
+  if (initialReadiness.status === 'ready') {
+    return;
+  }
+
+  await approvePrivateTokenSpender(signer, tokenAddress, spenderAddress);
+  const refreshedAllowanceWei = await readPrivateTokenAllowanceWei(
+    tokenAddress,
+    ownerAddress,
+    spenderAddress,
+    signer,
+    true
+  ).catch(() => null);
+  const refreshedReadiness = resolvePrivateTokenSpendReadiness({
+    requiredAmountWei: requiredAmount,
+    balanceWei,
+    allowanceWei: refreshedAllowanceWei,
+    tokenSymbol,
+    afterApproval: true
+  });
+  if (refreshedReadiness.status !== 'ready') {
+    throw new Error(refreshedReadiness.status === 'blocked' ? refreshedReadiness.message : 'Private token payment is not ready after approval.');
+  }
+};
+
 export const ensureTradeTokenAllowance = async (
   signer: Wallet | JsonRpcSigner,
   ownerAddress: string,
@@ -1479,29 +1745,27 @@ export const ensureTradeTokenAllowance = async (
       tokenAddress,
       ownerAddress,
       spenderAddress,
-      signer
+      signer,
+      true
     ).catch(() => null);
     if (allowance !== null && allowance >= requiredAmount) {
       return;
     }
 
-    const cotiEthers = await loadCotiEthersModule();
-    const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
-    const approveSelector = privateTokenInterface.getFunction('approve')?.selector;
-    if (!approveSelector) {
-      throw new Error('Unable to prepare private token approval.');
-    }
-
-    const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_ABI, signer);
-    const encryptedApproval = await signer.encryptValue(
-      PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+    await approvePrivateTokenSpender(signer, tokenAddress, spenderAddress);
+    const refreshedAllowance = await readPrivateTokenAllowanceWei(
       tokenAddress,
-      approveSelector
-    );
-    const approveTx = await privateTokenContract.approve(spenderAddress, encryptedApproval, {
-      gasLimit: PRIVATE_TOKEN_WRITE_GAS_LIMIT
-    });
-    await approveTx.wait();
+      ownerAddress,
+      spenderAddress,
+      signer,
+      true
+    ).catch(() => null);
+    if (refreshedAllowance === null) {
+      throw new Error('Private token approval could not be confirmed after the approval transaction.');
+    }
+    if (refreshedAllowance < requiredAmount) {
+      throw new Error('Private token allowance is still below the required amount after approval.');
+    }
     return;
   }
 

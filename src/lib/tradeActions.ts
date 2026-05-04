@@ -1,5 +1,5 @@
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
-import { ensureTradeTokenAllowance, resolveTradeEscrowContractConfig } from './appChain';
+import { ensurePrivateTokenSpendReady, ensureTradeTokenAllowance, resolveTradeEscrowContractConfig } from './appChain';
 import { resolveTradeAssetTypeValue } from './appHelpers';
 import {
   loadCotiEthersModule,
@@ -809,9 +809,21 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
 }): Promise<{ filledTxHash?: string; fullyFilled: boolean }> => {
   const resolvedEscrowContract = escrowContract ?? PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
   const tradeContract = await createTradeContract(signer, resolvedEscrowContract);
-  await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, requestAmountWei, resolvedEscrowContract);
 
   const requestIsPrivate = requestAsset.kind === 'private-erc20';
+  if (requestIsPrivate && requestAsset.tokenAddress) {
+    await ensurePrivateTokenSpendReady({
+      signer,
+      ownerAddress,
+      tokenAddress: requestAsset.tokenAddress,
+      spenderAddress: resolvedEscrowContract,
+      requiredAmount: requestAmountWei,
+      tokenSymbol: requestAsset.symbol
+    });
+  } else {
+    await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, requestAmountWei, resolvedEscrowContract);
+  }
+
   const functionName = requestIsPrivate
     ? accessSecret
       ? 'fillPrivateOrderWithSecret'
@@ -838,7 +850,9 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
       : await tradeContract.fillHybridPrivateOrder(tradeId, requestAmountWei, txOverrides);
   const fillReceipt = requireSuccessfulReceipt(
     (await fillTx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown; logs?: unknown[] },
-    'Private order fill failed on-chain.'
+    requestIsPrivate
+      ? 'Private token transfer failed. Check your private balance, approval, and AES unlock.'
+      : 'Private order fill failed on-chain.'
   );
 
   return {

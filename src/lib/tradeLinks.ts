@@ -10,6 +10,28 @@ export type EncodedTradeLink = {
   accessSecret?: string;
 };
 
+export const PRIVATE_LINK_SECRET_MISMATCH_MESSAGE =
+  'This private link does not match this offer. Open the full Share link from the maker and try again.';
+
+export const normalizeAccessHash = (value?: string | null): string => {
+  const normalized = value?.trim() ?? '';
+  return /^0x[a-fA-F0-9]{64}$/i.test(normalized) ? normalized.toLowerCase().replace(/^0x/i, '0x') : '';
+};
+
+export const doesAccessSecretMatchHash = (
+  accessSecret: string,
+  accessHash: string | undefined,
+  hashAccessSecret: (secret: string) => string
+): boolean => {
+  const normalizedAccessHash = normalizeAccessHash(accessHash);
+  if (!normalizedAccessHash) {
+    return true;
+  }
+
+  const normalizedSecretHash = normalizeAccessHash(hashAccessSecret(accessSecret));
+  return normalizedSecretHash === normalizedAccessHash;
+};
+
 const toBase64Url = (bytes: Uint8Array): string => {
   let binary = '';
   for (const byte of bytes) {

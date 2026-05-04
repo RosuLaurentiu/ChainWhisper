@@ -311,9 +311,21 @@ export default function TradeOfferCard({
   const requestVerifyUrl = buildTokenExplorerUrl(resolvedRequest?.tokenAddress);
   const acceptedTransactionUrl = buildTransactionExplorerUrl(snapshot?.acceptedTxHash);
   const makerExplorerUrl = buildAddressExplorerUrl(offer.maker);
-  const counterpartyAddress = isMaker ? offer.taker : offer.maker;
-  const hasCounterpartyAddress = !isZeroTradeTakerAddress(counterpartyAddress);
-  const counterpartyExplorerUrl = hasCounterpartyAddress ? buildAddressExplorerUrl(counterpartyAddress) : undefined;
+  const resolvedPeerAddress =
+    !isZeroTradeTakerAddress(offer.taker) && offer.taker.toLowerCase() !== offer.maker.toLowerCase()
+      ? offer.taker
+      : snapshot?.walletHasFill && walletKey && walletKey !== offer.maker.toLowerCase()
+        ? currentWalletAddress
+        : undefined;
+  const counterpartyExplorerUrl = resolvedPeerAddress ? buildAddressExplorerUrl(resolvedPeerAddress) : undefined;
+  const peerLabel =
+    resolvedPeerAddress && walletKey && resolvedPeerAddress.toLowerCase() === walletKey
+      ? `${shortenAddress(resolvedPeerAddress)} (you)`
+      : resolvedPeerAddress
+        ? shortenAddress(resolvedPeerAddress)
+        : offer.hiddenLiquidity
+          ? 'Private link'
+          : 'Any wallet';
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
   const requestScopeLabel = resolvedRequest ? resolveAssetScopeLabel(resolvedRequest.kind) : null;
   const tradeOrderSummary =
@@ -864,11 +876,11 @@ export default function TradeOfferCard({
               <div className="trade-card-counterparty">
                 <span>Peer</span>
                 {counterpartyExplorerUrl ? (
-                  <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
-                    {shortenAddress(counterpartyAddress)}
+                  <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={resolvedPeerAddress}>
+                    {peerLabel}
                   </a>
                 ) : (
-                  <strong>Any wallet</strong>
+                  <strong>{peerLabel}</strong>
                 )}
               </div>
             </div>
@@ -876,11 +888,11 @@ export default function TradeOfferCard({
             <div className="trade-card-counterparty">
               <span>Peer</span>
               {counterpartyExplorerUrl ? (
-                <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
-                  {shortenAddress(counterpartyAddress)}
+                <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={resolvedPeerAddress}>
+                  {peerLabel}
                 </a>
               ) : (
-                <strong>Any wallet</strong>
+                <strong>{peerLabel}</strong>
               )}
             </div>
           )}

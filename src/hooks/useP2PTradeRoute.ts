@@ -222,7 +222,7 @@ export const resolveTradeLinkInput = (value: string): ResolvedTradeLinkInput | n
   return null;
 };
 
-const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escrowContract?: string): string => {
+export const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escrowContract?: string): string => {
   if (escrowContract?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
     const secret = normalizeAccessSecret(accessSecret);
     return `/trades/recurring?order=${tradeId}${secret ? `#${secret}` : ''}`;

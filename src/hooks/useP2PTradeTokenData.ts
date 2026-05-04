@@ -148,7 +148,7 @@ export default function useP2PTradeTokenData({
     if (walletHasAes) {
       const signer = await getTradeSigner(false).catch(() => null);
       const privateBalance =
-        signer !== null ? await readPrivateTokenBalanceWei(PRIVATE_REWARD_TOKEN_ADDRESS, walletAddress, signer).catch(() => null) : null;
+        signer !== null ? await readPrivateTokenBalanceWei(PRIVATE_REWARD_TOKEN_ADDRESS, walletAddress, signer, true).catch(() => null) : null;
       setPrivateRewardTokenBalanceWei(privateBalance);
     } else {
       setPrivateRewardTokenBalanceWei(null);
@@ -197,7 +197,7 @@ export default function useP2PTradeTokenData({
           if (token.kind === 'private-erc20') {
             const signer = walletHasAes ? await getTradeSigner(false).catch(() => null) : null;
             balanceWei =
-              signer !== null ? await readPrivateTokenBalanceWei(normalizedAddress, walletAddress, signer).catch(() => null) : null;
+              signer !== null ? await readPrivateTokenBalanceWei(normalizedAddress, walletAddress, signer, true).catch(() => null) : null;
           } else {
             const rawBalance = await tokenContract.balanceOf(walletAddress).catch(() => null);
             balanceWei = typeof rawBalance === 'bigint' ? rawBalance : null;

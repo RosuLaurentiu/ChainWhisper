@@ -44,6 +44,7 @@ import {
 } from '../lib/appShared';
 import { getPreferredBrowserWalletId, saveWalletPreference } from '../lib/appStorage';
 import {
+  ensurePrivateTokenAccountEncryptionAddress,
   fetchPrivateOrderFillReceiptsForWallet,
   fetchRecurringExecutionRowsForWallet,
   fetchRecurringPrivateInventorySnapshotsForWallet,
@@ -81,6 +82,7 @@ import useP2PTradeTokenData from '../hooks/useP2PTradeTokenData';
 import useP2PWalletDisconnect from '../hooks/useP2PWalletDisconnect';
 import useInjectedWalletOptions from '../hooks/useInjectedWalletOptions';
 import { useStoredWalletPreference } from '../hooks/useStoredWalletPreference';
+import { doesAccessSecretMatchHash, normalizeAccessHash, PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../lib/tradeLinks';
 import {
   createRecurringOrderOnChain,
   editRecurringOrderOnChain,
@@ -1178,6 +1180,9 @@ export default function P2PTradingPage({
       }
 
       const isMaker = snapshot.maker.toLowerCase() === walletKey;
+      if (!forceReveal && !isMaker && !snapshot.walletHasFill) {
+        return snapshot;
+      }
       const tradeKey = getSnapshotKey(snapshot);
       const knownInitialAmount = knownPrivateLiquidityByTrade[tradeKey];
       const signer = await getTradeSigner(forceReveal);
@@ -1219,12 +1224,18 @@ export default function P2PTradingPage({
           : null;
       if (!isMaker) {
         if (privateFillReceiptsResult.status === 'rejected') {
-          throw privateFillReceiptsResult.reason instanceof Error
-            ? privateFillReceiptsResult.reason
-            : new Error('Private order history reveal failed. AES may need to be refreshed.');
+          if (forceReveal) {
+            throw privateFillReceiptsResult.reason instanceof Error
+              ? privateFillReceiptsResult.reason
+              : new Error('Private order history reveal failed. AES may need to be refreshed.');
+          }
+          return snapshot;
         }
         if (privateFillReceipts.length === 0) {
-          throw new Error('No private fill receipts were found for this wallet.');
+          if (forceReveal) {
+            throw new Error('No private fill receipts were found for this wallet.');
+          }
+          return snapshot;
         }
         return {
           ...snapshot,
@@ -1233,11 +1244,17 @@ export default function P2PTradingPage({
       }
       if (resolvedRemainingOfferAmount === null) {
         if (remainingOfferAmountResult.status === 'rejected' && privateFillReceiptsResult.status === 'rejected') {
-          throw remainingOfferAmountResult.reason instanceof Error
-            ? remainingOfferAmountResult.reason
-            : new Error('Private order reveal failed. AES may need to be refreshed.');
+          if (forceReveal) {
+            throw remainingOfferAmountResult.reason instanceof Error
+              ? remainingOfferAmountResult.reason
+              : new Error('Private order reveal failed. AES may need to be refreshed.');
+          }
+          return snapshot;
         }
-        throw new Error('This private order could not expose maker liquidity or private fill receipts on the active contract.');
+        if (forceReveal) {
+          throw new Error('This private order could not expose maker liquidity or private fill receipts on the active contract.');
+        }
+        return snapshot;
       }
 
       let filledOfferAmount: string | undefined;
@@ -1366,17 +1383,97 @@ export default function P2PTradingPage({
       }
 
       setDetailTradeError('');
-      rememberTradeAccessSecret(parsedLink.tradeId, parsedLink.accessSecret, parsedLink.escrowContract);
       openTrade(parsedLink.tradeId, parsedLink.accessSecret, parsedLink.escrowContract);
       setTradeLinkInput('');
     },
-    [openTrade, rememberTradeAccessSecret, showEmptyTradeRoute, tradeLinkInput]
+    [openTrade, showEmptyTradeRoute, tradeLinkInput]
   );
 
   const hashTradeAccessSecret = useCallback(async (accessSecret: string): Promise<string> => {
     const cotiEthers = await loadCotiEthersModule();
     return cotiEthers.keccak256(accessSecret);
   }, []);
+
+  useEffect(() => {
+    if (!detailTrade || routeTradeId === null) {
+      return;
+    }
+
+    const detailKey = getSnapshotKey(detailTrade);
+    const routeKey = buildTradeSnapshotKey(routeTradeId, routeEscrowContract);
+    if (detailTrade.tradeId !== routeTradeId || detailKey !== routeKey) {
+      return;
+    }
+
+    const routeSecret = normalizeAccessSecret(routeAccessSecret);
+    const cachedSecret = normalizeAccessSecret(
+      resolveKnownTradeAccessSecret(detailTrade.tradeId, detailTrade.escrowContract)
+    );
+    const candidateSecret = routeSecret || cachedSecret;
+    if (!candidateSecret) {
+      return;
+    }
+
+    let cancelled = false;
+    const validateCandidateSecret = async () => {
+      if (!detailTrade.hasAccessHash) {
+        return;
+      }
+
+      if (!normalizeAccessHash(detailTrade.accessHash)) {
+        forgetTradeAccessSecret(detailTrade.tradeId, detailTrade.escrowContract);
+        if (routeSecret) {
+          setTradeActionError('This private link could not be verified. Open the full Share link from the maker and try again.');
+        }
+        return;
+      }
+
+      const candidateHash = await hashTradeAccessSecret(candidateSecret);
+      const candidateMatches = doesAccessSecretMatchHash(
+        candidateSecret,
+        detailTrade.accessHash,
+        () => candidateHash
+      );
+      if (cancelled) {
+        return;
+      }
+      if (!candidateMatches) {
+        forgetTradeAccessSecret(detailTrade.tradeId, detailTrade.escrowContract);
+        if (routeSecret) {
+          setTradeActionError(PRIVATE_LINK_SECRET_MISMATCH_MESSAGE);
+        }
+        return;
+      }
+
+      if (!cancelled) {
+        rememberTradeAccessSecret(detailTrade.tradeId, candidateSecret, detailTrade.escrowContract);
+      }
+    };
+
+    validateCandidateSecret().catch(() => {
+      if (cancelled) {
+        return;
+      }
+      forgetTradeAccessSecret(detailTrade.tradeId, detailTrade.escrowContract);
+      if (routeSecret) {
+        setTradeActionError('This private link could not be verified. Open the full Share link from the maker and try again.');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    detailTrade,
+    forgetTradeAccessSecret,
+    hashTradeAccessSecret,
+    rememberTradeAccessSecret,
+    resolveKnownTradeAccessSecret,
+    routeAccessSecret,
+    routeEscrowContract,
+    routeTradeId,
+    setTradeActionError
+  ]);
 
   const tradeComposerModel = useMemo(
     () =>
@@ -1536,14 +1633,27 @@ export default function P2PTradingPage({
     setWalletError('');
     setConnectingWalletId('aes');
     try {
-      await getTradeSigner(true);
+      const signer = await getTradeSigner(true);
+      await ensurePrivateTokenAccountEncryptionAddress({
+        signer,
+        tokenAddress: PRIVATE_REWARD_TOKEN_ADDRESS,
+        ownerAddress: walletAddress,
+        tokenSymbol: privateRewardTokenSymbol || 'pWISP'
+      }).catch((error) => {
+        setWalletError(
+          getProviderErrorMessage(
+            error,
+            `Privacy is unlocked, but ${privateRewardTokenSymbol || 'pWISP'} balance visibility could not be refreshed.`
+          )
+        );
+      });
       await loadWalletBalances().catch(() => {});
     } catch (error) {
       setWalletError(getProviderErrorMessage(error, 'AES signature was not completed.'));
     } finally {
       setConnectingWalletId('');
     }
-  }, [getTradeSigner, loadWalletBalances, walletAddress]);
+  }, [getTradeSigner, loadWalletBalances, privateRewardTokenSymbol, walletAddress]);
 
   const {
     beginCounterTrade,
@@ -2561,12 +2671,7 @@ export default function P2PTradingPage({
 
   const renderTradeCard = (snapshot: TradeSnapshot, collapsed = false) => {
     const snapshotKey = getSnapshotKey(snapshot);
-    const accessSecret =
-      route.tradeId === snapshot.tradeId &&
-      buildTradeSnapshotKey(route.tradeId, route.escrowContract) === snapshotKey &&
-      resolvedRouteAccessSecret
-        ? resolvedRouteAccessSecret
-        : resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract);
+    const accessSecret = resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract);
     const shareUrl =
       snapshot.isPublic === false && snapshot.hasAccessHash && !accessSecret
         ? undefined
@@ -2605,12 +2710,6 @@ export default function P2PTradingPage({
       />
     );
   };
-
-  useEffect(() => {
-    if (routeTradeId !== null && routeAccessSecret) {
-      rememberTradeAccessSecret(routeTradeId, routeAccessSecret, routeEscrowContract);
-    }
-  }, [rememberTradeAccessSecret, routeAccessSecret, routeEscrowContract, routeTradeId]);
 
   useEffect(() => {
     if (!counterParentTrade) {
@@ -2985,12 +3084,7 @@ export default function P2PTradingPage({
       trade.hiddenLiquidity &&
       (perspective.isMaker ? !makerPrivateProgressSummary : trade.walletHasFill && privateFillReceiptRows.length === 0)
     );
-    const accessSecret =
-      route.tradeId === trade.tradeId &&
-      buildTradeSnapshotKey(route.tradeId, route.escrowContract) === tradeKey &&
-      resolvedRouteAccessSecret
-        ? resolvedRouteAccessSecret
-        : resolveKnownTradeAccessSecret(trade.tradeId, trade.escrowContract);
+    const accessSecret = resolveKnownTradeAccessSecret(trade.tradeId, trade.escrowContract);
     const shareUrl =
       trade.isPublic === false && trade.hasAccessHash && !accessSecret
         ? ''

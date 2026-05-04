@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ADDRESS } from '../lib/appShared/core';
 import { encodeTradeLink } from '../lib/tradeLinks';
-import { resolveTradeLinkInput, resolveTradeRouteFromParts } from './useP2PTradeRoute';
+import { buildTradeLinkPath, resolveTradeLinkInput, resolveTradeRouteFromParts } from './useP2PTradeRoute';
 
 const ACCESS_SECRET = `0x${'12'.repeat(32)}`;
 
@@ -41,10 +41,17 @@ describe('P2P trade route helpers', () => {
 
   it('parses shared input while rejecting partial numeric text', () => {
     expect(resolveTradeLinkInput('#123')).toEqual({ tradeId: 123 });
-    expect(resolveTradeLinkInput('http://localhost:5173/trades/recurring?order=7')).toEqual({
+    expect(resolveTradeLinkInput(`http://localhost:5173/trades/recurring?order=7#${ACCESS_SECRET}`)).toEqual({
       tradeId: 7,
-      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+      accessSecret: ACCESS_SECRET
     });
     expect(resolveTradeLinkInput('123abc')).toBeNull();
+  });
+
+  it('preserves recurring private-link secrets in share paths', () => {
+    expect(buildTradeLinkPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
+      `/trades/recurring?order=7#${ACCESS_SECRET}`
+    );
   });
 });

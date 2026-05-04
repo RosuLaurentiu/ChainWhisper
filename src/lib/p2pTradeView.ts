@@ -152,7 +152,7 @@ export const loadStoredTradeAccessSecrets = (): Record<string, string> => {
     return Object.fromEntries(
       Object.entries(parsed).filter(
         ([tradeId, secret]) =>
-          (/^\d+$/.test(tradeId) || /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeId)) &&
+          /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeId) &&
           typeof secret === 'string' &&
           normalizeStoredAccessSecret(secret)
       )

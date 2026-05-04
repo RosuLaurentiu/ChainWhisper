@@ -38,6 +38,7 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   { address: '0xe757Ca19d2c237AA52eBb1d2E8E4368eeA3eb331', kind: 'erc20' },
   { address: '0xFc075Bd3e22d337C19b7Ca25635282ad8e24941a', kind: 'erc20' },
   { address: '0x639aCc80569c5FC83c6FBf2319A6Cc38bBfe26d1', kind: 'erc20' },
+  { address: '0x23f0AE74466Fd0fc1d32bB947ebB8Cd553BECdA0', kind: 'private-erc20' },
   { address: '0xe8C3D2248a578e9E020C2447f8148e606090fbfe', kind: 'private-erc20' },
   { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20' },
 ];
