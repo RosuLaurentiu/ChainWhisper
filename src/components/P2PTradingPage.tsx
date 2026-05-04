@@ -7,7 +7,6 @@ import {
   TRADE_ESCROW_CONTRACT_ADDRESS,
   BURNER_PIN_MIN_LENGTH,
   buildTradeSnapshotKey,
-  createCotiBrowserProvider,
   formatCotiAmount,
   formatExpiryCountdown,
   formatMessageTimestamp,
@@ -23,10 +22,14 @@ import {
   markCotiWsHealthyNow,
   mergeOnboardInfo,
   normalizeChainId,
+  parseTokenAmountInput,
   parseBurnerWalletStorageState,
   REALTIME_SYNC_BURST_THROTTLE_MS,
   REALTIME_SYNC_DEBOUNCE_MS,
   REALTIME_SYNC_FALLBACK_INTERVAL_MS,
+  PRIVATE_REWARD_TOKEN_ADDRESS,
+  RECURRING_OTC_CONTRACT_ADDRESS,
+  REWARD_TOKEN_ADDRESS,
   resetCotiWsProvider,
   sanitizeTokenAmountInput,
   shortenAddress,
@@ -37,17 +40,31 @@ import {
   type Eip1193Provider,
   type TradeAssetPayload,
   type TradeFeeModeSelection,
-  type TradeOfferMessagePayload,
   type TradeSnapshot
 } from '../lib/appShared';
 import { getPreferredBrowserWalletId, saveWalletPreference } from '../lib/appStorage';
-import { readPrivateTradeRemainingOfferWei } from '../lib/appChain';
+import {
+  fetchPrivateOrderFillReceiptsForWallet,
+  fetchRecurringExecutionRowsForWallet,
+  fetchRecurringPrivateInventorySnapshotsForWallet,
+  fetchRecurringPrivateFillReceiptsForWallet,
+  readPrivateTokenBalanceWei,
+  readPrivateTradeRemainingOfferWei
+} from '../lib/appChain';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
+  getOnChainFailureMessage,
   resolveTradePresetKind,
   type TradeTokenPresetKey
 } from '../lib/appHelpers';
 import { deriveTradeComposerModel } from '../lib/tradeComposer';
+import {
+  deriveRecurringLiquidityInputFromReceive,
+  deriveRecurringReceiveAmountInput,
+  deriveTradePricingUpdate,
+  nextTradePricingEditedFields,
+  type TradePricingField
+} from '../lib/tradePricing';
 import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption,
@@ -65,6 +82,12 @@ import useP2PWalletDisconnect from '../hooks/useP2PWalletDisconnect';
 import useInjectedWalletOptions from '../hooks/useInjectedWalletOptions';
 import { useStoredWalletPreference } from '../hooks/useStoredWalletPreference';
 import {
+  createRecurringOrderOnChain,
+  editRecurringOrderOnChain,
+  fillRecurringOrderSideOnChain,
+  updateRecurringOrderStatusOnChain
+} from '../lib/tradeActions';
+import {
   buildNewBurnerWalletRecord,
   saveBurnerWalletRecordWithPin,
   selectBurnerWalletFromVault
@@ -75,28 +98,89 @@ import {
   isZeroTradeTakerAddress,
   resolveTradeOrderSummary
 } from '../lib/tradePerspective';
+import {
+  WALLET_STATUS_STORAGE_KEY,
+  buildOfferFromSnapshot,
+  buildTradeAssetExplorerUrl,
+  buildTransactionExplorerUrl,
+  canEditPublicTrade,
+  formatHiddenFixedPriceTerms,
+  formatTradeExpiryParts,
+  formatTradeListTerms,
+  formatTradeRateText,
+  filterAndSortTradeDesk,
+  getMakerPrivateProgressSummary,
+  getRecurringTerminalSideState,
+  getSnapshotKey,
+  getTradeCompletionSummary,
+  getTradeDisplayTerms,
+  getTradeHistoryKindLabel,
+  getTradeHistoryOutcomeLabel,
+  getTradePairFilterOptions,
+  isDirectWalletTrade,
+  loadStoredPrivateTradeLiquidity,
+  loadStoredTradeAccessSecrets,
+  readInitialTradeBrowserWalletId,
+  storePrivateTradeLiquidity,
+  storeTradeAccessSecrets,
+  type RecurringTerminalActionSide,
+  type TradeDeskAccessFilter,
+  type TradeDeskSortMode,
+  type TradeDeskTypeFilter
+} from '../lib/p2pTradeView';
 import BurnerImportModal from './BurnerImportModal';
 import BurnerPinModal from './BurnerPinModal';
-import TradeComposerPanel from './TradeComposerPanel';
+import TradeComposerPanel, { TradeTokenSelect } from './TradeComposerPanel';
 import TradeOfferCard from './TradeOfferCard';
 
 type TradeVisibility = 'public' | 'unlisted' | 'direct';
 type MyTradeGroupView = 'received' | 'active' | 'history';
 type PendingBurnerWalletAction = 'connect' | 'generate' | 'import';
 type P2PEmptyStateTone = 'default' | 'error' | 'loading' | 'locked';
+type TradeCreateMode = 'one-off' | 'recurring';
 
 type P2PTradingPageProps = {
   sharedWalletSession?: SharedWalletSession;
   onDisconnectWallet?: () => Promise<void> | void;
   onHeaderWalletControlChange?: (walletControl: ReactNode | null) => void;
-  onHeaderNavigationControlChange?: (navigationControl: ReactNode | null) => void;
+  onWalletSessionChange?: (walletSession: SharedWalletSession) => void;
 };
 
-const WALLET_STATUS_STORAGE_KEY = 'coti-trade-last-wallet-id';
-const TRADE_ACCESS_SECRET_STORAGE_KEY = 'coti-trade-access-secrets-v1';
-const PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY = 'coti-private-trade-liquidity-v1';
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 10_000;
 type TradeSigner = JsonRpcSigner | Wallet;
+
+const decimalScale = (decimals: number): bigint => 10n ** BigInt(Math.max(0, Math.floor(decimals)));
+
+const formatDecimalInput = (wholeUnits: bigint, decimals: number): string => {
+  if (wholeUnits <= 0n) {
+    return '';
+  }
+  const scale = decimalScale(decimals);
+  const whole = wholeUnits / scale;
+  const fraction = wholeUnits % scale;
+  if (fraction === 0n) {
+    return whole.toString();
+  }
+  const fractionText = fraction.toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${whole.toString()}.${fractionText}`;
+};
+
+const formatPriceInputFromTerms = (
+  baseAmountRaw: string,
+  quoteAmountRaw: string,
+  baseDecimals: number,
+  quoteDecimals: number
+): string => {
+  const baseAmount = BigInt(baseAmountRaw || '0');
+  const quoteAmount = BigInt(quoteAmountRaw || '0');
+  if (baseAmount <= 0n || quoteAmount <= 0n) {
+    return '';
+  }
+  const priceScale = decimalScale(RECURRING_PRICE_DECIMALS);
+  const scaledPrice =
+    (quoteAmount * decimalScale(baseDecimals) * priceScale) / (baseAmount * decimalScale(quoteDecimals));
+  return formatDecimalInput(scaledPrice, RECURRING_PRICE_DECIMALS);
+};
 
 const bytesEqual = (left?: Uint8Array | null, right?: Uint8Array | null): boolean => {
   if (left === right) {
@@ -113,6 +197,63 @@ const onboardInfoEqual = (left?: OnboardInfo, right?: OnboardInfo): boolean =>
   (left?.txHash ?? null) === (right?.txHash ?? null) &&
   bytesEqual(left?.rsaKey?.publicKey, right?.rsaKey?.publicKey) &&
   bytesEqual(left?.rsaKey?.privateKey, right?.rsaKey?.privateKey);
+
+const pricingFieldsEqual = (left: TradePricingField[], right: TradePricingField[]): boolean =>
+  left.length === right.length && left.every((field, index) => field === right[index]);
+
+const RECURRING_PRICE_DECIMALS = 18;
+const RECURRING_PRICE_SCALE = 10n ** BigInt(RECURRING_PRICE_DECIMALS);
+
+const tokenUnitWei = (decimals: number): bigint => {
+  const safeDecimals = Number.isFinite(decimals) ? Math.max(0, Math.min(36, Math.trunc(decimals))) : 18;
+  return 10n ** BigInt(safeDecimals);
+};
+
+const resolveRecurringSideTerms = ({
+  baseAmountWei,
+  quoteAmountWei,
+  priceInput,
+  baseDecimals,
+  quoteDecimals,
+  forcePriceOnly = false
+}: {
+  baseAmountWei: bigint | null;
+  quoteAmountWei: bigint | null;
+  priceInput: string;
+  baseDecimals: number;
+  quoteDecimals: number;
+  forcePriceOnly?: boolean;
+}): { baseAmountWei: bigint; quoteAmountWei: bigint } | null => {
+  if (!forcePriceOnly && baseAmountWei && quoteAmountWei && baseAmountWei > 0n && quoteAmountWei > 0n) {
+    return { baseAmountWei, quoteAmountWei };
+  }
+
+  const priceScaled = parseTokenAmountInput(priceInput, RECURRING_PRICE_DECIMALS);
+  if (!priceScaled || priceScaled <= 0n) {
+    return null;
+  }
+
+  const priceQuoteAmountWei = (priceScaled * tokenUnitWei(quoteDecimals)) / RECURRING_PRICE_SCALE;
+  if (priceQuoteAmountWei <= 0n) {
+    return null;
+  }
+
+  return {
+    baseAmountWei: tokenUnitWei(baseDecimals),
+    quoteAmountWei: priceQuoteAmountWei
+  };
+};
+
+function RecurringCycleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M7 7h9.5a3.5 3.5 0 0 1 0 7H15" />
+      <path d="M8.5 4.5 6 7l2.5 2.5" />
+      <path d="M17 17H7.5a3.5 3.5 0 0 1 0-7H9" />
+      <path d="M15.5 19.5 18 17l-2.5-2.5" />
+    </svg>
+  );
+}
 
 const mergeOnboardInfoByAddress = (
   previous: Record<string, OnboardInfo>,
@@ -134,326 +275,11 @@ const mergeOnboardInfoByAddress = (
   };
 };
 
-const readLegacyTradeBrowserWalletId = (): string => {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  try {
-    return window.localStorage.getItem(WALLET_STATUS_STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
-};
-
-const readInitialTradeBrowserWalletId = (): string => getPreferredBrowserWalletId() || readLegacyTradeBrowserWalletId();
-
-const buildOfferFromSnapshot = (snapshot: TradeSnapshot): TradeOfferMessagePayload => ({
-  version: 2,
-  tradeId: snapshot.tradeId,
-  escrowContract: snapshot.escrowContract ?? TRADE_ESCROW_CONTRACT_ADDRESS,
-  maker: snapshot.maker,
-  taker: snapshot.taker,
-  offer: snapshot.offer,
-  request: snapshot.request,
-  createdAt: snapshot.createdAt,
-  expiresAt: snapshot.expiresAt,
-  parentTradeId: snapshot.counterParentTradeId ?? undefined,
-  hiddenLiquidity: snapshot.hiddenLiquidity
-});
-
-const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'taker'>): boolean => !isZeroTradeTakerAddress(trade.taker);
-
-const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
-  try {
-    if (trade.hiddenLiquidity) {
-      return BigInt(trade.request.amount);
-    }
-    return BigInt(trade.fillState?.remainingRequestAmount ?? trade.request.amount);
-  } catch {
-    return 0n;
-  }
-};
-
-const getRemainingOfferAmount = (trade: TradeSnapshot): bigint => {
-  try {
-    if (trade.hiddenLiquidity) {
-      return BigInt(trade.offer.amount);
-    }
-    return BigInt(trade.fillState?.remainingOfferAmount ?? trade.offer.amount);
-  } catch {
-    return 0n;
-  }
-};
-
-const hasAnyTradeFill = (trade: TradeSnapshot): boolean => {
-  if (trade.hiddenLiquidity) {
-    return false;
-  }
-  try {
-    return BigInt(trade.fillState?.filledOfferAmount ?? '0') > 0n || BigInt(trade.fillState?.filledRequestAmount ?? '0') > 0n;
-  } catch {
-    return false;
-  }
-};
-
-const canEditPublicTrade = (trade: TradeSnapshot, walletKey: string): boolean =>
-  Boolean(
-    walletKey &&
-      trade.status === 'open' &&
-      trade.isPublic === true &&
-      trade.maker.toLowerCase() === walletKey &&
-      !hasAnyTradeFill(trade)
-  );
-
-const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContract'>): string =>
-  buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
-
-const withTradeAssetAmount = (asset: TradeAssetPayload, amount: bigint): TradeAssetPayload => ({
-  ...asset,
-  amount: amount.toString()
-});
-
-const getTradeDisplayTerms = (trade: TradeSnapshot): { offer: TradeAssetPayload; request: TradeAssetPayload; usingRemaining: boolean } => {
-  const usingRemaining = trade.status === 'open' && hasAnyTradeFill(trade) && getRemainingRequestAmount(trade) > 0n;
-  return {
-    offer: usingRemaining ? withTradeAssetAmount(trade.offer, getRemainingOfferAmount(trade)) : trade.offer,
-    request: usingRemaining ? withTradeAssetAmount(trade.request, getRemainingRequestAmount(trade)) : trade.request,
-    usingRemaining
-  };
-};
-
-const getTradeCompletionSummary = (
-  trade: TradeSnapshot
-): { percent: number; percentLabel: string; filledLabel: string; remainingLabel: string } | null => {
-  if (!hasAnyTradeFill(trade)) {
-    return null;
-  }
-
-  try {
-    const filledRequestAmount = BigInt(trade.fillState?.filledRequestAmount ?? '0');
-    const remainingRequestAmount = getRemainingRequestAmount(trade);
-    const totalRequestAmount = filledRequestAmount + remainingRequestAmount;
-    if (filledRequestAmount <= 0n || totalRequestAmount <= 0n) {
-      return null;
-    }
-
-    const rawPercent = Number((filledRequestAmount * 10_000n) / totalRequestAmount) / 100;
-    const percent = remainingRequestAmount === 0n ? 100 : Math.max(1, Math.min(99, rawPercent));
-    return {
-      percent,
-      percentLabel: `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}% filled`,
-      filledLabel: `${formatTokenAmount(filledRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol} filled`,
-      remainingLabel: `${formatTokenAmount(remainingRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol} remaining`
-    };
-  } catch {
-    return null;
-  }
-};
-
-const loadStoredTradeAccessSecrets = (): Record<string, string> => {
-  if (typeof window === 'undefined') {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TRADE_ACCESS_SECRET_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        ([tradeId, secret]) =>
-          (/^\d+$/.test(tradeId) || /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeId)) &&
-          typeof secret === 'string' &&
-          normalizeAccessSecret(secret)
-      )
-    ) as Record<string, string>;
-  } catch {
-    return {};
-  }
-};
-
-const isStoredTokenAmount = (value: unknown): value is string =>
-  typeof value === 'string' && /^\d+$/.test(value) && BigInt(value) > 0n;
-
-const loadStoredPrivateTradeLiquidity = (): Record<string, string> => {
-  if (typeof window === 'undefined') {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        ([tradeKey, amount]) => /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeKey) && isStoredTokenAmount(amount)
-      )
-    ) as Record<string, string>;
-  } catch {
-    return {};
-  }
-};
-
-const getMakerPrivateProgressSummary = (
-  trade: TradeSnapshot
-): { percent: number; percentLabel: string; filledLabel: string; remainingLabel: string; totalLabel?: string } | null => {
-  if (!trade.hiddenLiquidity || !trade.makerPrivateProgress) {
-    return null;
-  }
-
-  try {
-    const remainingOfferAmount = BigInt(trade.makerPrivateProgress.remainingOfferAmount);
-    const initialOfferAmountRaw = trade.makerPrivateProgress.initialOfferAmount;
-    const initialOfferAmount = initialOfferAmountRaw && /^\d+$/.test(initialOfferAmountRaw)
-      ? BigInt(initialOfferAmountRaw)
-      : null;
-    const filledOfferAmount =
-      initialOfferAmount !== null && initialOfferAmount >= remainingOfferAmount
-        ? initialOfferAmount - remainingOfferAmount
-        : trade.makerPrivateProgress.filledOfferAmount && /^\d+$/.test(trade.makerPrivateProgress.filledOfferAmount)
-          ? BigInt(trade.makerPrivateProgress.filledOfferAmount)
-          : null;
-    const percent =
-      initialOfferAmount !== null && initialOfferAmount > 0n && filledOfferAmount !== null
-        ? Number((filledOfferAmount * 10_000n) / initialOfferAmount) / 100
-        : 0;
-    const safePercent = Math.max(0, Math.min(100, percent));
-
-    return {
-      percent: safePercent,
-      percentLabel:
-        initialOfferAmount !== null && filledOfferAmount !== null
-          ? `${safePercent.toFixed(safePercent % 1 === 0 ? 0 : 1)}% filled`
-          : 'Live remaining',
-      filledLabel:
-        filledOfferAmount !== null
-          ? `${formatTokenAmount(filledOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} filled`
-          : 'Filled amount private',
-      remainingLabel: `${formatTokenAmount(remainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} remaining`,
-      totalLabel:
-        initialOfferAmount !== null
-          ? `${formatTokenAmount(initialOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} total`
-          : `${formatTokenAmount(remainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} current liquidity`
-    };
-  } catch {
-    return null;
-  }
-};
-
-const storePrivateTradeLiquidity = (amountsByTrade: Record<string, string>): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY, JSON.stringify(amountsByTrade));
-};
-
-const storeTradeAccessSecrets = (secrets: Record<string, string>): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(TRADE_ACCESS_SECRET_STORAGE_KEY, JSON.stringify(secrets));
-};
-
-const formatTradeExpiryParts = (expiresAt: number): { date: string; time: string; title: string } => {
-  if (expiresAt <= 0) {
-    return { date: 'No expiration', time: '', title: 'No expiration' };
-  }
-
-  const expiryDate = new Date(expiresAt * 1000);
-  const isCurrentYear = expiryDate.getFullYear() === new Date().getFullYear();
-  const date = new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(isCurrentYear ? {} : { year: 'numeric' })
-  }).format(expiryDate);
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit'
-  }).format(expiryDate);
-
-  return {
-    date,
-    time,
-    title: formatMessageTimestamp(expiresAt)
-  };
-};
-
-const formatTradeListTerms = (trade: TradeSnapshot): string => {
-  const displayTerms = getTradeDisplayTerms(trade);
-  if (trade.hiddenLiquidity) {
-    return `Private liquidity; price ratio ${formatTradeRatioLabel(displayTerms.offer, displayTerms.request) ?? 'unavailable'}`;
-  }
-  return `${formatTradeAssetDisplayText(displayTerms.offer)} for ${formatTradeAssetDisplayText(displayTerms.request)}`;
-};
-
-const formatHiddenFixedPriceTerms = (offer: TradeAssetPayload, request: TradeAssetPayload): string => {
-  return formatTradeRatioLabel(offer, request) ?? `${request.symbol}/${offer.symbol}`;
-};
-
-const formatTradeRateText = (baseAsset: TradeAssetPayload, quoteAsset: TradeAssetPayload): string => {
-  return formatTradeRatioLabel(baseAsset, quoteAsset) ?? 'Rate unavailable';
-};
-
-const buildTradeAssetExplorerUrl = (asset: TradeAssetPayload): string => {
-  const tokenAddress = asset.tokenAddress?.trim();
-  return tokenAddress ? `${COTI_NETWORK.blockExplorerUrl}/token/${tokenAddress}` : '';
-};
-
-const buildTransactionExplorerUrl = (txHash?: string): string => (txHash ? `${COTI_NETWORK.blockExplorerUrl}/tx/${txHash}` : '');
-
-const getTradeHistoryKindLabel = (trade: TradeSnapshot): string => {
-  if (trade.hiddenLiquidity) {
-    return 'Private liquidity';
-  }
-  if (trade.counterParentTradeId) {
-    return `Counter to #${trade.counterParentTradeId}`;
-  }
-  if (trade.replacesTradeId) {
-    return `Edited from #${trade.replacesTradeId}`;
-  }
-  if (trade.replacementTradeId) {
-    return `Replaced by #${trade.replacementTradeId}`;
-  }
-  return trade.isPublic === false ? 'Private offer' : 'Public listing';
-};
-
-const getTradeHistoryOutcomeLabel = (trade: TradeSnapshot, statusLabel: string): string => {
-  if (trade.status === 'accepted') {
-    return trade.acceptedTxHash ? 'Accepted on-chain' : 'Accepted';
-  }
-  return statusLabel;
-};
-
-const matchesTradeSearch = (trade: TradeSnapshot, query: string): boolean => {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (!normalizedQuery) {
-    return true;
-  }
-
-  return [
-    String(trade.tradeId),
-    trade.status,
-    trade.offer.symbol,
-    trade.request.symbol,
-    `${trade.offer.symbol}/${trade.request.symbol}`,
-    `${trade.offer.symbol} / ${trade.request.symbol}`,
-    trade.offer.tokenAddress,
-    trade.request.tokenAddress,
-    trade.maker,
-    trade.taker,
-    trade.parentTradeId ? String(trade.parentTradeId) : '',
-    trade.counterParentTradeId ? String(trade.counterParentTradeId) : '',
-    trade.replacesTradeId ? String(trade.replacesTradeId) : '',
-    trade.replacementTradeId ? String(trade.replacementTradeId) : ''
-  ]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(normalizedQuery));
-};
-
 export default function P2PTradingPage({
   sharedWalletSession,
   onDisconnectWallet,
   onHeaderWalletControlChange,
-  onHeaderNavigationControlChange
+  onWalletSessionChange
 }: P2PTradingPageProps) {
   const { buildTradeShareUrl, navigateToTradePath, openTrade, route, showEmptyTradeRoute } = useP2PTradeRoute();
   const walletPreference = useStoredWalletPreference();
@@ -465,7 +291,7 @@ export default function P2PTradingPage({
   const [connectingWalletId, setConnectingWalletId] = useState('');
   const [connectedWalletLabel, setConnectedWalletLabel] = useState('Wallet');
   const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>([]);
-  const [, setSelectedBurnerWalletId] = useState('');
+  const [selectedBurnerWalletId, setSelectedBurnerWalletId] = useState('');
   const [pendingBurnerWalletId, setPendingBurnerWalletId] = useState('');
   const [pendingBurnerAction, setPendingBurnerAction] = useState<PendingBurnerWalletAction>('connect');
   const [burnerPinMode, setBurnerPinMode] = useState<BurnerPinMode>('unlock');
@@ -478,6 +304,7 @@ export default function P2PTradingPage({
   const [appWalletMenuOpen, setAppWalletMenuOpen] = useState(false);
   const [onboardInfoByAddress, setOnboardInfoByAddress] = useState<Record<string, OnboardInfo>>({});
   const [tradeFeeModeSelection, setTradeFeeModeSelection] = useState<TradeFeeModeSelection>('coti');
+  const [tradeCreateMode, setTradeCreateMode] = useState<TradeCreateMode>('one-off');
   const [tradeVisibility, setTradeVisibility] = useState<TradeVisibility>('public');
   const [directTradeRecipient, setDirectTradeRecipient] = useState('');
   const [tradeOfferTokenSelection, setTradeOfferTokenSelection] = useState<TradeTokenPresetKey>('wisp');
@@ -486,16 +313,42 @@ export default function P2PTradingPage({
   const [tradeRequestCustomTokenAddress, setTradeRequestCustomTokenAddress] = useState('');
   const [tradeOfferAmountInput, setTradeOfferAmountInput] = useState('');
   const [tradeRequestAmountInput, setTradeRequestAmountInput] = useState('');
+  const [tradePriceInput, setTradePriceInput] = useState('');
+  const [tradePricingEditedFields, setTradePricingEditedFields] = useState<TradePricingField[]>([]);
+  const [tradeHasNoExpiry, setTradeHasNoExpiry] = useState(false);
+  const [recurringBuyPriceInput, setRecurringBuyPriceInput] = useState('');
+  const [recurringSellPriceInput, setRecurringSellPriceInput] = useState('');
+  const [recurringHidePrivateAmounts, setRecurringHidePrivateAmounts] = useState(false);
+  const [editingRecurringOrder, setEditingRecurringOrder] = useState<TradeSnapshot | null>(null);
+  const [recurringAddBuyBudgetInput, setRecurringAddBuyBudgetInput] = useState('');
+  const [recurringAddSellInventoryInput, setRecurringAddSellInventoryInput] = useState('');
+  const [recurringBuyReceiveInput, setRecurringBuyReceiveInput] = useState('');
+  const [recurringSellReceiveInput, setRecurringSellReceiveInput] = useState('');
+  const [recurringBuyReceiveEditable, setRecurringBuyReceiveEditable] = useState(false);
+  const [recurringSellReceiveEditable, setRecurringSellReceiveEditable] = useState(false);
+  const [recurringRemoveBuyBudgetInput, setRecurringRemoveBuyBudgetInput] = useState('');
+  const [recurringRemoveSellInventoryInput, setRecurringRemoveSellInventoryInput] = useState('');
   const [tradeExpiryHoursInput, setTradeExpiryHoursInput] = useState(DEFAULT_TRADE_EXPIRY_HOURS);
   const [tradeHidePrivateLiquidity, setTradeHidePrivateLiquidity] = useState(false);
   const [tradeActionError, setTradeActionError] = useState('');
   const [creatingTrade, setCreatingTrade] = useState(false);
+  const [creatingRecurringOrder, setCreatingRecurringOrder] = useState(false);
+  const [createdRecurringOrderId, setCreatedRecurringOrderId] = useState<number | null>(null);
+  const [createdRecurringOrderLink, setCreatedRecurringOrderLink] = useState('');
+  const [recurringBuyFillInput, setRecurringBuyFillInput] = useState('');
+  const [recurringSellFillInput, setRecurringSellFillInput] = useState('');
+  const [processingRecurringAction, setProcessingRecurringAction] = useState('');
   const [revealingPrivateTradeKey, setRevealingPrivateTradeKey] = useState('');
   const [createdTradeId, setCreatedTradeId] = useState<number | null>(null);
   const [createdTradeLink, setCreatedTradeLink] = useState('');
   const [lastCopiedKey, setLastCopiedKey] = useState('');
   const [tradeLinkInput, setTradeLinkInput] = useState('');
   const [tradeSearchInput, setTradeSearchInput] = useState('');
+  const [tradePairFilter, setTradePairFilter] = useState('all');
+  const [tradeTypeFilter, setTradeTypeFilter] = useState<TradeDeskTypeFilter>('all');
+  const [tradeAccessFilter, setTradeAccessFilter] = useState<TradeDeskAccessFilter>('all');
+  const [tradeSortMode, setTradeSortMode] = useState<TradeDeskSortMode>('newest');
+  const [recurringTerminalSide, setRecurringTerminalSide] = useState<RecurringTerminalActionSide>('buy');
   const [myTradeGroupView, setMyTradeGroupView] = useState<MyTradeGroupView>('received');
   const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
@@ -537,6 +390,7 @@ export default function P2PTradingPage({
   const routeView = route.view;
   const routeTradeId = route.tradeId;
   const routeEscrowContract = route.escrowContract;
+  const routeIsRecurringOrder = routeEscrowContract?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase();
   const routeAccessSecret = route.accessSecret;
   const storedRouteAccessSecret =
     routeTradeId !== null
@@ -647,6 +501,42 @@ export default function P2PTradingPage({
     sharedWalletSession?.walletAddress,
     walletAddress,
     walletKey
+  ]);
+
+  useEffect(() => {
+    const nextAddress = walletAddress.trim();
+    if (!nextAddress || !onWalletSessionChange) {
+      return;
+    }
+
+    const browserProvider = providerRef.current;
+    const appWallet = burnerWalletRef.current;
+    const activeWalletSource = browserProvider ? 'metamask' : appWallet ? 'burner' : null;
+    if (!activeWalletSource) {
+      return;
+    }
+
+    onWalletSessionChange({
+      activeSignerSource: activeWalletSource,
+      activeBurnerWalletId: selectedBurnerWalletId,
+      browserProvider: browserProvider ?? null,
+      browserWalletId: activeWalletSource === 'metamask' ? selectedWalletId : '',
+      browserWalletLabel: activeWalletSource === 'metamask' ? connectedWalletLabel || 'Browser wallet' : '',
+      burnerWallet: activeWalletSource === 'burner' ? appWallet : null,
+      burnerWallets,
+      chainId,
+      sessionOnboardInfo: onboardInfoByAddress,
+      walletAddress: nextAddress
+    });
+  }, [
+    burnerWallets,
+    chainId,
+    connectedWalletLabel,
+    onWalletSessionChange,
+    onboardInfoByAddress,
+    selectedBurnerWalletId,
+    selectedWalletId,
+    walletAddress
   ]);
 
   const toggleTradeRateDirection = useCallback((tradeId: number, escrowContract?: string) => {
@@ -791,40 +681,6 @@ export default function P2PTradingPage({
       setChainId(normalizeChainId(currentChain));
     },
     []
-  );
-
-  const onboardTradeWalletAes = useCallback(
-    async (provider: Eip1193Provider, address: string): Promise<JsonRpcSigner> => {
-      await ensureCotiNetwork(provider);
-
-      const cacheKey = address.toLowerCase();
-      let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
-      if (!signer) {
-        const browserProvider = await createCotiBrowserProvider(provider);
-        signer = await browserProvider.getSigner(address, onboardInfoByAddress[cacheKey]);
-        signer.disableAutoOnboard();
-        signerCacheRef.current[cacheKey] = signer;
-      } else if (onboardInfoByAddress[cacheKey]) {
-        signer.setUserOnboardInfo(onboardInfoByAddress[cacheKey]);
-      }
-
-      signer.disableAutoOnboard();
-      let onboardInfo = signer.getUserOnboardInfo();
-      if (!onboardInfo?.aesKey) {
-        await signer.generateOrRecoverAes();
-        onboardInfo = signer.getUserOnboardInfo();
-      }
-
-      if (!onboardInfo?.aesKey) {
-        throw new Error('AES key was not returned during signing.');
-      }
-
-      setOnboardInfoByAddress((previous) =>
-        mergeOnboardInfoByAddress(previous, cacheKey, onboardInfo)
-      );
-      return signer;
-    },
-    [ensureCotiNetwork, onboardInfoByAddress]
   );
 
   const connectWallet = useCallback(
@@ -1092,8 +948,10 @@ export default function P2PTradingPage({
   ]);
 
   useEffect(() => {
+    const sharedWalletAddress = sharedWalletSession?.walletAddress.trim() ?? '';
     if (
       tradePrimaryWalletKind === 'app' ||
+      sharedWalletAddress ||
       providerRef.current ||
       walletAddress ||
       connectingWalletId ||
@@ -1121,7 +979,14 @@ export default function P2PTradingPage({
     return () => {
       cancelled = true;
     };
-  }, [attachWallet, connectingWalletId, preferredWalletOption, tradePrimaryWalletKind, walletAddress]);
+  }, [
+    attachWallet,
+    connectingWalletId,
+    preferredWalletOption,
+    sharedWalletSession?.walletAddress,
+    tradePrimaryWalletKind,
+    walletAddress
+  ]);
 
   const getTradeSigner = useP2PTradeSigner({
     burnerWalletRef,
@@ -1162,46 +1027,225 @@ export default function P2PTradingPage({
 
   const enrichMakerPrivateProgress = useCallback(
     async (snapshot: TradeSnapshot, forceReveal = false): Promise<TradeSnapshot> => {
-      if (!snapshot.hiddenLiquidity || !walletKey || snapshot.maker.toLowerCase() !== walletKey) {
+      if (snapshot.recurringOrder) {
+        if (!walletKey) {
+          return snapshot;
+        }
+
+        const recurring = snapshot.recurringOrder;
+        const isMaker = snapshot.maker.toLowerCase() === walletKey;
+        if (recurring.mode === 'public') {
+          if (recurring.executionCount === 0 || (!isMaker && !snapshot.walletHasFill)) {
+            return snapshot;
+          }
+          const publicExecutions = await fetchRecurringExecutionRowsForWallet({
+            orderId: recurring.orderId,
+            walletAddress: isMaker ? undefined : walletAddress
+          }).catch(() => []);
+          return {
+            ...snapshot,
+            recurringOrder: {
+              ...recurring,
+              publicExecutions
+            }
+          };
+        }
+        if (!forceReveal) {
+          return snapshot;
+        }
+
+        const revealBaseInventory =
+          recurring.baseAsset.kind === 'private-erc20' && recurring.hasPrivateBaseInventory;
+        const revealQuoteInventory =
+          recurring.quoteAsset.kind === 'private-erc20' && recurring.hasPrivateQuoteInventory;
+
+        const signer = await getTradeSigner(forceReveal);
+        const [privateInventorySnapshotsResult, privateExecutionsResult] = await Promise.allSettled([
+          isMaker
+            ? fetchRecurringPrivateInventorySnapshotsForWallet({
+                orderId: recurring.orderId,
+                walletAddress,
+                signer
+              })
+            : Promise.resolve([]),
+          fetchRecurringPrivateFillReceiptsForWallet({
+            orderId: recurring.orderId,
+            walletAddress,
+            signer
+          })
+        ]);
+        const privateExecutions =
+          privateExecutionsResult.status === 'fulfilled'
+            ? privateExecutionsResult.value
+            : [];
+        const privateInventorySnapshots =
+          privateInventorySnapshotsResult.status === 'fulfilled'
+            ? privateInventorySnapshotsResult.value
+            : [];
+        const latestInventorySnapshot = privateInventorySnapshots[privateInventorySnapshots.length - 1];
+        const latestExecutionWithRemaining = [...privateExecutions]
+          .reverse()
+          .find((execution) => execution.remainingBaseInventory !== undefined || execution.remainingQuoteInventory !== undefined);
+        const fallbackBaseInventory =
+          latestInventorySnapshot?.baseInventory ??
+          latestExecutionWithRemaining?.remainingBaseInventory;
+        const fallbackQuoteInventory =
+          latestInventorySnapshot?.quoteInventory ??
+          latestExecutionWithRemaining?.remainingQuoteInventory;
+        const baseInventoryForMaker =
+          recurring.baseAsset.kind === 'private-erc20'
+            ? fallbackBaseInventory
+            : recurring.publicBaseInventory;
+        const quoteInventoryForMaker =
+          recurring.quoteAsset.kind === 'private-erc20'
+            ? fallbackQuoteInventory
+            : recurring.publicQuoteInventory;
+
+        if (
+          privateInventorySnapshotsResult.status === 'rejected' &&
+          privateExecutionsResult.status === 'rejected'
+        ) {
+          throw privateInventorySnapshotsResult.reason instanceof Error
+            ? privateInventorySnapshotsResult.reason
+            : new Error('Private recurring reveal failed. AES may need to be refreshed.');
+        }
+        const hasRevealedPrivateData =
+          (isMaker && (fallbackBaseInventory !== undefined || fallbackQuoteInventory !== undefined)) ||
+          privateExecutions.length > 0;
+        if (!hasRevealedPrivateData) {
+          const revealError =
+            privateInventorySnapshotsResult.status === 'rejected'
+              ? privateInventorySnapshotsResult.reason
+              : privateExecutionsResult.status === 'rejected'
+                ? privateExecutionsResult.reason
+                : null;
+          if (revealError instanceof Error) {
+            throw revealError;
+          }
+          if (revealBaseInventory || revealQuoteInventory) {
+            throw new Error(
+              isMaker
+                ? 'No maker reveal snapshot or private fill history was found for this recurring order. Create or edit the order on the latest recurring contract so it can publish maker-readable private liquidity snapshots.'
+                : 'No private buy/sell receipts were found for this wallet on the active recurring contract.'
+            );
+          }
+        }
+
+        return {
+          ...snapshot,
+          recurringOrder: {
+            ...recurring,
+            ...(isMaker
+              ? {
+                  makerPrivateInventory: {
+                    ...(baseInventoryForMaker !== undefined
+                      ? { baseInventory: baseInventoryForMaker }
+                      : {}),
+                    ...(quoteInventoryForMaker !== undefined
+                      ? { quoteInventory: quoteInventoryForMaker }
+                      : {})
+                  }
+                }
+              : {}),
+            privateExecutions
+          }
+        };
+      }
+      if (!snapshot.hiddenLiquidity || !walletKey) {
         return snapshot;
       }
       if (!forceReveal && !walletHasAes) {
         return snapshot;
       }
 
+      const isMaker = snapshot.maker.toLowerCase() === walletKey;
       const tradeKey = getSnapshotKey(snapshot);
       const knownInitialAmount = knownPrivateLiquidityByTrade[tradeKey];
-      try {
-        const signer = await getTradeSigner(forceReveal);
-        const remainingOfferAmount = await readPrivateTradeRemainingOfferWei({
+      const signer = await getTradeSigner(forceReveal);
+      const [remainingOfferAmountResult, privateFillReceiptsResult] = await Promise.allSettled([
+        isMaker
+          ? readPrivateTradeRemainingOfferWei({
+              tradeId: snapshot.tradeId,
+              escrowContract: snapshot.escrowContract,
+              makerAddress: snapshot.maker,
+              signer
+            })
+          : Promise.resolve(null),
+        fetchPrivateOrderFillReceiptsForWallet({
           tradeId: snapshot.tradeId,
           escrowContract: snapshot.escrowContract,
-          makerAddress: snapshot.maker,
+          walletAddress,
           signer
-        });
-        if (remainingOfferAmount === null) {
-          return snapshot;
+        })
+      ]);
+      const privateFillReceipts =
+        privateFillReceiptsResult.status === 'fulfilled'
+          ? privateFillReceiptsResult.value
+          : [];
+      const latestPrivateReceiptWithRemaining = [...privateFillReceipts]
+        .reverse()
+        .find((receipt) => receipt.remainingOfferAmount !== undefined);
+      const remainingOfferAmount =
+        remainingOfferAmountResult.status === 'fulfilled'
+          ? remainingOfferAmountResult.value
+          : null;
+      const resolvedRemainingOfferAmount =
+        isMaker
+          ? remainingOfferAmount ?? (
+              latestPrivateReceiptWithRemaining?.remainingOfferAmount &&
+              /^\d+$/.test(latestPrivateReceiptWithRemaining.remainingOfferAmount)
+                ? BigInt(latestPrivateReceiptWithRemaining.remainingOfferAmount)
+                : null
+            )
+          : null;
+      if (!isMaker) {
+        if (privateFillReceiptsResult.status === 'rejected') {
+          throw privateFillReceiptsResult.reason instanceof Error
+            ? privateFillReceiptsResult.reason
+            : new Error('Private order history reveal failed. AES may need to be refreshed.');
         }
-
-        let filledOfferAmount: string | undefined;
-        if (knownInitialAmount && /^\d+$/.test(knownInitialAmount)) {
-          const initial = BigInt(knownInitialAmount);
-          filledOfferAmount = initial >= remainingOfferAmount ? (initial - remainingOfferAmount).toString() : '0';
+        if (privateFillReceipts.length === 0) {
+          throw new Error('No private fill receipts were found for this wallet.');
         }
-
         return {
           ...snapshot,
-          makerPrivateProgress: {
-            initialOfferAmount: knownInitialAmount,
-            remainingOfferAmount: remainingOfferAmount.toString(),
-            filledOfferAmount
-          }
+          privateFillReceipts
         };
-      } catch {
-        return snapshot;
       }
+      if (resolvedRemainingOfferAmount === null) {
+        if (remainingOfferAmountResult.status === 'rejected' && privateFillReceiptsResult.status === 'rejected') {
+          throw remainingOfferAmountResult.reason instanceof Error
+            ? remainingOfferAmountResult.reason
+            : new Error('Private order reveal failed. AES may need to be refreshed.');
+        }
+        throw new Error('This private order could not expose maker liquidity or private fill receipts on the active contract.');
+      }
+
+      let filledOfferAmount: string | undefined;
+      if (knownInitialAmount && /^\d+$/.test(knownInitialAmount)) {
+        const initial = BigInt(knownInitialAmount);
+        filledOfferAmount = initial >= resolvedRemainingOfferAmount ? (initial - resolvedRemainingOfferAmount).toString() : '0';
+      } else {
+        const filledFromReceipts = privateFillReceipts.reduce((total, receipt) => {
+          const amount = receipt.offerAmount && /^\d+$/.test(receipt.offerAmount) ? BigInt(receipt.offerAmount) : 0n;
+          return total + amount;
+        }, 0n);
+        if (filledFromReceipts > 0n) {
+          filledOfferAmount = filledFromReceipts.toString();
+        }
+      }
+
+      return {
+        ...snapshot,
+        makerPrivateProgress: {
+          initialOfferAmount: knownInitialAmount,
+          remainingOfferAmount: resolvedRemainingOfferAmount.toString(),
+          filledOfferAmount
+        },
+        privateFillReceipts
+      };
     },
-    [getTradeSigner, knownPrivateLiquidityByTrade, walletHasAes, walletKey]
+    [getTradeSigner, knownPrivateLiquidityByTrade, walletAddress, walletHasAes, walletKey]
   );
 
   const {
@@ -1237,6 +1281,7 @@ export default function P2PTradingPage({
     walletAddress,
     walletKey
   });
+
   const openPublicTradeCount = publicTrades.filter((trade) => trade.status === 'open').length;
 
   const revealMakerPrivateProgress = useCallback(
@@ -1244,20 +1289,38 @@ export default function P2PTradingPage({
       const tradeKey = getSnapshotKey(snapshot);
       setTradeActionError('');
       try {
+        if (!walletKey) {
+          throw new Error('Connect the wallet that made or filled this private order.');
+        }
         setRevealingPrivateTradeKey(tradeKey);
         const revealedSnapshot = await enrichMakerPrivateProgress(snapshot, true);
-        if (!revealedSnapshot.makerPrivateProgress) {
-          throw new Error('Unable to reveal this private liquidity. Make sure this is your trade and your wallet AES key is available.');
+        if (revealedSnapshot.recurringOrder) {
+          const recurring = revealedSnapshot.recurringOrder;
+          const hasRevealedInventory =
+            recurring.makerPrivateInventory?.baseInventory !== undefined ||
+            recurring.makerPrivateInventory?.quoteInventory !== undefined;
+          const hasRevealedExecutions = Boolean(recurring.privateExecutions?.length);
+          if (!hasRevealedInventory && !hasRevealedExecutions) {
+            throw new Error('No private recurring liquidity or private buy/sell receipts were found for this wallet.');
+          }
+          mergeTradeSnapshot(revealedSnapshot);
+          setEditingRecurringOrder((current) =>
+            current && getSnapshotKey(current) === tradeKey ? revealedSnapshot : current
+          );
+          return;
+        }
+        if (!revealedSnapshot.makerPrivateProgress && !revealedSnapshot.privateFillReceipts?.length) {
+          throw new Error('Unable to reveal private history for this wallet. Make sure this is your trade and your wallet AES key is available.');
         }
         mergeTradeSnapshot(revealedSnapshot);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to reveal this private liquidity.';
+        const message = error instanceof Error ? error.message : 'Unable to reveal this private order.';
         setTradeActionError(message);
       } finally {
         setRevealingPrivateTradeKey('');
       }
     },
-    [enrichMakerPrivateProgress, mergeTradeSnapshot]
+    [enrichMakerPrivateProgress, mergeTradeSnapshot, walletKey]
   );
 
   const openTradeSnapshot = useCallback(
@@ -1319,12 +1382,13 @@ export default function P2PTradingPage({
         tradeOfferAmountInput,
         tradeRequestAmountInput,
         tradeExpiryHoursInput,
+        tradeHasNoExpiry,
         tradeHidePrivateLiquidity,
         hiddenLiquidityUnavailableMessage:
           counterParentTrade
-            ? 'Private liquidity is only available for fixed-price listings.'
+            ? 'Hidden amount orders are only available for fixed-price offers.'
             : editingTrade && !editingTrade.hiddenLiquidity
-              ? 'Private liquidity cannot be added to a visible-liquidity edit.'
+              ? 'Hide amount cannot be added to a visible-order edit.'
               : '',
         rewardTokenSymbol,
         rewardTokenDecimals,
@@ -1350,6 +1414,7 @@ export default function P2PTradingPage({
       rewardTokenDecimals,
       rewardTokenSymbol,
       tradeExpiryHoursInput,
+      tradeHasNoExpiry,
       tradeFeeModeSelection,
       tradeOfferAmountInput,
       tradeOfferCustomTokenAddress,
@@ -1363,13 +1428,75 @@ export default function P2PTradingPage({
     ]
   );
 
+  const updateTradeOfferAmountInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    setTradeOfferAmountInput(sanitized);
+    setTradePricingEditedFields((previous) => nextTradePricingEditedFields(previous, 'baseAmount'));
+  }, []);
+
+  const updateTradeRequestAmountInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    setTradeRequestAmountInput(sanitized);
+    setTradePricingEditedFields((previous) => nextTradePricingEditedFields(previous, 'quoteAmount'));
+  }, []);
+
+  const updateTradePriceInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    setTradePriceInput(sanitized);
+    setTradePricingEditedFields((previous) => nextTradePricingEditedFields(previous, 'price'));
+  }, []);
+
+  const updateRecurringBuyPriceInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    setRecurringBuyPriceInput(sanitized);
+  }, []);
+
+  const updateRecurringSellPriceInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    setRecurringSellPriceInput(sanitized);
+  }, []);
+
+  useEffect(() => {
+    const offerToken = tradeComposerModel.selectedTradeOfferToken;
+    const requestToken = tradeComposerModel.selectedTradeRequestToken;
+    if (!offerToken || !requestToken) return;
+
+    const update = deriveTradePricingUpdate({
+      baseAmountInput: tradeOfferAmountInput,
+      quoteAmountInput: tradeRequestAmountInput,
+      priceInput: tradePriceInput,
+      baseDecimals: offerToken.decimals,
+      quoteDecimals: requestToken.decimals,
+      editedFields: tradePricingEditedFields
+    });
+    if (!update) return;
+
+    if (update.field === 'baseAmount') {
+      setTradeOfferAmountInput(update.value);
+    } else if (update.field === 'quoteAmount') {
+      setTradeRequestAmountInput(update.value);
+    } else {
+      setTradePriceInput(update.value);
+    }
+    setTradePricingEditedFields((previous) =>
+      pricingFieldsEqual(previous, update.sourceFields) ? previous : update.sourceFields
+    );
+  }, [
+    tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerModel.selectedTradeRequestToken,
+    tradeOfferAmountInput,
+    tradePriceInput,
+    tradePricingEditedFields,
+    tradeRequestAmountInput
+  ]);
+
   const refreshTradeDataInBackground = useCallback(
     (tradeId?: number, escrowContract?: string) => {
       void Promise.allSettled([
         loadWalletBalances(),
-        refreshMyTrades(),
-        refreshPublicTrades(),
-        tradeId ? refreshTradeDetail(tradeId, escrowContract).catch(() => null) : Promise.resolve(null)
+        refreshMyTrades({ silent: true }),
+        refreshPublicTrades({ silent: true }),
+        tradeId ? refreshTradeDetail(tradeId, escrowContract, { silent: true }).catch(() => null) : Promise.resolve(null)
       ]);
     },
     [loadWalletBalances, refreshMyTrades, refreshPublicTrades, refreshTradeDetail]
@@ -1390,18 +1517,14 @@ export default function P2PTradingPage({
     setWalletError('');
     setConnectingWalletId('aes');
     try {
-      if (burnerSigner && burnerSigner.address.toLowerCase() === walletAddress.toLowerCase()) {
-        await getTradeSigner(true);
-      } else if (provider) {
-        await onboardTradeWalletAes(provider, walletAddress);
-      }
+      await getTradeSigner(true);
       await loadWalletBalances().catch(() => {});
     } catch (error) {
       setWalletError(getProviderErrorMessage(error, 'AES signature was not completed.'));
     } finally {
       setConnectingWalletId('');
     }
-  }, [getTradeSigner, loadWalletBalances, onboardTradeWalletAes, walletAddress]);
+  }, [getTradeSigner, loadWalletBalances, walletAddress]);
 
   const {
     beginCounterTrade,
@@ -1438,6 +1561,7 @@ export default function P2PTradingPage({
     setEditingTrade,
     setTradeActionError,
     setTradeExpiryHoursInput,
+    setTradeHasNoExpiry,
     setTradeHidePrivateLiquidity,
     setTradeOfferAmountInput,
     setTradeOfferCustomTokenAddress,
@@ -1447,11 +1571,291 @@ export default function P2PTradingPage({
     setTradeRequestTokenSelection,
     setTradeVisibility,
     tradeComposerModel,
+    tradeHasNoExpiry,
     tradeHidePrivateLiquidity,
     tradeVisibility,
     walletAddress,
     walletKey
   });
+
+  const startFreshOneOffTrade = useCallback(() => {
+    setTradeCreateMode('one-off');
+    setTradePriceInput('');
+    setTradePricingEditedFields([]);
+    setEditingRecurringOrder(null);
+    setRecurringAddBuyBudgetInput('');
+    setRecurringAddSellInventoryInput('');
+    setRecurringBuyReceiveInput('');
+    setRecurringSellReceiveInput('');
+    setRecurringBuyReceiveEditable(false);
+    setRecurringSellReceiveEditable(false);
+    setRecurringRemoveBuyBudgetInput('');
+    setRecurringRemoveSellInventoryInput('');
+    startFreshTrade();
+  }, [startFreshTrade]);
+
+  const startFreshRecurringOrder = useCallback(() => {
+    setTradeCreateMode('recurring');
+    setEditingRecurringOrder(null);
+    setRecurringBuyPriceInput('');
+    setRecurringSellPriceInput('');
+    setRecurringAddBuyBudgetInput('');
+    setRecurringAddSellInventoryInput('');
+    setRecurringBuyReceiveInput('');
+    setRecurringSellReceiveInput('');
+    setRecurringBuyReceiveEditable(false);
+    setRecurringSellReceiveEditable(false);
+    setRecurringRemoveBuyBudgetInput('');
+    setRecurringRemoveSellInventoryInput('');
+    setCreatedRecurringOrderId(null);
+    setCreatedRecurringOrderLink('');
+  }, []);
+
+  const resolveRecurringAssetSelection = useCallback(
+    (asset: TradeAssetPayload): TradeTokenPresetKey => {
+      if (asset.kind === 'native') {
+        return 'coti';
+      }
+      const tokenAddress = asset.tokenAddress?.toLowerCase() ?? '';
+      if (tokenAddress === REWARD_TOKEN_ADDRESS.toLowerCase()) {
+        return 'wisp';
+      }
+      if (tokenAddress === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
+        return 'pwisp';
+      }
+      const hasVerifiedOption = tradeComposerModel.tradeTokenOptions.some(
+        (option) => option.value.toLowerCase() === tokenAddress && !option.value.startsWith('custom')
+      );
+      if (hasVerifiedOption) {
+        return tokenAddress;
+      }
+      return asset.kind === 'private-erc20' ? 'custom-private' : 'custom-public';
+    },
+    [tradeComposerModel.tradeTokenOptions]
+  );
+
+  const beginEditRecurringOrder = useCallback(
+    (snapshot: TradeSnapshot) => {
+      const recurring = snapshot.recurringOrder;
+      if (!recurring) {
+        return;
+      }
+      const baseSelection = resolveRecurringAssetSelection(recurring.baseAsset);
+      const quoteSelection = resolveRecurringAssetSelection(recurring.quoteAsset);
+      clearEditTrade();
+      clearCounterTrade();
+      setTradeCreateMode('recurring');
+      setEditingRecurringOrder(snapshot);
+      setTradeOfferTokenSelection(baseSelection);
+      setTradeRequestTokenSelection(quoteSelection);
+      setTradeOfferCustomTokenAddress(baseSelection.startsWith('custom') ? recurring.baseAsset.tokenAddress ?? '' : '');
+      setTradeRequestCustomTokenAddress(quoteSelection.startsWith('custom') ? recurring.quoteAsset.tokenAddress ?? '' : '');
+      setRecurringHidePrivateAmounts(recurring.mode !== 'public');
+      setRecurringBuyPriceInput(
+        formatPriceInputFromTerms(
+          recurring.buyTerms.baseAmount,
+          recurring.buyTerms.quoteAmount,
+          recurring.baseAsset.decimals,
+          recurring.quoteAsset.decimals
+        )
+      );
+      setRecurringSellPriceInput(
+        formatPriceInputFromTerms(
+          recurring.sellTerms.baseAmount,
+          recurring.sellTerms.quoteAmount,
+          recurring.baseAsset.decimals,
+          recurring.quoteAsset.decimals
+        )
+      );
+      setRecurringAddBuyBudgetInput('');
+      setRecurringAddSellInventoryInput('');
+      setRecurringBuyReceiveInput('');
+      setRecurringSellReceiveInput('');
+      setRecurringBuyReceiveEditable(false);
+      setRecurringSellReceiveEditable(false);
+      setRecurringRemoveBuyBudgetInput('');
+      setRecurringRemoveSellInventoryInput('');
+      setCreatedRecurringOrderId(null);
+      setCreatedRecurringOrderLink('');
+      navigateToTradePath('/trades/create');
+    },
+    [clearCounterTrade, clearEditTrade, navigateToTradePath, resolveRecurringAssetSelection]
+  );
+
+  const clearRecurringEdit = useCallback(() => {
+    startFreshRecurringOrder();
+  }, [startFreshRecurringOrder]);
+
+  useEffect(() => {
+    if (editingTrade || counterParentTrade) {
+      setTradeCreateMode('one-off');
+      setTradePriceInput('');
+      setTradePricingEditedFields([]);
+      setEditingRecurringOrder(null);
+    }
+  }, [counterParentTrade, editingTrade]);
+
+  const createRecurringOrder = useCallback(async () => {
+    const recurringOrderBeingEdited = editingRecurringOrder?.recurringOrder ?? null;
+    const baseToken = tradeComposerModel.selectedTradeOfferToken;
+    const quoteToken = tradeComposerModel.selectedTradeRequestToken;
+    if (!walletAddress) {
+      setTradeActionError('Connect a wallet first.');
+      return;
+    }
+    if (!onCotiNetwork) {
+      setTradeActionError('Switch to COTI network first.');
+      return;
+    }
+    if (!baseToken || !quoteToken) {
+      setTradeActionError('Select base and quote assets first.');
+      return;
+    }
+    if (
+      baseToken.kind === quoteToken.kind &&
+      (baseToken.tokenAddress ?? '').toLowerCase() === (quoteToken.tokenAddress ?? '').toLowerCase()
+    ) {
+      setTradeActionError('Recurring orders need two different assets.');
+      return;
+    }
+
+    const addBaseInventoryWei = parseTokenAmountInput(recurringAddSellInventoryInput, baseToken.decimals) ?? 0n;
+    const addQuoteInventoryWei = parseTokenAmountInput(recurringAddBuyBudgetInput, quoteToken.decimals) ?? 0n;
+    const removeBaseInventoryWei = recurringOrderBeingEdited
+      ? parseTokenAmountInput(recurringRemoveSellInventoryInput, baseToken.decimals) ?? 0n
+      : 0n;
+    const removeQuoteInventoryWei = recurringOrderBeingEdited
+      ? parseTokenAmountInput(recurringRemoveBuyBudgetInput, quoteToken.decimals) ?? 0n
+      : 0n;
+    const hidePrivateRecurringAmounts =
+      recurringHidePrivateAmounts && (baseToken.kind === 'private-erc20' || quoteToken.kind === 'private-erc20');
+    const buyTerms = resolveRecurringSideTerms({
+      baseAmountWei: null,
+      quoteAmountWei: null,
+      priceInput: recurringBuyPriceInput,
+      baseDecimals: baseToken.decimals,
+      quoteDecimals: quoteToken.decimals,
+      forcePriceOnly: true
+    });
+    const sellTerms = resolveRecurringSideTerms({
+      baseAmountWei: null,
+      quoteAmountWei: null,
+      priceInput: recurringSellPriceInput,
+      baseDecimals: baseToken.decimals,
+      quoteDecimals: quoteToken.decimals,
+      forcePriceOnly: true
+    });
+    if (!buyTerms || !sellTerms) {
+      setTradeActionError('Enter a buy price and a sell price. Liquidity can stay empty until that side is funded.');
+      return;
+    }
+    if (!recurringOrderBeingEdited && addBaseInventoryWei <= 0n && addQuoteInventoryWei <= 0n) {
+      setTradeActionError('Add buy liquidity, sell liquidity, or both to start the order.');
+      return;
+    }
+
+    setTradeActionError('');
+    setCreatingRecurringOrder(true);
+    try {
+      const needsAes = baseToken.kind === 'private-erc20' || quoteToken.kind === 'private-erc20';
+      const signer = await getTradeSigner(needsAes);
+      const recurringAssetParams = {
+        baseAsset: {
+          kind: baseToken.kind,
+          tokenAddress: baseToken.tokenAddress
+        },
+        quoteAsset: {
+          kind: quoteToken.kind,
+          tokenAddress: quoteToken.tokenAddress
+        }
+      };
+      const result = recurringOrderBeingEdited
+        ? await (async () => {
+            await editRecurringOrderOnChain({
+              signer,
+              makerAddress: walletAddress,
+              orderId: recurringOrderBeingEdited.orderId,
+              ...recurringAssetParams,
+              buyBaseAmountWei: buyTerms.baseAmountWei,
+              buyQuoteAmountWei: buyTerms.quoteAmountWei,
+              sellBaseAmountWei: sellTerms.baseAmountWei,
+              sellQuoteAmountWei: sellTerms.quoteAmountWei,
+              addBaseInventoryWei,
+              addQuoteInventoryWei,
+              removeBaseInventoryWei,
+              removeQuoteInventoryWei,
+              hidePrivateAmounts: hidePrivateRecurringAmounts
+            });
+            return {
+              orderId: recurringOrderBeingEdited.orderId,
+              escrowContract: editingRecurringOrder?.escrowContract ?? RECURRING_OTC_CONTRACT_ADDRESS
+            };
+          })()
+        : await createRecurringOrderOnChain({
+            signer,
+            makerAddress: walletAddress,
+            ...recurringAssetParams,
+            buyBaseAmountWei: buyTerms.baseAmountWei,
+            buyQuoteAmountWei: buyTerms.quoteAmountWei,
+            sellBaseAmountWei: sellTerms.baseAmountWei,
+            sellQuoteAmountWei: sellTerms.quoteAmountWei,
+            initialBaseInventoryWei: addBaseInventoryWei,
+            initialQuoteInventoryWei: addQuoteInventoryWei,
+            nativeFeeWei: tradeRequiredFeeWei ?? 0n,
+            isPublic: true,
+            hidePrivateAmounts: hidePrivateRecurringAmounts
+          });
+      setCreatedRecurringOrderId(result.orderId);
+      const nextLink = buildTradeShareUrl(result.orderId, undefined, result.escrowContract);
+      setCreatedRecurringOrderLink(nextLink);
+      if (recurringOrderBeingEdited) {
+        setEditingRecurringOrder(null);
+        setRecurringAddBuyBudgetInput('');
+        setRecurringAddSellInventoryInput('');
+        setRecurringBuyReceiveInput('');
+        setRecurringSellReceiveInput('');
+        setRecurringBuyReceiveEditable(false);
+        setRecurringSellReceiveEditable(false);
+        setRecurringRemoveBuyBudgetInput('');
+        setRecurringRemoveSellInventoryInput('');
+        openTrade(result.orderId, undefined, result.escrowContract);
+      }
+      await Promise.allSettled([
+        loadWalletBalances(),
+        refreshMyTrades({ silent: true }),
+        refreshPublicTrades({ silent: true })
+      ]);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : recurringOrderBeingEdited
+          ? 'Failed to update recurring order.'
+          : 'Failed to create recurring order.';
+      setTradeActionError(getProviderErrorMessage(error, message));
+    } finally {
+      setCreatingRecurringOrder(false);
+    }
+  }, [
+    getTradeSigner,
+    loadWalletBalances,
+    onCotiNetwork,
+    recurringBuyPriceInput,
+    recurringHidePrivateAmounts,
+    recurringSellPriceInput,
+    buildTradeShareUrl,
+    editingRecurringOrder,
+    refreshMyTrades,
+    refreshPublicTrades,
+    openTrade,
+    recurringAddBuyBudgetInput,
+    recurringAddSellInventoryInput,
+    recurringRemoveBuyBudgetInput,
+    recurringRemoveSellInventoryInput,
+    tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerModel.selectedTradeRequestToken,
+    tradeRequiredFeeWei,
+    walletAddress
+  ]);
 
   const {
     acceptTrade,
@@ -1472,6 +1876,669 @@ export default function P2PTradingPage({
     setTradeActionError,
     walletAddress
   });
+
+  const fillRecurringOrderSide = useCallback(
+    async (snapshot: TradeSnapshot, side: 'buy' | 'sell') => {
+      const recurring = snapshot.recurringOrder;
+      if (!recurring) {
+        return;
+      }
+      if (!walletAddress) {
+        setTradeActionError('Connect a wallet first.');
+        return;
+      }
+      if (!onCotiNetwork) {
+        setTradeActionError('Switch to COTI network first.');
+        return;
+      }
+      const inputAsset = side === 'buy' ? recurring.baseAsset : recurring.quoteAsset;
+      const inputValue = side === 'buy' ? recurringBuyFillInput : recurringSellFillInput;
+      const inputAmountWei = parseTokenAmountInput(inputValue, inputAsset.decimals);
+      if (inputAmountWei === null || inputAmountWei <= 0n) {
+        setTradeActionError(side === 'buy' ? `Enter ${inputAsset.symbol} to sell.` : `Enter ${inputAsset.symbol} budget.`);
+        return;
+      }
+
+      const actionKey = `${getSnapshotKey(snapshot)}:${side}`;
+      setTradeActionError('');
+      setProcessingRecurringAction(actionKey);
+      try {
+        const needsAes = recurring.mode !== 'public' || inputAsset.kind === 'private-erc20';
+        const signer = await getTradeSigner(needsAes);
+        if (inputAsset.kind === 'private-erc20' && inputAsset.tokenAddress) {
+          const privateInputBalance = await readPrivateTokenBalanceWei(
+            inputAsset.tokenAddress,
+            walletAddress,
+            signer
+          ).catch(() => null);
+          if (privateInputBalance === null) {
+            setTradeActionError(`Unlock privacy and refresh your ${inputAsset.symbol} balance before selling.`);
+            return;
+          }
+          if (privateInputBalance < inputAmountWei) {
+            setTradeActionError(
+              `Not enough ${inputAsset.symbol}. Available: ${formatTokenAmount(privateInputBalance, inputAsset.decimals, 6)} ${inputAsset.symbol}.`
+            );
+            return;
+          }
+        }
+        await fillRecurringOrderSideOnChain({
+          signer,
+          ownerAddress: walletAddress,
+          orderId: recurring.orderId,
+          side,
+          inputAsset,
+          inputAmountWei,
+          hiddenAmounts: recurring.mode !== 'public',
+          accessSecret: resolvedRouteAccessSecret || undefined
+        });
+        if (side === 'buy') {
+          setRecurringBuyFillInput('');
+        } else {
+          setRecurringSellFillInput('');
+        }
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+      } catch (error) {
+        const outputAsset = side === 'buy' ? recurring.quoteAsset : recurring.baseAsset;
+        const fallbackMessage =
+          inputAsset.kind === 'private-erc20'
+            ? `Private ${inputAsset.symbol} transfer failed. Check your balance, unlock privacy, and try again.`
+            : outputAsset.kind === 'private-erc20'
+              ? `Private ${outputAsset.symbol} payout failed. Unlock privacy for this wallet and try again.`
+              : 'Recurring order fill failed.';
+        setTradeActionError(getOnChainFailureMessage(error, fallbackMessage));
+      } finally {
+        setProcessingRecurringAction('');
+      }
+    },
+    [
+      getTradeSigner,
+      onCotiNetwork,
+      recurringBuyFillInput,
+      recurringSellFillInput,
+      refreshTradeDataInBackground,
+      resolvedRouteAccessSecret,
+      walletAddress
+    ]
+  );
+
+  const updateRecurringOrderStatus = useCallback(
+    async (snapshot: TradeSnapshot, action: 'pause' | 'resume' | 'cancel') => {
+      const recurring = snapshot.recurringOrder;
+      if (!recurring) {
+        return;
+      }
+      if (!walletAddress) {
+        setTradeActionError('Connect a wallet first.');
+        return;
+      }
+      if (!onCotiNetwork) {
+        setTradeActionError('Switch to COTI network first.');
+        return;
+      }
+
+      const actionKey = `${getSnapshotKey(snapshot)}:${action}`;
+      setTradeActionError('');
+      setProcessingRecurringAction(actionKey);
+      try {
+        const signer = await getTradeSigner(false);
+        await updateRecurringOrderStatusOnChain({
+          signer,
+          orderId: recurring.orderId,
+          action
+        });
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Recurring order update failed.';
+        setTradeActionError(getProviderErrorMessage(error, message));
+      } finally {
+        setProcessingRecurringAction('');
+      }
+    },
+    [getTradeSigner, onCotiNetwork, refreshTradeDataInBackground, walletAddress]
+  );
+
+  const formatRecurringTokenAmount = (asset: TradeAssetPayload, amount: string, hidden = false): string => {
+    if (hidden) {
+      return `Hidden ${asset.symbol}`;
+    }
+    try {
+      return `${formatTokenAmount(BigInt(amount), asset.decimals, 6)} ${asset.symbol}`;
+    } catch {
+      return `0 ${asset.symbol}`;
+    }
+  };
+
+  const formatRecurringLiveLiquidityAmount = (
+    snapshot: TradeSnapshot | null,
+    side: 'sell' | 'buy'
+  ): string => {
+    const recurring = snapshot?.recurringOrder;
+    if (!recurring) {
+      return '--';
+    }
+    const asset = side === 'sell' ? recurring.baseAsset : recurring.quoteAsset;
+    const publicAmount = side === 'sell' ? recurring.publicBaseInventory : recurring.publicQuoteInventory;
+    const revealedAmount =
+      side === 'sell'
+        ? recurring.makerPrivateInventory?.baseInventory
+        : recurring.makerPrivateInventory?.quoteInventory;
+    const hidden = recurring.mode !== 'public' && asset.kind === 'private-erc20';
+    if (hidden && revealedAmount === undefined) {
+      return `Hidden ${asset.symbol}`;
+    }
+    return formatRecurringTokenAmount(asset, revealedAmount ?? publicAmount, false);
+  };
+
+  const renderRecurringOrderCard = (snapshot: TradeSnapshot, detail = false) => {
+    const recurring = snapshot.recurringOrder;
+    if (!recurring) {
+      return null;
+    }
+
+    const tradeKey = getSnapshotKey(snapshot);
+    const isMaker = walletKey.length > 0 && snapshot.maker.toLowerCase() === walletKey;
+    const isActive = recurring.recurringStatus === 'active';
+    const isPaused = recurring.recurringStatus === 'paused';
+    const statusLabel =
+      recurring.recurringStatus === 'active'
+        ? 'Active'
+        : recurring.recurringStatus === 'paused'
+          ? 'Paused'
+          : recurring.recurringStatus === 'cancelled'
+            ? 'Cancelled'
+            : 'Unknown';
+    const modeLabel =
+      recurring.mode === 'fully-private'
+        ? 'Private order'
+        : recurring.mode === 'hybrid-private'
+          ? 'Hybrid private order'
+          : 'Visible order';
+    const baseHidden = recurring.mode !== 'public' && recurring.baseAsset.kind === 'private-erc20';
+    const quoteHidden = recurring.mode !== 'public' && recurring.quoteAsset.kind === 'private-erc20';
+    const revealedBaseInventory = recurring.makerPrivateInventory?.baseInventory;
+    const revealedQuoteInventory = recurring.makerPrivateInventory?.quoteInventory;
+    const hasPrivateExecutionHistory = Boolean(recurring.privateExecutions?.length);
+    const recurringExecutionRows = recurring.privateExecutions ?? recurring.publicExecutions ?? [];
+    const hasRecurringExecutionRows = recurringExecutionRows.length > 0;
+    const isMyTradesHistoryCard = route.view === 'mine' && myTradeGroupView === 'history';
+    const canRevealRecurringPrivate =
+      route.view !== 'public' &&
+      walletKey.length > 0 &&
+      recurring.mode !== 'public' &&
+      (isMaker || snapshot.walletHasFill) &&
+      (isMaker
+        ? (baseHidden && recurring.hasPrivateBaseInventory) ||
+          (quoteHidden && recurring.hasPrivateQuoteInventory) ||
+          recurring.executionCount > 0
+        : recurring.executionCount > 0 || snapshot.walletHasFill);
+    const revealProcessing = revealingPrivateTradeKey === tradeKey;
+    const baseInventoryLabel =
+      baseHidden && revealedBaseInventory !== undefined
+        ? formatRecurringTokenAmount(recurring.baseAsset, revealedBaseInventory, false)
+        :
+      baseHidden && recurring.hasPrivateBaseInventory
+        ? `Hidden ${recurring.baseAsset.symbol}`
+        : formatRecurringTokenAmount(recurring.baseAsset, recurring.publicBaseInventory, false);
+    const quoteInventoryLabel =
+      quoteHidden && revealedQuoteInventory !== undefined
+        ? formatRecurringTokenAmount(recurring.quoteAsset, revealedQuoteInventory, false)
+        :
+      quoteHidden && recurring.hasPrivateQuoteInventory
+        ? `Hidden ${recurring.quoteAsset.symbol}`
+        : formatRecurringTokenAmount(recurring.quoteAsset, recurring.publicQuoteInventory, false);
+    const hasPositiveRecurringAmount = (amount?: string): boolean => {
+      if (!amount || !/^\d+$/.test(amount)) {
+        return false;
+      }
+      try {
+        return BigInt(amount) > 0n;
+      } catch {
+        return false;
+      }
+    };
+    const sellLiquidityLive =
+      baseHidden && revealedBaseInventory !== undefined
+        ? hasPositiveRecurringAmount(revealedBaseInventory)
+        : baseHidden
+          ? recurring.sellSideOpen && recurring.hasPrivateBaseInventory
+          : hasPositiveRecurringAmount(recurring.publicBaseInventory);
+    const buyLiquidityLive =
+      quoteHidden && revealedQuoteInventory !== undefined
+        ? hasPositiveRecurringAmount(revealedQuoteInventory)
+        : quoteHidden
+          ? recurring.buySideOpen && recurring.hasPrivateQuoteInventory
+          : hasPositiveRecurringAmount(recurring.publicQuoteInventory);
+    const buyPriceLabel =
+      formatTradeRatioLabel(
+        { ...recurring.baseAsset, amount: recurring.buyTerms.baseAmount },
+        { ...recurring.quoteAsset, amount: recurring.buyTerms.quoteAmount }
+      ) ?? `${recurring.quoteAsset.symbol}/${recurring.baseAsset.symbol}`;
+    const sellPriceLabel =
+      formatTradeRatioLabel(
+        { ...recurring.baseAsset, amount: recurring.sellTerms.baseAmount },
+        { ...recurring.quoteAsset, amount: recurring.sellTerms.quoteAmount }
+      ) ?? `${recurring.quoteAsset.symbol}/${recurring.baseAsset.symbol}`;
+    const calculateRecurringTerminalReceiveLabel = (side: 'buy' | 'sell'): string | null => {
+      const inputAsset = side === 'buy' ? recurring.quoteAsset : recurring.baseAsset;
+      const outputAsset = side === 'buy' ? recurring.baseAsset : recurring.quoteAsset;
+      const inputValue = side === 'buy' ? recurringSellFillInput : recurringBuyFillInput;
+      const terms = side === 'buy' ? recurring.sellTerms : recurring.buyTerms;
+      const inputAmount = parseTokenAmountInput(inputValue, inputAsset.decimals);
+      if (!inputAmount || inputAmount <= 0n) {
+        return null;
+      }
+      try {
+        const baseUnitAmount = BigInt(terms.baseAmount);
+        const quoteUnitAmount = BigInt(terms.quoteAmount);
+        const receiveAmount =
+          side === 'buy'
+            ? quoteUnitAmount > 0n
+              ? (inputAmount * baseUnitAmount) / quoteUnitAmount
+              : 0n
+            : baseUnitAmount > 0n
+              ? (inputAmount * quoteUnitAmount) / baseUnitAmount
+              : 0n;
+        return receiveAmount > 0n
+          ? `${formatTokenAmount(receiveAmount, outputAsset.decimals, 6)} ${outputAsset.symbol}`
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const formatRecurringExecutionAmount = (asset: TradeAssetPayload, amount?: string): string =>
+      amount !== undefined ? formatRecurringTokenAmount(asset, amount, false) : `Hidden ${asset.symbol}`;
+    const shareUrl = buildTradeShareUrl(snapshot.tradeId, undefined, snapshot.escrowContract);
+    const shareKey = `recurring-order-link:${tradeKey}`;
+    const buyProcessing = processingRecurringAction === `${tradeKey}:buy`;
+    const sellProcessing = processingRecurringAction === `${tradeKey}:sell`;
+    const sellToOrderState = getRecurringTerminalSideState(snapshot, 'sell');
+    const buyFromOrderState = getRecurringTerminalSideState(snapshot, 'buy');
+    const activeRecurringTerminalState = recurringTerminalSide === 'buy' ? buyFromOrderState : sellToOrderState;
+    const canFillBuySide = detail && !isMaker && sellToOrderState.isOpen;
+    const canFillSellSide = detail && !isMaker && buyFromOrderState.isOpen;
+    const recurringTerminalInputValue = recurringTerminalSide === 'buy' ? recurringSellFillInput : recurringBuyFillInput;
+    const recurringTerminalReceiveLabel =
+      calculateRecurringTerminalReceiveLabel(recurringTerminalSide) ??
+      (recurringTerminalSide === 'buy'
+        ? `Enter ${recurring.quoteAsset.symbol}`
+        : `Enter ${recurring.baseAsset.symbol}`);
+    const recurringTerminalProcessing = recurringTerminalSide === 'buy' ? sellProcessing : buyProcessing;
+    const recurringTerminalCanSubmit = recurringTerminalSide === 'buy' ? canFillSellSide : canFillBuySide;
+    const recurringBaseExplorerUrl = buildTradeAssetExplorerUrl(recurring.baseAsset);
+    const recurringQuoteExplorerUrl = buildTradeAssetExplorerUrl(recurring.quoteAsset);
+    const recurringMakerExplorerUrl = `${COTI_NETWORK.blockExplorerUrl}/address/${snapshot.maker}`;
+    const recurringTokenExplorerLinks = [
+      recurringBaseExplorerUrl
+        ? {
+            key: recurringBaseExplorerUrl,
+            href: recurringBaseExplorerUrl,
+            label: recurring.baseAsset.symbol,
+            title: `View ${recurring.baseAsset.symbol} on token explorer`
+          }
+        : null,
+      recurringQuoteExplorerUrl
+        ? {
+            key: recurringQuoteExplorerUrl,
+            href: recurringQuoteExplorerUrl,
+            label: recurring.quoteAsset.symbol,
+            title: `View ${recurring.quoteAsset.symbol} on token explorer`
+          }
+        : null
+    ]
+      .filter((link): link is { key: string; href: string; label: string; title: string } => Boolean(link))
+      .filter((link, index, links) => links.findIndex((candidate) => candidate.href === link.href) === index);
+    const showRecurringHistoryPanel =
+      detail ||
+      (isMyTradesHistoryCard &&
+        (recurring.executionCount > 0 ||
+          snapshot.walletHasFill ||
+          Boolean(recurring.privateExecutions) ||
+          Boolean(recurring.publicExecutions)));
+    const recurringHistoryPanelTitle =
+      recurring.mode === 'public'
+        ? 'Execution history'
+        : isMaker
+          ? 'Private order history'
+          : 'Your private history';
+    const recurringHistoryEmptyCopy =
+      recurring.mode === 'public'
+        ? 'No recurring executions are available for this wallet yet.'
+        : isMaker
+          ? 'Reveal this order to show maker-only private buy/sell receipts.'
+          : 'Reveal your wallet receipts to show the private buys and sells you made.';
+    const showRecurringPrivateRevealPanel = detail && canRevealRecurringPrivate;
+
+    return (
+      <article
+        key={tradeKey}
+        className={[
+          'p2p-recurring-order-card',
+          detail ? 'p2p-recurring-order-card-detail' : '',
+          recurring.mode !== 'public' ? 'p2p-recurring-order-card-private' : '',
+          `p2p-recurring-order-card-${recurring.recurringStatus}`
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        <div className="p2p-recurring-card-head">
+          <div>
+            <span>Recurring OTC</span>
+            <h3>
+              {recurring.baseAsset.symbol}/{recurring.quoteAsset.symbol} buy/sell desk
+            </h3>
+            <p>
+              Order #{recurring.orderId} · {modeLabel}
+            </p>
+          </div>
+          <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
+        </div>
+
+        <div className="p2p-recurring-price-card" aria-label="Recurring order prices">
+          <span>Price desk</span>
+          <div className="p2p-recurring-price-grid">
+            <div className="p2p-recurring-price-box p2p-recurring-price-buy">
+              <span>Buy price</span>
+              <strong>{buyPriceLabel}</strong>
+            </div>
+            <div className="p2p-recurring-price-box p2p-recurring-price-sell">
+              <span>Sell price</span>
+              <strong>{sellPriceLabel}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="p2p-recurring-inventory-strip" aria-label="Recurring order liquidity">
+          <div>
+            <div className="p2p-recurring-liquidity-head">
+              <span title="Sell liquidity">Sell liq.</span>
+              <i
+                className={sellLiquidityLive ? 'p2p-recurring-liquidity-dot is-live' : 'p2p-recurring-liquidity-dot'}
+                title={sellLiquidityLive ? 'Sell liquidity is live' : 'Sell liquidity needs funding'}
+                role="img"
+                aria-label={sellLiquidityLive ? 'Sell liquidity is live' : 'Sell liquidity needs funding'}
+              />
+            </div>
+            <strong>{baseInventoryLabel}</strong>
+          </div>
+          <div>
+            <div className="p2p-recurring-liquidity-head">
+              <span title="Buy liquidity">Buy liq.</span>
+              <i
+                className={buyLiquidityLive ? 'p2p-recurring-liquidity-dot is-live' : 'p2p-recurring-liquidity-dot'}
+                title={buyLiquidityLive ? 'Buy liquidity is live' : 'Buy liquidity needs funding'}
+                role="img"
+                aria-label={buyLiquidityLive ? 'Buy liquidity is live' : 'Buy liquidity needs funding'}
+              />
+            </div>
+            <strong>{quoteInventoryLabel}</strong>
+          </div>
+          <div>
+            <span>Executions</span>
+            <strong>{recurring.executionCount}</strong>
+          </div>
+        </div>
+
+        {recurringTokenExplorerLinks.length ? (
+          <div className="p2p-offer-token-actions" aria-label="Token explorer links">
+            <span>Verify tokens</span>
+            <div>
+              {recurringTokenExplorerLinks.map((link) => (
+                <a key={link.key} className="p2p-offer-token-link" href={link.href} target="_blank" rel="noreferrer" title={link.title}>
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {detail ? (
+          <div className="trade-card-participants p2p-recurring-participants" aria-label="Recurring order participants">
+            <div className="trade-card-counterparty">
+              <span>Creator</span>
+              <a href={recurringMakerExplorerUrl} target="_blank" rel="noreferrer" title={snapshot.maker}>
+                {isMaker ? `${shortenAddress(snapshot.maker)} (you)` : shortenAddress(snapshot.maker)}
+              </a>
+            </div>
+            <div className="trade-card-counterparty">
+              <span>Access</span>
+              <strong>{recurring.mode === 'public' ? 'Public desk' : 'Shared order'}</strong>
+            </div>
+          </div>
+        ) : null}
+
+        {showRecurringPrivateRevealPanel ? (
+          <div className="p2p-recurring-private-reveal">
+            <div>
+              <span>Private details</span>
+              <p>
+                {hasPrivateExecutionHistory
+                  ? isMaker
+                    ? 'Private liquidity and execution receipts are decrypted for this wallet.'
+                    : 'Your private buy/sell receipts are decrypted for this wallet.'
+                  : isMaker
+                    ? 'Reveal the hidden liquidity and private buy/sell receipts for this wallet.'
+                    : 'Reveal your private buy/sell receipts for this order.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => revealMakerPrivateProgress(snapshot).catch(() => {})}
+              disabled={revealProcessing}
+              title="Decrypt private recurring order liquidity and fill history"
+            >
+              {revealProcessing ? 'Revealing...' : hasPrivateExecutionHistory ? 'Refresh Private History' : 'Reveal Private History'}
+            </button>
+          </div>
+        ) : null}
+
+        {showRecurringHistoryPanel ? (
+          <div className="p2p-recurring-private-history" aria-live="polite">
+            <div className="p2p-recurring-private-history-head">
+              <span>{recurringHistoryPanelTitle}</span>
+              <strong>{recurringExecutionRows.length}</strong>
+            </div>
+            {hasRecurringExecutionRows ? (
+              recurringExecutionRows.map((execution) => (
+                <div className="p2p-recurring-private-history-row" key={`${tradeKey}:private-fill:${execution.fillIndex}`}>
+                  <div>
+                    <span>#{execution.fillIndex}</span>
+                    <strong>{execution.side === 'buy' ? 'Maker bought' : 'Maker sold'}</strong>
+                    <small>{execution.filler ? `Filler ${shortenAddress(execution.filler)}` : 'Private fill'}</small>
+                  </div>
+                  <div>
+                    <span>Base</span>
+                    <strong>{formatRecurringExecutionAmount(recurring.baseAsset, execution.baseAmount)}</strong>
+                    <small>
+                      Remaining {formatRecurringExecutionAmount(recurring.baseAsset, execution.remainingBaseInventory)}
+                    </small>
+                  </div>
+                  <div>
+                    <span>Quote</span>
+                    <strong>{formatRecurringExecutionAmount(recurring.quoteAsset, execution.quoteAmount)}</strong>
+                    <small>
+                      Remaining {formatRecurringExecutionAmount(recurring.quoteAsset, execution.remainingQuoteInventory)}
+                    </small>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="p2p-recurring-private-history-empty">
+                <p>{recurringHistoryEmptyCopy}</p>
+                {canRevealRecurringPrivate && !showRecurringPrivateRevealPanel ? (
+                  <button
+                    type="button"
+                    onClick={() => revealMakerPrivateProgress(snapshot).catch(() => {})}
+                    disabled={revealProcessing}
+                    title={isMaker ? 'Reveal private recurring order liquidity and history' : 'Reveal your private recurring buy/sell history'}
+                  >
+                    {revealProcessing ? 'Revealing...' : 'Reveal history'}
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {detail && !isMaker ? (
+          <div className="p2p-recurring-terminal" aria-label="Recurring order actions">
+            <span className="p2p-recurring-terminal-label">Your action</span>
+            <div className="p2p-recurring-terminal-tabs" role="tablist" aria-label="Choose recurring order side">
+              <button
+                type="button"
+                className={recurringTerminalSide === 'buy' ? 'active' : undefined}
+                role="tab"
+                aria-selected={recurringTerminalSide === 'buy'}
+                onClick={() => setRecurringTerminalSide('buy')}
+              >
+                Buy
+              </button>
+              <button
+                type="button"
+                className={recurringTerminalSide === 'sell' ? 'active' : undefined}
+                role="tab"
+                aria-selected={recurringTerminalSide === 'sell'}
+                onClick={() => setRecurringTerminalSide('sell')}
+              >
+                Sell
+              </button>
+            </div>
+            <div className="p2p-recurring-terminal-ticket" role="tabpanel">
+              <label className="trade-compose-field">
+                <span>{activeRecurringTerminalState.inputLabel}</span>
+                <input
+                  className="trade-compose-input"
+                  type="text"
+                  inputMode="decimal"
+                  value={recurringTerminalInputValue}
+                  onChange={(event) => {
+                    const nextValue = sanitizeTokenAmountInput(event.target.value);
+                    if (recurringTerminalSide === 'buy') {
+                      setRecurringSellFillInput(nextValue);
+                    } else {
+                      setRecurringBuyFillInput(nextValue);
+                    }
+                  }}
+                  placeholder={
+                    recurringTerminalSide === 'buy'
+                      ? `0 ${recurring.quoteAsset.symbol}`
+                      : `0 ${recurring.baseAsset.symbol}`
+                  }
+                  disabled={!recurringTerminalCanSubmit || recurringTerminalProcessing}
+                />
+              </label>
+              <div className="p2p-recurring-terminal-receive">
+                <span>You receive</span>
+                <strong>{recurringTerminalCanSubmit ? recurringTerminalReceiveLabel : '--'}</strong>
+                <small>
+                  {recurringTerminalSide === 'buy'
+                    ? `At the maker sell price: ${sellPriceLabel}.`
+                    : `At the maker buy price: ${buyPriceLabel}.`}
+                </small>
+              </div>
+              <button
+                type="button"
+                className={
+                  recurringTerminalSide === 'buy'
+                    ? 'trade-card-action trade-card-action-accept'
+                    : 'trade-card-action trade-card-action-counter'
+                }
+                onClick={() => fillRecurringOrderSide(snapshot, recurringTerminalSide === 'buy' ? 'sell' : 'buy').catch(() => {})}
+                disabled={!recurringTerminalCanSubmit || recurringTerminalProcessing}
+              >
+                {recurringTerminalProcessing
+                  ? 'Processing...'
+                  : recurringTerminalCanSubmit
+                    ? activeRecurringTerminalState.actionLabel
+                    : activeRecurringTerminalState.disabledLabel}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="p2p-recurring-card-footer">
+          <div>
+            {!detail ? (
+              <button type="button" className="p2p-offer-open-btn" onClick={() => openTradeSnapshot(snapshot)} title="Open recurring order">
+                Open
+              </button>
+            ) : null}
+            {!detail && canRevealRecurringPrivate && !hasPrivateExecutionHistory && !showRecurringHistoryPanel ? (
+              <button
+                type="button"
+                className="p2p-offer-counter-btn"
+                onClick={() => revealMakerPrivateProgress(snapshot).catch(() => {})}
+                disabled={revealProcessing}
+                title={isMaker ? 'Reveal private recurring order liquidity and history' : 'Reveal your private recurring buy/sell history'}
+              >
+                {revealProcessing ? 'Revealing...' : 'Reveal history'}
+              </button>
+            ) : null}
+            {shareUrl ? (
+              <button
+                type="button"
+                className={lastCopiedKey === shareKey ? 'copied' : undefined}
+                onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
+                title="Share recurring order link"
+              >
+                {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {detail && isMaker ? (
+          <div className="p2p-recurring-maker-actions">
+            <span>Maker controls</span>
+            <div>
+              {isActive ? (
+                <button
+                  type="button"
+                  onClick={() => updateRecurringOrderStatus(snapshot, 'pause').catch(() => {})}
+                  disabled={processingRecurringAction === `${tradeKey}:pause`}
+                >
+                  {processingRecurringAction === `${tradeKey}:pause` ? 'Pausing...' : 'Pause'}
+                </button>
+              ) : null}
+              {isPaused ? (
+                <button
+                  type="button"
+                  onClick={() => updateRecurringOrderStatus(snapshot, 'resume').catch(() => {})}
+                  disabled={processingRecurringAction === `${tradeKey}:resume`}
+                >
+                  {processingRecurringAction === `${tradeKey}:resume` ? 'Resuming...' : 'Resume'}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => beginEditRecurringOrder(snapshot)}
+                disabled={Boolean(processingRecurringAction)}
+              >
+                Edit
+              </button>
+              {recurring.recurringStatus !== 'cancelled' ? (
+                <button
+                  type="button"
+                  className="p2p-offer-cancel-btn"
+                  onClick={() => updateRecurringOrderStatus(snapshot, 'cancel').catch(() => {})}
+                  disabled={processingRecurringAction === `${tradeKey}:cancel`}
+                >
+                  {processingRecurringAction === `${tradeKey}:cancel` ? 'Closing...' : 'Close Order'}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {detail ? (
+          <div className="trade-card-meta-inline">
+            <span>Created {formatMessageTimestamp(snapshot.createdAt)}</span>
+            <span>Liquidity stays live until the maker edits funding or closes the order</span>
+          </div>
+        ) : null}
+      </article>
+    );
+  };
 
   const renderTradeCard = (snapshot: TradeSnapshot, collapsed = false) => {
     const snapshotKey = getSnapshotKey(snapshot);
@@ -1496,10 +2563,16 @@ export default function P2PTradingPage({
         actionPending={processingTradeActionId === snapshotKey}
         collapsed={collapsed}
         shareUrl={shareUrl}
-        shareLabel={accessSecret ? 'Private Link' : 'Share Link'}
+        shareLabel="Share"
         shareCopied={lastCopiedKey === shareKey}
         tradeWindowLayout={true}
         onCopyShareLink={shareUrl ? () => copyWithFeedback(shareUrl, shareKey).catch(() => {}) : undefined}
+        onRevealPrivateProgress={
+          snapshot.hiddenLiquidity && walletKey.length > 0 && snapshot.maker.toLowerCase() === walletKey
+            ? () => revealMakerPrivateProgress(snapshot).catch(() => {})
+            : undefined
+        }
+        revealPrivateProgressPending={revealingPrivateTradeKey === snapshotKey}
         showCounterAction={snapshot.status === 'open'}
         showEditAction={canEditPublicTrade(snapshot, walletKey)}
         onAccept={() => acceptTrade(snapshot).catch(() => {})}
@@ -1574,12 +2647,9 @@ export default function P2PTradingPage({
         return;
       }
       lastRealtimeSyncDispatchAt = Date.now();
-      refreshPublicTrades().catch(() => {});
+      refreshPublicTrades({ silent: true }).catch(() => {});
       if (walletAddress) {
-        refreshMyTrades().catch(() => {});
-      }
-      if (routeTradeId !== null) {
-        refreshTradeDetail(routeTradeId, routeEscrowContract).catch(() => {});
+        refreshMyTrades({ silent: true }).catch(() => {});
       }
     };
 
@@ -1732,20 +2802,25 @@ export default function P2PTradingPage({
         window.clearTimeout(realtimeSyncTimerId);
       }
     };
-  }, [hasActiveListRefresh, refreshMyTrades, refreshPublicTrades, refreshTradeDetail, routeEscrowContract, routeTradeId, walletAddress]);
+  }, [hasActiveListRefresh, refreshMyTrades, refreshPublicTrades, walletAddress]);
+
+  const tradePricePairLabel =
+    tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
+      ? `${tradeComposerModel.selectedTradeRequestToken.symbol}/${tradeComposerModel.selectedTradeOfferToken.symbol}`
+      : 'quote/base';
 
   const tradeComposer = (
     <TradeComposerPanel
       title={
         editingTrade
-          ? `Edit public trade #${editingTrade.tradeId}`
+          ? `Edit public offer #${editingTrade.tradeId}`
           : counterParentTrade
-            ? `Counter trade #${counterParentTrade.tradeId}`
-            : 'Create trade'
+            ? `Counter offer #${counterParentTrade.tradeId}`
+            : 'Create offer'
       }
       metaLabel={
         editingTrade
-          ? 'Cancel and replace public listing'
+          ? 'Cancel and replace public offer'
           : counterParentTrade
           ? `Linked counter to ${shortenAddress(counterParentTrade.maker)}`
           : tradeVisibility === 'public'
@@ -1758,19 +2833,19 @@ export default function P2PTradingPage({
       }
       safetyNote={
         editingTrade
-          ? 'Editing creates a new public trade and cancels the original listing in the same transaction.'
+          ? 'Editing creates a new public offer and cancels the original in the same transaction.'
           : counterParentTrade
-          ? 'The counter offer is created as a linked private trade for the original maker.'
+          ? 'The counter offer is created as a linked private offer for the original maker.'
           : 'Escrow settlement and trade terms are stored on-chain.'
       }
-      sendLabel={editingTrade ? 'Save Edit' : counterParentTrade ? 'Send Counter' : 'Create Trade'}
+      sendLabel={editingTrade ? 'Save Edit' : counterParentTrade ? 'Send Counter' : 'Create Offer'}
       sendingLabel="Creating..."
       sendTitle={
         editingTrade
-          ? 'Cancel the old public listing and create the replacement trade.'
+          ? 'Cancel the old public offer and create the replacement.'
           : counterParentTrade
             ? 'Create a linked counter trade on chain.'
-            : 'Create the escrow trade on chain.'
+            : 'Create the escrow offer on chain.'
       }
       feeMode={tradeFeeModeSelection}
       onFeeModeChange={setTradeFeeModeSelection}
@@ -1793,17 +2868,27 @@ export default function P2PTradingPage({
       offerVerifyUrl={tradeComposerModel.tradeOfferVerifyUrl}
       requestVerifyUrl={tradeComposerModel.tradeRequestVerifyUrl}
       offerAmountInput={tradeOfferAmountInput}
-      onOfferAmountInputChange={(value) => setTradeOfferAmountInput(sanitizeTokenAmountInput(value))}
+      onOfferAmountInputChange={updateTradeOfferAmountInput}
       requestAmountInput={tradeRequestAmountInput}
-      onRequestAmountInputChange={(value) => setTradeRequestAmountInput(sanitizeTokenAmountInput(value))}
+      onRequestAmountInputChange={updateTradeRequestAmountInput}
       offerAmountLabel={tradeComposerModel.tradeOfferAmountLabel}
       requestAmountLabel={tradeComposerModel.tradeRequestAmountLabel}
       offerAmountPlaceholder={tradeComposerModel.tradeOfferAmountPlaceholder}
       requestAmountPlaceholder={tradeComposerModel.tradeRequestAmountPlaceholder}
       offerAmountError={tradeComposerModel.tradeComposerFieldErrors.offerAmount}
       requestAmountError={tradeComposerModel.tradeComposerFieldErrors.requestAmount}
+      priceInput={tradePriceInput}
+      onPriceInputChange={updateTradePriceInput}
+      priceLabel="Price"
+      pricePlaceholder={`${tradeComposerModel.selectedTradeRequestToken?.symbol ?? 'quote'} per ${
+        tradeComposerModel.selectedTradeOfferToken?.symbol ?? 'base'
+      }`}
+      priceSummaryLabel={tradePricePairLabel}
+      priceHelpText="Any two fields set the offer; the third updates."
+      pricePlacement="sell-side"
+      showPriceRatioPreview
       canUseMaxOfferAmount={tradeComposerModel.canUseTradeOfferMax}
-      onUseMaxOfferAmount={() => setTradeOfferAmountInput(tradeComposerModel.tradeOfferMaxInputValue)}
+      onUseMaxOfferAmount={() => updateTradeOfferAmountInput(tradeComposerModel.tradeOfferMaxInputValue)}
       offerAmountSummaryLabel={tradeComposerModel.tradeOfferAmountSummaryLabel}
       requestAmountSummaryLabel={tradeComposerModel.tradeRequestAmountSummaryLabel}
       offerBalanceSummaryLabel={tradeComposerModel.tradeOfferBalanceSummaryLabel}
@@ -1814,6 +2899,8 @@ export default function P2PTradingPage({
         const nextRequestCustomAddress = tradeOfferCustomTokenAddress;
         const nextOfferAmount = tradeRequestAmountInput;
         const nextRequestAmount = tradeOfferAmountInput;
+        setTradePriceInput('');
+        setTradePricingEditedFields([]);
         setTradeOfferTokenSelection(nextOfferToken);
         setTradeRequestTokenSelection(nextRequestToken);
         setTradeOfferCustomTokenAddress(nextOfferCustomAddress);
@@ -1827,6 +2914,8 @@ export default function P2PTradingPage({
       tradeReverseRateLabel={tradeComposerModel.tradeReverseRateLabel}
       expiresHoursInput={tradeExpiryHoursInput}
       onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
+      expiresNever={tradeHasNoExpiry}
+      onExpiresNeverChange={setTradeHasNoExpiry}
       expiryError={tradeComposerModel.tradeComposerFieldErrors.expiry}
       hidePrivateLiquidity={tradeHidePrivateLiquidity}
       canHidePrivateLiquidity={tradeComposerModel.canHidePrivateLiquidity}
@@ -1843,6 +2932,10 @@ export default function P2PTradingPage({
   );
 
   const renderTradeOverviewCard = (trade: TradeSnapshot) => {
+    if (trade.recurringOrder) {
+      return renderRecurringOrderCard(trade, false);
+    }
+
     const tradeKey = getSnapshotKey(trade);
     const displayTerms = getTradeDisplayTerms(trade);
     const displayTrade = {
@@ -1861,9 +2954,17 @@ export default function P2PTradingPage({
     const canEdit = canEditPublicTrade(trade, walletKey);
     const completionSummary = getTradeCompletionSummary(trade);
     const makerPrivateProgressSummary = route.view === 'public' ? null : getMakerPrivateProgressSummary(trade);
+    const privateFillReceiptRows = trade.privateFillReceipts ?? [];
+    const walletFillState = trade.walletFillState;
+    const hasWalletFillState = Boolean(
+      walletFillState &&
+      (walletFillState.offerAmountReceived !== '0' || walletFillState.requestAmountPaid !== '0')
+    );
     const visibleCompletionSummary = makerPrivateProgressSummary ?? completionSummary;
     const canRevealMakerPrivateProgress = Boolean(
-      route.view !== 'public' && trade.hiddenLiquidity && perspective.isMaker && !makerPrivateProgressSummary
+      route.view !== 'public' &&
+      trade.hiddenLiquidity &&
+      (perspective.isMaker ? !makerPrivateProgressSummary : trade.walletHasFill && privateFillReceiptRows.length === 0)
     );
     const accessSecret =
       route.tradeId === trade.tradeId &&
@@ -1886,7 +2987,7 @@ export default function P2PTradingPage({
             ? 'Private link saved'
             : 'Private link'
           : 'Unlisted offer'
-        : 'Public listing';
+        : 'Public offer';
     const takerLabel = isZeroTradeTakerAddress(trade.taker) ? 'Any wallet' : shortenAddress(trade.taker);
     const statusLabel =
       trade.status === 'open'
@@ -1902,6 +3003,26 @@ export default function P2PTradingPage({
     const rightSide = orderSummary.secondarySide;
     const leftExplorerUrl = buildTradeAssetExplorerUrl(leftSide.asset);
     const rightExplorerUrl = buildTradeAssetExplorerUrl(rightSide.asset);
+    const tokenExplorerLinks = [
+      leftExplorerUrl
+        ? {
+            key: leftExplorerUrl,
+            href: leftExplorerUrl,
+            label: leftSide.asset.symbol,
+            title: `View ${leftSide.asset.symbol} on token explorer`
+          }
+        : null,
+      rightExplorerUrl
+        ? {
+            key: rightExplorerUrl,
+            href: rightExplorerUrl,
+            label: rightSide.asset.symbol,
+            title: `View ${rightSide.asset.symbol} on token explorer`
+          }
+        : null
+    ]
+      .filter((link): link is { key: string; href: string; label: string; title: string } => Boolean(link))
+      .filter((link, index, links) => links.findIndex((candidate) => candidate.href === link.href) === index);
     const pairLabel = orderSummary.directionLabel;
     const leftToneClass = `p2p-offer-term-${leftSide.tone}`;
     const rightToneClass = `p2p-offer-term-${rightSide.tone}`;
@@ -1913,13 +3034,13 @@ export default function P2PTradingPage({
         ? reverseRatioLabel ?? formatHiddenFixedPriceTerms(rightSide.asset, leftSide.asset)
         : defaultRatioLabel ?? formatHiddenFixedPriceTerms(leftSide.asset, rightSide.asset)
       : '';
-    const showHiddenPriceSummary = Boolean(trade.hiddenLiquidity);
     const showExplorerHiddenPriceOnly = route.view === 'public' && Boolean(trade.hiddenLiquidity);
     const tradeRateText = trade.hiddenLiquidity
       ? hiddenFixedPriceTerms
       : isRateReversed
         ? reverseRatioLabel ?? formatTradeRateText(rightSide.asset, leftSide.asset)
         : defaultRatioLabel ?? formatTradeRateText(leftSide.asset, rightSide.asset);
+    const showPriceSummary = Boolean(tradeRateText);
     const formatVisibleTermText = (asset: TradeAssetPayload): string =>
       trade.hiddenLiquidity
         ? asset.symbol
@@ -1952,6 +3073,12 @@ export default function P2PTradingPage({
     const historyRemainingLabel = trade.hiddenLiquidity
       ? makerPrivateProgressSummary?.remainingLabel ?? 'Amounts hidden'
       : completionSummary?.remainingLabel ?? (trade.status === 'accepted' ? 'Settled' : 'No remaining fill data');
+    const formatPrivateReceiptAmount = (asset: TradeAssetPayload, amount?: string): string => {
+      if (!amount || !/^\d+$/.test(amount)) {
+        return `Hidden ${asset.symbol}`;
+      }
+      return `${formatTokenAmount(BigInt(amount), asset.decimals, 6)} ${asset.symbol}`;
+    };
 
     return (
       <article
@@ -1966,10 +3093,11 @@ export default function P2PTradingPage({
       >
         <div className="p2p-offer-card-head">
           <div className="p2p-offer-title">
+            <span className="p2p-offer-kind">P2P OTC</span>
             <h3 title={formatTradeListTerms(trade)}>{pairLabel}</h3>
             <p>
               #{trade.tradeId}
-              {trade.hiddenLiquidity ? <span>Private liquidity</span> : null}
+              {trade.hiddenLiquidity ? <span>Private order</span> : null}
               {trade.counterParentTradeId ? <span>Counter to #{trade.counterParentTradeId}</span> : null}
               {trade.replacesTradeId ? <span>Edited from #{trade.replacesTradeId}</span> : null}
               {trade.replacementTradeId ? <span>Replaced by #{trade.replacementTradeId}</span> : null}
@@ -1978,17 +3106,23 @@ export default function P2PTradingPage({
           <strong className={`p2p-offer-status ${statusClassName}`}>{statusLabel}</strong>
         </div>
 
-        {showHiddenPriceSummary ? (
+        {showPriceSummary ? (
           <button
             type="button"
-            className="p2p-hidden-price-card"
+            className={trade.hiddenLiquidity ? 'p2p-hidden-price-card' : 'p2p-hidden-price-card p2p-price-ratio-card'}
             onClick={() => toggleTradeRateDirection(trade.tradeId, trade.escrowContract)}
             title="Flip price ratio"
-            aria-label={`Flip price ratio for trade ${trade.tradeId}. Current ratio: ${hiddenFixedPriceTerms}.`}
+            aria-label={`Flip price ratio for trade ${trade.tradeId}. Current ratio: ${tradeRateText}.`}
           >
             <span>Price ratio</span>
-            <strong>{hiddenFixedPriceTerms}</strong>
-            <small>Amounts and fills stay private.</small>
+            <strong>{tradeRateText}</strong>
+            <small>
+              {trade.hiddenLiquidity
+                ? 'Amounts and fills stay private.'
+                : displayTerms.usingRemaining
+                  ? 'Remaining escrow terms shown below.'
+                  : 'Escrow terms shown below.'}
+            </small>
           </button>
         ) : null}
 
@@ -1998,11 +3132,6 @@ export default function P2PTradingPage({
             <span>{leftSide.label}</span>
             <strong>{formatVisibleTermText(leftSide.asset)}</strong>
             <small>{leftMetaLabel}</small>
-            {leftExplorerUrl ? (
-              <a className="p2p-offer-token-link" href={leftExplorerUrl} target="_blank" rel="noreferrer">
-                Token Explorer
-              </a>
-            ) : null}
           </div>
           <div className="p2p-offer-term-link" aria-hidden="true">
             →
@@ -2011,11 +3140,6 @@ export default function P2PTradingPage({
             <span>{rightSide.label}</span>
             <strong>{formatVisibleTermText(rightSide.asset)}</strong>
             <small>{rightMetaLabel}</small>
-            {rightExplorerUrl ? (
-              <a className="p2p-offer-token-link" href={rightExplorerUrl} target="_blank" rel="noreferrer">
-                Token Explorer
-              </a>
-            ) : null}
           </div>
           </div>
         ) : null}
@@ -2023,7 +3147,7 @@ export default function P2PTradingPage({
         {visibleCompletionSummary ? (
           <div className="p2p-offer-completion" aria-label={visibleCompletionSummary.percentLabel}>
             <div className="p2p-offer-completion-head">
-              <span>{makerPrivateProgressSummary ? 'Your private liquidity' : 'Completion'}</span>
+              <span>{makerPrivateProgressSummary ? 'Your private order' : 'Completion'}</span>
               <strong>{makerPrivateProgressSummary?.totalLabel ?? visibleCompletionSummary.percentLabel}</strong>
             </div>
             <div className="p2p-offer-completion-bar">
@@ -2036,21 +3160,56 @@ export default function P2PTradingPage({
           </div>
         ) : null}
 
-        <div className={trade.hiddenLiquidity ? 'p2p-offer-facts p2p-offer-facts-compact' : 'p2p-offer-facts'}>
-          {!trade.hiddenLiquidity ? (
-            <div>
-              <span>Price ratio</span>
-              <button
-                type="button"
-                className="p2p-offer-rate-toggle"
-                onClick={() => toggleTradeRateDirection(trade.tradeId, trade.escrowContract)}
-                title="Flip rate"
-                aria-label={`Flip rate for trade ${trade.tradeId}. Current ratio: ${tradeRateText}.`}
-              >
-                {tradeRateText}
-              </button>
+        {trade.hiddenLiquidity && privateFillReceiptRows.length > 0 ? (
+          <div className="p2p-recurring-private-history p2p-private-order-history" aria-live="polite">
+            <div className="p2p-recurring-private-history-head">
+              <span>{perspective.isMaker ? 'Private order history' : 'Your private history'}</span>
+              <strong>{privateFillReceiptRows.length}</strong>
             </div>
-          ) : null}
+            {privateFillReceiptRows.map((receipt) => (
+              <div className="p2p-recurring-private-history-row" key={`${tradeKey}:private-order-fill:${receipt.fillIndex}`}>
+                <div>
+                  <span>#{receipt.fillIndex}</span>
+                  <strong>{receipt.filler ? `Filler ${shortenAddress(receipt.filler)}` : 'Private fill'}</strong>
+                </div>
+                <div>
+                  <span>Offer</span>
+                  <strong>{formatPrivateReceiptAmount(trade.offer, receipt.offerAmount)}</strong>
+                  <small>Remaining {formatPrivateReceiptAmount(trade.offer, receipt.remainingOfferAmount)}</small>
+                </div>
+                <div>
+                  <span>Payment</span>
+                  <strong>{formatPrivateReceiptAmount(trade.request, receipt.requestAmount)}</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {!trade.hiddenLiquidity && hasWalletFillState && walletFillState ? (
+          <div className="p2p-recurring-private-history p2p-private-order-history" aria-live="polite">
+            <div className="p2p-recurring-private-history-head">
+              <span>Your fill</span>
+              <strong>1</strong>
+            </div>
+            <div className="p2p-recurring-private-history-row">
+              <div>
+                <span>Fill</span>
+                <strong>{trade.status === 'open' ? 'Partial fill' : 'Settled fill'}</strong>
+              </div>
+              <div>
+                <span>You received</span>
+                <strong>{formatPrivateReceiptAmount(trade.offer, walletFillState.offerAmountReceived)}</strong>
+              </div>
+              <div>
+                <span>You paid</span>
+                <strong>{formatPrivateReceiptAmount(trade.request, walletFillState.requestAmountPaid)}</strong>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="p2p-offer-facts p2p-offer-facts-compact">
           <div>
             <span>Expires</span>
             {expiryCountdown ? (
@@ -2072,6 +3231,19 @@ export default function P2PTradingPage({
             <strong>{visibilityLabel}</strong>
           </div>
         </div>
+
+        {tokenExplorerLinks.length ? (
+          <div className="p2p-offer-token-actions" aria-label="Token explorer links">
+            <span>Verify tokens</span>
+            <div>
+              {tokenExplorerLinks.map((link) => (
+                <a key={link.key} className="p2p-offer-token-link" href={link.href} target="_blank" rel="noreferrer" title={link.title}>
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {isFinishedTrade ? (
           <>
@@ -2111,7 +3283,7 @@ export default function P2PTradingPage({
           {isFinishedTrade ? (
             <>
               <span className="p2p-offer-final-state">
-                {statusLabel} trade #{trade.tradeId}
+                {statusLabel} offer #{trade.tradeId}
                 {acceptedTxExplorerUrl ? ' with on-chain settlement' : ''}
               </span>
               {acceptedTxExplorerUrl ? (
@@ -2122,11 +3294,11 @@ export default function P2PTradingPage({
             </>
           ) : (
             <>
-              <span>{perspective.isMaker ? 'Created by you' : perspective.isTaker ? 'Reserved for you' : 'Open order'}</span>
+              <span>{perspective.isMaker ? 'Created by you' : perspective.isTaker ? 'Reserved for you' : trade.walletHasFill ? 'Filled by you' : ''}</span>
               <div>
                 {showOpenTradeAction ? (
-                  <button type="button" className="p2p-offer-open-btn" onClick={() => openTradeSnapshot(trade)} title="Open trade">
-                    Open trade
+                  <button type="button" className="p2p-offer-open-btn" onClick={() => openTradeSnapshot(trade)} title="Open offer">
+                    Open
                   </button>
                 ) : null}
                 {canRevealMakerPrivateProgress ? (
@@ -2135,19 +3307,19 @@ export default function P2PTradingPage({
                     className="p2p-offer-counter-btn"
                     onClick={() => revealMakerPrivateProgress(trade).catch(() => {})}
                     disabled={revealingPrivateTradeKey === tradeKey}
-                    title="Reveal your private liquidity with your wallet AES key"
+                    title={perspective.isMaker ? 'Reveal your private order with your wallet AES key' : 'Reveal your private fill history with your wallet AES key'}
                   >
-                    {revealingPrivateTradeKey === tradeKey ? 'Revealing...' : 'Reveal Liquidity'}
+                    {revealingPrivateTradeKey === tradeKey ? 'Revealing...' : perspective.isMaker ? 'Reveal' : 'Reveal history'}
                   </button>
                 ) : null}
-                {shareUrl && (perspective.isMaker || accessSecret) ? (
+                {shareUrl ? (
                   <button
                     type="button"
-                    className={lastCopiedKey === shareKey ? 'copied' : undefined}
+                    className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
                     onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
-                    title={accessSecret ? 'Copy private trade link' : 'Copy trade link'}
+                    title={accessSecret ? 'Share private trade link' : 'Share trade link'}
                   >
-                    {lastCopiedKey === shareKey ? 'Copied' : 'Copy'}
+                    {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
                   </button>
                 ) : null}
                 {canCounter ? (
@@ -2260,7 +3432,6 @@ export default function P2PTradingPage({
     setWalletMenuOpen,
     sharedWalletSession,
     signAesForCurrentWallet,
-    tradePrimaryWalletKind,
     walletAddress,
     walletHasAes,
     walletMenuOpen
@@ -2271,7 +3442,7 @@ export default function P2PTradingPage({
       onHeaderWalletControlChange?.(null);
     };
   }, [onHeaderWalletControlChange, tradeWalletHeaderControl]);
-  const tradeHeaderNavigationControl = useMemo(
+  const tradeViewTabs = useMemo(
     () => (
       <nav className="p2p-trade-tabs" aria-label="P2P trade views">
         <button
@@ -2280,13 +3451,13 @@ export default function P2PTradingPage({
           aria-current={route.view === 'public' ? 'page' : undefined}
           onClick={() => navigateToTradePath('/trades')}
         >
-          <span>Market</span>
+          <span>Desk</span>
         </button>
         <button
           type="button"
           className={route.view === 'create' ? 'active' : undefined}
           aria-current={route.view === 'create' ? 'page' : undefined}
-          onClick={startFreshTrade}
+          onClick={startFreshOneOffTrade}
         >
           <span>Create</span>
         </button>
@@ -2296,7 +3467,7 @@ export default function P2PTradingPage({
           aria-current={route.view === 'trade' ? 'page' : undefined}
           onClick={() => navigateToTradePath('/trades/open')}
         >
-          <span>Trade</span>
+          <span>Open</span>
         </button>
         <button
           type="button"
@@ -2308,21 +3479,29 @@ export default function P2PTradingPage({
         </button>
       </nav>
     ),
-    [navigateToTradePath, route.view, startFreshTrade]
+    [navigateToTradePath, route.view, startFreshOneOffTrade]
   );
-  useEffect(() => {
-    onHeaderNavigationControlChange?.(tradeHeaderNavigationControl);
-    return () => {
-      onHeaderNavigationControlChange?.(null);
-    };
-  }, [onHeaderNavigationControlChange, tradeHeaderNavigationControl]);
+  const publicOpenTrades = useMemo(
+    () => publicTrades.filter((trade) => trade.status === 'open'),
+    [publicTrades]
+  );
+  const tradeDeskFilters = useMemo(
+    () => ({
+      search: tradeSearchInput,
+      pair: tradePairFilter,
+      type: tradeTypeFilter,
+      access: tradeAccessFilter,
+      sort: tradeSortMode
+    }),
+    [tradeAccessFilter, tradePairFilter, tradeSearchInput, tradeSortMode, tradeTypeFilter]
+  );
   const filteredPublicTrades = useMemo(
-    () => publicTrades.filter((trade) => trade.status === 'open' && matchesTradeSearch(trade, tradeSearchInput)),
-    [publicTrades, tradeSearchInput]
+    () => filterAndSortTradeDesk(publicOpenTrades, tradeDeskFilters),
+    [publicOpenTrades, tradeDeskFilters]
   );
   const filteredMyTrades = useMemo(
-    () => myTrades.filter((trade) => matchesTradeSearch(trade, tradeSearchInput)),
-    [myTrades, tradeSearchInput]
+    () => filterAndSortTradeDesk(myTrades, tradeDeskFilters),
+    [myTrades, tradeDeskFilters]
   );
   const walletTradeGroups = useMemo(
     () => groupWalletTradesByPerspective(filteredMyTrades, walletAddress),
@@ -2366,33 +3545,236 @@ export default function P2PTradingPage({
   ];
   const selectedMyTradeGroup =
     myTradeGroupOptions.find((group) => group.id === myTradeGroupView) ?? myTradeGroupOptions[0];
-  const showTradeSearch = route.view === 'public' || (route.view === 'mine' && Boolean(walletAddress));
+  const tradePairFilterOptions = useMemo(
+    () => getTradePairFilterOptions(route.view === 'mine' ? myTrades : publicOpenTrades),
+    [myTrades, publicOpenTrades, route.view]
+  );
+  const hasActiveDeskFilters =
+    tradeSearchInput.trim().length > 0 ||
+    tradePairFilter !== 'all' ||
+    tradeTypeFilter !== 'all' ||
+    tradeAccessFilter !== 'all' ||
+    tradeSortMode !== 'newest';
+  const clearTradeDeskFilters = () => {
+    setTradeSearchInput('');
+    setTradePairFilter('all');
+    setTradeTypeFilter('all');
+    setTradeAccessFilter('all');
+    setTradeSortMode('newest');
+  };
+  const showTradeSearch =
+    route.view === 'public' || route.view === 'trade' || (route.view === 'mine' && Boolean(walletAddress));
   const tradeSearchPlaceholder =
     route.view === 'mine'
-      ? 'Search your trades by token, wallet, status, or id'
-      : 'Search public offers by token, pair, wallet, status, or id';
+      ? 'Search by token, wallet, status, or id'
+      : 'Search offers by pair, token, wallet, or id';
   const tradeSearchSummary =
     route.view === 'mine'
       ? `${selectedMyTradeGroup.trades.length} ${selectedMyTradeGroup.label.toLowerCase()}`
-      : `${filteredPublicTrades.length} of ${openPublicTradeCount} open`;
+      : `${filteredPublicTrades.length} of ${openPublicTradeCount} offers`;
+  const tradeDeskIdentity =
+    route.view === 'mine'
+      ? {
+        title: 'My Desk',
+        copy: 'Received, active, countered, and settled offers.'
+      }
+      : {
+          title: 'P2P OTC Desk',
+          copy: 'Peer-priced escrow offers between wallets.'
+        };
   const createdTradeCopyKey = 'created-trade-link';
   const focusTradeLinkInput = () => {
     tradeLinkInputRef.current?.focus();
   };
+  const recurringTokenOptions = tradeComposerModel.tradeTokenOptions.filter((option) => !option.value.startsWith('custom'));
+  const recurringBaseToken = tradeComposerModel.selectedTradeOfferToken;
+  const recurringQuoteToken = tradeComposerModel.selectedTradeRequestToken;
+  const recurringHasPrivateToken =
+    recurringBaseToken?.kind === 'private-erc20' || recurringQuoteToken?.kind === 'private-erc20';
+  const recurringPrivateAmountsHidden = recurringHasPrivateToken && recurringHidePrivateAmounts;
+  const recurringPrivacyLabel =
+    recurringBaseToken?.kind === 'private-erc20' && recurringQuoteToken?.kind === 'private-erc20'
+      ? 'Fully private order'
+      : recurringBaseToken?.kind === 'private-erc20' || recurringQuoteToken?.kind === 'private-erc20'
+        ? 'Hybrid private order'
+        : 'Public order';
+  const recurringPrivateAmountCopy =
+    !recurringHasPrivateToken
+      ? 'Select a private token if this order should use COTI private-token settlement.'
+      : recurringPrivateAmountsHidden
+        ? 'Public views show the prices, but private-token order size and fill amounts stay hidden.'
+        : 'Public views can show the entered order size; private-token transfers and receipts still use COTI privacy.';
+  const recurringBaseDecimals = recurringBaseToken?.decimals ?? 18;
+  const recurringQuoteDecimals = recurringQuoteToken?.decimals ?? 18;
+  const recurringBaseSymbol = recurringBaseToken?.symbol ?? 'base';
+  const recurringQuoteSymbol = recurringQuoteToken?.symbol ?? 'quote';
+  const recurringBuyReceivePreview = useMemo(
+    () =>
+      recurringBaseToken && recurringQuoteToken
+        ? deriveRecurringReceiveAmountInput({
+            side: 'buy',
+            liquidityInput: recurringAddBuyBudgetInput,
+            priceInput: recurringBuyPriceInput,
+            baseDecimals: recurringBaseDecimals,
+            quoteDecimals: recurringQuoteDecimals
+          })
+        : '',
+    [
+      recurringAddBuyBudgetInput,
+      recurringBaseDecimals,
+      recurringBaseToken,
+      recurringBuyPriceInput,
+      recurringQuoteDecimals,
+      recurringQuoteToken
+    ]
+  );
+  const recurringSellReceivePreview = useMemo(
+    () =>
+      recurringBaseToken && recurringQuoteToken
+        ? deriveRecurringReceiveAmountInput({
+            side: 'sell',
+            liquidityInput: recurringAddSellInventoryInput,
+            priceInput: recurringSellPriceInput,
+            baseDecimals: recurringBaseDecimals,
+            quoteDecimals: recurringQuoteDecimals
+          })
+        : '',
+    [
+      recurringAddSellInventoryInput,
+      recurringBaseDecimals,
+      recurringBaseToken,
+      recurringQuoteDecimals,
+      recurringQuoteToken,
+      recurringSellPriceInput
+    ]
+  );
+  const updateRecurringBuyLiquidityInput = useCallback((value: string) => {
+    setRecurringBuyReceiveEditable(false);
+    setRecurringBuyReceiveInput('');
+    setRecurringAddBuyBudgetInput(sanitizeTokenAmountInput(value));
+  }, []);
+  const updateRecurringSellLiquidityInput = useCallback((value: string) => {
+    setRecurringSellReceiveEditable(false);
+    setRecurringSellReceiveInput('');
+    setRecurringAddSellInventoryInput(sanitizeTokenAmountInput(value));
+  }, []);
+  const updateRecurringBuyReceiveInput = useCallback(
+    (value: string) => {
+      const sanitized = sanitizeTokenAmountInput(value);
+      setRecurringBuyReceiveInput(sanitized);
+      setRecurringAddBuyBudgetInput(
+        deriveRecurringLiquidityInputFromReceive({
+          side: 'buy',
+          receiveInput: sanitized,
+          priceInput: recurringBuyPriceInput,
+          baseDecimals: recurringBaseDecimals,
+          quoteDecimals: recurringQuoteDecimals
+        })
+      );
+    },
+    [recurringBaseDecimals, recurringBuyPriceInput, recurringQuoteDecimals]
+  );
+  const updateRecurringSellReceiveInput = useCallback(
+    (value: string) => {
+      const sanitized = sanitizeTokenAmountInput(value);
+      setRecurringSellReceiveInput(sanitized);
+      setRecurringAddSellInventoryInput(
+        deriveRecurringLiquidityInputFromReceive({
+          side: 'sell',
+          receiveInput: sanitized,
+          priceInput: recurringSellPriceInput,
+          baseDecimals: recurringBaseDecimals,
+          quoteDecimals: recurringQuoteDecimals
+        })
+      );
+    },
+    [recurringBaseDecimals, recurringQuoteDecimals, recurringSellPriceInput]
+  );
+  const toggleRecurringBuyReceiveEditable = useCallback(() => {
+    if (recurringBuyReceiveEditable) {
+      setRecurringBuyReceiveEditable(false);
+      setRecurringBuyReceiveInput('');
+      return;
+    }
+    setRecurringBuyReceiveInput(recurringBuyReceivePreview);
+    setRecurringBuyReceiveEditable(true);
+  }, [recurringBuyReceiveEditable, recurringBuyReceivePreview]);
+  const toggleRecurringSellReceiveEditable = useCallback(() => {
+    if (recurringSellReceiveEditable) {
+      setRecurringSellReceiveEditable(false);
+      setRecurringSellReceiveInput('');
+      return;
+    }
+    setRecurringSellReceiveInput(recurringSellReceivePreview);
+    setRecurringSellReceiveEditable(true);
+  }, [recurringSellReceiveEditable, recurringSellReceivePreview]);
+  useEffect(() => {
+    if (!recurringBuyReceiveEditable || !recurringBuyReceiveInput) {
+      return;
+    }
+    setRecurringAddBuyBudgetInput(
+      deriveRecurringLiquidityInputFromReceive({
+        side: 'buy',
+        receiveInput: recurringBuyReceiveInput,
+        priceInput: recurringBuyPriceInput,
+        baseDecimals: recurringBaseDecimals,
+        quoteDecimals: recurringQuoteDecimals
+      })
+    );
+  }, [
+    recurringBaseDecimals,
+    recurringBuyPriceInput,
+    recurringBuyReceiveEditable,
+    recurringBuyReceiveInput,
+    recurringQuoteDecimals
+  ]);
+  useEffect(() => {
+    if (!recurringSellReceiveEditable || !recurringSellReceiveInput) {
+      return;
+    }
+    setRecurringAddSellInventoryInput(
+      deriveRecurringLiquidityInputFromReceive({
+        side: 'sell',
+        receiveInput: recurringSellReceiveInput,
+        priceInput: recurringSellPriceInput,
+        baseDecimals: recurringBaseDecimals,
+        quoteDecimals: recurringQuoteDecimals
+      })
+    );
+  }, [
+    recurringBaseDecimals,
+    recurringQuoteDecimals,
+    recurringSellPriceInput,
+    recurringSellReceiveEditable,
+    recurringSellReceiveInput
+  ]);
+  const editingRecurring = editingRecurringOrder?.recurringOrder ?? null;
+  const editingRecurringTradeKey = editingRecurringOrder ? getSnapshotKey(editingRecurringOrder) : '';
+  const canRevealEditingRecurringLiquidity =
+    Boolean(editingRecurringOrder && editingRecurring && walletKey && editingRecurringOrder.maker.toLowerCase() === walletKey) &&
+    editingRecurring?.mode !== 'public' &&
+    ((editingRecurring?.baseAsset.kind === 'private-erc20' && editingRecurring.hasPrivateBaseInventory) ||
+      (editingRecurring?.quoteAsset.kind === 'private-erc20' && editingRecurring.hasPrivateQuoteInventory));
 
   return (
-    <main className="standalone-trades-shell p2p-trading-shell">
+    <main className={`standalone-trades-shell p2p-trading-shell${route.view === 'trade' ? ' p2p-trading-shell-drawer-open' : ''}`}>
+      <div className="p2p-secondary-nav">{tradeViewTabs}</div>
       {route.view !== 'create' ? (
         <section
           className={`p2p-market-overview p2p-market-overview-${route.view}${
             route.view === 'mine' && !showTradeSearch ? ' p2p-market-overview-summary-only' : ''
           }`}
         >
-          {route.view === 'public' || route.view === 'mine' ? (
+          <div className="p2p-market-identity">
+            <strong>{tradeDeskIdentity.title}</strong>
+            <span>{tradeDeskIdentity.copy}</span>
+          </div>
+
+          {route.view === 'public' || route.view === 'trade' || route.view === 'mine' ? (
             <div className="p2p-stats-strip" aria-label="P2P trading statistics">
-              {route.view === 'public' ? (
+              {route.view === 'public' || route.view === 'trade' ? (
                 <div>
-                  <span>Open offers</span>
+                  <span>Active offers</span>
                   <strong>{openPublicTradeCount}</strong>
                 </div>
               ) : null}
@@ -2416,51 +3798,91 @@ export default function P2PTradingPage({
           ) : null}
 
           {showTradeSearch ? (
-            <label className="p2p-token-search">
-              <span className="p2p-token-search-head">
-                <span className="p2p-token-search-label">Search trades</span>
-                <small>{tradeSearchSummary}</small>
-              </span>
-              <span className="p2p-token-search-input-wrap">
-                <input
-                  type="search"
-                  value={tradeSearchInput}
-                  onChange={(event) => setTradeSearchInput(event.target.value)}
-                  placeholder={tradeSearchPlaceholder}
-                />
-                {tradeSearchInput ? (
-                  <button type="button" onClick={() => setTradeSearchInput('')} aria-label="Clear trade search">
-                    Clear
-                  </button>
-                ) : null}
-              </span>
-            </label>
-          ) : null}
-
-          {route.view === 'trade' ? (
-            <form className="p2p-link-open-form p2p-action-open-form" onSubmit={openTradeFromInput}>
-              <input
-                ref={tradeLinkInputRef}
-                type="text"
-                value={tradeLinkInput}
-                onChange={(event) => setTradeLinkInput(event.target.value)}
-                placeholder="Paste trade link, compact code, or id"
-                aria-label="Trade link, compact code, or trade id"
-              />
-              <button type="submit">Open Trade</button>
-            </form>
+            <div className="p2p-filter-bar" aria-label="Offer filters">
+              <label className="p2p-token-search p2p-filter-search">
+                <span className="p2p-token-search-head">
+                  <span className="p2p-token-search-label">Find offers</span>
+                  <small>{tradeSearchSummary}</small>
+                </span>
+                <span className="p2p-token-search-input-wrap">
+                  <input
+                    type="search"
+                    value={tradeSearchInput}
+                    onChange={(event) => setTradeSearchInput(event.target.value)}
+                    placeholder={tradeSearchPlaceholder}
+                  />
+                  {tradeSearchInput ? (
+                    <button type="button" onClick={() => setTradeSearchInput('')} aria-label="Clear trade search">
+                      Clear
+                    </button>
+                  ) : null}
+                </span>
+              </label>
+              <label className="p2p-filter-select">
+                <span>Pair</span>
+                <select value={tradePairFilter} onChange={(event) => setTradePairFilter(event.target.value)}>
+                  {tradePairFilterOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="p2p-filter-select">
+                <span>Type</span>
+                <select
+                  value={tradeTypeFilter}
+                  onChange={(event) => setTradeTypeFilter(event.target.value as TradeDeskTypeFilter)}
+                >
+                  <option value="all">All types</option>
+                  <option value="one-off">One-off</option>
+                  <option value="recurring">Recurring</option>
+                  <option value="private">Private</option>
+                  <option value="visible">Visible</option>
+                </select>
+              </label>
+              <label className="p2p-filter-select">
+                <span>Access</span>
+                <select
+                  value={tradeAccessFilter}
+                  onChange={(event) => setTradeAccessFilter(event.target.value as TradeDeskAccessFilter)}
+                >
+                  <option value="all">All access</option>
+                  <option value="public">Public</option>
+                  <option value="private-link">Private link</option>
+                  <option value="direct">Direct</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                className="p2p-filter-clear"
+                onClick={clearTradeDeskFilters}
+                disabled={!hasActiveDeskFilters}
+              >
+                Filters
+              </button>
+              <label className="p2p-filter-select p2p-filter-sort">
+                <span>Sort</span>
+                <select value={tradeSortMode} onChange={(event) => setTradeSortMode(event.target.value as TradeDeskSortMode)}>
+                  <option value="newest">Newest</option>
+                  <option value="oldest">Oldest</option>
+                  <option value="expiring">Expiring soon</option>
+                  <option value="most-active">Most active</option>
+                </select>
+              </label>
+            </div>
           ) : null}
 
           {walletError || tradeActionError ? <p className="error p2p-market-status">{walletError || tradeActionError}</p> : null}
         </section>
       ) : null}
 
-      {route.view === 'public' ? (
+      {route.view === 'public' || route.view === 'trade' ? (
         <section className="standalone-trades-section p2p-public-trades-section">
           <div className="standalone-trades-section-head">
             <div>
-              <p className="landing-eyebrow">Directory</p>
-              <h2>Open public trades</h2>
+              <p className="landing-eyebrow">P2P OTC</p>
+              <h2>Active offers</h2>
             </div>
             <div className="standalone-trades-toolbar">
               <button type="button" className="standalone-trade-secondary-btn" onClick={() => refreshPublicTrades().catch(() => {})}>
@@ -2470,7 +3892,7 @@ export default function P2PTradingPage({
           </div>
           {publicTradesError
             ? renderP2PEmptyState(
-              'Market refresh failed',
+              'Desk refresh failed',
               publicTradesError,
               <button type="button" onClick={() => refreshPublicTrades().catch(() => {})} disabled={loadingPublicTrades}>
                 {loadingPublicTrades ? 'Refreshing...' : 'Retry'}
@@ -2480,7 +3902,7 @@ export default function P2PTradingPage({
             : null}
           {loadingPublicTrades && publicTrades.length === 0
             ? renderP2PEmptyState(
-              'Loading public trades',
+              'Loading offers',
               'Reading open offers from escrow events.',
               undefined,
               'loading'
@@ -2489,17 +3911,17 @@ export default function P2PTradingPage({
           {(!publicTradesError || publicTrades.length > 0) && (!loadingPublicTrades || publicTrades.length > 0)
             ? renderTradeList(
               filteredPublicTrades,
-              tradeSearchInput ? 'No public trades match that search.' : 'No open public trades found.',
+              hasActiveDeskFilters ? 'No offers match those filters.' : 'No active offers found.',
               'p2p-public-trade-grid',
               renderP2PEmptyState(
-                tradeSearchInput ? 'No matching public offers' : 'No public offers right now',
-                tradeSearchInput
-                  ? 'Try a token symbol, wallet address, status, or trade id.'
-                  : 'The directory is live, but there are no open public listings to review yet.',
-                tradeSearchInput ? (
+                hasActiveDeskFilters ? 'No matching offers' : 'No active offers right now',
+                hasActiveDeskFilters
+                  ? 'Clear filters or try another token, wallet, status, or trade id.'
+                  : 'The desk is live, but there are no public offers to review yet.',
+                hasActiveDeskFilters ? (
                   <>
-                    <button type="button" onClick={() => setTradeSearchInput('')}>
-                      Clear search
+                    <button type="button" onClick={clearTradeDeskFilters}>
+                      Clear filters
                     </button>
                     <button type="button" onClick={() => refreshPublicTrades().catch(() => {})} disabled={loadingPublicTrades}>
                       {loadingPublicTrades ? 'Refreshing...' : 'Refresh'}
@@ -2507,8 +3929,8 @@ export default function P2PTradingPage({
                   </>
                 ) : (
                   <>
-                    <button type="button" onClick={startFreshTrade}>
-                      Create Trade
+                    <button type="button" onClick={startFreshOneOffTrade}>
+                      Create Offer
                     </button>
                     <button type="button" onClick={() => refreshPublicTrades().catch(() => {})} disabled={loadingPublicTrades}>
                       {loadingPublicTrades ? 'Refreshing...' : 'Refresh'}
@@ -2525,15 +3947,450 @@ export default function P2PTradingPage({
         <section className="standalone-trade-create-panel">
           <div className="standalone-trades-section-head">
             <div>
-              <p className="landing-eyebrow">Create</p>
-              <h2>{editingTrade ? `Edit public trade #${editingTrade.tradeId}` : 'New trade'}</h2>
+              <p className="landing-eyebrow">OTC Desk</p>
+              <h2>
+                {editingTrade
+                  ? `Edit public offer #${editingTrade.tradeId}`
+                  : editingRecurringOrder?.recurringOrder
+                    ? `Edit recurring order #${editingRecurringOrder.recurringOrder.orderId}`
+                  : tradeCreateMode === 'recurring'
+                    ? 'New recurring order'
+                    : 'New offer'}
+              </h2>
             </div>
             {editingTrade ? (
               <button type="button" className="standalone-trade-secondary-btn" onClick={clearEditTrade}>
                 Cancel Edit
               </button>
             ) : null}
+            {editingRecurringOrder ? (
+              <button type="button" className="standalone-trade-secondary-btn" onClick={clearRecurringEdit}>
+                Cancel Edit
+              </button>
+            ) : null}
           </div>
+          {!editingTrade && !editingRecurringOrder ? (
+            <div className="standalone-trade-visibility p2p-create-mode-switch" role="group" aria-label="Order type">
+              <button
+                type="button"
+                className={tradeCreateMode === 'one-off' ? 'active' : undefined}
+                onClick={() => setTradeCreateMode('one-off')}
+                aria-pressed={tradeCreateMode === 'one-off'}
+              >
+                <span>One-off</span>
+                <small>Fixed escrow offer</small>
+              </button>
+              <button
+                type="button"
+                className={tradeCreateMode === 'recurring' ? 'active' : undefined}
+                onClick={startFreshRecurringOrder}
+                aria-pressed={tradeCreateMode === 'recurring'}
+              >
+                <span>Recurring</span>
+                <small>Reusable desk</small>
+              </button>
+            </div>
+          ) : null}
+          {tradeCreateMode === 'recurring' && !editingTrade ? (
+            <>
+              <div className="trade-compose-panel p2p-recurring-builder" role="group" aria-label="Recurring OTC order">
+                <div className="trade-compose-header p2p-recurring-header">
+                  <strong>Reusable OTC order</strong>
+                  <div className="trade-compose-header-meta">
+                    <span>{recurringPrivacyLabel}</span>
+                    <span>Inventory cycles between buy and sell sides</span>
+                  </div>
+                </div>
+
+                <div className="p2p-recurring-grid p2p-recurring-assets">
+                  <label className="trade-compose-field">
+                    <span>Base asset</span>
+                    <TradeTokenSelect
+                      options={recurringTokenOptions}
+                      value={tradeOfferTokenSelection}
+                      onChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
+                      disabled={creatingRecurringOrder || Boolean(editingRecurringOrder)}
+                    />
+                  </label>
+                  <label className="trade-compose-field">
+                    <span>Quote asset</span>
+                    <TradeTokenSelect
+                      options={recurringTokenOptions}
+                      value={tradeRequestTokenSelection}
+                      onChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
+                      disabled={creatingRecurringOrder || Boolean(editingRecurringOrder)}
+                    />
+                  </label>
+                </div>
+
+                <div className={`p2p-recurring-privacy-note${recurringHasPrivateToken ? ' is-private' : ''}`}>
+                  <div>
+                    <span>Order privacy</span>
+                    <strong>
+                      {recurringHasPrivateToken
+                        ? recurringPrivateAmountsHidden
+                          ? 'Private-token amounts hidden'
+                          : 'Private-token amounts visible'
+                        : 'Public amounts visible'}
+                    </strong>
+                  </div>
+                  <p>{recurringPrivateAmountCopy}</p>
+                  {recurringHasPrivateToken ? (
+                    <div
+                      className="p2p-recurring-privacy-toggle"
+                      role="group"
+                      aria-label="Private-token amount visibility"
+                    >
+                      <button
+                        type="button"
+                        className={recurringHidePrivateAmounts ? 'active' : undefined}
+                        onClick={() => setRecurringHidePrivateAmounts(true)}
+                        aria-pressed={recurringHidePrivateAmounts}
+                        disabled={creatingRecurringOrder || Boolean(editingRecurringOrder)}
+                      >
+                        Hide amount
+                      </button>
+                      <button
+                        type="button"
+                        className={!recurringHidePrivateAmounts ? 'active' : undefined}
+                        onClick={() => setRecurringHidePrivateAmounts(false)}
+                        aria-pressed={!recurringHidePrivateAmounts}
+                        disabled={creatingRecurringOrder || Boolean(editingRecurringOrder)}
+                      >
+                        Show amount
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="trade-compose-grid p2p-recurring-side-grid">
+                  <section className="trade-compose-section trade-compose-section-buy p2p-recurring-side-panel p2p-recurring-side-panel-buy">
+                    <div className="p2p-recurring-side-head">
+                      <span>Buy side</span>
+                      <strong>Maker buys {recurringBaseToken?.symbol ?? 'base'}</strong>
+                      <small>
+                        {editingRecurringOrder
+                          ? 'Edit the buy price. Liquidity is managed below.'
+                          : 'Set the maker buy price. Liquidity is managed below.'}
+                      </small>
+                    </div>
+                    <label className="trade-compose-field p2p-recurring-price-field">
+                      <span>Buy price</span>
+                      <input
+                        className="trade-compose-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={recurringBuyPriceInput}
+                        onChange={(event) => updateRecurringBuyPriceInput(event.target.value)}
+                        placeholder={`${recurringQuoteToken?.symbol ?? 'quote'} per ${recurringBaseToken?.symbol ?? 'base'}`}
+                        disabled={creatingRecurringOrder}
+                      />
+                    </label>
+                    {!editingRecurringOrder ? (
+                      <>
+                        <label className="trade-compose-field p2p-recurring-primary-field">
+                          <span>Buy liquidity</span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringAddBuyBudgetInput}
+                            onChange={(event) => updateRecurringBuyLiquidityInput(event.target.value)}
+                            placeholder={`0 ${recurringQuoteSymbol}`}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                        <label
+                          className={`trade-compose-field p2p-recurring-derived-field${
+                            recurringBuyReceiveEditable ? ' is-editing' : ''
+                          }`}
+                        >
+                          <span className="trade-compose-field-head">
+                            <span>You receive</span>
+                            <button
+                              type="button"
+                              className="p2p-recurring-derived-toggle"
+                              onClick={toggleRecurringBuyReceiveEditable}
+                              aria-label={recurringBuyReceiveEditable ? 'Preview buy receive' : 'Edit buy receive'}
+                              disabled={creatingRecurringOrder}
+                            >
+                              {recurringBuyReceiveEditable ? 'Preview' : 'Edit'}
+                            </button>
+                          </span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringBuyReceiveEditable ? recurringBuyReceiveInput : recurringBuyReceivePreview}
+                            onChange={(event) => updateRecurringBuyReceiveInput(event.target.value)}
+                            placeholder={`Estimated ${recurringBaseSymbol}`}
+                            readOnly={!recurringBuyReceiveEditable}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                      </>
+                    ) : null}
+                  </section>
+
+                  <div className="p2p-recurring-cycle-indicator" title="Inventory cycles between sides">
+                    <RecurringCycleIcon />
+                  </div>
+
+                  <section className="trade-compose-section trade-compose-section-sell p2p-recurring-side-panel p2p-recurring-side-panel-sell">
+                    <div className="p2p-recurring-side-head">
+                      <span>Sell side</span>
+                      <strong>Maker sells {recurringBaseToken?.symbol ?? 'base'}</strong>
+                      <small>
+                        {editingRecurringOrder
+                          ? 'Edit the sell price. Liquidity is managed below.'
+                          : 'Set the maker sell price. Liquidity is managed below.'}
+                      </small>
+                    </div>
+                    <label className="trade-compose-field p2p-recurring-price-field">
+                      <span>Sell price</span>
+                      <input
+                        className="trade-compose-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={recurringSellPriceInput}
+                        onChange={(event) => updateRecurringSellPriceInput(event.target.value)}
+                        placeholder={`${recurringQuoteToken?.symbol ?? 'quote'} per ${recurringBaseToken?.symbol ?? 'base'}`}
+                        disabled={creatingRecurringOrder}
+                      />
+                    </label>
+                    {!editingRecurringOrder ? (
+                      <>
+                        <label className="trade-compose-field p2p-recurring-primary-field">
+                          <span>Sell liquidity</span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringAddSellInventoryInput}
+                            onChange={(event) => updateRecurringSellLiquidityInput(event.target.value)}
+                            placeholder={`0 ${recurringBaseSymbol}`}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                        <label
+                          className={`trade-compose-field p2p-recurring-derived-field${
+                            recurringSellReceiveEditable ? ' is-editing' : ''
+                          }`}
+                        >
+                          <span className="trade-compose-field-head">
+                            <span>You receive</span>
+                            <button
+                              type="button"
+                              className="p2p-recurring-derived-toggle"
+                              onClick={toggleRecurringSellReceiveEditable}
+                              aria-label={recurringSellReceiveEditable ? 'Preview sell receive' : 'Edit sell receive'}
+                              disabled={creatingRecurringOrder}
+                            >
+                              {recurringSellReceiveEditable ? 'Preview' : 'Edit'}
+                            </button>
+                          </span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringSellReceiveEditable ? recurringSellReceiveInput : recurringSellReceivePreview}
+                            onChange={(event) => updateRecurringSellReceiveInput(event.target.value)}
+                            placeholder={`Estimated ${recurringQuoteSymbol}`}
+                            readOnly={!recurringSellReceiveEditable}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                      </>
+                    ) : null}
+                  </section>
+                </div>
+
+                {editingRecurringOrder ? (
+                  <div className="p2p-recurring-edit-liquidity">
+                    <div className="p2p-recurring-edit-liquidity-head">
+                      <div>
+                        <span>Live liquidity</span>
+                        <strong>Edit funding without changing this order link.</strong>
+                      </div>
+                      {canRevealEditingRecurringLiquidity ? (
+                        <button
+                          type="button"
+                          className="standalone-trade-secondary-btn"
+                          onClick={() => revealMakerPrivateProgress(editingRecurringOrder).catch(() => {})}
+                          disabled={revealingPrivateTradeKey === editingRecurringTradeKey}
+                        >
+                          {revealingPrivateTradeKey === editingRecurringTradeKey ? 'Revealing...' : 'Reveal Liquidity'}
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="p2p-recurring-grid p2p-recurring-assets p2p-recurring-add-funds">
+                      <section className="p2p-recurring-liquidity-edit-card">
+                        <div>
+                          <span>Sell liquidity</span>
+                          <strong>{formatRecurringLiveLiquidityAmount(editingRecurringOrder, 'sell')}</strong>
+                        </div>
+                        <label className="trade-compose-field">
+                          <span>Add</span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringAddSellInventoryInput}
+                            onChange={(event) => updateRecurringSellLiquidityInput(event.target.value)}
+                            placeholder={`0 ${recurringBaseSymbol}`}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                        <label
+                          className={`trade-compose-field p2p-recurring-derived-field${
+                            recurringSellReceiveEditable ? ' is-editing' : ''
+                          }`}
+                        >
+                          <span className="trade-compose-field-head">
+                            <span>You receive</span>
+                            <button
+                              type="button"
+                              className="p2p-recurring-derived-toggle"
+                              onClick={toggleRecurringSellReceiveEditable}
+                              aria-label={recurringSellReceiveEditable ? 'Preview sell receive' : 'Edit sell receive'}
+                              disabled={creatingRecurringOrder}
+                            >
+                              {recurringSellReceiveEditable ? 'Preview' : 'Edit'}
+                            </button>
+                          </span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringSellReceiveEditable ? recurringSellReceiveInput : recurringSellReceivePreview}
+                            onChange={(event) => updateRecurringSellReceiveInput(event.target.value)}
+                            placeholder={`Estimated ${recurringQuoteSymbol}`}
+                            readOnly={!recurringSellReceiveEditable}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                        <label className="trade-compose-field">
+                          <span>Remove</span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringRemoveSellInventoryInput}
+                            onChange={(event) => setRecurringRemoveSellInventoryInput(sanitizeTokenAmountInput(event.target.value))}
+                            placeholder={`0 ${recurringBaseSymbol}`}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                      </section>
+                      <section className="p2p-recurring-liquidity-edit-card">
+                        <div>
+                          <span>Buy liquidity</span>
+                          <strong>{formatRecurringLiveLiquidityAmount(editingRecurringOrder, 'buy')}</strong>
+                        </div>
+                        <label className="trade-compose-field">
+                          <span>Add</span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringAddBuyBudgetInput}
+                            onChange={(event) => updateRecurringBuyLiquidityInput(event.target.value)}
+                            placeholder={`0 ${recurringQuoteSymbol}`}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                        <label
+                          className={`trade-compose-field p2p-recurring-derived-field${
+                            recurringBuyReceiveEditable ? ' is-editing' : ''
+                          }`}
+                        >
+                          <span className="trade-compose-field-head">
+                            <span>You receive</span>
+                            <button
+                              type="button"
+                              className="p2p-recurring-derived-toggle"
+                              onClick={toggleRecurringBuyReceiveEditable}
+                              aria-label={recurringBuyReceiveEditable ? 'Preview buy receive' : 'Edit buy receive'}
+                              disabled={creatingRecurringOrder}
+                            >
+                              {recurringBuyReceiveEditable ? 'Preview' : 'Edit'}
+                            </button>
+                          </span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringBuyReceiveEditable ? recurringBuyReceiveInput : recurringBuyReceivePreview}
+                            onChange={(event) => updateRecurringBuyReceiveInput(event.target.value)}
+                            placeholder={`Estimated ${recurringBaseSymbol}`}
+                            readOnly={!recurringBuyReceiveEditable}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                        <label className="trade-compose-field">
+                          <span>Remove</span>
+                          <input
+                            className="trade-compose-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={recurringRemoveBuyBudgetInput}
+                            onChange={(event) => setRecurringRemoveBuyBudgetInput(sanitizeTokenAmountInput(event.target.value))}
+                            placeholder={`0 ${recurringQuoteSymbol}`}
+                            disabled={creatingRecurringOrder}
+                          />
+                        </label>
+                      </section>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="p2p-recurring-fill-handling">
+                  <span>Funding and fills</span>
+                  <p>
+                    Liquidity stays in this order and cycles between sides. Closing the order returns remaining funds to the maker.
+                  </p>
+                </div>
+
+                <div className="trade-compose-bottom p2p-recurring-actions">
+                  <p>
+                    {editingRecurringOrder
+                      ? 'Save prices and liquidity changes without changing the link.'
+                      : 'Set buy and sell prices, then fund buy liquidity, sell liquidity, or both.'}
+                  </p>
+                  <button type="button" onClick={() => createRecurringOrder().catch(() => {})} disabled={creatingRecurringOrder}>
+                    {creatingRecurringOrder
+                      ? editingRecurringOrder
+                        ? 'Saving...'
+                        : 'Creating...'
+                      : editingRecurringOrder
+                        ? 'Save Recurring Order'
+                        : 'Create Recurring Order'}
+                  </button>
+                </div>
+                <div className="trade-compose-warning">
+                  <p>
+                    <strong>P2P OTC check:</strong> Buy and sell prices are independent. Same-price orders only happen when you enter the same price.
+                  </p>
+                </div>
+              </div>
+              {createdRecurringOrderLink ? (
+                <div className="standalone-trade-created">
+                  <div>
+                    <span>Recurring order #{createdRecurringOrderId}</span>
+                    <strong>{createdRecurringOrderLink.replace(/^https?:\/\//, '')}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className={lastCopiedKey === 'created-recurring-order-link' ? 'copied' : undefined}
+                    onClick={() => copyWithFeedback(createdRecurringOrderLink, 'created-recurring-order-link').catch(() => {})}
+                  >
+                    {lastCopiedKey === 'created-recurring-order-link' ? 'Shared' : 'Share Link'}
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
           <div className="standalone-trade-options">
             {!editingTrade ? (
               <div className="standalone-trade-visibility" role="group" aria-label="Trade visibility">
@@ -2569,21 +4426,21 @@ export default function P2PTradingPage({
                 {editingTrade
                   ? 'Replacement will be listed publicly'
                   : tradeVisibility === 'public'
-                  ? 'Listed publicly while open'
+                  ? 'Visible on the desk while open'
                   : tradeVisibility === 'direct'
                     ? directTradeRecipientIsValid
                       ? `Sent to ${shortenAddress(directTradeRecipientNormalized)}`
-                      : 'Visible in the recipient wallet inbox'
-                    : 'Full private link required to accept'}
+                      : 'Only the recipient can act'
+                    : 'Shared link required to accept'}
               </strong>
               <p>
                 {editingTrade
-                  ? 'The original public listing is cancelled and the replacement keeps a link back to it.'
+                  ? 'Cancels the old public offer and keeps the replacement linked for history.'
                   : tradeVisibility === 'direct'
-                    ? 'Direct trades are not public listings. The recipient can find the offer under received trades.'
+                  ? 'Direct offers skip the public desk and appear under the recipient wallet received offers.'
                     : tradeVisibility === 'public'
-                      ? 'Public trades appear in the directory while open. On-chain terms remain public to direct contract reads.'
-                      : 'Unlisted trades are not shown in the public directory. On-chain terms remain public to direct contract reads.'}
+                      ? 'Public offers appear on the desk while open. On-chain terms remain public to contract reads.'
+                      : 'Private-link offers stay off the public desk. On-chain terms remain public to contract reads.'}
               </p>
             </div>
           </div>
@@ -2612,15 +4469,17 @@ export default function P2PTradingPage({
                 onClick={() => copyWithFeedback(createdTradeLink, createdTradeCopyKey).catch(() => {})}
               >
                 {lastCopiedKey === createdTradeCopyKey
-                  ? 'Copied'
+                  ? 'Shared'
                   : tradeVisibility === 'unlisted'
-                    ? 'Copy Private Link'
+                    ? 'Share Private Link'
                     : tradeVisibility === 'direct'
-                      ? 'Copy Trade Link'
-                      : 'Copy Link'}
+                      ? 'Share Trade Link'
+                      : 'Share Link'}
               </button>
             </div>
           ) : null}
+            </>
+          )}
           {tradeActionError ? <p className="standalone-trade-error">{tradeActionError}</p> : null}
         </section>
       ) : null}
@@ -2629,14 +4488,30 @@ export default function P2PTradingPage({
         <section className="standalone-trades-section standalone-trade-detail-section">
           <div className="standalone-trades-section-head">
             <div>
-              <p className="landing-eyebrow">Trade Window</p>
-              <h2>{route.tradeId ? 'Review trade' : 'Open a trade link'}</h2>
+              <p className="landing-eyebrow">Trading Terminal</p>
+              <h2>{route.tradeId ? 'Review offer' : 'Open trading terminal'}</h2>
             </div>
+            <button type="button" className="standalone-trade-secondary-btn" onClick={() => navigateToTradePath('/trades')}>
+              Close
+            </button>
           </div>
+          {!route.tradeId ? (
+            <form className="p2p-link-open-form p2p-action-open-form p2p-drawer-open-form" onSubmit={openTradeFromInput}>
+              <input
+                ref={tradeLinkInputRef}
+                type="text"
+                value={tradeLinkInput}
+                onChange={(event) => setTradeLinkInput(event.target.value)}
+                placeholder="Paste offer link, compact code, or id"
+                aria-label="Trade link, compact code, or trade id"
+              />
+              <button type="submit">Open</button>
+            </form>
+          ) : null}
           <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
             <p>
-              <strong>P2P trading risks:</strong> Always verify token contract addresses, amounts, and exchange rates before
-              confirming. Only the escrowed asset transfer is enforced on-chain — only trade with parties you trust.
+              <strong>P2P OTC check:</strong> Verify maker, token contracts, amounts, and price ratio before accepting.
+              Escrow enforces settlement, not counterparty reputation.
             </p>
           </div>
           {counterParentTrade ? (
@@ -2661,7 +4536,7 @@ export default function P2PTradingPage({
           {createdTradeLink && createdTradeId === route.tradeId ? (
             <div className="standalone-trade-created">
               <div>
-                <span>Trade #{createdTradeId}</span>
+                <span>Offer #{createdTradeId}</span>
                 <strong>{resolvedRouteAccessSecret ? 'Private link ready' : 'Share link ready'}</strong>
               </div>
               <button
@@ -2669,13 +4544,13 @@ export default function P2PTradingPage({
                 className={lastCopiedKey === createdTradeCopyKey ? 'copied' : undefined}
                 onClick={() => copyWithFeedback(createdTradeLink, createdTradeCopyKey).catch(() => {})}
               >
-                {lastCopiedKey === createdTradeCopyKey ? 'Copied' : resolvedRouteAccessSecret ? 'Copy Private Link' : 'Copy Link'}
+                {lastCopiedKey === createdTradeCopyKey ? 'Shared' : resolvedRouteAccessSecret ? 'Share Private Link' : 'Share Link'}
               </button>
             </div>
           ) : null}
           {route.routeError || detailTradeError
             ? renderP2PEmptyState(
-              'Trade could not load',
+              routeIsRecurringOrder ? 'Recurring order could not load' : 'Trade could not load',
               route.routeError || detailTradeError,
               <>
                 {routeTradeId !== null ? (
@@ -2692,7 +4567,7 @@ export default function P2PTradingPage({
                   </button>
                 )}
                 <button type="button" onClick={() => navigateToTradePath('/trades')}>
-                  Open Market
+                  Open Desk
                 </button>
               </>,
               'error'
@@ -2700,8 +4575,8 @@ export default function P2PTradingPage({
             : null}
           {loadingDetailTrade && !detailTrade
             ? renderP2PEmptyState(
-              'Loading trade',
-              'Reading escrow terms and access rules.',
+              routeIsRecurringOrder ? 'Reading recurring order' : 'Loading trade',
+              routeIsRecurringOrder ? 'Reading reusable buy/sell terms and liquidity.' : 'Reading escrow terms and access rules.',
               undefined,
               'loading'
             )
@@ -2715,23 +4590,27 @@ export default function P2PTradingPage({
                   Paste Link
                 </button>
                 <button type="button" onClick={() => navigateToTradePath('/trades')}>
-                  Open Market
+                  Open Desk
                 </button>
               </>,
               'locked'
             )
           ) : null}
-          {!tradeAccessBlocked && detailTrade ? renderTradeCard(detailTrade) : null}
+          {!tradeAccessBlocked && detailTrade
+            ? detailTrade.recurringOrder
+              ? renderRecurringOrderCard(detailTrade, true)
+              : renderTradeCard(detailTrade)
+            : null}
           {!loadingDetailTrade && !detailTrade && !tradeAccessBlocked && !route.routeError && !detailTradeError ? (
             renderP2PEmptyState(
-              'Open a trade window',
+              'Open trading terminal',
               'Paste a shared trade link, compact code, or trade id above.',
               <>
                 <button type="button" onClick={focusTradeLinkInput}>
                   Paste Link
                 </button>
                 <button type="button" onClick={() => navigateToTradePath('/trades')}>
-                  Open Market
+                  Open Desk
                 </button>
               </>
             )
@@ -2744,7 +4623,7 @@ export default function P2PTradingPage({
         <section className="standalone-trades-section">
           <div className="standalone-trades-section-head">
             <div>
-              <p className="landing-eyebrow">Wallet</p>
+              <p className="landing-eyebrow">OTC Desk</p>
               <h2>My trades</h2>
               {walletAddress ? (
                 <p className="p2p-wallet-trade-summary">
@@ -2759,7 +4638,7 @@ export default function P2PTradingPage({
           {!walletAddress
             ? renderP2PEmptyState(
               'Connect to see your trades',
-              'Received offers, active listings, counters, and history are grouped here once your trading wallet is connected.',
+              'Received offers, active offers, counters, and history are grouped here once your trading wallet is connected.',
               <button
                 type="button"
                 onClick={handleWalletPrimaryAction}
@@ -2785,7 +4664,7 @@ export default function P2PTradingPage({
           {walletAddress && loadingMyTrades && myTrades.length === 0
             ? renderP2PEmptyState(
               'Loading your trades',
-              'Checking received offers, active listings, counters, and history.',
+              'Checking received offers, active offers, counters, and history.',
               undefined,
               'loading'
             )
@@ -2810,29 +4689,29 @@ export default function P2PTradingPage({
               <section className="p2p-wallet-trade-group" role="tabpanel">
                 {renderTradeList(
                   selectedMyTradeGroup.trades,
-                  tradeSearchInput ? selectedMyTradeGroup.emptySearchMessage : selectedMyTradeGroup.emptyMessage,
+                  hasActiveDeskFilters ? selectedMyTradeGroup.emptySearchMessage : selectedMyTradeGroup.emptyMessage,
                   'p2p-wallet-trade-grid',
                   renderP2PEmptyState(
-                    tradeSearchInput ? `No ${selectedMyTradeGroup.label.toLowerCase()} match` : selectedMyTradeGroup.emptyMessage,
-                    tradeSearchInput
-                      ? 'Clear the search or try another token, wallet, status, or id.'
+                    hasActiveDeskFilters ? `No ${selectedMyTradeGroup.label.toLowerCase()} match` : selectedMyTradeGroup.emptyMessage,
+                    hasActiveDeskFilters
+                      ? 'Clear filters or try another token, wallet, status, or id.'
                       : selectedMyTradeGroup.id === 'received'
                         ? 'Direct and counter offers sent to this wallet will appear here for review.'
                         : selectedMyTradeGroup.id === 'active'
                           ? 'Create a public, private-link, or direct offer to start tracking it here.'
                           : 'Settled, cancelled, declined, and expired trades will collect here.',
-                    tradeSearchInput ? (
+                    hasActiveDeskFilters ? (
                       <>
-                        <button type="button" onClick={() => setTradeSearchInput('')}>
-                          Clear search
+                        <button type="button" onClick={clearTradeDeskFilters}>
+                          Clear filters
                         </button>
                         <button type="button" onClick={() => refreshMyTrades().catch(() => {})} disabled={loadingMyTrades}>
                           {loadingMyTrades ? 'Refreshing...' : 'Refresh'}
                         </button>
                       </>
                     ) : selectedMyTradeGroup.id === 'active' ? (
-                      <button type="button" onClick={startFreshTrade}>
-                        Create Trade
+                      <button type="button" onClick={startFreshOneOffTrade}>
+                        Create Offer
                       </button>
                     ) : (
                       <button type="button" onClick={() => refreshMyTrades().catch(() => {})} disabled={loadingMyTrades}>

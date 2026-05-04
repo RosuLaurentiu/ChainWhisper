@@ -108,6 +108,7 @@ type UseP2PTradeComposerActionsArgs = {
   setEditingTrade: Dispatch<SetStateAction<TradeSnapshot | null>>;
   setTradeActionError: Dispatch<SetStateAction<string>>;
   setTradeExpiryHoursInput: Dispatch<SetStateAction<string>>;
+  setTradeHasNoExpiry: Dispatch<SetStateAction<boolean>>;
   setTradeHidePrivateLiquidity: Dispatch<SetStateAction<boolean>>;
   setTradeOfferAmountInput: Dispatch<SetStateAction<string>>;
   setTradeOfferCustomTokenAddress: Dispatch<SetStateAction<string>>;
@@ -117,6 +118,7 @@ type UseP2PTradeComposerActionsArgs = {
   setTradeRequestTokenSelection: Dispatch<SetStateAction<TradeTokenPresetKey>>;
   setTradeVisibility: Dispatch<SetStateAction<TradeVisibility>>;
   tradeComposerModel: TradeComposerModel;
+  tradeHasNoExpiry: boolean;
   tradeHidePrivateLiquidity: boolean;
   tradeVisibility: TradeVisibility;
   walletAddress: string;
@@ -160,6 +162,7 @@ export default function useP2PTradeComposerActions({
   setEditingTrade,
   setTradeActionError,
   setTradeExpiryHoursInput,
+  setTradeHasNoExpiry,
   setTradeHidePrivateLiquidity,
   setTradeOfferAmountInput,
   setTradeOfferCustomTokenAddress,
@@ -169,6 +172,7 @@ export default function useP2PTradeComposerActions({
   setTradeRequestTokenSelection,
   setTradeVisibility,
   tradeComposerModel,
+  tradeHasNoExpiry,
   tradeHidePrivateLiquidity,
   tradeVisibility,
   walletAddress,
@@ -205,6 +209,7 @@ export default function useP2PTradeComposerActions({
       setTradeOfferAmountInput(formatTradeAmountInput(snapshot.request));
       setTradeRequestAmountInput(formatTradeAmountInput(snapshot.offer));
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeHasNoExpiry(false);
       setTradeHidePrivateLiquidity(false);
       setTradeActionError('');
       openTradeSnapshot(snapshot);
@@ -215,6 +220,7 @@ export default function useP2PTradeComposerActions({
       setEditingTrade,
       setTradeActionError,
       setTradeExpiryHoursInput,
+      setTradeHasNoExpiry,
       setTradeHidePrivateLiquidity,
       setTradeOfferAmountInput,
       setTradeOfferCustomTokenAddress,
@@ -278,6 +284,7 @@ export default function useP2PTradeComposerActions({
         setTradeRequestAmountInput(formatTradeAmountInput(snapshot.request));
       }
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeHasNoExpiry(snapshot.expiresAt <= 0);
       setTradeHidePrivateLiquidity(Boolean(snapshot.hiddenLiquidity));
       setTradeActionError('');
       navigateToTradePath('/trades/create');
@@ -289,6 +296,7 @@ export default function useP2PTradeComposerActions({
       setEditingTrade,
       setTradeActionError,
       setTradeExpiryHoursInput,
+      setTradeHasNoExpiry,
       setTradeHidePrivateLiquidity,
       setTradeOfferAmountInput,
       setTradeOfferCustomTokenAddress,
@@ -304,16 +312,18 @@ export default function useP2PTradeComposerActions({
 
   const clearEditTrade = useCallback(() => {
     setEditingTrade(null);
+    setTradeHasNoExpiry(false);
     setTradeHidePrivateLiquidity(false);
     setTradeActionError('');
-  }, [setEditingTrade, setTradeActionError, setTradeHidePrivateLiquidity]);
+  }, [setEditingTrade, setTradeActionError, setTradeHasNoExpiry, setTradeHidePrivateLiquidity]);
 
   const startFreshTrade = useCallback(() => {
     clearCounterTrade();
     clearEditTrade();
     setTradeHidePrivateLiquidity(false);
+    setTradeHasNoExpiry(false);
     navigateToTradePath('/trades/create');
-  }, [clearCounterTrade, clearEditTrade, navigateToTradePath, setTradeHidePrivateLiquidity]);
+  }, [clearCounterTrade, clearEditTrade, navigateToTradePath, setTradeHasNoExpiry, setTradeHidePrivateLiquidity]);
 
   const createTrade = useCallback(async () => {
     setTradeActionError('');
@@ -363,14 +373,16 @@ export default function useP2PTradeComposerActions({
           (!isEditTrade || editSourceTrade?.hiddenLiquidity)
       );
       if (isEditTrade && editSourceTrade.hiddenLiquidity && !hiddenLiquidity) {
-        setTradeActionError('Private liquidity trades must stay private when edited. Cancel the edit to create a visible-liquidity trade.');
+        setTradeActionError('Hidden amount orders must stay hidden when edited. Cancel the edit to create a visible order.');
         return;
       }
       const accessSecret = tradeVisibility === 'unlisted' && !isCounterTrade && !isEditTrade ? createTradeAccessSecret() : '';
       const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
       const signer = await getTradeSigner(isPrivateTradeAsset(offerToken));
       const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
-      const expiresAt = Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
+      const expiresAt = tradeHasNoExpiry
+        ? 0
+        : Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
       const publicOfferAmount = hiddenLiquidity ? tradeComposerModel.hiddenPriceOfferAmountWei! : offerAmount;
       const publicRequestAmount = hiddenLiquidity ? tradeComposerModel.hiddenPriceRequestAmountWei! : requestAmount;
       const takerAddress =
@@ -504,6 +516,7 @@ export default function useP2PTradeComposerActions({
       setTradeOfferAmountInput('');
       setTradeRequestAmountInput('');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+      setTradeHasNoExpiry(false);
       setTradeHidePrivateLiquidity(false);
       openTrade(tradeId, accessSecret || undefined, createResult.escrowContract);
       await Promise.all([
@@ -543,10 +556,12 @@ export default function useP2PTradeComposerActions({
     setEditingTrade,
     setTradeActionError,
     setTradeExpiryHoursInput,
+    setTradeHasNoExpiry,
     setTradeHidePrivateLiquidity,
     setTradeOfferAmountInput,
     setTradeRequestAmountInput,
     tradeComposerModel,
+    tradeHasNoExpiry,
     tradeHidePrivateLiquidity,
     tradeVisibility,
     walletAddress,

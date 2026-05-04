@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
-import { messageReferencesMatch } from '../lib/appHelpers';
 import { resolveRecentPeersWithMeta } from '../lib/appLookup';
+import {
+  mergeDirectHistoryEntries,
+  resolveDirectUnreadState
+} from '../lib/directConversationSyncHelpers';
 import {
   mergeDirectSyncOptions,
   resolveDirectSyncRange,
@@ -26,7 +29,6 @@ import {
   mergeUniqueContacts,
   normalizeConversationPreferenceState,
   normalizeLastReadAllTs,
-  normalizeMessagesByContact,
   parseChatMessagePayload,
   parseReadCursorText,
   parseStateBackupText,
@@ -815,171 +817,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
             typeof knownRange?.firstBlock === 'number' ? earliestBlock > knownRange.firstBlock : true;
         }
 
-        setMessagesByContact((previous) => {
-          if (entries.length === 0) {
-            return previous;
-          }
-
-          const next: Record<string, ChatMessage[]> = { ...previous };
-          const existingIdsByContact = new Map<string, Set<string>>();
-          const prunedOptimisticByContact = new Set<string>();
-          const confirmedOutgoingTxHashesByContact = new Map<string, Set<string>>();
-
-          for (const entry of entries) {
-            if (entry.direction !== 'outgoing' || !entry.txHash) {
-              continue;
-            }
-
-            const key = entry.contact.toLowerCase();
-            const existingHashes = confirmedOutgoingTxHashesByContact.get(key);
-            if (existingHashes) {
-              existingHashes.add(entry.txHash.toLowerCase());
-              continue;
-            }
-
-            confirmedOutgoingTxHashesByContact.set(key, new Set([entry.txHash.toLowerCase()]));
-          }
-
-          for (const entry of entries) {
-            const key = entry.contact.toLowerCase();
-            if (!prunedOptimisticByContact.has(key)) {
-              const confirmedHashes = confirmedOutgoingTxHashesByContact.get(key);
-              if (confirmedHashes && confirmedHashes.size > 0) {
-                next[key] = (next[key] ?? []).filter((message) => {
-                  if (!message.txHash) {
-                    return true;
-                  }
-
-                  const isOptimistic =
-                    message.deliveryState === 'pending' ||
-                    message.deliveryState === 'sent' ||
-                    message.deliveryState === 'failed';
-
-                  if (!isOptimistic) {
-                    return true;
-                  }
-
-                  return !confirmedHashes.has(message.txHash.toLowerCase());
-                });
-              }
-
-              prunedOptimisticByContact.add(key);
-            }
-
-            if (entry.direction === 'outgoing') {
-              const existingForDedupe = next[key] ?? [];
-              let matchedLocalIndex = -1;
-              let matchedLocalScore = Number.MAX_SAFE_INTEGER;
-
-              for (let index = 0; index < existingForDedupe.length; index += 1) {
-                const candidate = existingForDedupe[index];
-                if (
-                  !candidate.id.startsWith('local-') ||
-                  candidate.direction !== 'outgoing' ||
-                  candidate.text !== entry.text ||
-                  (candidate.replyToText ?? '') !== (entry.replyToText ?? '') ||
-                  !messageReferencesMatch(
-                    {
-                      txHash: candidate.replyToTxHash,
-                      blockNumber: candidate.replyToBlockNumber,
-                      logIndex: candidate.replyToLogIndex
-                    },
-                    {
-                      txHash: entry.replyToTxHash,
-                      blockNumber: entry.replyToBlockNumber,
-                      logIndex: entry.replyToLogIndex
-                    }
-                  ) ||
-                  !messageReferencesMatch(
-                    {
-                      txHash: candidate.reactionToTxHash,
-                      blockNumber: candidate.reactionToBlockNumber,
-                      logIndex: candidate.reactionToLogIndex
-                    },
-                    {
-                      txHash: entry.reactionToTxHash,
-                      blockNumber: entry.reactionToBlockNumber,
-                      logIndex: entry.reactionToLogIndex
-                    }
-                  ) ||
-                  (candidate.reactionEmoji ?? '') !== (entry.reactionEmoji ?? '')
-                ) {
-                  continue;
-                }
-
-                const isOptimisticCandidate =
-                  candidate.deliveryState === 'pending' ||
-                  candidate.deliveryState === 'sent' ||
-                  candidate.deliveryState === 'failed';
-                if (!isOptimisticCandidate) {
-                  continue;
-                }
-
-                const candidateTimestamp = typeof candidate.timestamp === 'number' ? candidate.timestamp : undefined;
-                const entryTimestamp = typeof entry.timestamp === 'number' ? entry.timestamp : undefined;
-                if (typeof candidateTimestamp === 'number' && typeof entryTimestamp === 'number') {
-                  const diff = Math.abs(candidateTimestamp - entryTimestamp);
-                  if (diff > 180) {
-                    continue;
-                  }
-                  if (diff < matchedLocalScore) {
-                    matchedLocalScore = diff;
-                    matchedLocalIndex = index;
-                  }
-                  continue;
-                }
-
-                if (matchedLocalIndex === -1) {
-                  matchedLocalIndex = index;
-                }
-              }
-
-              if (matchedLocalIndex >= 0) {
-                const pruned = [...existingForDedupe];
-                pruned.splice(matchedLocalIndex, 1);
-                next[key] = pruned;
-              }
-            }
-
-            const existing = next[key] ?? [];
-            let existingIds = existingIdsByContact.get(key);
-            if (!existingIds) {
-              existingIds = new Set(existing.map((message) => message.id));
-              existingIdsByContact.set(key, existingIds);
-            }
-
-            if (existingIds.has(entry.id)) {
-              continue;
-            }
-
-            existingIds.add(entry.id);
-
-            next[key] = [
-              ...existing,
-              {
-                id: entry.id,
-                direction: entry.direction,
-                text: entry.text,
-                senderAddress: entry.direction === 'outgoing' ? requestedWalletAddress : entry.contact,
-                replyToMessageId: entry.replyToMessageId,
-                replyToText: entry.replyToText,
-                replyToTxHash: entry.replyToTxHash,
-                replyToBlockNumber: entry.replyToBlockNumber,
-                replyToLogIndex: entry.replyToLogIndex,
-                reactionToTxHash: entry.reactionToTxHash,
-                reactionToBlockNumber: entry.reactionToBlockNumber,
-                reactionToLogIndex: entry.reactionToLogIndex,
-                reactionEmoji: entry.reactionEmoji,
-                timestamp: entry.timestamp,
-                blockNumber: entry.blockNumber,
-                logIndex: entry.logIndex,
-                txHash: entry.txHash
-              }
-            ];
-          }
-
-          return normalizeMessagesByContact(next);
-        });
+        setMessagesByContact((previous) => mergeDirectHistoryEntries(previous, entries, requestedWalletAddress));
       }
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -1043,7 +881,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
           setUnreadMap({});
         }
       } else if (unreadCandidateAddresses.length > 0) {
-        const latestTimes = unreadCandidateAddresses.map((address) => {
+        const latestMessageTimeByContact = new Map<string, number>();
+        for (const address of unreadCandidateAddresses) {
           const observed = latestIncomingMessageTimeByContact.get(address) ?? 0;
           const localMessages = messagesByContact[address] ?? [];
           let latestIncomingFromLocal = 0;
@@ -1056,64 +895,33 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
               latestIncomingFromLocal = ts;
             }
           }
-          return [address, Math.max(observed, latestIncomingFromLocal)] as const;
-        });
+          latestMessageTimeByContact.set(address, Math.max(observed, latestIncomingFromLocal));
+        }
 
-        const candidateSet = new Set(unreadCandidateAddresses);
         const activeKey = argsRef.current.activeContact?.toLowerCase();
         const pageVisible =
           typeof document !== 'undefined' &&
           !document.hidden &&
           (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
-        const globalReadTs = lastReadAllTsRef.current;
-        const nextReadByContact = { ...lastReadByContactRef.current };
-        let readByContactChanged = false;
-        const previousUnread = unreadMapRef.current || {};
-        const nextUnread = { ...previousUnread };
-        let unreadChanged = false;
+        const unreadState = resolveDirectUnreadState({
+          activeKey,
+          candidateAddresses: unreadCandidateAddresses,
+          globalReadTs: lastReadAllTsRef.current,
+          latestMessageTimeByContact,
+          pageVisible,
+          previousReadByContact: lastReadByContactRef.current,
+          previousUnread: unreadMapRef.current || {},
+          suppressedKeys: notificationSuppressedContactAddressSet,
+          walletKey
+        });
 
-        for (const [address, latestMessageTime] of latestTimes) {
-          if (address === activeKey && pageVisible && latestMessageTime > 0) {
-            const existingReadTs = nextReadByContact[address] ?? 0;
-            if (latestMessageTime > existingReadTs) {
-              nextReadByContact[address] = latestMessageTime;
-              readByContactChanged = true;
-            }
-          }
-
-          const contactReadTs = nextReadByContact[address] ?? 0;
-          const effectiveReadTs = Math.max(globalReadTs, contactReadTs);
-          const shouldSuppressNotificationsForContact =
-            notificationSuppressedContactAddressSet.has(address);
-          const shouldUnread =
-            !shouldSuppressNotificationsForContact &&
-            latestMessageTime > effectiveReadTs &&
-            !(address === activeKey && pageVisible);
-          if (shouldUnread) {
-            if (!nextUnread[address]) {
-              nextUnread[address] = true;
-              unreadChanged = true;
-            }
-          } else if (nextUnread[address]) {
-            delete nextUnread[address];
-            unreadChanged = true;
-          }
+        if (unreadState.unreadChanged) {
+          unreadMapRef.current = unreadState.nextUnread;
+          setUnreadMap(unreadState.nextUnread);
         }
 
-        for (const existingKey of Object.keys(nextUnread)) {
-          if (!candidateSet.has(existingKey)) {
-            delete nextUnread[existingKey];
-            unreadChanged = true;
-          }
-        }
-
-        if (unreadChanged) {
-          unreadMapRef.current = nextUnread;
-          setUnreadMap(nextUnread);
-        }
-
-        if (readByContactChanged) {
-          lastReadByContactRef.current = nextReadByContact;
+        if (unreadState.readByContactChanged) {
+          lastReadByContactRef.current = unreadState.nextReadByContact;
         }
       }
 
@@ -1441,52 +1249,11 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       }
 
       if (entries.length > 0) {
-        entries.sort((left, right) => {
-          if (left.blockNumber !== right.blockNumber) {
-            return left.blockNumber - right.blockNumber;
-          }
-          return left.logIndex - right.logIndex;
-        });
-
-        setMessagesByContact((previous) => {
-          const next: Record<string, ChatMessage[]> = { ...previous };
-          const existing = next[contactKey] ?? [];
-          const existingIds = new Set(existing.map((message) => message.id));
-          const additions: ChatMessage[] = [];
-
-          for (const entry of entries) {
-            if (existingIds.has(entry.id)) {
-              continue;
-            }
-
-            additions.push({
-              id: entry.id,
-              direction: entry.direction,
-              text: entry.text,
-              senderAddress: entry.direction === 'outgoing' ? requestedWalletAddress : entry.contact,
-              replyToMessageId: entry.replyToMessageId,
-              replyToText: entry.replyToText,
-              replyToTxHash: entry.replyToTxHash,
-              replyToBlockNumber: entry.replyToBlockNumber,
-              replyToLogIndex: entry.replyToLogIndex,
-              reactionToTxHash: entry.reactionToTxHash,
-              reactionToBlockNumber: entry.reactionToBlockNumber,
-              reactionToLogIndex: entry.reactionToLogIndex,
-              reactionEmoji: entry.reactionEmoji,
-              timestamp: entry.timestamp,
-              blockNumber: entry.blockNumber,
-              logIndex: entry.logIndex,
-              txHash: entry.txHash
-            });
-          }
-
-          if (additions.length === 0) {
-            return previous;
-          }
-
-          next[contactKey] = [...existing, ...additions];
-          return normalizeMessagesByContact(next);
-        });
+        setMessagesByContact((previous) =>
+          mergeDirectHistoryEntries(previous, entries, requestedWalletAddress, {
+            pruneOptimisticOutgoing: false
+          })
+        );
       }
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;

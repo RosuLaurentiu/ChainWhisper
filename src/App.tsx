@@ -11,6 +11,8 @@ import useBlockTimestampCache from './hooks/useBlockTimestampCache';
 import { useBurnerWallet } from './hooks/useBurnerWallet';
 import useChatWalletHeaderControl from './hooks/useChatWalletHeaderControl';
 import useDirectConversationSync from './hooks/useDirectConversationSync';
+import useGroupAdminActions from './hooks/useGroupAdminActions';
+import useInChatTradeActions from './hooks/useInChatTradeActions';
 import { useNotificationSound } from './hooks/useNotificationSound';
 import useImageAttachmentStatus from './hooks/useImageAttachmentStatus';
 import { useStateBackupSync } from './hooks/useStateBackupSync';
@@ -35,38 +37,13 @@ import {
   fetchTradeSnapshotById,
   readPrivateTokenBalanceWei
 } from './lib/appChain';
+import { getCotiSnapAesKey, storeCotiSnapAesKey } from './lib/cotiSnap';
 import { submitGroupMemo } from './lib/groupChatChain';
-import {
-  acceptCounterTradeAndCloseParentOnChain,
-  acceptTradeOnChain,
-  cancelTradeOnChain,
-  counterTradeAndCloseCounteredTradeOnChain,
-  createTradeOnChain,
-  declineTradeOnChain
-} from './lib/tradeActions';
-import {
-  createGroupJoinCode,
-  fetchActiveJoinCodesForAdmin,
-  hasActiveLegacyGroupInvite,
-  joinWithGroupCode,
-  revokeGroupJoinCode
-} from './lib/groupJoinCodes';
 import {
   submitDirectMemo,
   submitHiddenContactNameMemo,
   submitHiddenConversationStateMemo
 } from './lib/directChatChain';
-import {
-  acceptGroupInviteOnChain,
-  createGroupOnChain,
-  declineGroupInviteOnChain,
-  disbandGroupOnChain,
-  handoffAdminAndLeaveGroupOnChain,
-  inviteMembersToGroupOnChain,
-  leaveGroupOnChain,
-  removeMemberFromGroupOnChain,
-  renameGroupOnChain
-} from './lib/groupActions';
 import {
   fetchOnChainNicknames as fetchOnChainNicknamesLookup,
   getNicknameMaxLength as getNicknameMaxLengthLookup,
@@ -77,18 +54,18 @@ import {
 import {
   getStoredGroupRemovalNoticeMarker as getStoredGroupRemovalNoticeMarkerStorage,
   getPreferredBrowserWalletId,
+  saveWalletPreference,
   setStoredGroupRemovalNoticeMarker as setStoredGroupRemovalNoticeMarkerStorage
 } from './lib/appStorage';
 import { sendChatImageAttachment } from './lib/chatImageAttachment';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
-import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import { mergeDirectSyncOptions } from './lib/directSyncPlan';
+import { syncActiveGroupMessagesFast, type GroupMessageSyncContract } from './lib/groupMessageSync';
 import {
   collectGroupIdsFromLogs,
   collectLatestGroupRemovalEvents,
   mergeGroupSyncOptions,
   resolveActiveGroupBackfillPlan,
-  resolveGroupCursorRange,
   resolveGroupPrefetchPlan,
   resolveRealtimeGroupSyncOptions,
   resolveTrackedGroupMessageLoad,
@@ -120,8 +97,6 @@ import {
   buildTradeSnapshotKey,
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
-  buildTradeOfferMessagePayload,
-  buildTradeResponseMessagePayload,
   BURNER_PIN_MIN_LENGTH,
   BurnerWalletRecord,
   calculateEstimatedBurnerTopUpAmount,
@@ -140,26 +115,19 @@ import {
   DEFAULT_NICKNAME_MAX_BYTES,
   encodeMemoPlaintext,
   ERC20_TOKEN_ABI,
-  extractUserCiphertext,
   FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL,
   FALLBACK_REWARD_TOKEN_DECIMALS,
   FALLBACK_REWARD_TOKEN_SYMBOL,
-  FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK,
   formatCotiAmount,
-  formatGroupMembershipEventText,
   formatTokenAmount,
   getCotiWsLastHealthyAt,
   getGroupActionErrorMessage,
-  getGroupCreateErrorMessage,
-  getGroupJoinErrorMessage,
   getMessageDisplayText,
   getProviderErrorMessage,
-  GROUP_ADMIN_BURN_ADDRESS,
   GROUP_CHAT_CONTRACT_ABI,
   GROUP_CHAT_CONTRACT_ADDRESS,
   GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS,
   GroupInvite,
-  GroupMessageEntry,
   GroupSummary,
   hasInsufficientFundsError,
   IMAGE_MESSAGE_PREFIX,
@@ -178,13 +146,10 @@ import {
   normalizeReactionEmoji,
   normalizeTokenDecimals,
   parseChatMessagePayload,
-  parseGroupInviteCode,
-  parseGroupJoinCodeFromPayload,
   parseTradeOfferMessagePayload,
   parseStoredGroupTitle,
   parseSubmitMemoPayload,
   parseTokenAmountInput,
-  parseWalletAddressListInput,
   PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TOKEN_BALANCE_ABI,
@@ -196,7 +161,6 @@ import {
   REWARD_TOKEN_ADDRESS,
   sanitizeTokenAmountInput,
   shortenAddress,
-  sortMessagesChronologically,
   SWAP_VAULT_CONTRACT_ABI,
   SWAP_VAULT_CONTRACT_ADDRESS,
   SyncConversationOptions,
@@ -529,7 +493,6 @@ export default function App() {
   } = useNotificationSound(soundEnabled);
   const [error, setError] = useState<string>('');
   const [tradeHeaderWalletControl, setTradeHeaderWalletControl] = useState<ReactNode>(null);
-  const [tradeHeaderNavigationControl, setTradeHeaderNavigationControl] = useState<ReactNode>(null);
   const {
     activePage,
     activeMobileView,
@@ -797,6 +760,7 @@ export default function App() {
     activeProvider,
     activeSignerSource,
     activateBrowserWalletSession,
+    adoptBrowserWalletSession,
     browserWalletSession,
     chainId,
     connectingMethod,
@@ -850,9 +814,11 @@ export default function App() {
     openChangeBurnerPin,
     resetBurnerSession,
     savedBurnerWalletCount,
+    setActiveBurnerWalletId,
     setBurnerBalanceWei,
     setBurnerImportInput,
     setBurnerPinInput,
+    setBurnerWallets,
     setShowBurnerImportModal,
     setTopUpMetricsNonce,
     setTopUpMessageTarget,
@@ -2912,7 +2878,24 @@ export default function App() {
       }
 
       if (!onboardInfo?.aesKey) {
-        throw new Error('AES key unavailable. Use Connect without burner and complete onboarding signature once.');
+        const snapAesKey = await getCotiSnapAesKey(provider);
+        if (snapAesKey) {
+          signer.setUserOnboardInfo({
+            ...(signer.getUserOnboardInfo() ?? {}),
+            aesKey: snapAesKey
+          });
+          onboardInfo = signer.getUserOnboardInfo();
+        }
+      }
+
+      if (!onboardInfo?.aesKey) {
+        await signer.generateOrRecoverAes();
+        await storeCotiSnapAesKey(provider, signer.getUserOnboardInfo()?.aesKey).catch(() => {});
+        onboardInfo = signer.getUserOnboardInfo();
+      }
+
+      if (!onboardInfo?.aesKey) {
+        throw new Error('AES key unavailable. Complete the privacy unlock signature once.');
       }
 
       setSessionOnboardInfo((previous) => ({
@@ -2984,10 +2967,29 @@ export default function App() {
     try {
       signer.clearUserOnboardInfo();
       setOnboardStatus('Recovering COTI AES key...');
+      const provider = getConnectedProvider();
+      if (provider) {
+        const snapAesKey = await getCotiSnapAesKey(provider);
+        if (snapAesKey) {
+          signer.setUserOnboardInfo({
+            ...(signer.getUserOnboardInfo() ?? {}),
+            aesKey: snapAesKey
+          });
+          setSessionOnboardInfo((previous) => ({
+            ...previous,
+            [cacheKey]: mergeOnboardInfo(previous[cacheKey], signer.getUserOnboardInfo())
+          }));
+          setOnboardStatus('AES key ready');
+          return true;
+        }
+      }
       await signer.generateOrRecoverAes();
       const recoveredOnboardInfo = signer.getUserOnboardInfo();
       if (!recoveredOnboardInfo?.aesKey) {
         throw previousError instanceof Error ? previousError : new Error('AES key recovery did not return a key.');
+      }
+      if (provider) {
+        await storeCotiSnapAesKey(provider, recoveredOnboardInfo.aesKey).catch(() => {});
       }
 
       setSessionOnboardInfo((previous) => ({
@@ -3352,351 +3354,33 @@ export default function App() {
       const selectedActiveGroupId = activeGroupIdRef.current;
       const requestedPrefetchGroupId = toSafeNumber(options?.prefetchGroupId);
 
-      const syncActiveGroupMessagesFast = async (
+      const syncActiveGroupMessagesForGroup = (
         groupId: number,
         fastOptions?: { includeMembershipEvents?: boolean; knownLastBlock?: number; prefetch?: boolean; wideLoad?: boolean }
-      ): Promise<Map<string, number>> => {
-        const latestIncomingByGroup = new Map<string, number>();
-        const groupMessageSyncKey = `${walletKey}:${groupId}`;
-        const groupMemberSyncKey = `${walletKey}:${groupId}`;
-        const previousGroupMessageBlock = groupMessageLastSyncedBlockRef.current[groupMessageSyncKey];
-        const previousGroupMemberBlock = groupMemberLastSyncedBlockRef.current[groupMemberSyncKey];
-        const knownLastBlock = toSafeNumber(fastOptions?.knownLastBlock);
-        const activeGroupLastMessageBlock =
-          knownLastBlock > 0
-            ? knownLastBlock
-            : toSafeNumber(await contract.lastMessageBlockForGroup(groupId).catch(() => null));
-        if (currentWalletKeyRef.current !== requestedWalletKey) {
-          return latestIncomingByGroup;
-        }
-
-        const messageRange = resolveGroupCursorRange({
-          deep: options?.deep,
-          initialLookbackBlocks: INITIAL_SYNC_LOOKBACK_BLOCKS,
-          latestBlock,
-          lastActivityBlock: activeGroupLastMessageBlock,
-          prefetch: fastOptions?.prefetch,
-          prefetchLookbackBlocks: FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK,
-          previousSyncedBlock: previousGroupMessageBlock,
-          wideLoad: fastOptions?.wideLoad
-        });
-        const memberRange = fastOptions?.includeMembershipEvents
-          ? resolveGroupCursorRange({
-            deep: options?.deep,
-            initialLookbackBlocks: INITIAL_SYNC_LOOKBACK_BLOCKS,
-            latestBlock,
-            lastActivityBlock: knownLastBlock > 0 ? knownLastBlock : activeGroupLastMessageBlock,
-            previousSyncedBlock: previousGroupMemberBlock,
-            wideLoad: fastOptions?.wideLoad
-          })
-          : null;
-
-        if (!messageRange.shouldQuery) {
-          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = messageRange.advanceToBlock;
-        }
-        if (memberRange && !memberRange.shouldQuery) {
-          groupMemberLastSyncedBlockRef.current[groupMemberSyncKey] = memberRange.advanceToBlock;
-        }
-        if (!messageRange.shouldQuery && (!memberRange || !memberRange.shouldQuery)) {
-          return latestIncomingByGroup;
-        }
-
-        const [
-          incomingLogs,
-          outgoingLogs,
-          memberAddedLogs,
-          memberRemovedLogs,
-          memberLeftLogs
-        ] = await Promise.all([
-          messageRange.shouldQuery
-            ? contract.queryFilter(
-              contract.filters.GroupMessageDelivered(groupId, null, requestedWalletAddress),
-              messageRange.fromBlock,
-              messageRange.toBlock
-            )
-            : Promise.resolve([]),
-          messageRange.shouldQuery
-            ? contract.queryFilter(
-              contract.filters.GroupMessageSubmitted(groupId, requestedWalletAddress),
-              messageRange.fromBlock,
-              messageRange.toBlock
-            )
-            : Promise.resolve([]),
-          memberRange?.shouldQuery
-            ? contract.queryFilter(contract.filters.GroupMemberAdded(groupId, null), memberRange.fromBlock, memberRange.toBlock)
-            : Promise.resolve([]),
-          memberRange?.shouldQuery
-            ? contract.queryFilter(contract.filters.GroupMemberRemoved(groupId, null), memberRange.fromBlock, memberRange.toBlock)
-            : Promise.resolve([]),
-          memberRange?.shouldQuery
-            ? contract.queryFilter(contract.filters.GroupMemberLeft(groupId, null), memberRange.fromBlock, memberRange.toBlock)
-            : Promise.resolve([])
-        ]);
-        if (currentWalletKeyRef.current !== requestedWalletKey) {
-          return latestIncomingByGroup;
-        }
-
-        const blockNumbers = new Set<number>();
-        for (const log of incomingLogs) {
-          blockNumbers.add(log.blockNumber);
-        }
-        for (const log of outgoingLogs) {
-          blockNumbers.add(log.blockNumber);
-        }
-        for (const log of memberAddedLogs) {
-          blockNumbers.add(log.blockNumber);
-        }
-        for (const log of memberRemovedLogs) {
-          blockNumbers.add(log.blockNumber);
-        }
-        for (const log of memberLeftLogs) {
-          blockNumbers.add(log.blockNumber);
-        }
-
-        const blockTimestampMap = new Map<number, number>();
-        const blockTimestampCache = blockTimestampCacheRef.current;
-        await Promise.all(
-          Array.from(blockNumbers).map(async (blockNumber) => {
-            const cachedTimestamp = blockTimestampCache.get(blockNumber);
-            if (typeof cachedTimestamp === 'number') {
-              blockTimestampMap.set(blockNumber, cachedTimestamp);
-              return;
-            }
-
-            const block = await readProvider.getBlock(blockNumber);
-            if (block?.timestamp) {
-              const timestamp = Number(block.timestamp);
-              blockTimestampMap.set(blockNumber, timestamp);
-              blockTimestampCache.set(blockNumber, timestamp);
-            }
-          })
-        );
-        if (currentWalletKeyRef.current !== requestedWalletKey) {
-          return latestIncomingByGroup;
-        }
-
-        const entries: GroupMessageEntry[] = [];
-        const appendMessageEntry = async (
-          log: unknown,
-          direction: 'incoming' | 'outgoing',
-          senderAddress: string,
-          ciphertextSource: unknown,
-          idSuffix: string
-        ): Promise<void> => {
-          const typedLog = log as { transactionHash: string; blockNumber: number; index: number };
-          const userCiphertext = extractUserCiphertext(ciphertextSource);
-          let messageText = '(Unable to decrypt message)';
-          let replyToMessageId: string | undefined;
-          let replyToText: string | undefined;
-          let replyToTxHash: string | undefined;
-          let replyToBlockNumber: number | undefined;
-          let replyToLogIndex: number | undefined;
-          let reactionToTxHash: string | undefined;
-          let reactionToBlockNumber: number | undefined;
-          let reactionToLogIndex: number | undefined;
-          let reactionEmoji: string | undefined;
-          if (userCiphertext && userCiphertext.value.length > 0) {
-            try {
-              const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
-              messageText = parsedMessage.cleanText;
-              replyToMessageId = parsedMessage.replyToMessageId;
-              replyToText = parsedMessage.replyToText;
-              replyToTxHash = parsedMessage.replyToTxHash;
-              replyToBlockNumber = parsedMessage.replyToBlockNumber;
-              replyToLogIndex = parsedMessage.replyToLogIndex;
-              reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-              reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-              reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-              reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-              if (
-                messageText.trim().length === 0 &&
-                (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-              ) {
-                return;
-              }
-            } catch {
-              messageText = '(Unable to decrypt message)';
-            }
-          }
-
-          entries.push({
-            id: `${typedLog.transactionHash}-${typedLog.index}-${idSuffix}`,
-            groupId,
-            direction,
-            text: messageText,
-            senderAddress,
-            replyToMessageId,
-            replyToText,
-            replyToTxHash,
-            replyToBlockNumber,
-            replyToLogIndex,
-            reactionToTxHash,
-            reactionToBlockNumber,
-            reactionToLogIndex,
-            reactionEmoji,
-            txHash: typedLog.transactionHash,
-            blockNumber: typedLog.blockNumber,
-            logIndex: typedLog.index,
-            timestamp: blockTimestampMap.get(typedLog.blockNumber)
-          });
-        };
-
-        for (const log of incomingLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const from = String(args?.from ?? '').trim();
-          if (!isWalletAddress(from)) {
-            continue;
-          }
-          await appendMessageEntry(log, 'incoming', from, args?.messageForRecipient, 'group-in');
-        }
-
-        for (const log of outgoingLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          await appendMessageEntry(log, 'outgoing', requestedWalletAddress, args?.messageForSender, 'group-out');
-        }
-
-        for (const log of memberAddedLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const account = String(args?.account ?? '').trim();
-          entries.push({
-            id: `${log.transactionHash}-${log.index}-group-member-added`,
-            groupId,
-            direction: 'incoming',
-            text: formatGroupMembershipEventText('added', account),
-            senderAddress: account,
-            isSystem: true,
-            txHash: log.transactionHash,
-            blockNumber: log.blockNumber,
-            logIndex: log.index,
-            timestamp: blockTimestampMap.get(log.blockNumber)
-          });
-        }
-
-        for (const log of memberRemovedLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const account = String(args?.account ?? '').trim();
-          entries.push({
-            id: `${log.transactionHash}-${log.index}-group-member-removed`,
-            groupId,
-            direction: 'incoming',
-            text: formatGroupMembershipEventText('removed', account),
-            senderAddress: account,
-            isSystem: true,
-            txHash: log.transactionHash,
-            blockNumber: log.blockNumber,
-            logIndex: log.index,
-            timestamp: blockTimestampMap.get(log.blockNumber)
-          });
-        }
-
-        for (const log of memberLeftLogs) {
-          const args = (log as { args?: Record<string, unknown> }).args;
-          const account = String(args?.account ?? '').trim();
-          entries.push({
-            id: `${log.transactionHash}-${log.index}-group-member-left`,
-            groupId,
-            direction: 'incoming',
-            text: formatGroupMembershipEventText('left', account),
-            senderAddress: account,
-            isSystem: true,
-            txHash: log.transactionHash,
-            blockNumber: log.blockNumber,
-            logIndex: log.index,
-            timestamp: blockTimestampMap.get(log.blockNumber)
-          });
-        }
-
-        entries.sort((left, right) => {
-          if (left.blockNumber !== right.blockNumber) {
-            return left.blockNumber - right.blockNumber;
-          }
-          return left.logIndex - right.logIndex;
-        });
-
-        const latestIncomingFromEntries = entries.reduce((max, entry) => {
-          if (entry.direction !== 'incoming' || typeof entry.timestamp !== 'number') {
-            return max;
-          }
-          const ts = Number(entry.timestamp);
-          return ts > max ? ts : max;
-        }, 0);
-        if (latestIncomingFromEntries > 0) {
-          latestIncomingByGroup.set(String(groupId), latestIncomingFromEntries);
-        }
-
-        if (entries.length > 0) {
-          const activeGroupKey = String(groupId);
-          const existingGroupMessages = messagesByGroupRef.current[activeGroupKey] ?? [];
-          if (!fastOptions?.prefetch && (stickToBottomRef.current || existingGroupMessages.length === 0)) {
-            pendingForcedBottomAnchorThreadKeyRef.current = `group:${groupId}`;
-          }
-
-          setMessagesByGroup((previous) => {
-            const existing = previous[activeGroupKey] ?? [];
-            const confirmedOutgoingTxHashes = new Set(
-              entries
-                .filter((entry) => entry.direction === 'outgoing')
-                .map((entry) => entry.txHash.toLowerCase())
-            );
-            const prunedExisting = existing.filter((message) => {
-              if (!message.id.startsWith('local-group-')) {
-                return true;
-              }
-              if (!message.txHash) {
-                return true;
-              }
-              return !confirmedOutgoingTxHashes.has(message.txHash.toLowerCase());
-            });
-
-            const nextMessages = [...prunedExisting];
-            const existingIds = new Set(nextMessages.map((message) => message.id));
-            for (const entry of entries) {
-              if (existingIds.has(entry.id)) {
-                continue;
-              }
-
-              existingIds.add(entry.id);
-              nextMessages.push({
-                id: entry.id,
-                direction: entry.direction,
-                text: entry.text,
-                senderAddress: entry.senderAddress,
-                isSystem: entry.isSystem,
-                replyToMessageId: entry.replyToMessageId,
-                replyToText: entry.replyToText,
-                replyToTxHash: entry.replyToTxHash,
-                replyToBlockNumber: entry.replyToBlockNumber,
-                replyToLogIndex: entry.replyToLogIndex,
-                reactionToTxHash: entry.reactionToTxHash,
-                reactionToBlockNumber: entry.reactionToBlockNumber,
-                reactionToLogIndex: entry.reactionToLogIndex,
-                reactionEmoji: entry.reactionEmoji,
-                timestamp: entry.timestamp,
-                blockNumber: entry.blockNumber,
-                logIndex: entry.logIndex,
-                txHash: entry.txHash
-              });
-            }
-
-            return {
-              ...previous,
-              [activeGroupKey]: sortMessagesChronologically(nextMessages)
-            };
-          });
-        }
-
-        if (messageRange.shouldQuery) {
-          groupMessageLastSyncedBlockRef.current[groupMessageSyncKey] = messageRange.toBlock;
-        }
-        if (memberRange?.shouldQuery) {
-          groupMemberLastSyncedBlockRef.current[groupMemberSyncKey] = memberRange.toBlock;
-        }
-        return latestIncomingByGroup;
-      };
-
+      ): Promise<Map<string, number>> => syncActiveGroupMessagesFast({
+        blockTimestampCacheRef,
+        cacheKey,
+        contract: contract as unknown as GroupMessageSyncContract,
+        fastOptions,
+        groupId,
+        groupMemberLastSyncedBlockRef,
+        groupMessageLastSyncedBlockRef,
+        isCurrentWalletKey: () => currentWalletKeyRef.current === requestedWalletKey,
+        latestBlock,
+        messagesByGroupRef,
+        options,
+        parseEncryptedChatMessagePayload,
+        pendingForcedBottomAnchorThreadKeyRef,
+        readProvider,
+        requestedWalletAddress,
+        setMessagesByGroup,
+        signer,
+        stickToBottomRef,
+        walletKey
+      });
       if (requestedPrefetchGroupId > 0) {
         const prefetchGroupMeta = groupsRef.current.find((group) => group.id === requestedPrefetchGroupId);
-        await syncActiveGroupMessagesFast(
+        await syncActiveGroupMessagesForGroup(
           requestedPrefetchGroupId,
           {
             knownLastBlock: prefetchGroupMeta?.lastBlock && prefetchGroupMeta.lastBlock > 0
@@ -3716,7 +3400,7 @@ export default function App() {
 
       if (options?.activeMessagesOnly && selectedActiveGroupId !== null) {
         const activeGroupMeta = groupsRef.current.find((g) => g.id === selectedActiveGroupId);
-        await syncActiveGroupMessagesFast(
+        await syncActiveGroupMessagesForGroup(
           selectedActiveGroupId,
           {
             includeMembershipEvents: true,
@@ -4167,7 +3851,7 @@ export default function App() {
           const batch = prefetchGroups.slice(batchStart, batchStart + GROUP_MESSAGE_PREFETCH_BATCH_SIZE);
           const batchResults = await Promise.all(
             batch.map((group) =>
-              syncActiveGroupMessagesFast(group.id, {
+              syncActiveGroupMessagesForGroup(group.id, {
                 knownLastBlock: group.lastBlock,
                 prefetch: true
               }).catch(() => new Map<string, number>())
@@ -4191,7 +3875,7 @@ export default function App() {
       if (!options?.overviewOnly && selectedActiveGroupId !== null) {
         const activeGroupMeta = nextGroups.find((group) => group.id === selectedActiveGroupId);
         if (activeGroupMeta) {
-          const activeGroupIncoming = await syncActiveGroupMessagesFast(selectedActiveGroupId, {
+          const activeGroupIncoming = await syncActiveGroupMessagesForGroup(selectedActiveGroupId, {
             includeMembershipEvents: true,
             knownLastBlock: activeGroupMeta.lastBlock > 0 ? activeGroupMeta.lastBlock : undefined,
             wideLoad: options?.wideLoad
@@ -4373,674 +4057,66 @@ export default function App() {
     };
   }, [activeGroupId, sortedGroups, walletAddress, hasAesReady, prefetchGroupBeforeOpen]);
 
-  const loadActiveJoinCodesForGroup = useCallback(
-    async (groupId: number, options?: { silent?: boolean }) => {
-      const requestedWalletAddress = walletAddress.trim();
-      const requestedWalletKey = requestedWalletAddress.toLowerCase();
-      if (
-        !Number.isFinite(groupId) ||
-        groupId <= 0 ||
-        !requestedWalletAddress ||
-        !isWalletAddress(requestedWalletAddress) ||
-        !hasAesReady ||
-        !isActiveGroupAdmin ||
-        chainId !== COTI_NETWORK.chainIdDecimal
-      ) {
-        setActiveGroupJoinCodes([]);
-        setLoadingActiveGroupJoinCodes(false);
-        return;
-      }
-
-      try {
-        setLoadingActiveGroupJoinCodes(true);
-        const { signer, cacheKey } = await getMemoSigner();
-        const nextActiveCodes = await fetchActiveJoinCodesForAdmin({
-          groupId,
-          signer,
-          requestedWalletAddress
-        });
-        if (
-          currentWalletKeyRef.current !== requestedWalletKey ||
-          activeGroupIdRef.current !== groupId
-        ) {
-          return;
-        }
-        setActiveGroupJoinCodes(nextActiveCodes);
-        const nextOnboardInfo = signer.getUserOnboardInfo();
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-        }));
-      } catch (loadError) {
-        setActiveGroupJoinCodes([]);
-        if (!options?.silent) {
-          const message = loadError instanceof Error ? loadError.message : 'Failed to load active join codes.';
-          setError(message);
-        }
-      } finally {
-        if (
-          currentWalletKeyRef.current === requestedWalletKey &&
-          activeGroupIdRef.current === groupId
-        ) {
-          setLoadingActiveGroupJoinCodes(false);
-        }
-      }
-    },
-    [walletAddress, hasAesReady, isActiveGroupAdmin, chainId]
-  );
-
-  const revokeJoinCodeForActiveGroup = async (
-    codeHashInput: string,
-    displayCode?: string
-  ) => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can revoke join codes.');
-      return;
-    }
-
-    const normalizedCodeHash = codeHashInput.trim().toLowerCase();
-    if (!/^0x[a-f0-9]{64}$/.test(normalizedCodeHash)) {
-      setError('Invalid join code hash.');
-      return;
-    }
-
-    if (processingGroupAction) {
-      return;
-    }
-
-    const confirmationTarget = displayCode?.trim() ? `code ${displayCode.trim()}` : `hash ${normalizedCodeHash}`;
-    const confirmationMessage = `Revoke ${confirmationTarget}? Members will no longer be able to join with it.`;
-    if (!window.confirm(confirmationMessage)) {
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      setRevokingGroupJoinCodeHash(normalizedCodeHash);
-      const { signer, cacheKey } = await getMemoSigner();
-      await revokeGroupJoinCode({
-        signer,
-        groupId: activeGroupId,
-        codeHash: normalizedCodeHash
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      if (generatedGroupJoinCodeHash.trim().toLowerCase() === normalizedCodeHash) {
-        setGeneratedGroupInviteCode('');
-        setGeneratedGroupJoinCodeHash('');
-      }
-
-      await loadActiveJoinCodesForGroup(activeGroupId, { silent: true });
-      await syncGroupData({ background: true, overviewOnly: true });
-    } catch (revokeError) {
-      const message = getGroupActionErrorMessage(revokeError, 'Failed to revoke join code.');
-      setError(message);
-    } finally {
-      setRevokingGroupJoinCodeHash('');
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const createGroup = async () => {
-    setError('');
-
-    const title = normalizeContactName(newGroupTitle ?? '');
-    if (!title) {
-      setError('Enter a group title.');
-      return;
-    }
-
-    const myAddress = walletAddress.trim().toLowerCase();
-    const initialMembers = parseWalletAddressListInput(newGroupMembersInput).filter(
-      (address) => address.toLowerCase() !== myAddress
-    );
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await createGroupOnChain({
-        signer,
-        title,
-        isPrivate: newGroupIsPrivate,
-        initialMembers
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      setNewGroupTitle('');
-      setNewGroupIsPrivate(false);
-      setNewGroupMembersInput('');
-      await syncGroupData({ deep: true });
-      setShowQuickActionsModal(false);
-    } catch (createGroupError) {
-      const message = getGroupCreateErrorMessage(createGroupError, 'Failed to create group.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const inviteMembersToActiveGroup = async () => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (activeGroupMeta?.isPrivate && !isActiveGroupAdmin) {
-      setError('Private group: only the admin can invite new members.');
-      return;
-    }
-
-    const myAddress = walletAddress.trim().toLowerCase();
-    const existingMembers = new Set((activeGroupMeta?.members ?? []).map((member) => member.toLowerCase()));
-    const accounts = parseWalletAddressListInput(groupInviteMembersInput).filter((address) => {
-      const key = address.toLowerCase();
-      if (key === myAddress) {
-        return false;
-      }
-      return !existingMembers.has(key);
-    });
-    if (accounts.length === 0) {
-      setError('Enter at least one valid wallet address to invite.');
-      return;
-    }
-
-    const ttlHours = Math.max(0, Math.floor(Number(groupInviteTtlInput)));
-    if (!Number.isFinite(ttlHours) || ttlHours <= 0) {
-      setError('Invite TTL must be a positive number of hours.');
-      return;
-    }
-    const ttlParsed = ttlHours * 60 * 60;
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await inviteMembersToGroupOnChain({
-        signer,
-        groupId: activeGroupId,
-        accounts,
-        ttlSeconds: ttlParsed
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      setGroupInviteMembersInput('');
-      await syncGroupData({ deep: true });
-    } catch (inviteError) {
-      const message = getGroupActionErrorMessage(inviteError, 'Failed to send invites.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const generateJoinCodeForActiveGroup = async () => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can create join codes.');
-      return;
-    }
-
-    const ttlHours = Math.max(0, Math.floor(Number(groupInviteTtlInput)));
-    if (!Number.isFinite(ttlHours) || ttlHours <= 0) {
-      setError('Join code TTL must be a positive number of hours.');
-      return;
-    }
-    const ttlSeconds = ttlHours * 60 * 60;
-    const requestedWalletAddress = walletAddress.trim();
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      const nextJoinCode = await createGroupJoinCode({
-        groupId: activeGroupId,
-        signer,
-        requestedWalletAddress,
-        ttlSeconds,
-        groupJoinCodeMode,
-        groupJoinCodeMaxUsesInput
-      });
-      setGeneratedGroupInviteCode(nextJoinCode.generatedGroupInviteCode);
-      setGeneratedGroupJoinCodeHash(nextJoinCode.codeHash);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
-      await syncGroupData({ background: true, overviewOnly: true });
-    } catch (joinCodeError) {
-      const message = getGroupActionErrorMessage(joinCodeError, 'Failed to create join code.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const revokeGeneratedJoinCodeForActiveGroup = async () => {
-    setError('');
-
-    if (!/^0x[a-fA-F0-9]{64}$/.test(generatedGroupJoinCodeHash)) {
-      setError('No generated join code is available to revoke in this session.');
-      return;
-    }
-
-    const generatedJoinCode = parseGroupInviteCode(generatedGroupInviteCode);
-    const displayCode = generatedJoinCode && generatedJoinCode.version === 2 ? generatedJoinCode.code : undefined;
-    await revokeJoinCodeForActiveGroup(generatedGroupJoinCodeHash, displayCode);
-  };
-
-  const joinGroupWithCode = async () => {
-    setError('');
-
-    if (processingGroupAction) {
-      return;
-    }
-
-    const parsedCode = parseGroupInviteCode(groupJoinCodeInput);
-    if (!parsedCode) {
-      setError('Invalid group code.');
-      return;
-    }
-
-    const nowTs = Math.floor(Date.now() / 1000);
-    if (parsedCode.expiresAt > 0 && parsedCode.expiresAt <= nowTs) {
-      setError('This group code has expired.');
-      return;
-    }
-
-    const requestedWalletAddress = walletAddress.trim();
-    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
-      setError('Connect a wallet first.');
-      return;
-    }
-
-    const parsedJoinCode = parseGroupJoinCodeFromPayload(parsedCode);
-    if (!parsedJoinCode) {
-      try {
-        const hasLegacyInvite = await hasActiveLegacyGroupInvite({
-          groupId: parsedCode.groupId,
-          walletAddress: requestedWalletAddress,
-          nowTs
-        });
-
-        if (!hasLegacyInvite) {
-          setError('Legacy group code detected, but no active on-chain invite exists for this wallet.');
-          return;
-        }
-
-        setGroupJoinCodeInput('');
-        await acceptGroupInvite(parsedCode.groupId);
-        setShowQuickActionsModal(false);
-      } catch (legacyJoinError) {
-        const message = legacyJoinError instanceof Error ? legacyJoinError.message : 'Failed to join group with legacy code.';
-        setError(message);
-      }
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await joinWithGroupCode({
-        signer,
-        parsedJoinCode,
-        chainId,
-        nowTs
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      setGroupJoinCodeInput('');
-      await syncGroupData({ deep: true });
-      activateGroup(parsedJoinCode.groupId);
-      setShowQuickActionsModal(false);
-    } catch (joinError) {
-      const message = getGroupJoinErrorMessage(joinError, 'Failed to join group with code.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const removeMemberFromActiveGroup = async (account: string) => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can remove members.');
-      return;
-    }
-    if (!isWalletAddress(account)) {
-      setError('Invalid member wallet address.');
-      return;
-    }
-
-    const normalizedTarget = account.trim().toLowerCase();
-    const normalizedSelf = walletAddress.trim().toLowerCase();
-    if (normalizedTarget === normalizedSelf) {
-      setError('Use leave group for yourself. Removing your own admin account is disabled here.');
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await removeMemberFromGroupOnChain({
-        signer,
-        groupId: activeGroupId,
-        account
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await syncGroupData({ deep: true });
-    } catch (removeError) {
-      const message = removeError instanceof Error ? removeError.message : 'Failed to remove member.';
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const beginRenameActiveGroup = () => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can rename the group.');
-      return;
-    }
-
-    const groupId = activeGroupId;
-    const currentTitle = normalizeContactName(activeGroupMeta?.title ?? '') ?? `Group ${groupId}`;
-    setGroupRenameInput(currentTitle);
-    setGroupRenameOpen(true);
-  };
-
-  const cancelRenameActiveGroup = () => {
-    setGroupRenameOpen(false);
-    setGroupRenameInput('');
-  };
-
-  const renameActiveGroup = async () => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can rename the group.');
-      return;
-    }
-
-    const groupId = activeGroupId;
-    const currentTitle = normalizeContactName(activeGroupMeta?.title ?? '') ?? `Group ${groupId}`;
-    const nextTitle = normalizeContactName(groupRenameInput);
-    if (!nextTitle) {
-      setError('Enter a group title.');
-      return;
-    }
-    if (nextTitle === currentTitle) {
-      cancelRenameActiveGroup();
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await renameGroupOnChain({
-        signer,
-        groupId,
-        title: nextTitle,
-        isPrivate: Boolean(activeGroupMeta?.isPrivate)
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      cancelRenameActiveGroup();
-      await syncGroupData({ deep: true });
-    } catch (renameError) {
-      const message = getGroupActionErrorMessage(renameError, 'Failed to rename group.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const leaveActiveGroup = async () => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-
-    const groupId = activeGroupId;
-    const groupLabel = `${activeGroupMeta?.title ?? 'Group'} (#${groupId})`;
-    const leaveMessage = isActiveGroupAdmin
-      ? `Leave ${groupLabel} as admin?\n\nIf you are the only member, the group will be disbanded. Otherwise admin rights transfer to another member automatically.`
-      : `Leave ${groupLabel}?`;
-    if (!window.confirm(leaveMessage)) {
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await leaveGroupOnChain({
-        signer,
-        groupId
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      if (activeGroupIdRef.current === groupId) {
-        setActiveGroupId(null);
-      }
-      await syncGroupData({ deep: true });
-    } catch (leaveError) {
-      const message = getGroupActionErrorMessage(leaveError, 'Failed to leave group.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const handoffAdminAndLeaveActiveGroup = async () => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can use burn and leave.');
-      return;
-    }
-
-    const groupId = activeGroupId;
-    const groupLabel = `${activeGroupMeta?.title ?? 'Group'} (#${groupId})`;
-    const burnAddress = GROUP_ADMIN_BURN_ADDRESS;
-    const confirmationMessage = `Leave ${groupLabel} as admin?\n\nThis adds ${burnAddress} to the group (if needed), transfers admin to that burn wallet, and then leaves from your current wallet.\n\nThis action is irreversible.`;
-    if (!window.confirm(confirmationMessage)) {
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await handoffAdminAndLeaveGroupOnChain({
-        signer,
-        groupId
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      if (activeGroupIdRef.current === groupId) {
-        setActiveGroupId(null);
-      }
-      await syncGroupData({ deep: true });
-      setStatus(`Left group. Admin was transferred to burn wallet ${shortenAddress(burnAddress)}.`);
-    } catch (handoffError) {
-      const message = getGroupActionErrorMessage(handoffError, 'Failed to transfer admin to burn wallet and leave group.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const disbandActiveGroup = async () => {
-    setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can disband the group.');
-      return;
-    }
-
-    const groupId = activeGroupId;
-    const currentMemberCount = Math.max(0, activeGroupMeta?.memberCount ?? activeGroupMeta?.members.length ?? 0);
-    const confirmationMessage = `Disband this group now? This will permanently remove the group and all ${currentMemberCount} member records.`;
-    if (!window.confirm(confirmationMessage)) {
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await disbandGroupOnChain({
-        signer,
-        groupId
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      setGeneratedGroupInviteCode('');
-      setGeneratedGroupJoinCodeHash('');
-      if (activeGroupIdRef.current === groupId) {
-        setActiveGroupId(null);
-      }
-      await syncGroupData({ deep: true });
-    } catch (disbandError) {
-      const message = getGroupActionErrorMessage(disbandError, 'Failed to disband group.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const acceptGroupInvite = async (groupId: number) => {
-    setError('');
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await acceptGroupInviteOnChain({
-        signer,
-        groupId
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await syncGroupData({ deep: true });
-      activateGroup(groupId);
-    } catch (acceptError) {
-      const message = acceptError instanceof Error ? acceptError.message : 'Failed to accept invite.';
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
-  const declineGroupInvite = async (groupId: number) => {
-    setError('');
-    try {
-      setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await declineGroupInviteOnChain({
-        signer,
-        groupId
-      });
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await syncGroupData({ deep: true });
-    } catch (declineError) {
-      const message = declineError instanceof Error ? declineError.message : 'Failed to decline invite.';
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  };
-
+  const {
+    acceptGroupInvite,
+    beginRenameActiveGroup,
+    cancelRenameActiveGroup,
+    createGroup,
+    declineGroupInvite,
+    disbandActiveGroup,
+    generateJoinCodeForActiveGroup,
+    handoffAdminAndLeaveActiveGroup,
+    inviteMembersToActiveGroup,
+    joinGroupWithCode,
+    leaveActiveGroup,
+    loadActiveJoinCodesForGroup,
+    removeMemberFromActiveGroup,
+    renameActiveGroup,
+    revokeGeneratedJoinCodeForActiveGroup,
+    revokeJoinCodeForActiveGroup
+  } = useGroupAdminActions({
+    activeGroupId,
+    activeGroupIdRef,
+    activeGroupMeta,
+    activateGroup,
+    chainId,
+    currentWalletKeyRef,
+    generatedGroupInviteCode,
+    generatedGroupJoinCodeHash,
+    getMemoSigner,
+    groupInviteMembersInput,
+    groupInviteTtlInput,
+    groupJoinCodeInput,
+    groupJoinCodeMaxUsesInput,
+    groupJoinCodeMode,
+    groupRenameInput,
+    hasAesReady,
+    isActiveGroupAdmin,
+    newGroupIsPrivate,
+    newGroupMembersInput,
+    newGroupTitle,
+    processingGroupAction,
+    setActiveGroupId,
+    setActiveGroupJoinCodes,
+    setError,
+    setGeneratedGroupInviteCode,
+    setGeneratedGroupJoinCodeHash,
+    setGroupInviteMembersInput,
+    setGroupJoinCodeInput,
+    setGroupRenameInput,
+    setGroupRenameOpen,
+    setLoadingActiveGroupJoinCodes,
+    setNewGroupIsPrivate,
+    setNewGroupMembersInput,
+    setNewGroupTitle,
+    setProcessingGroupAction,
+    setRevokingGroupJoinCodeHash,
+    setSessionOnboardInfo,
+    setShowQuickActionsModal,
+    setStatus,
+    syncGroupData,
+    walletAddress
+  });
   const sendDirectImageMessage = async (file: File) => {
     const targetContact = activeContact;
     const replyTarget = browserWalletLiteMode ? null : replyingToMessage;
@@ -5915,449 +4991,55 @@ export default function App() {
     }
   };
 
-  const createTradeOffer = async (overrideReplyTarget?: ChatMessage | null) => {
-    setError('');
-
-    if (sendingRef.current || tipping || creatingTrade) {
-      return;
-    }
-
-    if (tradeComposerValidationMessage) {
-      setError(tradeComposerValidationMessage);
-      return;
-    }
-
-    if (!activeContact || !selectedTradeOfferToken || !selectedTradeRequestToken) {
-      setError('Select a contact and valid trade tokens first.');
-      return;
-    }
-
-    if (parsedTradeOfferAmountWei === null || parsedTradeOfferAmountWei <= 0n) {
-      setError(`Enter a valid ${selectedTradeOfferToken.symbol} amount to send.`);
-      return;
-    }
-
-    if (parsedTradeRequestAmountWei === null || parsedTradeRequestAmountWei <= 0n) {
-      setError(`Enter a valid ${selectedTradeRequestToken.symbol} amount to receive.`);
-      return;
-    }
-
-    const requestedWalletAddress = walletAddress.trim();
-    const requestedWalletKey = requestedWalletAddress.toLowerCase();
-    const pendingCounterContext = tradeCounterContext;
-    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
-      setError('Connect a wallet first.');
-      return;
-    }
-
-    try {
-      setCreatingTrade(true);
-      if (pendingCounterContext) {
-        setProcessingTradeActionId(
-          buildTradeSnapshotKey(pendingCounterContext.offer.tradeId, pendingCounterContext.offer.escrowContract)
-        );
-      }
-      const { signer, cacheKey } = await getMemoSigner();
-      const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
-      let counteredSnapshot: TradeSnapshot | null = null;
-
-      if (pendingCounterContext) {
-        const parentSnapshot = await resolveTradeSnapshotForOffer(pendingCounterContext.offer);
-        counteredSnapshot = parentSnapshot;
-        const isParentMaker = pendingCounterContext.offer.maker.toLowerCase() === requestedWalletKey;
-        const isParentTaker = pendingCounterContext.offer.taker.toLowerCase() === requestedWalletKey;
-
-        if (!isParentMaker && !isParentTaker) {
-          throw new Error('You are no longer a participant in the original trade.');
-        }
-
-        const counterOnboardInfo = signer.getUserOnboardInfo();
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], counterOnboardInfo)
-        }));
-      }
-
-      const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
-      const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
-      const publicOfferAmount = parsedTradeOfferAmountWei;
-      const createResult =
-        isCounterReplacement && counteredSnapshot
-          ? await counterTradeAndCloseCounteredTradeOnChain({
-              signer,
-              makerAddress: requestedWalletAddress,
-              counteredTradeId: counteredSnapshot.tradeId,
-              offerAsset: selectedTradeOfferToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: selectedTradeRequestToken,
-              requestAmountWei: parsedTradeRequestAmountWei,
-              expiresAt,
-              nativeFeeWei
-            })
-          : await createTradeOnChain({
-              signer,
-              makerAddress: requestedWalletAddress,
-              takerAddress: activeContact,
-              offerAsset: selectedTradeOfferToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: selectedTradeRequestToken,
-              requestAmountWei: parsedTradeRequestAmountWei,
-              expiresAt,
-              nativeFeeWei,
-              parentTradeId: tradeCounterParentId ?? undefined
-            });
-      const tradeId = createResult.tradeId;
-      const tradeKey = buildTradeSnapshotKey(tradeId, createResult.escrowContract);
-
-      const createdAt = Math.floor(Date.now() / 1000);
-      const tradeMessagePayload: TradeOfferMessagePayload = {
-        version: 2,
-        tradeId,
-        escrowContract: createResult.escrowContract,
-        maker: requestedWalletAddress,
-        taker: activeContact,
-        createdAt,
-        expiresAt,
-        parentTradeId: tradeCounterParentId ?? undefined
-      };
-
-      setTradeSnapshotsById((previous) => ({
-        ...previous,
-        ...(isCounterReplacement && counteredSnapshot
-          ? {
-              [buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)]: {
-                ...(previous[buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)] ??
-                  counteredSnapshot),
-                status: 'declined' as const
-              }
-            }
-          : {}),
-        [tradeKey]: {
-          tradeId,
-          escrowContract: createResult.escrowContract,
-          maker: requestedWalletAddress,
-          taker: activeContact,
-          offer: {
-            ...selectedTradeOfferToken,
-            amount: publicOfferAmount.toString()
-          },
-          request: {
-            ...selectedTradeRequestToken,
-            amount: parsedTradeRequestAmountWei.toString()
-          },
-          createdAt,
-          expiresAt,
-          status: 'open',
-          parentTradeId: tradeCounterParentId ?? undefined,
-          counterParentTradeId: tradeCounterParentId ?? undefined,
-          fillState: {
-            remainingOfferAmount: parsedTradeOfferAmountWei.toString(),
-            remainingRequestAmount: parsedTradeRequestAmountWei.toString(),
-            filledOfferAmount: '0',
-            filledRequestAmount: '0'
-          }
-        }
-      }));
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-
-      setTopUpMetricsNonce((previous) => previous + 1);
-      setTradeOfferAmountInput('');
-      setTradeRequestAmountInput('');
-      setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-      setTradeHidePrivateLiquidity(false);
-      setTradeCounterParentId(null);
-      setTradeCounterContext(null);
-      setTradeComposerOpen(false);
-      await sendMessage(buildTradeOfferMessagePayload(tradeMessagePayload), overrideReplyTarget ?? replyingToMessage);
-    } catch (tradeError) {
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to create trade offer.');
-      setError(message);
-      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
-      }
-    } finally {
-      setCreatingTrade(false);
-      if (pendingCounterContext) {
-        setProcessingTradeActionId('');
-      }
-    }
-  };
-
-  const acceptTradeOffer = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
-    setError('');
-
-    if (processingTradeActionId || !walletAddress || !isWalletAddress(walletAddress)) {
-      return;
-    }
-
-    try {
-      const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
-      setProcessingTradeActionId(tradeKey);
-      const snapshot = await resolveTradeSnapshotForOffer(offer);
-      if (snapshot.hiddenLiquidity) {
-        throw new Error('Open the shared P2P trade link to fill private liquidity trades.');
-      }
-      const remainingRequestAmount = (() => {
-        try {
-          return BigInt(snapshot.fillState?.remainingRequestAmount ?? snapshot.request.amount);
-        } catch {
-          return BigInt(snapshot.request.amount);
-        }
-      })();
-      const requestAsset = {
-        ...snapshot.request,
-        amount: remainingRequestAmount.toString()
-      };
-      const { signer, cacheKey } = await getMemoSigner();
-      const { acceptedTxHash } =
-        snapshot.counterParentTradeId
-            ? await acceptCounterTradeAndCloseParentOnChain({
-                signer,
-                ownerAddress: walletAddress,
-                tradeId: offer.tradeId,
-                requestAsset,
-                requestAmountWei: remainingRequestAmount
-              })
-            : await acceptTradeOnChain({
-                signer,
-                ownerAddress: walletAddress,
-                tradeId: offer.tradeId,
-                requestAsset,
-                requestAmountWei: remainingRequestAmount
-              });
-
-      setTradeSnapshotsById((previous) => {
-        const next = {
-          ...previous,
-          [tradeKey]: {
-            ...(previous[tradeKey] ?? snapshot),
-            status: 'accepted' as const,
-            acceptedTxHash
-          }
-        };
-        const parentSnapshot = snapshot.counterParentTradeId
-          ? previous[buildTradeSnapshotKey(snapshot.counterParentTradeId, snapshot.escrowContract)]
-          : undefined;
-        if (snapshot.counterParentTradeId && parentSnapshot) {
-          next[buildTradeSnapshotKey(snapshot.counterParentTradeId, parentSnapshot.escrowContract ?? snapshot.escrowContract)] = {
-            ...parentSnapshot,
-            status: 'cancelled'
-          };
-        }
-        return next;
-      });
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await sendMessage(
-        buildTradeResponseMessagePayload({
-          version: 1,
-          tradeId: offer.tradeId,
-          escrowContract: offer.escrowContract,
-          action: 'accepted',
-          actor: walletAddress,
-          createdAt: Math.floor(Date.now() / 1000)
-        }),
-        sourceMessage
-      );
-    } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to accept trade.');
-      setError(message);
-    } finally {
-      setProcessingTradeActionId('');
-    }
-  };
-
-  const declineTradeOffer = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
-    setError('');
-
-    if (processingTradeActionId) {
-      return;
-    }
-
-    try {
-      const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
-      setProcessingTradeActionId(tradeKey);
-      const snapshot = await resolveTradeSnapshotForOffer(offer);
-      const { signer, cacheKey } = await getMemoSigner();
-      await declineTradeOnChain({
-        signer,
-        tradeId: offer.tradeId,
-        escrowContract: snapshot.escrowContract
-      });
-
-      setTradeSnapshotsById((previous) => ({
-        ...previous,
-        [tradeKey]: {
-          ...(previous[tradeKey] ?? snapshot),
-          status: 'declined'
-        }
-      }));
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await sendMessage(
-        buildTradeResponseMessagePayload({
-          version: 1,
-          tradeId: offer.tradeId,
-          escrowContract: offer.escrowContract,
-          action: 'declined',
-          actor: walletAddress,
-          createdAt: Math.floor(Date.now() / 1000)
-        }),
-        sourceMessage
-      );
-    } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to refuse trade.');
-      setError(message);
-    } finally {
-      setProcessingTradeActionId('');
-    }
-  };
-
-  const cancelTradeOffer = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
-    setError('');
-
-    if (processingTradeActionId) {
-      return;
-    }
-
-    try {
-      const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
-      setProcessingTradeActionId(tradeKey);
-      const snapshot = await resolveTradeSnapshotForOffer(offer);
-      const { signer, cacheKey } = await getMemoSigner();
-      await cancelTradeOnChain({
-        signer,
-        tradeId: offer.tradeId,
-        escrowContract: snapshot.escrowContract
-      });
-
-      setTradeSnapshotsById((previous) => ({
-        ...previous,
-        [tradeKey]: {
-          ...(previous[tradeKey] ?? snapshot),
-          status: 'cancelled'
-        }
-      }));
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await sendMessage(
-        buildTradeResponseMessagePayload({
-          version: 1,
-          tradeId: offer.tradeId,
-          escrowContract: offer.escrowContract,
-          action: 'cancelled',
-          actor: walletAddress,
-          createdAt: Math.floor(Date.now() / 1000)
-        }),
-        sourceMessage
-      );
-    } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to cancel trade.');
-      setError(message);
-    } finally {
-      setProcessingTradeActionId('');
-    }
-  };
-
-  const prepareCounterTrade = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
-    const applyAssetSelection = (
-      asset: TradeAssetPayload,
-      onSelectionChange: (value: TradeTokenPresetKey) => void,
-      onCustomAddressChange: (value: string) => void,
-      onAmountInputChange: (value: string) => void
-    ) => {
-      if (asset.kind === 'native') {
-        onSelectionChange('coti');
-        onCustomAddressChange('');
-      } else if (asset.kind === 'private-erc20' && asset.tokenAddress?.toLowerCase() === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
-        onSelectionChange('pwisp');
-        onCustomAddressChange('');
-      } else if (asset.tokenAddress?.toLowerCase() === REWARD_TOKEN_ADDRESS.toLowerCase()) {
-        onSelectionChange('wisp');
-        onCustomAddressChange('');
-      } else {
-        onSelectionChange(asset.kind === 'private-erc20' ? 'custom-private' : 'custom-public');
-        onCustomAddressChange(asset.tokenAddress ?? '');
-      }
-
-      try {
-        onAmountInputChange(formatTokenAmount(BigInt(asset.amount), asset.decimals, 6));
-      } catch {
-        onAmountInputChange('');
-      }
-    };
-
-    const snapshot = await resolveTradeSnapshotForOffer(offer);
-    const counterParentId = snapshot.counterParentTradeId ?? offer.parentTradeId ?? offer.tradeId;
-
-    applyAssetSelection(
-      snapshot.request,
-      setTradeOfferTokenSelection,
-      setTradeOfferCustomTokenAddress,
-      setTradeOfferAmountInput
-    );
-    applyAssetSelection(
-      snapshot.offer,
-      setTradeRequestTokenSelection,
-      setTradeRequestCustomTokenAddress,
-      setTradeRequestAmountInput
-    );
-    setTradeCounterParentId(counterParentId);
-    setTradeCounterContext({ offer, sourceMessage });
-    setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
-    setTradeHidePrivateLiquidity(false);
-    setReplyingToMessage(sourceMessage);
-    setTipComposerOpen(false);
-    setTradeComposerOpen(true);
-  };
-
+  const {
+    acceptTradeOffer,
+    cancelTradeOffer,
+    createTradeOffer,
+    declineTradeOffer,
+    prepareCounterTrade
+  } = useInChatTradeActions({
+    activeContact,
+    activeSignerSource,
+    creatingTrade,
+    currentWalletKeyRef,
+    getMemoSigner,
+    parsedTradeExpiryHours,
+    parsedTradeOfferAmountWei,
+    parsedTradeRequestAmountWei,
+    processingTradeActionId,
+    replyingToMessage,
+    resolveRequiredFeeForTradeCreate,
+    resolveTradeSnapshotForOffer,
+    selectedTradeOfferToken,
+    selectedTradeRequestToken,
+    sendMessage,
+    sendingRef,
+    setCreatingTrade,
+    setError,
+    setProcessingTradeActionId,
+    setReplyingToMessage,
+    setSessionOnboardInfo,
+    setTipComposerOpen,
+    setTopUpMetricsNonce,
+    setTradeComposerOpen,
+    setTradeCounterContext,
+    setTradeCounterParentId,
+    setTradeExpiryHoursInput,
+    setTradeHidePrivateLiquidity,
+    setTradeOfferAmountInput,
+    setTradeOfferCustomTokenAddress,
+    setTradeOfferTokenSelection,
+    setTradeRequestAmountInput,
+    setTradeRequestCustomTokenAddress,
+    setTradeRequestTokenSelection,
+    setTradeSnapshotsById,
+    tipping,
+    topUpBurnerWithWallet,
+    tradeComposerValidationMessage,
+    tradeCounterContext,
+    tradeCounterParentId,
+    walletAddress
+  });
   const sendTipToRecipient = async (
     recipientInput: string,
     tipToken: TipTokenSelection,
@@ -6802,7 +5484,6 @@ export default function App() {
     setChatWalletMenuOpen(false);
     if (activePage !== 'trades') {
       setTradeHeaderWalletControl(null);
-      setTradeHeaderNavigationControl(null);
     }
     if (activePage !== 'chat') {
       setShowQuickActionsModal(false);
@@ -8426,6 +7107,81 @@ export default function App() {
       walletAddress
     ]
   );
+  const handleTradeWalletSessionChange = useCallback(
+    (session: SharedWalletSession) => {
+      const nextAddress = session.walletAddress.trim();
+      const nextWalletKey = nextAddress.toLowerCase();
+      if (!nextAddress) {
+        return;
+      }
+
+      const mergeSharedAes = () => {
+        const onboardInfo = session.sessionOnboardInfo[nextWalletKey];
+        if (!onboardInfo) {
+          return;
+        }
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [nextWalletKey]: mergeOnboardInfo(previous[nextWalletKey], onboardInfo)
+        }));
+      };
+
+      if (session.activeSignerSource === 'metamask' && session.browserProvider) {
+        adoptBrowserWalletSession({
+          address: nextAddress,
+          chainId: session.chainId,
+          provider: session.browserProvider,
+          walletId: session.browserWalletId,
+          walletLabel: session.browserWalletLabel || 'Browser wallet'
+        });
+        mergeSharedAes();
+        return;
+      }
+
+      if (session.activeSignerSource === 'burner' && session.burnerWallet) {
+        burnerWalletRef.current = session.burnerWallet;
+        const selectedBurnerRecord = session.burnerWallets?.find(
+          (walletRecord) =>
+            walletRecord.address?.toLowerCase() === nextWalletKey ||
+            (session.activeBurnerWalletId && walletRecord.id === session.activeBurnerWalletId)
+        );
+        if (selectedBurnerRecord) {
+          burnerRecordRef.current = {
+            ...selectedBurnerRecord,
+            address: session.burnerWallet.address
+          };
+        }
+        if (session.burnerWallets?.length) {
+          setBurnerWallets(session.burnerWallets);
+        }
+        setActiveBurnerWalletId(session.activeBurnerWalletId ?? selectedBurnerRecord?.id ?? '');
+        setActiveSignerSource('burner');
+        setConnectionMethod(null);
+        setConnectedProvider(null);
+        setSelectedInjectedWalletId('');
+        setWalletAddress(nextAddress);
+        setChainId(COTI_NETWORK.chainIdDecimal);
+        setStatus('Connected (app wallet)');
+        saveWalletPreference({ kind: 'app' });
+        mergeSharedAes();
+      }
+    },
+    [
+      adoptBrowserWalletSession,
+      burnerRecordRef,
+      burnerWalletRef,
+      setActiveBurnerWalletId,
+      setActiveSignerSource,
+      setBurnerWallets,
+      setChainId,
+      setConnectedProvider,
+      setConnectionMethod,
+      setSelectedInjectedWalletId,
+      setSessionOnboardInfo,
+      setStatus,
+      setWalletAddress
+    ]
+  );
   // --- Stable callbacks for ContactsSidebar ---
   const saveMyNicknameOnChainRef = useRef(saveMyNicknameOnChain);
   saveMyNicknameOnChainRef.current = saveMyNicknameOnChain;
@@ -8553,6 +7309,32 @@ export default function App() {
         </svg>
       </button>
     ) : null;
+  const appHeaderNavigationControl = useMemo(() => {
+    const appNavItems: Array<{ page: AppPage; label: string; onPrefetch?: () => void }> = [
+      { page: 'chat', label: 'Chat', onPrefetch: preloadChatPage },
+      { page: 'trades', label: 'Trades', onPrefetch: preloadTradesPage },
+      { page: 'swap', label: 'Shield', onPrefetch: preloadSwapPage },
+      { page: 'treasury', label: 'Treasury', onPrefetch: preloadTreasuryPage }
+    ];
+
+    return (
+      <nav className="app-header-nav" aria-label="ChainWhisper apps">
+        {appNavItems.map((item) => (
+          <button
+            key={item.page}
+            type="button"
+            className={activePage === item.page ? 'active' : undefined}
+            aria-current={activePage === item.page ? 'page' : undefined}
+            onClick={() => navigateToPage(item.page)}
+            onFocus={item.onPrefetch}
+            onMouseEnter={item.onPrefetch}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+    );
+  }, [activePage, navigateToPage]);
   const chatRealtimeReconnecting =
     activePage === 'chat' &&
     (directRealtimeStatus === 'reconnecting' || groupRealtimeStatus === 'reconnecting');
@@ -8860,7 +7642,7 @@ export default function App() {
                 tradeToggleTitle={tradeComposerOpen ? 'Hide trade options' : 'Open trade offer'}
               />
             ) : (
-              <div className="chat-placeholder chat-placeholder-state">
+              <div className="chat-placeholder chat-placeholder-state" role="status" aria-live="polite">
                 <strong>Select a conversation</strong>
                 <p>Open a contact or group from the sidebar to start messaging.</p>
               </div>
@@ -8914,7 +7696,7 @@ export default function App() {
           onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
           onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
-          links={COTI_ECOSYSTEM_LINKS}
+          appNavigationControl={appHeaderNavigationControl}
         />
         <HomePage
           onLaunchChat={() => navigateToPage('chat')}
@@ -8943,7 +7725,7 @@ export default function App() {
           onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
-          navigationControl={tradeHeaderNavigationControl}
+          appNavigationControl={appHeaderNavigationControl}
           walletControl={activeTradeWalletControl}
           subtitle="P2P Trades"
           showSoundToggle
@@ -8958,7 +7740,7 @@ export default function App() {
               sharedWalletSession={sharedTradeWalletSession}
               onDisconnectWallet={disconnectWallet}
               onHeaderWalletControlChange={setTradeHeaderWalletControl}
-              onHeaderNavigationControlChange={setTradeHeaderNavigationControl}
+              onWalletSessionChange={handleTradeWalletSessionChange}
             />
           </Suspense>
         </AppErrorBoundary>
@@ -8978,6 +7760,7 @@ export default function App() {
           onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
+          appNavigationControl={appHeaderNavigationControl}
           walletControl={activeChatWalletControl}
           subtitle="Shield"
           showSoundToggle
@@ -9034,6 +7817,7 @@ export default function App() {
           onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
+          appNavigationControl={appHeaderNavigationControl}
           subtitle="Treasury"
           showSoundToggle
         />
@@ -9062,9 +7846,10 @@ export default function App() {
         onCloseMobileLinks={() => setMobileLinksOpen(false)}
         debugControl={debugControl}
         brandActions={chatBrandActions}
+        appNavigationControl={appHeaderNavigationControl}
         walletControl={activeChatWalletControl}
         subtitle="Chat"
-        showSoundToggle={readStateFeaturesEnabled}
+        showSoundToggle
       />
       {walletSessionModals}
       {chatWorkspace}

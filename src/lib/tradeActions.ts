@@ -5,6 +5,8 @@ import {
   loadCotiEthersModule,
   PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+  RECURRING_OTC_CONTRACT_ABI,
+  RECURRING_OTC_CONTRACT_ADDRESS,
   toSafeNumber,
   TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -17,12 +19,18 @@ type TradeAssetSelection = Pick<TradeAssetPayload, 'kind' | 'tokenAddress'>;
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
+const EMPTY_ENCRYPTED_UINT64 = [0n, '0x'] as const;
 const PRIVATE_TRADE_WRITE_GAS_LIMIT = 4_000_000n;
 
 const createTradeContract = async (runner: TradeSigner, escrowContract?: string) => {
   const cotiEthers = await loadCotiEthersModule();
   const config = resolveTradeEscrowContractConfig(escrowContract);
   return new cotiEthers.Contract(config.address, config.abi, runner);
+};
+
+const createRecurringOrderContract = async (runner: TradeSigner) => {
+  const cotiEthers = await loadCotiEthersModule();
+  return new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, runner);
 };
 
 const requireSuccessfulReceipt = <T extends { status?: number | bigint } | null | undefined>(
@@ -76,6 +84,15 @@ const buildTradeAssetTuple = (asset: TradeAssetSelection, amountWei: bigint) =>
     amountWei
   ] as const;
 
+const buildRecurringAssetTuple = (asset: TradeAssetSelection) =>
+  [
+    resolveTradeAssetTypeValue(asset.kind),
+    asset.tokenAddress ?? ZERO_ADDRESS
+  ] as const;
+
+const buildRecurringTermsTuple = (baseAmountWei: bigint, quoteAmountWei: bigint) =>
+  [baseAmountWei, quoteAmountWei] as const;
+
 const ensureOfferEscrowReady = async (
   signer: TradeSigner,
   makerAddress: string,
@@ -118,7 +135,10 @@ const resolveTradeIdFromReceipt = async (
   tradeContract: Awaited<ReturnType<typeof createTradeContract>>,
   receipt: { logs?: unknown[] },
   fallbackErrorMessage: string,
-  abi: typeof TRADE_ESCROW_CONTRACT_ABI | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI = TRADE_ESCROW_CONTRACT_ABI
+  abi:
+    | typeof TRADE_ESCROW_CONTRACT_ABI
+    | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI
+    | typeof RECURRING_OTC_CONTRACT_ABI = TRADE_ESCROW_CONTRACT_ABI
 ): Promise<number> => {
   const cotiEthers = await loadCotiEthersModule();
   const interfaceInstance = new cotiEthers.Interface(abi);
@@ -127,8 +147,8 @@ const resolveTradeIdFromReceipt = async (
   for (const log of receipt.logs ?? []) {
     try {
       const parsedLog = interfaceInstance.parseLog(log as never);
-      if (parsedLog?.name === 'TradeOpened') {
-        tradeId = toSafeNumber(parsedLog.args?.tradeId ?? parsedLog.args?.[0]);
+      if (parsedLog?.name === 'TradeOpened' || parsedLog?.name === 'PrivateOrderOpened' || parsedLog?.name === 'RecurringOrderOpened') {
+        tradeId = toSafeNumber(parsedLog.args?.tradeId ?? parsedLog.args?.orderId ?? parsedLog.args?.[0]);
         break;
       }
     } catch {
@@ -136,9 +156,16 @@ const resolveTradeIdFromReceipt = async (
   }
 
   if (tradeId <= 0) {
-    const nextTradeIdRaw = await tradeContract.nextTradeId().catch(() => null);
+    const nextTradeIdRaw =
+      typeof tradeContract.nextTradeId === 'function' ? await tradeContract.nextTradeId().catch(() => null) : null;
     if (typeof nextTradeIdRaw === 'bigint' && nextTradeIdRaw > 0n) {
       tradeId = Number(nextTradeIdRaw - 1n);
+    } else {
+      const nextOrderIdRaw =
+        typeof tradeContract.nextOrderId === 'function' ? await tradeContract.nextOrderId().catch(() => null) : null;
+      if (typeof nextOrderIdRaw === 'bigint' && nextOrderIdRaw > 0n) {
+        tradeId = Number(nextOrderIdRaw - 1n);
+      }
     }
   }
 
@@ -151,7 +178,10 @@ const resolveTradeIdFromReceipt = async (
 
 const resolveTradeFunctionSelector = async (
   functionName: string,
-  abi: typeof TRADE_ESCROW_CONTRACT_ABI | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI = TRADE_ESCROW_CONTRACT_ABI
+  abi:
+    | typeof TRADE_ESCROW_CONTRACT_ABI
+    | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI
+    | typeof RECURRING_OTC_CONTRACT_ABI = TRADE_ESCROW_CONTRACT_ABI
 ): Promise<string> => {
   const cotiEthers = await loadCotiEthersModule();
   const interfaceInstance = new cotiEthers.Interface(abi);
@@ -162,7 +192,7 @@ const resolveTradeFunctionSelector = async (
   return selector;
 };
 
-const resolvePrivateFixedPriceFillResult = async (
+const resolvePrivateOrderFillResult = async (
   receipt: { logs?: unknown[] },
   fallbackFullyFilled = false
 ): Promise<boolean> => {
@@ -172,7 +202,7 @@ const resolvePrivateFixedPriceFillResult = async (
   for (const log of receipt.logs ?? []) {
     try {
       const parsedLog = interfaceInstance.parseLog(log as never);
-      if (parsedLog?.name === 'PrivateFixedPriceTradeFilled') {
+      if (parsedLog?.name === 'PrivateOrderFilled') {
         return Boolean(parsedLog.args?.fullyFilled ?? parsedLog.args?.[2]);
       }
     } catch {
@@ -219,10 +249,13 @@ export const createTradeOnChain = async ({
 }): Promise<{ tradeId: number; escrowContract: string }> => {
   if (hidePrivateLiquidity) {
     if (parentTradeId) {
-      throw new Error('Private liquidity trades cannot be linked as counter offers yet.');
+      throw new Error('Hidden amount orders cannot be linked as counter offers yet.');
     }
-    if (offerAsset.kind !== 'private-erc20' || requestAsset.kind !== 'private-erc20') {
-      throw new Error('Private liquidity trades require private tokens on both sides.');
+    if (offerAsset.kind !== 'private-erc20') {
+      throw new Error('Hide amount requires the token you sell to be private.');
+    }
+    if (requestAsset.kind === 'private-erc20' && requestAsset.tokenAddress === offerAsset.tokenAddress) {
+      throw new Error('Hidden amount orders need two different token sides.');
     }
 
     const resolvedHiddenOfferAmountWei = hiddenOfferAmountWei ?? offerAmountWei;
@@ -237,7 +270,7 @@ export const createTradeOnChain = async ({
     );
 
     const createSelector = await resolveTradeFunctionSelector(
-      'createPrivateFixedPriceTrade',
+      'createPrivateOrder',
       PRIVATE_TRADE_ESCROW_CONTRACT_ABI
     );
     const encryptedHiddenOfferAmount = await signer.encryptValue(
@@ -245,7 +278,7 @@ export const createTradeOnChain = async ({
       PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
       createSelector
     );
-    const createTx = await tradeContract.createPrivateFixedPriceTrade(
+    const createTx = await tradeContract.createPrivateOrder(
       buildTradeAssetTuple(offerAsset, resolvedPublicOfferAmountWei),
       buildTradeAssetTuple(requestAsset, requestAmountWei),
       takerAddress,
@@ -306,6 +339,348 @@ export const createTradeOnChain = async ({
   return { tradeId, escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS };
 };
 
+export const createRecurringOrderOnChain = async ({
+  signer,
+  makerAddress,
+  baseAsset,
+  quoteAsset,
+  buyBaseAmountWei,
+  buyQuoteAmountWei,
+  sellBaseAmountWei,
+  sellQuoteAmountWei,
+  initialBaseInventoryWei,
+  initialQuoteInventoryWei,
+  nativeFeeWei,
+  isPublic,
+  accessHash,
+  hidePrivateAmounts
+}: {
+  signer: TradeSigner;
+  makerAddress: string;
+  baseAsset: TradeAssetSelection;
+  quoteAsset: TradeAssetSelection;
+  buyBaseAmountWei: bigint;
+  buyQuoteAmountWei: bigint;
+  sellBaseAmountWei: bigint;
+  sellQuoteAmountWei: bigint;
+  initialBaseInventoryWei: bigint;
+  initialQuoteInventoryWei: bigint;
+  nativeFeeWei: bigint;
+  isPublic?: boolean;
+  accessHash?: string;
+  hidePrivateAmounts?: boolean;
+}): Promise<{ orderId: number; escrowContract: string }> => {
+  if (baseAsset.kind === quoteAsset.kind && (baseAsset.tokenAddress ?? ZERO_ADDRESS).toLowerCase() === (quoteAsset.tokenAddress ?? ZERO_ADDRESS).toLowerCase()) {
+    throw new Error('Recurring orders need two different assets.');
+  }
+  if (buyBaseAmountWei <= 0n || buyQuoteAmountWei <= 0n || sellBaseAmountWei <= 0n || sellQuoteAmountWei <= 0n) {
+    throw new Error('Enter buy and sell prices before creating a recurring order.');
+  }
+  if (initialBaseInventoryWei <= 0n && initialQuoteInventoryWei <= 0n) {
+    throw new Error('Fund at least one side of the recurring order.');
+  }
+
+  const recurringContract = await createRecurringOrderContract(signer);
+  const hasPrivateAsset = baseAsset.kind === 'private-erc20' || quoteAsset.kind === 'private-erc20';
+  const isPrivateOrder = Boolean(hidePrivateAmounts && hasPrivateAsset);
+  const baseAssetTuple = buildRecurringAssetTuple(baseAsset);
+  const quoteAssetTuple = buildRecurringAssetTuple(quoteAsset);
+  const buyTermsTuple = buildRecurringTermsTuple(buyBaseAmountWei, buyQuoteAmountWei);
+  const sellTermsTuple = buildRecurringTermsTuple(sellBaseAmountWei, sellQuoteAmountWei);
+  const recurringAddress = RECURRING_OTC_CONTRACT_ADDRESS;
+
+  if (baseAsset.kind !== 'native' && baseAsset.tokenAddress && initialBaseInventoryWei > 0n) {
+    await ensureTradeTokenAllowance(
+      signer,
+      makerAddress,
+      baseAsset.tokenAddress,
+      initialBaseInventoryWei,
+      baseAsset.kind,
+      recurringAddress
+    );
+  }
+  if (quoteAsset.kind !== 'native' && quoteAsset.tokenAddress && initialQuoteInventoryWei > 0n) {
+    await ensureTradeTokenAllowance(
+      signer,
+      makerAddress,
+      quoteAsset.tokenAddress,
+      initialQuoteInventoryWei,
+      quoteAsset.kind,
+      recurringAddress
+    );
+  }
+
+  const nativeInventoryWei =
+    (baseAsset.kind === 'native' ? initialBaseInventoryWei : 0n) +
+    (quoteAsset.kind === 'native' ? initialQuoteInventoryWei : 0n);
+  const valueToSend = nativeInventoryWei + nativeFeeWei;
+
+  const createTx = isPrivateOrder
+    ? await (async () => {
+        const selector = await resolveTradeFunctionSelector('createPrivateRecurringOrder', RECURRING_OTC_CONTRACT_ABI);
+        const encryptedBaseInventory = await signer.encryptValue(
+          baseAsset.kind === 'private-erc20' ? initialBaseInventoryWei : 0n,
+          recurringAddress,
+          selector
+        );
+        const encryptedQuoteInventory = await signer.encryptValue(
+          quoteAsset.kind === 'private-erc20' ? initialQuoteInventoryWei : 0n,
+          recurringAddress,
+          selector
+        );
+        return recurringContract.createPrivateRecurringOrder(
+          baseAssetTuple,
+          quoteAssetTuple,
+          buyTermsTuple,
+          sellTermsTuple,
+          ZERO_ADDRESS,
+          Boolean(isPublic),
+          accessHash ?? ZERO_BYTES32,
+          baseAsset.kind === 'private-erc20' ? 0n : initialBaseInventoryWei,
+          quoteAsset.kind === 'private-erc20' ? 0n : initialQuoteInventoryWei,
+          encryptedBaseInventory,
+          encryptedQuoteInventory,
+          { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+        );
+      })()
+    : await recurringContract.createRecurringOrder(
+        baseAssetTuple,
+        quoteAssetTuple,
+        buyTermsTuple,
+        sellTermsTuple,
+        ZERO_ADDRESS,
+        Boolean(isPublic),
+        accessHash ?? ZERO_BYTES32,
+        initialBaseInventoryWei,
+        initialQuoteInventoryWei,
+        hasPrivateAsset
+          ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+          : { value: valueToSend }
+      );
+  const createReceipt = requireSuccessfulReceipt(await createTx.wait(), 'Recurring order creation failed on-chain.');
+  const orderId = await resolveTradeIdFromReceipt(
+    recurringContract,
+    createReceipt as { logs?: unknown[] },
+    'Recurring order was created, but the order id could not be resolved.',
+    RECURRING_OTC_CONTRACT_ABI
+  );
+
+  return { orderId, escrowContract: RECURRING_OTC_CONTRACT_ADDRESS };
+};
+
+export const editRecurringOrderOnChain = async ({
+  signer,
+  makerAddress,
+  orderId,
+  baseAsset,
+  quoteAsset,
+  buyBaseAmountWei,
+  buyQuoteAmountWei,
+  sellBaseAmountWei,
+  sellQuoteAmountWei,
+  addBaseInventoryWei,
+  addQuoteInventoryWei,
+  removeBaseInventoryWei = 0n,
+  removeQuoteInventoryWei = 0n,
+  hidePrivateAmounts
+}: {
+  signer: TradeSigner;
+  makerAddress: string;
+  orderId: number;
+  baseAsset: TradeAssetSelection;
+  quoteAsset: TradeAssetSelection;
+  buyBaseAmountWei: bigint;
+  buyQuoteAmountWei: bigint;
+  sellBaseAmountWei: bigint;
+  sellQuoteAmountWei: bigint;
+  addBaseInventoryWei: bigint;
+  addQuoteInventoryWei: bigint;
+  removeBaseInventoryWei?: bigint;
+  removeQuoteInventoryWei?: bigint;
+  hidePrivateAmounts?: boolean;
+}): Promise<void> => {
+  if (orderId <= 0) {
+    throw new Error('Select a recurring order to edit.');
+  }
+  if (buyBaseAmountWei <= 0n || buyQuoteAmountWei <= 0n || sellBaseAmountWei <= 0n || sellQuoteAmountWei <= 0n) {
+    throw new Error('Enter buy and sell prices before saving the recurring order.');
+  }
+  if (addBaseInventoryWei < 0n || addQuoteInventoryWei < 0n) {
+    throw new Error('Added inventory cannot be negative.');
+  }
+  if (removeBaseInventoryWei < 0n || removeQuoteInventoryWei < 0n) {
+    throw new Error('Removed liquidity cannot be negative.');
+  }
+
+  const recurringContract = await createRecurringOrderContract(signer);
+  const recurringAddress = RECURRING_OTC_CONTRACT_ADDRESS;
+  const hasPrivateAsset = baseAsset.kind === 'private-erc20' || quoteAsset.kind === 'private-erc20';
+  const isPrivateOrder = Boolean(hidePrivateAmounts && hasPrivateAsset);
+
+  if (baseAsset.kind !== 'native' && baseAsset.tokenAddress && addBaseInventoryWei > 0n) {
+    await ensureTradeTokenAllowance(
+      signer,
+      makerAddress,
+      baseAsset.tokenAddress,
+      addBaseInventoryWei,
+      baseAsset.kind,
+      recurringAddress
+    );
+  }
+  if (quoteAsset.kind !== 'native' && quoteAsset.tokenAddress && addQuoteInventoryWei > 0n) {
+    await ensureTradeTokenAllowance(
+      signer,
+      makerAddress,
+      quoteAsset.tokenAddress,
+      addQuoteInventoryWei,
+      quoteAsset.kind,
+      recurringAddress
+    );
+  }
+
+  const nativeInventoryWei =
+    (baseAsset.kind === 'native' ? addBaseInventoryWei : 0n) +
+    (quoteAsset.kind === 'native' ? addQuoteInventoryWei : 0n);
+  const selector = await resolveTradeFunctionSelector('editOrder', RECURRING_OTC_CONTRACT_ABI);
+  const encryptedAddBaseInventory =
+    isPrivateOrder && baseAsset.kind === 'private-erc20'
+      ? await signer.encryptValue(addBaseInventoryWei, recurringAddress, selector)
+      : EMPTY_ENCRYPTED_UINT64;
+  const encryptedAddQuoteInventory =
+    isPrivateOrder && quoteAsset.kind === 'private-erc20'
+      ? await signer.encryptValue(addQuoteInventoryWei, recurringAddress, selector)
+      : EMPTY_ENCRYPTED_UINT64;
+  const encryptedRemoveBaseInventory =
+    isPrivateOrder && baseAsset.kind === 'private-erc20'
+      ? await signer.encryptValue(removeBaseInventoryWei, recurringAddress, selector)
+      : EMPTY_ENCRYPTED_UINT64;
+  const encryptedRemoveQuoteInventory =
+    isPrivateOrder && quoteAsset.kind === 'private-erc20'
+      ? await signer.encryptValue(removeQuoteInventoryWei, recurringAddress, selector)
+      : EMPTY_ENCRYPTED_UINT64;
+  const publicAddBaseInventory = isPrivateOrder && baseAsset.kind === 'private-erc20' ? 0n : addBaseInventoryWei;
+  const publicAddQuoteInventory = isPrivateOrder && quoteAsset.kind === 'private-erc20' ? 0n : addQuoteInventoryWei;
+  const publicRemoveBaseInventory = isPrivateOrder && baseAsset.kind === 'private-erc20' ? 0n : removeBaseInventoryWei;
+  const publicRemoveQuoteInventory = isPrivateOrder && quoteAsset.kind === 'private-erc20' ? 0n : removeQuoteInventoryWei;
+
+  const editTx = await recurringContract.editOrder(
+    orderId,
+    buildRecurringTermsTuple(buyBaseAmountWei, buyQuoteAmountWei),
+    buildRecurringTermsTuple(sellBaseAmountWei, sellQuoteAmountWei),
+    publicAddBaseInventory,
+    publicAddQuoteInventory,
+    encryptedAddBaseInventory,
+    encryptedAddQuoteInventory,
+    publicRemoveBaseInventory,
+    publicRemoveQuoteInventory,
+    encryptedRemoveBaseInventory,
+    encryptedRemoveQuoteInventory,
+    hasPrivateAsset
+      ? { value: nativeInventoryWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      : { value: nativeInventoryWei }
+  );
+  requireSuccessfulReceipt(await editTx.wait(), 'Recurring order edit failed on-chain.');
+};
+
+export const fillRecurringOrderSideOnChain = async ({
+  signer,
+  ownerAddress,
+  orderId,
+  side,
+  inputAsset,
+  inputAmountWei,
+  hiddenAmounts,
+  accessSecret
+}: {
+  signer: TradeSigner;
+  ownerAddress: string;
+  orderId: number;
+  side: 'buy' | 'sell';
+  inputAsset: TradeAssetPayload;
+  inputAmountWei: bigint;
+  hiddenAmounts?: boolean;
+  accessSecret?: string;
+}): Promise<{ filledTxHash?: string }> => {
+  if (inputAmountWei <= 0n) {
+    throw new Error('Enter an amount to fill this recurring order.');
+  }
+
+  const recurringContract = await createRecurringOrderContract(signer);
+  await ensureRequestPaymentReady(signer, ownerAddress, inputAsset, inputAmountWei, RECURRING_OTC_CONTRACT_ADDRESS);
+
+  if (hiddenAmounts) {
+    const functionName =
+      side === 'buy'
+        ? accessSecret
+          ? 'fillPrivateBuySideWithSecret'
+          : 'fillPrivateBuySide'
+        : accessSecret
+          ? 'fillPrivateSellSideWithSecret'
+          : 'fillPrivateSellSide';
+    const selector = await resolveTradeFunctionSelector(functionName, RECURRING_OTC_CONTRACT_ABI);
+    const encryptedAmount = await signer.encryptValue(
+      inputAsset.kind === 'private-erc20' ? inputAmountWei : 0n,
+      RECURRING_OTC_CONTRACT_ADDRESS,
+      selector
+    );
+    const publicAmount = inputAsset.kind === 'private-erc20' ? 0n : inputAmountWei;
+    const txOverrides = {
+      value: inputAsset.kind === 'native' ? inputAmountWei : 0n,
+      gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
+    };
+    const fillTx =
+      side === 'buy'
+        ? accessSecret
+          ? await recurringContract.fillPrivateBuySideWithSecret(orderId, publicAmount, encryptedAmount, 0n, accessSecret, txOverrides)
+          : await recurringContract.fillPrivateBuySide(orderId, publicAmount, encryptedAmount, 0n, txOverrides)
+        : accessSecret
+          ? await recurringContract.fillPrivateSellSideWithSecret(orderId, publicAmount, encryptedAmount, 0n, accessSecret, txOverrides)
+          : await recurringContract.fillPrivateSellSide(orderId, publicAmount, encryptedAmount, 0n, txOverrides);
+    const fillReceipt = requireSuccessfulReceipt(
+      (await fillTx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown },
+      'Recurring order fill failed on-chain.'
+    );
+    return { filledTxHash: resolveAcceptedTxHash(fillTx as { hash?: unknown }, fillReceipt) };
+  }
+
+  const txOverrides =
+    inputAsset.kind === 'private-erc20'
+      ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      : { value: inputAsset.kind === 'native' ? inputAmountWei : 0n };
+  const fillTx =
+    side === 'buy'
+      ? accessSecret
+        ? await recurringContract.fillBuySideWithSecret(orderId, inputAmountWei, 0n, accessSecret, txOverrides)
+        : await recurringContract.fillBuySide(orderId, inputAmountWei, 0n, txOverrides)
+      : accessSecret
+        ? await recurringContract.fillSellSideWithSecret(orderId, inputAmountWei, 0n, accessSecret, txOverrides)
+        : await recurringContract.fillSellSide(orderId, inputAmountWei, 0n, txOverrides);
+  const fillReceipt = requireSuccessfulReceipt(
+    (await fillTx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown },
+    'Recurring order fill failed on-chain.'
+  );
+  return { filledTxHash: resolveAcceptedTxHash(fillTx as { hash?: unknown }, fillReceipt) };
+};
+
+export const updateRecurringOrderStatusOnChain = async ({
+  signer,
+  orderId,
+  action
+}: {
+  signer: TradeSigner;
+  orderId: number;
+  action: 'pause' | 'resume' | 'cancel';
+}): Promise<void> => {
+  const recurringContract = await createRecurringOrderContract(signer);
+  const tx =
+    action === 'pause'
+      ? await recurringContract.pauseOrder(orderId)
+      : action === 'resume'
+        ? await recurringContract.resumeOrder(orderId)
+        : await recurringContract.cancelOrder(orderId);
+  requireSuccessfulReceipt(await tx.wait(), 'Recurring order update failed on-chain.');
+};
+
 export const acceptTradeOnChain = async ({
   signer,
   ownerAddress,
@@ -325,9 +700,10 @@ export const acceptTradeOnChain = async ({
   const resolvedRequestAmountWei = requestAmountWei ?? BigInt(requestAsset.amount);
   await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, resolvedRequestAmountWei);
 
-  const txOverrides = {
-    value: requestAsset.kind === 'native' ? resolvedRequestAmountWei : 0n
-  };
+  const txOverrides =
+    requestAsset.kind === 'private-erc20'
+      ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      : { value: requestAsset.kind === 'native' ? resolvedRequestAmountWei : 0n };
   const acceptTx = accessSecret
     ? await tradeContract.acceptTradeWithSecret(tradeId, accessSecret, txOverrides)
     : await tradeContract.acceptTrade(tradeId, txOverrides);
@@ -360,9 +736,10 @@ export const acceptCounterTradeAndCloseParentOnChain = async ({
   const resolvedRequestAmountWei = requestAmountWei ?? BigInt(requestAsset.amount);
   await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, resolvedRequestAmountWei);
 
-  const txOverrides = {
-    value: requestAsset.kind === 'native' ? resolvedRequestAmountWei : 0n
-  };
+  const txOverrides =
+    requestAsset.kind === 'private-erc20'
+      ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      : { value: requestAsset.kind === 'native' ? resolvedRequestAmountWei : 0n };
   const acceptTx = accessSecret
     ? await tradeContract.acceptCounterTradeAdvancedAndCloseParent(tradeId, accessSecret, txOverrides)
     : await tradeContract.acceptCounterTradeAndCloseParent(tradeId, txOverrides);
@@ -396,9 +773,10 @@ export const fillTradeOnChain = async ({
   const tradeContract = await createTradeContract(signer);
   await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, requestAmountWei);
 
-  const txOverrides = {
-    value: requestAsset.kind === 'native' ? requestAmountWei : 0n
-  };
+  const txOverrides =
+    requestAsset.kind === 'private-erc20'
+      ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      : { value: requestAsset.kind === 'native' ? requestAmountWei : 0n };
   const fillTx = accessSecret
     ? await tradeContract.fillTradeAdvanced(tradeId, requestAmountWei, minOfferAmountOut, accessSecret, txOverrides)
     : await tradeContract.fillTrade(tradeId, requestAmountWei, minOfferAmountOut, txOverrides);
@@ -429,36 +807,43 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
   escrowContract?: string;
   accessSecret?: string;
 }): Promise<{ filledTxHash?: string; fullyFilled: boolean }> => {
-  if (requestAsset.kind !== 'private-erc20') {
-    throw new Error('Private liquidity fills require a private payment token.');
-  }
-
   const resolvedEscrowContract = escrowContract ?? PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
   const tradeContract = await createTradeContract(signer, resolvedEscrowContract);
   await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, requestAmountWei, resolvedEscrowContract);
 
-  const functionName = accessSecret ? 'fillPrivateFixedPriceTradeWithSecret' : 'fillPrivateFixedPriceTrade';
-  const fillSelector = await resolveTradeFunctionSelector(functionName, PRIVATE_TRADE_ESCROW_CONTRACT_ABI);
-  const encryptedRequestAmount = await signer.encryptValue(
-    requestAmountWei,
-    resolvedEscrowContract,
-    fillSelector
-  );
-  const fillTx = accessSecret
-    ? await tradeContract.fillPrivateFixedPriceTradeWithSecret(tradeId, encryptedRequestAmount, accessSecret, {
-        gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
-      })
-    : await tradeContract.fillPrivateFixedPriceTrade(tradeId, encryptedRequestAmount, {
-        gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
-      });
+  const requestIsPrivate = requestAsset.kind === 'private-erc20';
+  const functionName = requestIsPrivate
+    ? accessSecret
+      ? 'fillPrivateOrderWithSecret'
+      : 'fillPrivateOrder'
+    : accessSecret
+      ? 'fillHybridPrivateOrderWithSecret'
+      : 'fillHybridPrivateOrder';
+  const fillSelector = requestIsPrivate
+    ? await resolveTradeFunctionSelector(functionName, PRIVATE_TRADE_ESCROW_CONTRACT_ABI)
+    : '';
+  const encryptedRequestAmount = requestIsPrivate
+    ? await signer.encryptValue(requestAmountWei, resolvedEscrowContract, fillSelector)
+    : null;
+  const txOverrides = {
+    value: requestAsset.kind === 'native' ? requestAmountWei : 0n,
+    gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
+  };
+  const fillTx = requestIsPrivate
+    ? accessSecret
+      ? await tradeContract.fillPrivateOrderWithSecret(tradeId, encryptedRequestAmount, accessSecret, txOverrides)
+      : await tradeContract.fillPrivateOrder(tradeId, encryptedRequestAmount, txOverrides)
+    : accessSecret
+      ? await tradeContract.fillHybridPrivateOrderWithSecret(tradeId, requestAmountWei, accessSecret, txOverrides)
+      : await tradeContract.fillHybridPrivateOrder(tradeId, requestAmountWei, txOverrides);
   const fillReceipt = requireSuccessfulReceipt(
     (await fillTx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown; logs?: unknown[] },
-    'Private fixed-price fill failed on-chain.'
+    'Private order fill failed on-chain.'
   );
 
   return {
     filledTxHash: resolveAcceptedTxHash(fillTx as { hash?: unknown }, fillReceipt),
-    fullyFilled: await resolvePrivateFixedPriceFillResult(fillReceipt)
+    fullyFilled: await resolvePrivateOrderFillResult(fillReceipt)
   };
 };
 
@@ -495,8 +880,11 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
   publicOfferAmountWei?: bigint;
   termsHash?: string;
 }): Promise<{ tradeId: number; escrowContract: string }> => {
-  if (offerAsset.kind !== 'private-erc20' || requestAsset.kind !== 'private-erc20') {
-    throw new Error('Private liquidity trades require private tokens on both sides.');
+  if (offerAsset.kind !== 'private-erc20') {
+    throw new Error('Hide amount requires the token you sell to be private.');
+  }
+  if (requestAsset.kind === 'private-erc20' && requestAsset.tokenAddress === offerAsset.tokenAddress) {
+    throw new Error('Hidden amount orders need two different token sides.');
   }
 
   const resolvedHiddenOfferAmountWei = hiddenOfferAmountWei ?? offerAmountWei;
@@ -511,7 +899,7 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
   );
 
   const editSelector = await resolveTradeFunctionSelector(
-    'cancelAndReplacePrivateFixedPriceTrade',
+    'cancelAndReplacePrivateOrder',
     PRIVATE_TRADE_ESCROW_CONTRACT_ABI
   );
   const encryptedHiddenOfferAmount = await signer.encryptValue(
@@ -519,7 +907,7 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
     PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
     editSelector
   );
-  const editTx = await tradeContract.cancelAndReplacePrivateFixedPriceTrade(
+  const editTx = await tradeContract.cancelAndReplacePrivateOrder(
     originalTradeId,
     buildTradeAssetTuple(offerAsset, resolvedPublicOfferAmountWei),
     buildTradeAssetTuple(requestAsset, requestAmountWei),
@@ -573,6 +961,10 @@ export const editTradeOnChain = async ({
   await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei);
 
   const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
+  const editOverrides =
+    offerAsset.kind === 'private-erc20'
+      ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      : { value: valueToSend };
   const editTx = await tradeContract.editTrade(
     originalTradeId,
     buildTradeAssetTuple(offerAsset, offerAmountWei),
@@ -581,7 +973,7 @@ export const editTradeOnChain = async ({
     expiresAt,
     isPublic,
     accessHash ?? ZERO_BYTES32,
-    { value: valueToSend }
+    editOverrides
   );
   const editReceipt = requireSuccessfulReceipt(await editTx.wait(), 'Trade edit failed on-chain.');
   const tradeId = await resolveTradeIdFromReceipt(
@@ -618,12 +1010,16 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
   await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei);
 
   const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
+  const counterOverrides =
+    offerAsset.kind === 'private-erc20'
+      ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      : { value: valueToSend };
   const counterTx = await tradeContract.counterTradeAndCloseCounteredTrade(
     counteredTradeId,
     buildTradeAssetTuple(offerAsset, offerAmountWei),
     buildTradeAssetTuple(requestAsset, requestAmountWei),
     expiresAt,
-    { value: valueToSend }
+    counterOverrides
   );
   const counterReceipt = requireSuccessfulReceipt(await counterTx.wait(), 'Counter replacement failed on-chain.');
   const tradeId = await resolveTradeIdFromReceipt(

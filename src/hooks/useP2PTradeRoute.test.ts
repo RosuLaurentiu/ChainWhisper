@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS } from '../lib/appShared/core';
+import { PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ADDRESS } from '../lib/appShared/core';
 import { encodeTradeLink } from '../lib/tradeLinks';
 import { resolveTradeLinkInput, resolveTradeRouteFromParts } from './useP2PTradeRoute';
 
@@ -10,6 +10,12 @@ describe('P2P trade route helpers', () => {
     expect(resolveTradeRouteFromParts('/trades')).toMatchObject({ view: 'public', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/create')).toMatchObject({ view: 'create', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/mine')).toMatchObject({ view: 'mine', tradeId: null });
+    expect(resolveTradeRouteFromParts('/trades/recurring')).toMatchObject({ view: 'create', tradeId: null });
+    expect(resolveTradeRouteFromParts('/trades/recurring', '?order=11')).toMatchObject({
+      view: 'trade',
+      tradeId: 11,
+      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+    });
     expect(resolveTradeRouteFromParts('/trades/open')).toMatchObject({ view: 'trade', tradeId: null });
   });
 
@@ -35,6 +41,10 @@ describe('P2P trade route helpers', () => {
 
   it('parses shared input while rejecting partial numeric text', () => {
     expect(resolveTradeLinkInput('#123')).toEqual({ tradeId: 123 });
+    expect(resolveTradeLinkInput('http://localhost:5173/trades/recurring?order=7')).toEqual({
+      tradeId: 7,
+      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+    });
     expect(resolveTradeLinkInput('123abc')).toBeNull();
   });
 });

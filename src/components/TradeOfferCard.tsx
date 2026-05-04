@@ -36,6 +36,8 @@ type TradeOfferCardProps = {
   shareCopied?: boolean;
   tradeWindowLayout?: boolean;
   onCopyShareLink?: () => void;
+  onRevealPrivateProgress?: () => void;
+  revealPrivateProgressPending?: boolean;
   showCounterAction?: boolean;
   showEditAction?: boolean;
   onToggleCollapsed?: () => void;
@@ -183,7 +185,7 @@ const buildTradeEventLabel = (
   }
 
   return response.counterTradeId
-    ? `Countered by ${actorLabel} -> trade #${response.counterTradeId}`
+    ? `Countered by ${actorLabel} -> offer #${response.counterTradeId}`
     : `Countered by ${actorLabel}`;
 };
 
@@ -255,10 +257,12 @@ export default function TradeOfferCard({
   collapsed = false,
   canToggleCollapsed = false,
   shareUrl,
-  shareLabel = 'Share Link',
+  shareLabel = 'Share',
   shareCopied = false,
   tradeWindowLayout = false,
   onCopyShareLink,
+  onRevealPrivateProgress,
+  revealPrivateProgressPending = false,
   showCounterAction = true,
   showEditAction = false,
   onToggleCollapsed,
@@ -306,6 +310,7 @@ export default function TradeOfferCard({
   const offerVerifyUrl = buildTokenExplorerUrl(resolvedOffer?.tokenAddress);
   const requestVerifyUrl = buildTokenExplorerUrl(resolvedRequest?.tokenAddress);
   const acceptedTransactionUrl = buildTransactionExplorerUrl(snapshot?.acceptedTxHash);
+  const makerExplorerUrl = buildAddressExplorerUrl(offer.maker);
   const counterpartyAddress = isMaker ? offer.taker : offer.maker;
   const hasCounterpartyAddress = !isZeroTradeTakerAddress(counterpartyAddress);
   const counterpartyExplorerUrl = hasCounterpartyAddress ? buildAddressExplorerUrl(counterpartyAddress) : undefined;
@@ -428,6 +433,12 @@ export default function TradeOfferCard({
           }
         })()
       : null;
+  const canRevealMakerPrivateProgress =
+    tradeWindowLayout &&
+    hiddenLiquidity &&
+    isMaker &&
+    Boolean(onRevealPrivateProgress) &&
+    !makerPrivateProgressSummary;
   const counterParentTradeId = snapshot?.counterParentTradeId ?? offer.parentTradeId;
   const canShowPartialFill = Boolean(
     onPartialFill &&
@@ -496,8 +507,8 @@ export default function TradeOfferCard({
         <div className="trade-card-title-wrap">
           <div className="trade-card-title-row">
             <div className="trade-card-title">
-              <strong>{tradeOrderSummary?.directionLabel ?? `Escrow trade #${offer.tradeId}`}</strong>
-              <span className="trade-card-id">Trade #{offer.tradeId}</span>
+              <strong>{tradeOrderSummary?.directionLabel ?? `Escrow offer #${offer.tradeId}`}</strong>
+              <span className="trade-card-id">Offer #{offer.tradeId}</span>
             </div>
             <div className="trade-card-header-actions">
               <span className={`trade-card-status ${statusClassName}`}>{statusDisplayLabel}</span>
@@ -507,12 +518,12 @@ export default function TradeOfferCard({
                   className={shareCopied ? 'trade-card-link-button copied' : 'trade-card-link-button'}
                   onClick={onCopyShareLink}
                 >
-                  {shareCopied ? 'Copied' : shareLabel}
+                  {shareCopied ? 'Shared' : shareLabel}
                 </button>
               ) : null}
               {acceptedTransactionUrl ? (
                 <a className="trade-card-link-button" href={acceptedTransactionUrl} target="_blank" rel="noreferrer">
-                  Accepted Tx
+                  Settlement Tx
                 </a>
               ) : null}
               {canToggleCollapsed ? (
@@ -532,7 +543,7 @@ export default function TradeOfferCard({
           {isMaker ? <span className="trade-card-parent">Your offer</span> : null}
           {isTaker ? <span className="trade-card-parent incoming">Incoming offer</span> : null}
           {canAcceptOpenTakerTrade ? <span className="trade-card-parent incoming">Open offer</span> : null}
-          {hiddenLiquidity ? <span className="trade-card-parent">Private liquidity</span> : null}
+          {hiddenLiquidity ? <span className="trade-card-parent">Private order</span> : null}
           {counterParentTradeId ? <span className="trade-card-parent">Counter to #{counterParentTradeId}</span> : null}
           {snapshot?.replacesTradeId ? <span className="trade-card-parent">Edited from #{snapshot.replacesTradeId}</span> : null}
           {snapshot?.replacementTradeId ? <span className="trade-card-parent">Replaced by #{snapshot.replacementTradeId}</span> : null}
@@ -699,7 +710,7 @@ export default function TradeOfferCard({
           {makerPrivateProgressSummary ? (
             <div className="trade-card-fill-progress" aria-label={makerPrivateProgressSummary.percentLabel}>
               <div>
-                <span>Your private liquidity</span>
+                <span>Your private order</span>
                 <strong>{makerPrivateProgressSummary.totalLabel}</strong>
               </div>
               <div className="trade-card-fill-bar">
@@ -719,6 +730,22 @@ export default function TradeOfferCard({
                 <span style={{ width: `${fillProgressPercent}%` }} />
               </div>
               <small>{fillProgressLabel}</small>
+            </div>
+          ) : null}
+          {canRevealMakerPrivateProgress ? (
+            <div className="trade-card-private-reveal">
+              <div>
+                <span>Owner budget</span>
+                <p>Reveal remaining hidden liquidity and private fills for this order.</p>
+              </div>
+              <button
+                type="button"
+                onClick={onRevealPrivateProgress}
+                disabled={revealPrivateProgressPending}
+                title="Reveal this one-off private order with your wallet AES key"
+              >
+                {revealPrivateProgressPending ? 'Revealing...' : 'Reveal budget'}
+              </button>
             </div>
           ) : null}
           {isOpen && (isTaker || canAcceptOpenTakerTrade) ? (
@@ -786,7 +813,7 @@ export default function TradeOfferCard({
                     ) : null}
                   </div>
                   <p className="trade-card-private-fill-note">
-                    Private liquidity may fill partially. The contract settles what is available at this ratio and returns any unspent private payment.
+                    Private orders may fill partially. The contract settles what is available at this ratio and returns any unspent payment.
                   </p>
                 </div>
               ) : null}
@@ -822,16 +849,41 @@ export default function TradeOfferCard({
                 : 'On-chain escrow. Verify token contracts before accepting.'}
             </p>
           ) : null}
-          <div className="trade-card-counterparty">
-            <span>Counterparty</span>
-            {counterpartyExplorerUrl ? (
-              <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
-                {shortenAddress(counterpartyAddress)}
-              </a>
-            ) : (
-              <strong>Any wallet</strong>
-            )}
-          </div>
+          {tradeWindowLayout ? (
+            <div className="trade-card-participants" aria-label="Trade participants">
+              <div className="trade-card-counterparty">
+                <span>Creator</span>
+                {makerExplorerUrl ? (
+                  <a href={makerExplorerUrl} target="_blank" rel="noreferrer" title={offer.maker}>
+                    {isMaker ? `${shortenAddress(offer.maker)} (you)` : shortenAddress(offer.maker)}
+                  </a>
+                ) : (
+                  <strong>{shortenAddress(offer.maker)}</strong>
+                )}
+              </div>
+              <div className="trade-card-counterparty">
+                <span>Peer</span>
+                {counterpartyExplorerUrl ? (
+                  <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
+                    {shortenAddress(counterpartyAddress)}
+                  </a>
+                ) : (
+                  <strong>Any wallet</strong>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="trade-card-counterparty">
+              <span>Peer</span>
+              {counterpartyExplorerUrl ? (
+                <a href={counterpartyExplorerUrl} target="_blank" rel="noreferrer" title={counterpartyAddress}>
+                  {shortenAddress(counterpartyAddress)}
+                </a>
+              ) : (
+                <strong>Any wallet</strong>
+              )}
+            </div>
+          )}
         </>
       ) : null}
 

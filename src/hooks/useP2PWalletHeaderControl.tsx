@@ -21,8 +21,6 @@ import {
   type SharedWalletSession
 } from '../lib/walletSession';
 
-type TradePrimaryWalletKind = 'app' | 'browser';
-
 type UseP2PWalletHeaderControlArgs = {
   appWalletMenuOpen: boolean;
   beginGenerateBurnerWallet: () => void;
@@ -51,7 +49,6 @@ type UseP2PWalletHeaderControlArgs = {
   setWalletMenuOpen: Dispatch<SetStateAction<boolean>>;
   sharedWalletSession?: SharedWalletSession;
   signAesForCurrentWallet: () => Promise<void>;
-  tradePrimaryWalletKind: TradePrimaryWalletKind;
   walletAddress: string;
   walletHasAes: boolean;
   walletMenuOpen: boolean;
@@ -92,7 +89,6 @@ export default function useP2PWalletHeaderControl({
   setWalletMenuOpen,
   sharedWalletSession,
   signAesForCurrentWallet,
-  tradePrimaryWalletKind,
   walletAddress,
   walletHasAes,
   walletMenuOpen
@@ -139,8 +135,8 @@ export default function useP2PWalletHeaderControl({
     ]
   );
   const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
-  const tradePrimaryConnectsAppWallet =
-    !walletAddress && tradeHasSavedAppWallet && (tradePrimaryWalletKind === 'app' || !preferredWalletOption);
+  const tradePrimaryConnectsAppWallet = !walletAddress && tradeHasSavedAppWallet && !preferredWalletOption;
+  const showTradeDisconnectedAppAction = Boolean(!walletAddress && preferredWalletOption);
   const tradeWalletBusyLabel =
     connectingWalletId === 'aes'
       ? 'Unlocking...'
@@ -226,7 +222,7 @@ export default function useP2PWalletHeaderControl({
         isConnected: Boolean(walletAddress),
         isOnCotiNetwork: onCotiNetwork,
         preferredBrowserWalletId: preferredWalletOption?.id,
-        showDisconnectedBrowserAction: tradePrimaryConnectsAppWallet
+        showDisconnectedBrowserAction: Boolean(!walletAddress && preferredWalletOption)
       }),
     [
       browserWalletOptions,
@@ -234,7 +230,6 @@ export default function useP2PWalletHeaderControl({
       onCotiNetwork,
       preferredWalletOption?.id,
       tradeHasSavedAppWallet,
-      tradePrimaryConnectsAppWallet,
       visibleAppWallets.length,
       walletAddress
     ]
@@ -247,7 +242,7 @@ export default function useP2PWalletHeaderControl({
     showBrowserQuickAction: showTradeBrowserQuickAction,
     showBrowserWalletMenuSection: showTradeBrowserWalletMenuSection
   } = tradeWalletActions;
-  const tradeAppWalletSwitchButton = showTradeAppWalletSwitchButton ? (
+  const tradeAppWalletSwitchButton = showTradeAppWalletSwitchButton && !showTradeDisconnectedAppAction ? (
     <AppWalletSwitchButton
       menuOpen={appWalletMenuOpen}
       onToggleMenu={() => {
@@ -266,6 +261,27 @@ export default function useP2PWalletHeaderControl({
   ) : null;
   const tradePrivacyActionLabel = resolveWalletPrivacyActionLabel(connectingWalletId === 'aes');
   const tradeWalletSwitchAction = useMemo(() => {
+    if (showTradeDisconnectedAppAction) {
+      const actionLabel = tradeHasSavedAppWallet ? 'App wallet' : 'Add app wallet';
+      return (
+        <button
+          type="button"
+          className="p2p-wallet-aes-action wallet-app-secondary-action"
+          onClick={() => {
+            if (tradeHasSavedAppWallet) {
+              connectBurnerWallet().catch(() => {});
+              return;
+            }
+            beginGenerateBurnerWallet();
+          }}
+          disabled={Boolean(connectingWalletId)}
+          title={tradeHasSavedAppWallet ? 'Use the app wallet for this app' : 'Create an app wallet for this app'}
+        >
+          {connectingWalletId === 'burner' ? 'Unlocking...' : actionLabel}
+        </button>
+      );
+    }
+
     if (showTradeBrowserQuickAction && preferredWalletOption) {
       return (
         <button
@@ -317,7 +333,9 @@ export default function useP2PWalletHeaderControl({
     preferredWalletOption,
     showTradeAppCreateAction,
     showTradeAppSwitchAction,
-    showTradeBrowserQuickAction
+    showTradeBrowserQuickAction,
+    showTradeDisconnectedAppAction,
+    tradeHasSavedAppWallet
   ]);
   const tradeWalletHeaderControl = useMemo(
     () => (

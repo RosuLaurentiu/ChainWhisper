@@ -35,6 +35,10 @@ type TokenMetadata = {
   rewardTokenSymbol: string;
 };
 
+type TradeRefreshOptions = {
+  silent?: boolean;
+};
+
 type UseP2PTradeDataArgs = TokenMetadata & {
   enrichMakerPrivateProgress: (snapshot: TradeSnapshot, forceReveal?: boolean) => Promise<TradeSnapshot>;
   resolvedRouteAccessSecret: string;
@@ -59,9 +63,9 @@ type UseP2PTradeDataResult = {
   myTradesError: string;
   publicTrades: TradeSnapshot[];
   publicTradesError: string;
-  refreshMyTrades: () => Promise<void>;
-  refreshPublicTrades: () => Promise<void>;
-  refreshTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
+  refreshMyTrades: (options?: TradeRefreshOptions) => Promise<void>;
+  refreshPublicTrades: (options?: TradeRefreshOptions) => Promise<void>;
+  refreshTradeDetail: (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions) => Promise<TradeSnapshot | null>;
   setDetailTrade: Dispatch<SetStateAction<TradeSnapshot | null>>;
   setDetailTradeError: Dispatch<SetStateAction<string>>;
   tradeAccessBlocked: boolean;
@@ -102,7 +106,8 @@ export default function useP2PTradeData({
     [enrichMakerPrivateProgress]
   );
 
-  const refreshPublicTrades = useCallback(async () => {
+  const refreshPublicTrades = useCallback(async (options?: TradeRefreshOptions) => {
+    const silent = Boolean(options?.silent);
     if (publicTradesRefreshRef.current) {
       publicTradesRefreshQueuedRef.current = true;
       return publicTradesRefreshRef.current;
@@ -111,8 +116,10 @@ export default function useP2PTradeData({
     const refreshRequest = (async () => {
       do {
         publicTradesRefreshQueuedRef.current = false;
-        setLoadingPublicTrades(true);
-        setPublicTradesError('');
+        if (!silent) {
+          setLoadingPublicTrades(true);
+          setPublicTradesError('');
+        }
         try {
           const snapshots = await fetchRecentTradeSnapshots({
             rewardTokenSymbol,
@@ -122,10 +129,17 @@ export default function useP2PTradeData({
             limit: 80
           });
           setPublicTrades(sortTrades(snapshots));
+          if (silent) {
+            setPublicTradesError('');
+          }
         } catch {
-          setPublicTradesError('Failed to load public trades.');
+          if (!silent) {
+            setPublicTradesError('Failed to load public trades.');
+          }
         } finally {
-          setLoadingPublicTrades(false);
+          if (!silent) {
+            setLoadingPublicTrades(false);
+          }
         }
       } while (publicTradesRefreshQueuedRef.current);
 
@@ -136,7 +150,8 @@ export default function useP2PTradeData({
     return refreshRequest;
   }, [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
 
-  const refreshMyTrades = useCallback(async () => {
+  const refreshMyTrades = useCallback(async (options?: TradeRefreshOptions) => {
+    const silent = Boolean(options?.silent);
     if (!walletAddress) {
       setMyTrades([]);
       return;
@@ -149,8 +164,10 @@ export default function useP2PTradeData({
     const refreshRequest = (async () => {
       do {
         myTradesRefreshQueuedRef.current = false;
-        setLoadingMyTrades(true);
-        setMyTradesError('');
+        if (!silent) {
+          setLoadingMyTrades(true);
+          setMyTradesError('');
+        }
         try {
           const snapshotsRaw = await fetchWalletTradeSnapshots(walletAddress, {
             rewardTokenSymbol,
@@ -161,10 +178,17 @@ export default function useP2PTradeData({
           });
           const snapshots = await enrichMakerPrivateProgressForList(snapshotsRaw);
           setMyTrades(sortTrades(snapshots));
+          if (silent) {
+            setMyTradesError('');
+          }
         } catch {
-          setMyTradesError('Failed to load your trades.');
+          if (!silent) {
+            setMyTradesError('Failed to load your trades.');
+          }
         } finally {
-          setLoadingMyTrades(false);
+          if (!silent) {
+            setLoadingMyTrades(false);
+          }
         }
       } while (myTradesRefreshQueuedRef.current);
 
@@ -193,7 +217,7 @@ export default function useP2PTradeData({
         }
         return sortTrades(withoutCurrent);
       });
-      if (walletKey && [snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey)) {
+      if (walletKey && ([snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey) || snapshot.walletHasFill)) {
         setMyTrades((previous) => {
           const withoutCurrent = previous.filter((trade) => getSnapshotKey(trade) !== snapshotKey);
           return sortTrades([snapshot, ...withoutCurrent]);
@@ -204,7 +228,7 @@ export default function useP2PTradeData({
   );
 
   const refreshTradeDetail = useCallback(
-    async (tradeId: number, escrowContract?: string): Promise<TradeSnapshot | null> => {
+    async (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions): Promise<TradeSnapshot | null> => {
       const snapshotRaw = await fetchTradeSnapshotById(tradeId, {
         rewardTokenSymbol,
         rewardTokenDecimals,
@@ -214,6 +238,9 @@ export default function useP2PTradeData({
       });
       const snapshot = await enrichMakerPrivateProgress(snapshotRaw);
       mergeTradeSnapshot(snapshot);
+      if (options?.silent) {
+        setDetailTradeError('');
+      }
       return snapshot;
     },
     [

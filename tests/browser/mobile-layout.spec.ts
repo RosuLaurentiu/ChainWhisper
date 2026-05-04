@@ -26,9 +26,9 @@ test.describe('mobile layout polish', () => {
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
     const tradeTabs = page.getByRole('navigation', { name: 'P2P trade views' });
     await expect(tradeTabs).toBeVisible();
-    await expect(tradeTabs.getByRole('button', { name: 'Market' })).toBeVisible();
+    await expect(tradeTabs.getByRole('button', { name: 'Desk' })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Create' })).toBeVisible();
-    await expect(tradeTabs.getByRole('button', { name: 'Trade', exact: true })).toBeVisible();
+    await expect(tradeTabs.getByRole('button', { name: 'Open', exact: true })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'My Trades', exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
@@ -36,7 +36,7 @@ test.describe('mobile layout polish', () => {
   test('keeps Treasury controls reachable on mobile', async ({ page }) => {
     await page.goto('/treasury');
 
-    await expect(page.getByText('Treasury', { exact: true })).toBeVisible();
+    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^Treasury$/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'COTI in pool', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Active gCOTI', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '90D' })).toBeVisible();

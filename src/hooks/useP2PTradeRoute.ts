@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+  RECURRING_OTC_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   isWalletAddress
 } from '../lib/appShared/core';
@@ -63,6 +64,9 @@ const resolveRouteEscrowContract = (searchValue = ''): string | undefined => {
   if (raw.toLowerCase() === 'private') {
     return PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
   }
+  if (raw.toLowerCase() === 'recurring') {
+    return RECURRING_OTC_CONTRACT_ADDRESS;
+  }
   if (raw.toLowerCase() === 'v2') {
     return TRADE_ESCROW_CONTRACT_ADDRESS;
   }
@@ -83,6 +87,20 @@ export const resolveTradeRouteFromParts = (
   }
   if (lowerPathname === '/trades/mine') {
     return { view: 'mine', tradeId: null, accessSecret: '', routeError: '' };
+  }
+  if (lowerPathname === '/trades/recurring') {
+    const params = new URLSearchParams(normalizeTradeSearch(searchValue));
+    const orderId = Number.parseInt(params.get('order') ?? params.get('id') ?? '', 10);
+    if (Number.isSafeInteger(orderId) && orderId > 0) {
+      return {
+        view: 'trade',
+        tradeId: orderId,
+        escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+        accessSecret: resolveLegacyTradeSecret(searchValue, hashValue),
+        routeError: ''
+      };
+    }
+    return { view: 'create', tradeId: null, accessSecret: '', routeError: '' };
   }
   if (lowerPathname === '/trades/open') {
     return createEmptyTradeRoute();
@@ -205,6 +223,10 @@ export const resolveTradeLinkInput = (value: string): ResolvedTradeLinkInput | n
 };
 
 const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escrowContract?: string): string => {
+  if (escrowContract?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
+    const secret = normalizeAccessSecret(accessSecret);
+    return `/trades/recurring?order=${tradeId}${secret ? `#${secret}` : ''}`;
+  }
   const code = encodeTradeLink(tradeId, accessSecret);
   const search =
     escrowContract && escrowContract.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()

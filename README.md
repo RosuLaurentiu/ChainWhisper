@@ -1,6 +1,6 @@
 # ChainWhisper
 
-ChainWhisper is a browser-based COTI Mainnet app suite for private coordination. It combines a home launcher, encrypted chat, P2P escrow trading, Whisper Shield token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
+ChainWhisper is a browser-based COTI Mainnet app suite for private coordination. It combines a home launcher, encrypted chat, a P2P OTC escrow desk, Whisper Shield token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
 
 The app uses `@coti-io/coti-ethers`, `viem`, Recharts, Zustand, TanStack Virtual, and Supabase Storage for temporary encrypted chat image blobs.
 
@@ -12,7 +12,7 @@ Current route behavior is intentional and should stay as-is unless a future chan
 
 - `/` - canonical Home launcher. `/home` is accepted as an alias.
 - `/chat` - ChainWhisper Chat. `/messages` and `/messenger` are accepted aliases.
-- `/trades` and `/trades/...` - P2P trading workspace and deep trade routes.
+- `/trades` and `/trades/...` - P2P OTC trading workspace and deep trade routes.
 - `/shield` - canonical Whisper Shield swap page. `/swap` and `/whisper-shield` are accepted aliases.
 - `/treasury` - Treasury Data. `/treasury-data` is accepted as an alias.
 
@@ -37,18 +37,23 @@ The chat app is a wallet-native encrypted messenger for COTI.
 
 ### P2P Trades (`/trades`)
 
-The standalone P2P app is a trading workspace backed by COTI escrow contracts.
+The standalone P2P app is an OTC-style escrow desk backed by COTI contracts.
 
-- Public trade directory with search and refresh.
-- Create public, private-link, direct-recipient, and counter trades.
-- Normal trades use the standard escrow contract and support public, private-link, direct, counter, partial fill, cancel, decline, and edit-by-replace flows.
-- Private liquidity trades use the private fixed-price escrow contract, require private tokens on both sides, and hide liquidity and fill amounts while showing price ratio, direction, expiry, and access type.
-- Makers can reveal their own private liquidity and fill progress from My Trades after AES is available.
-- Private liquidity offers are not auto-posted into chat, but copied share links can be pasted into conversations.
+- Desk view for active public offers with search and refresh.
+- Create public, private-link, direct-recipient, counter, hidden-amount private orders, hybrid private orders, and two-sided recurring OTC orders from the Create window.
+- Normal trades use the Trading V1 OTC escrow and reader contracts and support public, private-link, direct, counter, partial fill, cancel, decline, permanent/no-expiry, edit-by-replace, and visible private-token amount flows.
+- Private tokens are not automatically hidden. When Hide amount is off, private-token order size, fills, and remaining amounts are public and route through the normal OTC contract.
+- Hidden-amount private orders use the Trading V1 private-orders contract. Fully private orders use private tokens on both sides; hybrid private orders offer a private token while the taker pays with public/native assets.
+- Hidden-amount private orders and private recurring orders use a user-scoped private ledger for maker live liquidity snapshots and participant fill receipts.
+- Trades privacy flows try the COTI MetaMask Snap first for AES key access, then fall back to the existing COTI wallet onboarding path. Chat and Whisper Shield do not use the Snap.
+- Hidden-amount public/detail views hide private amounts and fill amounts while showing price ratio, direction, expiry, and access type.
+- Makers can reveal their own private-order progress and recurring live liquidity from My Trades after AES is available. Fillers can reveal their own private fill history, including partial fills on open orders.
+- Private orders are not auto-posted into chat, but copied share links can be pasted into conversations.
+- Recurring orders are reusable two-sided OTC orders, not timed/cadence orders: buy fills add base inventory to the sell side, and sell fills add quote inventory to the buy side. Makers can edit prices, per-side amounts, and add/remove live liquidity without changing the order link; closing the order returns remaining inventory.
 - Open compact trade links, full URLs, legacy trade IDs, or redirected GitHub Pages links.
 - A completed counter trade cancels the parent/initial trade automatically.
 - My Trades groups received offers, active offers, and history.
-- The top-header wallet control prioritizes MetaMask and CipherTrade, excludes Brave Wallet from the trading wallet list, and still exposes app wallet options.
+- The top-header wallet control prioritizes MetaMask and CipherTrade, excludes Brave Wallet from the trading wallet list, keeps the quick preferred browser-wallet action visible, and still exposes saved app wallet options.
 
 ### Whisper Shield (`/shield`)
 
@@ -73,43 +78,54 @@ Treasury Data is a read-only analytics dashboard for COTI treasury metrics.
 App pages should remain visually distinct where workflow density requires it, but shared behavior should live in shared modules.
 
 - `src/shell/routing.ts` owns top-level route parsing, canonical paths, aliases, and browser location sync.
-- `src/App.tsx` owns the app shell, shared chat wallet state, top-level page composition, and lazy loading of page apps.
+- `src/App.tsx` owns the app shell, shared chat wallet state, top-level page composition, and lazy loading of page apps. In-chat trade actions, group admin actions, and focused group message sync now live in extracted hooks/helpers.
 - `src/lib/appShared.ts` re-exports shared COTI constants, provider loading, wallet helpers, memo encoding, parsers, formatters, and common types from `src/lib/appShared/`.
 - `src/hooks/useWalletOnboarding.ts` manages browser wallet connection, COTI network switching, and AES onboarding for the main app wallet context.
 - `src/hooks/useBurnerWallet.ts` manages the PIN-protected local app-wallet vault.
+- `src/hooks/useInChatTradeActions.ts` owns DM trade create, accept, decline, cancel, and counter preparation orchestration.
+- `src/hooks/useGroupAdminActions.ts` owns group create, invite, join-code, join-by-code, remove, rename, leave, handoff, disband, and invite accept/decline actions.
+- `src/lib/groupMessageSync.ts` handles active-group message/member-event sync merging.
+- `src/lib/directConversationSyncHelpers.ts` contains direct-message merge, unread, nickname/contact, and optimistic reconciliation helpers.
 - `src/components/WalletHeaderPanel.tsx` is the shared compact header wallet surface.
 - `src/components/TradeComposerPanel.tsx` is the shared trade creation/editing surface.
 - `src/components/TradeOfferCard.tsx` renders trade links and in-chat trade cards.
-- `src/lib/tradeComposer.ts` derives trade composer state, validation, labels, balances, fees, and private-liquidity availability.
-- `src/lib/tradeActions.ts` submits escrow create, accept, fill, decline, cancel, edit, and counter-close transactions.
+- `src/lib/tradeComposer.ts` derives trade composer state, validation, labels, balances, fees, and private-order availability.
+- `src/lib/tradeActions.ts` submits OTC, private-order, and recurring-order create/fill/control transactions.
 - `src/lib/tradeLinks.ts` encodes and decodes compact trade links.
 - `src/lib/tradePerspective.ts` resolves maker/taker/open-trade perspective, buy/sell order semantics, ratio labels, and My Trades grouping.
-- `src/lib/appChain.ts` reads trade snapshots from both escrow contracts and normalizes private-token metadata.
+- `src/lib/p2pTradeView.ts` contains P2P display helpers, search/filter helpers, snapshot keys, explorer links, local trade access-secret cache helpers, and maker private-progress labels.
+- `src/lib/cotiSnap.ts` wraps the COTI MetaMask Snap RPC methods used by Trades privacy flows.
+- `src/lib/appHelpers.ts` contains verified ecosystem token presets, message helpers, and shared user-facing error helpers.
+- `src/lib/appChain.ts` reads active Trading V1 trade snapshots, blocks unsupported retired contract links, and normalizes private-token metadata.
 - `src/lib/treasuryData.ts` normalizes live, feed, explorer, and on-chain Treasury Data sources.
 - `src/lib/imagePull.ts` encrypts and decrypts image attachments before Supabase upload/read.
+- `src/hooks/useModalA11y.ts` provides shared modal focus, Escape, and focus-restore behavior.
+- `src/styles.css` is the ordered stylesheet import hub. Route/domain CSS lives in `src/styles/`.
 
-See `AGENTS.md` for future-maintenance rules and `APP_IMPROVEMENTS.md` for proposed follow-up work found during the app review.
+See `AGENTS.md` for future-maintenance rules. `APP_IMPROVEMENTS.md` is intentionally cleared and should only contain new active proposals.
 
 ## Network And Contracts
 
 - Network: COTI Mainnet, chain ID `2632500`, hex `0x282b34`.
 - Direct chat contract: `0xF4cab1599aafBBB68677682354B7c1760bCF6c48`.
 - Group chat contract: `0xE175ec590CE13FB6349f1CAd8b7e9D5d21eaa32b`.
-- Standard trade escrow contract: `0x7Ff60527677156a4c20419Ec862355A6137F8D47`.
-- Private liquidity trade escrow contract: `0xaaf6E676e46bF60eC04769E26EAaAde81D2f4410`.
+- ChainWhisper OTC escrow V1: `0xFe76733F6698F1682f8D85FA915D0fbA75A59090`.
+- ChainWhisper OTC reader V1: `0xb868E143a9B5dC94719D33509Ed9486FBCd9C80C`.
+- ChainWhisper Private Orders V1: `0x2CEa94cDe8F6279d4669d4df8c28D1156Ac1ACf2`.
+- ChainWhisper Recurring OTC V1: `0xd9CF385c42A90fA7F5b624F52dBAa8654C061Cb2`.
 - Reward token: `0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8`.
 - Private reward token: `0x922B39AC9FD4ccb5E5a9de0694C8189DC2D214E8`.
-- Verified private ecosystem token: `0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213`.
+- Verified ecosystem token presets live in `src/lib/appHelpers.ts`; they include public token `0xe8C3D2248a578e9E020C2447f8148e606090fbfe` and private token `0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213`.
 - Reward swap vault: `0x5C35CD3659991051F4Fb04F2C4120643739b7BdE`.
 - Treasury snapshot store default: `0x25975eda0B0Ef3E5D86787Cb89D0A3468C17Bece`.
 
 ## Data And Storage
 
-- On-chain: encrypted direct messages, encrypted group messages, group membership/invite/join-code state, nickname records, read-state backup memos, standard P2P escrow trades, private fixed-price liquidity trades, token fees, and Treasury snapshot history.
-- Browser storage: UI state, cached decrypted timelines, unread maps, notification preference, wallet preference, known trade access secrets, known maker-side private liquidity, selected wallet IDs, and encrypted app-wallet vaults.
+- On-chain: encrypted direct messages, encrypted group messages, group membership/invite/join-code state, nickname records, read-state backup memos, Trading V1 OTC trades, hidden-amount private orders, recurring OTC orders, token fees, and Treasury snapshot history.
+- Browser storage: UI state, cached decrypted timelines, unread maps, notification preference, wallet preference, known trade access secrets, known maker-side private-order reveal context, selected wallet IDs, and encrypted app-wallet vaults.
 - Supabase Storage and Edge Functions: encrypted chat image blobs in the `chat-images` bucket plus scheduled cleanup.
 
-Sensitive local data should stay minimized. Private trade access secrets and maker-side liquidity records are convenience caches and should not be treated as public app state.
+Sensitive local data should stay minimized. Private trade access secrets and maker-side private-order records are convenience caches and should not be treated as public app state.
 
 ## Local Development
 
@@ -123,6 +139,7 @@ Other scripts:
 - `npm run lint` - run ESLint.
 - `npm run test` - run Vitest tests.
 - `npm run build` - type-check and produce a production build.
+- `npm run test:browser` - run focused Playwright smoke tests for route wallet policy and mobile layout guardrails.
 - `npm run preview` - preview the built app.
 
 Before finishing changes, run:
@@ -132,6 +149,8 @@ npm run lint
 npm run test
 npm run build
 ```
+
+Run `npm run test:browser` as well for route, wallet-header, layout, or other visible UI changes.
 
 ## Environment
 
@@ -179,3 +198,5 @@ npm run lint
 npm run test
 npm run build
 ```
+
+Use `npm run test:browser` locally for browser smoke coverage before shipping UI-sensitive changes.

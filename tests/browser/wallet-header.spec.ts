@@ -3,16 +3,41 @@ import { expect, test } from '@playwright/test';
 const walletPanel = '.wallet-header-panel';
 
 test.describe('route wallet header policy', () => {
+  test('shows the shared app menu on every top-level page', async ({ page }) => {
+    for (const route of ['/', '/chat', '/trades', '/shield', '/treasury']) {
+      await page.goto(route);
+      const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' }).first();
+      await expect(appMenu).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'Chat' })).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'Trades' })).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'Shield' })).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'Treasury' })).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'Home' })).toHaveCount(0);
+    }
+  });
+
   test('keeps Home and Treasury wallet-free', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator(walletPanel)).toHaveCount(0);
+    await expect(page.locator('.sound-toggle-btn')).toHaveCount(0);
 
     await page.goto('/home');
     await expect(page.locator(walletPanel)).toHaveCount(0);
+    await expect(page.locator('.sound-toggle-btn')).toHaveCount(0);
 
     await page.goto('/treasury');
-    await expect(page.getByText('Treasury', { exact: true })).toBeVisible();
+    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^Treasury$/ })).toBeVisible();
     await expect(page.locator(walletPanel)).toHaveCount(0);
+  });
+
+  test('shows notification sound controls on app pages except Home', async ({ page }) => {
+    for (const route of ['/chat', '/trades', '/shield', '/treasury']) {
+      await page.goto(route);
+      await expect(page.locator('.sound-toggle-btn')).toBeVisible();
+    }
+
+    await page.goto('/');
+    await expect(page.locator('.sound-toggle-btn')).toHaveCount(0);
   });
 
   test('shows Chat and Shield app-wallet controls', async ({ page }) => {

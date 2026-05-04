@@ -17,6 +17,11 @@ type UseModalA11yOptions = {
   onClose: () => void;
 };
 
+const getFocusableElements = (dialog: HTMLElement): HTMLElement[] =>
+  Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => !element.hasAttribute('disabled') && element.tabIndex !== -1
+  );
+
 export const useModalA11y = ({ closeDisabled = false, dialogRef, isOpen, onClose }: UseModalA11yOptions) => {
   const onCloseRef = useRef(onClose);
   const closeDisabledRef = useRef(closeDisabled);
@@ -43,12 +48,42 @@ export const useModalA11y = ({ closeDisabled = false, dialogRef, isOpen, onClose
     }, 0);
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || closeDisabledRef.current) {
+      const dialog = dialogRef.current;
+      if (!dialog) {
         return;
       }
 
-      event.preventDefault();
-      onCloseRef.current();
+      if (event.key === 'Escape') {
+        if (closeDisabledRef.current) {
+          return;
+        }
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+
+      if (event.key !== 'Tab') {
+        return;
+      }
+
+      const focusableElements = getFocusableElements(dialog);
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (event.shiftKey && activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
     };
 
     document.addEventListener('keydown', handleKeyDown);

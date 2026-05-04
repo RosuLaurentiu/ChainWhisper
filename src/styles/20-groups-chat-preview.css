@@ -1,0 +1,393 @@
+.contacts-main-list,
+.groups-main-list {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.groups-invites-list {
+  flex: 0 1 auto;
+  max-height: 38%;
+}
+
+.contact-profile-card .contacts-list:empty {
+  display: none;
+}
+
+.contacts-list,
+.chat-messages {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.contacts-list::-webkit-scrollbar,
+.chat-messages::-webkit-scrollbar {
+  width: 10px;
+}
+
+.contacts-list::-webkit-scrollbar-track,
+.chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.contacts-list::-webkit-scrollbar-thumb,
+.chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(74, 64, 112, 0.9);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.contacts-list::-webkit-scrollbar-thumb:hover,
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.95);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.contact {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+}
+
+.mark-read-button {
+  width: auto;
+  justify-self: flex-start;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.contact-actions-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.contact-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.contact-action-btn {
+  width: 100%;
+  justify-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0;
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.contact-action-btn-primary {
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(139, 92, 246, 0.18);
+}
+
+.contact-action-btn-primary:hover {
+  background: rgba(139, 92, 246, 0.26);
+}
+
+.contact-action-btn-toggle.active {
+  border-color: rgba(167, 139, 250, 0.65);
+  background: rgba(139, 92, 246, 0.2);
+  color: #f3eeff;
+}
+
+.contacts-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.contact-view-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  background: var(--bg-elev-1);
+  white-space: nowrap;
+}
+
+.contact-view-badge.hidden {
+  border-color: rgba(167, 139, 250, 0.55);
+  color: #e4d7ff;
+  background: rgba(139, 92, 246, 0.18);
+}
+
+.contacts-empty-state {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--glass-strong);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 10px;
+}
+
+.contact-card {
+  border: 1px solid var(--border);
+  background: var(--glass-strong);
+  backdrop-filter: blur(6px);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 1px;
+}
+
+.contact-card:hover {
+  background: rgba(139, 92, 246, 0.14);
+}
+
+.contact-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.contact-card.active:hover {
+  background: var(--accent-soft);
+}
+
+.contact-card.hidden {
+  opacity: 0.78;
+  border-style: dashed;
+}
+
+.contact-card.syncing {
+  border-color: rgba(167, 139, 250, 0.72);
+  background: rgba(139, 92, 246, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.2);
+}
+
+.contact-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.contact-main {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 0;
+  text-align: left;
+  cursor: default;
+  font: inherit;
+  display: grid;
+  gap: 1px;
+  line-height: 1.2;
+  min-width: 0;
+  flex: 1;
+}
+
+.contact-icon {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 0.78rem;
+  position: relative;
+}
+
+.contact-icon:hover {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+.contact-icon.loading {
+  pointer-events: none;
+}
+
+.contact-icon.loading svg {
+  opacity: 0;
+}
+
+.contact-icon.loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(167, 139, 250, 0.28);
+  border-top-color: rgba(232, 219, 255, 0.95);
+  animation: coti-spin-centered 0.85s linear infinite;
+}
+
+.contact-copy {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.82rem;
+  width: fit-content;
+  border-radius: 4px;
+}
+
+.contact-chat-icon {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.contact-chat-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.sound-toggle-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.sound-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sound-toggle-btn[aria-pressed="true"] {
+  background: rgba(139, 92, 246, 0.2);
+  color: #d6c8ff;
+  border-color: #d6c8ff;
+  box-shadow: 0 2px 6px rgba(139, 92, 246, 0.18);
+}
+.sound-toggle-btn[aria-pressed="false"] {
+  opacity: 0.9;
+  color: var(--muted);
+}
+
+.contact-copy-primary {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 400;
+}
+
+.contact-copy-secondary {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.contact-copy:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.contact-copy.copied {
+  color: #8af5af;
+}
+
+.contact-name-inline {
+  color: var(--text);
+  font-size: 0.89rem;
+  font-weight: 700;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.contact-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.contact-rename {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.contact-rename input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev-1);
+  color: var(--text);
+  padding: 7px 9px;
+  font-size: 0.8rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.contact-rename button {
+  border: 1px solid var(--border);
+  background: var(--bg-elev-3);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.contact-rename button:hover {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+.error {
+  margin: 0;
+  color: #ff9fb2;
+  font-size: 0.85rem;
+}
+
+.chat-panel {
+  display: block;
+  min-height: 0;
+  height: 100%;
+  padding: 24px 20px;
+  background: radial-gradient(1200px 480px at 75% -60px, rgba(139, 92, 246, 0.1), transparent 62%);
+  overflow: hidden;
+}
+
+.chat-placeholder {
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  padding: 28px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  width: 100%;
+  text-align: center;
+}
+
+.chat-placeholder-state {
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  min-height: 180px;
+}
+
+.chat-placeholder-state strong,
+.chat-empty-state strong {
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
+.chat-placeholder-state p,
+.chat-empty-state p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+

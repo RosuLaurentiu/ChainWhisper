@@ -38,7 +38,7 @@ export default function TopUpModal({
   onClose
 }: TopUpModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  useModalA11y({ dialogRef, isOpen, onClose });
+  useModalA11y({ closeDisabled: initializingBurner, dialogRef, isOpen, onClose });
 
   if (!isOpen) {
     return null;
@@ -48,7 +48,14 @@ export default function TopUpModal({
   const estimatedTopUpRateLabel = `${formatCotiAmount(BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI, 3)} COTI/msg`;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div
+      className="modal-backdrop"
+      onClick={() => {
+        if (!initializingBurner) {
+          onClose();
+        }
+      }}
+    >
       <div
         ref={dialogRef}
         className="modal-card topup-modal"

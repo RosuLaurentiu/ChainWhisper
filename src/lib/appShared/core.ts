@@ -484,10 +484,72 @@ export type TradeFillStatePayload = {
   filledRequestAmount: string;
 };
 
+export type WalletTradeFillPayload = {
+  offerAmountReceived: string;
+  requestAmountPaid: string;
+};
+
 export type PrivateTradeMakerProgressPayload = {
   initialOfferAmount?: string;
   remainingOfferAmount: string;
   filledOfferAmount?: string;
+};
+
+export type PrivateTradeFillReceiptPayload = {
+  fillIndex: number;
+  filler: string;
+  offerAmount?: string;
+  requestAmount?: string;
+  remainingOfferAmount?: string;
+  txHash?: string;
+  blockNumber?: number;
+};
+
+export type RecurringTradeSide = 'buy' | 'sell';
+export type RecurringTradeMode = 'public' | 'fully-private' | 'hybrid-private';
+export type RecurringTradeStatus = 'active' | 'paused' | 'cancelled' | 'unknown';
+
+export type RecurringTradeTermsPayload = {
+  baseAmount: string;
+  quoteAmount: string;
+};
+
+export type RecurringPrivateInventoryPayload = {
+  baseInventory?: string;
+  quoteInventory?: string;
+};
+
+export type RecurringPrivateExecutionPayload = {
+  fillIndex: number;
+  side: RecurringTradeSide;
+  filler: string;
+  baseAmount?: string;
+  quoteAmount?: string;
+  remainingBaseInventory?: string;
+  remainingQuoteInventory?: string;
+  txHash?: string;
+  blockNumber?: number;
+};
+
+export type RecurringTradeSnapshotPayload = {
+  orderId: number;
+  selectedSide: RecurringTradeSide;
+  mode: RecurringTradeMode;
+  recurringStatus: RecurringTradeStatus;
+  baseAsset: TradeAssetPayload;
+  quoteAsset: TradeAssetPayload;
+  buyTerms: RecurringTradeTermsPayload;
+  sellTerms: RecurringTradeTermsPayload;
+  publicBaseInventory: string;
+  publicQuoteInventory: string;
+  buySideOpen: boolean;
+  sellSideOpen: boolean;
+  hasPrivateBaseInventory: boolean;
+  hasPrivateQuoteInventory: boolean;
+  executionCount: number;
+  makerPrivateInventory?: RecurringPrivateInventoryPayload;
+  privateExecutions?: RecurringPrivateExecutionPayload[];
+  publicExecutions?: RecurringPrivateExecutionPayload[];
 };
 
 export type TradeResponseMessagePayload = {
@@ -517,9 +579,13 @@ export type TradeSnapshot = {
   replacementTradeId?: number;
   replacesTradeId?: number;
   fillState?: TradeFillStatePayload;
+  walletFillState?: WalletTradeFillPayload;
   acceptedTxHash?: string;
   hiddenLiquidity?: boolean;
+  walletHasFill?: boolean;
   makerPrivateProgress?: PrivateTradeMakerProgressPayload;
+  privateFillReceipts?: PrivateTradeFillReceiptPayload[];
+  recurringOrder?: RecurringTradeSnapshotPayload;
 };
 
 export type PendingBurnerInit = {
@@ -699,26 +765,30 @@ export const GROUP_CHAT_CONTRACT_ABI = [
   'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
 ] as const;
 
-export const TRADE_ESCROW_CONTRACT_ADDRESS = '0x7Ff60527677156a4c20419Ec862355A6137F8D47';
-export const PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS = '0xaaf6E676e46bF60eC04769E26EAaAde81D2f4410';
+export const OTC_ESCROW_CONTRACT_ADDRESS = '0xFe76733F6698F1682f8D85FA915D0fbA75A59090';
+export const OTC_READER_CONTRACT_ADDRESS = '0xb868E143a9B5dC94719D33509Ed9486FBCd9C80C';
+export const PRIVATE_ORDERS_CONTRACT_ADDRESS = '0x2CEa94cDe8F6279d4669d4df8c28D1156Ac1ACf2';
+export const RECURRING_OTC_CONTRACT_ADDRESS = '0xd9CF385c42A90fA7F5b624F52dBAa8654C061Cb2';
+export const TRADE_ESCROW_CONTRACT_ADDRESS = OTC_ESCROW_CONTRACT_ADDRESS;
+export const PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS = PRIVATE_ORDERS_CONTRACT_ADDRESS;
 export const buildTradeSnapshotKey = (tradeId: number, escrowContract?: string): string =>
   `${(escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS).toLowerCase()}:${tradeId}`;
 export const TRADE_ESCROW_CONTRACT_ABI = [
   'function feeRecipient() view returns (address)',
   'function feeAmount() view returns (uint256)',
   'function chargeFeeOnEdit() view returns (bool)',
-  'function minPartialFillBps() view returns (uint16)',
+  'function defaultMinPartialFillBps() view returns (uint16)',
   'function nextTradeId() view returns (uint256)',
   'function contractVersion() pure returns (string)',
+  'function supportsFeature(bytes32 feature) pure returns (bool)',
+  'function configurePrivateToken(address token, address encryptionAddress)',
   'function createTrade((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt) payable returns (uint256 tradeId)',
   'function createTradeAdvanced((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, uint256 parentTradeId) payable returns (uint256 tradeId)',
-  'function createPrivateFixedPriceTrade((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, (uint256 ciphertext, bytes signature) hiddenOfferAmount) payable returns (uint256 tradeId)',
+  'function createTradeWithPolicy((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, uint256 parentTradeId, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) policy) payable returns (uint256 tradeId)',
   'function acceptTrade(uint256 tradeId) payable',
   'function acceptTradeWithSecret(uint256 tradeId, bytes32 accessSecret) payable',
   'function fillTrade(uint256 tradeId, uint256 requestAmountIn, uint256 minOfferAmountOut) payable returns (uint256 offerAmountOut)',
   'function fillTradeAdvanced(uint256 tradeId, uint256 requestAmountIn, uint256 minOfferAmountOut, bytes32 accessSecret) payable returns (uint256 offerAmountOut)',
-  'function fillPrivateFixedPriceTrade(uint256 tradeId, (uint256 ciphertext, bytes signature) requestAmountIn) returns (bool fullyFilled)',
-  'function fillPrivateFixedPriceTradeWithSecret(uint256 tradeId, (uint256 ciphertext, bytes signature) requestAmountIn, bytes32 accessSecret) returns (bool fullyFilled)',
   'function acceptCounterTradeAndCloseParent(uint256 counterTradeId) payable',
   'function acceptCounterTradeAdvancedAndCloseParent(uint256 counterTradeId, bytes32 accessSecret) payable',
   'function counterTradeAndCloseCounteredTrade(uint256 counteredTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 expiresAt) payable returns (uint256 newCounterTradeId)',
@@ -726,38 +796,35 @@ export const TRADE_ESCROW_CONTRACT_ABI = [
   'function declineTrade(uint256 tradeId)',
   'function reclaimExpiredTrade(uint256 tradeId)',
   'function extendTradeExpiry(uint256 tradeId, uint64 nextExpiresAt)',
-  'function cancelAndReplaceTrade(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash) payable returns (uint256 tradeId)',
   'function editTrade(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash) payable returns (uint256 tradeId)',
-  'function getTrade(uint256 tradeId) view returns (address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt)',
-  'function getTradeMetadata(uint256 tradeId) view returns (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid)',
-  'function getTradeFillState(uint256 tradeId) view returns (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount)',
+  'function editTradeWithPolicy(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) policy) payable returns (uint256 tradeId)',
+  'function getTradeView(uint256 tradeId) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) fillPolicy, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId, uint256 rootTradeId))',
   'function getTradeFillForAccount(uint256 tradeId, address account) view returns (uint256 offerAmountReceived, uint256 requestAmountPaid)',
-  'function offboardPrivateFixedPriceRemainingForMaker(uint256 tradeId) returns ((uint256 ciphertext, uint256 userCiphertext) remainingOfferAmount)',
   'function counterParentTradeId(uint256 tradeId) view returns (uint256)',
   'function replacementTradeId(uint256 tradeId) view returns (uint256)',
   'function replacesTradeId(uint256 tradeId) view returns (uint256)',
+  'function rootTradeId(uint256 tradeId) view returns (uint256)',
+  'function quoteFill(uint256 tradeId, uint256 requestAmountIn) view returns (uint256 requestAmountIn, uint256 offerAmountOut, bool isFinalFill, uint256 remainingOfferAmountAfter, uint256 remainingRequestAmountAfter)',
   'function getCounterTradeIds(uint256 parentTradeId, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getOpenPublicTradeIds(uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
+  'function getOpenPublicTradeIdsByPair(bytes32 pairKey, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getRecentTradeIds(uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForMaker(address maker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForTaker(address taker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForFiller(address filler, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
-  'event TradeOpened(uint256 indexed tradeId, address indexed maker, address indexed taker, uint8 offerAssetType, address offerToken, uint256 offerAmount, uint8 requestAssetType, address requestToken, uint256 requestAmount, uint64 createdAt, uint64 expiresAt)',
-  'event TradeAccepted(uint256 indexed tradeId, address indexed taker)',
+  'event TradeOpened(uint256 indexed tradeId, address indexed maker, address indexed taker, bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint64 createdAt, uint64 expiresAt, uint256 feePaid)',
+  'event TradeAccepted(uint256 indexed tradeId, address indexed taker, bool wasOpenPublicTrade)',
   'event TradeCancelled(uint256 indexed tradeId, address indexed maker)',
   'event TradeDeclined(uint256 indexed tradeId, address indexed taker)',
-  'event TradeOpenedV2(uint256 indexed tradeId, address indexed maker, address indexed taker, bool isPublic, bool hasAccessHash, uint256 parentTradeId, uint256 feePaid)',
-  'event TradeAcceptedV2(uint256 indexed tradeId, address indexed taker, bool wasOpenPublicTrade)',
   'event TradeExpired(uint256 indexed tradeId, address indexed maker, address indexed actor)',
-  'event TradeReplaced(uint256 indexed originalTradeId, uint256 indexed replacementTradeId)',
-  'event TradeEdited(uint256 indexed originalTradeId, uint256 indexed replacementTradeId)',
+  'event TradeReplaced(uint256 indexed originalTradeId, uint256 indexed replacementTradeId, uint256 indexed rootTradeId)',
   'event TradePartiallyFilled(uint256 indexed tradeId, address indexed filler, uint256 requestAmountIn, uint256 offerAmountOut, uint256 remainingOfferAmount, uint256 remainingRequestAmount)',
   'event TradeFilled(uint256 indexed tradeId)',
-  'event PrivateFixedPriceTradeOpened(uint256 indexed tradeId, bytes32 termsHash)',
-  'event PrivateFixedPriceTradeFilled(uint256 indexed tradeId, address indexed filler, bool fullyFilled)',
   'event CounterTradeAccepted(uint256 indexed counterTradeId, uint256 indexed parentTradeId, address indexed taker)',
   'event CounterTradeRegistered(uint256 indexed parentTradeId, uint256 indexed counterTradeId)',
-  'event CounterTradeSuperseded(uint256 indexed parentTradeId, uint256 indexed previousCounterTradeId, uint256 indexed nextCounterTradeId)'
+  'event CounterTradeSuperseded(uint256 indexed parentTradeId, uint256 indexed previousCounterTradeId, uint256 indexed nextCounterTradeId)',
+  'event ParentTradeClosedByCounter(uint256 indexed parentTradeId, uint256 indexed counterTradeId, uint8 parentStatus)',
+  'event SiblingCounterClosed(uint256 indexed parentTradeId, uint256 indexed acceptedCounterTradeId, uint256 indexed siblingCounterTradeId, uint8 siblingStatus)'
 ] as const;
 
 export const PRIVATE_TRADE_ESCROW_CONTRACT_ABI = [
@@ -765,17 +832,26 @@ export const PRIVATE_TRADE_ESCROW_CONTRACT_ABI = [
   'function feeAmount() view returns (uint256)',
   'function nextTradeId() view returns (uint256)',
   'function contractVersion() pure returns (string)',
-  'function createPrivateFixedPriceTrade((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, (uint256 ciphertext, bytes signature) hiddenOfferAmount) payable returns (uint256 tradeId)',
-  'function cancelAndReplacePrivateFixedPriceTrade(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, (uint256 ciphertext, bytes signature) hiddenOfferAmount) payable returns (uint256 tradeId)',
-  'function fillPrivateFixedPriceTrade(uint256 tradeId, (uint256 ciphertext, bytes signature) requestAmountIn) returns (bool fullyFilled)',
-  'function fillPrivateFixedPriceTradeWithSecret(uint256 tradeId, (uint256 ciphertext, bytes signature) requestAmountIn, bytes32 accessSecret) returns (bool fullyFilled)',
+  'function supportsFeature(bytes32 feature) pure returns (bool)',
+  'function configurePrivateToken(address token, address encryptionAddress)',
+  'function createPrivateOrder((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, (uint256 ciphertext, bytes signature) hiddenOfferAmount) payable returns (uint256 tradeId)',
+  'function createPrivateOrderWithRecoveryNote((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, (uint256 ciphertext, bytes signature) hiddenOfferAmount, ((uint256[] value), bytes[] signature) encryptedMakerRecoveryNote) payable returns (uint256 tradeId)',
+  'function cancelAndReplacePrivateOrder(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, (uint256 ciphertext, bytes signature) hiddenOfferAmount) payable returns (uint256 tradeId)',
+  'function cancelAndReplacePrivateOrderWithRecoveryNote(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, (uint256 ciphertext, bytes signature) hiddenOfferAmount, ((uint256[] value), bytes[] signature) encryptedMakerRecoveryNote) payable returns (uint256 tradeId)',
+  'function fillPrivateOrder(uint256 tradeId, (uint256 ciphertext, bytes signature) maxRequestAmountIn) returns (bool fullyFilled)',
+  'function fillPrivateOrderWithSecret(uint256 tradeId, (uint256 ciphertext, bytes signature) maxRequestAmountIn, bytes32 accessSecret) returns (bool fullyFilled)',
+  'function fillHybridPrivateOrder(uint256 tradeId, uint256 requestAmountIn) payable returns (bool fullyFilled)',
+  'function fillHybridPrivateOrderWithSecret(uint256 tradeId, uint256 requestAmountIn, bytes32 accessSecret) payable returns (bool fullyFilled)',
   'function cancelTrade(uint256 tradeId)',
   'function declineTrade(uint256 tradeId)',
   'function reclaimExpiredTrade(uint256 tradeId)',
   'function getTrade(uint256 tradeId) view returns (address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt)',
-  'function getTradeMetadata(uint256 tradeId) view returns (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid)',
+  'function getTradeMetadata(uint256 tradeId) view returns (bool isPublic, bytes32 accessHash, uint256 feePaid, bytes32 termsHash, uint8 mode, bool hasMakerRecoveryNote)',
   'function getTradeFillState(uint256 tradeId) view returns (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount)',
-  'function offboardPrivateFixedPriceRemainingForMaker(uint256 tradeId) returns ((uint256 ciphertext, uint256 userCiphertext) remainingOfferAmount)',
+  'function getTradeView(uint256 tradeId) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 feePaid, bytes32 termsHash, uint8 mode, bool hasMakerRecoveryNote) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId))',
+  'function getTradeViews(uint256[] tradeIds) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 feePaid, bytes32 termsHash, uint8 mode, bool hasMakerRecoveryNote) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId)[] views)',
+  'function offboardRemainingPrivateOrderForMaker(uint256 tradeId) returns ((uint256 ciphertext, uint256 userCiphertext) remainingOfferAmount)',
+  'function getMakerRecoveryNote(uint256 tradeId) returns (((uint256[] value) ciphertext, (uint256[] value) userCiphertext) noteForMaker)',
   'function replacementTradeId(uint256 tradeId) view returns (uint256)',
   'function replacesTradeId(uint256 tradeId) view returns (uint256)',
   'function openPublicTradeCount() view returns (uint256)',
@@ -784,18 +860,79 @@ export const PRIVATE_TRADE_ESCROW_CONTRACT_ABI = [
   'function getTradeIdsForMaker(address maker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForTaker(address taker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForFiller(address filler, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
-  'event TradeOpened(uint256 indexed tradeId, address indexed maker, address indexed taker, uint8 offerAssetType, address offerToken, uint256 offerAmount, uint8 requestAssetType, address requestToken, uint256 requestAmount, uint64 createdAt, uint64 expiresAt)',
-  'event TradeAccepted(uint256 indexed tradeId, address indexed taker)',
+  'function getPrivateOrderAccountSnapshot(uint256 tradeId, address account) view returns ((uint256 sequence, bool initialized, (uint256 ciphertext, uint256 userCiphertext) remainingOfferAmount) snapshot)',
+  'event PrivateOrderOpened(uint256 indexed tradeId, address indexed maker, address indexed taker, uint8 mode, bool isPublic, bool hasAccessHash, uint64 createdAt, uint64 expiresAt, bytes32 termsHash, uint256 feePaid)',
+  'event PrivateOrderAssets(uint256 indexed tradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset)',
+  'event MakerRecoveryNoteStored(uint256 indexed tradeId, address indexed maker, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) noteForMaker)',
+  'event PrivateOrderFilled(uint256 indexed tradeId, address indexed filler, bool fullyFilled, uint256 publicRequestAmountIn)',
+  'event PrivateOrderFillReceipt(uint256 indexed tradeId, address indexed recipient, address indexed filler, uint256 fillIndex, (uint256 ciphertext, uint256 userCiphertext) offerAmount, (uint256 ciphertext, uint256 userCiphertext) requestAmount, (uint256 ciphertext, uint256 userCiphertext) remainingOfferAmount)',
+  'event PrivateOrderAccountSnapshotUpdated(uint256 indexed tradeId, address indexed recipient, uint256 sequence, (uint256 ciphertext, uint256 userCiphertext) remainingOfferAmount)',
+  'event TradeAccepted(uint256 indexed tradeId, address indexed taker, bool wasOpenPublicTrade)',
   'event TradeCancelled(uint256 indexed tradeId, address indexed maker)',
   'event TradeDeclined(uint256 indexed tradeId, address indexed taker)',
-  'event TradeOpenedV2(uint256 indexed tradeId, address indexed maker, address indexed taker, bool isPublic, bool hasAccessHash, uint256 parentTradeId, uint256 feePaid)',
-  'event TradeAcceptedV2(uint256 indexed tradeId, address indexed taker, bool wasOpenPublicTrade)',
   'event TradeExpired(uint256 indexed tradeId, address indexed maker, address indexed actor)',
   'event TradeReplaced(uint256 indexed originalTradeId, uint256 indexed replacementTradeId)',
-  'event TradeEdited(uint256 indexed originalTradeId, uint256 indexed replacementTradeId)',
   'event TradeFilled(uint256 indexed tradeId)',
-  'event PrivateFixedPriceTradeOpened(uint256 indexed tradeId, bytes32 termsHash)',
-  'event PrivateFixedPriceTradeFilled(uint256 indexed tradeId, address indexed filler, bool fullyFilled)'
+] as const;
+
+export const OTC_READER_CONTRACT_ABI = [
+  'function contractVersion() pure returns (string)',
+  'function supportsFeature(bytes32 feature) pure returns (bool)',
+  'function getTradeViews(address escrow, uint256[] tradeIds) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) fillPolicy, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId, uint256 rootTradeId)[] views)',
+  'function getOpenPublicTradeViews(address escrow, uint256 offset, uint256 limit) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) fillPolicy, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId, uint256 rootTradeId)[] views, uint256 nextOffset)',
+  'function getTradeViewsForMaker(address escrow, address maker, uint256 offset, uint256 limit) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) fillPolicy, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId, uint256 rootTradeId)[] views, uint256 nextOffset)',
+  'function getTradeViewsForTaker(address escrow, address taker, uint256 offset, uint256 limit) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) fillPolicy, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId, uint256 rootTradeId)[] views, uint256 nextOffset)',
+  'function getTradeViewsForFiller(address escrow, address filler, uint256 offset, uint256 limit) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 parentTradeId, uint256 feePaid) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) fillPolicy, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId, uint256 rootTradeId)[] views, uint256 nextOffset)'
+] as const;
+
+export const RECURRING_OTC_CONTRACT_ABI = [
+  'function feeRecipient() view returns (address)',
+  'function feeAmount() view returns (uint256)',
+  'function nextOrderId() view returns (uint256)',
+  'function contractVersion() pure returns (string)',
+  'function supportsFeature(bytes32 feature) pure returns (bool)',
+  'function configurePrivateToken(address token, address encryptionAddress)',
+  'function createRecurringOrder((uint8 assetType, address token) baseAsset, (uint8 assetType, address token) quoteAsset, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms, address taker, bool isPublic, bytes32 accessHash, uint256 initialBaseInventory, uint256 initialQuoteInventory) payable returns (uint256 orderId)',
+  'function createPrivateRecurringOrder((uint8 assetType, address token) baseAsset, (uint8 assetType, address token) quoteAsset, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms, address taker, bool isPublic, bytes32 accessHash, uint256 initialBaseInventory, uint256 initialQuoteInventory, (uint256 ciphertext, bytes signature) encryptedInitialBaseInventory, (uint256 ciphertext, bytes signature) encryptedInitialQuoteInventory) payable returns (uint256 orderId)',
+  'function editOrder(uint256 orderId, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms, uint256 addBaseInventory, uint256 addQuoteInventory, (uint256 ciphertext, bytes signature) encryptedAddBaseInventory, (uint256 ciphertext, bytes signature) encryptedAddQuoteInventory, uint256 removeBaseInventory, uint256 removeQuoteInventory, (uint256 ciphertext, bytes signature) encryptedRemoveBaseInventory, (uint256 ciphertext, bytes signature) encryptedRemoveQuoteInventory) payable',
+  'function fillBuySide(uint256 orderId, uint256 baseAmountIn, uint256 minQuoteAmountOut) payable returns (uint256 quoteAmountOut)',
+  'function fillBuySideWithSecret(uint256 orderId, uint256 baseAmountIn, uint256 minQuoteAmountOut, bytes32 accessSecret) payable returns (uint256 quoteAmountOut)',
+  'function fillSellSide(uint256 orderId, uint256 quoteAmountIn, uint256 minBaseAmountOut) payable returns (uint256 baseAmountOut)',
+  'function fillSellSideWithSecret(uint256 orderId, uint256 quoteAmountIn, uint256 minBaseAmountOut, bytes32 accessSecret) payable returns (uint256 baseAmountOut)',
+  'function fillPrivateBuySide(uint256 orderId, uint256 publicBaseAmountIn, (uint256 ciphertext, bytes signature) privateBaseAmountIn, uint256 minPublicQuoteAmountOut) payable returns (bool executed)',
+  'function fillPrivateBuySideWithSecret(uint256 orderId, uint256 publicBaseAmountIn, (uint256 ciphertext, bytes signature) privateBaseAmountIn, uint256 minPublicQuoteAmountOut, bytes32 accessSecret) payable returns (bool executed)',
+  'function fillPrivateSellSide(uint256 orderId, uint256 publicQuoteAmountIn, (uint256 ciphertext, bytes signature) privateQuoteAmountIn, uint256 minPublicBaseAmountOut) payable returns (bool executed)',
+  'function fillPrivateSellSideWithSecret(uint256 orderId, uint256 publicQuoteAmountIn, (uint256 ciphertext, bytes signature) privateQuoteAmountIn, uint256 minPublicBaseAmountOut, bytes32 accessSecret) payable returns (bool executed)',
+  'function pauseOrder(uint256 orderId)',
+  'function resumeOrder(uint256 orderId)',
+  'function cancelOrder(uint256 orderId)',
+  'function settleInventory(uint256 orderId)',
+  'function offboardPrivateBaseInventoryForMaker(uint256 orderId) returns ((uint256 ciphertext, uint256 userCiphertext) baseInventory)',
+  'function offboardPrivateQuoteInventoryForMaker(uint256 orderId) returns ((uint256 ciphertext, uint256 userCiphertext) quoteInventory)',
+  'function getOrder(uint256 orderId) view returns (address maker, address taker, uint8 status, uint8 mode, (uint8 assetType, address token) baseAsset, (uint8 assetType, address token) quoteAsset, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms, bool isPublic, bytes32 accessHash, uint64 createdAt, uint32 executionCount, uint256 publicBaseInventory, uint256 publicQuoteInventory)',
+  'function getOrderView(uint256 orderId) view returns (((address maker, address taker, uint8 status, uint8 mode, (uint8 assetType, address token) baseAsset, (uint8 assetType, address token) quoteAsset, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms, bool isPublic, bytes32 accessHash, uint64 createdAt, uint32 executionCount, uint256 publicBaseInventory, uint256 publicQuoteInventory) order, bool buySideOpen, bool sellSideOpen, bool hasPrivateBaseInventory, bool hasPrivateQuoteInventory))',
+  'function getOrderViews(uint256[] orderIds) view returns (((address maker, address taker, uint8 status, uint8 mode, (uint8 assetType, address token) baseAsset, (uint8 assetType, address token) quoteAsset, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms, bool isPublic, bytes32 accessHash, uint64 createdAt, uint32 executionCount, uint256 publicBaseInventory, uint256 publicQuoteInventory) order, bool buySideOpen, bool sellSideOpen, bool hasPrivateBaseInventory, bool hasPrivateQuoteInventory)[] views)',
+  'function getOpenPublicOrderIds(uint256 offset, uint256 limit) view returns (uint256[] orderIds, uint256 nextOffset)',
+  'function getRecentOrderIds(uint256 offset, uint256 limit) view returns (uint256[] orderIds, uint256 nextOffset)',
+  'function getOrderIdsForMaker(address maker, uint256 offset, uint256 limit) view returns (uint256[] orderIds, uint256 nextOffset)',
+  'function getOrderIdsForTaker(address taker, uint256 offset, uint256 limit) view returns (uint256[] orderIds, uint256 nextOffset)',
+  'function getOrderIdsForFiller(address filler, uint256 offset, uint256 limit) view returns (uint256[] orderIds, uint256 nextOffset)',
+  'function getRecurringAccountSnapshot(uint256 orderId, address account) view returns ((uint256 sequence, bool initialized, (uint256 ciphertext, uint256 userCiphertext) baseInventory, (uint256 ciphertext, uint256 userCiphertext) quoteInventory) snapshot)',
+  'function quoteBuySide(uint256 orderId, uint256 baseAmountIn) view returns (uint256 quoteAmountOut)',
+  'function quoteSellSide(uint256 orderId, uint256 quoteAmountIn) view returns (uint256 baseAmountOut)',
+  'event RecurringOrderOpened(uint256 indexed orderId, address indexed maker, address indexed taker, uint8 mode, bool isPublic, bool hasAccessHash, uint64 createdAt, uint256 feePaid)',
+  'event RecurringOrderAssets(uint256 indexed orderId, (uint8 assetType, address token) baseAsset, (uint8 assetType, address token) quoteAsset)',
+  'event RecurringOrderTerms(uint256 indexed orderId, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms)',
+  'event RecurringOrderInventoryFunded(uint256 indexed orderId, uint256 publicBaseInventory, uint256 publicQuoteInventory, bool hasPrivateBaseInventory, bool hasPrivateQuoteInventory)',
+  'event RecurringOrderEdited(uint256 indexed orderId, (uint256 baseAmount, uint256 quoteAmount) buyTerms, (uint256 baseAmount, uint256 quoteAmount) sellTerms, uint256 addedPublicBaseInventory, uint256 addedPublicQuoteInventory, bool addedPrivateBaseInventory, bool addedPrivateQuoteInventory, uint256 removedPublicBaseInventory, uint256 removedPublicQuoteInventory, bool removedPrivateBaseInventory, bool removedPrivateQuoteInventory)',
+  'event RecurringOrderExecuted(uint256 indexed orderId, address indexed filler, uint8 side, uint32 executionIndex, uint256 publicBaseAmount, uint256 publicQuoteAmount)',
+  'event RecurringOrderPaused(uint256 indexed orderId)',
+  'event RecurringOrderResumed(uint256 indexed orderId)',
+  'event RecurringOrderCancelled(uint256 indexed orderId)',
+  'event RecurringOrderInventorySettled(uint256 indexed orderId, address indexed maker, uint256 publicBaseAmount, uint256 publicQuoteAmount, bool settledPrivateBase, bool settledPrivateQuote)',
+  'event PrivateRecurringFillReceipt(uint256 indexed orderId, address indexed recipient, address indexed filler, uint256 fillIndex, uint8 side, (uint256 ciphertext, uint256 userCiphertext) baseAmount, (uint256 ciphertext, uint256 userCiphertext) quoteAmount, (uint256 ciphertext, uint256 userCiphertext) remainingBaseInventory, (uint256 ciphertext, uint256 userCiphertext) remainingQuoteInventory)',
+  'event PrivateRecurringInventorySnapshot(uint256 indexed orderId, address indexed recipient, (uint256 ciphertext, uint256 userCiphertext) baseInventory, (uint256 ciphertext, uint256 userCiphertext) quoteInventory)',
+  'event PrivateRecurringAccountSnapshotUpdated(uint256 indexed orderId, address indexed recipient, uint256 sequence, (uint256 ciphertext, uint256 userCiphertext) baseInventory, (uint256 ciphertext, uint256 userCiphertext) quoteInventory)'
 ] as const;
 
 export const ERC20_TOKEN_ABI = [
@@ -820,6 +957,7 @@ export const PRIVATE_ERC20_TOKEN_ABI = [
   'function balanceOf(address account) view returns (uint256)',
   'function balanceOf() returns (uint256)',
   'function allowance(address account, bool isSpender) returns (uint256)',
+  'function allowance(address owner, address spender) view returns ((uint256 ciphertext, uint256 ownerCiphertext, uint256 spenderCiphertext))',
   'function approve(address spender, (uint256 ciphertext, bytes signature) value) returns (bool)',
   'function transfer(address to, (uint256 ciphertext, bytes signature) value) returns (uint256)'
 ] as const;

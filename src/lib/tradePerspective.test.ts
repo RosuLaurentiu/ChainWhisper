@@ -117,6 +117,53 @@ describe('groupWalletTradesByPerspective', () => {
       history: [fillerPartialTrade]
     });
   });
+
+  it('shows filler-indexed hidden orders in wallet history even while open', () => {
+    const privateFillTrade = trade({
+      tradeId: 6,
+      maker,
+      taker: ZERO_TRADE_TAKER_ADDRESS,
+      hiddenLiquidity: true,
+      walletHasFill: true
+    });
+
+    expect(groupWalletTradesByPerspective([privateFillTrade], taker)).toEqual({
+      needsAction: [],
+      myActiveOffers: [],
+      history: [privateFillTrade]
+    });
+  });
+
+  it('shows active maker recurring orders in history once they have executions', () => {
+    const makerRecurringTrade = trade({
+      tradeId: 7,
+      maker: taker,
+      taker: ZERO_TRADE_TAKER_ADDRESS,
+      recurringOrder: {
+        orderId: 7,
+        selectedSide: 'sell',
+        mode: 'hybrid-private',
+        recurringStatus: 'active',
+        baseAsset: asset('AAA'),
+        quoteAsset: asset('BBB'),
+        buyTerms: { baseAmount: '1000000000000000000', quoteAmount: '1000000000000000000' },
+        sellTerms: { baseAmount: '1000000000000000000', quoteAmount: '1000000000000000000' },
+        publicBaseInventory: '0',
+        publicQuoteInventory: '0',
+        buySideOpen: true,
+        sellSideOpen: true,
+        hasPrivateBaseInventory: true,
+        hasPrivateQuoteInventory: false,
+        executionCount: 2
+      }
+    });
+
+    expect(groupWalletTradesByPerspective([makerRecurringTrade], taker)).toEqual({
+      needsAction: [],
+      myActiveOffers: [makerRecurringTrade],
+      history: [makerRecurringTrade]
+    });
+  });
 });
 
 describe('resolveTradeOrderSummary', () => {

@@ -14,6 +14,7 @@ import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption
 } from '../lib/walletOptions';
+import { getCotiSnapAesKey, storeCotiSnapAesKey } from '../lib/cotiSnap';
 import useInjectedWalletOptions from './useInjectedWalletOptions';
 
 type UseWalletOnboardingArgs = {
@@ -105,6 +106,20 @@ export function useWalletOnboarding({
     setBrowserWalletSessionState(session);
   }, []);
 
+  const adoptBrowserWalletSession = useCallback((session: BrowserWalletSession) => {
+    activeProviderRef.current = session.provider;
+    setActiveProvider(session.provider);
+    browserWalletSessionRef.current = session;
+    setBrowserWalletSessionState(session);
+    setConnectionMethod('metamask');
+    setActiveSignerSource('metamask');
+    setSelectedInjectedWalletId(session.walletId);
+    setWalletAddress(session.address);
+    setChainId(session.chainId);
+    setStatus(`Connected (${session.walletLabel || 'Browser wallet'})`);
+    saveWalletPreference({ kind: 'browser', browserWalletId: session.walletId });
+  }, [setActiveSignerSource]);
+
   const getConnectedProvider = useCallback((): Eip1193Provider | null => {
     if (connectionMethod === 'metamask') {
       return activeProviderRef.current ?? activeProvider ?? preferredInjectedWalletOption?.provider ?? null;
@@ -191,7 +206,18 @@ export function useWalletOnboarding({
       signer.disableAutoOnboard();
       signerCacheRef.current[cacheKey] = signer;
 
-      await signer.generateOrRecoverAes();
+      const snapAesKey = await getCotiSnapAesKey(provider);
+      if (snapAesKey) {
+        signer.setUserOnboardInfo({
+          ...(signer.getUserOnboardInfo() ?? {}),
+          aesKey: snapAesKey
+        });
+      }
+
+      if (!signer.getUserOnboardInfo()?.aesKey) {
+        await signer.generateOrRecoverAes();
+        await storeCotiSnapAesKey(provider, signer.getUserOnboardInfo()?.aesKey).catch(() => {});
+      }
 
       const rawOnboardInfo = signer.getUserOnboardInfo();
       const onboardInfo = mergeOnboardInfo(undefined, rawOnboardInfo);
@@ -472,6 +498,7 @@ export function useWalletOnboarding({
     activeProvider,
     activeSignerSource,
     activateBrowserWalletSession,
+    adoptBrowserWalletSession,
     browserWalletSession,
     chainId,
     connectAndOnboard,

@@ -26,14 +26,21 @@ export default function BurnerPinModal({
   onSubmit
 }: BurnerPinModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  useModalA11y({ dialogRef, isOpen, onClose });
+  useModalA11y({ closeDisabled: initializingBurner, dialogRef, isOpen, onClose });
 
   if (!isOpen) {
     return null;
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div
+      className="modal-backdrop"
+      onClick={() => {
+        if (!initializingBurner) {
+          onClose();
+        }
+      }}
+    >
       <div
         ref={dialogRef}
         className="modal-card"

@@ -6,6 +6,7 @@ import {
   normalizeChainId,
   type Eip1193Provider
 } from '../lib/appShared';
+import { getCotiSnapAesKey, storeCotiSnapAesKey } from '../lib/cotiSnap';
 
 export type P2PTradeSigner = JsonRpcSigner | Wallet;
 
@@ -85,7 +86,17 @@ export default function useP2PTradeSigner({
 
       signer.disableAutoOnboard();
       if (requireAes && !signer.getUserOnboardInfo()?.aesKey) {
+        const snapAesKey = await getCotiSnapAesKey(provider);
+        if (snapAesKey) {
+          signer.setUserOnboardInfo({
+            ...(signer.getUserOnboardInfo() ?? {}),
+            aesKey: snapAesKey
+          });
+        }
+      }
+      if (requireAes && !signer.getUserOnboardInfo()?.aesKey) {
         await signer.generateOrRecoverAes();
+        await storeCotiSnapAesKey(provider, signer.getUserOnboardInfo()?.aesKey).catch(() => {});
       }
 
       const onboardInfo = signer.getUserOnboardInfo();

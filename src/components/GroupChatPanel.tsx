@@ -520,6 +520,7 @@ export default function GroupChatPanel({
                           onCopyWithFeedback(message.senderAddress as string, senderCopyKey).catch(() => {});
                         }}
                         title={isSenderCopied ? 'Copied' : `Copy ${message.senderAddress as string}`}
+                        aria-label={isSenderCopied ? 'Sender address copied' : `Copy sender address for ${senderLabel}`}
                       >
                         {isSenderCopied ? `${senderLabel} (copied)` : senderLabel}
                       </button>
@@ -541,6 +542,7 @@ export default function GroupChatPanel({
                         )
                       }
                       title="Go to replied message"
+                      aria-label={`Go to replied message: ${getReplyReferenceFallbackLabel(message)}`}
                     >
                       {'\u21AA'} {getReplyReferenceFallbackLabel(message)}
                     </button>
@@ -569,6 +571,9 @@ export default function GroupChatPanel({
                             walletPromptSensitiveActionsDisabled
                           }
                           title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}
+                          aria-label={`${reaction.reactedByMe ? 'Your reaction' : 'Reaction'} ${reaction.emoji}, ${
+                            reaction.count
+                          } ${reaction.count === 1 ? 'reaction' : 'reactions'}`}
                         >
                           <span>{reaction.emoji}</span>
                           <span>{reaction.count}</span>

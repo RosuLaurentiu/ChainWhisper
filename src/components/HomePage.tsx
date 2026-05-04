@@ -12,7 +12,7 @@ type HomePageProps = {
 
 const CORE_APPS = [
   { label: 'Chat', description: 'Private direct and group messaging' },
-  { label: 'Trades', description: 'P2P escrow orders and private liquidity' },
+  { label: 'Trades', description: 'P2P escrow orders and private orders' },
   { label: 'Shield', description: 'Public/private reward-token swaps' },
   { label: 'Treasury', description: 'Read-only COTI and gCOTI analytics' }
 ] as const;
@@ -107,7 +107,7 @@ export default function HomePage({
           <article className="landing-module-card">
             <span className="landing-module-kicker">Trading</span>
             <h3>P2P Trades</h3>
-            <p>Browse public orders, create escrow trades, share direct links, and manage private liquidity.</p>
+            <p>Browse public orders, create escrow trades, share direct links, and manage private orders.</p>
             <button
               type="button"
               className="landing-module-cta"

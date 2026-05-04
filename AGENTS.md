@@ -8,7 +8,7 @@ Current route behavior is intentional:
 
 - `/` - canonical Home launcher and product overview. `/home` is an alias. No wallet controls shown here.
 - `/chat` - main encrypted messaging app for direct chat and group chat. `/messages` and `/messenger` are aliases.
-- `/trades` and nested `/trades/...` - standalone P2P escrow trading app with deep trade routes.
+- `/trades` and nested `/trades/...` - standalone P2P OTC escrow trading app with deep trade routes.
 - `/shield` - canonical Whisper Shield private-token swap app. `/swap` and `/whisper-shield` are aliases.
 - `/treasury` - Treasury Data analytics. `/treasury-data` is an alias. No wallet interaction needed.
 
@@ -38,7 +38,7 @@ Current route behavior is intentional:
 - Replies with a message reference.
 - Tips sent inline in chat.
 - In-chat trading: a trade offer created inside a DM is a direct trade between the two participants.
-- Private liquidity trades should not be auto-posted into chat, but a copied trade link may be pasted and rendered as a link.
+- Private orders should not be auto-posted into chat, but a copied trade link may be pasted and rendered as a link.
 - Mute/hide per conversation; state is persisted on-chain as an encrypted hidden message.
 - Read/unread state is a single global timestamp (`lastReadAllTs`). Saved on-chain when all messages are read. Do not introduce per-conversation on-chain read state because it does not scale.
 
@@ -47,32 +47,38 @@ Current route behavior is intentional:
 - Similar to direct chat but with multiple participants.
 - Group menu and group admin options include add/remove members, admin controls, leave, handoff, rename, and disband.
 - Group invites support expiry and join codes.
-- Group sync is currently slower than direct chat sync; improving group sync speed is a priority.
-- Group chat should gain link-rendering parity with direct chat when working on chat UX.
+- Group sync is split between overview, active-message, and active-member/member-event paths. Preserve that split so opening one group does not force broad overview scans.
+- Group chat shares direct-chat link rendering for HTTP(S) URLs and internal trade links. Keep pasted private-order links as links only, not auto-posted trade cards.
 
 ### Sync Architecture
 
 - History syncs from chain by scanning block ranges.
 - Incremental (`updateHead`) syncs scan only new blocks.
 - WS subscriptions trigger debounced incremental syncs on message and group events.
+- Active direct conversations and active groups should refresh the focused thread first; broad overview work should stay secondary.
 - Read/unread state is backed up as an on-chain self-memo.
 - Block cache (`restoreCache`) skips re-scanning already-indexed read-state backup blocks on reconnect.
 
 ## P2P Trading App - Feature Summary
 
-- Public trade directory: users can browse open trades from anyone.
+- P2P is an OTC desk, not a pool/router-style DEX. Use desk, offer, peer, shared link, and settlement language where it reads naturally.
+- Public desk: users can browse active public offers from anyone.
 - Trade cards should read like buy/sell orders at a price ratio, not like generic token transfer cards.
-- Normal trades use `TRADE_ESCROW_CONTRACT_ADDRESS` and support public listings, private links, direct-recipient links, partial fills, counters, cancel, decline, and edit by cancel-and-replace.
-- Private liquidity trades use `PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS`. They require private ERC-20 tokens on both sides.
-- Private liquidity trades must always hide token amounts and fill amounts from public/detail views. Public views should prioritize price ratio, order direction, expiry, and access type.
-- Makers can reveal their own private liquidity/fill progress from My Trades once AES is available. Do not expose this in the public explorer view.
-- Private liquidity fills are settled by the contract from the taker's private payment amount; the taker inputs what they want to spend, and the contract path handles partial fill/overshoot privately.
+- Normal trades use the Trading V1 OTC escrow/reader contracts and support public offers, private links, direct-recipient links, partial fills, permanent/no-expiry offers, counters, cancel, decline, edit by cancel-and-replace, and visible private-token amount flows.
+- Private tokens are not automatically hidden. If Hide amount is off, private-token order size, fills, and remaining amounts are public and the order routes through the normal OTC contract.
+- Hidden-amount private orders use `PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS`. Fully private hidden-amount orders use private ERC-20 tokens on both sides; hybrid private orders offer a private token and let the taker pay with a public/native asset.
+- Hidden-amount private orders must hide private token amounts and private fill amounts from public/detail views. Public views should prioritize price ratio, order direction, expiry, and access type.
+- Hidden-amount private orders and private recurring orders use user-scoped private ledger snapshots and fill receipts. Makers can reveal their own live budget/liquidity and progress from My Trades once AES is available. Fillers can reveal their own buy/sell history even when an order is only partially filled. Do not expose maker-only values in the public explorer view.
+- Trades privacy flows use the COTI MetaMask Snap first for AES key access, with the existing COTI wallet onboarding path as fallback. Do not move Chat or Whisper Shield to Snap.
+- Hidden-amount private-order fills are settled by the contract from the taker payment amount; the contract path handles partial fill/overshoot privately where private tokens are involved.
+- Recurring orders live as an option inside the Create window. They are reusable two-sided OTC orders, not cadence/timer orders: maker buy fills add base inventory to the sell side, and maker sell fills add quote inventory to the buy side. Recurring private-token orders must offer explicit Show amount and Hide amount paths.
+- Recurring inventory is live order liquidity, not normal unused funds. Makers can edit prices, per-side amounts, and add/remove liquidity in place without changing the order link. The normal closing action should read as "Close order" and return remaining inventory.
 - Private-link and direct trades should only be visible when their requirements are satisfied. Direct links may be shared manually.
 - Counters: a counter-offer to an existing standard trade is itself a direct trade between the parties.
 - A completed counter cancels the parent/initial trade automatically.
-- Private liquidity counters are not currently supported by the action layer; avoid presenting them as available unless contract/action support changes.
+- Private-order counters are not currently supported by the action layer; avoid presenting them as available unless contract/action support changes.
 - Trade IDs are contract-local. Always include the escrow contract in links, keys, fetches, and UI identity. Use `buildTradeSnapshotKey(tradeId, escrowContract)`.
-- Trade cards show offer/request assets, expiry countdown with urgency color-coding, status, access type, and relevant maker/taker actions.
+- Trade cards show offer/request assets, price ratio, expiry countdown with urgency color-coding, status, access type, and relevant maker/taker actions.
 - Trade links can be shared publicly.
 
 ## Treasury App
@@ -92,9 +98,9 @@ Current route behavior is intentional:
 - Dark purple minimalist aesthetic is intentional and should be preserved.
 - Small polish improvements to spacing, typography, hierarchy, and empty states are welcome.
 - No major layout restructuring, theme toggles, or new color palettes without a specific request.
-- P2P should feel like a trading dashboard: clear buy/sell direction, concise ratio display, direct action buttons, and low visual noise.
-- Private liquidity cards should lead with price ratio and direction. Do not show one side's amount if the other side is hidden.
-- Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", and "Private liquidity" consistently across explorer cards, detail cards, and in-chat cards.
+- P2P should feel like a P2P OTC trading desk: clear buy/sell direction, concise ratio display, direct action buttons, peer/settlement language, and low visual noise.
+- Hidden-amount private-order cards should lead with price ratio and direction. Do not show one side's amount if the other side is hidden.
+- Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", "Show amount", "Hide amount", and "Private order" consistently across explorer cards, detail cards, and in-chat cards.
 - Wallet/AES readiness states should be clear enough that users know whether they need to connect, switch network, sign AES, top up, or unlock an app wallet.
 
 ## Important Source Map
@@ -106,13 +112,22 @@ Current route behavior is intentional:
 - `src/components/TradeOfferCard.tsx` - trade card used for shared links and in-chat rendering.
 - `src/components/TreasuryPage.tsx` - Treasury Data presentation.
 - `src/components/TokenSwapPage.tsx` - Whisper Shield swap presentation.
+- `src/components/MessageTextWithLinks.tsx` and `src/lib/chatLinks.ts` - shared chat link rendering and internal app-link interception.
 - `src/lib/treasuryData.ts` - live/feed/on-chain data loading and normalization.
 - `src/lib/appShared.ts` - re-exports `src/lib/appShared/core.ts` and `src/lib/appShared/parsers.ts`. Shared constants, wallet helpers, parsers, memo encoding, COTI provider loading, and formatting belong there.
 - `src/hooks/useWalletOnboarding.ts` and `src/hooks/useBurnerWallet.ts` - reusable wallet/onboarding hooks.
+- `src/hooks/useInChatTradeActions.ts` - DM trade action orchestration for create, accept, decline, cancel, and counter preparation.
+- `src/hooks/useGroupAdminActions.ts` - group create, invite, join-code, join-by-code, remove, rename, leave, handoff, disband, and invite accept/decline flows.
+- `src/lib/groupMessageSync.ts` - active-group message and member-event sync helpers.
+- `src/lib/directConversationSyncHelpers.ts` - direct-chat merge, unread, nickname/contact, and optimistic reconciliation helpers.
+- `src/lib/p2pTradeView.ts` - P2P display, search/filter, snapshot-key, explorer-link, local storage, and maker-private-progress helpers.
+- `src/lib/appHelpers.ts` - verified ecosystem token presets, message helpers, and shared user-facing error helpers.
 - `src/lib/tradeComposer.ts`, `src/lib/tradeActions.ts`, `src/lib/tradeLinks.ts`, `src/lib/tradePerspective.ts`, `src/lib/appChain.ts` - shared trade logic. Extend these before duplicating trade behavior in components.
 - `src/lib/walletOptions.ts` - browser wallet filtering/detection. MetaMask and CipherTrade are allowed for trading; Brave is filtered out.
+- `src/hooks/useModalA11y.ts` - shared modal focus trap, Escape, and focus-restore behavior.
 - Supabase image storage is limited to encrypted chat image attachments: `src/lib/imagePull.ts`, `src/lib/supabaseClient.ts`, and `supabase/`.
-- `APP_IMPROVEMENTS.md` - prioritized proposals from the current app review. It is advisory, not runtime behavior.
+- `src/styles.css` - ordered stylesheet import hub. Route/domain CSS lives in `src/styles/`; preserve import order when moving rules.
+- `APP_IMPROVEMENTS.md` - intentionally clean active-proposal scratchpad. Do not use it as a completed-work changelog.
 
 ## Consistency Rules
 
@@ -120,11 +135,13 @@ Current route behavior is intentional:
 - Wallet controls belong in the universal top header.
 - Keep trade display semantics consistent through `tradePerspective`, `tradeComposer`, `tradeLinks`, `appChain`, and `TradeOfferCard`.
 - All new contract reads should go through `appChain.ts`; all new trade writes should go through `tradeActions.ts`.
-- Each app keeps its own layout and density: chat is a workspace, P2P is a trading dashboard, Treasury is analytics, Home is a launcher, Whisper Shield is a compact swap tool.
-- For private liquidity trades, never key state only by numeric trade ID. Include the escrow contract address.
+- Each app keeps its own layout and density: chat is a workspace, P2P is an OTC desk, Treasury is analytics, Home is a launcher, Whisper Shield is a compact swap tool.
+- Keep `src/styles.css` as the import hub; add route/domain CSS under `src/styles/` when a split reduces risk.
+- For private orders, never key state only by numeric trade ID. Include the escrow contract address.
 - For private tokens, respect 6-decimal formatting where token metadata resolves that way, and require AES before displaying private balances or maker-only private progress.
-- Sensitive local caches such as trade access secrets and maker private liquidity are convenience data. Keep them scoped, documented, and easy to clear when improving storage behavior.
-- Oversized files are known technical debt. Prefer extracting cohesive hooks/components/helpers from `src/App.tsx`, `src/components/P2PTradingPage.tsx`, and `src/styles.css` when working nearby.
+- Sensitive local caches such as trade access secrets and maker private-order reveal context are convenience data. Keep them scoped, documented, and easy to clear when improving storage behavior.
+- Verified ecosystem token presets belong in `src/lib/appHelpers.ts`. Keep token kind (`erc20` or `private-erc20`) accurate.
+- Oversized files have been reduced, but keep extracting cohesive hooks/components/helpers when it makes a real app change safer.
 
 ## Verification
 
@@ -135,5 +152,7 @@ npm run lint
 npm run test
 npm run build
 ```
+
+Run `npm run test:browser` for route, wallet-header, mobile layout, and other visible UI changes.
 
 Use focused tests for parser/link/perspective/routing changes first, then run the full suite.

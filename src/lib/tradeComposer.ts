@@ -316,10 +316,17 @@ export const deriveTradeComposerModel = ({
   const parsedTradeRequestAmountWei = selectedTradeRequestToken
     ? parseTokenAmountInput(tradeRequestAmountInput, selectedTradeRequestToken.decimals)
     : null;
-  const privatePairSelected =
-    selectedTradeOfferToken?.kind === 'private-erc20' && selectedTradeRequestToken?.kind === 'private-erc20';
-  const hiddenLiquidityPairMessage = privatePairSelected ? '' : 'Private liquidity needs private tokens on both sides.';
-  const canHidePrivateLiquidity = privatePairSelected && !hiddenLiquidityUnavailableMessage;
+  const privateOrderSelected = selectedTradeOfferToken?.kind === 'private-erc20';
+  const privateOrderPairInvalid =
+    privateOrderSelected &&
+    selectedTradeRequestToken?.kind === 'private-erc20' &&
+    selectedTradeRequestToken.tokenAddress?.toLowerCase() === selectedTradeOfferToken?.tokenAddress?.toLowerCase();
+  const hiddenLiquidityPairMessage = privateOrderSelected
+    ? privateOrderPairInvalid
+      ? 'Hidden amount orders need two different token sides.'
+      : ''
+    : 'Hide amount requires the token you sell to be private.';
+  const canHidePrivateLiquidity = privateOrderSelected && !privateOrderPairInvalid && !hiddenLiquidityUnavailableMessage;
   const hiddenLiquidityActive = Boolean(tradeHidePrivateLiquidity && canHidePrivateLiquidity);
   const resolvedHiddenLiquidityUnavailableMessage =
     hiddenLiquidityUnavailableMessage || hiddenLiquidityPairMessage;
@@ -429,7 +436,7 @@ export const deriveTradeComposerModel = ({
     hiddenPriceOfferAmountWei !== null &&
     hiddenPriceOfferAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
   ) {
-    tradeComposerFieldErrors.general = `${selectedTradeOfferToken.symbol} decimals are too large for private liquidity settlement.`;
+    tradeComposerFieldErrors.general = `${selectedTradeOfferToken.symbol} decimals are too large for private order settlement.`;
   }
   if (
     hiddenLiquidityActive &&
@@ -437,7 +444,7 @@ export const deriveTradeComposerModel = ({
     hiddenPriceRequestAmountWei !== null &&
     hiddenPriceRequestAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
   ) {
-    tradeComposerFieldErrors.requestAmount = `The implied ${selectedTradeRequestToken.symbol} ratio is too large for private liquidity settlement.`;
+    tradeComposerFieldErrors.requestAmount = `The implied ${selectedTradeRequestToken.symbol} ratio is too large for private order settlement.`;
   }
 
   const offerAmountValid = selectedTradeOfferToken !== null && parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n;
@@ -589,10 +596,10 @@ export const deriveTradeComposerModel = ({
     tradeOfferAmountSummaryLabel,
     tradeRequestAmountSummaryLabel,
     tradeOfferBalanceSummaryLabel,
-    tradeOfferAmountLabel: 'Sell amount',
-    tradeRequestAmountLabel: 'Buy amount',
+    tradeOfferAmountLabel: 'You sell',
+    tradeRequestAmountLabel: 'You receive',
     tradeOfferAmountPlaceholder: 'Amount you sell',
-    tradeRequestAmountPlaceholder: 'Amount you buy',
+    tradeRequestAmountPlaceholder: 'Amount you receive',
     tradeOfferVerifyUrl,
     tradeRequestVerifyUrl,
     parsedTradeExpiryHours: safeParsedTradeExpiryHours,

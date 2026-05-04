@@ -13,6 +13,8 @@ import {
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TOKEN_BALANCE_ABI,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+  RECURRING_OTC_CONTRACT_ABI,
+  RECURRING_OTC_CONTRACT_ADDRESS,
   REWARD_TOKEN_ADDRESS,
   TIP_NATIVE_TOKEN_DECIMALS,
   TIP_NATIVE_TOKEN_SYMBOL,
@@ -24,6 +26,10 @@ import {
   normalizeTokenDecimals,
   shortenAddress,
   toSafeNumber,
+  type PrivateTradeFillReceiptPayload,
+  type RecurringPrivateExecutionPayload,
+  type RecurringTradeMode,
+  type RecurringTradeStatus,
   type TradeAssetPayload,
   type TradeSnapshot
 } from './appShared';
@@ -42,6 +48,18 @@ type TradeEscrowConfig = {
 const normalizeEscrowAddress = (value?: string | null): string =>
   typeof value === 'string' && isWalletAddress(value) ? value : TRADE_ESCROW_CONTRACT_ADDRESS;
 
+const isRecurringOrderContractAddress = (value?: string | null): boolean =>
+  typeof value === 'string' && isWalletAddress(value) && value.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase();
+
+export const isActiveTradeEscrowContractAddress = (value?: string | null): boolean => {
+  const address = normalizeEscrowAddress(value).toLowerCase();
+  return (
+    address === TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase() ||
+    address === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase() ||
+    address === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()
+  );
+};
+
 export const resolveTradeEscrowContractConfig = (escrowContract?: string | null): TradeEscrowConfig => {
   const address = normalizeEscrowAddress(escrowContract);
   if (address.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
@@ -50,6 +68,9 @@ export const resolveTradeEscrowContractConfig = (escrowContract?: string | null)
       abi: PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
       hiddenOnly: true
     };
+  }
+  if (address.toLowerCase() !== TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new Error('This trade link uses a retired contract and is not supported by the current app.');
   }
 
   return {
@@ -96,6 +117,111 @@ const parseOptionalTradeId = (value: unknown): number | undefined => {
   return tradeId > 0 ? tradeId : undefined;
 };
 
+type RecurringRawAsset = {
+  assetType?: unknown;
+  token?: unknown;
+  [key: number]: unknown;
+};
+
+type RecurringRawTerms = {
+  baseAmount?: unknown;
+  quoteAmount?: unknown;
+  [key: number]: unknown;
+};
+
+type RecurringRawOrder = {
+  maker?: unknown;
+  taker?: unknown;
+  status?: unknown;
+  mode?: unknown;
+  baseAsset?: unknown;
+  quoteAsset?: unknown;
+  buyTerms?: unknown;
+  sellTerms?: unknown;
+  isPublic?: unknown;
+  accessHash?: unknown;
+  createdAt?: unknown;
+  executionCount?: unknown;
+  publicBaseInventory?: unknown;
+  publicQuoteInventory?: unknown;
+  [key: number]: unknown;
+};
+
+type RecurringRawView = {
+  order?: unknown;
+  buySideOpen?: unknown;
+  sellSideOpen?: unknown;
+  hasPrivateBaseInventory?: unknown;
+  hasPrivateQuoteInventory?: unknown;
+  [key: number]: unknown;
+};
+
+const parseRecurringAssetRaw = (assetRaw: unknown): { assetType: unknown; token: unknown } => {
+  const asset = assetRaw as RecurringRawAsset | null | undefined;
+  return {
+    assetType: asset?.assetType ?? asset?.[0] ?? 0,
+    token: asset?.token ?? asset?.[1] ?? ''
+  };
+};
+
+const parseRecurringTermsRaw = (termsRaw: unknown): { baseAmount: string; quoteAmount: string } => {
+  const terms = termsRaw as RecurringRawTerms | null | undefined;
+  return {
+    baseAmount: toBigintString(terms?.baseAmount ?? terms?.[0]),
+    quoteAmount: toBigintString(terms?.quoteAmount ?? terms?.[1])
+  };
+};
+
+const resolveRecurringMode = (value: unknown): RecurringTradeMode => {
+  const mode = Number(value ?? 0);
+  if (mode === 1) {
+    return 'fully-private';
+  }
+  if (mode === 2) {
+    return 'hybrid-private';
+  }
+  return 'public';
+};
+
+const resolveRecurringStatus = (value: unknown): RecurringTradeStatus => {
+  const status = Number(value ?? 0);
+  if (status === 1) {
+    return 'active';
+  }
+  if (status === 2) {
+    return 'paused';
+  }
+  if (status === 3) {
+    return 'cancelled';
+  }
+  return 'unknown';
+};
+
+const resolveRecurringTradeStatus = (value: unknown): TradeSnapshot['status'] => {
+  const status = resolveRecurringStatus(value);
+  if (status === 'active') {
+    return 'open';
+  }
+  if (status === 'cancelled') {
+    return 'cancelled';
+  }
+  return 'unknown';
+};
+
+const proportionalAmount = (available: string, numerator: string, denominator: string): string => {
+  try {
+    const availableAmount = BigInt(available);
+    const numeratorAmount = BigInt(numerator);
+    const denominatorAmount = BigInt(denominator);
+    if (availableAmount <= 0n || numeratorAmount <= 0n || denominatorAmount <= 0n) {
+      return '0';
+    }
+    return ((availableAmount * numeratorAmount) / denominatorAmount).toString();
+  } catch {
+    return '0';
+  }
+};
+
 const parseTradeFillState = (
   fillStateRaw: unknown,
   offerAmount: unknown,
@@ -122,14 +248,14 @@ const parseTradeFillState = (
 
 const decryptPrivateUintValue = async (
   encryptedValue: unknown,
-  signer: Wallet | JsonRpcSigner
+  signer: Wallet | JsonRpcSigner,
+  recoverOnFailure = false
 ): Promise<bigint | null> => {
   if (encryptedValue === null || encryptedValue === undefined) {
     return null;
   }
 
-  try {
-    const decrypted = await signer.decryptValue(encryptedValue as never);
+  const parseDecryptedValue = (decrypted: unknown): bigint | null => {
     if (typeof decrypted === 'bigint') {
       return decrypted <= PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE ? decrypted : null;
     }
@@ -137,10 +263,35 @@ const decryptPrivateUintValue = async (
       const parsed = BigInt(decrypted.trim());
       return parsed <= PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE ? parsed : null;
     }
+    return null;
+  };
+
+  try {
+    const decrypted = await signer.decryptValue(encryptedValue as never);
+    return parseDecryptedValue(decrypted);
   } catch {
   }
 
+  if (recoverOnFailure) {
+    const previousOnboardInfo = signer.getUserOnboardInfo();
+    try {
+      signer.clearUserOnboardInfo();
+      await signer.generateOrRecoverAes();
+      const decrypted = await signer.decryptValue(encryptedValue as never);
+      return parseDecryptedValue(decrypted);
+    } catch {
+      if (previousOnboardInfo) {
+        signer.setUserOnboardInfo(previousOnboardInfo);
+      }
+    }
+  }
+
   return null;
+};
+
+const extractUserCiphertext = (encryptedValue: unknown): unknown => {
+  const encrypted = encryptedValue as { userCiphertext?: unknown; [key: number]: unknown } | null | undefined;
+  return encrypted?.userCiphertext ?? encrypted?.[1] ?? encryptedValue;
 };
 
 export const readPrivateTokenBalanceWei = async (
@@ -210,16 +361,388 @@ export const readPrivateTradeRemainingOfferWei = async ({
   }
 
   const privateTradeInterface = new cotiEthers.Interface(config.abi);
-  const callData = privateTradeInterface.encodeFunctionData('offboardPrivateFixedPriceRemainingForMaker', [tradeId]);
-  const rawResult = await readProvider.call({
-    from: makerAddress,
-    to: config.address,
-    data: callData
-  });
-  const decoded = privateTradeInterface.decodeFunctionResult('offboardPrivateFixedPriceRemainingForMaker', rawResult);
-  const encryptedRemainingRaw = decoded?.[0] as { userCiphertext?: unknown; [key: number]: unknown } | null | undefined;
-  const userCiphertext = encryptedRemainingRaw?.userCiphertext ?? encryptedRemainingRaw?.[1] ?? encryptedRemainingRaw;
-  return decryptPrivateUintValue(userCiphertext, signer);
+  try {
+    const callData = privateTradeInterface.encodeFunctionData('getPrivateOrderAccountSnapshot', [tradeId, makerAddress]);
+    const rawResult = await readProvider.call({
+      from: makerAddress,
+      to: config.address,
+      data: callData
+    });
+    const decoded = privateTradeInterface.decodeFunctionResult('getPrivateOrderAccountSnapshot', rawResult);
+    const snapshot = decoded?.[0] ?? decoded;
+    const initialized = Boolean(snapshot?.initialized ?? snapshot?.[1] ?? decoded?.initialized ?? decoded?.[1]);
+    if (!initialized) {
+      return null;
+    }
+    const encryptedRemaining = snapshot?.remainingOfferAmount ?? snapshot?.[2] ?? decoded?.remainingOfferAmount ?? decoded?.[2];
+    const decrypted = await decryptPrivateUintValue(extractUserCiphertext(encryptedRemaining), signer, true);
+    if (decrypted === null) {
+      throw new Error('Private order liquidity could not be decrypted. Refresh AES and try again.');
+    }
+    return decrypted;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('could not be decrypted')) {
+      throw error;
+    }
+    throw new Error('Private order liquidity reveal failed. Make sure this is your order, AES is unlocked, and the contract can read the private balance.');
+  }
+};
+
+const decryptRecurringReceiptAmount = async (
+  encryptedValue: unknown,
+  signer: Wallet | JsonRpcSigner
+): Promise<string | undefined> => {
+  const value = await decryptPrivateUintValue(extractUserCiphertext(encryptedValue), signer, true);
+  return value === null ? undefined : value.toString();
+};
+
+export const fetchRecurringPrivateFillReceiptsForWallet = async ({
+  orderId,
+  walletAddress,
+  signer,
+  fromBlock
+}: {
+  orderId: number;
+  walletAddress: string;
+  signer: Wallet | JsonRpcSigner;
+  fromBlock?: number;
+}): Promise<RecurringPrivateExecutionPayload[]> => {
+  if (!Number.isSafeInteger(orderId) || orderId <= 0 || !isWalletAddress(walletAddress)) {
+    return [];
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const safeFromBlock =
+    typeof fromBlock === 'number' && Number.isSafeInteger(fromBlock)
+      ? Math.max(0, fromBlock)
+      : 0;
+  const logs = await contract.queryFilter(
+    contract.filters.PrivateRecurringFillReceipt(BigInt(orderId), walletAddress, null),
+    safeFromBlock,
+    'latest'
+  );
+
+  const executions = await Promise.all(
+    logs.map(async (log: unknown): Promise<RecurringPrivateExecutionPayload | null> => {
+      const eventLog = log as {
+        args?: {
+          orderId?: unknown;
+          recipient?: unknown;
+          filler?: unknown;
+          fillIndex?: unknown;
+          side?: unknown;
+          baseAmount?: unknown;
+          quoteAmount?: unknown;
+          remainingBaseInventory?: unknown;
+          remainingQuoteInventory?: unknown;
+          [key: number]: unknown;
+        };
+        transactionHash?: string;
+        blockNumber?: number;
+      };
+      const args = eventLog.args;
+      if (!args) {
+        return null;
+      }
+
+      const receiptOrderId = toSafeNumber(args.orderId ?? args[0]);
+      if (receiptOrderId !== orderId) {
+        return null;
+      }
+
+      const fillIndex = toSafeNumber(args.fillIndex ?? args[3]);
+      const sideRaw = Number(args.side ?? args[4] ?? 0);
+      const filler = String(args.filler ?? args[2] ?? '').trim();
+      const [baseAmount, quoteAmount, remainingBaseInventory, remainingQuoteInventory] = await Promise.all([
+        decryptRecurringReceiptAmount(args.baseAmount ?? args[5], signer),
+        decryptRecurringReceiptAmount(args.quoteAmount ?? args[6], signer),
+        decryptRecurringReceiptAmount(args.remainingBaseInventory ?? args[7], signer),
+        decryptRecurringReceiptAmount(args.remainingQuoteInventory ?? args[8], signer)
+      ]);
+
+      return {
+        fillIndex,
+        side: sideRaw === 1 ? 'sell' : 'buy',
+        filler,
+        ...(baseAmount !== undefined ? { baseAmount } : {}),
+        ...(quoteAmount !== undefined ? { quoteAmount } : {}),
+        ...(remainingBaseInventory !== undefined ? { remainingBaseInventory } : {}),
+        ...(remainingQuoteInventory !== undefined ? { remainingQuoteInventory } : {}),
+        ...(eventLog.transactionHash ? { txHash: eventLog.transactionHash } : {}),
+        ...(typeof eventLog.blockNumber === 'number' ? { blockNumber: eventLog.blockNumber } : {})
+      };
+    })
+  );
+
+  const filteredExecutions = executions
+    .filter((execution): execution is RecurringPrivateExecutionPayload => execution !== null)
+    .sort((left, right) => left.fillIndex - right.fillIndex);
+  const hasDecryptedReceiptValue = filteredExecutions.some(
+    (execution) =>
+      execution.baseAmount !== undefined ||
+      execution.quoteAmount !== undefined ||
+      execution.remainingBaseInventory !== undefined ||
+      execution.remainingQuoteInventory !== undefined
+  );
+  if (logs.length > 0 && !hasDecryptedReceiptValue) {
+    throw new Error('Private recurring fill receipts were found, but this wallet AES key could not decrypt them.');
+  }
+  return filteredExecutions;
+};
+
+export const fetchRecurringExecutionRowsForWallet = async ({
+  orderId,
+  walletAddress,
+  fromBlock
+}: {
+  orderId: number;
+  walletAddress?: string;
+  fromBlock?: number;
+}): Promise<RecurringPrivateExecutionPayload[]> => {
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    return [];
+  }
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const safeFromBlock =
+    typeof fromBlock === 'number' && Number.isSafeInteger(fromBlock)
+      ? Math.max(0, fromBlock)
+      : 0;
+  const fillerFilter = walletAddress && isWalletAddress(walletAddress) ? walletAddress : null;
+  const logs = await contract.queryFilter(
+    contract.filters.RecurringOrderExecuted(BigInt(orderId), fillerFilter),
+    safeFromBlock,
+    'latest'
+  );
+
+  return logs
+    .map((log: unknown): RecurringPrivateExecutionPayload | null => {
+      const eventLog = log as {
+        args?: {
+          orderId?: unknown;
+          filler?: unknown;
+          side?: unknown;
+          executionIndex?: unknown;
+          publicBaseAmount?: unknown;
+          publicQuoteAmount?: unknown;
+          [key: number]: unknown;
+        };
+        transactionHash?: string;
+        blockNumber?: number;
+      };
+      const args = eventLog.args;
+      if (!args || toSafeNumber(args.orderId ?? args[0]) !== orderId) {
+        return null;
+      }
+      const sideRaw = Number(args.side ?? args[2] ?? 0);
+      const baseAmount = toBigintString(args.publicBaseAmount ?? args[4]);
+      const quoteAmount = toBigintString(args.publicQuoteAmount ?? args[5]);
+      return {
+        fillIndex: toSafeNumber(args.executionIndex ?? args[3]),
+        side: sideRaw === 1 ? 'sell' : 'buy',
+        filler: String(args.filler ?? args[1] ?? '').trim(),
+        ...(baseAmount !== '0' ? { baseAmount } : {}),
+        ...(quoteAmount !== '0' ? { quoteAmount } : {}),
+        ...(eventLog.transactionHash ? { txHash: eventLog.transactionHash } : {}),
+        ...(typeof eventLog.blockNumber === 'number' ? { blockNumber: eventLog.blockNumber } : {})
+      };
+    })
+    .filter((execution): execution is RecurringPrivateExecutionPayload => execution !== null)
+    .sort((left, right) => left.fillIndex - right.fillIndex);
+};
+
+export const fetchRecurringPrivateInventorySnapshotsForWallet = async ({
+  orderId,
+  walletAddress,
+  signer,
+  fromBlock
+}: {
+  orderId: number;
+  walletAddress: string;
+  signer: Wallet | JsonRpcSigner;
+  fromBlock?: number;
+}): Promise<Array<{ baseInventory?: string; quoteInventory?: string; txHash?: string; blockNumber?: number }>> => {
+  if (!Number.isSafeInteger(orderId) || orderId <= 0 || !isWalletAddress(walletAddress)) {
+    return [];
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const latestSnapshotRaw = await contract.getRecurringAccountSnapshot(BigInt(orderId), walletAddress);
+  const latestInitialized = Boolean(latestSnapshotRaw?.initialized ?? latestSnapshotRaw?.[1]);
+  if (latestInitialized) {
+    const [baseInventory, quoteInventory] = await Promise.all([
+      decryptRecurringReceiptAmount(latestSnapshotRaw?.baseInventory ?? latestSnapshotRaw?.[2], signer),
+      decryptRecurringReceiptAmount(latestSnapshotRaw?.quoteInventory ?? latestSnapshotRaw?.[3], signer)
+    ]);
+    if (baseInventory === undefined && quoteInventory === undefined) {
+      throw new Error('Private recurring liquidity was found, but this wallet AES key could not decrypt it.');
+    }
+    return [
+      {
+        ...(baseInventory !== undefined ? { baseInventory } : {}),
+        ...(quoteInventory !== undefined ? { quoteInventory } : {})
+      }
+    ];
+  }
+  const safeFromBlock =
+    typeof fromBlock === 'number' && Number.isSafeInteger(fromBlock)
+      ? Math.max(0, fromBlock)
+      : 0;
+  const logs = await contract.queryFilter(
+    contract.filters.PrivateRecurringInventorySnapshot(BigInt(orderId), walletAddress),
+    safeFromBlock,
+    'latest'
+  );
+
+  const snapshots = await Promise.all(
+    logs.map(async (log: unknown): Promise<{ baseInventory?: string; quoteInventory?: string; txHash?: string; blockNumber?: number } | null> => {
+      const eventLog = log as {
+        args?: {
+          orderId?: unknown;
+          recipient?: unknown;
+          baseInventory?: unknown;
+          quoteInventory?: unknown;
+          [key: number]: unknown;
+        };
+        transactionHash?: string;
+        blockNumber?: number;
+      };
+      const args = eventLog.args;
+      if (!args) {
+        return null;
+      }
+
+      const snapshotOrderId = toSafeNumber(args.orderId ?? args[0]);
+      if (snapshotOrderId !== orderId) {
+        return null;
+      }
+
+      const [baseInventory, quoteInventory] = await Promise.all([
+        decryptRecurringReceiptAmount(args.baseInventory ?? args[2], signer),
+        decryptRecurringReceiptAmount(args.quoteInventory ?? args[3], signer)
+      ]);
+
+      return {
+        ...(baseInventory !== undefined ? { baseInventory } : {}),
+        ...(quoteInventory !== undefined ? { quoteInventory } : {}),
+        ...(eventLog.transactionHash ? { txHash: eventLog.transactionHash } : {}),
+        ...(typeof eventLog.blockNumber === 'number' ? { blockNumber: eventLog.blockNumber } : {})
+      };
+    })
+  );
+
+  const filteredSnapshots = snapshots.filter(
+    (snapshot): snapshot is { baseInventory?: string; quoteInventory?: string; txHash?: string; blockNumber?: number } =>
+      snapshot !== null
+  );
+  const hasDecryptedSnapshotValue = filteredSnapshots.some(
+    (snapshot) => snapshot.baseInventory !== undefined || snapshot.quoteInventory !== undefined
+  );
+  if (logs.length > 0 && !hasDecryptedSnapshotValue) {
+    throw new Error('Private recurring liquidity snapshots were found, but this wallet AES key could not decrypt them.');
+  }
+  return filteredSnapshots;
+};
+
+export const fetchPrivateOrderFillReceiptsForWallet = async ({
+  tradeId,
+  escrowContract,
+  walletAddress,
+  signer,
+  fromBlock
+}: {
+  tradeId: number;
+  escrowContract?: string;
+  walletAddress: string;
+  signer: Wallet | JsonRpcSigner;
+  fromBlock?: number;
+}): Promise<PrivateTradeFillReceiptPayload[]> => {
+  if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(walletAddress)) {
+    return [];
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const config = resolveTradeEscrowContractConfig(escrowContract);
+  if (!config.hiddenOnly) {
+    return [];
+  }
+
+  const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
+  const safeFromBlock =
+    typeof fromBlock === 'number' && Number.isSafeInteger(fromBlock)
+      ? Math.max(0, fromBlock)
+      : 0;
+  const logs = await contract.queryFilter(
+    contract.filters.PrivateOrderFillReceipt(BigInt(tradeId), walletAddress, null),
+    safeFromBlock,
+    'latest'
+  );
+
+  const receipts = await Promise.all(
+    logs.map(async (log: unknown): Promise<PrivateTradeFillReceiptPayload | null> => {
+      const eventLog = log as {
+        args?: {
+          tradeId?: unknown;
+          recipient?: unknown;
+          filler?: unknown;
+          fillIndex?: unknown;
+          offerAmount?: unknown;
+          requestAmount?: unknown;
+          remainingOfferAmount?: unknown;
+          [key: number]: unknown;
+        };
+        transactionHash?: string;
+        blockNumber?: number;
+      };
+      const args = eventLog.args;
+      if (!args) {
+        return null;
+      }
+
+      const receiptTradeId = toSafeNumber(args.tradeId ?? args[0]);
+      if (receiptTradeId !== tradeId) {
+        return null;
+      }
+
+      const fillIndex = toSafeNumber(args.fillIndex ?? args[3]);
+      const filler = String(args.filler ?? args[2] ?? '').trim();
+      const [offerAmount, requestAmount, remainingOfferAmount] = await Promise.all([
+        decryptRecurringReceiptAmount(args.offerAmount ?? args[4], signer),
+        decryptRecurringReceiptAmount(args.requestAmount ?? args[5], signer),
+        decryptRecurringReceiptAmount(args.remainingOfferAmount ?? args[6], signer)
+      ]);
+
+      return {
+        fillIndex,
+        filler,
+        ...(offerAmount !== undefined ? { offerAmount } : {}),
+        ...(requestAmount !== undefined ? { requestAmount } : {}),
+        ...(remainingOfferAmount !== undefined ? { remainingOfferAmount } : {}),
+        ...(eventLog.transactionHash ? { txHash: eventLog.transactionHash } : {}),
+        ...(typeof eventLog.blockNumber === 'number' ? { blockNumber: eventLog.blockNumber } : {})
+      };
+    })
+  );
+
+  const filteredReceipts = receipts
+    .filter((receipt): receipt is PrivateTradeFillReceiptPayload => receipt !== null)
+    .sort((left, right) => left.fillIndex - right.fillIndex);
+  const hasDecryptedReceiptValue = filteredReceipts.some(
+    (receipt) =>
+      receipt.offerAmount !== undefined ||
+      receipt.requestAmount !== undefined ||
+      receipt.remainingOfferAmount !== undefined
+  );
+  if (logs.length > 0 && !hasDecryptedReceiptValue) {
+    throw new Error('Private fill receipts were found, but this wallet AES key could not decrypt them.');
+  }
+  return filteredReceipts;
 };
 
 const readPrivateTokenAllowanceWei = async (
@@ -231,14 +754,25 @@ const readPrivateTokenAllowanceWei = async (
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
   const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
-  const allowanceCallData = privateTokenInterface.encodeFunctionData('allowance', [spenderAddress, true]);
+  const allowanceCallData = privateTokenInterface.encodeFunctionData('allowance(address,address)', [
+    ownerAddress,
+    spenderAddress
+  ]);
   const allowanceRawResult = await readProvider.call({
     from: ownerAddress,
     to: tokenAddress,
     data: allowanceCallData
   });
-  const decodedAllowance = privateTokenInterface.decodeFunctionResult('allowance', allowanceRawResult);
-  return decryptPrivateUintValue(decodedAllowance?.[0] ?? null, signer);
+  const decodedAllowance = privateTokenInterface.decodeFunctionResult(
+    'allowance(address,address)',
+    allowanceRawResult
+  );
+  const allowance = decodedAllowance?.[0] as
+    | { ownerCiphertext?: unknown; [key: number]: unknown }
+    | null
+    | undefined;
+  const ownerCiphertext = allowance?.ownerCiphertext ?? allowance?.[1] ?? null;
+  return decryptPrivateUintValue(ownerCiphertext, signer);
 };
 
 const resolveTradeAssetSnapshot = async (
@@ -327,15 +861,214 @@ const resolveTradeAssetSnapshot = async (
   }
 };
 
+const buildRecurringOrderSnapshotFromView = async (
+  orderId: number,
+  orderViewRaw: unknown,
+  options: {
+    rewardTokenSymbol: string;
+    rewardTokenDecimals: number;
+    privateRewardTokenSymbol: string;
+    privateRewardTokenDecimals: number;
+  }
+): Promise<TradeSnapshot> => {
+  const view = orderViewRaw as RecurringRawView | null | undefined;
+  const orderRaw = (view?.order ?? view?.[0]) as RecurringRawOrder | null | undefined;
+  if (!orderRaw) {
+    throw new Error('Recurring order was not found.');
+  }
+
+  const baseAssetRaw = parseRecurringAssetRaw(orderRaw.baseAsset ?? orderRaw[4]);
+  const quoteAssetRaw = parseRecurringAssetRaw(orderRaw.quoteAsset ?? orderRaw[5]);
+  const buyTerms = parseRecurringTermsRaw(orderRaw.buyTerms ?? orderRaw[6]);
+  const sellTerms = parseRecurringTermsRaw(orderRaw.sellTerms ?? orderRaw[7]);
+  const publicBaseInventory = toBigintString(orderRaw.publicBaseInventory ?? orderRaw[12]);
+  const publicQuoteInventory = toBigintString(orderRaw.publicQuoteInventory ?? orderRaw[13]);
+  const buySideOpen = Boolean(view?.buySideOpen ?? view?.[1]);
+  const sellSideOpen = Boolean(view?.sellSideOpen ?? view?.[2]);
+  const selectedSide = sellSideOpen || !buySideOpen ? 'sell' : 'buy';
+  const mode = resolveRecurringMode(orderRaw.mode ?? orderRaw[3]);
+  const recurringStatus = resolveRecurringStatus(orderRaw.status ?? orderRaw[2]);
+  const hiddenLiquidity = mode !== 'public';
+
+  const [baseAsset, quoteAsset] = await Promise.all([
+    resolveTradeAssetSnapshot(
+      baseAssetRaw.assetType,
+      baseAssetRaw.token,
+      '0',
+      options.rewardTokenSymbol,
+      options.rewardTokenDecimals,
+      options.privateRewardTokenSymbol,
+      options.privateRewardTokenDecimals
+    ),
+    resolveTradeAssetSnapshot(
+      quoteAssetRaw.assetType,
+      quoteAssetRaw.token,
+      '0',
+      options.rewardTokenSymbol,
+      options.rewardTokenDecimals,
+      options.privateRewardTokenSymbol,
+      options.privateRewardTokenDecimals
+    )
+  ]);
+
+  const sideOfferAmount = selectedSide === 'sell' ? sellTerms.baseAmount : buyTerms.quoteAmount;
+  const sideRequestAmount = selectedSide === 'sell' ? sellTerms.quoteAmount : buyTerms.baseAmount;
+  const remainingOfferAmount =
+    selectedSide === 'sell'
+      ? hiddenLiquidity && baseAsset.kind === 'private-erc20'
+        ? '0'
+        : publicBaseInventory
+      : hiddenLiquidity && quoteAsset.kind === 'private-erc20'
+        ? '0'
+        : publicQuoteInventory;
+  const remainingRequestAmount =
+    selectedSide === 'sell'
+      ? proportionalAmount(remainingOfferAmount, sellTerms.quoteAmount, sellTerms.baseAmount)
+      : proportionalAmount(remainingOfferAmount, buyTerms.baseAmount, buyTerms.quoteAmount);
+  const maker = String(orderRaw.maker ?? orderRaw[0] ?? '').trim();
+  const taker = String(orderRaw.taker ?? orderRaw[1] ?? '').trim();
+  const accessHash = String(orderRaw.accessHash ?? orderRaw[9] ?? '');
+  const isPublicRaw = orderRaw.isPublic ?? orderRaw[8];
+  const isPublic = typeof isPublicRaw === 'boolean' ? isPublicRaw : undefined;
+  const executionCount = toSafeNumber(orderRaw.executionCount ?? orderRaw[11]);
+
+  return {
+    tradeId: orderId,
+    escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+    maker,
+    taker,
+    offer:
+      selectedSide === 'sell'
+        ? { ...baseAsset, amount: sideOfferAmount }
+        : { ...quoteAsset, amount: sideOfferAmount },
+    request:
+      selectedSide === 'sell'
+        ? { ...quoteAsset, amount: sideRequestAmount }
+        : { ...baseAsset, amount: sideRequestAmount },
+    createdAt: toSafeNumber(orderRaw.createdAt ?? orderRaw[10]),
+    expiresAt: 0,
+    status: resolveRecurringTradeStatus(orderRaw.status ?? orderRaw[2]),
+    isPublic,
+    hasAccessHash: /^0x[0-9a-fA-F]{64}$/.test(accessHash)
+      ? accessHash.toLowerCase() !== ZERO_BYTES32
+      : undefined,
+    fillState: {
+      remainingOfferAmount,
+      remainingRequestAmount,
+      filledOfferAmount: executionCount > 0 ? '1' : '0',
+      filledRequestAmount: executionCount > 0 ? '1' : '0'
+    },
+    hiddenLiquidity,
+    recurringOrder: {
+      orderId,
+      selectedSide,
+      mode,
+      recurringStatus,
+      baseAsset,
+      quoteAsset,
+      buyTerms,
+      sellTerms,
+      publicBaseInventory,
+      publicQuoteInventory,
+      buySideOpen,
+      sellSideOpen,
+      hasPrivateBaseInventory: Boolean(view?.hasPrivateBaseInventory ?? view?.[3]),
+      hasPrivateQuoteInventory: Boolean(view?.hasPrivateQuoteInventory ?? view?.[4]),
+      executionCount
+    }
+  };
+};
+
+const fetchRecurringOrderSnapshotById = async (
+  orderId: number,
+  options: {
+    rewardTokenSymbol: string;
+    rewardTokenDecimals: number;
+    privateRewardTokenSymbol: string;
+    privateRewardTokenDecimals: number;
+  }
+): Promise<TradeSnapshot> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  let orderViewRaw: unknown;
+  try {
+    orderViewRaw = await contract.getOrderView(orderId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('InvalidOrder') || message.includes('0xaf610693')) {
+      throw new Error('Recurring order was not found on the active contract. Old recurring links are retired.');
+    }
+    throw error;
+  }
+  return buildRecurringOrderSnapshotFromView(orderId, orderViewRaw, options);
+};
+
+export const __buildRecurringOrderSnapshotFromViewForTest = buildRecurringOrderSnapshotFromView;
+
+const resolveRecurringIdsFromPagedResult = (raw: unknown): number[] => {
+  const idsRaw = Array.isArray(raw) ? raw[0] : null;
+  return Array.isArray(idsRaw)
+    ? idsRaw.map((value: unknown) => toSafeNumber(value)).filter((value: number) => value > 0)
+    : [];
+};
+
+export const __resolveRecurringIdsFromPagedResultForTest = resolveRecurringIdsFromPagedResult;
+
+const fetchRecurringOrderSnapshotsByIds = async (
+  orderIds: number[],
+  options: {
+    rewardTokenSymbol: string;
+    rewardTokenDecimals: number;
+    privateRewardTokenSymbol: string;
+    privateRewardTokenDecimals: number;
+  }
+): Promise<TradeSnapshot[]> => {
+  if (orderIds.length === 0) {
+    return [];
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const orderViewsRaw = await contract.getOrderViews(orderIds);
+  const orderViews = Array.isArray(orderViewsRaw) ? orderViewsRaw : [];
+  const snapshots = await Promise.all(
+    orderIds.map((orderId, index) =>
+      buildRecurringOrderSnapshotFromView(orderId, orderViews[index], options).catch(() => null)
+    )
+  );
+  return snapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
+};
+
 export const fetchTradeAccessMetadataById = async (
   tradeId: number,
   escrowContract?: string
 ): Promise<TradeAccessMetadata> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
+  if (isRecurringOrderContractAddress(escrowContract)) {
+    const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+    const orderViewRaw = await contract.getOrderView(tradeId);
+    const view = orderViewRaw as RecurringRawView | null | undefined;
+    const orderRaw = (view?.order ?? view?.[0]) as RecurringRawOrder | null | undefined;
+    const isPublicRaw = orderRaw?.isPublic ?? orderRaw?.[8];
+    const accessHash = String(orderRaw?.accessHash ?? orderRaw?.[9] ?? '');
+    return {
+      isPublic: typeof isPublicRaw === 'boolean' ? isPublicRaw : undefined,
+      hasAccessHash: /^0x[0-9a-fA-F]{64}$/.test(accessHash) ? accessHash.toLowerCase() !== ZERO_BYTES32 : undefined
+    };
+  }
+
   const config = resolveTradeEscrowContractConfig(escrowContract);
   const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
-  const metadataRaw = await contract.getTradeMetadata(tradeId);
+  let metadataRaw: unknown;
+  if (typeof contract.getTradeMetadata === 'function') {
+    metadataRaw = await contract.getTradeMetadata(tradeId);
+  } else {
+    const tradeViewRaw = (await contract.getTradeView(tradeId)) as { metadata?: unknown; [key: number]: unknown };
+    metadataRaw = tradeViewRaw.metadata ?? tradeViewRaw[1];
+  }
   return parseTradeAccessMetadata(metadataRaw);
 };
 
@@ -349,32 +1082,85 @@ export const fetchTradeSnapshotById = async (
     escrowContract?: string;
   }
 ): Promise<TradeSnapshot> => {
+  if (isRecurringOrderContractAddress(options.escrowContract)) {
+    return fetchRecurringOrderSnapshotById(tradeId, options);
+  }
+
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
   const config = resolveTradeEscrowContractConfig(options.escrowContract);
   const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
-  const tradeRaw = await contract.getTrade(tradeId);
-  const [metadataRaw, fillStateRaw, counterParentRaw, replacementRaw, replacesRaw] = await Promise.all([
-    contract.getTradeMetadata?.(tradeId).catch(() => null),
-    contract.getTradeFillState?.(tradeId).catch(() => null),
-    contract.counterParentTradeId?.(tradeId).catch(() => null),
-    contract.replacementTradeId?.(tradeId).catch(() => null),
-    contract.replacesTradeId?.(tradeId).catch(() => null)
+  const tradeViewRaw = await contract.getTradeView(tradeId);
+  const tradeView = tradeViewRaw as
+    | {
+        trade?: unknown;
+        metadata?: unknown;
+        fillState?: unknown;
+        effectiveStatus?: unknown;
+        replacementTradeId?: unknown;
+        replacesTradeId?: unknown;
+        rootTradeId?: unknown;
+        [key: number]: unknown;
+      }
+    | null
+    | undefined;
+  const indexedTradeView = tradeViewRaw as { [key: number]: unknown } | null | undefined;
+  const viewTradeRaw = tradeView?.trade ?? indexedTradeView?.[0];
+  const viewMetadataRaw = tradeView?.metadata ?? indexedTradeView?.[1];
+  const viewFillStateRaw = tradeView?.fillState ?? indexedTradeView?.[2];
+  const viewEffectiveStatusRaw =
+    tradeView?.effectiveStatus ?? indexedTradeView?.[config.hiddenOnly ? 3 : 4];
+  const viewReplacementRaw =
+    tradeView?.replacementTradeId ?? indexedTradeView?.[config.hiddenOnly ? 4 : 5];
+  const viewReplacesRaw =
+    tradeView?.replacesTradeId ?? indexedTradeView?.[config.hiddenOnly ? 5 : 6];
+  const [counterParentRaw, replacementRaw, replacesRaw] = await Promise.all([
+    typeof contract.counterParentTradeId === 'function'
+      ? contract.counterParentTradeId(tradeId).catch(() => null)
+      : Promise.resolve(null),
+    typeof contract.replacementTradeId === 'function'
+      ? contract.replacementTradeId(tradeId).catch(() => viewReplacementRaw ?? null)
+      : Promise.resolve(viewReplacementRaw ?? null),
+    typeof contract.replacesTradeId === 'function'
+      ? contract.replacesTradeId(tradeId).catch(() => viewReplacesRaw ?? null)
+      : Promise.resolve(viewReplacesRaw ?? null)
   ]);
-  const maker = String((tradeRaw as { maker?: unknown }).maker ?? tradeRaw?.[0] ?? '').trim();
-  const taker = String((tradeRaw as { taker?: unknown }).taker ?? tradeRaw?.[1] ?? '').trim();
-  const statusRaw = (tradeRaw as { status?: unknown }).status ?? tradeRaw?.[2];
-  const offerAssetRaw = (tradeRaw as { offerAsset?: unknown }).offerAsset ?? tradeRaw?.[3];
-  const requestAssetRaw = (tradeRaw as { requestAsset?: unknown }).requestAsset ?? tradeRaw?.[4];
-  const createdAt = toSafeNumber((tradeRaw as { createdAt?: unknown }).createdAt ?? tradeRaw?.[5]);
-  const expiresAt = toSafeNumber((tradeRaw as { expiresAt?: unknown }).expiresAt ?? tradeRaw?.[6]);
-  const offerAssetType = (offerAssetRaw as { assetType?: unknown })?.assetType ?? offerAssetRaw?.[0] ?? 0;
-  const offerToken = (offerAssetRaw as { token?: unknown })?.token ?? offerAssetRaw?.[1] ?? '';
-  const offerAmount = (offerAssetRaw as { amount?: unknown })?.amount ?? offerAssetRaw?.[2] ?? 0n;
-  const requestAssetType = (requestAssetRaw as { assetType?: unknown })?.assetType ?? requestAssetRaw?.[0] ?? 0;
-  const requestToken = (requestAssetRaw as { token?: unknown })?.token ?? requestAssetRaw?.[1] ?? '';
-  const requestAmount = (requestAssetRaw as { amount?: unknown })?.amount ?? requestAssetRaw?.[2] ?? 0n;
-  const { isPublic, hasAccessHash, parentTradeId } = parseTradeAccessMetadata(metadataRaw);
+  const tradeRaw = viewTradeRaw as
+    | {
+        maker?: unknown;
+        taker?: unknown;
+        status?: unknown;
+        offerAsset?: unknown;
+        requestAsset?: unknown;
+        createdAt?: unknown;
+        expiresAt?: unknown;
+        [key: number]: unknown;
+      }
+    | null
+    | undefined;
+  const metadataRaw = viewMetadataRaw;
+  const fillStateRaw = viewFillStateRaw;
+  const maker = String(tradeRaw?.maker ?? tradeRaw?.[0] ?? '').trim();
+  const taker = String(tradeRaw?.taker ?? tradeRaw?.[1] ?? '').trim();
+  const statusRaw = viewEffectiveStatusRaw ?? tradeRaw?.status ?? tradeRaw?.[2];
+  const offerAssetRaw = (tradeRaw?.offerAsset ?? tradeRaw?.[3]) as
+    | { assetType?: unknown; token?: unknown; amount?: unknown; [key: number]: unknown }
+    | null
+    | undefined;
+  const requestAssetRaw = (tradeRaw?.requestAsset ?? tradeRaw?.[4]) as
+    | { assetType?: unknown; token?: unknown; amount?: unknown; [key: number]: unknown }
+    | null
+    | undefined;
+  const createdAt = toSafeNumber(tradeRaw?.createdAt ?? tradeRaw?.[5]);
+  const expiresAt = toSafeNumber(tradeRaw?.expiresAt ?? tradeRaw?.[6]);
+  const offerAssetType = offerAssetRaw?.assetType ?? offerAssetRaw?.[0] ?? 0;
+  const offerToken = offerAssetRaw?.token ?? offerAssetRaw?.[1] ?? '';
+  const offerAmount = offerAssetRaw?.amount ?? offerAssetRaw?.[2] ?? 0n;
+  const requestAssetType = requestAssetRaw?.assetType ?? requestAssetRaw?.[0] ?? 0;
+  const requestToken = requestAssetRaw?.token ?? requestAssetRaw?.[1] ?? '';
+  const requestAmount = requestAssetRaw?.amount ?? requestAssetRaw?.[2] ?? 0n;
+  const { isPublic, hasAccessHash, parentTradeId: parsedParentTradeId } = parseTradeAccessMetadata(metadataRaw);
+  const parentTradeId = config.hiddenOnly ? undefined : parsedParentTradeId;
   const fillState = parseTradeFillState(fillStateRaw, offerAmount, requestAmount);
   const counterParentTradeId = parseOptionalTradeId(counterParentRaw);
   const replacementTradeId = parseOptionalTradeId(replacementRaw);
@@ -471,8 +1257,8 @@ export const fetchRecentTradeSnapshots = async (
     resolveTradeEscrowContractConfig(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS)
   ];
 
-  const snapshotGroups = await Promise.all(
-    configs.map(async (config) => {
+  const snapshotGroups = await Promise.all([
+    ...configs.map(async (config) => {
       const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
       const publicTradeIdsRaw = await contract.getOpenPublicTradeIds?.(0, safeLimit).catch(() => null);
       const publicTradeIdsResult = Array.isArray(publicTradeIdsRaw) ? publicTradeIdsRaw[0] : null;
@@ -515,8 +1301,23 @@ export const fetchRecentTradeSnapshots = async (
           }).catch(() => null)
         )
       );
-    })
-  );
+    }),
+    (async () => {
+      const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+      const openOrderIdsRaw = await contract.getOpenPublicOrderIds(0, safeLimit).catch(() => null);
+      const orderIds = resolveRecurringIdsFromPagedResult(openOrderIdsRaw);
+      const snapshots = await fetchRecurringOrderSnapshotsByIds(orderIds, {
+        rewardTokenSymbol: options.rewardTokenSymbol,
+        rewardTokenDecimals: options.rewardTokenDecimals,
+        privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+        privateRewardTokenDecimals: options.privateRewardTokenDecimals
+      }).catch(() => []);
+      return snapshots.filter((snapshot) =>
+        snapshot.status === 'open' &&
+        Boolean(snapshot.recurringOrder?.buySideOpen || snapshot.recurringOrder?.sellSideOpen)
+      );
+    })()
+  ]);
 
   return snapshotGroups
     .flat()
@@ -552,14 +1353,38 @@ export const fetchWalletTradeSnapshots = async (
     resolveTradeEscrowContractConfig(TRADE_ESCROW_CONTRACT_ADDRESS),
     resolveTradeEscrowContractConfig(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS)
   ];
-  const snapshotGroups = await Promise.all(
-    configs.map(async (config) => {
+  const readWalletFillState = async (
+    contractInstance: unknown,
+    tradeId: number
+  ): Promise<TradeSnapshot['walletFillState'] | undefined> => {
+    const contractWithFills = contractInstance as {
+      getTradeFillForAccount?: (tradeId: number, account: string) => Promise<unknown>;
+    };
+    const raw = await contractWithFills.getTradeFillForAccount?.(tradeId, walletAddress).catch(() => null);
+    if (!raw) {
+      return undefined;
+    }
+    const fillState = raw as {
+      offerAmountReceived?: unknown;
+      requestAmountPaid?: unknown;
+      [key: number]: unknown;
+    };
+    const offerAmountReceived = toBigintString(fillState.offerAmountReceived ?? fillState[0]);
+    const requestAmountPaid = toBigintString(fillState.requestAmountPaid ?? fillState[1]);
+    return offerAmountReceived !== '0' || requestAmountPaid !== '0'
+      ? { offerAmountReceived, requestAmountPaid }
+      : undefined;
+  };
+  const snapshotGroups = await Promise.all([
+    ...configs.map(async (config) => {
       const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
       const [makerIdsRaw, takerIdsRaw, fillerIdsRaw] = await Promise.all([
         contract.getTradeIdsForMaker(walletAddress, 0, safeLimit).catch(() => null),
         contract.getTradeIdsForTaker(walletAddress, 0, safeLimit).catch(() => null),
         contract.getTradeIdsForFiller?.(walletAddress, 0, safeLimit).catch(() => null)
       ]);
+      const fillerIds = resolveIds(fillerIdsRaw);
+      const fillerIdSet = new Set(fillerIds);
       const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw), ...resolveIds(fillerIdsRaw)]))
         .sort((left, right) => right - left)
         .slice(0, safeLimit);
@@ -571,11 +1396,50 @@ export const fetchWalletTradeSnapshots = async (
             privateRewardTokenSymbol: options.privateRewardTokenSymbol,
             privateRewardTokenDecimals: options.privateRewardTokenDecimals,
             escrowContract: config.address
-          }).catch(() => null)
+          })
+            .then(async (snapshot) => {
+              if (!fillerIdSet.has(tradeId)) {
+                return snapshot;
+              }
+              return {
+                ...snapshot,
+                walletHasFill: true,
+                ...(config.hiddenOnly ? {} : { walletFillState: await readWalletFillState(contract, tradeId) })
+              };
+            })
+            .catch(() => null)
         )
       );
-    })
-  );
+    }),
+    (async () => {
+      const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+      const [makerIdsRaw, takerIdsRaw, fillerIdsRaw] = await Promise.all([
+        contract.getOrderIdsForMaker(walletAddress, 0, safeLimit).catch(() => null),
+        contract.getOrderIdsForTaker(walletAddress, 0, safeLimit).catch(() => null),
+        contract.getOrderIdsForFiller(walletAddress, 0, safeLimit).catch(() => null)
+      ]);
+      const recurringFillerIds = resolveRecurringIdsFromPagedResult(fillerIdsRaw);
+      const recurringFillerIdSet = new Set(recurringFillerIds);
+      const orderIds = Array.from(
+        new Set([
+          ...resolveRecurringIdsFromPagedResult(makerIdsRaw),
+          ...resolveRecurringIdsFromPagedResult(takerIdsRaw),
+          ...recurringFillerIds
+        ])
+      )
+        .sort((left, right) => right - left)
+        .slice(0, safeLimit);
+      const snapshots = await fetchRecurringOrderSnapshotsByIds(orderIds, {
+        rewardTokenSymbol: options.rewardTokenSymbol,
+        rewardTokenDecimals: options.rewardTokenDecimals,
+        privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+        privateRewardTokenDecimals: options.privateRewardTokenDecimals
+      }).catch(() => []);
+      return snapshots.map((snapshot) =>
+        recurringFillerIdSet.has(snapshot.tradeId) ? { ...snapshot, walletHasFill: true } : snapshot
+      );
+    })()
+  ]);
 
   return snapshotGroups
     .flat()

@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from 'react';
+import { useEffect, useRef, type ReactNode, type Ref } from 'react';
 import AppFavicon from '../assets/favicon.png';
 
 type AppHeaderLink = {
@@ -17,6 +17,7 @@ type AppHeaderProps = {
   debugControl?: ReactNode;
   links?: readonly AppHeaderLink[];
   brandActions?: ReactNode;
+  appNavigationControl?: ReactNode;
   navigationControl?: ReactNode;
   walletControl?: ReactNode;
   title?: string;
@@ -42,14 +43,18 @@ export default function AppHeader({
   debugControl,
   links = [],
   brandActions,
+  appNavigationControl,
   navigationControl,
   walletControl,
   title = 'ChainWhisper',
   subtitle = '',
   showSoundToggle = false
 }: AppHeaderProps) {
+  const mobileMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const hasNavLinks = links.length > 0;
   const shouldShowSoundToggle = showSoundToggle && typeof onToggleSound === 'function' && typeof soundEnabled === 'boolean';
+  const desktopAppNavigationControl = !isMobileNav ? appNavigationControl : null;
+  const mobileAppNavigationControl = isMobileNav ? appNavigationControl : null;
   const desktopNavigationControl = !isMobileNav ? navigationControl : null;
   const mobileNavigationControl = isMobileNav ? navigationControl : null;
   const desktopWalletControl = !isMobileNav ? walletControl : null;
@@ -120,7 +125,28 @@ export default function AppHeader({
   );
   const headerClassName = `${hasNavLinks ? 'top-header top-header-has-links' : 'top-header top-header-no-links'}${
     desktopWalletControl ? ' top-header-has-wallet' : ''
-  }${desktopNavigationControl ? ' top-header-has-navigation' : ''}${mobileWalletControl ? ' top-header-has-mobile-wallet' : ''}`;
+  }${desktopAppNavigationControl ? ' top-header-has-app-navigation' : ''}${
+    desktopNavigationControl ? ' top-header-has-navigation' : ''
+  }${mobileWalletControl ? ' top-header-has-mobile-wallet' : ''}`;
+
+  useEffect(() => {
+    if (!isMobileNav || !hasNavLinks || !mobileLinksOpen) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      event.preventDefault();
+      onCloseMobileLinks();
+      window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus());
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [hasNavLinks, isMobileNav, mobileLinksOpen, onCloseMobileLinks]);
 
   return (
     <header className={headerClassName} ref={headerRef}>
@@ -139,6 +165,7 @@ export default function AppHeader({
         </div>
 
         <div className="top-header-right">
+          {desktopAppNavigationControl ? <div className="top-header-app-nav">{desktopAppNavigationControl}</div> : null}
           {desktopNavigationControl ? <div className="top-header-nav">{desktopNavigationControl}</div> : null}
 
           {!isMobileNav && hasNavLinks ? (
@@ -151,6 +178,7 @@ export default function AppHeader({
 
           {isMobileNav && hasNavLinks ? (
             <button
+              ref={mobileMenuButtonRef}
               type="button"
               className="top-header-menu-btn"
               aria-expanded={mobileLinksOpen}
@@ -169,11 +197,13 @@ export default function AppHeader({
           id="top-navigation-links-mobile"
           className={mobileLinksOpen ? 'top-header-mobile-links open' : 'top-header-mobile-links'}
           aria-label="COTI ecosystem navigation mobile"
+          hidden={!mobileLinksOpen}
         >
           {renderNavLinks(links, onCloseMobileLinks)}
         </nav>
       ) : null}
 
+      {mobileAppNavigationControl ? <div className="top-header-mobile-app-nav">{mobileAppNavigationControl}</div> : null}
       {mobileWalletControl ? <div className="top-header-mobile-wallet">{mobileWalletControl}</div> : null}
       {mobileNavigationControl ? <div className="top-header-mobile-nav">{mobileNavigationControl}</div> : null}
     </header>

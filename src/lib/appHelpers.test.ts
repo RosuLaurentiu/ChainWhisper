@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMessageReferenceKeys,
+  getOnChainFailureMessage,
   getVerifiedEcosystemToken,
   isVerifiedEcosystemToken,
   messageReferencesMatch,
@@ -81,13 +82,21 @@ describe('memo plaintext decoding', () => {
 });
 
 describe('verified ecosystem tokens', () => {
-  it('includes the added public ecosystem token', () => {
+  it('includes the added private ecosystem token', () => {
     const address = '0xe8C3D2248a578e9E020C2447f8148e606090fbfe';
 
     expect(isVerifiedEcosystemToken(address)).toBe(true);
     expect(getVerifiedEcosystemToken(address.toUpperCase())).toEqual({
       address,
-      kind: 'erc20'
+      kind: 'private-erc20'
     });
+  });
+});
+
+describe('trade on-chain error messages', () => {
+  it('maps recurring private-token transfer failures to a useful message', () => {
+    expect(getOnChainFailureMessage({ data: '0x90b8ec18' }, 'fallback')).toBe(
+      'Private token transfer failed. Check balance, privacy unlock, and approval.'
+    );
   });
 });

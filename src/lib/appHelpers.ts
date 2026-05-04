@@ -38,7 +38,7 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   { address: '0xe757Ca19d2c237AA52eBb1d2E8E4368eeA3eb331', kind: 'erc20' },
   { address: '0xFc075Bd3e22d337C19b7Ca25635282ad8e24941a', kind: 'erc20' },
   { address: '0x639aCc80569c5FC83c6FBf2319A6Cc38bBfe26d1', kind: 'erc20' },
-  { address: '0xe8C3D2248a578e9E020C2447f8148e606090fbfe', kind: 'erc20' },
+  { address: '0xe8C3D2248a578e9E020C2447f8148e606090fbfe', kind: 'private-erc20' },
   { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20' },
 ];
 
@@ -98,7 +98,13 @@ const TRADE_ASSET_TYPE_PRIVATE_ERC20 = 2;
 const TRADE_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
   '0xfceb320b': 'This trade needs its full private link before it can be accepted.',
   '0x025dbdd4': 'Insufficient escrow fee. Check the required COTI fee and try again.',
-  '0xe6c4247b': 'Invalid wallet address for this trade action.'
+  '0xe6c4247b': 'Invalid wallet address for this trade action.',
+  '0x8a8b5302': 'This order side is not available for that fill path.',
+  '0x2723e9c2': 'The COTI amount sent does not match the fill amount.',
+  '0x94697444': 'Enter a valid fill amount for this order side.',
+  '0x8b2024a5': 'This order side does not have enough inventory for that fill.',
+  '0x914e7cb8': 'Enter a private-token amount greater than zero.',
+  '0x90b8ec18': 'Private token transfer failed. Check balance, privacy unlock, and approval.'
 };
 
 export const resolveTradeSnapshotStatus = (statusRaw: unknown, expiresAt: number): TradeSnapshot['status'] => {
