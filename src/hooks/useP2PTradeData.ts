@@ -234,7 +234,8 @@ export default function useP2PTradeData({
         rewardTokenDecimals,
         privateRewardTokenSymbol,
         privateRewardTokenDecimals,
-        escrowContract
+        escrowContract,
+        accessSecret: resolvedRouteAccessSecret || undefined
       });
       const snapshot = await enrichMakerPrivateProgress(snapshotRaw);
       mergeTradeSnapshot(snapshot);
@@ -249,7 +250,8 @@ export default function useP2PTradeData({
       privateRewardTokenDecimals,
       privateRewardTokenSymbol,
       rewardTokenDecimals,
-      rewardTokenSymbol
+      rewardTokenSymbol,
+      resolvedRouteAccessSecret
     ]
   );
 

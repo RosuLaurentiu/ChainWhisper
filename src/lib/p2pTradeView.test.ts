@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   canEditPublicTrade,
+  buildTradeAssetExplorerUrl,
   filterAndSortTradeDesk,
   getMakerPrivateProgressSummary,
   getRecurringTerminalSideState,
@@ -84,6 +85,12 @@ describe('p2pTradeView helpers', () => {
     expect(matchesTradeSearch(trade, 'wisp')).toBe(true);
     expect(matchesTradeSearch(trade, '12')).toBe(true);
     expect(matchesTradeSearch(trade, 'missing')).toBe(false);
+  });
+
+  it('builds Cotiscan token links through the indexed address page', () => {
+    expect(buildTradeAssetExplorerUrl(token('HOTDOG', '1', '0x5085Ea0611A9C49316972C57390ca25C9CF236AB'))).toBe(
+      'https://mainnet.cotiscan.io/address/0x5085Ea0611A9C49316972C57390ca25C9CF236AB'
+    );
   });
 
   it('allows editing only unfilled open public maker trades', () => {

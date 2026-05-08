@@ -209,7 +209,13 @@ export const deriveTradeComposerModel = ({
     tradeFeeModeSelection === 'token' ? 'coti' : tradeFeeModeSelection;
   const normalizedTradeOfferCustomTokenAddress = tradeOfferCustomTokenAddress.trim();
   const normalizedTradeRequestCustomTokenAddress = tradeRequestCustomTokenAddress.trim();
-  const verifiedTokenOptions = VERIFIED_ECOSYSTEM_TOKENS.map(({ address, kind }) => {
+  const builtInTokenAddresses = new Set([
+    REWARD_TOKEN_ADDRESS.toLowerCase(),
+    PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()
+  ]);
+  const verifiedTokenOptions = VERIFIED_ECOSYSTEM_TOKENS.filter(
+    ({ address }) => !builtInTokenAddresses.has(address.toLowerCase())
+  ).map(({ address, kind }) => {
     const key = buildTradeCustomTokenInfoKey(kind, address);
     const info = customTradeTokenInfoByAddress[key];
     const symbol = info?.loading
@@ -357,10 +363,10 @@ export const deriveTradeComposerModel = ({
       ? `${formatTokenAmount(selectedTradeOfferBalanceWei, selectedTradeOfferToken.decimals, 6)} ${selectedTradeOfferToken.symbol}`
       : '--';
   const tradeOfferVerifyUrl = selectedTradeOfferToken?.tokenAddress
-    ? `${COTI_NETWORK.blockExplorerUrl}/token/${selectedTradeOfferToken.tokenAddress}`
+    ? `${COTI_NETWORK.blockExplorerUrl}/address/${selectedTradeOfferToken.tokenAddress}`
     : undefined;
   const tradeRequestVerifyUrl = selectedTradeRequestToken?.tokenAddress
-    ? `${COTI_NETWORK.blockExplorerUrl}/token/${selectedTradeRequestToken.tokenAddress}`
+    ? `${COTI_NETWORK.blockExplorerUrl}/address/${selectedTradeRequestToken.tokenAddress}`
     : undefined;
 
   const normalizedExpiryInput = tradeHasNoExpiry ? '0' : tradeExpiryHoursInput.trim();

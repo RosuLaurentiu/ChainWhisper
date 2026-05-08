@@ -291,7 +291,7 @@ export const formatTradeRateText = (baseAsset: TradeAssetPayload, quoteAsset: Tr
 
 export const buildTradeAssetExplorerUrl = (asset: TradeAssetPayload): string => {
   const tokenAddress = asset.tokenAddress?.trim();
-  return tokenAddress ? `${COTI_NETWORK.blockExplorerUrl}/token/${tokenAddress}` : '';
+  return tokenAddress ? `${COTI_NETWORK.blockExplorerUrl}/address/${tokenAddress}` : '';
 };
 
 export const buildTransactionExplorerUrl = (txHash?: string): string =>

@@ -13,8 +13,10 @@ import {
   cancelTradeOnChain,
   counterTradeAndCloseCounteredTradeOnChain,
   createTradeOnChain,
-  declineTradeOnChain
+  declineTradeOnChain,
+  fillPrivateFixedPriceTradeOnChain
 } from '../lib/tradeActions';
+import { createTradeAccessSecret } from '../lib/partyTradeTerms';
 import {
   buildTradeOfferMessagePayload,
   buildTradeResponseMessagePayload,
@@ -189,6 +191,9 @@ export default function useInChatTradeActions({
       const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
       const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
       const publicOfferAmount = parsedTradeOfferAmountWei;
+      const visiblePrivateTokenPartyTrade =
+        selectedTradeOfferToken.kind === 'private-erc20' || selectedTradeRequestToken.kind === 'private-erc20';
+      const partyAccessSecret = visiblePrivateTokenPartyTrade ? createTradeAccessSecret() : '';
       const createResult =
         isCounterReplacement && counteredSnapshot
           ? await counterTradeAndCloseCounteredTradeOnChain({
@@ -200,7 +205,12 @@ export default function useInChatTradeActions({
               requestAsset: selectedTradeRequestToken,
               requestAmountWei: parsedTradeRequestAmountWei,
               expiresAt,
-              nativeFeeWei
+              nativeFeeWei,
+              partyAccessSecret: partyAccessSecret || undefined,
+              counterTakerAddress: counteredSnapshot.maker,
+              counteredEscrowContract: counteredSnapshot.escrowContract,
+              parentEscrowContract: counteredSnapshot.counterParentEscrow ?? counteredSnapshot.escrowContract,
+              parentTradeId: counteredSnapshot.counterParentTradeId
             })
           : await createTradeOnChain({
               signer,
@@ -212,7 +222,9 @@ export default function useInChatTradeActions({
               requestAmountWei: parsedTradeRequestAmountWei,
               expiresAt,
               nativeFeeWei,
-              parentTradeId: tradeCounterParentId ?? undefined
+              parentTradeId: tradeCounterParentId ?? undefined,
+              partyAccessSecret: partyAccessSecret || undefined,
+              parentEscrowContract: counteredSnapshot?.escrowContract
             });
       const tradeId = createResult.tradeId;
       const tradeKey = buildTradeSnapshotKey(tradeId, createResult.escrowContract);
@@ -226,7 +238,8 @@ export default function useInChatTradeActions({
         taker: activeContact,
         createdAt,
         expiresAt,
-        parentTradeId: tradeCounterParentId ?? undefined
+        parentTradeId: tradeCounterParentId ?? undefined,
+        accessSecret: partyAccessSecret || undefined
       };
 
       setTradeSnapshotsById((previous) => ({
@@ -257,6 +270,7 @@ export default function useInChatTradeActions({
           expiresAt,
           status: 'open',
           parentTradeId: tradeCounterParentId ?? undefined,
+          counterParentEscrow: counteredSnapshot?.escrowContract,
           counterParentTradeId: tradeCounterParentId ?? undefined,
           fillState: {
             remainingOfferAmount: parsedTradeOfferAmountWei.toString(),
@@ -337,22 +351,37 @@ export default function useInChatTradeActions({
         amount: remainingRequestAmount.toString()
       };
       const { signer, cacheKey } = await getMemoSigner();
-      const { acceptedTxHash } =
-        snapshot.counterParentTradeId
-            ? await acceptCounterTradeAndCloseParentOnChain({
-                signer,
-                ownerAddress: walletAddress,
-                tradeId: offer.tradeId,
-                requestAsset,
-                requestAmountWei: remainingRequestAmount
-              })
-            : await acceptTradeOnChain({
-                signer,
-                ownerAddress: walletAddress,
-                tradeId: offer.tradeId,
-                requestAsset,
-                requestAmountWei: remainingRequestAmount
-              });
+      const acceptResult = snapshot.counterParentTradeId
+        ? await acceptCounterTradeAndCloseParentOnChain({
+            signer,
+            ownerAddress: walletAddress,
+            tradeId: offer.tradeId,
+            requestAsset,
+            requestAmountWei: remainingRequestAmount,
+            escrowContract: snapshot.escrowContract,
+            accessSecret: offer.accessSecret
+          })
+        : offer.accessSecret
+          ? await fillPrivateFixedPriceTradeOnChain({
+              signer,
+              ownerAddress: walletAddress,
+              tradeId: offer.tradeId,
+              requestAsset,
+              requestAmountWei: remainingRequestAmount,
+              escrowContract: snapshot.escrowContract,
+              accessSecret: offer.accessSecret
+            })
+          : await acceptTradeOnChain({
+              signer,
+              ownerAddress: walletAddress,
+              tradeId: offer.tradeId,
+              requestAsset,
+              requestAmountWei: remainingRequestAmount,
+              accessSecret: offer.accessSecret
+            });
+      const acceptedTxHash =
+        (acceptResult as { acceptedTxHash?: string }).acceptedTxHash ??
+        (acceptResult as { filledTxHash?: string }).filledTxHash;
 
       setTradeSnapshotsById((previous) => {
         const next = {

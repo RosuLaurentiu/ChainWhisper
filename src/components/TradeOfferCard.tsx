@@ -63,7 +63,7 @@ type TradeCardAssetPanel = {
 };
 
 const buildTokenExplorerUrl = (tokenAddress?: string): string | undefined =>
-  tokenAddress ? `${COTI_NETWORK.blockExplorerUrl}/token/${tokenAddress}` : undefined;
+  tokenAddress ? `${COTI_NETWORK.blockExplorerUrl}/address/${tokenAddress}` : undefined;
 
 const isVerifiedAsset = (asset: TradeAssetPayload): boolean => {
   if (asset.kind === 'native') return true;

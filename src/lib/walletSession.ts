@@ -31,6 +31,19 @@ export type WalletReadiness = {
   statusTone: WalletStatusTone;
 };
 
+export type PrivacyUnlockSnapStatus =
+  | 'unknown'
+  | 'unsupported'
+  | 'not-installed'
+  | 'installed-aes-ready'
+  | 'installed-aes-missing'
+  | 'error';
+
+export type WalletPrivacyUnlockPrompt = {
+  label: string;
+  title: string;
+};
+
 type WalletOptionLike = {
   id: string;
 };
@@ -226,6 +239,73 @@ export const resolveWalletPrimaryButtonClassName = ({
 
 export const resolveWalletPrivacyActionLabel = (unlocking: boolean): string =>
   unlocking ? 'Unlocking...' : WALLET_ACTION_LABEL.unlockPrivacy;
+
+export const resolveWalletPrivacyUnlockPrompt = ({
+  connectedWithAppWallet = false,
+  hasAesReady,
+  snapStatus = 'unknown',
+  unlocking
+}: {
+  connectedWithAppWallet?: boolean;
+  hasAesReady: boolean;
+  snapStatus?: PrivacyUnlockSnapStatus;
+  unlocking: boolean;
+}): WalletPrivacyUnlockPrompt => {
+  if (unlocking) {
+    return {
+      label: 'Unlocking...',
+      title: 'Check your wallet prompt to finish the privacy unlock.'
+    };
+  }
+
+  if (hasAesReady) {
+    return {
+      label: WALLET_ACTION_LABEL.unlockPrivacy,
+      title: 'Privacy is already unlocked for this wallet.'
+    };
+  }
+
+  if (connectedWithAppWallet) {
+    return {
+      label: WALLET_ACTION_LABEL.unlockPrivacy,
+      title: 'Unlock privacy with the connected app wallet.'
+    };
+  }
+
+  switch (snapStatus) {
+    case 'installed-aes-ready':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'Recover the COTI AES key from the MetaMask Snap.'
+      };
+    case 'installed-aes-missing':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'COTI Snap is installed; approve AES access or recover your key once.'
+      };
+    case 'not-installed':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'Install or approve COTI Snap, with the COTI wallet fallback kept available.'
+      };
+    case 'unsupported':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'This wallet does not expose MetaMask Snap discovery; use the COTI wallet fallback.'
+      };
+    case 'error':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'COTI Snap status could not be checked. Try unlocking privacy and approve the wallet prompts.'
+      };
+    case 'unknown':
+    default:
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'Unlock privacy to reveal private balances, receipts, and encrypted trade history.'
+      };
+  }
+};
 
 export const resolveWalletBlockedActionLabel = ({
   connectLabel = WALLET_ACTION_LABEL.connect,

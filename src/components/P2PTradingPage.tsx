@@ -43,6 +43,7 @@ import {
   type TradeSnapshot
 } from '../lib/appShared';
 import { getPreferredBrowserWalletId, saveWalletPreference } from '../lib/appStorage';
+import { getCotiSnapAesStatus, type CotiSnapAesStatus } from '../lib/cotiSnap';
 import {
   ensurePrivateTokenAccountEncryptionAddress,
   fetchPrivateOrderFillReceiptsForWallet,
@@ -100,6 +101,7 @@ import {
   isZeroTradeTakerAddress,
   resolveTradeOrderSummary
 } from '../lib/tradePerspective';
+import { buildTradeTransactionHistoryRows } from '../lib/tradeHistory';
 import {
   WALLET_STATUS_STORAGE_KEY,
   buildOfferFromSnapshot,
@@ -361,6 +363,7 @@ export default function P2PTradingPage({
   const [knownPrivateLiquidityByTrade, setKnownPrivateLiquidityByTrade] = useState<Record<string, string>>(
     () => loadStoredPrivateTradeLiquidity()
   );
+  const [cotiSnapAesStatus, setCotiSnapAesStatus] = useState<CotiSnapAesStatus>('unknown');
   const [counterParentTrade, setCounterParentTrade] = useState<TradeSnapshot | null>(null);
   const [editingTrade, setEditingTrade] = useState<TradeSnapshot | null>(null);
   const injectedWalletOptions = useInjectedWalletOptions();
@@ -423,6 +426,34 @@ export default function P2PTradingPage({
       setSelectedWalletId(preferredBrowserWalletId);
     }
   }, [connectingWalletId, preferredBrowserWalletId, walletAddress]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const provider = providerRef.current;
+
+    if (!walletAddress || connectedWithBurner || walletHasAes || !provider) {
+      setCotiSnapAesStatus(walletHasAes ? 'installed-aes-ready' : 'unknown');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    getCotiSnapAesStatus(provider)
+      .then((status) => {
+        if (!cancelled) {
+          setCotiSnapAesStatus(status);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCotiSnapAesStatus('error');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedWithBurner, walletAddress, walletHasAes]);
 
   useEffect(() => {
     const sharedAddress = sharedWalletSession?.walletAddress.trim() ?? '';
@@ -1633,6 +1664,12 @@ export default function P2PTradingPage({
     setWalletError('');
     setConnectingWalletId('aes');
     try {
+      if (provider && !burnerSigner) {
+        const snapStatus = await getCotiSnapAesStatus(provider).catch((): CotiSnapAesStatus => 'error');
+        setCotiSnapAesStatus(snapStatus);
+      } else if (burnerSigner) {
+        setCotiSnapAesStatus('unsupported');
+      }
       const signer = await getTradeSigner(true);
       await ensurePrivateTokenAccountEncryptionAddress({
         signer,
@@ -1648,7 +1685,9 @@ export default function P2PTradingPage({
         );
       });
       await loadWalletBalances().catch(() => {});
+      setCotiSnapAesStatus('installed-aes-ready');
     } catch (error) {
+      setCotiSnapAesStatus('error');
       setWalletError(getProviderErrorMessage(error, 'AES signature was not completed.'));
     } finally {
       setConnectingWalletId('');
@@ -3186,6 +3225,13 @@ export default function P2PTradingPage({
     const historyRemainingLabel = trade.hiddenLiquidity
       ? makerPrivateProgressSummary?.remainingLabel ?? 'Amounts hidden'
       : completionSummary?.remainingLabel ?? (trade.status === 'accepted' ? 'Settled' : 'No remaining fill data');
+    const historyRows = buildTradeTransactionHistoryRows([trade], walletAddress);
+    const primaryHistoryRow = historyRows[0] ?? null;
+    const historyCounterpartyLabel = primaryHistoryRow?.counterparty
+      ? shortenAddress(primaryHistoryRow.counterparty)
+      : isZeroTradeTakerAddress(trade.taker)
+        ? 'Unfilled'
+        : shortenAddress(trade.taker);
     const formatPrivateReceiptAmount = (asset: TradeAssetPayload, amount?: string): string => {
       if (!amount || !/^\d+$/.test(amount)) {
         return `Hidden ${asset.symbol}`;
@@ -3378,6 +3424,10 @@ export default function P2PTradingPage({
                 <span>Type</span>
                 <strong>{getTradeHistoryKindLabel(trade)}</strong>
               </div>
+              <div>
+                <span>Counterparty</span>
+                <strong>{historyCounterpartyLabel}</strong>
+              </div>
             </div>
             <div className="p2p-offer-parties">
               <div>
@@ -3546,6 +3596,7 @@ export default function P2PTradingPage({
     setWalletMenuOpen,
     sharedWalletSession,
     signAesForCurrentWallet,
+    snapAesStatus: cotiSnapAesStatus,
     walletAddress,
     walletHasAes,
     walletMenuOpen
@@ -3561,6 +3612,7 @@ export default function P2PTradingPage({
         connectedWalletLabel,
         connectedWithBurner ? 'app' : 'browser',
         connectingWalletId,
+        cotiSnapAesStatus,
         walletHasAes ? 'aes' : 'locked',
         onCotiNetwork ? 'coti' : 'wrong-network',
         preferredWalletOption?.id ?? '',
@@ -3579,6 +3631,7 @@ export default function P2PTradingPage({
       connectedWalletLabel,
       connectedWithBurner,
       connectingWalletId,
+      cotiSnapAesStatus,
       isMobileNav,
       lastCopiedKey,
       onCotiNetwork,

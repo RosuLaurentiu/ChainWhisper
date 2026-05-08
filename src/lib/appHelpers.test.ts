@@ -82,8 +82,8 @@ describe('memo plaintext decoding', () => {
 });
 
 describe('verified ecosystem tokens', () => {
-  it('includes the added private ecosystem token', () => {
-    const address = '0xe8C3D2248a578e9E020C2447f8148e606090fbfe';
+  it('includes the active pWISP private token', () => {
+    const address = '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a';
 
     expect(isVerifiedEcosystemToken(address)).toBe(true);
     expect(getVerifiedEcosystemToken(address.toUpperCase())).toEqual({
@@ -92,8 +92,12 @@ describe('verified ecosystem tokens', () => {
     });
   });
 
-  it('includes the deployed test private token', () => {
-    const address = '0x23f0AE74466Fd0fc1d32bB947ebB8Cd553BECdA0';
+  it('does not include the retired test private token', () => {
+    expect(isVerifiedEcosystemToken('0x23f0AE74466Fd0fc1d32bB947ebB8Cd553BECdA0')).toBe(false);
+  });
+
+  it('includes HOTDOG as an approved private ecosystem token', () => {
+    const address = '0x5085Ea0611A9C49316972C57390ca25C9CF236AB';
 
     expect(isVerifiedEcosystemToken(address)).toBe(true);
     expect(getVerifiedEcosystemToken(address.toUpperCase())).toEqual({

@@ -175,6 +175,7 @@ import {
   toSafeNumber,
   trimReplyPreview,
   WHISPER_REWARDS_ABI,
+  WHISPER_SHIELD_ENABLED,
   WS_HEALTHCHECK_TTL_MS,
   WS_RETRY_COOLDOWN_MS,
 } from './lib/appShared';
@@ -1512,6 +1513,7 @@ export default function App() {
   );
   const swapInputSymbol = swapDirection === 'shield' ? rewardTokenSymbol : privateRewardTokenSymbol;
   const canSwapRewardTokens =
+    WHISPER_SHIELD_ENABLED &&
     !swappingTokens &&
     !!walletAddress &&
     onCotiNetwork &&
@@ -1525,13 +1527,15 @@ export default function App() {
   });
   const swapButtonLabel = swappingTokens
     ? 'Swapping...'
-    : swapBlockedActionLabel
-      ? swapBlockedActionLabel
-      : parsedSwapAmount === null || parsedSwapAmount <= 0n
-        ? `Enter ${swapInputSymbol} amount`
-        : swapDirection === 'shield'
-          ? `Shield to ${privateRewardTokenSymbol}`
-          : `Unshield to ${rewardTokenSymbol}`;
+    : !WHISPER_SHIELD_ENABLED
+      ? 'Bridge upgrade pending'
+      : swapBlockedActionLabel
+        ? swapBlockedActionLabel
+        : parsedSwapAmount === null || parsedSwapAmount <= 0n
+          ? `Enter ${swapInputSymbol} amount`
+          : swapDirection === 'shield'
+            ? `Shield to ${privateRewardTokenSymbol}`
+            : `Unshield to ${rewardTokenSymbol}`;
   const topUpAmountLabel = useMemo(() => {
     if (topUpAmountWei !== null) {
       return `${formatCotiAmount(topUpAmountWei, 3)} COTI`;
@@ -1972,7 +1976,8 @@ export default function App() {
               rewardTokenDecimals,
               privateRewardTokenSymbol,
               privateRewardTokenDecimals,
-              escrowContract: offer.escrowContract
+              escrowContract: offer.escrowContract,
+              accessSecret: offer.accessSecret
             });
           } catch {
             return null;
@@ -2028,6 +2033,11 @@ export default function App() {
   const swapRewardTokens = async () => {
     setError('');
     setSwapStatusMessage('');
+
+    if (!WHISPER_SHIELD_ENABLED) {
+      setError('Whisper Shield swaps are paused while pWISP moves to the PrivacyBridge replacement.');
+      return;
+    }
 
     const requestedWalletAddress = walletAddress.trim();
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
@@ -3179,7 +3189,8 @@ export default function App() {
       rewardTokenDecimals,
       privateRewardTokenSymbol,
       privateRewardTokenDecimals,
-      escrowContract: offerMessage.escrowContract
+      escrowContract: offerMessage.escrowContract,
+      accessSecret: offerMessage.accessSecret
     });
     setTradeSnapshotsById((previous) => ({
       ...previous,
@@ -5890,6 +5901,15 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
+    if (!WHISPER_SHIELD_ENABLED || !SWAP_VAULT_CONTRACT_ADDRESS) {
+      setSwapFeeWei(null);
+      setSwapTokenFeeAmount(null);
+      setShieldVaultTokenBalanceWei(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const loadShieldVaultReserve = async () => {
       try {
         const cotiEthers = await loadCotiEthersModule();
@@ -5961,7 +5981,10 @@ export default function App() {
         const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
         const privateTokenContract = new cotiEthers.Contract(PRIVATE_REWARD_TOKEN_ADDRESS, PRIVATE_TOKEN_BALANCE_ABI, readProvider);
         const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
-        const swapVaultContract = new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, readProvider);
+        const swapVaultContract =
+          WHISPER_SHIELD_ENABLED && SWAP_VAULT_CONTRACT_ADDRESS
+            ? new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, readProvider)
+            : null;
 
         const [
           rewardBalanceRaw,
@@ -5985,8 +6008,8 @@ export default function App() {
           groupContract.tokenFeeAmount().catch(() => null),
           groupContract.rewardsContract().catch(() => null),
           groupContract.rewardsPaused().catch(() => null),
-          swapVaultContract.swapFeeWei().catch(() => null),
-          swapVaultContract.getTokenFeeAmount().catch(() => null)
+          swapVaultContract ? swapVaultContract.swapFeeWei().catch(() => null) : Promise.resolve(null),
+          swapVaultContract ? swapVaultContract.getTokenFeeAmount().catch(() => null) : Promise.resolve(null)
         ]);
 
         let privateBalanceWei: bigint | null = null;
@@ -7754,6 +7777,7 @@ export default function App() {
               walletAddress={walletAddress}
               onCotiNetwork={onCotiNetwork}
               hasAesReady={hasAesReady}
+              shieldEnabled={WHISPER_SHIELD_ENABLED}
               onRefreshRewardBalances={() => setTopUpMetricsNonce((previous) => previous + 1)}
               canSwapRewardTokens={canSwapRewardTokens}
               swapButtonLabel={swapButtonLabel}

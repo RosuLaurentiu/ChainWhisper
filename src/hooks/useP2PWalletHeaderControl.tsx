@@ -16,8 +16,9 @@ import {
   resolveWalletHeaderActionVisibility,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
-  resolveWalletPrivacyActionLabel,
+  resolveWalletPrivacyUnlockPrompt,
   resolveWalletReadiness,
+  type PrivacyUnlockSnapStatus,
   type SharedWalletSession
 } from '../lib/walletSession';
 
@@ -50,6 +51,7 @@ type UseP2PWalletHeaderControlArgs = {
   setWalletMenuOpen: Dispatch<SetStateAction<boolean>>;
   sharedWalletSession?: SharedWalletSession;
   signAesForCurrentWallet: () => Promise<void>;
+  snapAesStatus?: PrivacyUnlockSnapStatus;
   walletAddress: string;
   walletHasAes: boolean;
   walletMenuOpen: boolean;
@@ -91,6 +93,7 @@ export default function useP2PWalletHeaderControl({
   setWalletMenuOpen,
   sharedWalletSession,
   signAesForCurrentWallet,
+  snapAesStatus = 'unknown',
   walletAddress,
   walletHasAes,
   walletMenuOpen
@@ -279,7 +282,12 @@ export default function useP2PWalletHeaderControl({
       disabled={Boolean(connectingWalletId)}
     />
   ) : null;
-  const tradePrivacyActionLabel = resolveWalletPrivacyActionLabel(connectingWalletId === 'aes');
+  const tradePrivacyPrompt = resolveWalletPrivacyUnlockPrompt({
+    connectedWithAppWallet: connectedWithBurner,
+    hasAesReady: walletHasAes,
+    snapStatus: snapAesStatus,
+    unlocking: connectingWalletId === 'aes'
+  });
   const tradeWalletSwitchAction = useMemo(() => {
     if (compactMobileWallet) {
       return null;
@@ -378,8 +386,8 @@ export default function useP2PWalletHeaderControl({
         statusLabel={walletStatusLabel}
         statusTone={walletStatusTone}
         statusActionDisabled={Boolean(connectingWalletId)}
-        statusActionLabel={showInlineAesAction ? tradePrivacyActionLabel : undefined}
-        statusActionTitle="Run COTI onboarding once so encrypted balances and private messaging features can work."
+        statusActionLabel={showInlineAesAction ? tradePrivacyPrompt.label : undefined}
+        statusActionTitle={tradePrivacyPrompt.title}
         onStatusAction={
           showInlineAesAction
             ? () => {
@@ -500,7 +508,8 @@ export default function useP2PWalletHeaderControl({
       showInlineAesAction,
       signAesForCurrentWallet,
       tradeAppWalletSwitchButton,
-      tradePrivacyActionLabel,
+      tradePrivacyPrompt.label,
+      tradePrivacyPrompt.title,
       tradePrimaryConnectsAppWallet,
       tradeWalletSwitchAction,
       visibleShowTradeBrowserWalletMenuSection,

@@ -20,6 +20,7 @@ import {
   editTradeOnChain,
   replacePrivateFixedPriceTradeOnChain
 } from '../lib/tradeActions';
+import { createTradeAccessSecret } from '../lib/partyTradeTerms';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 
 type TradeSigner = JsonRpcSigner | Wallet;
@@ -39,12 +40,6 @@ const quotePrivateRequestAmountForOffer = (
   }
 
   return (offerAmountOut * requestUnitAmount + offerUnitAmount - 1n) / offerUnitAmount;
-};
-
-const createTradeAccessSecret = (): string => {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 };
 
 const formatTradeAmountInput = (asset: TradeAssetPayload): string => {
@@ -376,9 +371,18 @@ export default function useP2PTradeComposerActions({
         setTradeActionError('Hidden amount orders must stay hidden when edited. Cancel the edit to create a visible order.');
         return;
       }
-      const accessSecret = tradeVisibility === 'unlisted' && !isCounterTrade && !isEditTrade ? createTradeAccessSecret() : '';
+      const visiblePrivateTokenPartyTrade = Boolean(
+        !hiddenLiquidity &&
+          !isEditTrade &&
+          (isCounterTrade || tradeVisibility !== 'public') &&
+          (isPrivateTradeAsset(offerToken) || isPrivateTradeAsset(requestToken))
+      );
+      const accessSecret =
+        (tradeVisibility === 'unlisted' && !isCounterTrade && !isEditTrade) || visiblePrivateTokenPartyTrade
+          ? createTradeAccessSecret()
+          : '';
       const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
-      const signer = await getTradeSigner(isPrivateTradeAsset(offerToken));
+      const signer = await getTradeSigner(isPrivateTradeAsset(offerToken) || visiblePrivateTokenPartyTrade);
       const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
       const expiresAt = tradeHasNoExpiry
         ? 0
@@ -432,7 +436,12 @@ export default function useP2PTradeComposerActions({
               requestAsset: requestToken,
               requestAmountWei: requestAmount,
               expiresAt,
-              nativeFeeWei
+              nativeFeeWei,
+              partyAccessSecret: accessSecret || undefined,
+              counterTakerAddress: counterParentTrade.maker,
+              counteredEscrowContract: counterParentTrade.escrowContract,
+              parentEscrowContract: counterParentTrade.counterParentEscrow ?? counterParentTrade.escrowContract,
+              parentTradeId: counterParentTrade.counterParentTradeId
             })
           : await createTradeOnChain({
               signer,
@@ -449,7 +458,9 @@ export default function useP2PTradeComposerActions({
               parentTradeId: counterParentTrade?.tradeId,
               hidePrivateLiquidity: hiddenLiquidity,
               hiddenOfferAmountWei: hiddenLiquidity ? offerAmount : undefined,
-              publicOfferAmountWei: hiddenLiquidity ? publicOfferAmount : undefined
+              publicOfferAmountWei: hiddenLiquidity ? publicOfferAmount : undefined,
+              partyAccessSecret: accessSecret || undefined,
+              parentEscrowContract: counterParentTrade?.escrowContract
             });
       const tradeId = createResult.tradeId;
       if (hiddenLiquidity) {
@@ -472,6 +483,7 @@ export default function useP2PTradeComposerActions({
         isPublic: isEditTrade || (!isCounterTrade && tradeVisibility === 'public'),
         hasAccessHash: Boolean(accessSecret),
         parentTradeId: isEditTrade ? editSourceTrade.tradeId : counterParentTradeId,
+        counterParentEscrow: isCounterTrade ? counterParentTrade?.escrowContract : undefined,
         counterParentTradeId: isCounterTrade ? counterParentTradeId : undefined,
         replacesTradeId: isEditTrade ? editSourceTrade.tradeId : undefined,
         fillState: {

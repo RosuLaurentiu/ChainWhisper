@@ -9,6 +9,7 @@ import {
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
+  resolveWalletPrivacyUnlockPrompt,
   resolveWalletReadiness
 } from './walletSession';
 
@@ -103,6 +104,27 @@ describe('wallet header labels', () => {
     expect(resolveWalletBlockedActionLabel({ hasAesReady: false, onCotiNetwork: true, walletAddress: '0xabc' })).toBe(
       'Unlock privacy'
     );
+  });
+
+  it('keeps one unlock privacy action while making the prompt source-aware', () => {
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'installed-aes-ready',
+        unlocking: false
+      })
+    ).toMatchObject({
+      label: 'Unlock privacy',
+      title: 'Recover the COTI AES key from the MetaMask Snap.'
+    });
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'unsupported',
+        unlocking: false
+      }).title
+    ).toContain('fallback');
+    expect(resolveWalletPrivacyUnlockPrompt({ hasAesReady: false, unlocking: true }).label).toBe('Unlocking...');
   });
 });
 

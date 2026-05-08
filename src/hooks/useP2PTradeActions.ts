@@ -17,6 +17,7 @@ import {
   fillPrivateFixedPriceTradeOnChain,
   fillTradeOnChain
 } from '../lib/tradeActions';
+import { resolveTradeEscrowContractConfig } from '../lib/appChain';
 import { doesAccessSecretMatchHash, normalizeAccessHash, PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../lib/tradeLinks';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 
@@ -144,7 +145,10 @@ export default function useP2PTradeActions({
           throw new Error('This trade has no remaining amount to accept.');
         }
         const acceptRequestAsset = withTradeAssetAmount(latestSnapshot.request, remainingRequestAmount);
-        const hiddenFillResult = latestSnapshot.hiddenLiquidity
+        const latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
+        const shouldUsePrivateFillPath =
+          (latestSnapshot.hiddenLiquidity || latestEscrowConfig.partyVisible) && !latestSnapshot.counterParentTradeId;
+        const hiddenFillResult = shouldUsePrivateFillPath
           ? await fillPrivateFixedPriceTradeOnChain({
               signer,
               ownerAddress: walletAddress,
@@ -165,6 +169,7 @@ export default function useP2PTradeActions({
                   tradeId: snapshot.tradeId,
                   requestAsset: acceptRequestAsset,
                   requestAmountWei: remainingRequestAmount,
+                  escrowContract: latestSnapshot.escrowContract,
                   accessSecret: accessSecret || undefined
                 })
               : await acceptTradeOnChain({
@@ -175,14 +180,17 @@ export default function useP2PTradeActions({
                   requestAmountWei: remainingRequestAmount,
                   accessSecret: accessSecret || undefined
                 });
+        const acceptedViaCounter = Boolean(latestSnapshot.counterParentTradeId);
         const nextSnapshot: TradeSnapshot = {
           ...latestSnapshot,
           taker:
-            (!latestSnapshot.hiddenLiquidity || hiddenFillResult?.fullyFilled) &&
+            (acceptedViaCounter || !latestSnapshot.hiddenLiquidity || hiddenFillResult?.fullyFilled) &&
             latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
               ? walletAddress
               : latestSnapshot.taker,
-          status: latestSnapshot.hiddenLiquidity
+          status: acceptedViaCounter
+            ? 'accepted'
+            : latestSnapshot.hiddenLiquidity
             ? hiddenFillResult?.fullyFilled
               ? 'accepted'
               : 'open'

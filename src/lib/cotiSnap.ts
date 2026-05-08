@@ -4,9 +4,25 @@ const COTI_SNAP_ID = 'npm:@coti-io/coti-snap';
 
 type SnapResponse = Record<string, unknown>;
 
+export type CotiSnapAesStatus =
+  | 'unknown'
+  | 'unsupported'
+  | 'not-installed'
+  | 'installed-aes-ready'
+  | 'installed-aes-missing'
+  | 'error';
+
+const getInstalledSnaps = async (provider: Eip1193Provider): Promise<Record<string, SnapResponse> | null> => {
+  try {
+    return (await provider.request({ method: 'wallet_getSnaps' })) as Record<string, SnapResponse> | null;
+  } catch {
+    return null;
+  }
+};
+
 const requestSnap = async (provider: Eip1193Provider): Promise<boolean> => {
   try {
-    const snaps = (await provider.request({ method: 'wallet_getSnaps' })) as Record<string, SnapResponse> | null;
+    const snaps = await getInstalledSnaps(provider);
     if (snaps && Object.prototype.hasOwnProperty.call(snaps, COTI_SNAP_ID)) {
       return true;
     }
@@ -25,6 +41,24 @@ const requestSnap = async (provider: Eip1193Provider): Promise<boolean> => {
     return true;
   } catch {
     return false;
+  }
+};
+
+const invokeInstalledCotiSnap = async <T>(
+  provider: Eip1193Provider,
+  method: string,
+  params?: Record<string, unknown>
+): Promise<T | null> => {
+  try {
+    return (await provider.request({
+      method: 'wallet_invokeSnap',
+      params: {
+        snapId: COTI_SNAP_ID,
+        request: params ? { method, params } : { method }
+      }
+    })) as T;
+  } catch {
+    return null;
   }
 };
 
@@ -49,6 +83,25 @@ const invokeCotiSnap = async <T>(
   } catch {
     return null;
   }
+};
+
+export const getCotiSnapAesStatus = async (provider: Eip1193Provider): Promise<CotiSnapAesStatus> => {
+  const snaps = await getInstalledSnaps(provider);
+  if (!snaps) {
+    return 'unsupported';
+  }
+  if (!Object.prototype.hasOwnProperty.call(snaps, COTI_SNAP_ID)) {
+    return 'not-installed';
+  }
+
+  const hasAesKey = await invokeInstalledCotiSnap<boolean>(provider, 'has-aes-key');
+  if (hasAesKey === true) {
+    return 'installed-aes-ready';
+  }
+  if (hasAesKey === false) {
+    return 'installed-aes-missing';
+  }
+  return 'error';
 };
 
 export const getCotiSnapAesKey = async (provider: Eip1193Provider): Promise<string | null> => {

@@ -1978,6 +1978,7 @@ export const parseTradeOfferMessagePayload = (text: string): TradeOfferMessagePa
   const createdAt = toSafeNumber(parsed.createdAt);
   const expiresAt = toSafeNumber(parsed.expiresAt);
   const parentTradeId = toSafeNumber(parsed.parentTradeId);
+  const accessSecret = typeof parsed.accessSecret === 'string' ? parsed.accessSecret.trim() : '';
   const escrowContract =
     typeof parsed.escrowContract === 'string' && isWalletAddress(parsed.escrowContract)
       ? parsed.escrowContract
@@ -2014,7 +2015,8 @@ export const parseTradeOfferMessagePayload = (text: string): TradeOfferMessagePa
     createdAt,
     expiresAt,
     parentTradeId: parentTradeId > 0 ? parentTradeId : undefined,
-    hiddenLiquidity: parsed.hiddenLiquidity === true
+    hiddenLiquidity: parsed.hiddenLiquidity === true,
+    accessSecret: /^0x[a-fA-F0-9]{64}$/.test(accessSecret) ? accessSecret : undefined
   };
 };
 

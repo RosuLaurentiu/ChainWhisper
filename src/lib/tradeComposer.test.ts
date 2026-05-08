@@ -42,6 +42,15 @@ describe('trade composer private token visibility', () => {
     expect(model.canSendTradeOffer).toBe(true);
   });
 
+  it('does not duplicate built-in pWISP in the verified private-token options', () => {
+    const model = deriveTradeComposerModel(baseParams);
+    const privatePwispOptions = model.tradeTokenOptions.filter(
+      (option) => option.label.includes('pWISP') && option.label.includes('(private)')
+    );
+
+    expect(privatePwispOptions).toEqual([{ value: 'pwisp', label: '✓ pWISP (private)' }]);
+  });
+
   it('allows visible private-token request orders through the normal visible path', () => {
     const model = deriveTradeComposerModel({
       ...baseParams,
