@@ -38,6 +38,7 @@ import {
   readPrivateTokenBalanceWei
 } from './lib/appChain';
 import { getCotiSnapAesKey, storeCotiSnapAesKey } from './lib/cotiSnap';
+import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import { submitGroupMemo } from './lib/groupChatChain';
 import {
   submitDirectMemo,
@@ -7680,6 +7681,7 @@ export default function App() {
           onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
           onToggleSound={handleToggleSound}
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
+          links={COTI_ECOSYSTEM_LINKS}
           appNavigationControl={appHeaderNavigationControl}
         />
         <HomePage
