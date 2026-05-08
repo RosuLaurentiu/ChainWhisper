@@ -906,7 +906,7 @@ export const updateRecurringOrderStatusOnChain = async ({
       ? await recurringContract.pauseOrder(orderId)
       : action === 'resume'
         ? await recurringContract.resumeOrder(orderId)
-        : await recurringContract.cancelOrder(orderId);
+        : await recurringContract.cancelOrder(orderId, { gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT });
   requireSuccessfulReceipt(await tx.wait(), 'Recurring order update failed on-chain.');
 };
 

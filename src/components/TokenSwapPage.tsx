@@ -25,7 +25,9 @@ type TokenSwapPageProps = {
   walletAddress: string;
   onCotiNetwork: boolean;
   hasAesReady: boolean;
-  shieldEnabled: boolean;
+  canShieldTokens: boolean;
+  canUnshieldTokens: boolean;
+  currentSwapDirectionEnabled: boolean;
   onRefreshRewardBalances: () => void;
   canSwapRewardTokens: boolean;
   swapButtonLabel: string;
@@ -52,7 +54,9 @@ export default function TokenSwapPage({
   walletAddress,
   onCotiNetwork,
   hasAesReady,
-  shieldEnabled,
+  canShieldTokens,
+  canUnshieldTokens,
+  currentSwapDirectionEnabled,
   onRefreshRewardBalances,
   canSwapRewardTokens,
   swapButtonLabel,
@@ -63,8 +67,9 @@ export default function TokenSwapPage({
   const swapOutputSymbol = swapDirection === 'shield' ? privateRewardTokenSymbol : rewardTokenSymbol;
   const routeLabel = swapDirection === 'shield' ? 'Public -> Private' : 'Private -> Public';
   const receivePreview = swapAmountInput.trim() ? swapAmountInput : '0';
+  const directionUnavailableLabel = swapDirection === 'shield' ? 'Shield paused' : 'Legacy unshield unavailable';
   const shieldVaultBalanceLabel =
-    !shieldEnabled
+    !currentSwapDirectionEnabled
       ? 'Paused'
       : shieldVaultTokenBalanceWei !== null
       ? `${formatTokenAmount(shieldVaultTokenBalanceWei, rewardTokenDecimals, 6)} ${rewardTokenSymbol}`
@@ -72,7 +77,7 @@ export default function TokenSwapPage({
         ? 'Loading...'
         : '--';
   const shieldVaultStatusLabel =
-    !shieldEnabled
+    !currentSwapDirectionEnabled
       ? 'Paused'
       : shieldVaultTokenBalanceWei !== null
         ? 'Live reserve'
@@ -80,24 +85,27 @@ export default function TokenSwapPage({
           ? 'Loading'
           : 'Unavailable';
   const nativeFeeLabel =
-    !shieldEnabled
+    !currentSwapDirectionEnabled
       ? '--'
       : swapFeeWei !== null
         ? `${formatCotiAmount(swapFeeWei)} COTI`
         : loadingRewardBalances
           ? 'Loading...'
           : '--';
-  const feeQuoteLabel = !shieldEnabled
-    ? 'Bridge upgrade pending'
+  const feeQuoteLabel = !currentSwapDirectionEnabled
+    ? directionUnavailableLabel
     : loadingRewardBalances
     ? 'Loading...'
     : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
         swapTokenFeeAmount !== null ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6) : '--'
       }`;
-  const shieldState = !shieldEnabled
+  const shieldState = !currentSwapDirectionEnabled
     ? {
-        title: 'Bridge upgrade pending',
-        description: 'Whisper Shield swaps are paused until the PrivacyBridge replacement is live.',
+        title: directionUnavailableLabel,
+        description:
+          swapDirection === 'shield'
+            ? 'New Shield deposits are paused while the replacement vault is prepared. Legacy unshield remains available for old private-token holders.'
+            : 'Legacy withdrawals are unavailable right now.',
         tone: 'locked'
       }
     : !walletAddress
@@ -168,7 +176,7 @@ export default function TokenSwapPage({
                 type="button"
                 className={swapDirection === 'shield' ? 'swap-pill-option active' : 'swap-pill-option'}
                 onClick={() => onSwapDirectionChange('shield')}
-                disabled={!shieldEnabled || swappingTokens}
+                disabled={!canShieldTokens || swappingTokens}
                 aria-pressed={swapDirection === 'shield'}
               >
                 Shield
@@ -177,7 +185,7 @@ export default function TokenSwapPage({
                 type="button"
                 className={swapDirection === 'unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
                 onClick={() => onSwapDirectionChange('unshield')}
-                disabled={!shieldEnabled || swappingTokens}
+                disabled={!canUnshieldTokens || swappingTokens}
                 aria-pressed={swapDirection === 'unshield'}
               >
                 Unshield
@@ -202,7 +210,7 @@ export default function TokenSwapPage({
                   value={swapAmountInput}
                   onChange={(event) => onSwapAmountInputChange(event.target.value)}
                   placeholder="0.0"
-                  disabled={!shieldEnabled || swappingTokens}
+                  disabled={!currentSwapDirectionEnabled || swappingTokens}
                 />
                 <span className="swap-token-chip">{swapInputSymbol}</span>
               </div>

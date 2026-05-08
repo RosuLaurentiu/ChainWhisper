@@ -135,6 +135,8 @@ import {
   INITIAL_SYNC_LOOKBACK_BLOCKS,
   isProviderActionRejected,
   isWalletAddress,
+  LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
+  LEGACY_SWAP_VAULT_CONTRACT_ADDRESS,
   loadCotiEthersModule,
   loadCotiReadProvider,
   loadCotiWsProvider,
@@ -177,6 +179,7 @@ import {
   trimReplyPreview,
   WHISPER_REWARDS_ABI,
   WHISPER_SHIELD_ENABLED,
+  WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED,
   WS_HEALTHCHECK_TTL_MS,
   WS_RETRY_COOLDOWN_MS,
 } from './lib/appShared';
@@ -443,6 +446,9 @@ export default function App() {
     setLoadingTopUpQuote,
     setLoadingRewardBalances
   } = useTokenToolsStore();
+  const [legacyPrivateRewardTokenBalanceWei, setLegacyPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
+  const [legacyPrivateRewardTokenSymbol, setLegacyPrivateRewardTokenSymbol] = useState(FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL);
+  const [legacyPrivateRewardTokenDecimals, setLegacyPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
   const {
     tradeComposerOpen,
     creatingTrade,
@@ -1485,6 +1491,28 @@ export default function App() {
 
     return getBurnerWalletDisplayName(burnerWallets[walletIndex]);
   };
+  const canShieldTokens = WHISPER_SHIELD_ENABLED && Boolean(SWAP_VAULT_CONTRACT_ADDRESS);
+  const canUnshieldTokens =
+    WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED && Boolean(LEGACY_SWAP_VAULT_CONTRACT_ADDRESS);
+  const currentSwapDirectionEnabled = swapDirection === 'shield' ? canShieldTokens : canUnshieldTokens;
+  const activeSwapVaultContractAddress =
+    swapDirection === 'unshield' ? LEGACY_SWAP_VAULT_CONTRACT_ADDRESS : SWAP_VAULT_CONTRACT_ADDRESS;
+  const swapPrivateRewardTokenBalanceWei =
+    swapDirection === 'unshield' ? legacyPrivateRewardTokenBalanceWei : privateRewardTokenBalanceWei;
+  const swapPrivateRewardTokenSymbol =
+    swapDirection === 'unshield'
+      ? `${legacyPrivateRewardTokenSymbol || FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL} (old)`
+      : privateRewardTokenSymbol;
+  const swapPrivateRewardTokenDecimals =
+    swapDirection === 'unshield' ? legacyPrivateRewardTokenDecimals : privateRewardTokenDecimals;
+  const swapInputDecimals = swapDirection === 'shield' ? rewardTokenDecimals : swapPrivateRewardTokenDecimals;
+
+  useEffect(() => {
+    if (swapDirection === 'shield' && !canShieldTokens && canUnshieldTokens) {
+      setSwapDirection('unshield');
+    }
+  }, [canShieldTokens, canUnshieldTokens, setSwapDirection, swapDirection]);
+
   const tokenToolsSummary = useMemo(() => {
     if (loadingRewardBalances) {
       return 'Loading balances...';
@@ -1492,29 +1520,29 @@ export default function App() {
     const publicBalance =
       rewardTokenBalanceWei !== null ? formatTokenAmount(rewardTokenBalanceWei, rewardTokenDecimals, 4) : '--';
     const privateBalance =
-      privateRewardTokenBalanceWei !== null
-        ? formatTokenAmount(privateRewardTokenBalanceWei, privateRewardTokenDecimals, 4)
+      swapPrivateRewardTokenBalanceWei !== null
+        ? formatTokenAmount(swapPrivateRewardTokenBalanceWei, swapPrivateRewardTokenDecimals, 4)
         : hasAesReady
           ? '--'
           : 'AES';
-    return `${rewardTokenSymbol} ${publicBalance} | ${privateRewardTokenSymbol} ${privateBalance}`;
+    return `${rewardTokenSymbol} ${publicBalance} | ${swapPrivateRewardTokenSymbol} ${privateBalance}`;
   }, [
     loadingRewardBalances,
     rewardTokenSymbol,
-    privateRewardTokenSymbol,
+    swapPrivateRewardTokenSymbol,
     rewardTokenBalanceWei,
-    privateRewardTokenBalanceWei,
+    swapPrivateRewardTokenBalanceWei,
     rewardTokenDecimals,
-    privateRewardTokenDecimals,
+    swapPrivateRewardTokenDecimals,
     hasAesReady
   ]);
   const parsedSwapAmount = useMemo(
-    () => parseTokenAmountInput(swapAmountInput, rewardTokenDecimals),
-    [swapAmountInput, rewardTokenDecimals]
+    () => parseTokenAmountInput(swapAmountInput, swapInputDecimals),
+    [swapAmountInput, swapInputDecimals]
   );
-  const swapInputSymbol = swapDirection === 'shield' ? rewardTokenSymbol : privateRewardTokenSymbol;
+  const swapInputSymbol = swapDirection === 'shield' ? rewardTokenSymbol : swapPrivateRewardTokenSymbol;
   const canSwapRewardTokens =
-    WHISPER_SHIELD_ENABLED &&
+    currentSwapDirectionEnabled &&
     !swappingTokens &&
     !!walletAddress &&
     onCotiNetwork &&
@@ -1528,14 +1556,16 @@ export default function App() {
   });
   const swapButtonLabel = swappingTokens
     ? 'Swapping...'
-    : !WHISPER_SHIELD_ENABLED
-      ? 'Bridge upgrade pending'
+    : !currentSwapDirectionEnabled
+      ? swapDirection === 'shield'
+        ? 'Shield paused'
+        : 'Legacy unshield unavailable'
       : swapBlockedActionLabel
         ? swapBlockedActionLabel
         : parsedSwapAmount === null || parsedSwapAmount <= 0n
           ? `Enter ${swapInputSymbol} amount`
           : swapDirection === 'shield'
-            ? `Shield to ${privateRewardTokenSymbol}`
+            ? `Shield to ${swapPrivateRewardTokenSymbol}`
             : `Unshield to ${rewardTokenSymbol}`;
   const topUpAmountLabel = useMemo(() => {
     if (topUpAmountWei !== null) {
@@ -2049,25 +2079,29 @@ export default function App() {
       setError('Switch to the COTI network first.');
       return;
     }
+    if (!currentSwapDirectionEnabled || !activeSwapVaultContractAddress) {
+      setError(swapDirection === 'shield' ? 'Shield deposits are paused.' : 'Legacy unshield is unavailable.');
+      return;
+    }
 
-    const amount = parseTokenAmountInput(swapAmountInput, rewardTokenDecimals);
+    const amount = parseTokenAmountInput(swapAmountInput, swapInputDecimals);
     if (amount === null || amount <= 0n) {
-      setError(`Enter a valid ${rewardTokenSymbol} amount.`);
+      setError(`Enter a valid ${swapInputSymbol} amount.`);
       return;
     }
     const selectedSwapPaymentMode = swapFeeModeSelection === 'coti' ? 1 : 0;
     if (swapDirection === 'unshield') {
-      if (privateRewardTokenBalanceWei === null) {
-        setError(`Unable to read ${privateRewardTokenSymbol} balance. Wait for balances to load and try again.`);
+      if (swapPrivateRewardTokenBalanceWei === null) {
+        setError(`Unable to read ${swapPrivateRewardTokenSymbol} balance. Wait for balances to load and try again.`);
         return;
       }
-      if (privateRewardTokenBalanceWei < amount) {
+      if (swapPrivateRewardTokenBalanceWei < amount) {
         setError(
-          `Insufficient ${privateRewardTokenSymbol} balance. Available ${formatTokenAmount(
-            privateRewardTokenBalanceWei,
-            privateRewardTokenDecimals,
+          `Insufficient ${swapPrivateRewardTokenSymbol} balance. Available ${formatTokenAmount(
+            swapPrivateRewardTokenBalanceWei,
+            swapPrivateRewardTokenDecimals,
             6
-          )}, requested ${formatTokenAmount(amount, privateRewardTokenDecimals, 6)}.`
+          )}, requested ${formatTokenAmount(amount, swapPrivateRewardTokenDecimals, 6)}.`
         );
         return;
       }
@@ -2077,7 +2111,7 @@ export default function App() {
       setSwappingTokens(true);
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
-      const swapContract = new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, signer);
+      const swapContract = new cotiEthers.Contract(activeSwapVaultContractAddress, SWAP_VAULT_CONTRACT_ABI, signer);
       const publicTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, signer);
 
       const [resolvedSwapFeeWei, resolvedSwapTokenFee] = (await Promise.all([
@@ -2092,13 +2126,13 @@ export default function App() {
       if (
         swapDirection === 'unshield' &&
         swapPaymentMode === 0 &&
-        privateRewardTokenBalanceWei !== null &&
+        swapPrivateRewardTokenBalanceWei !== null &&
         resolvedSwapTokenFee > 0n
       ) {
         // If amount is greater than (private balance - token fee), switch to COTI mode
         // so the swap can use native fee directly.
-        if (privateRewardTokenBalanceWei >= resolvedSwapTokenFee) {
-          const maxUnshieldAfterPrivateFee = privateRewardTokenBalanceWei - resolvedSwapTokenFee;
+        if (swapPrivateRewardTokenBalanceWei >= resolvedSwapTokenFee) {
+          const maxUnshieldAfterPrivateFee = swapPrivateRewardTokenBalanceWei - resolvedSwapTokenFee;
           if (amount > maxUnshieldAfterPrivateFee) {
             swapPaymentMode = 1;
             usedAutoCotiMode = true;
@@ -2117,10 +2151,10 @@ export default function App() {
         const requiredApproval = swapPaymentMode === 0 ? amount + resolvedSwapTokenFee : amount;
         const allowance = (await publicTokenContract.allowance(
           requestedWalletAddress,
-          SWAP_VAULT_CONTRACT_ADDRESS
+          activeSwapVaultContractAddress
         )) as bigint;
         if (allowance < requiredApproval) {
-          const approveTx = await publicTokenContract.approve(SWAP_VAULT_CONTRACT_ADDRESS, requiredApproval);
+          const approveTx = await publicTokenContract.approve(activeSwapVaultContractAddress, requiredApproval);
           await approveTx.wait();
         }
       }
@@ -2231,12 +2265,12 @@ export default function App() {
               : ` Fee paid with ${rewardTokenSymbol}.`
               : feePaidMethod === 'private'
                 ? feePaidAmount !== null
-                  ? ` Fee paid with ${privateRewardTokenSymbol} (${formatTokenAmount(feePaidAmount, privateRewardTokenDecimals, 6)} ${privateRewardTokenSymbol}).`
-                  : ` Fee paid with ${privateRewardTokenSymbol}.`
+                  ? ` Fee paid with ${swapPrivateRewardTokenSymbol} (${formatTokenAmount(feePaidAmount, swapPrivateRewardTokenDecimals, 6)} ${swapPrivateRewardTokenSymbol}).`
+                  : ` Fee paid with ${swapPrivateRewardTokenSymbol}.`
                 : '';
       const fallbackStatus = usedNativeFallbackRetry ? ' Used COTI fee fallback after token/private fee attempt failed.' : '';
       const autoModeStatus = usedAutoCotiMode
-        ? ` Auto-switched fee mode to COTI because amount exceeded ${privateRewardTokenSymbol} balance minus token fee.`
+        ? ` Auto-switched fee mode to COTI because amount exceeded ${swapPrivateRewardTokenSymbol} balance minus token fee.`
         : '';
       setSwapStatusMessage(`${swapDirectionStatus}${feeStatus}${fallbackStatus}${autoModeStatus}`);
     } catch (swapError) {
@@ -5902,7 +5936,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    if (!WHISPER_SHIELD_ENABLED || !SWAP_VAULT_CONTRACT_ADDRESS) {
+    if (!currentSwapDirectionEnabled || !activeSwapVaultContractAddress) {
       setSwapFeeWei(null);
       setSwapTokenFeeAmount(null);
       setShieldVaultTokenBalanceWei(null);
@@ -5916,14 +5950,18 @@ export default function App() {
         const cotiEthers = await loadCotiEthersModule();
         const readProvider = await loadCotiReadProvider(true);
         const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
-        const swapVaultContract = new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, readProvider);
+        const swapVaultContract = new cotiEthers.Contract(
+          activeSwapVaultContractAddress,
+          SWAP_VAULT_CONTRACT_ABI,
+          readProvider
+        );
         const [rewardSymbolRaw, rewardDecimalsRaw, swapFeeRaw, swapTokenFeeRaw, shieldVaultTokenBalanceRaw] =
           await Promise.all([
             rewardTokenContract.symbol().catch(() => null),
             rewardTokenContract.decimals().catch(() => null),
             swapVaultContract.swapFeeWei().catch(() => null),
             swapVaultContract.getTokenFeeAmount().catch(() => null),
-            rewardTokenContract.balanceOf(SWAP_VAULT_CONTRACT_ADDRESS).catch(() => null)
+            rewardTokenContract.balanceOf(activeSwapVaultContractAddress).catch(() => null)
           ]);
 
         if (cancelled) {
@@ -5953,7 +5991,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [topUpMetricsNonce]);
+  }, [activeSwapVaultContractAddress, currentSwapDirectionEnabled, topUpMetricsNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5962,6 +6000,7 @@ export default function App() {
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress) || chainId !== COTI_NETWORK.chainIdDecimal) {
       setRewardTokenBalanceWei(null);
       setPrivateRewardTokenBalanceWei(null);
+      setLegacyPrivateRewardTokenBalanceWei(null);
       setGroupRewardsContractAddress('');
       setGroupRewardsPaused(null);
       setRewardsContractPaused(null);
@@ -5981,10 +6020,15 @@ export default function App() {
         const readProvider = await loadCotiReadProvider(true);
         const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
         const privateTokenContract = new cotiEthers.Contract(PRIVATE_REWARD_TOKEN_ADDRESS, PRIVATE_TOKEN_BALANCE_ABI, readProvider);
+        const legacyPrivateTokenContract = new cotiEthers.Contract(
+          LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
+          PRIVATE_TOKEN_BALANCE_ABI,
+          readProvider
+        );
         const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
         const swapVaultContract =
-          WHISPER_SHIELD_ENABLED && SWAP_VAULT_CONTRACT_ADDRESS
-            ? new cotiEthers.Contract(SWAP_VAULT_CONTRACT_ADDRESS, SWAP_VAULT_CONTRACT_ABI, readProvider)
+          currentSwapDirectionEnabled && activeSwapVaultContractAddress
+            ? new cotiEthers.Contract(activeSwapVaultContractAddress, SWAP_VAULT_CONTRACT_ABI, readProvider)
             : null;
 
         const [
@@ -5993,6 +6037,8 @@ export default function App() {
           rewardDecimalsRaw,
           privateSymbolRaw,
           privateDecimalsRaw,
+          legacyPrivateSymbolRaw,
+          legacyPrivateDecimalsRaw,
           groupNativeFeeRaw,
           groupTokenFeeRaw,
           rewardsContractRaw,
@@ -6005,6 +6051,8 @@ export default function App() {
           rewardTokenContract.decimals().catch(() => null),
           privateTokenContract.symbol().catch(() => null),
           privateTokenContract.decimals().catch(() => null),
+          legacyPrivateTokenContract.symbol().catch(() => null),
+          legacyPrivateTokenContract.decimals().catch(() => null),
           groupContract.feeAmount().catch(() => null),
           groupContract.tokenFeeAmount().catch(() => null),
           groupContract.rewardsContract().catch(() => null),
@@ -6014,11 +6062,18 @@ export default function App() {
         ]);
 
         let privateBalanceWei: bigint | null = null;
+        let legacyPrivateBalanceWei: bigint | null = null;
         if (hasAesReady) {
           try {
             const { signer, cacheKey } = await getMemoSigner();
             privateBalanceWei = await readPrivateTokenBalanceWei(
               PRIVATE_REWARD_TOKEN_ADDRESS,
+              requestedWalletAddress,
+              signer,
+              true
+            ).catch(() => null);
+            legacyPrivateBalanceWei = await readPrivateTokenBalanceWei(
+              LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
               requestedWalletAddress,
               signer,
               true
@@ -6031,6 +6086,7 @@ export default function App() {
             }));
           } catch {
             privateBalanceWei = null;
+            legacyPrivateBalanceWei = null;
           }
         }
 
@@ -6077,6 +6133,10 @@ export default function App() {
           typeof privateSymbolRaw === 'string' && privateSymbolRaw.trim()
             ? privateSymbolRaw.trim().slice(0, 12)
             : FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL;
+        const resolvedLegacyPrivateSymbol =
+          typeof legacyPrivateSymbolRaw === 'string' && legacyPrivateSymbolRaw.trim()
+            ? legacyPrivateSymbolRaw.trim().slice(0, 12)
+            : FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL;
         const resolvedRewardDecimals =
           typeof rewardDecimalsRaw === 'number' || typeof rewardDecimalsRaw === 'bigint'
             ? normalizeTokenDecimals(Number(rewardDecimalsRaw))
@@ -6085,14 +6145,21 @@ export default function App() {
           typeof privateDecimalsRaw === 'number' || typeof privateDecimalsRaw === 'bigint'
             ? normalizeTokenDecimals(Number(privateDecimalsRaw))
             : FALLBACK_REWARD_TOKEN_DECIMALS;
+        const resolvedLegacyPrivateDecimals =
+          typeof legacyPrivateDecimalsRaw === 'number' || typeof legacyPrivateDecimalsRaw === 'bigint'
+            ? normalizeTokenDecimals(Number(legacyPrivateDecimalsRaw))
+            : FALLBACK_REWARD_TOKEN_DECIMALS;
 
         if (!cancelled) {
           setRewardTokenBalanceWei(nextRewardBalance);
           setPrivateRewardTokenBalanceWei(privateBalanceWei);
+          setLegacyPrivateRewardTokenBalanceWei(legacyPrivateBalanceWei);
           setRewardTokenSymbol(resolvedRewardSymbol);
           setPrivateRewardTokenSymbol(resolvedPrivateSymbol);
+          setLegacyPrivateRewardTokenSymbol(resolvedLegacyPrivateSymbol);
           setRewardTokenDecimals(resolvedRewardDecimals);
           setPrivateRewardTokenDecimals(resolvedPrivateDecimals);
+          setLegacyPrivateRewardTokenDecimals(resolvedLegacyPrivateDecimals);
           setGroupRewardsContractAddress(nextRewardsContractAddress);
           setGroupRewardsPaused(nextRewardsPaused);
           setRewardsContractPaused(nextRewardsContractPaused);
@@ -6112,6 +6179,7 @@ export default function App() {
         if (!cancelled) {
           setRewardTokenBalanceWei(null);
           setPrivateRewardTokenBalanceWei(null);
+          setLegacyPrivateRewardTokenBalanceWei(null);
           setGroupRewardsContractAddress('');
           setGroupRewardsPaused(null);
           setRewardsContractPaused(null);
@@ -6133,7 +6201,14 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [walletAddress, chainId, hasAesReady, topUpMetricsNonce]);
+  }, [
+    activeSwapVaultContractAddress,
+    chainId,
+    currentSwapDirectionEnabled,
+    hasAesReady,
+    topUpMetricsNonce,
+    walletAddress
+  ]);
 
   useEffect(() => {
     requiredFeeCacheRef.current = requiredFeeWei;
@@ -7764,7 +7839,7 @@ export default function App() {
               shieldVaultTokenBalanceWei={shieldVaultTokenBalanceWei}
               rewardTokenDecimals={rewardTokenDecimals}
               rewardTokenSymbol={rewardTokenSymbol}
-              privateRewardTokenSymbol={privateRewardTokenSymbol}
+              privateRewardTokenSymbol={swapPrivateRewardTokenSymbol}
               swapAmountInput={swapAmountInput}
               onSwapAmountInputChange={(value) => setSwapAmountInput(sanitizeTokenAmountInput(value))}
               swappingTokens={swappingTokens}
@@ -7779,7 +7854,9 @@ export default function App() {
               walletAddress={walletAddress}
               onCotiNetwork={onCotiNetwork}
               hasAesReady={hasAesReady}
-              shieldEnabled={WHISPER_SHIELD_ENABLED}
+              canShieldTokens={canShieldTokens}
+              canUnshieldTokens={canUnshieldTokens}
+              currentSwapDirectionEnabled={currentSwapDirectionEnabled}
               onRefreshRewardBalances={() => setTopUpMetricsNonce((previous) => previous + 1)}
               canSwapRewardTokens={canSwapRewardTokens}
               swapButtonLabel={swapButtonLabel}
