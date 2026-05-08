@@ -2065,11 +2065,6 @@ export default function App() {
     setError('');
     setSwapStatusMessage('');
 
-    if (!WHISPER_SHIELD_ENABLED) {
-      setError('Whisper Shield swaps are paused while pWISP moves to the PrivacyBridge replacement.');
-      return;
-    }
-
     const requestedWalletAddress = walletAddress.trim();
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
       setError('Connect a wallet first.');

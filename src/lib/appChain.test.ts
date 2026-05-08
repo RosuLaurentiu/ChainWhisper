@@ -210,6 +210,7 @@ describe('trade escrow contract resolution', () => {
     const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
 
     expect(privateTokenInterface.getFunction('allowance(address,address)')?.selector).toBeTruthy();
+    expect(privateTokenInterface.getFunction('balanceOf(address)')?.selector).toBeTruthy();
     expect(privateTokenInterface.getFunction('accountEncryptionAddress')?.selector).toBeTruthy();
     expect(privateTokenInterface.getFunction('setAccountEncryptionAddress')?.selector).toBeTruthy();
     expect(privateTokenInterface.getFunction('approve')?.selector).toBeTruthy();

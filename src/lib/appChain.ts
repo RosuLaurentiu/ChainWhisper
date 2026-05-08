@@ -638,6 +638,7 @@ export const readPrivateTokenBalanceWei = async (
   const readProvider = await loadCotiReadProvider(true);
   const privateTokenVNextInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
   const privateTokenInterface = new cotiEthers.Interface(PRIVATE_TOKEN_BALANCE_ABI);
+  const legacyPrivateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
 
   let encryptedBalanceRaw: unknown = null;
   try {
@@ -671,6 +672,26 @@ export const readPrivateTokenBalanceWei = async (
     encryptedBalanceRaw = decodedByAddress?.[0] ?? null;
   } catch {
     encryptedBalanceRaw = null;
+  }
+
+  if (encryptedBalanceRaw === null) {
+    try {
+      const legacyBalanceByAddressCallData = legacyPrivateTokenInterface.encodeFunctionData('balanceOf(address)', [
+        ownerAddress
+      ]);
+      const legacyBalanceByAddressRawResult = await readProvider.call({
+        from: ownerAddress,
+        to: tokenAddress,
+        data: legacyBalanceByAddressCallData
+      });
+      const decodedLegacyByAddress = legacyPrivateTokenInterface.decodeFunctionResult(
+        'balanceOf(address)',
+        legacyBalanceByAddressRawResult
+      );
+      encryptedBalanceRaw = decodedLegacyByAddress?.[0] ?? null;
+    } catch {
+      encryptedBalanceRaw = null;
+    }
   }
 
   if (encryptedBalanceRaw === null) {
