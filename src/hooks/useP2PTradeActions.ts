@@ -10,6 +10,7 @@ import {
 } from '../lib/appShared';
 import { getOnChainFailureMessage } from '../lib/appHelpers';
 import {
+  acceptDirectVisibleTradeOnChain,
   acceptCounterTradeAndCloseParentOnChain,
   acceptTradeOnChain,
   cancelTradeOnChain,
@@ -17,19 +18,29 @@ import {
   fillPrivateFixedPriceTradeOnChain,
   fillTradeOnChain
 } from '../lib/tradeActions';
-import { resolveTradeEscrowContractConfig } from '../lib/appChain';
+import { resolveTradeEscrowContractConfig, revealDirectTradeTermsForWallet } from '../lib/appChain';
+import { canUseWalletAuthorityForDirectAccess } from '../lib/tradeCounterSupport';
 import { doesAccessSecretMatchHash, normalizeAccessHash, PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../lib/tradeLinks';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
+import { isHiddenLiquidityTrade } from '../lib/p2pTradeView';
 
 type TradeSigner = JsonRpcSigner | Wallet;
+export type CounterAcceptMode = 'close-related' | 'accept-only';
 
 const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContract'>): string =>
   buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
 
 const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
 
-const assertAccessSecretMatchesSnapshot = async (snapshot: TradeSnapshot, accessSecret: string): Promise<void> => {
+const assertAccessSecretMatchesSnapshot = async (
+  snapshot: TradeSnapshot,
+  accessSecret: string,
+  walletAddress: string
+): Promise<void> => {
   if (!snapshot.hasAccessHash) {
+    return;
+  }
+  if (canUseWalletAuthorityForDirectAccess(snapshot, walletAddress)) {
     return;
   }
   if (!accessSecret) {
@@ -47,7 +58,11 @@ const assertAccessSecretMatchesSnapshot = async (snapshot: TradeSnapshot, access
 
 const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
   try {
-    if (trade.hiddenLiquidity) {
+    const escrowConfig = resolveTradeEscrowContractConfig(trade.escrowContract);
+    if (escrowConfig.directVisible) {
+      return BigInt(trade.request.amount);
+    }
+    if (isHiddenLiquidityTrade(trade)) {
       return BigInt(trade.request.amount);
     }
     return BigInt(trade.fillState?.remainingRequestAmount ?? trade.request.amount);
@@ -58,7 +73,7 @@ const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
 
 const getRemainingOfferAmount = (trade: TradeSnapshot): bigint => {
   try {
-    if (trade.hiddenLiquidity) {
+    if (isHiddenLiquidityTrade(trade)) {
       return BigInt(trade.offer.amount);
     }
     return BigInt(trade.fillState?.remainingOfferAmount ?? trade.offer.amount);
@@ -72,6 +87,44 @@ const withTradeAssetAmount = (asset: TradeAssetPayload, amount: bigint): TradeAs
   amount: amount.toString()
 });
 
+const hasPositiveTradeAmount = (value?: string | null): boolean => {
+  const normalized = value?.trim() ?? '';
+  return /^\d+$/.test(normalized) && BigInt(normalized) > 0n;
+};
+
+const hasHydratedTradeAmounts = (snapshot: Pick<TradeSnapshot, 'offer' | 'request'>): boolean =>
+  hasPositiveTradeAmount(snapshot.offer.amount) && hasPositiveTradeAmount(snapshot.request.amount);
+
+const carryKnownDirectTerms = (latestSnapshot: TradeSnapshot, sourceSnapshot: TradeSnapshot): TradeSnapshot => {
+  const latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
+  if (
+    !latestEscrowConfig.directVisible ||
+    hasHydratedTradeAmounts(latestSnapshot) ||
+    !hasHydratedTradeAmounts(sourceSnapshot)
+  ) {
+    return latestSnapshot;
+  }
+
+  const nextFillState =
+    latestSnapshot.status === 'open'
+      ? {
+          ...latestSnapshot.fillState,
+          remainingOfferAmount: sourceSnapshot.offer.amount,
+          remainingRequestAmount: sourceSnapshot.request.amount,
+          filledOfferAmount: latestSnapshot.fillState?.filledOfferAmount ?? '0',
+          filledRequestAmount: latestSnapshot.fillState?.filledRequestAmount ?? '0'
+        }
+      : latestSnapshot.fillState;
+
+  return {
+    ...latestSnapshot,
+    offer: { ...latestSnapshot.offer, amount: sourceSnapshot.offer.amount },
+    request: { ...latestSnapshot.request, amount: sourceSnapshot.request.amount },
+    fillState: nextFillState,
+    hiddenLiquidity: false
+  };
+};
+
 type UseP2PTradeActionsArgs = {
   connectedWithBurner: boolean;
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
@@ -79,6 +132,7 @@ type UseP2PTradeActionsArgs = {
   refreshTradeDataInBackground: (tradeId?: number, escrowContract?: string) => void;
   refreshTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
+  rememberTradeAccessSecret?: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   resolvedRouteAccessSecret: string;
   routeEscrowContract?: string;
   routeTradeId: number | null;
@@ -87,7 +141,7 @@ type UseP2PTradeActionsArgs = {
 };
 
 type UseP2PTradeActionsResult = {
-  acceptTrade: (snapshot: TradeSnapshot) => Promise<void>;
+  acceptTrade: (snapshot: TradeSnapshot, counterAcceptMode?: CounterAcceptMode) => Promise<void>;
   cancelTrade: (snapshot: TradeSnapshot) => Promise<void>;
   declineTrade: (snapshot: TradeSnapshot) => Promise<void>;
   partialFillTrade: (snapshot: TradeSnapshot, amountInput: string) => Promise<void>;
@@ -101,6 +155,7 @@ export default function useP2PTradeActions({
   refreshTradeDataInBackground,
   refreshTradeDetail,
   resolveKnownTradeAccessSecret,
+  rememberTradeAccessSecret,
   resolvedRouteAccessSecret,
   routeEscrowContract,
   routeTradeId,
@@ -120,7 +175,7 @@ export default function useP2PTradeActions({
   );
 
   const acceptTrade = useCallback(
-    async (snapshot: TradeSnapshot) => {
+    async (snapshot: TradeSnapshot, counterAcceptMode: CounterAcceptMode = 'close-related') => {
       if (!walletAddress) {
         setTradeActionError('Connect a wallet first.');
         return;
@@ -136,28 +191,75 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
-        const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
-        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret);
-        const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
+        let latestSnapshot = carryKnownDirectTerms(
+          (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot,
+          snapshot
+        );
+        let accessSecret = resolveAccessSecretForSnapshot(snapshot);
+        let latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
+        const directTermsNeedHydration = latestEscrowConfig.directVisible && !hasHydratedTradeAmounts(latestSnapshot);
+        const directRevealNeedsAes =
+          directTermsNeedHydration &&
+          !accessSecret &&
+          canUseWalletAuthorityForDirectAccess(latestSnapshot, walletAddress);
+        const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request) || directRevealNeedsAes);
+        if (directTermsNeedHydration) {
+          const revealResult = await revealDirectTradeTermsForWallet({
+            snapshot: latestSnapshot,
+            walletAddress,
+            signer,
+            accessSecret: accessSecret || undefined
+          });
+          if (!revealResult.ok) {
+            throw new Error(revealResult.message);
+          }
+          latestSnapshot = revealResult.snapshot;
+          latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
+          if (revealResult.recoveredAccessSecret) {
+            accessSecret = revealResult.recoveredAccessSecret;
+            rememberTradeAccessSecret?.(latestSnapshot.tradeId, revealResult.recoveredAccessSecret, latestSnapshot.escrowContract);
+          }
+        }
+        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, walletAddress);
         const remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
         if (remainingRequestAmount <= 0n) {
           throw new Error('This trade has no remaining amount to accept.');
         }
         const acceptRequestAsset = withTradeAssetAmount(latestSnapshot.request, remainingRequestAmount);
-        const latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
+        const acceptDirectCounterOnly = Boolean(
+          latestSnapshot.counterParentTradeId &&
+          counterAcceptMode === 'accept-only' &&
+          latestEscrowConfig.directVisible
+        );
+        if (latestSnapshot.counterParentTradeId && counterAcceptMode === 'accept-only' && !latestEscrowConfig.directVisible) {
+          throw new Error('Accept only is available for Direct OTC counter offers.');
+        }
         const shouldUsePrivateFillPath =
-          (latestSnapshot.hiddenLiquidity || latestEscrowConfig.partyVisible) && !latestSnapshot.counterParentTradeId;
+          acceptDirectCounterOnly ||
+          ((isHiddenLiquidityTrade(latestSnapshot) || latestEscrowConfig.directVisible) && !latestSnapshot.counterParentTradeId);
         const hiddenFillResult = shouldUsePrivateFillPath
-          ? await fillPrivateFixedPriceTradeOnChain({
-              signer,
-              ownerAddress: walletAddress,
-              tradeId: snapshot.tradeId,
-              requestAsset: acceptRequestAsset,
-              requestAmountWei: remainingRequestAmount,
-              escrowContract: latestSnapshot.escrowContract,
-              accessSecret: accessSecret || undefined
-            })
+          ? acceptDirectCounterOnly
+            ? await acceptDirectVisibleTradeOnChain({
+                signer,
+                ownerAddress: walletAddress,
+                tradeId: latestSnapshot.tradeId,
+                requestAsset: acceptRequestAsset,
+                requestAmountWei: remainingRequestAmount,
+                escrowContract: latestSnapshot.escrowContract,
+                accessSecret: accessSecret || undefined
+              }).then((result) => ({
+                filledTxHash: result.acceptedTxHash,
+                fullyFilled: true
+              }))
+            : await fillPrivateFixedPriceTradeOnChain({
+                signer,
+                ownerAddress: walletAddress,
+                tradeId: latestSnapshot.tradeId,
+                requestAsset: acceptRequestAsset,
+                requestAmountWei: remainingRequestAmount,
+                escrowContract: latestSnapshot.escrowContract,
+                accessSecret: accessSecret || undefined
+              })
           : null;
         const { acceptedTxHash } =
           hiddenFillResult !== null
@@ -166,7 +268,7 @@ export default function useP2PTradeActions({
               ? await acceptCounterTradeAndCloseParentOnChain({
                   signer,
                   ownerAddress: walletAddress,
-                  tradeId: snapshot.tradeId,
+                  tradeId: latestSnapshot.tradeId,
                   requestAsset: acceptRequestAsset,
                   requestAmountWei: remainingRequestAmount,
                   escrowContract: latestSnapshot.escrowContract,
@@ -175,27 +277,28 @@ export default function useP2PTradeActions({
               : await acceptTradeOnChain({
                   signer,
                   ownerAddress: walletAddress,
-                  tradeId: snapshot.tradeId,
+                  tradeId: latestSnapshot.tradeId,
                   requestAsset: acceptRequestAsset,
                   requestAmountWei: remainingRequestAmount,
                   accessSecret: accessSecret || undefined
                 });
         const acceptedViaCounter = Boolean(latestSnapshot.counterParentTradeId);
+        const closedRelatedCounter = Boolean(latestSnapshot.counterParentTradeId && counterAcceptMode === 'close-related');
         const nextSnapshot: TradeSnapshot = {
           ...latestSnapshot,
           taker:
-            (acceptedViaCounter || !latestSnapshot.hiddenLiquidity || hiddenFillResult?.fullyFilled) &&
+            (acceptedViaCounter || !isHiddenLiquidityTrade(latestSnapshot) || hiddenFillResult?.fullyFilled) &&
             latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
               ? walletAddress
               : latestSnapshot.taker,
           status: acceptedViaCounter
             ? 'accepted'
-            : latestSnapshot.hiddenLiquidity
+            : isHiddenLiquidityTrade(latestSnapshot)
             ? hiddenFillResult?.fullyFilled
               ? 'accepted'
               : 'open'
             : 'accepted',
-          fillState: latestSnapshot.hiddenLiquidity
+          fillState: isHiddenLiquidityTrade(latestSnapshot)
             ? latestSnapshot.fillState
             : {
                 remainingOfferAmount: '0',
@@ -206,7 +309,7 @@ export default function useP2PTradeActions({
           acceptedTxHash
         };
         mergeTradeSnapshot(nextSnapshot);
-        if (latestSnapshot.counterParentTradeId) {
+        if (closedRelatedCounter) {
           refreshTradeDataInBackground(latestSnapshot.counterParentTradeId);
         }
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
@@ -221,6 +324,7 @@ export default function useP2PTradeActions({
       connectedWithBurner,
       getTradeSigner,
       mergeTradeSnapshot,
+      rememberTradeAccessSecret,
       refreshTradeDataInBackground,
       refreshTradeDetail,
       resolveAccessSecretForSnapshot,
@@ -250,7 +354,8 @@ export default function useP2PTradeActions({
 
         let requestedAmount: bigint;
         let remainingRequestAmount = 0n;
-        if (latestSnapshot.hiddenLiquidity) {
+        const latestSnapshotHiddenLiquidity = isHiddenLiquidityTrade(latestSnapshot);
+        if (latestSnapshotHiddenLiquidity) {
           const parsedRequestAmount = parseTokenAmountInput(amountInput, latestSnapshot.request.decimals);
           if (parsedRequestAmount === null || parsedRequestAmount <= 0n) {
             throw new Error(`Enter a valid ${latestSnapshot.request.symbol} amount to pay.`);
@@ -274,10 +379,10 @@ export default function useP2PTradeActions({
         }
 
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret);
+        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, walletAddress);
 
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
-        const fillResult = latestSnapshot.hiddenLiquidity
+        const fillResult = latestSnapshotHiddenLiquidity
           ? await fillPrivateFixedPriceTradeOnChain({
               signer,
               ownerAddress: walletAddress,
@@ -295,7 +400,7 @@ export default function useP2PTradeActions({
               requestAmountWei: requestedAmount,
               accessSecret: accessSecret || undefined
             });
-        if (latestSnapshot.hiddenLiquidity) {
+        if (latestSnapshotHiddenLiquidity) {
           mergeTradeSnapshot({
             ...latestSnapshot,
             taker:

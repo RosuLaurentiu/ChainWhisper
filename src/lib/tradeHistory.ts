@@ -4,10 +4,11 @@ import {
   type TradeSnapshot
 } from './appShared';
 import { buildTradeSnapshotKey } from './appShared/core';
+import { getTradeTermsVisibility, hasHydratedDirectTradeTerms } from './p2pTradeView';
 import { isZeroTradeTakerAddress } from './tradePerspective';
 
 export type TradeTransactionHistoryRole = 'maker' | 'taker' | 'filler';
-export type TradeTransactionHistorySource = 'standard' | 'private' | 'party' | 'recurring';
+export type TradeTransactionHistorySource = 'standard' | 'private' | 'direct' | 'recurring';
 export type TradeTransactionAmountVisibility = 'public' | 'private-revealed' | 'private-hidden';
 
 export type TradeTransactionAsset = TradeAssetPayload & {
@@ -40,9 +41,9 @@ const withAmount = (asset: TradeAssetPayload, amount: string | undefined, visibl
 
 const resolveTradeSourceKind = (trade: TradeSnapshot): TradeTransactionHistorySource => {
   if (trade.recurringOrder) return 'recurring';
-  if (trade.hiddenLiquidity) return 'private';
+  if (getTradeTermsVisibility(trade) === 'hidden-liquidity') return 'private';
   if (trade.escrowContract && normalizeAddress(trade.escrowContract) !== normalizeAddress(TRADE_ESCROW_CONTRACT_ADDRESS)) {
-    return 'party';
+    return 'direct';
   }
   return 'standard';
 };
@@ -114,6 +115,10 @@ export const buildTradeTransactionHistoryRows = (
     const isTaker = walletKey === takerKey;
     const isOpenTakerTrade = isZeroTradeTakerAddress(trade.taker);
     const sourceKind = resolveTradeSourceKind(trade);
+    const termsVisibility = getTradeTermsVisibility(trade);
+    const amountsVisible =
+      termsVisibility === 'public' ||
+      (termsVisibility === 'direct-private-terms' && hasHydratedDirectTradeTerms(trade));
 
     for (const receipt of trade.privateFillReceipts ?? []) {
       const fillerKey = normalizeAddress(receipt.filler);
@@ -167,11 +172,11 @@ export const buildTradeTransactionHistoryRows = (
         : trade.taker
       : trade.maker;
     const bought = isMaker
-      ? withAmount(trade.request, filledRequestAmount ?? trade.request.amount, !trade.hiddenLiquidity)
-      : withAmount(trade.offer, filledOfferAmount ?? trade.offer.amount, !trade.hiddenLiquidity);
+      ? withAmount(trade.request, filledRequestAmount ?? trade.request.amount, amountsVisible)
+      : withAmount(trade.offer, filledOfferAmount ?? trade.offer.amount, amountsVisible);
     const sold = isMaker
-      ? withAmount(trade.offer, filledOfferAmount ?? trade.offer.amount, !trade.hiddenLiquidity)
-      : withAmount(trade.request, filledRequestAmount ?? trade.request.amount, !trade.hiddenLiquidity);
+      ? withAmount(trade.offer, filledOfferAmount ?? trade.offer.amount, amountsVisible)
+      : withAmount(trade.request, filledRequestAmount ?? trade.request.amount, amountsVisible);
 
     rows.push({
       key: `${buildTradeSnapshotKey(trade.tradeId, contractAddress)}:visible:${role}`,
@@ -182,7 +187,12 @@ export const buildTradeTransactionHistoryRows = (
       counterparty,
       bought,
       sold,
-      amountVisibility: trade.hiddenLiquidity ? 'private-hidden' : 'public',
+      amountVisibility:
+        termsVisibility === 'public'
+          ? 'public'
+          : amountsVisible
+            ? 'private-revealed'
+            : 'private-hidden',
       ...(trade.acceptedTxHash ? { txHash: trade.acceptedTxHash } : {})
     });
   }

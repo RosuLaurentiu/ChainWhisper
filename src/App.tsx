@@ -35,9 +35,14 @@ import {
 } from './lib/appHelpers';
 import {
   fetchTradeSnapshotById,
-  readPrivateTokenBalanceWei
+  readCurrentPrivateErc20BalanceWei,
+  readLegacyPrivateRewardBalanceWei
 } from './lib/appChain';
-import { getCotiSnapAesKey, storeCotiSnapAesKey } from './lib/cotiSnap';
+import {
+  buildWalletAesHealthState,
+  getOrRecoverAesForWallet,
+  type WalletAesHealthState
+} from './lib/cotiAesUnlock';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import { submitGroupMemo } from './lib/groupChatChain';
 import {
@@ -153,6 +158,7 @@ import {
   parseStoredGroupTitle,
   parseSubmitMemoPayload,
   parseTokenAmountInput,
+  PRIVATE_ERC20_TOKEN_VNEXT_ABI,
   PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TOKEN_BALANCE_ABI,
@@ -500,6 +506,7 @@ export default function App() {
   } = useNotificationSound(soundEnabled);
   const [error, setError] = useState<string>('');
   const [tradeHeaderWalletControl, setTradeHeaderWalletControl] = useState<ReactNode>(null);
+  const [walletAesHealthByAddress, setWalletAesHealthByAddress] = useState<Record<string, WalletAesHealthState>>({});
   const {
     activePage,
     activeMobileView,
@@ -763,6 +770,20 @@ export default function App() {
   }, []);
   const walletPreference = useStoredWalletPreference();
   const preferredBrowserWalletId = getPreferredBrowserWalletId(walletPreference);
+  const setWalletAesHealth = useCallback((address: string, health: WalletAesHealthState) => {
+    const walletKey = address.trim().toLowerCase();
+    if (!walletKey) {
+      return;
+    }
+    setWalletAesHealthByAddress((previous) =>
+      previous[walletKey]?.status === health.status && previous[walletKey]?.message === health.message
+        ? previous
+        : {
+            ...previous,
+            [walletKey]: health
+          }
+    );
+  }, []);
   const {
     activeProvider,
     activeSignerSource,
@@ -798,7 +819,9 @@ export default function App() {
     resetBurnerSessionRef,
     runPostConnectDataSyncUntilAppliedRef,
     setError,
-    setMyNickname
+    setMyNickname,
+    onWalletAesHealthChange: setWalletAesHealth,
+    walletAesHealthByAddress
   });
   const {
     beginBurnerPinFlow,
@@ -1407,8 +1430,14 @@ export default function App() {
     [activeContact, walletAddress]
   );
   const hasAesReady = useMemo(
-    () => hasSessionAesKey(walletAddress, sessionOnboardInfo),
-    [walletAddress, sessionOnboardInfo]
+    () => {
+      const walletKey = walletAddress.trim().toLowerCase();
+      return (
+        hasSessionAesKey(walletAddress, sessionOnboardInfo) &&
+        walletAesHealthByAddress[walletKey]?.status !== 'key-mismatch'
+      );
+    },
+    [walletAddress, sessionOnboardInfo, walletAesHealthByAddress]
   );
   const canManageActiveGroupJoinCodes = useMemo(() => {
     if (activeGroupId === null) {
@@ -1837,7 +1866,7 @@ export default function App() {
       const nextEntries = await Promise.all(
         customTokenRequests.map(async (request) => {
           try {
-            const tokenAbi = request.kind === 'private-erc20' ? PRIVATE_TOKEN_BALANCE_ABI : ERC20_TOKEN_ABI;
+            const tokenAbi = request.kind === 'private-erc20' ? PRIVATE_ERC20_TOKEN_VNEXT_ABI : ERC20_TOKEN_ABI;
             const tokenContract = new cotiEthers.Contract(request.address, tokenAbi, readProvider);
             const [symbolRaw, decimalsRaw] = await Promise.all([
               tokenContract.symbol().catch(() => null),
@@ -1851,9 +1880,11 @@ export default function App() {
                 if (!signerBundle) {
                   error = 'Unlock your AES key to read this private token balance.';
                 } else {
-                  balanceWei = await readPrivateTokenBalanceWei(request.address, walletAddress, signerBundle.signer).catch(
-                    () => null
-                  );
+                  balanceWei = await readCurrentPrivateErc20BalanceWei(
+                    request.address,
+                    walletAddress,
+                    signerBundle.signer
+                  ).catch(() => null);
                 }
               } else {
                 balanceWei = await tokenContract.balanceOf(walletAddress).catch(() => null);
@@ -2917,19 +2948,17 @@ export default function App() {
       }
 
       if (!onboardInfo?.aesKey) {
-        const snapAesKey = await getCotiSnapAesKey(provider);
-        if (snapAesKey) {
-          signer.setUserOnboardInfo({
-            ...(signer.getUserOnboardInfo() ?? {}),
-            aesKey: snapAesKey
-          });
-          onboardInfo = signer.getUserOnboardInfo();
-        }
-      }
-
-      if (!onboardInfo?.aesKey) {
-        await signer.generateOrRecoverAes();
-        await storeCotiSnapAesKey(provider, signer.getUserOnboardInfo()?.aesKey).catch(() => {});
+        const aesHealth = walletAesHealthByAddress[cacheKey];
+        const repairMismatch = aesHealth?.status === 'key-mismatch' || aesHealth?.status === 'repair-needed';
+        await getOrRecoverAesForWallet({
+          allowUnrecoverableReset: repairMismatch,
+          forceFreshAes: repairMismatch,
+          forceLegacyRefresh: repairMismatch,
+          forceRefresh: repairMismatch,
+          provider,
+          signer,
+          walletAddress
+        });
         onboardInfo = signer.getUserOnboardInfo();
       }
 
@@ -2940,6 +2969,10 @@ export default function App() {
       setSessionOnboardInfo((previous) => ({
         ...previous,
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+      }));
+      setWalletAesHealth(walletAddress, buildWalletAesHealthState({
+        status: 'ready-unverified',
+        walletAddress
       }));
 
       setOnboardStatus('AES key ready');
@@ -3002,49 +3035,23 @@ export default function App() {
     }
 
     memoAesRecoveryAttemptedRef.current[cacheKey] = true;
-    const previousOnboardInfo = signer.getUserOnboardInfo();
-    try {
-      signer.clearUserOnboardInfo();
-      setOnboardStatus('Recovering COTI AES key...');
-      const provider = getConnectedProvider();
-      if (provider) {
-        const snapAesKey = await getCotiSnapAesKey(provider);
-        if (snapAesKey) {
-          signer.setUserOnboardInfo({
-            ...(signer.getUserOnboardInfo() ?? {}),
-            aesKey: snapAesKey
-          });
-          setSessionOnboardInfo((previous) => ({
-            ...previous,
-            [cacheKey]: mergeOnboardInfo(previous[cacheKey], signer.getUserOnboardInfo())
-          }));
-          setOnboardStatus('AES key ready');
-          return true;
-        }
-      }
-      await signer.generateOrRecoverAes();
-      const recoveredOnboardInfo = signer.getUserOnboardInfo();
-      if (!recoveredOnboardInfo?.aesKey) {
-        throw previousError instanceof Error ? previousError : new Error('AES key recovery did not return a key.');
-      }
-      if (provider) {
-        await storeCotiSnapAesKey(provider, recoveredOnboardInfo.aesKey).catch(() => {});
-      }
-
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], recoveredOnboardInfo)
+    void signer;
+    const currentHealth = walletAesHealthByAddress[cacheKey]?.status;
+    const message =
+      previousError instanceof Error
+        ? previousError.message
+        : 'The AES key did not decrypt existing wallet data.';
+    if (currentHealth !== 'ready') {
+      setWalletAesHealth(cacheKey, buildWalletAesHealthState({
+        message,
+        status: 'repair-needed',
+        walletAddress: cacheKey
       }));
+      setOnboardStatus('Privacy key needs refresh');
+    } else {
       setOnboardStatus('AES key ready');
-      return true;
-    } catch {
-      signer.clearUserOnboardInfo();
-      if (previousOnboardInfo) {
-        signer.setUserOnboardInfo(previousOnboardInfo);
-      }
-      setOnboardStatus(previousOnboardInfo?.aesKey ? 'AES key ready' : 'Not onboarded');
-      return false;
     }
+    return false;
   };
 
   const decryptMemoPlaintextWithRecovery = async (
@@ -3054,7 +3061,12 @@ export default function App() {
   ): Promise<string> => {
     try {
       const decrypted = await signer.decryptValue(ciphertext as never);
-      return decodeDecryptedMemoPlaintext(decrypted);
+      const plain = decodeDecryptedMemoPlaintext(decrypted);
+      setWalletAesHealth(cacheKey, buildWalletAesHealthState({
+        status: 'ready',
+        walletAddress: cacheKey
+      }));
+      return plain;
     } catch (firstError) {
       const recovered = await tryRecoverRegisteredMemoAes(signer, cacheKey, firstError);
       if (!recovered) {
@@ -3062,7 +3074,12 @@ export default function App() {
       }
 
       const decrypted = await signer.decryptValue(ciphertext as never);
-      return decodeDecryptedMemoPlaintext(decrypted);
+      const plain = decodeDecryptedMemoPlaintext(decrypted);
+      setWalletAesHealth(cacheKey, buildWalletAesHealthState({
+        status: 'ready',
+        walletAddress: cacheKey
+      }));
+      return plain;
     }
   };
 
@@ -6014,7 +6031,7 @@ export default function App() {
         const cotiEthers = await loadCotiEthersModule();
         const readProvider = await loadCotiReadProvider(true);
         const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
-        const privateTokenContract = new cotiEthers.Contract(PRIVATE_REWARD_TOKEN_ADDRESS, PRIVATE_TOKEN_BALANCE_ABI, readProvider);
+        const privateTokenContract = new cotiEthers.Contract(PRIVATE_REWARD_TOKEN_ADDRESS, PRIVATE_ERC20_TOKEN_VNEXT_ABI, readProvider);
         const legacyPrivateTokenContract = new cotiEthers.Contract(
           LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
           PRIVATE_TOKEN_BALANCE_ABI,
@@ -6061,17 +6078,14 @@ export default function App() {
         if (hasAesReady) {
           try {
             const { signer, cacheKey } = await getMemoSigner();
-            privateBalanceWei = await readPrivateTokenBalanceWei(
+            privateBalanceWei = await readCurrentPrivateErc20BalanceWei(
               PRIVATE_REWARD_TOKEN_ADDRESS,
               requestedWalletAddress,
-              signer,
-              true
+              signer
             ).catch(() => null);
-            legacyPrivateBalanceWei = await readPrivateTokenBalanceWei(
-              LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
+            legacyPrivateBalanceWei = await readLegacyPrivateRewardBalanceWei(
               requestedWalletAddress,
-              signer,
-              true
+              signer
             ).catch(() => null);
 
             const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -7121,6 +7135,7 @@ export default function App() {
     setShowTopUpModal,
     topUpAmountLabel,
     topUpAmountWei,
+    walletAesHealth: walletAesHealthByAddress[walletAddress.trim().toLowerCase()] ?? null,
     walletAddress
   });
   const sharedTradeWalletSession = useMemo<SharedWalletSession>(
@@ -7138,8 +7153,10 @@ export default function App() {
       burnerWallet: chatWarmAppWallet,
       burnerWallets,
       chainId,
+      onWalletAesHealthChange: setWalletAesHealth,
       onSwitchActiveBurnerWallet: handleSwitchActiveBurnerWallet,
       sessionOnboardInfo,
+      walletAesHealthByAddress,
       walletAddress
     }),
     [
@@ -7159,6 +7176,8 @@ export default function App() {
       preferredBrowserWalletId,
       preferredInjectedWalletOption?.label,
       sessionOnboardInfo,
+      setWalletAesHealth,
+      walletAesHealthByAddress,
       walletAddress
     ]
   );

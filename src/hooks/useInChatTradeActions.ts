@@ -16,7 +16,8 @@ import {
   declineTradeOnChain,
   fillPrivateFixedPriceTradeOnChain
 } from '../lib/tradeActions';
-import { createTradeAccessSecret } from '../lib/partyTradeTerms';
+import { getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
+import { createTradeAccessSecret } from '../lib/directTradeTerms';
 import {
   buildTradeOfferMessagePayload,
   buildTradeResponseMessagePayload,
@@ -174,6 +175,10 @@ export default function useInChatTradeActions({
       if (pendingCounterContext) {
         const parentSnapshot = await resolveTradeSnapshotForOffer(pendingCounterContext.offer);
         counteredSnapshot = parentSnapshot;
+        const counterUnavailableReason = getCounterOfferUnavailableReason(parentSnapshot, requestedWalletKey);
+        if (counterUnavailableReason) {
+          throw new Error(counterUnavailableReason);
+        }
         const isParentMaker = pendingCounterContext.offer.maker.toLowerCase() === requestedWalletKey;
         const isParentTaker = pendingCounterContext.offer.taker.toLowerCase() === requestedWalletKey;
 
@@ -191,7 +196,7 @@ export default function useInChatTradeActions({
       const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
       const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
       const publicOfferAmount = parsedTradeOfferAmountWei;
-      const partyAccessSecret = createTradeAccessSecret();
+      const directAccessSecret = createTradeAccessSecret();
       const createResult =
         isCounterReplacement && counteredSnapshot
           ? await counterTradeAndCloseCounteredTradeOnChain({
@@ -204,7 +209,7 @@ export default function useInChatTradeActions({
               requestAmountWei: parsedTradeRequestAmountWei,
               expiresAt,
               nativeFeeWei,
-              partyAccessSecret: partyAccessSecret || undefined,
+              directAccessSecret: directAccessSecret || undefined,
               counterTakerAddress: counteredSnapshot.maker,
               counteredEscrowContract: counteredSnapshot.escrowContract,
               parentEscrowContract: counteredSnapshot.counterParentEscrow ?? counteredSnapshot.escrowContract,
@@ -221,7 +226,7 @@ export default function useInChatTradeActions({
               expiresAt,
               nativeFeeWei,
               parentTradeId: tradeCounterParentId ?? undefined,
-              partyAccessSecret: partyAccessSecret || undefined,
+              directAccessSecret: directAccessSecret || undefined,
               parentEscrowContract: counteredSnapshot?.escrowContract
             });
       const tradeId = createResult.tradeId;
@@ -237,7 +242,7 @@ export default function useInChatTradeActions({
         createdAt,
         expiresAt,
         parentTradeId: tradeCounterParentId ?? undefined,
-        accessSecret: partyAccessSecret || undefined
+        accessSecret: directAccessSecret || undefined
       };
 
       setTradeSnapshotsById((previous) => ({
@@ -570,6 +575,14 @@ export default function useInChatTradeActions({
     };
 
     const snapshot = await resolveTradeSnapshotForOffer(offer);
+    const counterUnavailableReason = getCounterOfferUnavailableReason(
+      snapshot,
+      currentWalletKeyRef.current.toLowerCase()
+    );
+    if (counterUnavailableReason) {
+      setError(counterUnavailableReason);
+      return;
+    }
     const counterParentId = snapshot.counterParentTradeId ?? offer.parentTradeId ?? offer.tradeId;
 
     applyAssetSelection(

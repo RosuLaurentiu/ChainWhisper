@@ -8,14 +8,14 @@ const SECRET_BYTES = 32;
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
-export type PartyTradeTermsAsset = Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'amount'>;
+export type DirectTradeTermsAsset = Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'amount'>;
 
-export type PartyTradeTerms = {
+export type DirectTradeTerms = {
   version: 1;
   maker: string;
   taker: string;
-  offer: PartyTradeTermsAsset;
-  request: PartyTradeTermsAsset;
+  offer: DirectTradeTermsAsset;
+  request: DirectTradeTermsAsset;
   expiresAt: number;
   parentEscrowContract?: string;
   parentTradeId?: number;
@@ -61,8 +61,8 @@ const deriveTermsKey = async (accessSecret: string, usages: KeyUsage[]): Promise
     {
       name: 'HKDF',
       hash: 'SHA-256',
-      salt: toArrayBuffer(TEXT_ENCODER.encode('ChainWhisperPartyTermsV1')),
-      info: toArrayBuffer(TEXT_ENCODER.encode('party-trade-terms'))
+      salt: toArrayBuffer(TEXT_ENCODER.encode('ChainWhisperDirectTermsV1')),
+      info: toArrayBuffer(TEXT_ENCODER.encode('direct-trade-terms'))
     },
     material,
     { name: 'AES-GCM', length: 256 },
@@ -71,13 +71,13 @@ const deriveTermsKey = async (accessSecret: string, usages: KeyUsage[]): Promise
   );
 };
 
-const canonicalAsset = (asset: PartyTradeTermsAsset): PartyTradeTermsAsset => ({
+const canonicalAsset = (asset: DirectTradeTermsAsset): DirectTradeTermsAsset => ({
   kind: asset.kind,
   tokenAddress: asset.tokenAddress?.trim() || undefined,
   amount: BigInt(asset.amount).toString()
 });
 
-export const buildPartyTradeTerms = (terms: Omit<PartyTradeTerms, 'version'>): PartyTradeTerms => ({
+export const buildDirectTradeTerms = (terms: Omit<DirectTradeTerms, 'version'>): DirectTradeTerms => ({
   version: TERMS_PAYLOAD_VERSION,
   maker: terms.maker,
   taker: terms.taker,
@@ -91,7 +91,7 @@ export const buildPartyTradeTerms = (terms: Omit<PartyTradeTerms, 'version'>): P
       : undefined
 });
 
-export const encodePartyTradeTerms = (terms: PartyTradeTerms): string =>
+export const encodeDirectTradeTerms = (terms: DirectTradeTerms): string =>
   JSON.stringify({
     version: terms.version,
     maker: terms.maker,
@@ -103,14 +103,14 @@ export const encodePartyTradeTerms = (terms: PartyTradeTerms): string =>
     parentTradeId: terms.parentTradeId
   });
 
-export const encryptPartyTradeTerms = async (terms: PartyTradeTerms, accessSecret: string): Promise<string> => {
+export const encryptDirectTradeTerms = async (terms: DirectTradeTerms, accessSecret: string): Promise<string> => {
   const key = await deriveTermsKey(accessSecret, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ciphertext = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv: toArrayBuffer(iv) },
       key,
-      toArrayBuffer(TEXT_ENCODER.encode(encodePartyTradeTerms(terms)))
+      toArrayBuffer(TEXT_ENCODER.encode(encodeDirectTradeTerms(terms)))
     )
   );
   const payload = new Uint8Array(1 + iv.length + ciphertext.length);
@@ -120,7 +120,7 @@ export const encryptPartyTradeTerms = async (terms: PartyTradeTerms, accessSecre
   return bytesToHex(payload);
 };
 
-export const decryptPartyTradeTerms = async (encryptedPayload: string, accessSecret: string): Promise<PartyTradeTerms> => {
+export const decryptDirectTradeTerms = async (encryptedPayload: string, accessSecret: string): Promise<DirectTradeTerms> => {
   const payload = hexToBytes(encryptedPayload);
   if (payload.length <= 1 + IV_BYTES || payload[0] !== ENCRYPTED_PAYLOAD_VERSION) {
     throw new Error('Invalid encrypted trade terms payload.');
@@ -129,16 +129,54 @@ export const decryptPartyTradeTerms = async (encryptedPayload: string, accessSec
   const iv = payload.slice(1, 1 + IV_BYTES);
   const ciphertext = payload.slice(1 + IV_BYTES);
   const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv) }, key, toArrayBuffer(ciphertext));
-  const parsed = JSON.parse(TEXT_DECODER.decode(decrypted)) as PartyTradeTerms;
-  return buildPartyTradeTerms(parsed);
+  const parsed = JSON.parse(TEXT_DECODER.decode(decrypted)) as DirectTradeTerms;
+  return buildDirectTradeTerms(parsed);
 };
 
-export const applyPartyTradeTermsToSnapshot = <T extends { offer: TradeAssetPayload; request: TradeAssetPayload; hiddenLiquidity?: boolean }>(
+const isZeroAmount = (value?: string): boolean => {
+  try {
+    return BigInt(value ?? '0') === 0n;
+  } catch {
+    return true;
+  }
+};
+
+export const applyDirectTradeTermsToSnapshot = <
+  T extends {
+    offer: TradeAssetPayload;
+    request: TradeAssetPayload;
+    hiddenLiquidity?: boolean;
+    status?: string;
+    fillState?: {
+      remainingOfferAmount?: string;
+      remainingRequestAmount?: string;
+      filledOfferAmount?: string;
+      filledRequestAmount?: string;
+    };
+  }
+>(
   snapshot: T,
-  terms: PartyTradeTerms
-): T => ({
-  ...snapshot,
-  offer: { ...snapshot.offer, amount: terms.offer.amount },
-  request: { ...snapshot.request, amount: terms.request.amount },
-  hiddenLiquidity: false
-});
+  terms: DirectTradeTerms
+): T => {
+  const shouldRestoreOpenFillState =
+    snapshot.status === 'open' &&
+    snapshot.fillState &&
+    isZeroAmount(snapshot.fillState.remainingOfferAmount) &&
+    isZeroAmount(snapshot.fillState.remainingRequestAmount);
+
+  return {
+    ...snapshot,
+    offer: { ...snapshot.offer, amount: terms.offer.amount },
+    request: { ...snapshot.request, amount: terms.request.amount },
+    fillState: shouldRestoreOpenFillState
+      ? {
+          ...snapshot.fillState,
+          remainingOfferAmount: terms.offer.amount,
+          remainingRequestAmount: terms.request.amount,
+          filledOfferAmount: snapshot.fillState?.filledOfferAmount ?? '0',
+          filledRequestAmount: snapshot.fillState?.filledRequestAmount ?? '0'
+        }
+      : snapshot.fillState,
+    hiddenLiquidity: false
+  };
+};

@@ -14,7 +14,7 @@ export type TradeRecoveryAsset = Pick<TradeAssetPayload, 'kind' | 'tokenAddress'
 
 export type TradeRecoveryPayload = {
   version: 1;
-  kind: 'party' | 'private-order' | 'recurring-order';
+  kind: 'direct' | 'private-order' | 'recurring-order';
   accessSecret?: string;
   maker: string;
   taker: string;
@@ -201,5 +201,5 @@ export const applyTradeRecoveryPayloadToSnapshot = <
   ...snapshot,
   offer: payload.offer ? { ...snapshot.offer, amount: payload.offer.amount } : snapshot.offer,
   request: payload.request ? { ...snapshot.request, amount: payload.request.amount } : snapshot.request,
-  hiddenLiquidity: payload.kind === 'party' ? false : snapshot.hiddenLiquidity
+  hiddenLiquidity: payload.kind === 'direct' ? false : snapshot.hiddenLiquidity
 });

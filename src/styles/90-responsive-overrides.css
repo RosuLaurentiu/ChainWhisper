@@ -1571,7 +1571,8 @@
   }
 
   .p2p-offer-grid,
-  .p2p-offer-parties {
+  .p2p-offer-parties,
+  .p2p-counter-summary {
     grid-template-columns: minmax(0, 1fr);
   }
 

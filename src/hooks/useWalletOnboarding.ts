@@ -16,7 +16,8 @@ import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption
 } from '../lib/walletOptions';
-import { getCotiSnapAesKey, storeCotiSnapAesKey } from '../lib/cotiSnap';
+import { buildWalletAesHealthState, clearCotiAesUnlockRequest, getOrRecoverAesForWallet } from '../lib/cotiAesUnlock';
+import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
 import useInjectedWalletOptions from './useInjectedWalletOptions';
 
 type UseWalletOnboardingArgs = {
@@ -26,6 +27,8 @@ type UseWalletOnboardingArgs = {
   runPostConnectDataSyncUntilAppliedRef: MutableRefObject<(address: string) => Promise<void>>;
   setError: Dispatch<SetStateAction<string>>;
   setMyNickname: Dispatch<SetStateAction<string>>;
+  onWalletAesHealthChange?: (walletAddress: string, health: WalletAesHealthState) => void;
+  walletAesHealthByAddress?: Record<string, WalletAesHealthState>;
 };
 
 export type BrowserWalletSession = {
@@ -37,6 +40,7 @@ export type BrowserWalletSession = {
 };
 
 type BrowserWalletActivationOptions = {
+  forceFreshPrivacy?: boolean;
   preparePrivacy?: boolean;
 };
 
@@ -46,7 +50,9 @@ export function useWalletOnboarding({
   resetBurnerSessionRef,
   runPostConnectDataSyncUntilAppliedRef,
   setError,
-  setMyNickname
+  setMyNickname,
+  onWalletAesHealthChange,
+  walletAesHealthByAddress = {}
 }: UseWalletOnboardingArgs) {
   const [walletAddress, setWalletAddress] = useState('');
   const [chainId, setChainId] = useState<number | null>(null);
@@ -108,6 +114,33 @@ export function useWalletOnboarding({
     setBrowserWalletSessionState(session);
   }, []);
 
+  const resetBrowserPrivacySessionForWalletChange = useCallback((nextAddress: string) => {
+    const nextWalletKey = nextAddress.trim().toLowerCase();
+    const previousWalletKey = currentWalletKeyRef.current;
+    if (nextWalletKey === previousWalletKey) {
+      return;
+    }
+
+    if (previousWalletKey) {
+      clearCotiAesUnlockRequest(previousWalletKey, activeProviderRef.current);
+    }
+    if (nextWalletKey) {
+      clearCotiAesUnlockRequest(nextWalletKey, activeProviderRef.current);
+    }
+    signerCacheRef.current = {};
+    setSessionOnboardInfo((previous) => {
+      const next = { ...previous };
+      if (nextWalletKey) {
+        delete next[nextWalletKey];
+      }
+      if (previousWalletKey) {
+        delete next[previousWalletKey];
+      }
+      return next;
+    });
+    setOnboardStatus('Not onboarded');
+  }, []);
+
   const adoptBrowserWalletSession = useCallback((session: BrowserWalletSession) => {
     activeProviderRef.current = session.provider;
     setActiveProvider(session.provider);
@@ -116,11 +149,12 @@ export function useWalletOnboarding({
     setConnectionMethod('metamask');
     setActiveSignerSource('metamask');
     setSelectedInjectedWalletId(session.walletId);
+    resetBrowserPrivacySessionForWalletChange(session.address);
     setWalletAddress(session.address);
     setChainId(session.chainId);
     setStatus(`Connected (${session.walletLabel || 'Browser wallet'})`);
     saveWalletPreference({ kind: 'browser', browserWalletId: session.walletId });
-  }, [setActiveSignerSource]);
+  }, [resetBrowserPrivacySessionForWalletChange, setActiveSignerSource]);
 
   const getConnectedProvider = useCallback((): Eip1193Provider | null => {
     if (connectionMethod === 'metamask') {
@@ -178,6 +212,7 @@ export function useWalletOnboarding({
         return;
       }
       const selected = accounts[0] ?? '';
+      resetBrowserPrivacySessionForWalletChange(selected);
       setWalletAddress(selected);
 
       if (selected) {
@@ -189,11 +224,11 @@ export function useWalletOnboarding({
         setStatus('Disconnected');
       }
     },
-    [getConnectedProvider]
+    [getConnectedProvider, resetBrowserPrivacySessionForWalletChange]
   );
 
   const onboardAddressAes = useCallback(
-    async (address: string, provider: Eip1193Provider): Promise<OnboardInfo> => {
+    async (address: string, provider: Eip1193Provider, options?: BrowserWalletActivationOptions): Promise<OnboardInfo> => {
       if (!provider) {
         throw new Error('Wallet provider is not available.');
       }
@@ -204,22 +239,43 @@ export function useWalletOnboarding({
       const browserProvider = await createCotiBrowserProvider(provider);
 
       const cacheKey = address.toLowerCase();
-      const signer = await browserProvider.getSigner(address, sessionOnboardInfo[cacheKey]);
+      const currentAesHealth = walletAesHealthByAddress[cacheKey]?.status;
+      const forceFreshPrivacy = Boolean(options?.forceFreshPrivacy);
+      const refreshMismatch =
+        forceFreshPrivacy || currentAesHealth === 'key-mismatch' || currentAesHealth === 'repair-needed';
+      if (refreshMismatch) {
+        clearCotiAesUnlockRequest(address, provider);
+        setSessionOnboardInfo((previous) => {
+          if (!previous[cacheKey]) {
+            return previous;
+          }
+          const next = { ...previous };
+          delete next[cacheKey];
+          return next;
+        });
+      }
+      const signer = await browserProvider.getSigner(address, refreshMismatch ? undefined : sessionOnboardInfo[cacheKey]);
       signer.disableAutoOnboard();
       signerCacheRef.current[cacheKey] = signer;
 
-      const snapAesKey = await getCotiSnapAesKey(provider);
-      if (snapAesKey) {
-        signer.setUserOnboardInfo({
-          ...(signer.getUserOnboardInfo() ?? {}),
-          aesKey: snapAesKey
-        });
+      if (refreshMismatch) {
+        onWalletAesHealthChange?.(
+          address,
+          buildWalletAesHealthState({
+            status: 'repairing',
+            walletAddress: address
+          })
+        );
       }
-
-      if (!signer.getUserOnboardInfo()?.aesKey) {
-        await signer.generateOrRecoverAes();
-        await storeCotiSnapAesKey(provider, signer.getUserOnboardInfo()?.aesKey).catch(() => {});
-      }
+      await getOrRecoverAesForWallet({
+        allowUnrecoverableReset: refreshMismatch,
+        forceFreshAes: refreshMismatch,
+        forceLegacyRefresh: refreshMismatch,
+        forceRefresh: true,
+        provider,
+        signer,
+        walletAddress: address
+      });
 
       const rawOnboardInfo = signer.getUserOnboardInfo();
       const onboardInfo = mergeOnboardInfo(undefined, rawOnboardInfo);
@@ -237,13 +293,20 @@ export function useWalletOnboarding({
 
       setSessionOnboardInfo((previous) => ({
         ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+        [cacheKey]: refreshMismatch ? onboardInfo : mergeOnboardInfo(previous[cacheKey], onboardInfo)
       }));
+      onWalletAesHealthChange?.(
+        address,
+        buildWalletAesHealthState({
+          status: 'ready-unverified',
+          walletAddress: address
+        })
+      );
 
       setOnboardStatus('AES key ready');
       return onboardInfo;
     },
-    [ensureCotiNetwork, sessionOnboardInfo]
+    [ensureCotiNetwork, onWalletAesHealthChange, sessionOnboardInfo, walletAesHealthByAddress]
   );
 
   const connectAndOnboard = useCallback(
@@ -279,6 +342,7 @@ export function useWalletOnboarding({
         setConnectedProvider(provider);
         setConnectionMethod('metamask');
         setActiveSignerSource('metamask');
+        resetBrowserPrivacySessionForWalletChange(selected);
         setWalletAddress(selected);
         saveWalletPreference({ kind: 'browser', browserWalletId: walletOption?.id });
 
@@ -293,7 +357,7 @@ export function useWalletOnboarding({
           walletLabel
         });
         setStatus(`Connected (${walletLabel})`);
-        const onboardInfo = options?.preparePrivacy ? await onboardAddressAes(selected, provider) : null;
+        const onboardInfo = options?.preparePrivacy ? await onboardAddressAes(selected, provider, options) : null;
         const selectedWalletKey = selected.toLowerCase();
         window.setTimeout(() => {
           void (async () => {
@@ -329,6 +393,7 @@ export function useWalletOnboarding({
       loadMyNicknameFromChainRef,
       onboardAddressAes,
       preferredInjectedWalletOption,
+      resetBrowserPrivacySessionForWalletChange,
       runPostConnectDataSyncUntilAppliedRef,
       setBrowserWalletSession,
       setConnectedProvider,
@@ -367,6 +432,7 @@ export function useWalletOnboarding({
         setConnectionMethod('metamask');
         setActiveSignerSource('metamask');
         setSelectedInjectedWalletId(targetSession.walletId);
+        resetBrowserPrivacySessionForWalletChange(selected);
         setWalletAddress(selected);
         saveWalletPreference({ kind: 'browser', browserWalletId: targetSession.walletId });
 
@@ -380,7 +446,9 @@ export function useWalletOnboarding({
         };
         setBrowserWalletSession(nextSession);
         setStatus(`Connected (${targetSession.walletLabel})`);
-        const onboardInfo = options?.preparePrivacy ? await onboardAddressAes(selected, targetSession.provider) : null;
+        const onboardInfo = options?.preparePrivacy
+          ? await onboardAddressAes(selected, targetSession.provider, options)
+          : null;
 
         const selectedWalletKey = selected.toLowerCase();
         window.setTimeout(() => {
@@ -413,6 +481,7 @@ export function useWalletOnboarding({
       connectAndOnboard,
       loadMyNicknameFromChainRef,
       onboardAddressAes,
+      resetBrowserPrivacySessionForWalletChange,
       runPostConnectDataSyncUntilAppliedRef,
       setBrowserWalletSession,
       setConnectedProvider,
@@ -478,7 +547,16 @@ export function useWalletOnboarding({
       }
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
       const selected = nextAccounts[0] ?? '';
+      resetBrowserPrivacySessionForWalletChange(selected);
       setWalletAddress(selected);
+      setBrowserWalletSession(
+        browserWalletSessionRef.current
+          ? {
+              ...browserWalletSessionRef.current,
+              address: selected
+            }
+          : null
+      );
       if (!selected) {
         setStatus('Disconnected');
         setChainId(null);
@@ -501,7 +579,15 @@ export function useWalletOnboarding({
       provider.removeListener?.('accountsChanged', handleAccountsChanged);
       provider.removeListener?.('chainChanged', handleChainChanged);
     };
-  }, [activeProvider, connectionMethod, getConnectedProvider, refreshWalletState, setError]);
+  }, [
+    activeProvider,
+    connectionMethod,
+    getConnectedProvider,
+    refreshWalletState,
+    resetBrowserPrivacySessionForWalletChange,
+    setBrowserWalletSession,
+    setError
+  ]);
 
   return {
     activeProvider,

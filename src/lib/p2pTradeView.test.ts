@@ -7,14 +7,18 @@ import {
   getRecurringTerminalSideState,
   getTradeCompletionSummary,
   getTradeDisplayTerms,
+  getTradeTermsVisibility,
+  hasHydratedDirectTradeTerms,
   getTradePairFilterOptions,
+  isHiddenLiquidityTrade,
   loadStoredPrivateTradeLiquidity,
   loadStoredTradeAccessSecrets,
   matchesTradeSearch,
+  shouldRecoverMakerTradePayload,
   storePrivateTradeLiquidity,
   storeTradeAccessSecrets
 } from './p2pTradeView';
-import type { TradeSnapshot } from './appShared';
+import { DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, type TradeSnapshot } from './appShared';
 
 const token = (symbol: string, amount: string, tokenAddress = `0x${symbol.padEnd(40, '1').slice(0, 40)}`) => ({
   amount,
@@ -77,6 +81,57 @@ describe('p2pTradeView helpers', () => {
       filledLabel: '0.25 WISP filled',
       remainingLabel: '0.75 WISP remaining'
     });
+  });
+
+  it('treats Direct OTC counters as private terms instead of hidden liquidity', () => {
+    const directCounter = baseTrade({
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      counterParentTradeId: 4,
+      isPublic: false,
+      hiddenLiquidity: true,
+      offer: token('pWISP', '0'),
+      request: token('HOTDOG', '0')
+    });
+    const hydratedDirectCounter = {
+      ...directCounter,
+      offer: token('pWISP', '1200000'),
+      request: token('HOTDOG', '2400000')
+    };
+    const priceOnlyDirectCounter = {
+      ...directCounter,
+      offer: token('pWISP', '1200000'),
+      request: token('HOTDOG', '0')
+    };
+
+    expect(getTradeTermsVisibility(directCounter)).toBe('direct-private-terms');
+    expect(isHiddenLiquidityTrade(directCounter)).toBe(false);
+    expect(hasHydratedDirectTradeTerms(directCounter)).toBe(false);
+    expect(hasHydratedDirectTradeTerms(priceOnlyDirectCounter)).toBe(false);
+    expect(hasHydratedDirectTradeTerms(hydratedDirectCounter)).toBe(true);
+    expect(getTradeCompletionSummary(directCounter)).toBeNull();
+    expect(getMakerPrivateProgressSummary(directCounter)).toBeNull();
+  });
+
+  it('still recovers maker payloads for unhydrated Direct trades even when the link secret is already known', () => {
+    const maker = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const directCounter = baseTrade({
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      maker,
+      taker: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      counterParentTradeId: 4,
+      hasAccessHash: true,
+      offer: token('pWISP', '0'),
+      request: token('HOTDOG', '0')
+    });
+    const hydratedDirectCounter = {
+      ...directCounter,
+      offer: token('pWISP', '1200000'),
+      request: token('HOTDOG', '2400000')
+    };
+
+    expect(shouldRecoverMakerTradePayload(directCounter, maker, true)).toBe(true);
+    expect(shouldRecoverMakerTradePayload(hydratedDirectCounter, maker, true)).toBe(false);
+    expect(shouldRecoverMakerTradePayload(directCounter, directCounter.taker, true)).toBe(false);
   });
 
   it('matches search by trade identity and token fields', () => {

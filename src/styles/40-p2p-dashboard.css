@@ -2585,6 +2585,11 @@
   cursor: not-allowed;
 }
 
+.p2p-offer-disabled-btn {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
 .p2p-counter-panel {
   scroll-margin-top: calc(var(--header-height) + 24px);
   display: grid;
@@ -2620,6 +2625,41 @@
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.45;
+}
+
+.p2p-counter-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.p2p-counter-summary > div {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 8px;
+}
+
+.p2p-counter-summary span,
+.p2p-counter-summary strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-counter-summary span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.p2p-counter-summary strong {
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 0.82rem;
 }
 
 .p2p-recurring-section {

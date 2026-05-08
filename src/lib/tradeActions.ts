@@ -2,14 +2,15 @@ import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
   ensurePrivateTokenSpendReady,
   ensureTradeTokenAllowance,
-  isPartyTradeEscrowConfigured,
+  isLegacyPrivateOrderEscrowContractAddress,
+  isDirectTradeEscrowConfigured,
   resolveTradeEscrowContractConfig
 } from './appChain';
 import { resolveTradeAssetTypeValue } from './appHelpers';
 import {
   loadCotiEthersModule,
-  PARTY_TRADE_ESCROW_CONTRACT_ABI,
-  PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+  DIRECT_TRADE_ESCROW_CONTRACT_ABI,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   RECURRING_OTC_CONTRACT_ABI,
@@ -19,9 +20,11 @@ import {
   TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload
 } from './appShared';
-import { buildPartyTradeTerms, encryptPartyTradeTerms } from './partyTradeTerms';
+import { buildDirectTradeTerms, encryptDirectTradeTerms } from './directTradeTerms';
 import { EMPTY_PRIVATE_UINT256_INPUT, encryptPrivateUint256Input } from './privateUint256';
+import { PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE } from './tradeCounterSupport';
 import { buildTradeRecoveryPayload, encryptTradeRecoveryPayloadForSigner } from './tradeRecoveryPayload';
+import { normalizeAccessHash } from './tradeLinks';
 
 type TradeSigner = Wallet | JsonRpcSigner;
 
@@ -102,7 +105,7 @@ const buildRecurringAssetTuple = (asset: TradeAssetSelection) =>
 const buildRecurringTermsTuple = (baseAmountWei: bigint, quoteAmountWei: bigint) =>
   [baseAmountWei, quoteAmountWei] as const;
 
-export const shouldRouteTradeThroughPartyEscrow = ({
+export const shouldRouteTradeThroughDirectEscrow = ({
   isPublic,
   parentTradeId,
   hidePrivateLiquidity
@@ -110,7 +113,7 @@ export const shouldRouteTradeThroughPartyEscrow = ({
   isPublic?: boolean;
   parentTradeId?: number;
   hidePrivateLiquidity?: boolean;
-}): boolean => !hidePrivateLiquidity && (!isPublic || Boolean(parentTradeId));
+}): boolean => Boolean(parentTradeId) || (!hidePrivateLiquidity && !isPublic);
 
 const ensureOfferEscrowReady = async (
   signer: TradeSigner,
@@ -157,7 +160,7 @@ const resolveTradeIdFromReceipt = async (
   abi:
     | typeof TRADE_ESCROW_CONTRACT_ABI
     | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI
-    | typeof PARTY_TRADE_ESCROW_CONTRACT_ABI
+    | typeof DIRECT_TRADE_ESCROW_CONTRACT_ABI
     | typeof RECURRING_OTC_CONTRACT_ABI = TRADE_ESCROW_CONTRACT_ABI
 ): Promise<number> => {
   const cotiEthers = await loadCotiEthersModule();
@@ -170,7 +173,7 @@ const resolveTradeIdFromReceipt = async (
       if (
         parsedLog?.name === 'TradeOpened' ||
         parsedLog?.name === 'PrivateOrderOpened' ||
-        parsedLog?.name === 'PartyTradeOpened' ||
+        parsedLog?.name === 'DirectTradeOpened' ||
         parsedLog?.name === 'RecurringOrderOpened'
       ) {
         tradeId = toSafeNumber(parsedLog.args?.tradeId ?? parsedLog.args?.orderId ?? parsedLog.args?.[0]);
@@ -206,7 +209,7 @@ const resolveTradeFunctionSelector = async (
   abi:
     | typeof TRADE_ESCROW_CONTRACT_ABI
     | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI
-    | typeof PARTY_TRADE_ESCROW_CONTRACT_ABI
+    | typeof DIRECT_TRADE_ESCROW_CONTRACT_ABI
     | typeof RECURRING_OTC_CONTRACT_ABI = TRADE_ESCROW_CONTRACT_ABI
 ): Promise<string> => {
   const cotiEthers = await loadCotiEthersModule();
@@ -217,6 +220,59 @@ const resolveTradeFunctionSelector = async (
   }
   return selector;
 };
+
+const buildDirectTermsPayload = async ({
+  makerAddress,
+  takerAddress,
+  offerAsset,
+  offerAmountWei,
+  requestAsset,
+  requestAmountWei,
+  expiresAt,
+  directAccessSecret,
+  parentEscrowContract,
+  parentTradeId
+}: {
+  makerAddress: string;
+  takerAddress: string;
+  offerAsset: TradeAssetSelection;
+  offerAmountWei: bigint;
+  requestAsset: TradeAssetSelection;
+  requestAmountWei: bigint;
+  expiresAt: number;
+  directAccessSecret?: string;
+  parentEscrowContract?: string;
+  parentTradeId?: number;
+}): Promise<{ accessSecret: string; termsPayload: string }> => {
+  const accessSecret = normalizeAccessHash(directAccessSecret);
+  if (!accessSecret) {
+    throw new Error('Direct OTC trades need a valid encrypted terms key before creation.');
+  }
+  const terms = buildDirectTradeTerms({
+    maker: makerAddress,
+    taker: takerAddress,
+    offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: offerAmountWei.toString() },
+    request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
+    expiresAt,
+    parentEscrowContract,
+    parentTradeId
+  });
+  return {
+    accessSecret,
+    termsPayload: await encryptDirectTradeTerms(terms, accessSecret)
+  };
+};
+
+const encryptDirectAccessSecretInput = async (
+  signer: TradeSigner,
+  accessSecret: string,
+  functionSelector: string
+) => encryptPrivateUint256Input(
+  signer,
+  BigInt(accessSecret),
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+  functionSelector
+);
 
 const resolvePrivateOrderFillResult = async (
   receipt: { logs?: unknown[] },
@@ -257,9 +313,7 @@ export const createTradeOnChain = async ({
   publicOfferAmountWei,
   termsHash,
   makerRecoveryPayload,
-  makerTermsPayload,
-  counterpartyTermsPayload,
-  partyAccessSecret,
+  directAccessSecret,
   parentEscrowContract
 }: {
   signer: TradeSigner;
@@ -280,15 +334,10 @@ export const createTradeOnChain = async ({
   publicOfferAmountWei?: bigint;
   termsHash?: string;
   makerRecoveryPayload?: string;
-  makerTermsPayload?: string;
-  counterpartyTermsPayload?: string;
-  partyAccessSecret?: string;
+  directAccessSecret?: string;
   parentEscrowContract?: string;
 }): Promise<{ tradeId: number; escrowContract: string }> => {
-  if (hidePrivateLiquidity) {
-    if (parentTradeId) {
-      throw new Error('Hidden amount orders cannot be linked as counter offers yet.');
-    }
+  if (hidePrivateLiquidity && !parentTradeId) {
     if (offerAsset.kind !== 'private-erc20') {
       throw new Error('Hide amount requires the token you sell to be private.');
     }
@@ -361,68 +410,52 @@ export const createTradeOnChain = async ({
     return { tradeId, escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS };
   }
 
-  const shouldUsePartyVisibleEscrow = shouldRouteTradeThroughPartyEscrow({ isPublic, parentTradeId, hidePrivateLiquidity });
-  if (shouldUsePartyVisibleEscrow) {
-    if (!isPartyTradeEscrowConfigured()) {
-      throw new Error(
-        'Private-link, direct, and counter trades with visible amounts need the V1 party OTC escrow before they can be created without public amount leakage.'
-      );
-    }
-    let resolvedMakerTermsPayload = makerTermsPayload;
-    let resolvedCounterpartyTermsPayload = counterpartyTermsPayload;
-    let resolvedTermsHash = termsHash;
-    if ((!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) && partyAccessSecret) {
-      const terms = buildPartyTradeTerms({
-        maker: makerAddress,
-        taker: takerAddress,
-        offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: offerAmountWei.toString() },
-        request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
-        expiresAt,
-        parentEscrowContract,
-        parentTradeId
-      });
-      resolvedMakerTermsPayload = await encryptTradeRecoveryPayloadForSigner(
-        signer,
-        buildTradeRecoveryPayload({
-          kind: 'party',
-          accessSecret: partyAccessSecret,
-          maker: makerAddress,
-          taker: takerAddress,
-          offer: terms.offer,
-          request: terms.request,
-          expiresAt: terms.expiresAt,
-          parentEscrowContract: terms.parentEscrowContract,
-          parentTradeId: terms.parentTradeId
-        })
-      );
-      resolvedCounterpartyTermsPayload = await encryptPartyTradeTerms(terms, partyAccessSecret);
-    }
-    if (!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) {
-      throw new Error('Party-visible trades need encrypted on-chain term payloads before creation.');
-    }
+  if (parentTradeId && isLegacyPrivateOrderEscrowContractAddress(parentEscrowContract)) {
+    throw new Error(PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE);
+  }
 
-    const tradeContract = await createTradeContract(signer, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS);
-    await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS);
+  const shouldUseDirectVisibleEscrow = shouldRouteTradeThroughDirectEscrow({ isPublic, parentTradeId, hidePrivateLiquidity });
+  if (shouldUseDirectVisibleEscrow) {
+    if (!isDirectTradeEscrowConfigured()) {
+      throw new Error(
+        'Private-link, direct, and counter trades with visible amounts need the V1 Direct OTC escrow before they can be created without public amount leakage.'
+      );
+    }
+    const { accessSecret: resolvedDirectAccessSecret, termsPayload } = await buildDirectTermsPayload({
+      makerAddress,
+      takerAddress,
+      offerAsset,
+      offerAmountWei,
+      requestAsset,
+      requestAmountWei,
+      expiresAt,
+      directAccessSecret,
+      parentEscrowContract,
+      parentTradeId
+    });
+
+    const tradeContract = await createTradeContract(signer, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
+    await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
     const parentEscrowIsExternal =
       Boolean(parentTradeId && parentEscrowContract) &&
-      parentEscrowContract?.toLowerCase() !== PARTY_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+      parentEscrowContract?.toLowerCase() !== DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
     const createFunctionName = parentTradeId
       ? parentEscrowIsExternal
-        ? 'createPartyCounterTradeForParent'
-        : 'createPartyCounterTrade'
-      : 'createPartyTrade';
-    const createSelector = await resolveTradeFunctionSelector(createFunctionName, PARTY_TRADE_ESCROW_CONTRACT_ABI);
-    if (!resolvedTermsHash) {
-      const cotiEthers = await loadCotiEthersModule();
-      resolvedTermsHash = cotiEthers.keccak256(resolvedMakerTermsPayload);
-    }
+        ? 'createDirectCounterTradeForParent'
+        : 'createDirectCounterTrade'
+      : 'createDirectTrade';
+    const createSelector = await resolveTradeFunctionSelector(createFunctionName, DIRECT_TRADE_ESCROW_CONTRACT_ABI);
+    const cotiEthers = await loadCotiEthersModule();
+    const resolvedTermsHash = termsHash ?? cotiEthers.keccak256(termsPayload);
+    const directAccessHash = cotiEthers.keccak256(resolvedDirectAccessSecret);
+    const encryptedAccessSecret = await encryptDirectAccessSecretInput(signer, resolvedDirectAccessSecret, createSelector);
     const encryptedOfferAmount =
       offerAsset.kind === 'private-erc20'
-        ? await encryptPrivateUint256Input(signer, offerAmountWei, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS, createSelector)
+        ? await encryptPrivateUint256Input(signer, offerAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, createSelector)
         : EMPTY_PRIVATE_UINT256_INPUT;
     const encryptedRequestAmount =
       requestAsset.kind === 'private-erc20'
-        ? await encryptPrivateUint256Input(signer, requestAmountWei, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS, createSelector)
+        ? await encryptPrivateUint256Input(signer, requestAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, createSelector)
         : EMPTY_PRIVATE_UINT256_INPUT;
     const publicAmounts = {
       offerAmount: offerAsset.kind === 'private-erc20' ? 0n : offerAmountWei,
@@ -431,7 +464,7 @@ export const createTradeOnChain = async ({
     const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
     const createTx = parentTradeId
       ? parentEscrowIsExternal
-        ? await tradeContract.createPartyCounterTradeForParent(
+        ? await tradeContract.createDirectCounterTradeForParent(
             parentEscrowContract ?? ZERO_ADDRESS,
             parentTradeId,
             takerAddress,
@@ -441,12 +474,13 @@ export const createTradeOnChain = async ({
             encryptedOfferAmount,
             encryptedRequestAmount,
             expiresAt,
+            directAccessHash,
             resolvedTermsHash ?? ZERO_BYTES32,
-            resolvedMakerTermsPayload,
-            resolvedCounterpartyTermsPayload,
+            encryptedAccessSecret,
+            termsPayload,
             { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
           )
-        : await tradeContract.createPartyCounterTrade(
+        : await tradeContract.createDirectCounterTrade(
           parentTradeId,
           [resolveTradeAssetTypeValue(offerAsset.kind), offerAsset.tokenAddress ?? ZERO_ADDRESS],
           [resolveTradeAssetTypeValue(requestAsset.kind), requestAsset.tokenAddress ?? ZERO_ADDRESS],
@@ -454,12 +488,13 @@ export const createTradeOnChain = async ({
           encryptedOfferAmount,
           encryptedRequestAmount,
           expiresAt,
+          directAccessHash,
           resolvedTermsHash ?? ZERO_BYTES32,
-          resolvedMakerTermsPayload,
-          resolvedCounterpartyTermsPayload,
+          encryptedAccessSecret,
+          termsPayload,
           { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
         )
-      : await tradeContract.createPartyTrade(
+      : await tradeContract.createDirectTrade(
           [resolveTradeAssetTypeValue(offerAsset.kind), offerAsset.tokenAddress ?? ZERO_ADDRESS],
           [resolveTradeAssetTypeValue(requestAsset.kind), requestAsset.tokenAddress ?? ZERO_ADDRESS],
           publicAmounts,
@@ -467,10 +502,10 @@ export const createTradeOnChain = async ({
           encryptedRequestAmount,
           takerAddress,
           expiresAt,
-          accessHash ?? ZERO_BYTES32,
+          directAccessHash,
           resolvedTermsHash ?? ZERO_BYTES32,
-          resolvedMakerTermsPayload,
-          resolvedCounterpartyTermsPayload,
+          encryptedAccessSecret,
+          termsPayload,
           { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
         );
     const createReceipt = requireSuccessfulReceipt(await createTx.wait(), 'Trade creation failed on-chain.');
@@ -478,10 +513,10 @@ export const createTradeOnChain = async ({
       tradeContract,
       createReceipt as { logs?: unknown[] },
       'Trade was created, but the trade id could not be resolved.',
-      PARTY_TRADE_ESCROW_CONTRACT_ABI
+      DIRECT_TRADE_ESCROW_CONTRACT_ABI
     );
 
-    return { tradeId, escrowContract: PARTY_TRADE_ESCROW_CONTRACT_ADDRESS };
+    return { tradeId, escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS };
   }
 
   const tradeContract = await createTradeContract(signer);
@@ -985,11 +1020,11 @@ export const acceptCounterTradeAndCloseParentOnChain = async ({
       ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
       : { value: requestAsset.kind === 'native' ? resolvedRequestAmountWei : 0n };
   let acceptTx: { wait: () => Promise<unknown>; hash?: unknown };
-  if (config.partyVisible) {
+  if (config.directVisible) {
     const functionName = accessSecret ? 'acceptCounterTradeAdvancedAndCloseParent' : 'acceptCounterTradeAndCloseParent';
     const selector =
       requestAsset.kind === 'private-erc20'
-        ? await resolveTradeFunctionSelector(functionName, PARTY_TRADE_ESCROW_CONTRACT_ABI)
+        ? await resolveTradeFunctionSelector(functionName, DIRECT_TRADE_ESCROW_CONTRACT_ABI)
         : '';
     const encryptedRequestAmount =
       requestAsset.kind === 'private-erc20'
@@ -1085,10 +1120,10 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
     await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, requestAmountWei, resolvedEscrowContract);
   }
 
-  if (config.partyVisible) {
-    const functionName = accessSecret ? 'acceptPartyTradeWithSecret' : 'acceptPartyTrade';
+  if (config.directVisible) {
+    const functionName = accessSecret ? 'acceptDirectTradeWithSecret' : 'acceptDirectTrade';
     const fillSelector = requestIsPrivate
-      ? await resolveTradeFunctionSelector(functionName, PARTY_TRADE_ESCROW_CONTRACT_ABI)
+      ? await resolveTradeFunctionSelector(functionName, DIRECT_TRADE_ESCROW_CONTRACT_ABI)
       : '';
     const encryptedRequestAmount = requestIsPrivate
       ? await encryptPrivateUint256Input(signer, requestAmountWei, resolvedEscrowContract, fillSelector)
@@ -1098,11 +1133,11 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
       gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
     };
     const fillTx = accessSecret
-      ? await tradeContract.acceptPartyTradeWithSecret(tradeId, encryptedRequestAmount, accessSecret, txOverrides)
-      : await tradeContract.acceptPartyTrade(tradeId, encryptedRequestAmount, txOverrides);
+      ? await tradeContract.acceptDirectTradeWithSecret(tradeId, encryptedRequestAmount, accessSecret, txOverrides)
+      : await tradeContract.acceptDirectTrade(tradeId, encryptedRequestAmount, txOverrides);
     const fillReceipt = requireSuccessfulReceipt(
       (await fillTx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown },
-      'Party-visible trade fill failed on-chain.'
+      'Direct-visible trade fill failed on-chain.'
     );
     return {
       filledTxHash: resolveAcceptedTxHash(fillTx as { hash?: unknown }, fillReceipt),
@@ -1145,6 +1180,40 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
     filledTxHash: resolveAcceptedTxHash(fillTx as { hash?: unknown }, fillReceipt),
     fullyFilled: await resolvePrivateOrderFillResult(fillReceipt)
   };
+};
+
+export const acceptDirectVisibleTradeOnChain = async ({
+  signer,
+  ownerAddress,
+  tradeId,
+  requestAsset,
+  requestAmountWei,
+  escrowContract,
+  accessSecret
+}: {
+  signer: TradeSigner;
+  ownerAddress: string;
+  tradeId: number;
+  requestAsset: TradeAssetPayload;
+  requestAmountWei: bigint;
+  escrowContract?: string;
+  accessSecret?: string;
+}): Promise<{ acceptedTxHash?: string }> => {
+  const resolvedEscrowContract = escrowContract ?? DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
+  const config = resolveTradeEscrowContractConfig(resolvedEscrowContract);
+  if (!config.directVisible) {
+    throw new Error('Accept only is available for Direct OTC trades.');
+  }
+  const result = await fillPrivateFixedPriceTradeOnChain({
+    signer,
+    ownerAddress,
+    tradeId,
+    requestAsset,
+    requestAmountWei,
+    escrowContract: resolvedEscrowContract,
+    accessSecret
+  });
+  return { acceptedTxHash: result.filledTxHash };
 };
 
 export const replacePrivateFixedPriceTradeOnChain = async ({
@@ -1314,6 +1383,97 @@ export const editTradeOnChain = async ({
   return { tradeId, escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS };
 };
 
+export const editDirectTradeOnChain = async ({
+  signer,
+  makerAddress,
+  originalTradeId,
+  takerAddress,
+  offerAsset,
+  offerAmountWei,
+  requestAsset,
+  requestAmountWei,
+  expiresAt,
+  nativeFeeWei,
+  directAccessSecret,
+  parentEscrowContract,
+  parentTradeId
+}: {
+  signer: TradeSigner;
+  makerAddress: string;
+  originalTradeId: number;
+  takerAddress: string;
+  offerAsset: TradeAssetSelection;
+  offerAmountWei: bigint;
+  requestAsset: TradeAssetSelection;
+  requestAmountWei: bigint;
+  expiresAt: number;
+  nativeFeeWei: bigint;
+  directAccessSecret?: string;
+  parentEscrowContract?: string;
+  parentTradeId?: number;
+}): Promise<{ tradeId: number; escrowContract: string }> => {
+  if (!isDirectTradeEscrowConfigured()) {
+    throw new Error('Direct OTC edits need the V1 Direct OTC escrow.');
+  }
+
+  const { accessSecret: resolvedDirectAccessSecret, termsPayload } = await buildDirectTermsPayload({
+    makerAddress,
+    takerAddress,
+    offerAsset,
+    offerAmountWei,
+    requestAsset,
+    requestAmountWei,
+    expiresAt,
+    directAccessSecret,
+    parentEscrowContract,
+    parentTradeId
+  });
+
+  const directContract = await createTradeContract(signer, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
+  await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
+  const editSelector = await resolveTradeFunctionSelector('editDirectTrade', DIRECT_TRADE_ESCROW_CONTRACT_ABI);
+  const encryptedOfferAmount =
+    offerAsset.kind === 'private-erc20'
+      ? await encryptPrivateUint256Input(signer, offerAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, editSelector)
+      : EMPTY_PRIVATE_UINT256_INPUT;
+  const encryptedRequestAmount =
+    requestAsset.kind === 'private-erc20'
+      ? await encryptPrivateUint256Input(signer, requestAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, editSelector)
+      : EMPTY_PRIVATE_UINT256_INPUT;
+  const publicAmounts = {
+    offerAmount: offerAsset.kind === 'private-erc20' ? 0n : offerAmountWei,
+    requestAmount: requestAsset.kind === 'private-erc20' ? 0n : requestAmountWei
+  };
+  const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
+  const cotiEthers = await loadCotiEthersModule();
+  const termsHash = cotiEthers.keccak256(termsPayload);
+  const encryptedAccessSecret = await encryptDirectAccessSecretInput(signer, resolvedDirectAccessSecret, editSelector);
+  const editTx = await directContract.editDirectTrade(
+    originalTradeId,
+    [resolveTradeAssetTypeValue(offerAsset.kind), offerAsset.tokenAddress ?? ZERO_ADDRESS],
+    [resolveTradeAssetTypeValue(requestAsset.kind), requestAsset.tokenAddress ?? ZERO_ADDRESS],
+    publicAmounts,
+    encryptedOfferAmount,
+    encryptedRequestAmount,
+    takerAddress,
+    expiresAt,
+    cotiEthers.keccak256(resolvedDirectAccessSecret),
+    termsHash,
+    encryptedAccessSecret,
+    termsPayload,
+    { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+  );
+  const editReceipt = requireSuccessfulReceipt(await editTx.wait(), 'Direct OTC edit failed on-chain.');
+  const tradeId = await resolveTradeIdFromReceipt(
+    directContract,
+    editReceipt as { logs?: unknown[] },
+    'Direct OTC trade was edited, but the replacement trade id could not be resolved.',
+    DIRECT_TRADE_ESCROW_CONTRACT_ABI
+  );
+
+  return { tradeId, escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS };
+};
+
 export const counterTradeAndCloseCounteredTradeOnChain = async ({
   signer,
   makerAddress,
@@ -1324,9 +1484,7 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
   requestAmountWei,
   expiresAt,
   nativeFeeWei,
-  makerTermsPayload,
-  counterpartyTermsPayload,
-  partyAccessSecret,
+  directAccessSecret,
   counterTakerAddress,
   counteredEscrowContract,
   parentEscrowContract,
@@ -1341,69 +1499,58 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
   requestAmountWei: bigint;
   expiresAt: number;
   nativeFeeWei: bigint;
-  makerTermsPayload?: string;
-  counterpartyTermsPayload?: string;
-  partyAccessSecret?: string;
+  directAccessSecret?: string;
   counterTakerAddress?: string;
   counteredEscrowContract?: string;
   parentEscrowContract?: string;
   parentTradeId?: number;
 }): Promise<{ tradeId: number; escrowContract: string }> => {
-  if (!isPartyTradeEscrowConfigured()) {
+  if (!isDirectTradeEscrowConfigured()) {
     throw new Error(
-      'Counter replacement needs the V1 party OTC escrow before it can be created with private on-chain recovery.'
+      'Counter replacement needs the V1 Direct OTC escrow before it can be created with private on-chain recovery.'
     );
   }
-  let resolvedMakerTermsPayload = makerTermsPayload;
-  let resolvedCounterpartyTermsPayload = counterpartyTermsPayload;
-  if ((!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) && partyAccessSecret && counterTakerAddress) {
-    const terms = buildPartyTradeTerms({
-      maker: makerAddress,
-      taker: counterTakerAddress,
-      offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: offerAmountWei.toString() },
-      request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
-      expiresAt,
-      parentEscrowContract,
-      parentTradeId
-    });
-    resolvedMakerTermsPayload = await encryptTradeRecoveryPayloadForSigner(
-      signer,
-      buildTradeRecoveryPayload({
-        kind: 'party',
-        accessSecret: partyAccessSecret,
-        maker: makerAddress,
-        taker: counterTakerAddress,
-        offer: terms.offer,
-        request: terms.request,
-        expiresAt: terms.expiresAt,
-        parentEscrowContract: terms.parentEscrowContract,
-        parentTradeId: terms.parentTradeId
-      })
-    );
-    resolvedCounterpartyTermsPayload = await encryptPartyTradeTerms(terms, partyAccessSecret);
+  if (
+    isLegacyPrivateOrderEscrowContractAddress(counteredEscrowContract) ||
+    isLegacyPrivateOrderEscrowContractAddress(parentEscrowContract)
+  ) {
+    throw new Error(PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE);
   }
-  if (!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) {
-    throw new Error('Party-visible counter replacements need encrypted on-chain term payloads before creation.');
+  if (!counterTakerAddress) {
+    throw new Error('Direct-visible counter replacements need the counterparty wallet before creation.');
   }
+  const { accessSecret: resolvedDirectAccessSecret, termsPayload } = await buildDirectTermsPayload({
+    makerAddress,
+    takerAddress: counterTakerAddress,
+    offerAsset,
+    offerAmountWei,
+    requestAsset,
+    requestAmountWei,
+    expiresAt,
+    directAccessSecret,
+    parentEscrowContract,
+    parentTradeId
+  });
 
-  const partyContract = await createTradeContract(signer, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS);
-  await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS);
+  const directContract = await createTradeContract(signer, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
+  await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
   const counterSelector = await resolveTradeFunctionSelector(
     'counterTradeAndCloseCounteredTrade',
-    PARTY_TRADE_ESCROW_CONTRACT_ABI
+    DIRECT_TRADE_ESCROW_CONTRACT_ABI
   );
   const encryptedOfferAmount =
     offerAsset.kind === 'private-erc20'
-      ? await encryptPrivateUint256Input(signer, offerAmountWei, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS, counterSelector)
+      ? await encryptPrivateUint256Input(signer, offerAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, counterSelector)
       : EMPTY_PRIVATE_UINT256_INPUT;
   const encryptedRequestAmount =
     requestAsset.kind === 'private-erc20'
-      ? await encryptPrivateUint256Input(signer, requestAmountWei, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS, counterSelector)
+      ? await encryptPrivateUint256Input(signer, requestAmountWei, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, counterSelector)
       : EMPTY_PRIVATE_UINT256_INPUT;
   const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
   const cotiEthers = await loadCotiEthersModule();
-  const termsHash = cotiEthers.keccak256(resolvedMakerTermsPayload);
-  const partyAssetArgs = [
+  const termsHash = cotiEthers.keccak256(termsPayload);
+  const encryptedAccessSecret = await encryptDirectAccessSecretInput(signer, resolvedDirectAccessSecret, counterSelector);
+  const directAssetArgs = [
     [resolveTradeAssetTypeValue(offerAsset.kind), offerAsset.tokenAddress ?? ZERO_ADDRESS],
     [resolveTradeAssetTypeValue(requestAsset.kind), requestAsset.tokenAddress ?? ZERO_ADDRESS],
     {
@@ -1413,24 +1560,25 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
     encryptedOfferAmount,
     encryptedRequestAmount,
     expiresAt,
+    cotiEthers.keccak256(resolvedDirectAccessSecret),
     termsHash,
-    resolvedMakerTermsPayload,
-    resolvedCounterpartyTermsPayload
+    encryptedAccessSecret,
+    termsPayload
   ] as const;
-  const counteredEscrowIsParty =
+  const counteredEscrowIsDirect =
     !counteredEscrowContract ||
-    counteredEscrowContract.toLowerCase() === PARTY_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
-  const counterTx = counteredEscrowIsParty
-    ? await partyContract.counterTradeAndCloseCounteredTrade(counteredTradeId, ...partyAssetArgs, {
+    counteredEscrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+  const counterTx = counteredEscrowIsDirect
+    ? await directContract.counterTradeAndCloseCounteredTrade(counteredTradeId, ...directAssetArgs, {
         value: valueToSend,
         gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
       })
     : parentEscrowContract && parentTradeId && counterTakerAddress
-      ? await partyContract.createPartyCounterTradeForParent(
+      ? await directContract.createDirectCounterTradeForParent(
           parentEscrowContract,
           parentTradeId,
           counterTakerAddress,
-          ...partyAssetArgs,
+          ...directAssetArgs,
           { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
         )
       : (() => {
@@ -1438,13 +1586,13 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
         })();
   const counterReceipt = requireSuccessfulReceipt(await counterTx.wait(), 'Counter replacement failed on-chain.');
   const tradeId = await resolveTradeIdFromReceipt(
-    partyContract,
+    directContract,
     counterReceipt as { logs?: unknown[] },
     'Counter was created, but the trade id could not be resolved.',
-    PARTY_TRADE_ESCROW_CONTRACT_ABI
+    DIRECT_TRADE_ESCROW_CONTRACT_ABI
   );
 
-  return { tradeId, escrowContract: PARTY_TRADE_ESCROW_CONTRACT_ADDRESS };
+  return { tradeId, escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS };
 };
 
 const runTradeActionOnChain = async ({

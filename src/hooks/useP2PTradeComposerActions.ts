@@ -3,6 +3,7 @@ import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
   PRIVATE_REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_ADDRESS,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   formatTokenAmount,
   type TradeAssetPayload,
   type TradeSnapshot
@@ -17,10 +18,12 @@ import type { TradeComposerModel } from '../lib/tradeComposer';
 import {
   counterTradeAndCloseCounteredTradeOnChain,
   createTradeOnChain,
+  editDirectTradeOnChain,
   editTradeOnChain,
   replacePrivateFixedPriceTradeOnChain
 } from '../lib/tradeActions';
-import { createTradeAccessSecret } from '../lib/partyTradeTerms';
+import { getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
+import { createTradeAccessSecret } from '../lib/directTradeTerms';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 
 type TradeSigner = JsonRpcSigner | Wallet;
@@ -93,6 +96,7 @@ type UseP2PTradeComposerActionsArgs = {
   refreshPublicTrades: () => Promise<void>;
   rememberPrivateTradeLiquidity: (tradeId: number, escrowContract: string | undefined, offerAmountWei: bigint) => void;
   rememberTradeAccessSecret: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
+  resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   resolveRequiredFeeForTradeCreate: () => Promise<bigint>;
   setCounterParentTrade: Dispatch<SetStateAction<TradeSnapshot | null>>;
   setCreatedTradeId: Dispatch<SetStateAction<number | null>>;
@@ -147,6 +151,7 @@ export default function useP2PTradeComposerActions({
   refreshPublicTrades,
   rememberPrivateTradeLiquidity,
   rememberTradeAccessSecret,
+  resolveKnownTradeAccessSecret,
   resolveRequiredFeeForTradeCreate,
   setCounterParentTrade,
   setCreatedTradeId,
@@ -175,20 +180,9 @@ export default function useP2PTradeComposerActions({
 }: UseP2PTradeComposerActionsArgs): UseP2PTradeComposerActionsResult {
   const beginCounterTrade = useCallback(
     (snapshot: TradeSnapshot) => {
-      if (!walletAddress) {
-        setTradeActionError('Connect a wallet before countering.');
-        return;
-      }
-      if (snapshot.maker.toLowerCase() === walletKey) {
-        setTradeActionError('This is your offer. Cancel it and create a new one to change the terms.');
-        return;
-      }
-      if (snapshot.status !== 'open') {
-        setTradeActionError('Only open trades can receive counter offers.');
-        return;
-      }
-      if (snapshot.counterParentTradeId && snapshot.taker.toLowerCase() !== walletKey) {
-        setTradeActionError('Only the recipient of a counter offer can replace it with a new counter.');
+      const counterUnavailableReason = getCounterOfferUnavailableReason(snapshot, walletAddress ? walletKey : '');
+      if (counterUnavailableReason) {
+        setTradeActionError(counterUnavailableReason);
         return;
       }
 
@@ -359,6 +353,13 @@ export default function useP2PTradeComposerActions({
       const isCounterReplacement = Boolean(counterParentTrade?.counterParentTradeId);
       const editSourceTrade = editingTrade;
       const isEditTrade = editSourceTrade !== null;
+      if (counterParentTrade) {
+        const counterUnavailableReason = getCounterOfferUnavailableReason(counterParentTrade, walletKey);
+        if (counterUnavailableReason) {
+          setTradeActionError(counterUnavailableReason);
+          return;
+        }
+      }
       const hiddenLiquidity = Boolean(
         tradeHidePrivateLiquidity &&
           tradeComposerModel.hiddenLiquidityActive &&
@@ -371,17 +372,26 @@ export default function useP2PTradeComposerActions({
         setTradeActionError('Hidden amount orders must stay hidden when edited. Cancel the edit to create a visible order.');
         return;
       }
-      const visiblePrivateTokenPartyTrade = Boolean(
+      const visiblePrivateTokenDirectTrade = Boolean(
         !hiddenLiquidity &&
           !isEditTrade &&
           (isCounterTrade || tradeVisibility !== 'public')
       );
+      const isEditingDirectTrade = Boolean(
+        editSourceTrade?.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
+      );
+      const existingEditAccessSecret = isEditingDirectTrade
+        ? resolveKnownTradeAccessSecret(editSourceTrade!.tradeId, editSourceTrade!.escrowContract)
+        : '';
       const accessSecret =
-        (!isEditTrade && (tradeVisibility !== 'public' || isCounterTrade))
+        (isEditingDirectTrade || (!isEditTrade && (tradeVisibility !== 'public' || isCounterTrade)))
           ? createTradeAccessSecret()
           : '';
-      const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
-      const signer = await getTradeSigner(isPrivateTradeAsset(offerToken) || hiddenLiquidity || visiblePrivateTokenPartyTrade);
+      const directEditAccessSecret = isEditingDirectTrade ? existingEditAccessSecret || accessSecret : accessSecret;
+      const accessHash = directEditAccessSecret ? await hashTradeAccessSecret(directEditAccessSecret) : ZERO_BYTES32;
+      const signer = await getTradeSigner(
+        isPrivateTradeAsset(offerToken) || isPrivateTradeAsset(requestToken) || hiddenLiquidity || visiblePrivateTokenDirectTrade
+      );
       const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
       const expiresAt = tradeHasNoExpiry
         ? 0
@@ -391,7 +401,9 @@ export default function useP2PTradeComposerActions({
       const takerAddress =
         counterParentTrade?.maker ??
         (isEditTrade
-          ? ZERO_TRADE_TAKER_ADDRESS
+          ? isEditingDirectTrade
+            ? editSourceTrade?.taker ?? ZERO_TRADE_TAKER_ADDRESS
+            : ZERO_TRADE_TAKER_ADDRESS
           : tradeVisibility === 'direct'
             ? directTradeRecipientNormalized
             : ZERO_TRADE_TAKER_ADDRESS);
@@ -413,6 +425,22 @@ export default function useP2PTradeComposerActions({
               hiddenOfferAmountWei: offerAmount,
               publicOfferAmountWei: publicOfferAmount
             })
+          : isEditingDirectTrade
+            ? await editDirectTradeOnChain({
+                signer,
+                makerAddress: walletAddress,
+                originalTradeId: editSourceTrade.tradeId,
+                takerAddress,
+                offerAsset: offerToken,
+                offerAmountWei: offerAmount,
+                requestAsset: requestToken,
+                requestAmountWei: requestAmount,
+                expiresAt,
+                nativeFeeWei,
+                directAccessSecret: directEditAccessSecret || undefined,
+                parentEscrowContract: editSourceTrade.counterParentEscrow,
+                parentTradeId: editSourceTrade.counterParentTradeId
+              })
           : await editTradeOnChain({
               signer,
               makerAddress: walletAddress,
@@ -437,7 +465,7 @@ export default function useP2PTradeComposerActions({
               requestAmountWei: requestAmount,
               expiresAt,
               nativeFeeWei,
-              partyAccessSecret: accessSecret || undefined,
+              directAccessSecret: accessSecret || undefined,
               counterTakerAddress: counterParentTrade.maker,
               counteredEscrowContract: counterParentTrade.escrowContract,
               parentEscrowContract: counterParentTrade.counterParentEscrow ?? counterParentTrade.escrowContract,
@@ -460,7 +488,7 @@ export default function useP2PTradeComposerActions({
               hidePrivateLiquidity: hiddenLiquidity,
               hiddenOfferAmountWei: hiddenLiquidity ? offerAmount : undefined,
               publicOfferAmountWei: hiddenLiquidity ? publicOfferAmount : undefined,
-              partyAccessSecret: accessSecret || undefined,
+              directAccessSecret: accessSecret || undefined,
               parentEscrowContract: counterParentTrade?.escrowContract
             });
       const tradeId = createResult.tradeId;
@@ -471,6 +499,7 @@ export default function useP2PTradeComposerActions({
       const counterParentTradeId = isCounterReplacement
         ? counterParentTrade?.counterParentTradeId
         : counterParentTrade?.tradeId;
+      const createdOnDirectEscrow = createResult.escrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
       const snapshot: TradeSnapshot = {
         tradeId,
         escrowContract: createResult.escrowContract,
@@ -481,8 +510,9 @@ export default function useP2PTradeComposerActions({
         createdAt,
         expiresAt,
         status: 'open',
-        isPublic: isEditTrade || (!isCounterTrade && tradeVisibility === 'public'),
-        hasAccessHash: Boolean(accessSecret),
+        isPublic: createdOnDirectEscrow ? false : isEditTrade || (!isCounterTrade && tradeVisibility === 'public'),
+        hasAccessHash: Boolean(directEditAccessSecret),
+        accessHash: directEditAccessSecret ? accessHash : undefined,
         parentTradeId: isEditTrade ? editSourceTrade.tradeId : counterParentTradeId,
         counterParentEscrow: isCounterTrade ? counterParentTrade?.escrowContract : undefined,
         counterParentTradeId: isCounterTrade ? counterParentTradeId : undefined,
@@ -502,8 +532,8 @@ export default function useP2PTradeComposerActions({
             }
           : undefined
       };
-      const shareUrl = buildTradeShareUrl(tradeId, accessSecret || undefined, createResult.escrowContract);
-      rememberTradeAccessSecret(tradeId, accessSecret || undefined, createResult.escrowContract);
+      const shareUrl = buildTradeShareUrl(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
+      rememberTradeAccessSecret(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
       if (isEditTrade) {
         mergeTradeSnapshot({
           ...editSourceTrade,
@@ -531,7 +561,7 @@ export default function useP2PTradeComposerActions({
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
       setTradeHasNoExpiry(false);
       setTradeHidePrivateLiquidity(false);
-      openTrade(tradeId, accessSecret || undefined, createResult.escrowContract);
+      openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
       await Promise.all([
         loadWalletBalances(),
         refreshMyTrades(),
@@ -559,6 +589,7 @@ export default function useP2PTradeComposerActions({
     refreshPublicTrades,
     rememberPrivateTradeLiquidity,
     rememberTradeAccessSecret,
+    resolveKnownTradeAccessSecret,
     resolveRequiredFeeForTradeCreate,
     setCounterParentTrade,
     setCreatedTradeId,

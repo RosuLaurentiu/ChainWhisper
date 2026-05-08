@@ -23,6 +23,7 @@ import {
   type TradeResponseMessagePayload,
   type TradeSnapshot
 } from '../lib/appShared';
+import { getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
 
 type MessageReactionSummary = {
   emoji: string;
@@ -437,6 +438,9 @@ function DirectChatPanel({
                       const latestResponse = latestTradeResponsesById[tradeKey] ?? null;
                       const defaultExpanded = parsedTradeOffer.tradeId === latestTradeId;
                       const expanded = tradeCardExpandedState[tradeKey] ?? defaultExpanded;
+                      const counterUnavailableReason = snapshot
+                        ? getCounterOfferUnavailableReason(snapshot, walletAddress.trim().toLowerCase())
+                        : undefined;
 
                       return (
                         <TradeOfferCard
@@ -445,6 +449,8 @@ function DirectChatPanel({
                           latestResponse={latestResponse}
                           currentWalletAddress={walletAddress}
                           actionPending={processingTradeActionId === tradeKey}
+                          showCounterAction={!counterUnavailableReason}
+                          counterUnavailableReason={counterUnavailableReason}
                           collapsed={!expanded}
                           canToggleCollapsed={true}
                           onToggleCollapsed={() => {

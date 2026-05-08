@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   RECURRING_OTC_CONTRACT_ADDRESS
 } from '../lib/appShared/core';
@@ -33,10 +33,10 @@ describe('P2P trade route helpers', () => {
       accessSecret: ACCESS_SECRET,
       routeError: ''
     });
-    expect(resolveTradeRouteFromParts(`/trades/l/${code}`, '?escrow=party')).toMatchObject({
+    expect(resolveTradeRouteFromParts(`/trades/l/${code}`, '?escrow=direct')).toMatchObject({
       view: 'trade',
       tradeId: 42,
-      escrowContract: PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
       accessSecret: ACCESS_SECRET,
       routeError: ''
     });
@@ -51,6 +51,8 @@ describe('P2P trade route helpers', () => {
   });
 
   it('parses shared input while rejecting partial numeric text', () => {
+    const bareCode = encodeTradeLink(9, ACCESS_SECRET);
+    expect(resolveTradeLinkInput(bareCode)).toEqual({ tradeId: 9, accessSecret: ACCESS_SECRET });
     expect(resolveTradeLinkInput('#123')).toEqual({ tradeId: 123 });
     expect(resolveTradeLinkInput(`http://localhost:5173/trades/recurring?order=7#${ACCESS_SECRET}`)).toEqual({
       tradeId: 7,
@@ -64,8 +66,8 @@ describe('P2P trade route helpers', () => {
     expect(buildTradeLinkPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
       `/trades/recurring?order=7#${ACCESS_SECRET}`
     );
-    expect(buildTradeLinkPath(8, ACCESS_SECRET, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
-      `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=party`
+    expect(buildTradeLinkPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
+      `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
     );
   });
 });

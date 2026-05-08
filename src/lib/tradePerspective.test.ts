@@ -134,6 +134,24 @@ describe('groupWalletTradesByPerspective', () => {
     });
   });
 
+  it('shows Direct counters addressed to the wallet as received offers', () => {
+    const directCounter = trade({
+      tradeId: 8,
+      maker,
+      taker,
+      escrowContract: '0x9999999999999999999999999999999999999999',
+      counterParentTradeId: 3,
+      counterParentEscrow: '0x8888888888888888888888888888888888888888',
+      isPublic: false
+    });
+
+    expect(groupWalletTradesByPerspective([directCounter], taker)).toEqual({
+      needsAction: [directCounter],
+      myActiveOffers: [],
+      history: []
+    });
+  });
+
   it('shows active maker recurring orders in history once they have executions', () => {
     const makerRecurringTrade = trade({
       tradeId: 7,

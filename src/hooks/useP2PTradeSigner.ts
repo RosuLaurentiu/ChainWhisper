@@ -6,9 +6,12 @@ import {
   normalizeChainId,
   type Eip1193Provider
 } from '../lib/appShared';
-import { getCotiSnapAesKey, storeCotiSnapAesKey } from '../lib/cotiSnap';
+import { getOrRecoverAesForWallet } from '../lib/cotiAesUnlock';
 
 export type P2PTradeSigner = JsonRpcSigner | Wallet;
+export type P2PTradeSignerOptions = {
+  refreshAes?: boolean;
+};
 
 type MergeOnboardInfoByAddress = (
   previous: Record<string, OnboardInfo>,
@@ -40,9 +43,9 @@ export default function useP2PTradeSigner({
   setOnboardInfoByAddress,
   signerCacheRef,
   walletAddress
-}: UseP2PTradeSignerArgs): (requireAes: boolean) => Promise<P2PTradeSigner> {
+}: UseP2PTradeSignerArgs): (requireAes: boolean, options?: P2PTradeSignerOptions) => Promise<P2PTradeSigner> {
   return useCallback(
-    async (requireAes: boolean): Promise<P2PTradeSigner> => {
+    async (requireAes: boolean, options: P2PTradeSignerOptions = {}): Promise<P2PTradeSigner> => {
       const burnerSigner = burnerWalletRef.current;
       if (burnerSigner && walletAddress && burnerSigner.address.toLowerCase() === walletAddress.toLowerCase()) {
         const cacheKey = burnerSigner.address.toLowerCase();
@@ -50,8 +53,12 @@ export default function useP2PTradeSigner({
           burnerSigner.setUserOnboardInfo(onboardInfoByAddress[cacheKey]);
         }
         burnerSigner.disableAutoOnboard();
-        if (requireAes && !burnerSigner.getUserOnboardInfo()?.aesKey) {
-          await burnerSigner.generateOrRecoverAes();
+        if (requireAes && (options.refreshAes || !burnerSigner.getUserOnboardInfo()?.aesKey)) {
+          await getOrRecoverAesForWallet({
+            forceRefresh: options.refreshAes,
+            signer: burnerSigner,
+            walletAddress: burnerSigner.address
+          });
         }
         const onboardInfo = burnerSigner.getUserOnboardInfo();
         if (onboardInfo?.aesKey) {
@@ -85,18 +92,13 @@ export default function useP2PTradeSigner({
       }
 
       signer.disableAutoOnboard();
-      if (requireAes && !signer.getUserOnboardInfo()?.aesKey) {
-        const snapAesKey = await getCotiSnapAesKey(provider);
-        if (snapAesKey) {
-          signer.setUserOnboardInfo({
-            ...(signer.getUserOnboardInfo() ?? {}),
-            aesKey: snapAesKey
-          });
-        }
-      }
-      if (requireAes && !signer.getUserOnboardInfo()?.aesKey) {
-        await signer.generateOrRecoverAes();
-        await storeCotiSnapAesKey(provider, signer.getUserOnboardInfo()?.aesKey).catch(() => {});
+      if (requireAes && (options.refreshAes || !signer.getUserOnboardInfo()?.aesKey)) {
+        await getOrRecoverAesForWallet({
+          forceRefresh: options.refreshAes,
+          provider,
+          signer,
+          walletAddress
+        });
       }
 
       const onboardInfo = signer.getUserOnboardInfo();

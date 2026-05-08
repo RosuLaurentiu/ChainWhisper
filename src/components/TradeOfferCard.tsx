@@ -22,6 +22,10 @@ import {
   resolveTradeOrderSummary,
   type TradeOrderSideRole
 } from '../lib/tradePerspective';
+import {
+  getTradeTermsVisibility,
+  hasHydratedDirectTradeTerms
+} from '../lib/p2pTradeView';
 
 type TradeOfferCardProps = {
   offer: TradeOfferMessagePayload;
@@ -39,9 +43,11 @@ type TradeOfferCardProps = {
   onRevealPrivateProgress?: () => void;
   revealPrivateProgressPending?: boolean;
   showCounterAction?: boolean;
+  counterUnavailableReason?: string;
   showEditAction?: boolean;
   onToggleCollapsed?: () => void;
   onAccept: () => void;
+  onAcceptOnly?: () => void;
   onPartialFill?: (amountInput: string) => void;
   onDecline: () => void;
   onCounter: () => void;
@@ -100,7 +106,7 @@ const resolveTradeStatus = (
 ): string => {
   if (snapshot?.status && snapshot.status !== 'unknown') {
     if (
-      (snapshot.hiddenLiquidity || offer.hiddenLiquidity) &&
+      (snapshot ? getTradeTermsVisibility(snapshot) === 'hidden-liquidity' : offer.hiddenLiquidity) &&
       snapshot.status === 'open' &&
       latestResponse?.action === 'accepted'
     ) {
@@ -264,9 +270,11 @@ export default function TradeOfferCard({
   onRevealPrivateProgress,
   revealPrivateProgressPending = false,
   showCounterAction = true,
+  counterUnavailableReason,
   showEditAction = false,
   onToggleCollapsed,
   onAccept,
+  onAcceptOnly,
   onPartialFill,
   onDecline,
   onCounter,
@@ -281,12 +289,20 @@ export default function TradeOfferCard({
   const isMaker = walletKey.length > 0 && offer.maker.toLowerCase() === walletKey;
   const isTaker = walletKey.length > 0 && offer.taker.toLowerCase() === walletKey;
   const isOpenTakerTrade = isZeroTradeTakerAddress(offer.taker);
-  const hiddenLiquidity = Boolean(snapshot?.hiddenLiquidity || offer.hiddenLiquidity);
+  const termsVisibility = snapshot
+    ? getTradeTermsVisibility(snapshot)
+    : offer.hiddenLiquidity
+      ? 'hidden-liquidity'
+      : 'public';
+  const hiddenLiquidity = termsVisibility === 'hidden-liquidity';
+  const directPrivateTerms = termsVisibility === 'direct-private-terms';
+  const directTermsHydrated = snapshot ? hasHydratedDirectTradeTerms(snapshot) : false;
   const statusLabel = resolveTradeStatus(offer, snapshot, latestResponse);
   const statusClassName = statusLabel.toLowerCase().replace(/\s+/g, '-');
   const isOpen = statusLabel === 'Open' || statusLabel === 'Pending sync';
   const canAcceptOpenTakerTrade = isOpen && isOpenTakerTrade && !isMaker;
   const hasWalletForOpenAccept = walletKey.length > 0;
+  const showCounterUnavailable = Boolean(counterUnavailableReason && !showCounterAction && (isTaker || canAcceptOpenTakerTrade));
   const showExpiryAt = isOpen;
   const baseOffer = snapshot?.offer ?? offer.offer;
   const baseRequest = snapshot?.request ?? offer.request;
@@ -323,7 +339,7 @@ export default function TradeOfferCard({
       ? `${shortenAddress(resolvedPeerAddress)} (you)`
       : resolvedPeerAddress
         ? shortenAddress(resolvedPeerAddress)
-        : offer.hiddenLiquidity
+        : hiddenLiquidity
           ? 'Private link'
           : 'Any wallet';
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
@@ -349,10 +365,14 @@ export default function TradeOfferCard({
             asset: side.asset,
             label: side.label,
             displayText:
-              hiddenLiquidity
+              hiddenLiquidity || (directPrivateTerms && !directTermsHydrated)
                 ? side.asset.symbol
                 : formatTradeAssetDisplayText(side.asset),
-            metaText: hiddenLiquidity ? 'Amount hidden' : undefined,
+            metaText: hiddenLiquidity
+              ? 'Amount hidden'
+              : directPrivateTerms && !directTermsHydrated
+                ? 'Private terms'
+                : undefined,
             tone: side.tone,
             role: side.role,
             verifyUrl: isOfferSide ? offerVerifyUrl : requestVerifyUrl,
@@ -366,9 +386,18 @@ export default function TradeOfferCard({
     assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[0]?.asset, assetPanels[1]?.asset) : null;
   const reverseRateLabel =
     assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[1]?.asset, assetPanels[0]?.asset) : null;
-  const showRatioCard = Boolean((hiddenLiquidity || tradeWindowLayout) && defaultRateLabel);
+  const showRatioCard = Boolean(
+    (hiddenLiquidity || tradeWindowLayout || (directPrivateTerms && !directTermsHydrated)) &&
+    (defaultRateLabel || (directPrivateTerms && !directTermsHydrated))
+  );
   const visibleRatioLabel =
-    showRatioCard && showReverseRate && reverseRateLabel ? reverseRateLabel : showRatioCard ? defaultRateLabel : null;
+    directPrivateTerms && !directTermsHydrated
+      ? 'Private terms'
+      : showRatioCard && showReverseRate && reverseRateLabel
+        ? reverseRateLabel
+        : showRatioCard
+          ? defaultRateLabel
+          : null;
   const visibleRatioAriaLabel = `Flip price ratio. Current ratio: ${visibleRatioLabel ?? 'unavailable'}.`;
   const tradeRateLabel = !hiddenLiquidity && !tradeWindowLayout && defaultRateLabel ? `Price ratio: ${defaultRateLabel}` : null;
   const visibleOrderValueLabel =
@@ -447,11 +476,27 @@ export default function TradeOfferCard({
       : null;
   const canRevealMakerPrivateProgress =
     tradeWindowLayout &&
-    hiddenLiquidity &&
-    isMaker &&
+    (
+      (hiddenLiquidity && isMaker) ||
+      (directPrivateTerms && !directTermsHydrated && (isMaker || isTaker))
+    ) &&
     Boolean(onRevealPrivateProgress) &&
     !makerPrivateProgressSummary;
   const counterParentTradeId = snapshot?.counterParentTradeId ?? offer.parentTradeId;
+  const isCounterTrade = Boolean(counterParentTradeId);
+  const revealPanelCopy = directPrivateTerms && !directTermsHydrated
+    ? {
+        heading: 'Private terms',
+        body: 'Reveal the exact Direct OTC terms shared with this wallet.',
+        title: 'Reveal this Direct offer with your wallet AES key',
+        button: 'Reveal terms'
+      }
+    : {
+        heading: 'Owner budget',
+        body: 'Reveal remaining hidden liquidity and private fills for this order.',
+        title: 'Reveal this one-off private order with your wallet AES key',
+        button: 'Reveal budget'
+      };
   const canShowPartialFill = Boolean(
     onPartialFill &&
       isOpen &&
@@ -556,6 +601,7 @@ export default function TradeOfferCard({
           {isTaker ? <span className="trade-card-parent incoming">Incoming offer</span> : null}
           {canAcceptOpenTakerTrade ? <span className="trade-card-parent incoming">Open offer</span> : null}
           {hiddenLiquidity ? <span className="trade-card-parent">Private order</span> : null}
+          {directPrivateTerms ? <span className="trade-card-parent">Private terms</span> : null}
           {counterParentTradeId ? <span className="trade-card-parent">Counter to #{counterParentTradeId}</span> : null}
           {snapshot?.replacesTradeId ? <span className="trade-card-parent">Edited from #{snapshot.replacesTradeId}</span> : null}
           {snapshot?.replacementTradeId ? <span className="trade-card-parent">Replaced by #{snapshot.replacementTradeId}</span> : null}
@@ -747,16 +793,16 @@ export default function TradeOfferCard({
           {canRevealMakerPrivateProgress ? (
             <div className="trade-card-private-reveal">
               <div>
-                <span>Owner budget</span>
-                <p>Reveal remaining hidden liquidity and private fills for this order.</p>
+                <span>{revealPanelCopy.heading}</span>
+                <p>{revealPanelCopy.body}</p>
               </div>
               <button
                 type="button"
                 onClick={onRevealPrivateProgress}
                 disabled={revealPrivateProgressPending}
-                title="Reveal this one-off private order with your wallet AES key"
+                title={revealPanelCopy.title}
               >
-                {revealPrivateProgressPending ? 'Revealing...' : 'Reveal budget'}
+                {revealPrivateProgressPending ? 'Revealing...' : revealPanelCopy.button}
               </button>
             </div>
           ) : null}
@@ -776,8 +822,21 @@ export default function TradeOfferCard({
                   {actionPending
                     ? 'Processing...'
                     : hasWalletForOpenAccept
-                      ? 'Buy'
+                      ? isCounterTrade && isTaker
+                        ? 'Accept & close related'
+                        : 'Buy'
                     : 'Connect wallet to buy'}
+                </button>
+              ) : null}
+              {!hiddenLiquidity && isCounterTrade && isTaker && onAcceptOnly ? (
+                <button
+                  type="button"
+                  className="trade-card-action trade-card-action-counter"
+                  onClick={onAcceptOnly}
+                  disabled={actionPending}
+                  title="Accept only this counter offer and keep the parent and sibling counters open."
+                >
+                  Accept only
                 </button>
               ) : null}
               {(isTaker || canAcceptOpenTakerTrade) &&
@@ -790,6 +849,16 @@ export default function TradeOfferCard({
                   disabled={actionPending}
                 >
                   Counter
+                </button>
+              ) : null}
+              {showCounterUnavailable && !(canShowPartialFill && hiddenLiquidity && baseOffer && baseRequest) ? (
+                <button
+                  type="button"
+                  className="trade-card-action trade-card-action-counter trade-card-action-disabled"
+                  disabled
+                  title={counterUnavailableReason}
+                >
+                  Counter unavailable
                 </button>
               ) : null}
               {isTaker ? (
@@ -821,6 +890,16 @@ export default function TradeOfferCard({
                         disabled={actionPending}
                       >
                         Counter
+                      </button>
+                    ) : null}
+                    {showCounterUnavailable && !showCounterAction ? (
+                      <button
+                        type="button"
+                        className="trade-card-action trade-card-action-counter trade-card-action-disabled"
+                        disabled
+                        title={counterUnavailableReason}
+                      >
+                        Counter unavailable
                       </button>
                     ) : null}
                   </div>

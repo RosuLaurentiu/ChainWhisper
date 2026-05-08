@@ -110,12 +110,12 @@ describe('wallet header labels', () => {
     expect(
       resolveWalletPrivacyUnlockPrompt({
         hasAesReady: false,
-        snapStatus: 'installed-aes-ready',
+        snapStatus: 'installed',
         unlocking: false
       })
     ).toMatchObject({
       label: 'Unlock privacy',
-      title: 'Recover the COTI AES key from the MetaMask Snap.'
+      title: 'COTI Snap is installed. Click to recover or create the AES key for this wallet.'
     });
     expect(
       resolveWalletPrivacyUnlockPrompt({
@@ -124,6 +124,40 @@ describe('wallet header labels', () => {
         unlocking: false
       }).title
     ).toContain('fallback');
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'installed-aes-stale',
+        unlocking: false
+    })
+    ).toMatchObject({
+      label: 'Unlock privacy'
+    });
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'key-mismatch',
+        unlocking: false
+      })
+    ).toMatchObject({
+      label: 'Unlock privacy'
+    });
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'repair-needed',
+        unlocking: false
+      })
+    ).toMatchObject({
+      label: 'Unlock privacy'
+    });
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'rejected',
+        unlocking: false
+      }).title
+    ).toContain('rejected');
     expect(resolveWalletPrivacyUnlockPrompt({ hasAesReady: false, unlocking: true }).label).toBe('Unlocking...');
   });
 });

@@ -1,16 +1,55 @@
-import type { Eip1193Provider } from './appShared';
+import { COTI_NETWORK, normalizeChainId, type Eip1193Provider } from './appShared';
 
 const COTI_SNAP_ID = 'npm:@coti-io/coti-snap';
 
 type SnapResponse = Record<string, unknown>;
+type CotiSnapConnectionStatus = 'ready' | 'not-installed' | 'unsupported' | 'rejected' | 'error';
 
 export type CotiSnapAesStatus =
   | 'unknown'
   | 'unsupported'
   | 'not-installed'
+  | 'installed'
   | 'installed-aes-ready'
   | 'installed-aes-missing'
+  | 'installed-aes-stale'
+  | 'key-mismatch'
+  | 'repair-needed'
+  | 'rejected'
   | 'error';
+
+export type CotiSnapAesKeyResult =
+  | { status: 'ready'; aesKey: string }
+  | { status: 'missing-aes' }
+  | { status: 'not-installed' }
+  | { status: 'unsupported' }
+  | { status: 'wallet-mismatch' }
+  | { status: 'wrong-network' }
+  | { status: 'rejected' }
+  | { status: 'error' };
+
+export type CotiSnapWalletContext = {
+  expectedChainId?: number;
+  walletAddress?: string;
+};
+
+const isUserRejectedError = (error: unknown): boolean => {
+  const candidate = error as { code?: unknown; message?: unknown } | null | undefined;
+  const message = typeof candidate?.message === 'string' ? candidate.message.toLowerCase() : '';
+  return candidate?.code === 4001 || message.includes('reject') || message.includes('denied');
+};
+
+const isUnsupportedSnapError = (error: unknown): boolean => {
+  const candidate = error as { code?: unknown; message?: unknown } | null | undefined;
+  const message = typeof candidate?.message === 'string' ? candidate.message.toLowerCase() : '';
+  return (
+    candidate?.code === -32601 ||
+    candidate?.code === 4200 ||
+    message.includes('unsupported') ||
+    message.includes('does not exist') ||
+    message.includes('not supported')
+  );
+};
 
 const getInstalledSnaps = async (provider: Eip1193Provider): Promise<Record<string, SnapResponse> | null> => {
   try {
@@ -20,11 +59,36 @@ const getInstalledSnaps = async (provider: Eip1193Provider): Promise<Record<stri
   }
 };
 
-const requestSnap = async (provider: Eip1193Provider): Promise<boolean> => {
+const normalizeWalletAddress = (address?: string | null): string => address?.trim().toLowerCase() ?? '';
+
+const confirmSnapWalletContext = async (
+  provider: Eip1193Provider,
+  context?: CotiSnapWalletContext
+): Promise<'ready' | 'wallet-mismatch' | 'wrong-network' | 'error'> => {
+  const expectedWallet = normalizeWalletAddress(context?.walletAddress);
+  const expectedChainId = context?.expectedChainId ?? COTI_NETWORK.chainIdDecimal;
+
+  try {
+    if (expectedWallet) {
+      const accounts = (await provider.request({ method: 'eth_accounts' })) as string[];
+      const activeWallet = normalizeWalletAddress(Array.isArray(accounts) ? accounts[0] : '');
+      if (activeWallet !== expectedWallet) {
+        return 'wallet-mismatch';
+      }
+    }
+
+    const activeChainId = normalizeChainId((await provider.request({ method: 'eth_chainId' })) as string | number);
+    return activeChainId === expectedChainId ? 'ready' : 'wrong-network';
+  } catch {
+    return 'error';
+  }
+};
+
+const requestSnap = async (provider: Eip1193Provider): Promise<CotiSnapConnectionStatus> => {
   try {
     const snaps = await getInstalledSnaps(provider);
     if (snaps && Object.prototype.hasOwnProperty.call(snaps, COTI_SNAP_ID)) {
-      return true;
+      return 'ready';
     }
   } catch {
     // Some injected wallets do not expose Snap discovery; requestSnaps below
@@ -38,9 +102,12 @@ const requestSnap = async (provider: Eip1193Provider): Promise<boolean> => {
         [COTI_SNAP_ID]: {}
       }
     });
-    return true;
-  } catch {
-    return false;
+    return 'ready';
+  } catch (error) {
+    if (isUserRejectedError(error)) {
+      return 'rejected';
+    }
+    return isUnsupportedSnapError(error) ? 'unsupported' : 'not-installed';
   }
 };
 
@@ -48,41 +115,40 @@ const invokeInstalledCotiSnap = async <T>(
   provider: Eip1193Provider,
   method: string,
   params?: Record<string, unknown>
-): Promise<T | null> => {
+): Promise<{ ok: true; value: T } | { ok: false; status: 'rejected' | 'error' }> => {
   try {
-    return (await provider.request({
+    const value = (await provider.request({
       method: 'wallet_invokeSnap',
       params: {
         snapId: COTI_SNAP_ID,
         request: params ? { method, params } : { method }
       }
     })) as T;
-  } catch {
-    return null;
+    return { ok: true, value };
+  } catch (error) {
+    return { ok: false, status: isUserRejectedError(error) ? 'rejected' : 'error' };
   }
 };
 
-const invokeCotiSnap = async <T>(
-  provider: Eip1193Provider,
-  method: string,
-  params?: Record<string, unknown>
-): Promise<T | null> => {
+const connectInstalledCotiSnapToWallet = async (
+  provider: Eip1193Provider
+): Promise<'ready' | 'rejected' | 'error'> => {
+  const connected = await invokeInstalledCotiSnap<unknown>(provider, 'connect-to-wallet');
+  if (!connected.ok) {
+    return connected.status;
+  }
+  return connected.value !== null && connected.value !== false ? 'ready' : 'rejected';
+};
+
+const requestAndConnectCotiSnap = async (
+  provider: Eip1193Provider
+): Promise<CotiSnapConnectionStatus> => {
   const installed = await requestSnap(provider);
-  if (!installed) {
-    return null;
+  if (installed !== 'ready') {
+    return installed;
   }
 
-  try {
-    return (await provider.request({
-      method: 'wallet_invokeSnap',
-      params: {
-        snapId: COTI_SNAP_ID,
-        request: params ? { method, params } : { method }
-      }
-    })) as T;
-  } catch {
-    return null;
-  }
+  return connectInstalledCotiSnapToWallet(provider);
 };
 
 export const getCotiSnapAesStatus = async (provider: Eip1193Provider): Promise<CotiSnapAesStatus> => {
@@ -94,28 +160,84 @@ export const getCotiSnapAesStatus = async (provider: Eip1193Provider): Promise<C
     return 'not-installed';
   }
 
+  return 'installed';
+};
+
+export const getCotiSnapAesKeyResult = async (
+  provider: Eip1193Provider,
+  context?: CotiSnapWalletContext
+): Promise<CotiSnapAesKeyResult> => {
+  const walletContext = await confirmSnapWalletContext(provider, context);
+  if (walletContext !== 'ready') {
+    return { status: walletContext };
+  }
+
+  const connected = await requestAndConnectCotiSnap(provider);
+  if (connected !== 'ready') {
+    return { status: connected };
+  }
+
   const hasAesKey = await invokeInstalledCotiSnap<boolean>(provider, 'has-aes-key');
-  if (hasAesKey === true) {
-    return 'installed-aes-ready';
+  if (!hasAesKey.ok) {
+    return { status: hasAesKey.status };
   }
-  if (hasAesKey === false) {
-    return 'installed-aes-missing';
+  if (!hasAesKey.value) {
+    return { status: 'missing-aes' };
   }
-  return 'error';
+  const aesKey = await invokeInstalledCotiSnap<unknown>(provider, 'get-aes-key');
+  if (!aesKey.ok) {
+    return { status: aesKey.status };
+  }
+  return typeof aesKey.value === 'string' && aesKey.value.trim()
+    ? { status: 'ready', aesKey: aesKey.value.trim() }
+    : { status: 'missing-aes' };
 };
 
 export const getCotiSnapAesKey = async (provider: Eip1193Provider): Promise<string | null> => {
-  const hasAesKey = await invokeCotiSnap<boolean>(provider, 'has-aes-key');
-  if (!hasAesKey) {
-    return null;
-  }
-  const aesKey = await invokeCotiSnap<unknown>(provider, 'get-aes-key');
-  return typeof aesKey === 'string' && aesKey.trim() ? aesKey.trim() : null;
+  const result = await getCotiSnapAesKeyResult(provider);
+  return result.status === 'ready' ? result.aesKey : null;
 };
 
-export const storeCotiSnapAesKey = async (provider: Eip1193Provider, aesKey?: string | null): Promise<void> => {
+export const storeCotiSnapAesKeyResult = async (
+  provider: Eip1193Provider,
+  aesKey?: string | null,
+  context?: CotiSnapWalletContext
+): Promise<Exclude<CotiSnapAesKeyResult['status'], 'missing-aes'>> => {
   if (!aesKey?.trim()) {
-    return;
+    return 'error';
   }
-  await invokeCotiSnap(provider, 'set-aes-key', { newUserAesKey: aesKey.trim() });
+  const walletContext = await confirmSnapWalletContext(provider, context);
+  if (walletContext !== 'ready') {
+    return walletContext;
+  }
+  const connected = await requestAndConnectCotiSnap(provider);
+  if (connected !== 'ready') {
+    return connected;
+  }
+  const stored = await invokeInstalledCotiSnap(provider, 'set-aes-key', { newUserAesKey: aesKey.trim() });
+  return stored.ok ? 'ready' : stored.status;
+};
+
+export const storeCotiSnapAesKey = async (
+  provider: Eip1193Provider,
+  aesKey?: string | null,
+  context?: CotiSnapWalletContext
+): Promise<void> => {
+  await storeCotiSnapAesKeyResult(provider, aesKey, context);
+};
+
+export const deleteCotiSnapAesKeyResult = async (
+  provider: Eip1193Provider,
+  context?: CotiSnapWalletContext
+): Promise<Exclude<CotiSnapAesKeyResult['status'], 'missing-aes'>> => {
+  const walletContext = await confirmSnapWalletContext(provider, context);
+  if (walletContext !== 'ready') {
+    return walletContext;
+  }
+  const connected = await requestAndConnectCotiSnap(provider);
+  if (connected !== 'ready') {
+    return connected;
+  }
+  const deleted = await invokeInstalledCotiSnap(provider, 'delete-aes-key');
+  return deleted.ok ? 'ready' : deleted.status;
 };

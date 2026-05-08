@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import type { TradeSnapshot } from './appShared';
 import {
   OTC_READER_CONTRACT_ABI,
   OTC_HISTORY_READER_CONTRACT_ABI,
   OTC_HISTORY_READER_CONTRACT_ADDRESS,
   OTC_REGISTRY_CONTRACT_ABI,
   OTC_REGISTRY_CONTRACT_ADDRESS,
-  PARTY_TRADE_ESCROW_CONTRACT_ABI,
-  PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+  DIRECT_TRADE_ESCROW_CONTRACT_ABI,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+  LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_ERC20_TOKEN_ABI,
   PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+  PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
@@ -21,12 +24,17 @@ import {
 import { loadCotiEthersModule } from './appShared';
 import {
   __buildRecurringOrderSnapshotFromViewForTest,
+  __getIndexedResultValueForTest,
+  __mergeWalletTradeSnapshotsForTest,
+  __normalizeCurrentPrivateTokenBalanceWeiForTest,
+  __resolveDirectTermPayloadSecretCallerForTest,
   __resolveRecurringIdsFromPagedResultForTest,
+  __selectTradeSnapshotCandidateForTest,
   DEFAULT_TRADING_CONTRACT_ADDRESSES,
   isActiveTradeEscrowContractAddress,
   isOtcHistoryReaderConfigured,
   isOtcRegistryConfigured,
-  isPartyTradeEscrowConfigured,
+  isDirectTradeEscrowConfigured,
   resolvePrivateTokenAllowanceWritePlan,
   resolvePrivateTokenSpendReadiness,
   resolveTradingContractAddressesFromRegistryValue,
@@ -48,22 +56,51 @@ describe('trade escrow contract resolution', () => {
     });
     expect(isActiveTradeEscrowContractAddress(TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(true);
     expect(isActiveTradeEscrowContractAddress(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(true);
-    expect(isPartyTradeEscrowConfigured()).toBe(true);
+    expect(isDirectTradeEscrowConfigured()).toBe(true);
     expect(isOtcRegistryConfigured()).toBe(true);
     expect(isOtcHistoryReaderConfigured()).toBe(true);
-    expect(PARTY_TRADE_ESCROW_CONTRACT_ADDRESS).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    expect(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS).toMatch(/^0x[0-9a-fA-F]{40}$/);
     expect(OTC_REGISTRY_CONTRACT_ADDRESS).toMatch(/^0x[0-9a-fA-F]{40}$/);
     expect(OTC_HISTORY_READER_CONTRACT_ADDRESS).toMatch(/^0x[0-9a-fA-F]{40}$/);
     expect(DEFAULT_TRADING_CONTRACT_ADDRESSES.reader).toMatch(/^0x[0-9a-fA-F]{40}$/);
-    expect(isActiveTradeEscrowContractAddress(PARTY_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(true);
+    expect(isActiveTradeEscrowContractAddress(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(true);
     expect(isActiveTradeEscrowContractAddress(RECURRING_OTC_CONTRACT_ADDRESS)).toBe(true);
+    expect(isActiveTradeEscrowContractAddress('0x9dC2166CEB035F542cA8ADf10660d6fe2342471d')).toBe(false);
+    expect(() => resolveTradeEscrowContractConfig('0x9dC2166CEB035F542cA8ADf10660d6fe2342471d')).toThrow(
+      /retired contract/
+    );
+  });
+
+  it('builds fresh Direct links with the Direct escrow alias', async () => {
+    const { buildTradeLinkPath, resolveTradeRouteFromParts } = await import('../hooks/useP2PTradeRoute');
+    const { encodeTradeLink } = await import('./tradeLinks');
+    const secret = `0x${'34'.repeat(32)}`;
+    const path = buildTradeLinkPath(12, secret, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
+
+    expect(path).toBe(`/trades/l/${encodeTradeLink(12, secret)}?escrow=direct`);
+    expect(resolveTradeRouteFromParts(path.split('?')[0], path.slice(path.indexOf('?')))).toMatchObject({
+      tradeId: 12,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessSecret: secret
+    });
+  });
+
+  it('uses a nonparticipant caller when reading Direct link-secret payloads', () => {
+    const maker = '0x000000000000000000000000000000000000dead';
+    const taker = '0x0000000000000000000000000000000000000001';
+
+    const caller = __resolveDirectTermPayloadSecretCallerForTest(maker, taker);
+
+    expect(caller.toLowerCase()).not.toBe(maker.toLowerCase());
+    expect(caller.toLowerCase()).not.toBe(taker.toLowerCase());
+    expect(caller).toMatch(/^0x[0-9a-fA-F]{40}$/);
   });
 
   it('resolves optional registry contract addresses over current app fallbacks', () => {
     const registryValue = {
       standardEscrow: '0x1000000000000000000000000000000000000001',
       privateEscrow: '0x1000000000000000000000000000000000000002',
-      partyEscrow: '0x1000000000000000000000000000000000000003',
+      directEscrow: '0x1000000000000000000000000000000000000003',
       recurringEscrow: '0x1000000000000000000000000000000000000004',
       reader: '0x1000000000000000000000000000000000000005',
       historyReader: '0x1000000000000000000000000000000000000006'
@@ -73,12 +110,12 @@ describe('trade escrow contract resolution', () => {
     expect(
       resolveTradingContractAddressesFromRegistryValue({
         ...registryValue,
-        partyEscrow: '',
+        directEscrow: '',
         historyReader: ''
       })
     ).toMatchObject({
       ...registryValue,
-      partyEscrow: DEFAULT_TRADING_CONTRACT_ADDRESSES.partyEscrow,
+      directEscrow: DEFAULT_TRADING_CONTRACT_ADDRESSES.directEscrow,
       historyReader: DEFAULT_TRADING_CONTRACT_ADDRESSES.historyReader
     });
   });
@@ -157,7 +194,7 @@ describe('trade escrow contract resolution', () => {
     const cotiEthers = await loadCotiEthersModule();
     const otcInterface = new cotiEthers.Interface(TRADE_ESCROW_CONTRACT_ABI);
     const privateOrdersInterface = new cotiEthers.Interface(PRIVATE_TRADE_ESCROW_CONTRACT_ABI);
-    const partyInterface = new cotiEthers.Interface(PARTY_TRADE_ESCROW_CONTRACT_ABI);
+    const directInterface = new cotiEthers.Interface(DIRECT_TRADE_ESCROW_CONTRACT_ABI);
     const readerInterface = new cotiEthers.Interface(OTC_READER_CONTRACT_ABI);
     const registryInterface = new cotiEthers.Interface(OTC_REGISTRY_CONTRACT_ABI);
     const historyReaderInterface = new cotiEthers.Interface(OTC_HISTORY_READER_CONTRACT_ABI);
@@ -165,8 +202,8 @@ describe('trade escrow contract resolution', () => {
     expect(otcInterface.getFunction('getTradeView')?.selector).toBeTruthy();
     expect(otcInterface.getFunction('getOpenPublicTradeIds')?.selector).toBeTruthy();
     expect(otcInterface.getFunction('getTradeIdsForMaker')?.selector).toBeTruthy();
-    expect(otcInterface.getFunction('setTrustedPartyCounterEscrow')?.selector).toBeTruthy();
-    expect(otcInterface.getFunction('closeParentTradeByPartyCounter')?.selector).toBeTruthy();
+    expect(otcInterface.getFunction('setTrustedDirectCounterEscrow')?.selector).toBeTruthy();
+    expect(otcInterface.getFunction('closeParentTradeByDirectCounter')?.selector).toBeTruthy();
     expect(privateOrdersInterface.getFunction('getTradeView')?.selector).toBeTruthy();
     expect(privateOrdersInterface.getFunction('getTradeViews')?.selector).toBeTruthy();
     expect(privateOrdersInterface.getFunction('getOpenPublicTradeIds')?.selector).toBeTruthy();
@@ -174,20 +211,27 @@ describe('trade escrow contract resolution', () => {
     expect(privateOrdersInterface.getFunction('getPrivateOrderAccountSummary')?.selector).toBeTruthy();
     expect(privateOrdersInterface.getFunction('refreshTrade')?.selector).toBeTruthy();
     expect(privateOrdersInterface.getFunction('getMakerRecoveryNote')?.selector).toBeTruthy();
+    expect(privateOrdersInterface.getFunction('trustedDirectCounterEscrow')?.selector).toBeTruthy();
+    expect(privateOrdersInterface.getFunction('setTrustedDirectCounterEscrow')?.selector).toBeTruthy();
+    expect(privateOrdersInterface.getFunction('closeParentTradeByDirectCounter')?.selector).toBeTruthy();
+    expect(privateOrdersInterface.getEvent('TrustedDirectCounterEscrowSet')?.topicHash).toBeTruthy();
+    expect(privateOrdersInterface.getEvent('ParentTradeClosedByDirectCounter')?.topicHash).toBeTruthy();
     expect(privateOrdersInterface.getEvent('MakerRecoveryNoteStored')?.topicHash).toBe(
       '0xcb0045cbf12c92e8cecabe18d67d46f6064e29445a9339cfc8cb22987deff433'
     );
     expect(privateOrdersInterface.getEvent('PrivateOrderFillReceipt')?.topicHash).toBe(
       '0xc542164fb3e3cfa7f44a4a32bb4648613c865891873e1c749d55c6f9a0c7d1e7'
     );
-    expect(partyInterface.getFunction('createPartyTrade')?.selector).toBeTruthy();
-    expect(partyInterface.getFunction('createPartyCounterTrade')?.selector).toBeTruthy();
-    expect(partyInterface.getFunction('createPartyCounterTradeForParent')?.selector).toBeTruthy();
-    expect(partyInterface.getFunction('getCounterTradeIdsForParent')?.selector).toBeTruthy();
-    expect(partyInterface.getFunction('counterParentEscrow')?.selector).toBeTruthy();
-    expect(partyInterface.getFunction('getPartyTermPayload')?.selector).toBeTruthy();
-    expect(partyInterface.getFunction('acceptCounterTradeAndCloseParent')?.selector).toBeTruthy();
-    expect(partyInterface.getEvent('PartyTradeOpened')?.topicHash).toBeTruthy();
+    expect(directInterface.getFunction('createDirectTrade')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('createDirectCounterTrade')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('createDirectCounterTradeForParent')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('counterTradeAndCloseCounteredTrade')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('getCounterTradeIdsForParent')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('counterParentEscrow')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('getDirectTermPayload')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('getDirectAccessSecretForAccount')?.selector).toBeTruthy();
+    expect(directInterface.getFunction('acceptCounterTradeAndCloseParent')?.selector).toBeTruthy();
+    expect(directInterface.getEvent('DirectTradeOpened')?.topicHash).toBeTruthy();
     expect(readerInterface.getFunction('getPublicDeskPage')?.selector).toBeTruthy();
     expect(readerInterface.getFunction('getWalletDeskPage')?.selector).toBeTruthy();
     expect(readerInterface.getFunction('getWalletDeskPageV2')?.selector).toBeTruthy();
@@ -258,6 +302,25 @@ describe('trade escrow contract resolution', () => {
       status: 'blocked',
       reason: 'insufficient-balance'
     });
+  });
+
+  it('rejects obvious AES garbage without relying on latest PrivateERC20 totalSupply()', () => {
+    expect(__normalizeCurrentPrivateTokenBalanceWeiForTest(5_000_000n)).toBe(5_000_000n);
+    expect(__normalizeCurrentPrivateTokenBalanceWeiForTest(null)).toBeNull();
+    expect(__normalizeCurrentPrivateTokenBalanceWeiForTest(10n ** 49n)).toBeNull();
+    expect(__normalizeCurrentPrivateTokenBalanceWeiForTest(10n ** 48n)).toBe(10n ** 48n);
+  });
+
+  it('keeps current and legacy private token ABIs separated', async () => {
+    const legacyInterface = new (await loadCotiEthersModule()).Interface(PRIVATE_ERC20_TOKEN_ABI);
+    const currentInterface = new (await loadCotiEthersModule()).Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
+
+    expect(legacyInterface.getFunction('balanceOf(address)')?.outputs?.[0]?.format()).toContain('uint256');
+    expect(currentInterface.getFunction('balanceOf(address)')?.outputs?.[0]?.format()).toContain('uint256,uint256');
+    expect(currentInterface.getFunction('balanceOf(address)')?.outputs?.[0]?.format()).not.toBe(
+      legacyInterface.getFunction('balanceOf(address)')?.outputs?.[0]?.format()
+    );
+    expect(LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()).not.toBe(PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase());
   });
 
   it('requires private token approval when allowance is missing or too low', () => {
@@ -382,5 +445,114 @@ describe('trade escrow contract resolution', () => {
     expect(__resolveRecurringIdsFromPagedResultForTest([[1n, 2n, 0n], 0n])).toEqual([1, 2]);
     expect(__resolveRecurringIdsFromPagedResultForTest([[], 0n])).toEqual([]);
     expect(__resolveRecurringIdsFromPagedResultForTest(null)).toEqual([]);
+  });
+});
+
+describe('trade snapshot selection and wallet merge helpers', () => {
+  const snapshot = (overrides: Partial<TradeSnapshot>) => ({
+    tradeId: 1,
+    escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+    maker: '0x1111111111111111111111111111111111111111',
+    taker: '0x2222222222222222222222222222222222222222',
+    offer: { kind: 'erc20', tokenAddress: REWARD_TOKEN_ADDRESS, symbol: 'AAA', decimals: 18, amount: '1' },
+    request: { kind: 'erc20', tokenAddress: REWARD_TOKEN_ADDRESS, symbol: 'BBB', decimals: 18, amount: '1' },
+    createdAt: 1,
+    expiresAt: 2,
+    status: 'open',
+    isPublic: false,
+    ...overrides
+  }) as TradeSnapshot;
+
+  it('prefers a bare compact-link candidate whose access hash matches the secret', () => {
+    const directHash = `0x${'ab'.repeat(32)}`;
+    const standard = snapshot({
+      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+      isPublic: true,
+      accessHash: ZERO_BYTES32
+    });
+    const direct = snapshot({
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessHash: directHash
+    });
+
+    expect(__selectTradeSnapshotCandidateForTest([standard, direct], directHash)).toBe(direct);
+  });
+
+  it('falls back to a Direct counter candidate for bare compact links with counter secrets', () => {
+    const accessSecretHash = `0x${'cd'.repeat(32)}`;
+    const standard = snapshot({
+      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+      isPublic: true,
+      accessHash: ZERO_BYTES32
+    });
+    const directCounter = snapshot({
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessHash: ZERO_BYTES32,
+      counterParentTradeId: 3
+    });
+
+    expect(__selectTradeSnapshotCandidateForTest([standard, directCounter], accessSecretHash)).toBe(directCounter);
+  });
+
+  it('does not pick an access-hash-aware Direct counter when the compact-link secret does not match', () => {
+    const accessSecretHash = `0x${'cd'.repeat(32)}`;
+    const standard = snapshot({
+      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+      isPublic: true,
+      accessHash: ZERO_BYTES32
+    });
+    const directCounter = snapshot({
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessHash: `0x${'ef'.repeat(32)}`,
+      counterParentTradeId: 3
+    });
+
+    expect(__selectTradeSnapshotCandidateForTest([standard, directCounter], accessSecretHash)).toBe(standard);
+  });
+
+  it('merges history-reader rows with direct per-contract indexes by contract-local identity', () => {
+    const standard = snapshot({
+      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+      tradeId: 7,
+      createdAt: 10
+    });
+    const directCounter = snapshot({
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      tradeId: 7,
+      taker: '0x2222222222222222222222222222222222222222',
+      createdAt: 12,
+      counterParentTradeId: 3
+    });
+    const duplicateHistory = snapshot({
+      escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+      tradeId: 7,
+      createdAt: 10,
+      walletHasFill: true
+    });
+
+    expect(__mergeWalletTradeSnapshotsForTest([[duplicateHistory], [standard, directCounter]])).toEqual([
+      directCounter,
+      {
+        ...duplicateHistory,
+        ...standard,
+        walletHasFill: true
+      }
+    ]);
+  });
+
+  it('treats missing Direct asset amount indexes as absent instead of throwing', () => {
+    const directAssetLikeResult = {
+      0: 2n,
+      1: PRIVATE_REWARD_TOKEN_ADDRESS
+    };
+    Object.defineProperty(directAssetLikeResult, 2, {
+      get() {
+        throw new RangeError('out of result range');
+      }
+    });
+
+    expect(__getIndexedResultValueForTest(directAssetLikeResult, 0)).toBe(2n);
+    expect(__getIndexedResultValueForTest(directAssetLikeResult, 1)).toBe(PRIVATE_REWARD_TOKEN_ADDRESS);
+    expect(__getIndexedResultValueForTest(directAssetLikeResult, 2)).toBeUndefined();
   });
 });

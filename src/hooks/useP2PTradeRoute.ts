@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   RECURRING_OTC_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -66,7 +66,10 @@ const resolveRouteEscrowContract = (searchValue = ''): string | undefined => {
     return PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
   }
   if (raw.toLowerCase() === 'party') {
-    return PARTY_TRADE_ESCROW_CONTRACT_ADDRESS;
+    return '0x0000000000000000000000000000000000000000';
+  }
+  if (raw.toLowerCase() === 'direct') {
+    return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
   }
   if (raw.toLowerCase() === 'recurring') {
     return RECURRING_OTC_CONTRACT_ADDRESS;
@@ -235,8 +238,8 @@ export const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escro
   const search =
     escrowContract && escrowContract.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
       ? '?escrow=private'
-      : escrowContract && escrowContract.toLowerCase() === PARTY_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
-        ? '?escrow=party'
+      : escrowContract && escrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
+        ? '?escrow=direct'
       : '';
   return `/trades/l/${code}${search}`;
 };

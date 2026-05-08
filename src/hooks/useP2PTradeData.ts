@@ -8,7 +8,8 @@ import {
   fetchRecentTradeSnapshots,
   fetchTradeAccessMetadataById,
   fetchTradeSnapshotById,
-  fetchWalletTradeSnapshots
+  fetchWalletTradeSnapshots,
+  resolveTradeEscrowContractConfig
 } from '../lib/appChain';
 import type { TradePageView } from './useP2PTradeRoute';
 
@@ -235,7 +236,8 @@ export default function useP2PTradeData({
         privateRewardTokenSymbol,
         privateRewardTokenDecimals,
         escrowContract,
-        accessSecret: resolvedRouteAccessSecret || undefined
+        accessSecret: resolvedRouteAccessSecret || undefined,
+        callerAddress: walletAddress || undefined
       });
       const snapshot = await enrichMakerPrivateProgress(snapshotRaw);
       mergeTradeSnapshot(snapshot);
@@ -306,9 +308,17 @@ export default function useP2PTradeData({
           Boolean(walletKey) &&
           [snapshot?.maker.toLowerCase(), snapshot?.taker.toLowerCase()].includes(walletKey);
         const isUnlisted = metadata?.isPublic === false || snapshot?.isPublic === false;
+        let directVisibleRoute = false;
+        try {
+          directVisibleRoute = Boolean(
+            resolveTradeEscrowContractConfig(routeEscrowContract || snapshot?.escrowContract).directVisible
+          );
+        } catch {
+          directVisibleRoute = false;
+        }
         const routeSecretCanAuthorize = Boolean(
           resolvedRouteAccessSecret &&
-            (metadata?.hasAccessHash === true || snapshot?.hasAccessHash === true)
+            (metadata?.hasAccessHash === true || snapshot?.hasAccessHash === true || directVisibleRoute)
         );
         if (isUnlisted && !routeSecretCanAuthorize && !isParticipant) {
           setTradeAccessBlocked(true);

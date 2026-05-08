@@ -21,12 +21,14 @@ import {
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
-  resolveWalletPrivacyActionLabel,
+  resolveWalletPrivacyUnlockPrompt,
   resolveWalletReadiness
 } from '../lib/walletSession';
+import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
 import type { BrowserWalletSession } from './useWalletOnboarding';
 
 type BrowserWalletActivationOptions = {
+  forceFreshPrivacy?: boolean;
   preparePrivacy?: boolean;
 };
 
@@ -73,6 +75,7 @@ type UseChatWalletHeaderControlArgs = {
   setShowTopUpModal: Dispatch<SetStateAction<boolean>>;
   topUpAmountLabel: string;
   topUpAmountWei: bigint | null;
+  walletAesHealth?: WalletAesHealthState | null;
   walletAddress: string;
 };
 
@@ -125,6 +128,7 @@ export default function useChatWalletHeaderControl({
   setShowTopUpModal,
   topUpAmountLabel,
   topUpAmountWei,
+  walletAesHealth,
   walletAddress
 }: UseChatWalletHeaderControlArgs): UseChatWalletHeaderControlResult {
   const allowedChatBrowserWalletOptions = useMemo(
@@ -181,6 +185,20 @@ export default function useChatWalletHeaderControl({
     hasAesReady,
     walletAddress
   });
+  const chatWalletStatusLabel =
+    walletAesHealth?.status === 'repairing'
+      ? 'Repairing privacy key'
+      : walletAesHealth?.status === 'repair-needed'
+        ? 'Privacy key needs refresh'
+      : walletAesHealth?.status === 'key-mismatch'
+        ? 'Privacy key mismatch'
+        : chatWalletReadiness.statusLabel;
+  const chatWalletStatusTone =
+    walletAesHealth?.status === 'repairing' ||
+    walletAesHealth?.status === 'repair-needed' ||
+    walletAesHealth?.status === 'key-mismatch'
+      ? 'warning'
+      : chatWalletReadiness.statusTone;
   const chatWarmBrowserWalletLabel = browserWalletSession?.walletLabel ?? chatPreferredBrowserWalletOption?.label ?? 'Browser wallet';
   const chatDisplayBrowserWalletLabel =
     activeSignerSource === 'metamask'
@@ -249,6 +267,9 @@ export default function useChatWalletHeaderControl({
     />
   ) : null;
 
+  const walletNeedsPrivacyRepair =
+    walletAesHealth?.status === 'repair-needed' || walletAesHealth?.status === 'key-mismatch';
+
   const unlockChatPrivacy = useCallback(async () => {
     const provider = getConnectedProvider();
     if (!walletAddress || !provider) {
@@ -260,7 +281,7 @@ export default function useChatWalletHeaderControl({
     try {
       await activateBrowserWalletSession(
         currentInjectedWalletOption?.id ?? chatPreferredBrowserWalletOption?.id,
-        { preparePrivacy: true }
+        { forceFreshPrivacy: walletNeedsPrivacyRepair, preparePrivacy: true }
       );
     } catch (privacyError) {
       setError(getProviderErrorMessage(privacyError, 'Privacy unlock was not completed.'));
@@ -271,11 +292,17 @@ export default function useChatWalletHeaderControl({
     currentInjectedWalletOption?.id,
     getConnectedProvider,
     setError,
+    walletNeedsPrivacyRepair,
     walletAddress
   ]);
 
-  const chatPrivacyActionLabel = resolveWalletPrivacyActionLabel(connectingMethod === 'metamask');
-  const showChatPrivacyStatusAction = isConnected && activeSignerSource === 'metamask' && onCotiNetwork && !hasAesReady;
+  const chatPrivacyPrompt = resolveWalletPrivacyUnlockPrompt({
+    hasAesReady: hasAesReady && !walletNeedsPrivacyRepair,
+    snapStatus: walletNeedsPrivacyRepair ? 'repair-needed' : 'unknown',
+    unlocking: connectingMethod === 'metamask'
+  });
+  const showChatPrivacyStatusAction =
+    isConnected && activeSignerSource === 'metamask' && onCotiNetwork && (!hasAesReady || walletNeedsPrivacyRepair);
   const chatWalletSwitchAction =
     showChatBrowserQuickAction && chatPreferredBrowserWalletOption ? (
       <button
@@ -353,11 +380,11 @@ export default function useChatWalletHeaderControl({
       primaryDisabled={chatWalletPrimaryDisabled}
       onPrimaryAction={handleChatWalletPrimaryAction}
       modeLabel={chatWalletDisplayModeLabel}
-      statusLabel={chatWalletReadiness.statusLabel}
-      statusTone={chatWalletReadiness.statusTone}
+      statusLabel={chatWalletStatusLabel}
+      statusTone={chatWalletStatusTone}
       statusActionDisabled={connectingMethod !== null}
-      statusActionLabel={showChatPrivacyStatusAction ? chatPrivacyActionLabel : undefined}
-      statusActionTitle="Run COTI onboarding once so encrypted chat and private balances can work."
+      statusActionLabel={showChatPrivacyStatusAction ? chatPrivacyPrompt.label : undefined}
+      statusActionTitle={showChatPrivacyStatusAction ? chatPrivacyPrompt.title : undefined}
       onStatusAction={
         showChatPrivacyStatusAction
           ? () => {

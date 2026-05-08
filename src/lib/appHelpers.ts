@@ -25,6 +25,8 @@ export type MessageReferenceCandidate = {
 
 export type TradeTokenPresetKey = string;
 
+export const HOTDOG_PRIVATE_TOKEN_ADDRESS = '0x5085Ea0611A9C49316972C57390ca25C9CF236AB';
+
 export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   address: string;
   kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
@@ -40,7 +42,7 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   { address: '0x639aCc80569c5FC83c6FBf2319A6Cc38bBfe26d1', kind: 'erc20' },
   { address: '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a', kind: 'private-erc20' },
   { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20' },
-  { address: '0x5085Ea0611A9C49316972C57390ca25C9CF236AB', kind: 'private-erc20' },
+  { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20' },
 ];
 
 const VERIFIED_ECOSYSTEM_TOKEN_ADDRESS_SET = new Set(
@@ -58,6 +60,33 @@ export const getVerifiedEcosystemToken = (address: string) =>
 
 export type ResolvedTradeToken = Omit<TradeAssetPayload, 'amount'>;
 
+export type PrivateTokenBalanceState =
+  | { status: 'locked' }
+  | { status: 'setup-needed' }
+  | { status: 'setup-pending' }
+  | { status: 'ready'; balanceWei: bigint }
+  | { status: 'decrypt-failed' }
+  | { status: 'snap-stale' }
+  | { status: 'unsupported' };
+
+export type PrivateTokenBalancePrivacyAction = 'none' | 'setup' | 'repair';
+
+export const resolvePrivateTokenBalancePrivacyAction = (
+  state?: PrivateTokenBalanceState
+): PrivateTokenBalancePrivacyAction => {
+  if (state?.status === 'setup-needed') {
+    return 'setup';
+  }
+  if (state?.status === 'decrypt-failed' || state?.status === 'snap-stale') {
+    return 'repair';
+  }
+  return 'none';
+};
+
+export const privateTokenBalanceStateNeedsPrivacyAction = (
+  state?: PrivateTokenBalanceState
+): boolean => resolvePrivateTokenBalancePrivacyAction(state) !== 'none';
+
 export type TradeCustomTokenInfo = {
   kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
   address: string;
@@ -68,6 +97,7 @@ export type TradeCustomTokenInfo = {
   error?: string;
   walletKey?: string;
   aesReady?: boolean;
+  privateBalanceState?: PrivateTokenBalanceState;
 };
 
 export type TradeComposerFieldErrors = {

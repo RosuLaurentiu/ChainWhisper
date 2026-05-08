@@ -21,6 +21,7 @@ import {
   type PrivacyUnlockSnapStatus,
   type SharedWalletSession
 } from '../lib/walletSession';
+import type { PrivateTokenBalancePrivacyAction } from '../lib/appHelpers';
 
 type UseP2PWalletHeaderControlArgs = {
   appWalletMenuOpen: boolean;
@@ -54,6 +55,7 @@ type UseP2PWalletHeaderControlArgs = {
   snapAesStatus?: PrivacyUnlockSnapStatus;
   walletAddress: string;
   walletHasAes: boolean;
+  walletPrivateTokenPrivacyAction?: PrivateTokenBalancePrivacyAction;
   walletMenuOpen: boolean;
 };
 
@@ -96,6 +98,7 @@ export default function useP2PWalletHeaderControl({
   snapAesStatus = 'unknown',
   walletAddress,
   walletHasAes,
+  walletPrivateTokenPrivacyAction = 'none',
   walletMenuOpen
 }: UseP2PWalletHeaderControlArgs): UseP2PWalletHeaderControlResult {
   const walletKey = walletAddress.trim().toLowerCase();
@@ -201,7 +204,18 @@ export default function useP2PWalletHeaderControl({
     walletAddress
   });
   const walletPrimaryButtonIsAddress = Boolean(walletAddress && onCotiNetwork);
-  const showInlineAesAction = Boolean(walletAddress && onCotiNetwork && !walletHasAes);
+  const walletNeedsPrivacyRepair =
+    snapAesStatus === 'installed-aes-stale' ||
+    snapAesStatus === 'key-mismatch' ||
+    snapAesStatus === 'repair-needed';
+  const walletNeedsPrivateTokenSetup = walletPrivateTokenPrivacyAction === 'setup';
+  const walletNeedsPrivateTokenRepair = walletPrivateTokenPrivacyAction === 'repair';
+  const walletNeedsPrivateTokenPrivacyAction = walletPrivateTokenPrivacyAction !== 'none';
+  const showInlineAesAction = Boolean(
+    walletAddress &&
+    onCotiNetwork &&
+    (!walletHasAes || walletNeedsPrivacyRepair || walletNeedsPrivateTokenPrivacyAction)
+  );
   const walletReadiness = resolveWalletReadiness({
     chainId,
     hasAesReady: walletHasAes,
@@ -215,8 +229,20 @@ export default function useP2PWalletHeaderControl({
     hasBrowserWalletAvailable: hasConnectedBrowserWallet,
     walletAddress
   });
-  const walletStatusLabel = walletReadiness.statusLabel;
-  const walletStatusTone = walletReadiness.statusTone;
+  const walletStatusLabel =
+    snapAesStatus === 'repair-needed'
+      ? 'Privacy key needs refresh'
+      : snapAesStatus === 'key-mismatch'
+        ? 'Privacy key mismatch'
+        : walletNeedsPrivateTokenRepair
+          ? 'Private token refresh needed'
+        : walletReadiness.statusLabel;
+  const walletStatusTone =
+    snapAesStatus === 'repair-needed' || snapAesStatus === 'key-mismatch'
+      ? 'warning'
+      : walletNeedsPrivateTokenRepair
+        ? 'warning'
+      : walletReadiness.statusTone;
   const tradeWalletActions = useMemo(
     () =>
       resolveWalletHeaderActionVisibility({
@@ -282,12 +308,29 @@ export default function useP2PWalletHeaderControl({
       disabled={Boolean(connectingWalletId)}
     />
   ) : null;
-  const tradePrivacyPrompt = resolveWalletPrivacyUnlockPrompt({
-    connectedWithAppWallet: connectedWithBurner,
-    hasAesReady: walletHasAes,
-    snapStatus: snapAesStatus,
-    unlocking: connectingWalletId === 'aes'
-  });
+  const tradePrivacyPrompt =
+    walletNeedsPrivateTokenPrivacyAction && walletHasAes && !walletNeedsPrivacyRepair
+      ? {
+          label: connectingWalletId === 'aes'
+            ? walletNeedsPrivateTokenSetup
+              ? 'Setting up...'
+              : 'Refreshing...'
+            : walletNeedsPrivateTokenSetup
+              ? 'Set up tokens'
+              : 'Refresh privacy',
+          title:
+            connectingWalletId === 'aes'
+              ? 'Check your wallet prompt to finish the private token privacy action.'
+              : walletNeedsPrivateTokenSetup
+                ? 'Set up latest PrivateERC20 balance visibility for this wallet.'
+                : 'Refresh this wallet privacy key or private-token balance visibility.'
+        }
+      : resolveWalletPrivacyUnlockPrompt({
+          connectedWithAppWallet: connectedWithBurner,
+          hasAesReady: walletHasAes && !walletNeedsPrivacyRepair,
+          snapStatus: snapAesStatus,
+          unlocking: connectingWalletId === 'aes'
+        });
   const tradeWalletSwitchAction = useMemo(() => {
     if (compactMobileWallet) {
       return null;

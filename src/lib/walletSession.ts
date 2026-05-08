@@ -6,6 +6,7 @@ import {
   type Eip1193Provider,
   type SignerSource
 } from './appShared/core';
+import type { WalletAesHealthState } from './cotiAesUnlock';
 
 export type SharedWalletSession = {
   activeSignerSource: SignerSource;
@@ -17,7 +18,9 @@ export type SharedWalletSession = {
   burnerWallets?: BurnerWalletRecord[];
   chainId: number | null;
   onSwitchActiveBurnerWallet?: (walletId: string) => Promise<void> | void;
+  onWalletAesHealthChange?: (walletAddress: string, health: WalletAesHealthState) => void;
   sessionOnboardInfo: Record<string, OnboardInfo>;
+  walletAesHealthByAddress?: Record<string, WalletAesHealthState>;
   walletAddress: string;
 };
 
@@ -35,8 +38,13 @@ export type PrivacyUnlockSnapStatus =
   | 'unknown'
   | 'unsupported'
   | 'not-installed'
+  | 'installed'
   | 'installed-aes-ready'
   | 'installed-aes-missing'
+  | 'installed-aes-stale'
+  | 'key-mismatch'
+  | 'repair-needed'
+  | 'rejected'
   | 'error';
 
 export type WalletPrivacyUnlockPrompt = {
@@ -273,6 +281,11 @@ export const resolveWalletPrivacyUnlockPrompt = ({
   }
 
   switch (snapStatus) {
+    case 'installed':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'COTI Snap is installed. Click to recover or create the AES key for this wallet.'
+      };
     case 'installed-aes-ready':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
@@ -282,6 +295,18 @@ export const resolveWalletPrivacyUnlockPrompt = ({
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
         title: 'COTI Snap is installed; approve AES access or recover your key once.'
+      };
+    case 'installed-aes-stale':
+    case 'key-mismatch':
+    case 'repair-needed':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'Unlock privacy will refresh this wallet AES key if the Snap key does not decrypt wallet data.'
+      };
+    case 'rejected':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'The COTI Snap request was rejected. Click again when you are ready to approve it.'
       };
     case 'not-installed':
       return {

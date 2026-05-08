@@ -5,6 +5,8 @@ import {
   getVerifiedEcosystemToken,
   isVerifiedEcosystemToken,
   messageReferencesMatch,
+  privateTokenBalanceStateNeedsPrivacyAction,
+  resolvePrivateTokenBalancePrivacyAction,
   sanitizeOutgoingMessagePlainText
 } from './appHelpers';
 import {
@@ -112,5 +114,23 @@ describe('trade on-chain error messages', () => {
     expect(getOnChainFailureMessage({ data: '0x90b8ec18' }, 'fallback')).toBe(
       'Private token transfer failed. Check balance, privacy unlock, and approval.'
     );
+  });
+});
+
+describe('privateTokenBalanceStateNeedsPrivacyAction', () => {
+  it('only asks for an explicit privacy action when current private-token balances need setup or repair', () => {
+    expect(privateTokenBalanceStateNeedsPrivacyAction({ status: 'setup-needed' })).toBe(true);
+    expect(privateTokenBalanceStateNeedsPrivacyAction({ status: 'decrypt-failed' })).toBe(true);
+    expect(privateTokenBalanceStateNeedsPrivacyAction({ status: 'snap-stale' })).toBe(true);
+    expect(privateTokenBalanceStateNeedsPrivacyAction({ status: 'ready', balanceWei: 1n })).toBe(false);
+    expect(privateTokenBalanceStateNeedsPrivacyAction({ status: 'locked' })).toBe(false);
+    expect(privateTokenBalanceStateNeedsPrivacyAction({ status: 'unsupported' })).toBe(false);
+  });
+
+  it('distinguishes token setup from privacy-key repair', () => {
+    expect(resolvePrivateTokenBalancePrivacyAction({ status: 'setup-needed' })).toBe('setup');
+    expect(resolvePrivateTokenBalancePrivacyAction({ status: 'decrypt-failed' })).toBe('repair');
+    expect(resolvePrivateTokenBalancePrivacyAction({ status: 'snap-stale' })).toBe('repair');
+    expect(resolvePrivateTokenBalancePrivacyAction({ status: 'ready', balanceWei: 1n })).toBe('none');
   });
 });

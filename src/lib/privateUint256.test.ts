@@ -26,6 +26,18 @@ const createBrowserLikeSigner = (aesKey = AES_KEY) => {
   };
 };
 
+const createLockedSigner = () =>
+  ({
+    address: '0x1111111111111111111111111111111111111111',
+    getAddress: async () => '0x1111111111111111111111111111111111111111',
+    getUserOnboardInfo: () => undefined,
+    getAutoOnboard: () => true,
+    generateOrRecoverAes: async () => {
+      throw new Error('should not recover aes from encrypt helper');
+    },
+    signMessage: async () => SIGNATURE
+  }) as unknown as JsonRpcSigner;
+
 describe('private uint256 input encryption', () => {
   it('encrypts trading amounts larger than the legacy 64-bit limit', async () => {
     const { signer, getSignedMessage } = createBrowserLikeSigner();
@@ -68,5 +80,16 @@ describe('private uint256 input encryption', () => {
         '0x12345678'
       )
     ).rejects.toThrow('value must fit uint256');
+  });
+
+  it('requires AES to be unlocked before private-token writes', async () => {
+    await expect(
+      encryptPrivateUint256Input(
+        createLockedSigner(),
+        123n,
+        '0x4444444444444444444444444444444444444444',
+        '0x12345678'
+      )
+    ).rejects.toThrow('Unlock privacy');
   });
 });

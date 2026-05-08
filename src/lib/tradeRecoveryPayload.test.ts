@@ -5,14 +5,14 @@ import {
   decryptTradeRecoveryPayload,
   encryptTradeRecoveryPayload
 } from './tradeRecoveryPayload';
-import { createTradeAccessSecret } from './partyTradeTerms';
+import { createTradeAccessSecret } from './directTradeTerms';
 import type { TradeSnapshot } from './appShared';
 
 describe('tradeRecoveryPayload', () => {
   it('stores private-link recovery data as maker-AES encrypted bytes', async () => {
     const accessSecret = createTradeAccessSecret();
     const payload = buildTradeRecoveryPayload({
-      kind: 'party',
+      kind: 'direct',
       accessSecret,
       maker: '0x1111111111111111111111111111111111111111',
       taker: '0x2222222222222222222222222222222222222222',
@@ -27,7 +27,7 @@ describe('tradeRecoveryPayload', () => {
     await expect(decryptTradeRecoveryPayload(encrypted, 'maker-aes-key')).resolves.toEqual(payload);
   });
 
-  it('hydrates Party exact terms for maker views after recovery', () => {
+  it('hydrates Direct exact terms for maker views after recovery', () => {
     const snapshot = {
       tradeId: 1,
       maker: '0x1111111111111111111111111111111111111111',
@@ -40,7 +40,7 @@ describe('tradeRecoveryPayload', () => {
       hiddenLiquidity: true
     } satisfies TradeSnapshot;
     const payload = buildTradeRecoveryPayload({
-      kind: 'party',
+      kind: 'direct',
       accessSecret: createTradeAccessSecret(),
       maker: snapshot.maker,
       taker: snapshot.taker,

@@ -7,6 +7,7 @@ import {
   GROUP_CHAT_CONTRACT_ADDRESS,
   GROUP_SUBMIT_GAS_BUFFER,
   GROUP_SUBMIT_GAS_LIMIT_MAX,
+  LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
   MAX_ERC20_APPROVAL,
   OTC_HISTORY_READER_CONTRACT_ABI,
   OTC_HISTORY_READER_CONTRACT_ADDRESS,
@@ -16,11 +17,10 @@ import {
   PRIVATE_ERC20_TOKEN_ABI,
   PRIVATE_ERC20_TOKEN_VNEXT_ABI,
   PRIVATE_REWARD_TOKEN_ADDRESS,
-  PARTY_TRADE_ESCROW_CONTRACT_ABI,
-  PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+  DIRECT_TRADE_ESCROW_CONTRACT_ABI,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
-  PRIVATE_TOKEN_BALANCE_ABI,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   RECURRING_OTC_CONTRACT_ABI,
   RECURRING_OTC_CONTRACT_ADDRESS,
@@ -43,12 +43,13 @@ import {
   type TradeSnapshot
 } from './appShared';
 import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHelpers';
-import { applyPartyTradeTermsToSnapshot, decryptPartyTradeTerms } from './partyTradeTerms';
+import { applyDirectTradeTermsToSnapshot, decryptDirectTradeTerms } from './directTradeTerms';
 import { encryptPrivateUint256Input } from './privateUint256';
 import {
   decryptTradeRecoveryPayloadForSigner,
   type TradeRecoveryPayload
 } from './tradeRecoveryPayload';
+import { normalizeAccessHash } from './tradeLinks';
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const ACCEPTED_TX_LOOKBACK_BLOCKS = 100_000;
@@ -192,15 +193,15 @@ type TradeEscrowConfig = {
   abi:
     | typeof TRADE_ESCROW_CONTRACT_ABI
     | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI
-    | typeof PARTY_TRADE_ESCROW_CONTRACT_ABI;
+    | typeof DIRECT_TRADE_ESCROW_CONTRACT_ABI;
   hiddenOnly: boolean;
-  partyVisible: boolean;
+  directVisible: boolean;
 };
 
 export type TradingContractAddresses = {
   standardEscrow: string;
   privateEscrow: string;
-  partyEscrow: string;
+  directEscrow: string;
   recurringEscrow: string;
   reader: string;
   historyReader: string;
@@ -209,7 +210,7 @@ export type TradingContractAddresses = {
 export const DEFAULT_TRADING_CONTRACT_ADDRESSES: TradingContractAddresses = {
   standardEscrow: TRADE_ESCROW_CONTRACT_ADDRESS,
   privateEscrow: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
-  partyEscrow: PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+  directEscrow: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   recurringEscrow: RECURRING_OTC_CONTRACT_ADDRESS,
   reader: OTC_READER_CONTRACT_ADDRESS,
   historyReader: OTC_HISTORY_READER_CONTRACT_ADDRESS
@@ -232,7 +233,7 @@ export const resolveTradingContractAddressesFromRegistryValue = (
     | {
         standardEscrow?: unknown;
         privateEscrow?: unknown;
-        partyEscrow?: unknown;
+        directEscrow?: unknown;
         recurringEscrow?: unknown;
         reader?: unknown;
         historyReader?: unknown;
@@ -244,7 +245,7 @@ export const resolveTradingContractAddressesFromRegistryValue = (
   return {
     standardEscrow: normalizeRegistryAddress(source?.standardEscrow ?? source?.[0], fallback.standardEscrow),
     privateEscrow: normalizeRegistryAddress(source?.privateEscrow ?? source?.[1], fallback.privateEscrow),
-    partyEscrow: normalizeRegistryAddress(source?.partyEscrow ?? source?.[2], fallback.partyEscrow),
+    directEscrow: normalizeRegistryAddress(source?.directEscrow ?? source?.[2], fallback.directEscrow),
     recurringEscrow: normalizeRegistryAddress(source?.recurringEscrow ?? source?.[3], fallback.recurringEscrow),
     reader: normalizeRegistryAddress(source?.reader ?? source?.[4], fallback.reader),
     historyReader: normalizeRegistryAddress(source?.historyReader ?? source?.[5], fallback.historyReader)
@@ -279,23 +280,33 @@ const isRecurringOrderContractAddress = (
   isWalletAddress(value) &&
   value.toLowerCase() === addresses.recurringEscrow.toLowerCase();
 
-export const isPartyTradeEscrowConfigured = (): boolean => isWalletAddress(PARTY_TRADE_ESCROW_CONTRACT_ADDRESS);
+export const isLegacyPrivateOrderEscrowContractAddress = (_value?: string | null): boolean => false;
 
-const isPartyTradeEscrowContractAddress = (
+export const isPrivateOrderEscrowContractAddress = (
   value?: string | null,
   addresses: TradingContractAddresses = DEFAULT_TRADING_CONTRACT_ADDRESSES
 ): boolean =>
-  isWalletAddress(addresses.partyEscrow) &&
   typeof value === 'string' &&
   isWalletAddress(value) &&
-  value.toLowerCase() === addresses.partyEscrow.toLowerCase();
+  value.toLowerCase() === addresses.privateEscrow.toLowerCase();
+
+export const isDirectTradeEscrowConfigured = (): boolean => isWalletAddress(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
+
+const isDirectTradeEscrowContractAddress = (
+  value?: string | null,
+  addresses: TradingContractAddresses = DEFAULT_TRADING_CONTRACT_ADDRESSES
+): boolean =>
+  typeof value === 'string' &&
+  isWalletAddress(value) &&
+  isWalletAddress(addresses.directEscrow) &&
+  value.toLowerCase() === addresses.directEscrow.toLowerCase();
 
 export const isActiveTradeEscrowContractAddress = (value?: string | null): boolean => {
   const address = normalizeEscrowAddress(value).toLowerCase();
   return (
     address === TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase() ||
     address === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase() ||
-    isPartyTradeEscrowContractAddress(address) ||
+    isDirectTradeEscrowContractAddress(address) ||
     address === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()
   );
 };
@@ -305,20 +316,20 @@ export const resolveTradeEscrowContractConfig = (
   addresses: TradingContractAddresses = DEFAULT_TRADING_CONTRACT_ADDRESSES
 ): TradeEscrowConfig => {
   const address = normalizeEscrowAddress(escrowContract, addresses);
-  if (address.toLowerCase() === addresses.privateEscrow.toLowerCase()) {
+  if (isPrivateOrderEscrowContractAddress(address, addresses)) {
     return {
       address: addresses.privateEscrow,
       abi: PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
       hiddenOnly: true,
-      partyVisible: false
+      directVisible: false
     };
   }
-  if (isPartyTradeEscrowContractAddress(address, addresses)) {
+  if (isDirectTradeEscrowContractAddress(address, addresses)) {
     return {
-      address: addresses.partyEscrow,
-      abi: PARTY_TRADE_ESCROW_CONTRACT_ABI,
+      address: addresses.directEscrow,
+      abi: DIRECT_TRADE_ESCROW_CONTRACT_ABI,
       hiddenOnly: false,
-      partyVisible: true
+      directVisible: true
     };
   }
   if (address.toLowerCase() !== addresses.standardEscrow.toLowerCase()) {
@@ -329,7 +340,7 @@ export const resolveTradeEscrowContractConfig = (
     address: addresses.standardEscrow,
     abi: TRADE_ESCROW_CONTRACT_ABI,
     hiddenOnly: false,
-    partyVisible: false
+    directVisible: false
   };
 };
 
@@ -340,8 +351,14 @@ const resolveActiveOneOffTradeEscrowConfigs = (
     resolveTradeEscrowContractConfig(addresses.standardEscrow, addresses),
     resolveTradeEscrowContractConfig(addresses.privateEscrow, addresses)
   ];
-  if (isWalletAddress(addresses.partyEscrow)) {
-    configs.push(resolveTradeEscrowContractConfig(addresses.partyEscrow, addresses));
+  if (isWalletAddress(addresses.directEscrow)) {
+    configs.push(resolveTradeEscrowContractConfig(addresses.directEscrow, addresses));
+  }
+  if (
+    isWalletAddress(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS) &&
+    DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase() !== addresses.directEscrow.toLowerCase()
+  ) {
+    configs.push(resolveTradeEscrowContractConfig(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS));
   }
   return configs;
 };
@@ -351,6 +368,12 @@ export type TradeAccessMetadata = {
   hasAccessHash?: boolean;
   accessHash?: string;
   parentTradeId?: number;
+  hasTermsPayload?: boolean;
+  hasMakerAccessSecret?: boolean;
+  hasTakerAccessSecret?: boolean;
+  hasMakerTermsPayload?: boolean;
+  hasCounterpartyTermsPayload?: boolean;
+  publicAmountCaveat?: boolean;
 };
 
 const parseTradeAccessMetadata = (metadataRaw: unknown): TradeAccessMetadata => {
@@ -375,20 +398,40 @@ const parseTradeAccessMetadata = (metadataRaw: unknown): TradeAccessMetadata => 
   };
 };
 
-const parsePartyTradeAccessMetadata = (metadataRaw: unknown): TradeAccessMetadata => {
-  const metadata = metadataRaw as { accessHash?: unknown; parentTradeId?: unknown } | null | undefined;
+const parseDirectTradeAccessMetadata = (metadataRaw: unknown): TradeAccessMetadata => {
+  const metadata = metadataRaw as {
+    accessHash?: unknown;
+    parentTradeId?: unknown;
+    hasTermsPayload?: unknown;
+    hasMakerAccessSecret?: unknown;
+    hasTakerAccessSecret?: unknown;
+    hasMakerTermsPayload?: unknown;
+    hasCounterpartyTermsPayload?: unknown;
+    publicAmountCaveat?: unknown;
+  } | null | undefined;
   const indexedMetadata = metadataRaw as { [key: number]: unknown } | null | undefined;
   const metadataAccessHash = String(metadata?.accessHash ?? indexedMetadata?.[0] ?? '');
   const parentTradeId = toSafeNumber(metadata?.parentTradeId ?? indexedMetadata?.[1]);
   const accessHash = /^0x[0-9a-fA-F]{64}$/.test(metadataAccessHash)
     ? metadataAccessHash.toLowerCase()
     : undefined;
+  const hasTermsPayload = metadata?.hasTermsPayload ?? indexedMetadata?.[4];
+  const hasMakerAccessSecret = metadata?.hasMakerAccessSecret ?? indexedMetadata?.[5];
+  const hasTakerAccessSecret = metadata?.hasTakerAccessSecret ?? indexedMetadata?.[6];
+  const publicAmountCaveat = metadata?.publicAmountCaveat ?? indexedMetadata?.[7];
 
   return {
     isPublic: false,
     hasAccessHash: accessHash ? accessHash !== ZERO_BYTES32 : undefined,
     accessHash,
-    parentTradeId: parentTradeId > 0 ? parentTradeId : undefined
+    parentTradeId: parentTradeId > 0 ? parentTradeId : undefined,
+    hasTermsPayload: typeof hasTermsPayload === 'boolean' ? hasTermsPayload : undefined,
+    hasMakerAccessSecret: typeof hasMakerAccessSecret === 'boolean' ? hasMakerAccessSecret : undefined,
+    hasTakerAccessSecret: typeof hasTakerAccessSecret === 'boolean' ? hasTakerAccessSecret : undefined,
+    hasMakerTermsPayload: typeof hasMakerAccessSecret === 'boolean' ? hasMakerAccessSecret : undefined,
+    hasCounterpartyTermsPayload:
+      typeof hasTermsPayload === 'boolean' ? hasTermsPayload : undefined,
+    publicAmountCaveat: typeof publicAmountCaveat === 'boolean' ? publicAmountCaveat : undefined
   };
 };
 
@@ -404,6 +447,35 @@ const parseOptionalTradeId = (value: unknown): number | undefined => {
   const tradeId = toSafeNumber(value);
   return tradeId > 0 ? tradeId : undefined;
 };
+
+const getIndexedResultValue = (value: unknown, index: number): unknown => {
+  try {
+    return (value as { [key: number]: unknown } | null | undefined)?.[index];
+  } catch {
+    return undefined;
+  }
+};
+
+export const __getIndexedResultValueForTest = getIndexedResultValue;
+
+const DIRECT_TERM_PAYLOAD_SECRET_CALLER_CANDIDATES = [
+  '0x000000000000000000000000000000000000dEaD',
+  '0x0000000000000000000000000000000000000001',
+  '0x1111111111111111111111111111111111111111'
+];
+
+const resolveDirectTermPayloadSecretCaller = (makerAddress?: string, takerAddress?: string): string => {
+  const makerKey = makerAddress?.trim().toLowerCase() ?? '';
+  const takerKey = takerAddress?.trim().toLowerCase() ?? '';
+  return (
+    DIRECT_TERM_PAYLOAD_SECRET_CALLER_CANDIDATES.find((candidate) => {
+      const candidateKey = candidate.toLowerCase();
+      return candidateKey !== makerKey && candidateKey !== takerKey;
+    }) ?? DIRECT_TERM_PAYLOAD_SECRET_CALLER_CANDIDATES[0]
+  );
+};
+
+export const __resolveDirectTermPayloadSecretCallerForTest = resolveDirectTermPayloadSecretCaller;
 
 type RecurringRawAsset = {
   assetType?: unknown;
@@ -595,6 +667,7 @@ const decryptPrivateUintValue = async (
   signer: Wallet | JsonRpcSigner,
   recoverOnFailure = false
 ): Promise<bigint | null> => {
+  void recoverOnFailure;
   if (encryptedValue === null || encryptedValue === undefined) {
     return null;
   }
@@ -602,22 +675,6 @@ const decryptPrivateUintValue = async (
   const firstAttempt = await decryptPrivateUintValueWithCurrentAes(encryptedValue, signer);
   if (firstAttempt !== null) {
     return firstAttempt;
-  }
-
-  if (recoverOnFailure) {
-    const previousOnboardInfo = signer.getUserOnboardInfo();
-    try {
-      signer.clearUserOnboardInfo();
-      await signer.generateOrRecoverAes();
-      const decrypted = await decryptPrivateUintValueWithCurrentAes(encryptedValue, signer);
-      if (decrypted !== null) {
-        return decrypted;
-      }
-    } catch {
-      if (previousOnboardInfo) {
-        signer.setUserOnboardInfo(previousOnboardInfo);
-      }
-    }
   }
 
   return null;
@@ -628,7 +685,35 @@ const extractUserCiphertext = (encryptedValue: unknown): unknown => {
   return encrypted?.userCiphertext ?? encrypted?.[1] ?? encryptedValue;
 };
 
-export const readPrivateTokenBalanceWei = async (
+// Wrong/stale AES keys can decrypt ctUint256 into random uint256-looking values.
+// Current PrivateERC20 totalSupply() is not a reliable private-balance bound, so
+// use a very high UI sanity cap to avoid rendering obvious AES garbage.
+const PRIVATE_TOKEN_BALANCE_DECRYPT_SANITY_MAX_WEI = 10n ** 48n;
+
+const normalizeCurrentPrivateTokenBalanceWei = (balanceWei: bigint | null): bigint | null => {
+  if (balanceWei === null) {
+    return null;
+  }
+  if (balanceWei < 0n) {
+    return null;
+  }
+  if (balanceWei > PRIVATE_TOKEN_BALANCE_DECRYPT_SANITY_MAX_WEI) {
+    return null;
+  }
+  return balanceWei;
+};
+
+export const __normalizeCurrentPrivateTokenBalanceWeiForTest = normalizeCurrentPrivateTokenBalanceWei;
+
+const decryptPrivateTokenBalanceWei = async (
+  encryptedValue: unknown,
+  signer: Wallet | JsonRpcSigner
+): Promise<bigint | null> => {
+  const firstAttempt = await decryptPrivateUintValueWithCurrentAes(encryptedValue, signer);
+  return normalizeCurrentPrivateTokenBalanceWei(firstAttempt);
+};
+
+export const readCurrentPrivateErc20BalanceWei = async (
   tokenAddress: string,
   ownerAddress: string,
   signer: Wallet | JsonRpcSigner,
@@ -637,79 +722,443 @@ export const readPrivateTokenBalanceWei = async (
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
   const privateTokenVNextInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
-  const privateTokenInterface = new cotiEthers.Interface(PRIVATE_TOKEN_BALANCE_ABI);
+
+  const balanceByAddressCallData = privateTokenVNextInterface.encodeFunctionData('balanceOf(address)', [ownerAddress]);
+  const balanceByAddressRawResult = await readProvider.call({
+    from: ownerAddress,
+    to: tokenAddress,
+    data: balanceByAddressCallData
+  });
+  const decodedByAddress = privateTokenVNextInterface.decodeFunctionResult(
+    'balanceOf(address)',
+    balanceByAddressRawResult
+  );
+  const encryptedBalanceRaw = decodedByAddress?.[0] ?? null;
+  void recoverOnFailure;
+  return decryptPrivateTokenBalanceWei(encryptedBalanceRaw, signer);
+};
+
+export const readLegacyPrivateRewardBalanceWei = async (
+  ownerAddress: string,
+  signer: Wallet | JsonRpcSigner,
+  recoverOnFailure = false
+): Promise<bigint | null> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
   const legacyPrivateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
-
   let encryptedBalanceRaw: unknown = null;
-  try {
-    const balanceByAddressCallData = privateTokenVNextInterface.encodeFunctionData('balanceOf(address)', [ownerAddress]);
-    const balanceByAddressRawResult = await readProvider.call({
-      from: ownerAddress,
-      to: tokenAddress,
-      data: balanceByAddressCallData
-    });
-    const decodedByAddress = privateTokenVNextInterface.decodeFunctionResult(
-      'balanceOf(address)',
-      balanceByAddressRawResult
-    );
-    encryptedBalanceRaw = decodedByAddress?.[0] ?? null;
-    return decryptPrivateUintValue(encryptedBalanceRaw, signer, recoverOnFailure);
-  } catch {
-    encryptedBalanceRaw = null;
-  }
 
   try {
-    const balanceByAddressCallData = privateTokenInterface.encodeFunctionData('balanceOf(address)', [ownerAddress]);
-    const balanceByAddressRawResult = await readProvider.call({
+    const legacyBalanceByAddressCallData = legacyPrivateTokenInterface.encodeFunctionData('balanceOf(address)', [
+      ownerAddress
+    ]);
+    const legacyBalanceByAddressRawResult = await readProvider.call({
       from: ownerAddress,
-      to: tokenAddress,
-      data: balanceByAddressCallData
+      to: LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
+      data: legacyBalanceByAddressCallData
     });
-    const decodedByAddress = privateTokenInterface.decodeFunctionResult(
+    const decodedLegacyByAddress = legacyPrivateTokenInterface.decodeFunctionResult(
       'balanceOf(address)',
-      balanceByAddressRawResult
+      legacyBalanceByAddressRawResult
     );
-    encryptedBalanceRaw = decodedByAddress?.[0] ?? null;
+    encryptedBalanceRaw = decodedLegacyByAddress?.[0] ?? null;
   } catch {
     encryptedBalanceRaw = null;
   }
 
   if (encryptedBalanceRaw === null) {
-    try {
-      const legacyBalanceByAddressCallData = legacyPrivateTokenInterface.encodeFunctionData('balanceOf(address)', [
-        ownerAddress
-      ]);
-      const legacyBalanceByAddressRawResult = await readProvider.call({
-        from: ownerAddress,
-        to: tokenAddress,
-        data: legacyBalanceByAddressCallData
-      });
-      const decodedLegacyByAddress = legacyPrivateTokenInterface.decodeFunctionResult(
-        'balanceOf(address)',
-        legacyBalanceByAddressRawResult
-      );
-      encryptedBalanceRaw = decodedLegacyByAddress?.[0] ?? null;
-    } catch {
-      encryptedBalanceRaw = null;
+    const balanceCallData = legacyPrivateTokenInterface.encodeFunctionData('balanceOf()', []);
+    const balanceRawResult = await readProvider.call({
+      from: ownerAddress,
+      to: LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
+      data: balanceCallData
+    });
+    const decodedBalance = legacyPrivateTokenInterface.decodeFunctionResult('balanceOf()', balanceRawResult);
+    encryptedBalanceRaw = decodedBalance?.[0] ?? null;
+  }
+
+  void recoverOnFailure;
+  return decryptPrivateTokenBalanceWei(encryptedBalanceRaw, signer);
+};
+
+export const readPrivateTokenBalanceWei = readCurrentPrivateErc20BalanceWei;
+
+export type DirectTermsRevealSource =
+  | 'already-hydrated'
+  | 'access-secret-payload'
+  | 'account-secret-envelope';
+
+export type DirectTermsRevealErrorCode =
+  | 'not-direct'
+  | 'not-participant'
+  | 'missing-counterparty-payload'
+  | 'stale-access-secret'
+  | 'missing-account-secret'
+  | 'account-secret-decrypt-failed'
+  | 'missing-maker-payload'
+  | 'maker-recovery-decrypt-failed'
+  | 'amount-snapshot-failed';
+
+export type DirectTermsRevealResult =
+  | {
+      ok: true;
+      snapshot: TradeSnapshot;
+      source: DirectTermsRevealSource;
+      recoveredAccessSecret?: string;
+    }
+  | {
+      ok: false;
+      snapshot: TradeSnapshot;
+      code: DirectTermsRevealErrorCode;
+      message: string;
+    };
+
+const hasPositiveSnapshotAssetAmount = (value?: string | null): boolean => {
+  const normalized = value?.trim() ?? '';
+  return /^\d+$/.test(normalized) && BigInt(normalized) > 0n;
+};
+
+const hasHydratedDirectSnapshotAmounts = (snapshot: Pick<TradeSnapshot, 'offer' | 'request'>): boolean =>
+  hasPositiveSnapshotAssetAmount(snapshot.offer.amount) &&
+  hasPositiveSnapshotAssetAmount(snapshot.request.amount);
+
+const MAX_UINT256_VALUE = (1n << 256n) - 1n;
+
+const bigintToBytes32Hex = (value: bigint): string | null => {
+  if (value < 0n || value > MAX_UINT256_VALUE) {
+    return null;
+  }
+  return `0x${value.toString(16).padStart(64, '0')}`;
+};
+
+export const readDirectTermPayloadBySecret = async ({
+  tradeId,
+  escrowContract,
+  accessSecret,
+  makerAddress,
+  takerAddress
+}: {
+  tradeId: number;
+  escrowContract?: string;
+  accessSecret: string;
+  makerAddress?: string;
+  takerAddress?: string;
+}): Promise<string | null> => {
+  if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !normalizeAccessHash(accessSecret)) {
+    return null;
+  }
+
+  const config = resolveTradeEscrowContractConfig(escrowContract);
+  if (!config.directVisible) {
+    return null;
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const directInterface = new cotiEthers.Interface(config.abi);
+  const rawResult = await readProvider
+    .call({
+      from: resolveDirectTermPayloadSecretCaller(makerAddress, takerAddress),
+      to: config.address,
+      data: directInterface.encodeFunctionData('getDirectTermPayload', [tradeId, accessSecret])
+    })
+    .catch(() => '');
+  if (!rawResult || rawResult === '0x') {
+    return null;
+  }
+  const decoded = directInterface.decodeFunctionResult('getDirectTermPayload', rawResult);
+  const payload = String(decoded?.[0] ?? '');
+  return payload && payload !== '0x' ? payload : null;
+};
+
+export const readDirectTermPayloadForAccount = async ({
+  tradeId,
+  escrowContract,
+  walletAddress,
+  signer
+}: {
+  tradeId: number;
+  escrowContract?: string;
+  walletAddress: string;
+  signer?: Wallet | JsonRpcSigner;
+}): Promise<string | null> => {
+  if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(walletAddress)) {
+    return null;
+  }
+
+  const config = resolveTradeEscrowContractConfig(escrowContract);
+  if (!config.directVisible) {
+    return null;
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  if (signer) {
+    const signerContract = new cotiEthers.Contract(config.address, config.abi, signer) as {
+      getDirectTermPayload?: {
+        staticCall?: (tradeId: number | bigint, accessSecret: string) => Promise<unknown>;
+      };
+    };
+    const signerPayload = await signerContract.getDirectTermPayload
+      ?.staticCall?.(BigInt(tradeId), ZERO_BYTES32)
+      .catch(() => null);
+    const normalizedSignerPayload = String(signerPayload ?? '');
+    if (normalizedSignerPayload && normalizedSignerPayload !== '0x') {
+      return normalizedSignerPayload;
     }
   }
 
-  if (encryptedBalanceRaw === null) {
+  const readProvider = await loadCotiReadProvider(true);
+  const directInterface = new cotiEthers.Interface(config.abi);
+  const rawResult = await readProvider
+    .call({
+      from: walletAddress,
+      to: config.address,
+      data: directInterface.encodeFunctionData('getDirectTermPayload', [tradeId, ZERO_BYTES32])
+    })
+    .catch(() => '');
+  if (!rawResult || rawResult === '0x') {
+    return null;
+  }
+  const decoded = directInterface.decodeFunctionResult('getDirectTermPayload', rawResult);
+  const payload = String(decoded?.[0] ?? '');
+  return payload && payload !== '0x' ? payload : null;
+};
+
+export const readDirectAccessSecretForAccount = async ({
+  tradeId,
+  escrowContract,
+  walletAddress,
+  signer
+}: {
+  tradeId: number;
+  escrowContract?: string;
+  walletAddress: string;
+  signer: Wallet | JsonRpcSigner;
+}): Promise<string | null> => {
+  if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(walletAddress)) {
+    return null;
+  }
+
+  const config = resolveTradeEscrowContractConfig(escrowContract);
+  if (!config.directVisible) {
+    return null;
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const directSignerContract = new cotiEthers.Contract(config.address, config.abi, signer) as {
+    getDirectAccessSecretForAccount?: {
+      staticCall?: (tradeId: number | bigint) => Promise<unknown>;
+    };
+  };
+  let encryptedSecret = await directSignerContract.getDirectAccessSecretForAccount
+    ?.staticCall?.(BigInt(tradeId))
+    .catch(() => null);
+  if (!encryptedSecret) {
+    const readProvider = await loadCotiReadProvider(true);
+    const directInterface = new cotiEthers.Interface(config.abi);
+    const rawResult = await readProvider
+      .call({
+        from: walletAddress,
+        to: config.address,
+        data: directInterface.encodeFunctionData('getDirectAccessSecretForAccount', [tradeId])
+      })
+      .catch(() => '');
+    if (!rawResult || rawResult === '0x') {
+      return null;
+    }
+    const decoded = directInterface.decodeFunctionResult('getDirectAccessSecretForAccount', rawResult);
+    encryptedSecret = decoded?.[0] ?? decoded;
+  }
+
+  const decryptedSecret = await decryptPrivateUintValue(extractUserCiphertext(encryptedSecret), signer, true);
+  return decryptedSecret === null ? null : bigintToBytes32Hex(decryptedSecret);
+};
+
+export const revealDirectTradeTermsForWallet = async ({
+  snapshot,
+  walletAddress,
+  signer,
+  accessSecret
+}: {
+  snapshot: TradeSnapshot;
+  walletAddress: string;
+  signer: Wallet | JsonRpcSigner;
+  accessSecret?: string;
+}): Promise<DirectTermsRevealResult> => {
+  const config = resolveTradeEscrowContractConfig(snapshot.escrowContract);
+  if (!config.directVisible) {
+    return {
+      ok: false,
+      snapshot,
+      code: 'not-direct',
+      message: 'This offer is not a Direct OTC offer.'
+    };
+  }
+
+  if (hasHydratedDirectSnapshotAmounts(snapshot)) {
+    return { ok: true, snapshot, source: 'already-hydrated' };
+  }
+
+  const normalizedWallet = walletAddress.trim().toLowerCase();
+  const makerKey = snapshot.maker.trim().toLowerCase();
+  const takerKey = snapshot.taker.trim().toLowerCase();
+  const isMaker = normalizedWallet !== '' && normalizedWallet === makerKey;
+  const isFixedTaker =
+    normalizedWallet !== '' &&
+    takerKey !== '' &&
+    takerKey !== ZERO_BYTES32.toLowerCase() &&
+    takerKey !== '0x0000000000000000000000000000000000000000' &&
+    normalizedWallet === takerKey;
+  const validAccessSecret = normalizeAccessHash(accessSecret);
+  let staleSecretError: DirectTermsRevealResult | null = null;
+  let accountSecretError: DirectTermsRevealResult | null = null;
+
+  if (validAccessSecret) {
     try {
-      const balanceCallData = privateTokenInterface.encodeFunctionData('balanceOf()', []);
-      const balanceRawResult = await readProvider.call({
-        from: ownerAddress,
-        to: tokenAddress,
-        data: balanceCallData
+      const encryptedPayload = await readDirectTermPayloadBySecret({
+        tradeId: snapshot.tradeId,
+        escrowContract: snapshot.escrowContract,
+        accessSecret: validAccessSecret,
+        makerAddress: snapshot.maker,
+        takerAddress: snapshot.taker
       });
-      const decodedBalance = privateTokenInterface.decodeFunctionResult('balanceOf()', balanceRawResult);
-      encryptedBalanceRaw = decodedBalance?.[0] ?? null;
+      if (!encryptedPayload) {
+        staleSecretError = {
+          ok: false,
+          snapshot,
+          code: snapshot.directTermsMetadata?.hasTermsPayload === false
+            ? 'missing-counterparty-payload'
+            : 'stale-access-secret',
+          message:
+            snapshot.directTermsMetadata?.hasTermsPayload === false
+              ? 'This Direct offer was created without link-readable terms. Open it with the maker or recipient wallet.'
+              : 'The saved counter link secret is stale or invalid. Open the copied link again.'
+        };
+      } else {
+        const terms = await decryptDirectTradeTerms(encryptedPayload, validAccessSecret);
+        const revealedSnapshot = applyDirectTradeTermsToSnapshot(snapshot, terms);
+        if (hasHydratedDirectSnapshotAmounts(revealedSnapshot)) {
+          return {
+            ok: true,
+            snapshot: revealedSnapshot,
+            source: 'access-secret-payload',
+            recoveredAccessSecret: validAccessSecret
+          };
+        }
+        staleSecretError = {
+          ok: false,
+          snapshot,
+          code: 'stale-access-secret',
+          message: 'The saved counter link secret is stale or invalid. Open the copied link again.'
+        };
+      }
     } catch {
-      encryptedBalanceRaw = null;
+      staleSecretError = {
+        ok: false,
+        snapshot,
+        code: 'stale-access-secret',
+        message: 'The saved counter link secret is stale or invalid. Open the copied link again.'
+      };
     }
   }
 
-  return decryptPrivateUintValue(encryptedBalanceRaw, signer, recoverOnFailure);
+  if (isMaker || isFixedTaker) {
+    try {
+      const missingEnvelope =
+        (isMaker && snapshot.directTermsMetadata?.hasMakerAccessSecret === false) ||
+        (isFixedTaker && snapshot.directTermsMetadata?.hasTakerAccessSecret === false);
+      if (missingEnvelope) {
+        accountSecretError = {
+          ok: false,
+          snapshot,
+          code: 'missing-account-secret',
+          message: 'This Direct offer was created before wallet-reveal terms were supported. Open the share link or recreate it.'
+        };
+      } else {
+        const recoveredSecret = await readDirectAccessSecretForAccount({
+          tradeId: snapshot.tradeId,
+          escrowContract: snapshot.escrowContract,
+          walletAddress,
+          signer
+        });
+        const normalizedRecoveredSecret = normalizeAccessHash(recoveredSecret);
+        if (!normalizedRecoveredSecret) {
+          accountSecretError = {
+            ok: false,
+            snapshot,
+            code: 'account-secret-decrypt-failed',
+            message: 'Privacy is unlocked, but this wallet could not decrypt the Direct offer key. Refresh privacy key.'
+          };
+        } else {
+          const encryptedPayload =
+            (await readDirectTermPayloadBySecret({
+              tradeId: snapshot.tradeId,
+              escrowContract: snapshot.escrowContract,
+              accessSecret: normalizedRecoveredSecret,
+              makerAddress: snapshot.maker,
+              takerAddress: snapshot.taker
+            })) ??
+            (await readDirectTermPayloadForAccount({
+              tradeId: snapshot.tradeId,
+              escrowContract: snapshot.escrowContract,
+              walletAddress,
+              signer
+            }));
+          if (!encryptedPayload) {
+            accountSecretError = {
+              ok: false,
+              snapshot,
+              code: 'missing-counterparty-payload',
+              message: 'This Direct offer was created without canonical encrypted terms. Open the share link or recreate it.'
+            };
+          } else {
+            const terms = await decryptDirectTradeTerms(encryptedPayload, normalizedRecoveredSecret);
+            const revealedSnapshot = applyDirectTradeTermsToSnapshot(snapshot, terms);
+            if (hasHydratedDirectSnapshotAmounts(revealedSnapshot)) {
+              return {
+                ok: true,
+                snapshot: revealedSnapshot,
+                source: 'account-secret-envelope',
+                recoveredAccessSecret: normalizedRecoveredSecret
+              };
+            }
+            accountSecretError = {
+              ok: false,
+              snapshot,
+              code: 'missing-counterparty-payload',
+              message: 'This Direct offer was created without complete encrypted terms. Open the share link or recreate it.'
+            };
+          }
+        }
+      }
+    } catch {
+      accountSecretError = {
+        ok: false,
+        snapshot,
+        code: 'account-secret-decrypt-failed',
+        message: 'Privacy is unlocked, but this wallet could not decrypt the Direct offer key. Refresh privacy key.'
+      };
+    }
+  }
+
+  if (!isMaker && !isFixedTaker && !validAccessSecret) {
+    return {
+      ok: false,
+      snapshot,
+      code: 'not-participant',
+      message: 'This wallet is not the maker or recipient for this Direct offer.'
+    };
+  }
+
+  return (
+    accountSecretError ??
+    staleSecretError ?? {
+      ok: false,
+      snapshot,
+      code: 'missing-account-secret',
+      message: 'This Direct offer is missing wallet-reveal terms. Open the share link or recreate it.'
+    }
+  );
 };
 
 export const readPrivateTradeRemainingOfferWei = async ({
@@ -1148,30 +1597,11 @@ export const readPrivateTokenAllowanceWei = async (
       | null
       | undefined;
     const ownerCiphertext = allowance?.ownerCiphertext ?? allowance?.[1] ?? null;
-    return decryptPrivateUintValue(ownerCiphertext, signer, recoverOnFailure);
+    void recoverOnFailure;
+    return decryptPrivateUintValue(ownerCiphertext, signer, false);
   } catch {
+    return null;
   }
-
-  const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
-  const allowanceCallData = privateTokenInterface.encodeFunctionData('allowance(address,address)', [
-    ownerAddress,
-    spenderAddress
-  ]);
-  const allowanceRawResult = await readProvider.call({
-    from: ownerAddress,
-    to: tokenAddress,
-    data: allowanceCallData
-  });
-  const decodedAllowance = privateTokenInterface.decodeFunctionResult(
-    'allowance(address,address)',
-    allowanceRawResult
-  );
-  const allowance = decodedAllowance?.[0] as
-    | { ownerCiphertext?: unknown; [key: number]: unknown }
-    | null
-    | undefined;
-  const ownerCiphertext = allowance?.ownerCiphertext ?? allowance?.[1] ?? null;
-  return decryptPrivateUintValue(ownerCiphertext, signer, recoverOnFailure);
 };
 
 const resolveTradeAssetSnapshot = async (
@@ -1229,7 +1659,7 @@ const resolveTradeAssetSnapshot = async (
     const readProvider = await loadCotiReadProvider(true);
     const tokenContract = new cotiEthers.Contract(
       normalizedTokenAddress,
-      kind === 'private-erc20' ? PRIVATE_TOKEN_BALANCE_ABI : ERC20_TOKEN_ABI,
+      kind === 'private-erc20' ? PRIVATE_ERC20_TOKEN_VNEXT_ABI : ERC20_TOKEN_ABI,
       readProvider
     );
     const [symbolRaw, decimalsRaw] = await Promise.all([
@@ -1483,17 +1913,19 @@ export const fetchTradeAccessMetadataById = async (
     const tradeViewRaw = (await contract.getTradeView(tradeId)) as { metadata?: unknown; [key: number]: unknown };
     metadataRaw = tradeViewRaw.metadata ?? tradeViewRaw[1];
   }
-  return config.partyVisible ? parsePartyTradeAccessMetadata(metadataRaw) : parseTradeAccessMetadata(metadataRaw);
+  return config.directVisible ? parseDirectTradeAccessMetadata(metadataRaw) : parseTradeAccessMetadata(metadataRaw);
 };
 
 export const recoverTradeAccessPayloadForMaker = async ({
   tradeId,
   escrowContract,
-  signer
+  signer,
+  callerAddress
 }: {
   tradeId: number;
   escrowContract?: string;
   signer: Wallet | JsonRpcSigner;
+  callerAddress?: string;
 }): Promise<TradeRecoveryPayload> => {
   const cotiEthers = await loadCotiEthersModule();
   if (isRecurringOrderContractAddress(escrowContract)) {
@@ -1504,15 +1936,36 @@ export const recoverTradeAccessPayloadForMaker = async ({
 
   const config = resolveTradeEscrowContractConfig(escrowContract);
   const contract = new cotiEthers.Contract(config.address, config.abi, signer);
-  const encryptedPayload = config.partyVisible
-    ? await contract.getPartyTermPayload(tradeId, ZERO_BYTES32)
-    : config.hiddenOnly
-      ? await contract.getMakerRecoveryNote(tradeId)
-      : '0x';
+  let encryptedPayload: unknown = '0x';
+  if (config.directVisible || config.hiddenOnly) {
+    const functionName = config.directVisible ? 'getDirectTermPayload' : 'getMakerRecoveryNote';
+    const functionArgs = config.directVisible ? [tradeId, ZERO_BYTES32] : [tradeId];
+    const callerOverride = isWalletAddress(callerAddress ?? '') ? callerAddress : '';
+    if (callerOverride) {
+      try {
+        const readProvider = await loadCotiReadProvider(true);
+        const tradeInterface = new cotiEthers.Interface(config.abi);
+        const rawResult = await readProvider.call({
+          from: callerOverride,
+          to: config.address,
+          data: tradeInterface.encodeFunctionData(functionName, functionArgs)
+        });
+        const decoded = tradeInterface.decodeFunctionResult(functionName, rawResult);
+        encryptedPayload = decoded?.[0] ?? decoded;
+      } catch {
+        encryptedPayload = '0x';
+      }
+    }
+    if (String(encryptedPayload) === '0x') {
+      encryptedPayload = config.directVisible
+        ? await contract.getDirectTermPayload(tradeId, ZERO_BYTES32)
+        : await contract.getMakerRecoveryNote(tradeId);
+    }
+  }
   return decryptTradeRecoveryPayloadForSigner(signer, String(encryptedPayload));
 };
 
-export const fetchTradeSnapshotById = async (
+const fetchTradeSnapshotByIdFromContract = async (
   tradeId: number,
   options: {
     rewardTokenSymbol: string;
@@ -1521,6 +1974,7 @@ export const fetchTradeSnapshotById = async (
     privateRewardTokenDecimals: number;
     escrowContract?: string;
     accessSecret?: string;
+    callerAddress?: string;
     contractAddresses?: TradingContractAddresses;
   }
 ): Promise<TradeSnapshot> => {
@@ -1553,13 +2007,19 @@ export const fetchTradeSnapshotById = async (
   const indexedTradeView = tradeViewRaw as { [key: number]: unknown } | null | undefined;
   const viewTradeRaw = tradeView?.trade ?? indexedTradeView?.[0];
   const viewMetadataRaw = tradeView?.metadata ?? indexedTradeView?.[1];
-  const viewFillStateRaw = config.partyVisible ? null : tradeView?.fillState ?? indexedTradeView?.[2];
+  const viewFillStateRaw = config.directVisible ? null : tradeView?.fillState ?? indexedTradeView?.[2];
   const viewEffectiveStatusRaw =
-    tradeView?.effectiveStatus ?? indexedTradeView?.[config.partyVisible ? 2 : config.hiddenOnly ? 3 : 4];
+    tradeView?.effectiveStatus ?? indexedTradeView?.[config.directVisible ? 2 : config.hiddenOnly ? 3 : 4];
   const viewReplacementRaw =
-    tradeView?.replacementTradeId ?? indexedTradeView?.[config.partyVisible ? 3 : config.hiddenOnly ? 4 : 5];
+    tradeView?.replacementTradeId ?? indexedTradeView?.[config.directVisible ? 3 : config.hiddenOnly ? 4 : 5];
   const viewReplacesRaw =
-    tradeView?.replacesTradeId ?? indexedTradeView?.[config.partyVisible ? 4 : config.hiddenOnly ? 5 : 6];
+    tradeView?.replacesTradeId ?? indexedTradeView?.[config.directVisible ? 4 : config.hiddenOnly ? 5 : 6];
+  const viewDirectOfferAmountPrivateRaw = config.directVisible
+    ? (tradeView as { offerAmountPrivate?: unknown } | null | undefined)?.offerAmountPrivate ?? indexedTradeView?.[6]
+    : undefined;
+  const viewDirectRequestAmountPrivateRaw = config.directVisible
+    ? (tradeView as { requestAmountPrivate?: unknown } | null | undefined)?.requestAmountPrivate ?? indexedTradeView?.[7]
+    : undefined;
   const [counterParentRaw, counterParentEscrowRaw, replacementRaw, replacesRaw] = await Promise.all([
     typeof contract.counterParentTradeId === 'function'
       ? contract.counterParentTradeId(tradeId).catch(() => null)
@@ -1592,25 +2052,26 @@ export const fetchTradeSnapshotById = async (
   const maker = String(tradeRaw?.maker ?? tradeRaw?.[0] ?? '').trim();
   const taker = String(tradeRaw?.taker ?? tradeRaw?.[1] ?? '').trim();
   const statusRaw = viewEffectiveStatusRaw ?? tradeRaw?.status ?? tradeRaw?.[2];
-  const offerAssetRaw = (tradeRaw?.offerAsset ?? tradeRaw?.[3]) as
+  const offerAssetRaw = (tradeRaw?.offerAsset ?? getIndexedResultValue(tradeRaw, 3)) as
     | { assetType?: unknown; token?: unknown; amount?: unknown; [key: number]: unknown }
     | null
     | undefined;
-  const requestAssetRaw = (tradeRaw?.requestAsset ?? tradeRaw?.[4]) as
+  const requestAssetRaw = (tradeRaw?.requestAsset ?? getIndexedResultValue(tradeRaw, 4)) as
     | { assetType?: unknown; token?: unknown; amount?: unknown; [key: number]: unknown }
     | null
     | undefined;
   const createdAt = toSafeNumber(tradeRaw?.createdAt ?? tradeRaw?.[5]);
   const expiresAt = toSafeNumber(tradeRaw?.expiresAt ?? tradeRaw?.[6]);
-  const offerAssetType = offerAssetRaw?.assetType ?? offerAssetRaw?.[0] ?? 0;
-  const offerToken = offerAssetRaw?.token ?? offerAssetRaw?.[1] ?? '';
-  const offerAmount = offerAssetRaw?.amount ?? offerAssetRaw?.[2] ?? 0n;
-  const requestAssetType = requestAssetRaw?.assetType ?? requestAssetRaw?.[0] ?? 0;
-  const requestToken = requestAssetRaw?.token ?? requestAssetRaw?.[1] ?? '';
-  const requestAmount = requestAssetRaw?.amount ?? requestAssetRaw?.[2] ?? 0n;
-  const { isPublic, hasAccessHash, accessHash, parentTradeId: parsedParentTradeId } = config.partyVisible
-    ? parsePartyTradeAccessMetadata(metadataRaw)
+  const offerAssetType = offerAssetRaw?.assetType ?? getIndexedResultValue(offerAssetRaw, 0) ?? 0;
+  const offerToken = offerAssetRaw?.token ?? getIndexedResultValue(offerAssetRaw, 1) ?? '';
+  const offerAmount = offerAssetRaw?.amount ?? getIndexedResultValue(offerAssetRaw, 2) ?? 0n;
+  const requestAssetType = requestAssetRaw?.assetType ?? getIndexedResultValue(requestAssetRaw, 0) ?? 0;
+  const requestToken = requestAssetRaw?.token ?? getIndexedResultValue(requestAssetRaw, 1) ?? '';
+  const requestAmount = requestAssetRaw?.amount ?? getIndexedResultValue(requestAssetRaw, 2) ?? 0n;
+  const tradeAccessMetadata = config.directVisible
+    ? parseDirectTradeAccessMetadata(metadataRaw)
     : parseTradeAccessMetadata(metadataRaw);
+  const { isPublic, hasAccessHash, accessHash, parentTradeId: parsedParentTradeId } = tradeAccessMetadata;
   const parentTradeId = config.hiddenOnly ? undefined : parsedParentTradeId;
   const fillState = parseTradeFillState(fillStateRaw, offerAmount, requestAmount);
   const counterParentTradeId = parseOptionalTradeId(counterParentRaw);
@@ -1643,7 +2104,6 @@ export const fetchTradeSnapshotById = async (
   ]);
   const resolvedStatus = resolveTradeSnapshotStatus(statusRaw, expiresAt);
   const hiddenLiquidity =
-    config.partyVisible ||
     config.hiddenOnly ||
     offer.kind === 'private-erc20' &&
     request.kind === 'private-erc20' &&
@@ -1694,19 +2154,116 @@ export const fetchTradeSnapshotById = async (
     replacesTradeId,
     fillState,
     acceptedTxHash,
-    hiddenLiquidity
+    hiddenLiquidity,
+    directTermsMetadata: config.directVisible
+      ? {
+          hasTermsPayload: tradeAccessMetadata.hasTermsPayload,
+          hasMakerAccessSecret: tradeAccessMetadata.hasMakerAccessSecret,
+          hasTakerAccessSecret: tradeAccessMetadata.hasTakerAccessSecret,
+          hasMakerTermsPayload: tradeAccessMetadata.hasMakerTermsPayload,
+          hasCounterpartyTermsPayload: tradeAccessMetadata.hasCounterpartyTermsPayload,
+          offerAmountPrivate:
+            typeof viewDirectOfferAmountPrivateRaw === 'boolean' ? viewDirectOfferAmountPrivateRaw : undefined,
+          requestAmountPrivate:
+            typeof viewDirectRequestAmountPrivateRaw === 'boolean' ? viewDirectRequestAmountPrivateRaw : undefined,
+          publicAmountCaveat: tradeAccessMetadata.publicAmountCaveat
+        }
+      : undefined
   };
 
-  if (config.partyVisible && options.accessSecret) {
+  if (config.directVisible && options.accessSecret) {
     try {
-      const encryptedPayload = await contract.getPartyTermPayload(tradeId, options.accessSecret);
-      const terms = await decryptPartyTradeTerms(String(encryptedPayload), options.accessSecret);
-      snapshot = applyPartyTradeTermsToSnapshot(snapshot, terms);
+      const encryptedPayload = await readDirectTermPayloadBySecret({
+        tradeId,
+        escrowContract: config.address,
+        accessSecret: options.accessSecret,
+        makerAddress: maker,
+        takerAddress: taker
+      });
+      if (encryptedPayload) {
+        const terms = await decryptDirectTradeTerms(String(encryptedPayload), options.accessSecret);
+        snapshot = applyDirectTradeTermsToSnapshot(snapshot, terms);
+      }
     } catch {
     }
   }
 
   return snapshot;
+};
+
+export const __selectTradeSnapshotCandidateForTest = (
+  snapshots: TradeSnapshot[],
+  accessSecretHash?: string
+): TradeSnapshot | null => {
+  if (snapshots.length === 0) {
+    return null;
+  }
+
+  const normalizedAccessSecretHash = normalizeAccessHash(accessSecretHash);
+  if (normalizedAccessSecretHash) {
+    const accessMatched = snapshots.find((snapshot) =>
+      normalizeAccessHash(snapshot.accessHash) === normalizedAccessSecretHash
+    );
+    if (accessMatched) {
+      return accessMatched;
+    }
+    const directCounterCandidate = snapshots.find((snapshot) =>
+      isDirectTradeEscrowContractAddress(snapshot.escrowContract) &&
+      Boolean(snapshot.counterParentTradeId) &&
+      normalizeAccessHash(snapshot.accessHash) === ZERO_BYTES32
+    );
+    if (directCounterCandidate) {
+      return directCounterCandidate;
+    }
+  }
+
+  const publicCandidate = snapshots.find((snapshot) => snapshot.isPublic);
+  return publicCandidate ?? snapshots[0] ?? null;
+};
+
+export const fetchTradeSnapshotById = async (
+  tradeId: number,
+  options: {
+    rewardTokenSymbol: string;
+    rewardTokenDecimals: number;
+    privateRewardTokenSymbol: string;
+    privateRewardTokenDecimals: number;
+    escrowContract?: string;
+    accessSecret?: string;
+    callerAddress?: string;
+    contractAddresses?: TradingContractAddresses;
+  }
+): Promise<TradeSnapshot> => {
+  const contractAddresses = options.contractAddresses ?? DEFAULT_TRADING_CONTRACT_ADDRESSES;
+  if (options.escrowContract || isRecurringOrderContractAddress(options.escrowContract, contractAddresses)) {
+    return fetchTradeSnapshotByIdFromContract(tradeId, options);
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const configs = resolveActiveOneOffTradeEscrowConfigs(contractAddresses);
+  const candidates = await Promise.all(
+    configs.map((config) =>
+      fetchTradeSnapshotByIdFromContract(tradeId, {
+        ...options,
+        escrowContract: config.address,
+        contractAddresses
+      }).catch(() => null)
+    )
+  );
+  const readableCandidates = candidates.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
+  const accessSecretHash = options.accessSecret
+    ? normalizeAccessHash(cotiEthers.keccak256(options.accessSecret))
+    : undefined;
+  const selected = __selectTradeSnapshotCandidateForTest(readableCandidates, accessSecretHash);
+  if (selected) {
+    return selected;
+  }
+
+  return fetchTradeSnapshotByIdFromContract(tradeId, {
+    ...options,
+    escrowContract: contractAddresses.standardEscrow,
+    contractAddresses
+  });
 };
 
 export const fetchRecentTradeSnapshots = async (
@@ -1853,7 +2410,7 @@ const fetchWalletHistoryRefsFromReader = async (
           walletAddress,
           addresses.standardEscrow,
           addresses.privateEscrow,
-          addresses.partyEscrow || '0x0000000000000000000000000000000000000000',
+          addresses.directEscrow || '0x0000000000000000000000000000000000000000',
           addresses.recurringEscrow,
           0,
           limit
@@ -1862,6 +2419,36 @@ const fetchWalletHistoryRefsFromReader = async (
   } catch {
     return null;
   }
+};
+
+const getWalletTradeSnapshotKey = (snapshot: TradeSnapshot): string =>
+  `${(snapshot.escrowContract ?? '').toLowerCase()}:${snapshot.tradeId}`;
+
+export const __mergeWalletTradeSnapshotsForTest = (
+  snapshotGroups: TradeSnapshot[][],
+  limit = 80
+): TradeSnapshot[] => {
+  const byKey = new Map<string, TradeSnapshot>();
+  for (const snapshot of snapshotGroups.flat()) {
+    const key = getWalletTradeSnapshotKey(snapshot);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, snapshot);
+      continue;
+    }
+
+    byKey.set(key, {
+      ...existing,
+      ...snapshot,
+      walletHasFill: Boolean(existing.walletHasFill || snapshot.walletHasFill),
+      walletFillState: snapshot.walletFillState ?? existing.walletFillState,
+      makerPrivateProgress: snapshot.makerPrivateProgress ?? existing.makerPrivateProgress
+    });
+  }
+
+  return Array.from(byKey.values())
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, limit);
 };
 
 export const fetchWalletTradeSnapshots = async (
@@ -1911,6 +2498,7 @@ export const fetchWalletTradeSnapshots = async (
       : undefined;
   };
   const historyRefs = await fetchWalletHistoryRefsFromReader(walletAddress, tradingContracts, safeLimit);
+  let historySnapshots: TradeSnapshot[] = [];
   if (historyRefs) {
     const fillerKeys = new Set(
       historyRefs
@@ -1928,7 +2516,8 @@ export const fetchWalletTradeSnapshots = async (
           privateRewardTokenSymbol: options.privateRewardTokenSymbol,
           privateRewardTokenDecimals: options.privateRewardTokenDecimals,
           escrowContract: ref.contractAddress,
-          contractAddresses: tradingContracts
+          contractAddresses: tradingContracts,
+          callerAddress: walletAddress
         })
           .then(async (snapshot) => {
             const key = `${ref.contractAddress.toLowerCase()}:${ref.localId}`;
@@ -1945,10 +2534,7 @@ export const fetchWalletTradeSnapshots = async (
           .catch(() => null)
       )
     );
-    return snapshots
-      .filter((snapshot): snapshot is TradeSnapshot => snapshot !== null)
-      .sort((left, right) => right.createdAt - left.createdAt)
-      .slice(0, safeLimit);
+    historySnapshots = snapshots.filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
   }
   const configs = resolveActiveOneOffTradeEscrowConfigs(tradingContracts);
   const snapshotGroups = await Promise.all([
@@ -1972,7 +2558,8 @@ export const fetchWalletTradeSnapshots = async (
             privateRewardTokenSymbol: options.privateRewardTokenSymbol,
             privateRewardTokenDecimals: options.privateRewardTokenDecimals,
             escrowContract: config.address,
-            contractAddresses: tradingContracts
+            contractAddresses: tradingContracts,
+            callerAddress: walletAddress
           })
             .then(async (snapshot) => {
               if (!fillerIdSet.has(tradeId)) {
@@ -2019,11 +2606,58 @@ export const fetchWalletTradeSnapshots = async (
     })()
   ]);
 
-  return snapshotGroups
+  const directSnapshots = snapshotGroups
     .flat()
-    .filter((snapshot): snapshot is TradeSnapshot => snapshot !== null)
-    .sort((left, right) => right.createdAt - left.createdAt)
-    .slice(0, safeLimit);
+    .filter((snapshot): snapshot is TradeSnapshot => snapshot !== null);
+  const walletKey = walletAddress.toLowerCase();
+  const parentSnapshotsForCounterScan = directSnapshots.filter(
+    (snapshot) =>
+      !snapshot.recurringOrder &&
+      !snapshot.counterParentTradeId &&
+      snapshot.status === 'open' &&
+      snapshot.maker.toLowerCase() === walletKey &&
+      isWalletAddress(snapshot.escrowContract ?? '')
+  );
+  const directCounterSnapshots =
+    parentSnapshotsForCounterScan.length > 0
+      ? (
+          await Promise.all(
+            configs
+              .filter((config) => config.directVisible)
+              .map(async (config) => {
+                const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
+                const counterIdsByParent = await Promise.all(
+                  parentSnapshotsForCounterScan.map(async (parentSnapshot) => {
+                    const raw = await contract
+                      .getCounterTradeIdsForParent?.(parentSnapshot.escrowContract, parentSnapshot.tradeId, 0, safeLimit)
+                      .catch(() => null);
+                    return resolveIds(raw);
+                  })
+                );
+                const counterIds = Array.from(new Set(counterIdsByParent.flat()))
+                  .sort((left, right) => right - left)
+                  .slice(0, safeLimit);
+                return Promise.all(
+                  counterIds.map((tradeId) =>
+                    fetchTradeSnapshotById(tradeId, {
+                      rewardTokenSymbol: options.rewardTokenSymbol,
+                      rewardTokenDecimals: options.rewardTokenDecimals,
+                      privateRewardTokenSymbol: options.privateRewardTokenSymbol,
+                      privateRewardTokenDecimals: options.privateRewardTokenDecimals,
+                      escrowContract: config.address,
+                      contractAddresses: tradingContracts,
+                      callerAddress: walletAddress
+                    }).catch(() => null)
+                  )
+                );
+              })
+          )
+        )
+          .flat()
+          .filter((snapshot): snapshot is TradeSnapshot => snapshot !== null)
+      : [];
+
+  return __mergeWalletTradeSnapshotsForTest([historySnapshots, directSnapshots, directCounterSnapshots], safeLimit);
 };
 
 const approvePrivateTokenSpender = async (
@@ -2076,7 +2710,7 @@ export const readPrivateTokenAccountEncryptionAddress = async (
 
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_ABI, readProvider);
+  const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_VNEXT_ABI, readProvider);
   const currentAddress = await privateTokenContract.accountEncryptionAddress(ownerAddress).catch(() => null);
   return typeof currentAddress === 'string' && isWalletAddress(currentAddress) ? currentAddress : null;
 };
@@ -2114,7 +2748,7 @@ const refreshPrivateTokenAccountEncryptionAddress = async (
   tokenSymbol = 'private token'
 ): Promise<void> => {
   const cotiEthers = await loadCotiEthersModule();
-  const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_ABI, signer);
+  const privateTokenContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_VNEXT_ABI, signer);
   const tx = await privateTokenContract.setAccountEncryptionAddress(ownerAddress, {
     gasLimit: PRIVATE_TOKEN_WRITE_GAS_LIMIT
   }).catch((error: unknown) => {
@@ -2151,15 +2785,16 @@ export const ensurePrivateTokenSpendReady = async ({
     throw new Error('Private token amount exceeds the maximum plaintext size supported by COTI private ERC-20.');
   }
 
-  let balanceWei = await readPrivateTokenBalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
+  await ensurePrivateTokenAccountEncryptionAddress({
+    signer,
+    tokenAddress,
+    ownerAddress,
+    tokenSymbol
+  });
+
+  let balanceWei = await readCurrentPrivateErc20BalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
   if (balanceWei === null) {
-    await ensurePrivateTokenAccountEncryptionAddress({
-      signer,
-      tokenAddress,
-      ownerAddress,
-      tokenSymbol
-    });
-    balanceWei = await readPrivateTokenBalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
+    balanceWei = await readCurrentPrivateErc20BalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
   }
   const allowanceWei = await readPrivateTokenAllowanceWei(
     tokenAddress,
@@ -2218,6 +2853,12 @@ export const ensureTradeTokenAllowance = async (
     if (requiredAmount > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
       throw new Error('Private token amount exceeds the maximum plaintext size supported by COTI private ERC-20.');
     }
+
+    await ensurePrivateTokenAccountEncryptionAddress({
+      signer,
+      tokenAddress,
+      ownerAddress
+    });
 
     const allowance = await readPrivateTokenAllowanceWei(
       tokenAddress,

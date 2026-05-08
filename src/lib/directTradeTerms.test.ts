@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyPartyTradeTermsToSnapshot,
-  buildPartyTradeTerms,
+  applyDirectTradeTermsToSnapshot,
+  buildDirectTradeTerms,
   createTradeAccessSecret,
-  decryptPartyTradeTerms,
-  encryptPartyTradeTerms
-} from './partyTradeTerms';
+  decryptDirectTradeTerms,
+  encryptDirectTradeTerms
+} from './directTradeTerms';
 import type { TradeSnapshot } from './appShared';
 
-describe('partyTradeTerms', () => {
-  it('encrypts and decrypts party-visible trade terms with the private link secret', async () => {
+describe('directTradeTerms', () => {
+  it('encrypts and decrypts direct-visible trade terms with the private link secret', async () => {
     const accessSecret = createTradeAccessSecret();
-    const terms = buildPartyTradeTerms({
+    const terms = buildDirectTradeTerms({
       maker: '0x1111111111111111111111111111111111111111',
       taker: '0x2222222222222222222222222222222222222222',
       offer: { kind: 'private-erc20', tokenAddress: '0x3333333333333333333333333333333333333333', amount: '1000' },
@@ -21,11 +21,11 @@ describe('partyTradeTerms', () => {
       parentTradeId: 7
     });
 
-    const encrypted = await encryptPartyTradeTerms(terms, accessSecret);
+    const encrypted = await encryptDirectTradeTerms(terms, accessSecret);
     expect(encrypted).toMatch(/^0x[0-9a-f]+$/);
 
-    await expect(decryptPartyTradeTerms(encrypted, createTradeAccessSecret())).rejects.toThrow();
-    await expect(decryptPartyTradeTerms(encrypted, accessSecret)).resolves.toEqual(terms);
+    await expect(decryptDirectTradeTerms(encrypted, createTradeAccessSecret())).rejects.toThrow();
+    await expect(decryptDirectTradeTerms(encrypted, accessSecret)).resolves.toEqual(terms);
   });
 
   it('hydrates exact amounts only after terms are decrypted', () => {
@@ -38,9 +38,15 @@ describe('partyTradeTerms', () => {
       createdAt: 1,
       expiresAt: 2,
       status: 'open',
+      fillState: {
+        remainingOfferAmount: '0',
+        remainingRequestAmount: '0',
+        filledOfferAmount: '0',
+        filledRequestAmount: '0'
+      },
       hiddenLiquidity: true
     } satisfies TradeSnapshot;
-    const terms = buildPartyTradeTerms({
+    const terms = buildDirectTradeTerms({
       maker: snapshot.maker,
       taker: snapshot.taker,
       offer: { kind: 'private-erc20', tokenAddress: snapshot.offer.tokenAddress, amount: '123' },
@@ -48,9 +54,11 @@ describe('partyTradeTerms', () => {
       expiresAt: snapshot.expiresAt
     });
 
-    const hydrated = applyPartyTradeTermsToSnapshot(snapshot, terms);
+    const hydrated = applyDirectTradeTermsToSnapshot(snapshot, terms);
     expect(hydrated.offer.amount).toBe('123');
     expect(hydrated.request.amount).toBe('456');
+    expect(hydrated.fillState?.remainingOfferAmount).toBe('123');
+    expect(hydrated.fillState?.remainingRequestAmount).toBe('456');
     expect(hydrated.hiddenLiquidity).toBe(false);
   });
 });

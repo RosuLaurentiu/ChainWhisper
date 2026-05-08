@@ -5,6 +5,7 @@ import {
   formatMessageTimestamp,
   formatTokenAmount,
   formatTradeAssetDisplayText,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
   type TradeOfferMessagePayload,
@@ -47,15 +48,66 @@ export const buildOfferFromSnapshot = (snapshot: TradeSnapshot): TradeOfferMessa
   createdAt: snapshot.createdAt,
   expiresAt: snapshot.expiresAt,
   parentTradeId: snapshot.counterParentTradeId ?? undefined,
-  hiddenLiquidity: snapshot.hiddenLiquidity
+  hiddenLiquidity: getTradeTermsVisibility(snapshot) === 'hidden-liquidity'
 });
 
 export const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'taker'>): boolean =>
   !isZeroTradeTakerAddress(trade.taker);
 
+export type TradeTermsVisibility = 'public' | 'direct-private-terms' | 'hidden-liquidity';
+
+const isDirectEscrowTrade = (trade: Pick<TradeSnapshot, 'escrowContract'>): boolean =>
+  trade.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+
+export const getTradeTermsVisibility = (
+  trade: Pick<TradeSnapshot, 'escrowContract' | 'hiddenLiquidity' | 'recurringOrder'>
+): TradeTermsVisibility => {
+  if (trade.recurringOrder) {
+    return trade.recurringOrder.mode === 'public' ? 'public' : 'hidden-liquidity';
+  }
+  if (isDirectEscrowTrade(trade)) {
+    return 'direct-private-terms';
+  }
+  return trade.hiddenLiquidity ? 'hidden-liquidity' : 'public';
+};
+
+export const isHiddenLiquidityTrade = (
+  trade: Pick<TradeSnapshot, 'escrowContract' | 'hiddenLiquidity' | 'recurringOrder'>
+): boolean => getTradeTermsVisibility(trade) === 'hidden-liquidity';
+
+const hasPositiveAssetAmount = (asset?: Pick<TradeAssetPayload, 'amount'> | null): boolean => {
+  const normalizedAmount = asset?.amount?.trim() ?? '';
+  return /^\d+$/.test(normalizedAmount) && BigInt(normalizedAmount) > 0n;
+};
+
+export const hasHydratedDirectTradeTerms = (
+  trade: Pick<TradeSnapshot, 'escrowContract' | 'offer' | 'request'>
+): boolean =>
+  isDirectEscrowTrade(trade) &&
+  hasPositiveAssetAmount(trade.offer) &&
+  hasPositiveAssetAmount(trade.request);
+
+export const shouldRecoverMakerTradePayload = (
+  trade: Pick<TradeSnapshot, 'escrowContract' | 'maker' | 'hasAccessHash' | 'offer' | 'request'>,
+  walletKey: string,
+  hasKnownAccessSecret: boolean
+): boolean => {
+  const normalizedWallet = walletKey.trim().toLowerCase();
+  if (!normalizedWallet || trade.maker.toLowerCase() !== normalizedWallet) {
+    return false;
+  }
+
+  const needsDirectTermHydration = isDirectEscrowTrade(trade) && !hasHydratedDirectTradeTerms(trade);
+  if (!trade.hasAccessHash && !needsDirectTermHydration) {
+    return false;
+  }
+
+  return !hasKnownAccessSecret || needsDirectTermHydration;
+};
+
 export const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
   try {
-    if (trade.hiddenLiquidity) {
+    if (isHiddenLiquidityTrade(trade)) {
       return BigInt(trade.request.amount);
     }
     return BigInt(trade.fillState?.remainingRequestAmount ?? trade.request.amount);
@@ -66,7 +118,7 @@ export const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
 
 export const getRemainingOfferAmount = (trade: TradeSnapshot): bigint => {
   try {
-    if (trade.hiddenLiquidity) {
+    if (isHiddenLiquidityTrade(trade)) {
       return BigInt(trade.offer.amount);
     }
     return BigInt(trade.fillState?.remainingOfferAmount ?? trade.offer.amount);
@@ -76,7 +128,7 @@ export const getRemainingOfferAmount = (trade: TradeSnapshot): bigint => {
 };
 
 export const hasAnyTradeFill = (trade: TradeSnapshot): boolean => {
-  if (trade.hiddenLiquidity) {
+  if (isHiddenLiquidityTrade(trade)) {
     return false;
   }
   try {
@@ -90,7 +142,8 @@ export const canEditPublicTrade = (trade: TradeSnapshot, walletKey: string): boo
   Boolean(
     walletKey &&
       trade.status === 'open' &&
-      trade.isPublic === true &&
+      (trade.isPublic === true ||
+        trade.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) &&
       trade.maker.toLowerCase() === walletKey &&
       !hasAnyTradeFill(trade)
   );
@@ -190,7 +243,7 @@ export const loadStoredPrivateTradeLiquidity = (): Record<string, string> => {
 export const getMakerPrivateProgressSummary = (
   trade: TradeSnapshot
 ): { percent: number; percentLabel: string; filledLabel: string; remainingLabel: string; totalLabel?: string } | null => {
-  if (!trade.hiddenLiquidity || !trade.makerPrivateProgress) {
+  if (!isHiddenLiquidityTrade(trade) || !trade.makerPrivateProgress) {
     return null;
   }
 
@@ -281,8 +334,12 @@ export const formatTradeListTerms = (trade: TradeSnapshot): string => {
     return `Recurring OTC ${baseSymbol}/${quoteSymbol}; buy and sell sides reuse liquidity`;
   }
   const displayTerms = getTradeDisplayTerms(trade);
-  if (trade.hiddenLiquidity) {
+  const termsVisibility = getTradeTermsVisibility(trade);
+  if (termsVisibility === 'hidden-liquidity') {
     return `Private order; price ratio ${formatTradeRatioLabel(displayTerms.offer, displayTerms.request) ?? 'unavailable'}`;
+  }
+  if (termsVisibility === 'direct-private-terms' && !hasHydratedDirectTradeTerms(trade)) {
+    return 'Direct offer with private terms';
   }
   return `${formatTradeAssetDisplayText(displayTerms.offer)} for ${formatTradeAssetDisplayText(displayTerms.request)}`;
 };
@@ -307,7 +364,7 @@ export const getTradeHistoryKindLabel = (trade: TradeSnapshot): string => {
   if (trade.recurringOrder) {
     return 'Recurring OTC order';
   }
-  if (trade.hiddenLiquidity) {
+  if (getTradeTermsVisibility(trade) === 'hidden-liquidity') {
     return 'Private order';
   }
   if (trade.counterParentTradeId) {
@@ -425,8 +482,7 @@ export const getTradeAccessFilter = (trade: TradeSnapshot): Exclude<TradeDeskAcc
   return 'public';
 };
 
-const tradeIsPrivate = (trade: TradeSnapshot): boolean =>
-  Boolean(trade.hiddenLiquidity || (trade.recurringOrder && trade.recurringOrder.mode !== 'public'));
+const tradeIsPrivate = (trade: TradeSnapshot): boolean => getTradeTermsVisibility(trade) !== 'public';
 
 const tradeMatchesDeskType = (trade: TradeSnapshot, filter: TradeDeskTypeFilter): boolean => {
   switch (filter) {

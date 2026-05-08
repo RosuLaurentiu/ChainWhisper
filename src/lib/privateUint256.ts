@@ -78,16 +78,7 @@ const ensureSignerAesKey = async (signer: PrivateUint256Signer): Promise<string>
     return currentInfo.aesKey;
   }
 
-  if (typeof signer.getAutoOnboard === 'function' && !signer.getAutoOnboard()) {
-    throw new Error('user AES key is not defined and auto onboard is off.');
-  }
-
-  await signer.generateOrRecoverAes();
-  const refreshedInfo = signer.getUserOnboardInfo();
-  if (!refreshedInfo?.aesKey) {
-    throw new Error('user AES key is not defined and cannot be onboarded or recovered.');
-  }
-  return refreshedInfo.aesKey;
+  throw new Error('Unlock privacy before preparing a private token transaction.');
 };
 
 const resolveSignerAddress = async (signer: PrivateUint256Signer): Promise<string> => {
