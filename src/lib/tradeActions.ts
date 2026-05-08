@@ -21,6 +21,7 @@ import {
 } from './appShared';
 import { buildPartyTradeTerms, encryptPartyTradeTerms } from './partyTradeTerms';
 import { EMPTY_PRIVATE_UINT256_INPUT, encryptPrivateUint256Input } from './privateUint256';
+import { buildTradeRecoveryPayload, encryptTradeRecoveryPayloadForSigner } from './tradeRecoveryPayload';
 
 type TradeSigner = Wallet | JsonRpcSigner;
 
@@ -101,8 +102,15 @@ const buildRecurringAssetTuple = (asset: TradeAssetSelection) =>
 const buildRecurringTermsTuple = (baseAmountWei: bigint, quoteAmountWei: bigint) =>
   [baseAmountWei, quoteAmountWei] as const;
 
-const tradeUsesPrivateToken = (offerAsset: TradeAssetSelection, requestAsset: TradeAssetSelection): boolean =>
-  offerAsset.kind === 'private-erc20' || requestAsset.kind === 'private-erc20';
+export const shouldRouteTradeThroughPartyEscrow = ({
+  isPublic,
+  parentTradeId,
+  hidePrivateLiquidity
+}: {
+  isPublic?: boolean;
+  parentTradeId?: number;
+  hidePrivateLiquidity?: boolean;
+}): boolean => !hidePrivateLiquidity && (!isPublic || Boolean(parentTradeId));
 
 const ensureOfferEscrowReady = async (
   signer: TradeSigner,
@@ -242,11 +250,13 @@ export const createTradeOnChain = async ({
   nativeFeeWei,
   isPublic,
   accessHash,
+  accessSecret,
   parentTradeId,
   hidePrivateLiquidity,
   hiddenOfferAmountWei,
   publicOfferAmountWei,
   termsHash,
+  makerRecoveryPayload,
   makerTermsPayload,
   counterpartyTermsPayload,
   partyAccessSecret,
@@ -263,11 +273,13 @@ export const createTradeOnChain = async ({
   nativeFeeWei: bigint;
   isPublic?: boolean;
   accessHash?: string;
+  accessSecret?: string;
   parentTradeId?: number;
   hidePrivateLiquidity?: boolean;
   hiddenOfferAmountWei?: bigint;
   publicOfferAmountWei?: bigint;
   termsHash?: string;
+  makerRecoveryPayload?: string;
   makerTermsPayload?: string;
   counterpartyTermsPayload?: string;
   partyAccessSecret?: string;
@@ -295,17 +307,30 @@ export const createTradeOnChain = async ({
       PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS
     );
 
-    const createSelector = await resolveTradeFunctionSelector(
-      'createPrivateOrder',
-      PRIVATE_TRADE_ESCROW_CONTRACT_ABI
-    );
+    const resolvedMakerRecoveryPayload =
+      makerRecoveryPayload ??
+      (await encryptTradeRecoveryPayloadForSigner(
+        signer,
+        buildTradeRecoveryPayload({
+          kind: 'private-order',
+          accessSecret,
+          maker: makerAddress,
+          taker: takerAddress,
+          offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: resolvedHiddenOfferAmountWei.toString() },
+          request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
+          expiresAt
+        })
+      ));
+    const hasMakerRecoveryPayload = Boolean(resolvedMakerRecoveryPayload);
+    const createFunctionName = hasMakerRecoveryPayload ? 'createPrivateOrderWithRecoveryNote' : 'createPrivateOrder';
+    const createSelector = await resolveTradeFunctionSelector(createFunctionName, PRIVATE_TRADE_ESCROW_CONTRACT_ABI);
     const encryptedHiddenOfferAmount = await encryptPrivateUint256Input(
       signer,
       resolvedHiddenOfferAmountWei,
       PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
       createSelector
     );
-    const createTx = await tradeContract.createPrivateOrder(
+    const privateOrderArgs = [
       buildTradeAssetTuple(offerAsset, resolvedPublicOfferAmountWei),
       buildTradeAssetTuple(requestAsset, requestAmountWei),
       takerAddress,
@@ -313,9 +338,18 @@ export const createTradeOnChain = async ({
       Boolean(isPublic),
       accessHash ?? ZERO_BYTES32,
       termsHash ?? ZERO_BYTES32,
-      encryptedHiddenOfferAmount,
-      { value: nativeFeeWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
-    );
+      encryptedHiddenOfferAmount
+    ] as const;
+    const createTx = hasMakerRecoveryPayload
+      ? await tradeContract.createPrivateOrderWithRecoveryNote(
+          ...privateOrderArgs,
+          resolvedMakerRecoveryPayload,
+          { value: nativeFeeWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+        )
+      : await tradeContract.createPrivateOrder(
+          ...privateOrderArgs,
+          { value: nativeFeeWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+        );
     const createReceipt = requireSuccessfulReceipt(await createTx.wait(), 'Trade creation failed on-chain.');
     const tradeId = await resolveTradeIdFromReceipt(
       tradeContract,
@@ -327,7 +361,7 @@ export const createTradeOnChain = async ({
     return { tradeId, escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS };
   }
 
-  const shouldUsePartyVisibleEscrow = (!isPublic || Boolean(parentTradeId)) && tradeUsesPrivateToken(offerAsset, requestAsset);
+  const shouldUsePartyVisibleEscrow = shouldRouteTradeThroughPartyEscrow({ isPublic, parentTradeId, hidePrivateLiquidity });
   if (shouldUsePartyVisibleEscrow) {
     if (!isPartyTradeEscrowConfigured()) {
       throw new Error(
@@ -338,20 +372,30 @@ export const createTradeOnChain = async ({
     let resolvedCounterpartyTermsPayload = counterpartyTermsPayload;
     let resolvedTermsHash = termsHash;
     if ((!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) && partyAccessSecret) {
-      const encryptedTerms = await encryptPartyTradeTerms(
-        buildPartyTradeTerms({
+      const terms = buildPartyTradeTerms({
+        maker: makerAddress,
+        taker: takerAddress,
+        offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: offerAmountWei.toString() },
+        request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
+        expiresAt,
+        parentEscrowContract,
+        parentTradeId
+      });
+      resolvedMakerTermsPayload = await encryptTradeRecoveryPayloadForSigner(
+        signer,
+        buildTradeRecoveryPayload({
+          kind: 'party',
+          accessSecret: partyAccessSecret,
           maker: makerAddress,
           taker: takerAddress,
-          offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: offerAmountWei.toString() },
-          request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
-          expiresAt,
-          parentEscrowContract,
-          parentTradeId
-        }),
-        partyAccessSecret
+          offer: terms.offer,
+          request: terms.request,
+          expiresAt: terms.expiresAt,
+          parentEscrowContract: terms.parentEscrowContract,
+          parentTradeId: terms.parentTradeId
+        })
       );
-      resolvedMakerTermsPayload = encryptedTerms;
-      resolvedCounterpartyTermsPayload = encryptedTerms;
+      resolvedCounterpartyTermsPayload = await encryptPartyTradeTerms(terms, partyAccessSecret);
     }
     if (!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) {
       throw new Error('Party-visible trades need encrypted on-chain term payloads before creation.');
@@ -493,6 +537,8 @@ export const createRecurringOrderOnChain = async ({
   nativeFeeWei,
   isPublic,
   accessHash,
+  accessSecret,
+  makerRecoveryPayload,
   hidePrivateAmounts
 }: {
   signer: TradeSigner;
@@ -508,6 +554,8 @@ export const createRecurringOrderOnChain = async ({
   nativeFeeWei: bigint;
   isPublic?: boolean;
   accessHash?: string;
+  accessSecret?: string;
+  makerRecoveryPayload?: string;
   hidePrivateAmounts?: boolean;
 }): Promise<{ orderId: number; escrowContract: string }> => {
   if (baseAsset.kind === quoteAsset.kind && (baseAsset.tokenAddress ?? ZERO_ADDRESS).toLowerCase() === (quoteAsset.tokenAddress ?? ZERO_ADDRESS).toLowerCase()) {
@@ -554,10 +602,39 @@ export const createRecurringOrderOnChain = async ({
     (baseAsset.kind === 'native' ? initialBaseInventoryWei : 0n) +
     (quoteAsset.kind === 'native' ? initialQuoteInventoryWei : 0n);
   const valueToSend = nativeInventoryWei + nativeFeeWei;
+  const resolvedMakerRecoveryPayload =
+    makerRecoveryPayload ??
+    (accessSecret || !isPublic || isPrivateOrder
+      ? await encryptTradeRecoveryPayloadForSigner(
+          signer,
+          buildTradeRecoveryPayload({
+            kind: 'recurring-order',
+            accessSecret,
+            maker: makerAddress,
+            taker: ZERO_ADDRESS,
+            baseAsset: { kind: baseAsset.kind, tokenAddress: baseAsset.tokenAddress, amount: '0' },
+            quoteAsset: { kind: quoteAsset.kind, tokenAddress: quoteAsset.tokenAddress, amount: '0' },
+            buyTerms: {
+              baseAmount: buyBaseAmountWei.toString(),
+              quoteAmount: buyQuoteAmountWei.toString()
+            },
+            sellTerms: {
+              baseAmount: sellBaseAmountWei.toString(),
+              quoteAmount: sellQuoteAmountWei.toString()
+            },
+            initialBaseInventory: initialBaseInventoryWei.toString(),
+            initialQuoteInventory: initialQuoteInventoryWei.toString()
+          })
+        )
+      : '');
+  const hasMakerRecoveryPayload = Boolean(resolvedMakerRecoveryPayload);
 
   const createTx = isPrivateOrder
     ? await (async () => {
-        const selector = await resolveTradeFunctionSelector('createPrivateRecurringOrder', RECURRING_OTC_CONTRACT_ABI);
+        const functionName = hasMakerRecoveryPayload
+          ? 'createPrivateRecurringOrderWithRecoveryNote'
+          : 'createPrivateRecurringOrder';
+        const selector = await resolveTradeFunctionSelector(functionName, RECURRING_OTC_CONTRACT_ABI);
         const encryptedBaseInventory = await encryptPrivateUint256Input(
           signer,
           baseAsset.kind === 'private-erc20' ? initialBaseInventoryWei : 0n,
@@ -570,7 +647,7 @@ export const createRecurringOrderOnChain = async ({
           recurringAddress,
           selector
         );
-        return recurringContract.createPrivateRecurringOrder(
+        const privateRecurringArgs = [
           baseAssetTuple,
           quoteAssetTuple,
           buyTermsTuple,
@@ -581,24 +658,46 @@ export const createRecurringOrderOnChain = async ({
           baseAsset.kind === 'private-erc20' ? 0n : initialBaseInventoryWei,
           quoteAsset.kind === 'private-erc20' ? 0n : initialQuoteInventoryWei,
           encryptedBaseInventory,
-          encryptedQuoteInventory,
-          { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
-        );
+          encryptedQuoteInventory
+        ] as const;
+        return hasMakerRecoveryPayload
+          ? recurringContract.createPrivateRecurringOrderWithRecoveryNote(
+              ...privateRecurringArgs,
+              resolvedMakerRecoveryPayload,
+              { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+            )
+          : recurringContract.createPrivateRecurringOrder(
+              ...privateRecurringArgs,
+              { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+            );
       })()
-    : await recurringContract.createRecurringOrder(
-        baseAssetTuple,
-        quoteAssetTuple,
-        buyTermsTuple,
-        sellTermsTuple,
-        ZERO_ADDRESS,
-        Boolean(isPublic),
-        accessHash ?? ZERO_BYTES32,
-        initialBaseInventoryWei,
-        initialQuoteInventoryWei,
-        hasPrivateAsset
-          ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
-          : { value: valueToSend }
-      );
+    : await (async () => {
+        const publicRecurringArgs = [
+          baseAssetTuple,
+          quoteAssetTuple,
+          buyTermsTuple,
+          sellTermsTuple,
+          ZERO_ADDRESS,
+          Boolean(isPublic),
+          accessHash ?? ZERO_BYTES32,
+          initialBaseInventoryWei,
+          initialQuoteInventoryWei
+        ] as const;
+        return hasMakerRecoveryPayload
+          ? recurringContract.createRecurringOrderWithRecoveryNote(
+              ...publicRecurringArgs,
+              resolvedMakerRecoveryPayload,
+              hasPrivateAsset
+                ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+                : { value: valueToSend }
+            )
+          : recurringContract.createRecurringOrder(
+              ...publicRecurringArgs,
+              hasPrivateAsset
+                ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+                : { value: valueToSend }
+            );
+      })();
   const createReceipt = requireSuccessfulReceipt(await createTx.wait(), 'Recurring order creation failed on-chain.');
   const orderId = await resolveTradeIdFromReceipt(
     recurringContract,
@@ -1061,9 +1160,11 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
   nativeFeeWei,
   isPublic,
   accessHash,
+  accessSecret,
   hiddenOfferAmountWei,
   publicOfferAmountWei,
-  termsHash
+  termsHash,
+  makerRecoveryPayload
 }: {
   signer: TradeSigner;
   makerAddress: string;
@@ -1077,9 +1178,11 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
   nativeFeeWei: bigint;
   isPublic: boolean;
   accessHash?: string;
+  accessSecret?: string;
   hiddenOfferAmountWei?: bigint;
   publicOfferAmountWei?: bigint;
   termsHash?: string;
+  makerRecoveryPayload?: string;
 }): Promise<{ tradeId: number; escrowContract: string }> => {
   if (offerAsset.kind !== 'private-erc20') {
     throw new Error('Hide amount requires the token you sell to be private.');
@@ -1099,17 +1202,32 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
     PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS
   );
 
-  const editSelector = await resolveTradeFunctionSelector(
-    'cancelAndReplacePrivateOrder',
-    PRIVATE_TRADE_ESCROW_CONTRACT_ABI
-  );
+  const resolvedMakerRecoveryPayload =
+    makerRecoveryPayload ??
+    (await encryptTradeRecoveryPayloadForSigner(
+      signer,
+      buildTradeRecoveryPayload({
+        kind: 'private-order',
+        accessSecret,
+        maker: makerAddress,
+        taker: takerAddress,
+        offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: resolvedHiddenOfferAmountWei.toString() },
+        request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
+        expiresAt
+      })
+    ));
+  const hasMakerRecoveryPayload = Boolean(resolvedMakerRecoveryPayload);
+  const editFunctionName = hasMakerRecoveryPayload
+    ? 'cancelAndReplacePrivateOrderWithRecoveryNote'
+    : 'cancelAndReplacePrivateOrder';
+  const editSelector = await resolveTradeFunctionSelector(editFunctionName, PRIVATE_TRADE_ESCROW_CONTRACT_ABI);
   const encryptedHiddenOfferAmount = await encryptPrivateUint256Input(
     signer,
     resolvedHiddenOfferAmountWei,
     PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
     editSelector
   );
-  const editTx = await tradeContract.cancelAndReplacePrivateOrder(
+  const editArgs = [
     originalTradeId,
     buildTradeAssetTuple(offerAsset, resolvedPublicOfferAmountWei),
     buildTradeAssetTuple(requestAsset, requestAmountWei),
@@ -1118,9 +1236,18 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
     isPublic,
     accessHash ?? ZERO_BYTES32,
     termsHash ?? ZERO_BYTES32,
-    encryptedHiddenOfferAmount,
-    { value: nativeFeeWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
-  );
+    encryptedHiddenOfferAmount
+  ] as const;
+  const editTx = hasMakerRecoveryPayload
+    ? await tradeContract.cancelAndReplacePrivateOrderWithRecoveryNote(
+        ...editArgs,
+        resolvedMakerRecoveryPayload,
+        { value: nativeFeeWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      )
+    : await tradeContract.cancelAndReplacePrivateOrder(
+        ...editArgs,
+        { value: nativeFeeWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
+      );
   const editReceipt = requireSuccessfulReceipt(await editTx.wait(), 'Private trade edit failed on-chain.');
   const tradeId = await resolveTradeIdFromReceipt(
     tradeContract,
@@ -1222,52 +1349,38 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
   parentEscrowContract?: string;
   parentTradeId?: number;
 }): Promise<{ tradeId: number; escrowContract: string }> => {
-  if (!tradeUsesPrivateToken(offerAsset, requestAsset)) {
-    const tradeContract = await createTradeContract(signer);
-    await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei);
-    const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
-    const counterOverrides =
-      offerAsset.kind === 'private-erc20'
-        ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
-        : { value: valueToSend };
-    const counterTx = await tradeContract.counterTradeAndCloseCounteredTrade(
-      counteredTradeId,
-      buildTradeAssetTuple(offerAsset, offerAmountWei),
-      buildTradeAssetTuple(requestAsset, requestAmountWei),
-      expiresAt,
-      counterOverrides
-    );
-    const counterReceipt = requireSuccessfulReceipt(await counterTx.wait(), 'Counter replacement failed on-chain.');
-    const tradeId = await resolveTradeIdFromReceipt(
-      tradeContract,
-      counterReceipt as { logs?: unknown[] },
-      'Counter was created, but the trade id could not be resolved.'
-    );
-    return { tradeId, escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS };
-  }
-
   if (!isPartyTradeEscrowConfigured()) {
     throw new Error(
-      'Counter replacement needs the V1 party OTC escrow before it can be created without public amount leakage.'
+      'Counter replacement needs the V1 party OTC escrow before it can be created with private on-chain recovery.'
     );
   }
   let resolvedMakerTermsPayload = makerTermsPayload;
   let resolvedCounterpartyTermsPayload = counterpartyTermsPayload;
   if ((!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) && partyAccessSecret && counterTakerAddress) {
-    const encryptedTerms = await encryptPartyTradeTerms(
-      buildPartyTradeTerms({
+    const terms = buildPartyTradeTerms({
+      maker: makerAddress,
+      taker: counterTakerAddress,
+      offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: offerAmountWei.toString() },
+      request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
+      expiresAt,
+      parentEscrowContract,
+      parentTradeId
+    });
+    resolvedMakerTermsPayload = await encryptTradeRecoveryPayloadForSigner(
+      signer,
+      buildTradeRecoveryPayload({
+        kind: 'party',
+        accessSecret: partyAccessSecret,
         maker: makerAddress,
         taker: counterTakerAddress,
-        offer: { kind: offerAsset.kind, tokenAddress: offerAsset.tokenAddress, amount: offerAmountWei.toString() },
-        request: { kind: requestAsset.kind, tokenAddress: requestAsset.tokenAddress, amount: requestAmountWei.toString() },
-        expiresAt,
-        parentEscrowContract,
-        parentTradeId
-      }),
-      partyAccessSecret
+        offer: terms.offer,
+        request: terms.request,
+        expiresAt: terms.expiresAt,
+        parentEscrowContract: terms.parentEscrowContract,
+        parentTradeId: terms.parentTradeId
+      })
     );
-    resolvedMakerTermsPayload = encryptedTerms;
-    resolvedCounterpartyTermsPayload = encryptedTerms;
+    resolvedCounterpartyTermsPayload = await encryptPartyTradeTerms(terms, partyAccessSecret);
   }
   if (!resolvedMakerTermsPayload || !resolvedCounterpartyTermsPayload) {
     throw new Error('Party-visible counter replacements need encrypted on-chain term payloads before creation.');

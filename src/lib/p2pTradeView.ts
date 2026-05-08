@@ -149,6 +149,7 @@ export const loadStoredTradeAccessSecrets = (): Record<string, string> => {
 
   try {
     const parsed = JSON.parse(window.localStorage.getItem(TRADE_ACCESS_SECRET_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
+    window.localStorage.removeItem(TRADE_ACCESS_SECRET_STORAGE_KEY);
     return Object.fromEntries(
       Object.entries(parsed).filter(
         ([tradeId, secret]) =>
@@ -158,6 +159,10 @@ export const loadStoredTradeAccessSecrets = (): Record<string, string> => {
       )
     ) as Record<string, string>;
   } catch {
+    try {
+      window.localStorage.removeItem(TRADE_ACCESS_SECRET_STORAGE_KEY);
+    } catch {
+    }
     return {};
   }
 };
@@ -241,7 +246,8 @@ export const storeTradeAccessSecrets = (secrets: Record<string, string>): void =
     return;
   }
 
-  window.localStorage.setItem(TRADE_ACCESS_SECRET_STORAGE_KEY, JSON.stringify(secrets));
+  void secrets;
+  window.localStorage.removeItem(TRADE_ACCESS_SECRET_STORAGE_KEY);
 };
 
 export const formatTradeExpiryParts = (expiresAt: number): { date: string; time: string; title: string } => {

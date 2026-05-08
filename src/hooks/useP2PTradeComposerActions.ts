@@ -374,15 +374,14 @@ export default function useP2PTradeComposerActions({
       const visiblePrivateTokenPartyTrade = Boolean(
         !hiddenLiquidity &&
           !isEditTrade &&
-          (isCounterTrade || tradeVisibility !== 'public') &&
-          (isPrivateTradeAsset(offerToken) || isPrivateTradeAsset(requestToken))
+          (isCounterTrade || tradeVisibility !== 'public')
       );
       const accessSecret =
-        (tradeVisibility === 'unlisted' && !isCounterTrade && !isEditTrade) || visiblePrivateTokenPartyTrade
+        (!isEditTrade && (tradeVisibility !== 'public' || isCounterTrade))
           ? createTradeAccessSecret()
           : '';
       const accessHash = accessSecret ? await hashTradeAccessSecret(accessSecret) : ZERO_BYTES32;
-      const signer = await getTradeSigner(isPrivateTradeAsset(offerToken) || visiblePrivateTokenPartyTrade);
+      const signer = await getTradeSigner(isPrivateTradeAsset(offerToken) || hiddenLiquidity || visiblePrivateTokenPartyTrade);
       const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
       const expiresAt = tradeHasNoExpiry
         ? 0
@@ -410,6 +409,7 @@ export default function useP2PTradeComposerActions({
               expiresAt,
               nativeFeeWei,
               isPublic: true,
+              accessSecret: accessSecret || undefined,
               hiddenOfferAmountWei: offerAmount,
               publicOfferAmountWei: publicOfferAmount
             })
@@ -455,6 +455,7 @@ export default function useP2PTradeComposerActions({
               nativeFeeWei,
               isPublic: !isCounterTrade && tradeVisibility === 'public',
               accessHash: accessHash !== ZERO_BYTES32 ? accessHash : undefined,
+              accessSecret: accessSecret || undefined,
               parentTradeId: counterParentTrade?.tradeId,
               hidePrivateLiquidity: hiddenLiquidity,
               hiddenOfferAmountWei: hiddenLiquidity ? offerAmount : undefined,

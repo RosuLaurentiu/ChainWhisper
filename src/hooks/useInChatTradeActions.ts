@@ -191,9 +191,7 @@ export default function useInChatTradeActions({
       const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
       const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
       const publicOfferAmount = parsedTradeOfferAmountWei;
-      const visiblePrivateTokenPartyTrade =
-        selectedTradeOfferToken.kind === 'private-erc20' || selectedTradeRequestToken.kind === 'private-erc20';
-      const partyAccessSecret = visiblePrivateTokenPartyTrade ? createTradeAccessSecret() : '';
+      const partyAccessSecret = createTradeAccessSecret();
       const createResult =
         isCounterReplacement && counteredSnapshot
           ? await counterTradeAndCloseCounteredTradeOnChain({

@@ -45,6 +45,10 @@ import {
 import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHelpers';
 import { applyPartyTradeTermsToSnapshot, decryptPartyTradeTerms } from './partyTradeTerms';
 import { encryptPrivateUint256Input } from './privateUint256';
+import {
+  decryptTradeRecoveryPayloadForSigner,
+  type TradeRecoveryPayload
+} from './tradeRecoveryPayload';
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const ACCEPTED_TX_LOOKBACK_BLOCKS = 100_000;
@@ -1459,6 +1463,32 @@ export const fetchTradeAccessMetadataById = async (
     metadataRaw = tradeViewRaw.metadata ?? tradeViewRaw[1];
   }
   return config.partyVisible ? parsePartyTradeAccessMetadata(metadataRaw) : parseTradeAccessMetadata(metadataRaw);
+};
+
+export const recoverTradeAccessPayloadForMaker = async ({
+  tradeId,
+  escrowContract,
+  signer
+}: {
+  tradeId: number;
+  escrowContract?: string;
+  signer: Wallet | JsonRpcSigner;
+}): Promise<TradeRecoveryPayload> => {
+  const cotiEthers = await loadCotiEthersModule();
+  if (isRecurringOrderContractAddress(escrowContract)) {
+    const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, signer);
+    const encryptedPayload = await contract.getRecurringRecoveryNote(tradeId);
+    return decryptTradeRecoveryPayloadForSigner(signer, String(encryptedPayload));
+  }
+
+  const config = resolveTradeEscrowContractConfig(escrowContract);
+  const contract = new cotiEthers.Contract(config.address, config.abi, signer);
+  const encryptedPayload = config.partyVisible
+    ? await contract.getPartyTermPayload(tradeId, ZERO_BYTES32)
+    : config.hiddenOnly
+      ? await contract.getMakerRecoveryNote(tradeId)
+      : '0x';
+  return decryptTradeRecoveryPayloadForSigner(signer, String(encryptedPayload));
 };
 
 export const fetchTradeSnapshotById = async (

@@ -51,7 +51,9 @@ import {
   fetchRecurringPrivateInventorySnapshotsForWallet,
   fetchRecurringPrivateFillReceiptsForWallet,
   readPrivateTokenBalanceWei,
-  readPrivateTradeRemainingOfferWei
+  readPrivateTradeRemainingOfferWei,
+  recoverTradeAccessPayloadForMaker,
+  resolveTradeEscrowContractConfig
 } from '../lib/appChain';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
@@ -102,6 +104,7 @@ import {
   resolveTradeOrderSummary
 } from '../lib/tradePerspective';
 import { buildTradeTransactionHistoryRows } from '../lib/tradeHistory';
+import { applyTradeRecoveryPayloadToSnapshot } from '../lib/tradeRecoveryPayload';
 import {
   WALLET_STATUS_STORAGE_KEY,
   buildOfferFromSnapshot,
@@ -1053,6 +1056,52 @@ export default function P2PTradingPage({
     walletAddress
   });
 
+  const recoverMakerTradeAccessSecret = useCallback(
+    async (snapshot: TradeSnapshot, forceReveal = false): Promise<TradeSnapshot> => {
+      if (!walletKey || snapshot.maker.toLowerCase() !== walletKey || !snapshot.hasAccessHash) {
+        return snapshot;
+      }
+      if (resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract)) {
+        return snapshot;
+      }
+      if (!forceReveal && !walletHasAes) {
+        return snapshot;
+      }
+
+      const signer = await getTradeSigner(forceReveal);
+      const recoveryPayload = await recoverTradeAccessPayloadForMaker({
+        tradeId: snapshot.tradeId,
+        escrowContract: snapshot.escrowContract,
+        signer
+      });
+      const recoveredSecret = normalizeAccessSecret(recoveryPayload.accessSecret);
+      if (recoveredSecret) {
+        const cotiEthers = await loadCotiEthersModule();
+        if (
+          !snapshot.accessHash ||
+          doesAccessSecretMatchHash(recoveredSecret, snapshot.accessHash, () => cotiEthers.keccak256(recoveredSecret))
+        ) {
+          rememberTradeAccessSecret(snapshot.tradeId, recoveredSecret, snapshot.escrowContract);
+        }
+      }
+      if (recoveryPayload.kind === 'private-order' && recoveryPayload.offer?.amount) {
+        try {
+          rememberPrivateTradeLiquidity(snapshot.tradeId, snapshot.escrowContract, BigInt(recoveryPayload.offer.amount));
+        } catch {
+        }
+      }
+      return applyTradeRecoveryPayloadToSnapshot(snapshot, recoveryPayload);
+    },
+    [
+      getTradeSigner,
+      rememberPrivateTradeLiquidity,
+      rememberTradeAccessSecret,
+      resolveKnownTradeAccessSecret,
+      walletHasAes,
+      walletKey
+    ]
+  );
+
   const {
     clearWalletBalances,
     customTradeTokenInfoByAddress,
@@ -1203,32 +1252,44 @@ export default function P2PTradingPage({
           }
         };
       }
-      if (!snapshot.hiddenLiquidity || !walletKey) {
-        return snapshot;
+      let recoveredSnapshot = snapshot;
+      if (walletKey && snapshot.maker.toLowerCase() === walletKey && snapshot.hasAccessHash) {
+        try {
+          recoveredSnapshot = await recoverMakerTradeAccessSecret(snapshot, forceReveal);
+        } catch {
+          recoveredSnapshot = snapshot;
+        }
+      }
+      const escrowConfig = resolveTradeEscrowContractConfig(recoveredSnapshot.escrowContract);
+      if (escrowConfig.partyVisible) {
+        return recoveredSnapshot;
+      }
+      if (!recoveredSnapshot.hiddenLiquidity || !walletKey) {
+        return recoveredSnapshot;
       }
       if (!forceReveal && !walletHasAes) {
-        return snapshot;
+        return recoveredSnapshot;
       }
 
-      const isMaker = snapshot.maker.toLowerCase() === walletKey;
-      if (!forceReveal && !isMaker && !snapshot.walletHasFill) {
-        return snapshot;
+      const isMaker = recoveredSnapshot.maker.toLowerCase() === walletKey;
+      if (!forceReveal && !isMaker && !recoveredSnapshot.walletHasFill) {
+        return recoveredSnapshot;
       }
-      const tradeKey = getSnapshotKey(snapshot);
+      const tradeKey = getSnapshotKey(recoveredSnapshot);
       const knownInitialAmount = knownPrivateLiquidityByTrade[tradeKey];
       const signer = await getTradeSigner(forceReveal);
       const [remainingOfferAmountResult, privateFillReceiptsResult] = await Promise.allSettled([
         isMaker
           ? readPrivateTradeRemainingOfferWei({
-              tradeId: snapshot.tradeId,
-              escrowContract: snapshot.escrowContract,
-              makerAddress: snapshot.maker,
+              tradeId: recoveredSnapshot.tradeId,
+              escrowContract: recoveredSnapshot.escrowContract,
+              makerAddress: recoveredSnapshot.maker,
               signer
             })
           : Promise.resolve(null),
         fetchPrivateOrderFillReceiptsForWallet({
-          tradeId: snapshot.tradeId,
-          escrowContract: snapshot.escrowContract,
+          tradeId: recoveredSnapshot.tradeId,
+          escrowContract: recoveredSnapshot.escrowContract,
           walletAddress,
           signer
         })
@@ -1266,10 +1327,10 @@ export default function P2PTradingPage({
           if (forceReveal) {
             throw new Error('No private fill receipts were found for this wallet.');
           }
-          return snapshot;
+          return recoveredSnapshot;
         }
         return {
-          ...snapshot,
+          ...recoveredSnapshot,
           privateFillReceipts
         };
       }
@@ -1280,12 +1341,12 @@ export default function P2PTradingPage({
               ? remainingOfferAmountResult.reason
               : new Error('Private order reveal failed. AES may need to be refreshed.');
           }
-          return snapshot;
+          return recoveredSnapshot;
         }
         if (forceReveal) {
           throw new Error('This private order could not expose maker liquidity or private fill receipts on the active contract.');
         }
-        return snapshot;
+        return recoveredSnapshot;
       }
 
       let filledOfferAmount: string | undefined;
@@ -1303,7 +1364,7 @@ export default function P2PTradingPage({
       }
 
       return {
-        ...snapshot,
+        ...recoveredSnapshot,
         makerPrivateProgress: {
           initialOfferAmount: knownInitialAmount,
           remainingOfferAmount: resolvedRemainingOfferAmount.toString(),
@@ -1312,7 +1373,7 @@ export default function P2PTradingPage({
         privateFillReceipts
       };
     },
-    [getTradeSigner, knownPrivateLiquidityByTrade, walletAddress, walletHasAes, walletKey]
+    [getTradeSigner, knownPrivateLiquidityByTrade, recoverMakerTradeAccessSecret, walletAddress, walletHasAes, walletKey]
   );
 
   const {

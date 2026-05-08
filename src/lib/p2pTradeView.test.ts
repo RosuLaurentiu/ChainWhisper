@@ -119,16 +119,17 @@ describe('p2pTradeView helpers', () => {
     vi.stubGlobal('window', {
       localStorage: {
         getItem: (key: string) => storage.get(key) ?? null,
-        setItem: (key: string, value: string) => storage.set(key, value)
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key)
       }
     });
 
-    storeTradeAccessSecrets({
+    storage.set('coti-trade-access-secrets-v1', JSON.stringify({
       '7': `0x${'a'.repeat(64)}`,
       bad: `0x${'b'.repeat(64)}`,
       '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`,
       '0x1111111111111111111111111111111111111111:8': 'nope'
-    });
+    }));
     storePrivateTradeLiquidity({
       '0x1111111111111111111111111111111111111111:7': '123',
       '0x1111111111111111111111111111111111111111:8': '0',
@@ -138,6 +139,11 @@ describe('p2pTradeView helpers', () => {
     expect(loadStoredTradeAccessSecrets()).toEqual({
       '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`
     });
+    expect(storage.has('coti-trade-access-secrets-v1')).toBe(false);
+    storeTradeAccessSecrets({
+      '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`
+    });
+    expect(storage.has('coti-trade-access-secrets-v1')).toBe(false);
     expect(loadStoredPrivateTradeLiquidity()).toEqual({
       '0x1111111111111111111111111111111111111111:7': '123'
     });

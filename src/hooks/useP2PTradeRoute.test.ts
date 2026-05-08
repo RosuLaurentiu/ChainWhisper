@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ADDRESS } from '../lib/appShared/core';
+import {
+  PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+  RECURRING_OTC_CONTRACT_ADDRESS
+} from '../lib/appShared/core';
 import { encodeTradeLink } from '../lib/tradeLinks';
 import { buildTradeLinkPath, resolveTradeLinkInput, resolveTradeRouteFromParts } from './useP2PTradeRoute';
 
@@ -29,6 +33,13 @@ describe('P2P trade route helpers', () => {
       accessSecret: ACCESS_SECRET,
       routeError: ''
     });
+    expect(resolveTradeRouteFromParts(`/trades/l/${code}`, '?escrow=party')).toMatchObject({
+      view: 'trade',
+      tradeId: 42,
+      escrowContract: PARTY_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessSecret: ACCESS_SECRET,
+      routeError: ''
+    });
   });
 
   it('preserves legacy numeric links and secret hashes', () => {
@@ -52,6 +63,9 @@ describe('P2P trade route helpers', () => {
   it('preserves recurring private-link secrets in share paths', () => {
     expect(buildTradeLinkPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
       `/trades/recurring?order=7#${ACCESS_SECRET}`
+    );
+    expect(buildTradeLinkPath(8, ACCESS_SECRET, PARTY_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
+      `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=party`
     );
   });
 });
