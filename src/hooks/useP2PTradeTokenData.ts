@@ -43,7 +43,22 @@ type ReloadPrivateBalancesResult = {
   readyTokenAddresses: string[];
 };
 
+export type WalletBalanceRefreshReason =
+  | 'connect'
+  | 'focus'
+  | 'interval'
+  | 'unlock'
+  | 'trade-action'
+  | 'manual';
+
+export type WalletBalanceRefreshOptions = {
+  reason?: WalletBalanceRefreshReason;
+  silent?: boolean;
+  signer?: TradeSigner;
+};
+
 type UseP2PTradeTokenDataArgs = {
+  balanceRefreshSessionKey: string;
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   tradeOfferCustomTokenAddress: string;
   tradeOfferTokenSelection: TradeTokenPresetKey;
@@ -56,6 +71,18 @@ type UseP2PTradeTokenDataArgs = {
 
 const LOCKED_PRIVATE_BALANCE_STATE: PrivateTokenBalanceState = { status: 'locked' };
 
+export const resolveBalanceWeiAfterRefresh = (
+  previous: bigint | null,
+  next: bigint | null,
+  silent: boolean
+): bigint | null => (next !== null ? next : silent ? previous : null);
+
+export const resolvePrivateBalanceStateAfterRefresh = (
+  previous: PrivateTokenBalanceState,
+  next: PrivateTokenBalanceState,
+  silent: boolean
+): PrivateTokenBalanceState => (silent && next.status !== 'ready' && previous.status === 'ready' ? previous : next);
+
 type UseP2PTradeTokenDataResult = {
   clearWalletBalances: () => void;
   customTradeTokenInfoByAddress: Record<string, TradeCustomTokenInfo>;
@@ -66,6 +93,7 @@ type UseP2PTradeTokenDataResult = {
   privateRewardTokenDecimals: number;
   privateRewardTokenSymbol: string;
   reloadPrivateBalancesWithUnlockedSigner: (signer: TradeSigner) => Promise<ReloadPrivateBalancesResult>;
+  refreshWalletBalances: (options?: WalletBalanceRefreshOptions) => Promise<void>;
   refreshCurrentPrivateTokenInfos: () => Promise<void>;
   resolveRequiredFeeForTradeCreate: () => Promise<bigint>;
   rewardTokenBalanceWei: bigint | null;
@@ -75,6 +103,7 @@ type UseP2PTradeTokenDataResult = {
 };
 
 export default function useP2PTradeTokenData({
+  balanceRefreshSessionKey,
   getTradeSigner,
   tradeOfferCustomTokenAddress,
   tradeOfferTokenSelection,
@@ -96,10 +125,16 @@ export default function useP2PTradeTokenData({
   const [privateRewardTokenDecimals, setPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
   const [tradeRequiredFeeWei, setTradeRequiredFeeWei] = useState<bigint | null>(null);
   const feeRequestRef = useRef<Promise<bigint> | null>(null);
+  const balanceRefreshRef = useRef<Promise<void> | null>(null);
+  const balanceRefreshQueuedRef = useRef<WalletBalanceRefreshOptions | null>(null);
   const latestWalletKeyRef = useRef(walletKey);
+  const latestBalanceRefreshSessionKeyRef = useRef(balanceRefreshSessionKey);
   useEffect(() => {
     latestWalletKeyRef.current = walletKey;
   }, [walletKey]);
+  useEffect(() => {
+    latestBalanceRefreshSessionKeyRef.current = balanceRefreshSessionKey;
+  }, [balanceRefreshSessionKey]);
 
   const clearWalletBalances = useCallback(() => {
     setNativeBalanceWei(null);
@@ -199,8 +234,10 @@ export default function useP2PTradeTokenData({
     [walletAddress, walletHasAes]
   );
 
-  const loadWalletBalances = useCallback(async () => {
+  const loadPrimaryWalletBalances = useCallback(async (options?: WalletBalanceRefreshOptions) => {
+    const silent = Boolean(options?.silent);
     const requestWalletKey = walletKey;
+    const requestSessionKey = balanceRefreshSessionKey;
     const readProvider = await loadCotiReadProvider(true);
     const cotiEthers = await loadCotiEthersModule();
     const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
@@ -227,6 +264,9 @@ export default function useP2PTradeTokenData({
     if (latestWalletKeyRef.current !== requestWalletKey) {
       return;
     }
+    if (latestBalanceRefreshSessionKeyRef.current !== requestSessionKey) {
+      return;
+    }
 
     if (!walletAddress || !isWalletAddress(walletAddress)) {
       clearWalletBalances();
@@ -237,56 +277,85 @@ export default function useP2PTradeTokenData({
       readProvider.getBalance(walletAddress).catch(() => null),
       rewardTokenContract.balanceOf(walletAddress).catch(() => null)
     ]);
-    setNativeBalanceWei(typeof nativeBalanceRaw === 'bigint' ? nativeBalanceRaw : null);
-    setRewardTokenBalanceWei(typeof rewardBalanceRaw === 'bigint' ? rewardBalanceRaw : null);
+    setNativeBalanceWei((previous) =>
+      resolveBalanceWeiAfterRefresh(previous, typeof nativeBalanceRaw === 'bigint' ? nativeBalanceRaw : null, silent)
+    );
+    setRewardTokenBalanceWei((previous) =>
+      resolveBalanceWeiAfterRefresh(previous, typeof rewardBalanceRaw === 'bigint' ? rewardBalanceRaw : null, silent)
+    );
 
     if (latestWalletKeyRef.current !== requestWalletKey) {
       return;
     }
+    if (latestBalanceRefreshSessionKeyRef.current !== requestSessionKey) {
+      return;
+    }
 
     if (walletHasAes) {
-      const signer = await getTradeSigner(false).catch(() => null);
+      const signer = options?.signer ?? (await getTradeSigner(false).catch(() => null));
       const privateBalanceState =
         signer !== null
           ? await readCurrentPrivateBalanceState(PRIVATE_REWARD_TOKEN_ADDRESS, signer)
           : { status: 'locked' as const };
-      setPrivateRewardTokenBalanceState(privateBalanceState);
-      setPrivateRewardTokenBalanceWei(
-        privateBalanceState.status === 'ready' ? privateBalanceState.balanceWei : null
+      setPrivateRewardTokenBalanceState((previous) =>
+        resolvePrivateBalanceStateAfterRefresh(previous, privateBalanceState, silent)
       );
-    } else {
+      setPrivateRewardTokenBalanceWei((previous) =>
+        resolveBalanceWeiAfterRefresh(
+          previous,
+          privateBalanceState.status === 'ready' ? privateBalanceState.balanceWei : null,
+          silent
+        )
+      );
+    } else if (!silent) {
       setPrivateRewardTokenBalanceState({ status: 'locked' });
       setPrivateRewardTokenBalanceWei(null);
     }
-  }, [clearWalletBalances, getTradeSigner, readCurrentPrivateBalanceState, walletAddress, walletHasAes, walletKey]);
+  }, [
+    balanceRefreshSessionKey,
+    clearWalletBalances,
+    getTradeSigner,
+    readCurrentPrivateBalanceState,
+    walletAddress,
+    walletHasAes,
+    walletKey
+  ]);
 
   const loadCustomTokenInfo = useCallback(
-    async (token: TradeTokenInfoRequest, options?: { aesReady?: boolean; signer?: TradeSigner }) => {
+    async (token: TradeTokenInfoRequest, options?: { aesReady?: boolean; signer?: TradeSigner; silent?: boolean }) => {
       const normalizedAddress = token.address.trim();
       if (!isWalletAddress(normalizedAddress)) {
         return;
       }
       const requestWalletKey = walletKey;
+      const requestSessionKey = balanceRefreshSessionKey;
       const aesReady = options?.aesReady ?? walletHasAes;
       if (latestWalletKeyRef.current !== requestWalletKey) {
         return;
       }
+      if (latestBalanceRefreshSessionKeyRef.current !== requestSessionKey) {
+        return;
+      }
+      const silent = Boolean(options?.silent);
 
       const tokenKey = buildTradeCustomTokenInfoKey(token.kind, normalizedAddress);
-      setCustomTradeTokenInfoByAddress((previous) => ({
-        ...previous,
-        [tokenKey]: {
-          kind: token.kind,
-          address: normalizedAddress,
-          symbol: shortenAddress(normalizedAddress),
-          decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
-          balanceWei: null,
-          loading: true,
-          walletKey,
-          aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
-          privateBalanceState: token.kind === 'private-erc20' ? (aesReady ? { status: 'setup-pending' } : { status: 'locked' }) : undefined
-        }
-      }));
+      if (!silent) {
+        setCustomTradeTokenInfoByAddress((previous) => ({
+          ...previous,
+          [tokenKey]: {
+            kind: token.kind,
+            address: normalizedAddress,
+            symbol: previous[tokenKey]?.symbol ?? shortenAddress(normalizedAddress),
+            decimals: previous[tokenKey]?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
+            balanceWei: previous[tokenKey]?.balanceWei ?? null,
+            loading: true,
+            walletKey,
+            aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
+            privateBalanceState:
+              token.kind === 'private-erc20' ? (aesReady ? { status: 'setup-pending' } : { status: 'locked' }) : undefined
+          }
+        }));
+      }
 
       try {
         const cotiEthers = await loadCotiEthersModule();
@@ -322,23 +391,43 @@ export default function useP2PTradeTokenData({
         if (latestWalletKeyRef.current !== requestWalletKey) {
           return;
         }
+        if (latestBalanceRefreshSessionKeyRef.current !== requestSessionKey) {
+          return;
+        }
 
-        setCustomTradeTokenInfoByAddress((previous) => ({
-          ...previous,
-          [tokenKey]: {
-            kind: token.kind,
-            address: normalizedAddress,
-            symbol,
-            decimals,
-            balanceWei,
-            loading: false,
-            walletKey,
-            aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
-            privateBalanceState
-          }
-        }));
+        setCustomTradeTokenInfoByAddress((previous) => {
+          const previousEntry = previous[tokenKey];
+          const nextPrivateBalanceState =
+            token.kind === 'private-erc20' && privateBalanceState
+              ? resolvePrivateBalanceStateAfterRefresh(
+                  previousEntry?.privateBalanceState ?? LOCKED_PRIVATE_BALANCE_STATE,
+                  privateBalanceState,
+                  silent
+                )
+              : privateBalanceState;
+          return {
+            ...previous,
+            [tokenKey]: {
+              kind: token.kind,
+              address: normalizedAddress,
+              symbol,
+              decimals,
+              balanceWei: resolveBalanceWeiAfterRefresh(previousEntry?.balanceWei ?? null, balanceWei, silent),
+              loading: false,
+              walletKey,
+              aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
+              privateBalanceState: nextPrivateBalanceState
+            }
+          };
+        });
       } catch {
         if (latestWalletKeyRef.current !== requestWalletKey) {
+          return;
+        }
+        if (latestBalanceRefreshSessionKeyRef.current !== requestSessionKey) {
+          return;
+        }
+        if (silent) {
           return;
         }
         setCustomTradeTokenInfoByAddress((previous) => ({
@@ -358,7 +447,7 @@ export default function useP2PTradeTokenData({
         }));
       }
     },
-    [getTradeSigner, readCurrentPrivateBalanceState, walletAddress, walletHasAes, walletKey]
+    [balanceRefreshSessionKey, getTradeSigner, readCurrentPrivateBalanceState, walletAddress, walletHasAes, walletKey]
   );
 
   const reloadPrivateBalancesWithUnlockedSigner = useCallback(
@@ -451,6 +540,54 @@ export default function useP2PTradeTokenData({
     [readCurrentPrivateBalanceState, resolveCurrentPrivateTokenRequests, walletAddress, walletKey]
   );
 
+  const refreshWalletBalances = useCallback(
+    async (options?: WalletBalanceRefreshOptions): Promise<void> => {
+      if (balanceRefreshRef.current) {
+        balanceRefreshQueuedRef.current = {
+          ...(balanceRefreshQueuedRef.current ?? {}),
+          ...(options ?? {}),
+          silent: Boolean(balanceRefreshQueuedRef.current?.silent ?? options?.silent)
+        };
+        return balanceRefreshRef.current;
+      }
+
+      const refreshRequest = (async () => {
+        let nextOptions: WalletBalanceRefreshOptions | undefined = options;
+        do {
+          const currentOptions = nextOptions;
+          balanceRefreshQueuedRef.current = null;
+          await loadPrimaryWalletBalances(currentOptions);
+          const privateTokenRequests = resolveCurrentPrivateTokenRequests();
+          await Promise.all(
+            privateTokenRequests.map((token) =>
+              loadCustomTokenInfo(token, {
+                aesReady: walletHasAes || Boolean(currentOptions?.signer),
+                signer: currentOptions?.signer,
+                silent: Boolean(currentOptions?.silent)
+              }).catch(() => {})
+            )
+          );
+          nextOptions = balanceRefreshQueuedRef.current ?? undefined;
+        } while (nextOptions);
+      })();
+
+      balanceRefreshRef.current = refreshRequest;
+      try {
+        await refreshRequest;
+      } finally {
+        if (balanceRefreshRef.current === refreshRequest) {
+          balanceRefreshRef.current = null;
+        }
+      }
+    },
+    [loadCustomTokenInfo, loadPrimaryWalletBalances, resolveCurrentPrivateTokenRequests, walletHasAes]
+  );
+
+  const loadWalletBalances = useCallback(
+    async (): Promise<void> => refreshWalletBalances({ reason: 'manual' }),
+    [refreshWalletBalances]
+  );
+
   useEffect(() => {
     resolveRequiredFeeForTradeCreate().catch(() => {});
   }, [resolveRequiredFeeForTradeCreate]);
@@ -460,8 +597,8 @@ export default function useP2PTradeTokenData({
   }, [clearWalletBalances, walletKey]);
 
   useEffect(() => {
-    loadWalletBalances().catch(() => {});
-  }, [loadWalletBalances]);
+    refreshWalletBalances({ reason: 'connect', silent: false }).catch(() => {});
+  }, [refreshWalletBalances]);
 
   useEffect(() => {
     const requestedTokens = [
@@ -483,7 +620,7 @@ export default function useP2PTradeTokenData({
       const shouldRefreshPrivateBalance =
         token.kind === 'private-erc20' && existing?.aesReady !== walletHasAes && !existing?.loading;
       if (!existing || existing.walletKey !== walletKey || shouldRefreshPrivateBalance) {
-        loadCustomTokenInfo(token).catch(() => {});
+        loadCustomTokenInfo(token, { silent: false }).catch(() => {});
       }
     }
   }, [
@@ -504,13 +641,15 @@ export default function useP2PTradeTokenData({
       const shouldRefreshPrivateBalance =
         token.kind === 'private-erc20' && existing?.aesReady !== walletHasAes && !existing?.loading;
       if (!existing || existing.walletKey !== walletKey || shouldRefreshPrivateBalance) {
-        loadCustomTokenInfo(token).catch(() => {});
+        loadCustomTokenInfo(token, { silent: false }).catch(() => {});
       }
     }
   }, [customTradeTokenInfoByAddress, loadCustomTokenInfo, walletHasAes, walletKey]);
 
   const refreshCurrentPrivateTokenInfos = useCallback(async () => {
-    await Promise.all(resolveCurrentPrivateTokenRequests().map((token) => loadCustomTokenInfo(token).catch(() => {})));
+    await Promise.all(
+      resolveCurrentPrivateTokenRequests().map((token) => loadCustomTokenInfo(token, { silent: true }).catch(() => {}))
+    );
   }, [loadCustomTokenInfo, resolveCurrentPrivateTokenRequests]);
 
   return {
@@ -523,6 +662,7 @@ export default function useP2PTradeTokenData({
     privateRewardTokenDecimals,
     privateRewardTokenSymbol,
     reloadPrivateBalancesWithUnlockedSigner,
+    refreshWalletBalances,
     refreshCurrentPrivateTokenInfos,
     resolveRequiredFeeForTradeCreate,
     rewardTokenBalanceWei,

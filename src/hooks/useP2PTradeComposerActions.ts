@@ -53,6 +53,14 @@ const formatTradeAmountInput = (asset: TradeAssetPayload): string => {
   }
 };
 
+const hasVisibleTradeAmount = (asset: TradeAssetPayload): boolean => {
+  try {
+    return BigInt(asset.amount) > 0n;
+  } catch {
+    return false;
+  }
+};
+
 const resolveTradeAssetSelection = (
   asset: TradeAssetPayload
 ): { selection: TradeTokenPresetKey; customAddress: string } => {
@@ -91,7 +99,6 @@ type UseP2PTradeComposerActionsArgs = {
   mergeTradeSnapshot: (snapshot: TradeSnapshot) => void;
   navigateToTradePath: (path: string) => void;
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
-  openTradeSnapshot: (snapshot: TradeSnapshot, accessSecret?: string) => void;
   refreshMyTrades: () => Promise<void>;
   refreshPublicTrades: () => Promise<void>;
   rememberPrivateTradeLiquidity: (tradeId: number, escrowContract: string | undefined, offerAmountWei: bigint) => void;
@@ -146,7 +153,6 @@ export default function useP2PTradeComposerActions({
   mergeTradeSnapshot,
   navigateToTradePath,
   openTrade,
-  openTradeSnapshot,
   refreshMyTrades,
   refreshPublicTrades,
   rememberPrivateTradeLiquidity,
@@ -195,17 +201,27 @@ export default function useP2PTradeComposerActions({
       setTradeRequestTokenSelection(nextRequestSelection.selection);
       setTradeOfferCustomTokenAddress(nextOfferSelection.customAddress);
       setTradeRequestCustomTokenAddress(nextRequestSelection.customAddress);
-      setTradeOfferAmountInput(formatTradeAmountInput(snapshot.request));
-      setTradeRequestAmountInput(formatTradeAmountInput(snapshot.offer));
+      const canPrefillAmounts =
+        !snapshot.hiddenLiquidity &&
+        hasVisibleTradeAmount(snapshot.request) &&
+        hasVisibleTradeAmount(snapshot.offer);
+      setTradeOfferAmountInput(canPrefillAmounts ? formatTradeAmountInput(snapshot.request) : '');
+      setTradeRequestAmountInput(canPrefillAmounts ? formatTradeAmountInput(snapshot.offer) : '');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
       setTradeHasNoExpiry(false);
       setTradeHidePrivateLiquidity(false);
       setTradeActionError('');
-      openTradeSnapshot(snapshot);
+      setCreatedTradeId(null);
+      setCreatedTradeLink('');
+      setDetailTrade(null);
+      navigateToTradePath('/trades/open/counter');
     },
     [
-      openTradeSnapshot,
+      navigateToTradePath,
       setCounterParentTrade,
+      setCreatedTradeId,
+      setCreatedTradeLink,
+      setDetailTrade,
       setEditingTrade,
       setTradeActionError,
       setTradeExpiryHoursInput,

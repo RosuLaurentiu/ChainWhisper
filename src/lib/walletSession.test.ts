@@ -6,9 +6,11 @@ import {
   resolveAppWalletSwitchOptions,
   resolveWalletBlockedActionLabel,
   resolveWalletHeaderActionVisibility,
+  resolveWalletHeaderViewModel,
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
+  resolveWalletPrivacyDisplayState,
   resolveWalletPrivacyUnlockPrompt,
   resolveWalletReadiness
 } from './walletSession';
@@ -115,8 +117,15 @@ describe('wallet header labels', () => {
       })
     ).toMatchObject({
       label: 'Unlock privacy',
-      title: 'COTI Snap is installed. Click to recover or create the AES key for this wallet.'
+      title: 'COTI Snap is installed. Click to read the AES key for this MetaMask wallet.'
     });
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'installed-aes-missing',
+        unlocking: false
+      }).title
+    ).toContain('Onboard it in the COTI Snap wallet');
     expect(
       resolveWalletPrivacyUnlockPrompt({
         hasAesReady: false,
@@ -159,6 +168,224 @@ describe('wallet header labels', () => {
       }).title
     ).toContain('rejected');
     expect(resolveWalletPrivacyUnlockPrompt({ hasAesReady: false, unlocking: true }).label).toBe('Unlocking...');
+  });
+});
+
+describe('resolveWalletPrivacyDisplayState', () => {
+  it('returns one display state for locked, setup, ready, refresh, and mismatch cases', () => {
+    const walletAddress = '0x1234567890abcdef';
+    expect(
+      resolveWalletPrivacyDisplayState({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: false,
+        unlocking: false,
+        walletAddress
+      })
+    ).toMatchObject({
+      showAction: true,
+      status: 'locked',
+      statusLabel: 'Privacy locked'
+    });
+    expect(
+      resolveWalletPrivacyDisplayState({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        privateTokenPrivacyAction: 'setup',
+        unlocking: false,
+        walletAddress
+      })
+    ).toMatchObject({
+      actionLabel: 'Set up tokens',
+      showAction: true,
+      status: 'ready',
+      statusLabel: 'Ready'
+    });
+    expect(
+      resolveWalletPrivacyDisplayState({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        unlocking: false,
+        walletAesHealth: {
+          status: 'repairing',
+          updatedAt: 1,
+          walletKey: walletAddress
+        },
+        walletAddress
+      })
+    ).toMatchObject({
+      showAction: false,
+      status: 'repairing',
+      statusLabel: 'Repairing privacy key'
+    });
+    expect(
+      resolveWalletPrivacyDisplayState({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        unlocking: false,
+        walletAesHealth: {
+          status: 'ready-unverified',
+          updatedAt: 1,
+          walletKey: walletAddress
+        },
+        walletAddress
+      })
+    ).toMatchObject({
+      showAction: false,
+      status: 'ready-unverified',
+      statusLabel: 'Ready'
+    });
+    expect(
+      resolveWalletPrivacyDisplayState({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        privateTokenPrivacyAction: 'repair',
+        unlocking: false,
+        walletAddress
+      })
+    ).toMatchObject({
+      showAction: true,
+      status: 'ready',
+      statusLabel: 'Ready'
+    });
+    expect(
+      resolveWalletPrivacyDisplayState({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        snapStatus: 'key-mismatch',
+        unlocking: false,
+        walletAddress
+      })
+    ).toMatchObject({
+      showAction: true,
+      status: 'key-mismatch',
+      statusLabel: 'Privacy key mismatch'
+    });
+  });
+});
+
+describe('resolveWalletHeaderViewModel', () => {
+  const walletAddress = '0x1234567890abcdef';
+
+  it('keeps connected app wallets ready and ignores stale browser Snap status', () => {
+    expect(
+      resolveWalletHeaderViewModel({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        policy: 'browser-first',
+        snapStatus: 'key-mismatch',
+        unlocking: false,
+        walletAddress,
+        walletKind: 'app'
+      })
+    ).toMatchObject({
+      effectiveSnapStatus: 'unknown',
+      privacyActionKind: 'none',
+      privacyDisplay: {
+        status: 'ready',
+        statusLabel: 'Ready'
+      },
+      showPrivacyAction: false,
+      walletKind: 'app'
+    });
+  });
+
+  it('keeps browser wallets repairable when their Snap AES state is stale', () => {
+    expect(
+      resolveWalletHeaderViewModel({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        policy: 'app-first',
+        snapStatus: 'key-mismatch',
+        unlocking: false,
+        walletAddress,
+        walletKind: 'browser'
+      })
+    ).toMatchObject({
+      effectiveSnapStatus: 'key-mismatch',
+      privacyActionKind: 'repair-browser-aes',
+      privacyDisplay: {
+        status: 'key-mismatch'
+      },
+      showPrivacyAction: true
+    });
+  });
+
+  it('keeps private-token setup as the only app-wallet status action once AES is ready', () => {
+    expect(
+      resolveWalletHeaderViewModel({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        policy: 'browser-first',
+        privateTokenPrivacyAction: 'setup',
+        snapStatus: 'installed-aes-stale',
+        unlocking: false,
+        walletAddress,
+        walletKind: 'app'
+      })
+    ).toMatchObject({
+      effectiveSnapStatus: 'unknown',
+      privacyActionKind: 'setup-private-tokens',
+      privacyDisplay: {
+        actionLabel: 'Set up tokens',
+        status: 'ready',
+        statusLabel: 'Ready'
+      },
+      showPrivacyAction: true
+    });
+  });
+
+  it('keeps the AES status ready while surfacing private-token refresh as an action', () => {
+    expect(
+      resolveWalletHeaderViewModel({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        policy: 'browser-first',
+        privateTokenPrivacyAction: 'repair',
+        unlocking: false,
+        walletAddress,
+        walletKind: 'browser'
+      })
+    ).toMatchObject({
+      privacyActionKind: 'repair-private-tokens',
+      privacyDisplay: {
+        actionLabel: 'Refresh privacy',
+        status: 'ready',
+        statusLabel: 'Ready'
+      },
+      showPrivacyAction: true
+    });
+  });
+
+  it('keeps Trades browser-first and Chat app-first policies explicit in the model', () => {
+    expect(
+      resolveWalletHeaderViewModel({
+        chainId: null,
+        hasAesReady: false,
+        policy: 'browser-first',
+        unlocking: false,
+        walletAddress: '',
+        walletKind: 'none'
+      })
+    ).toMatchObject({
+      policy: 'browser-first',
+      privacyActionKind: 'none',
+      walletKind: 'none'
+    });
+
+    expect(
+      resolveWalletHeaderViewModel({
+        chainId: null,
+        hasAesReady: false,
+        policy: 'app-first',
+        unlocking: false,
+        walletAddress: '',
+        walletKind: 'none'
+      })
+    ).toMatchObject({
+      policy: 'app-first',
+      privacyActionKind: 'none',
+      walletKind: 'none'
+    });
   });
 });
 

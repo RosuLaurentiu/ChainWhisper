@@ -35,7 +35,7 @@ test.describe('mobile layout polish', () => {
     await expect(tradeTabs).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Desk' })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Create' })).toBeVisible();
-    await expect(tradeTabs.getByRole('button', { name: 'Open', exact: true })).toBeVisible();
+    await expect(tradeTabs.getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'My Trades', exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });

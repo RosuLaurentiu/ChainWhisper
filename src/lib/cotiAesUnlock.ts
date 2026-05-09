@@ -1,9 +1,7 @@
 import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import { COTI_NETWORK, type Eip1193Provider } from './appShared';
 import {
-  deleteCotiSnapAesKeyResult,
   getCotiSnapAesKeyResult,
-  storeCotiSnapAesKey,
   type CotiSnapAesKeyResult,
   type CotiSnapAesStatus
 } from './cotiSnap';
@@ -21,12 +19,18 @@ type UnlockArgs = {
   forceLegacyRefresh?: boolean;
   forceRefresh?: boolean;
   provider?: Eip1193Provider | null;
+  requireSnapAes?: boolean;
   signer: CotiAesSigner;
   walletAddress: string;
 };
 
 export type PrivacyUnlockResult =
-  | { status: 'ready'; onboardInfo: OnboardInfo; source: 'cache' | 'snap' | 'fallback' }
+  | {
+      status: 'ready';
+      onboardInfo: OnboardInfo;
+      snapStoreStatus?: Exclude<CotiSnapAesKeyResult['status'], 'missing-aes'>;
+      source: 'cache' | 'snap' | 'fallback';
+    }
   | {
       status: 'fallback-unavailable';
       reason: Exclude<CotiSnapAesKeyResult['status'], 'ready'> | 'disabled' | 'unrecoverable';
@@ -71,6 +75,10 @@ export type WalletScopedSnapAesState = {
   sessionKey: string;
   staleTokenAddresses: string[];
   status: CotiSnapAesStatus;
+  walletKey: string;
+};
+
+export type WalletScopedAesValidationResult = CotiAesValidationResult & {
   walletKey: string;
 };
 
@@ -280,6 +288,7 @@ export const getOrRecoverAesForWalletResult = async ({
   forceLegacyRefresh = false,
   forceRefresh = false,
   provider,
+  requireSnapAes = false,
   signer,
   walletAddress
 }: UnlockArgs): Promise<PrivacyUnlockResult> => {
@@ -321,6 +330,15 @@ export const getOrRecoverAesForWalletResult = async ({
           reason: snapResult.status
         };
       }
+      if (
+        requireSnapAes &&
+        snapResult.status !== 'unsupported'
+      ) {
+        return {
+          status: 'fallback-unavailable' as const,
+          reason: snapResult.status
+        };
+      }
       if (!allowLegacyFallback) {
         return {
           status: 'fallback-unavailable' as const,
@@ -337,18 +355,12 @@ export const getOrRecoverAesForWalletResult = async ({
     }
 
     const existingInfoBeforeFallback = signer.getUserOnboardInfo();
-    if (forceLegacyRefresh && forceFreshAes && provider) {
-      await deleteCotiSnapAesKeyResult(provider, getSnapWalletContext(walletAddress)).catch(() => {});
-    }
     if (forceLegacyRefresh && !forceFreshAes && !hasRecoverableOnboardInfo(existingInfoBeforeFallback)) {
       if (!allowUnrecoverableReset) {
         return {
           status: 'fallback-unavailable' as const,
           reason: 'unrecoverable' as const
         };
-      }
-      if (provider) {
-        await deleteCotiSnapAesKeyResult(provider, getSnapWalletContext(walletAddress)).catch(() => {});
       }
     }
     if (forceLegacyRefresh && forceFreshAes) {
@@ -358,9 +370,6 @@ export const getOrRecoverAesForWalletResult = async ({
     }
     await signer.generateOrRecoverAes();
     const recoveredOnboardInfo = requireOnboardInfo(signer.getUserOnboardInfo());
-    if (provider) {
-      await storeCotiSnapAesKey(provider, recoveredOnboardInfo.aesKey, getSnapWalletContext(walletAddress)).catch(() => {});
-    }
     return {
       status: 'ready' as const,
       onboardInfo: recoveredOnboardInfo,
@@ -399,7 +408,7 @@ export const getOrRecoverValidatedAesForWallet = async (
     args.validationProbes
   );
   if (validation.status === 'key-mismatch') {
-    resetSignerOnboardInfoForFreshAes(args.signer);
+    clearSignerAesKey(args.signer);
     return {
       source: unlockResult.source,
       status: 'key-mismatch',
@@ -416,11 +425,28 @@ export const getOrRecoverValidatedAesForWallet = async (
 
 export const repairCotiAesForWallet = async (
   args: UnlockArgs & { validationProbes?: CotiAesValidationProbe[] }
-): Promise<ValidatedPrivacyUnlockResult> =>
-  getOrRecoverValidatedAesForWallet({
+): Promise<ValidatedPrivacyUnlockResult> => {
+  const snapFirstResult = await getOrRecoverValidatedAesForWallet({
+    ...args,
+    forceFreshAes: false,
+    forceLegacyRefresh: false,
+    forceRefresh: true
+  });
+  if (snapFirstResult.status === 'ready' || snapFirstResult.status === 'ready-unverified') {
+    return snapFirstResult;
+  }
+  if (
+    snapFirstResult.status === 'fallback-unavailable' &&
+    (snapFirstResult.reason === 'wallet-mismatch' || snapFirstResult.reason === 'wrong-network')
+  ) {
+    return snapFirstResult;
+  }
+
+  return getOrRecoverValidatedAesForWallet({
     ...args,
     allowUnrecoverableReset: true,
-    forceFreshAes: true,
+    forceFreshAes: false,
     forceLegacyRefresh: true,
     forceRefresh: true
   });
+};

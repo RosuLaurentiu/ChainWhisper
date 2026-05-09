@@ -18,11 +18,11 @@ test.describe('trading V1 routes', () => {
     await expect(page.getByPlaceholder(/Search offers by pair/i)).toBeVisible();
     await expect(page.getByLabel('Pair')).toBeVisible();
     await expect(page.getByLabel('Type')).toBeVisible();
-    await expect(page.getByLabel('Access')).toBeVisible();
+    await expect(page.getByLabel('Access')).toHaveCount(0);
     await expect(page.getByLabel('Sort')).toBeVisible();
     await page.getByLabel('Type').selectOption('recurring');
     await expect(page.getByLabel('Type')).toHaveValue('recurring');
-    await page.getByRole('button', { name: /Filters/ }).click();
+    await page.getByRole('button', { name: /Reset/ }).click();
     await expect(page.getByLabel('Type')).toHaveValue('all');
   });
 

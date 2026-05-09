@@ -14,14 +14,15 @@ import {
   resolveWalletModeLabel,
   resolveAppWalletSwitchOptions,
   resolveWalletHeaderActionVisibility,
+  resolveWalletHeaderViewModel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
   resolveWalletPrivacyUnlockPrompt,
-  resolveWalletReadiness,
   type PrivacyUnlockSnapStatus,
   type SharedWalletSession
 } from '../lib/walletSession';
 import type { PrivateTokenBalancePrivacyAction } from '../lib/appHelpers';
+import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
 
 type UseP2PWalletHeaderControlArgs = {
   appWalletMenuOpen: boolean;
@@ -54,6 +55,7 @@ type UseP2PWalletHeaderControlArgs = {
   signAesForCurrentWallet: () => Promise<void>;
   snapAesStatus?: PrivacyUnlockSnapStatus;
   walletAddress: string;
+  walletAesHealth?: WalletAesHealthState | null;
   walletHasAes: boolean;
   walletPrivateTokenPrivacyAction?: PrivateTokenBalancePrivacyAction;
   walletMenuOpen: boolean;
@@ -97,6 +99,7 @@ export default function useP2PWalletHeaderControl({
   signAesForCurrentWallet,
   snapAesStatus = 'unknown',
   walletAddress,
+  walletAesHealth = null,
   walletHasAes,
   walletPrivateTokenPrivacyAction = 'none',
   walletMenuOpen
@@ -145,12 +148,12 @@ export default function useP2PWalletHeaderControl({
   const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
   const tradePrimaryConnectsAppWallet = !walletAddress && tradeHasSavedAppWallet && !preferredWalletOption;
   const showTradeDisconnectedAppAction = Boolean(!walletAddress && preferredWalletOption);
-  const tradeWalletBusyLabel =
-    connectingWalletId === 'aes'
+  const walletConnectionBusy = Boolean(connectingWalletId && connectingWalletId !== 'aes');
+  const tradeWalletBusyLabel = walletConnectionBusy
+    ? connectingWalletId === 'burner'
       ? 'Unlocking...'
-      : connectingWalletId
-        ? 'Connecting...'
-        : undefined;
+      : 'Connecting...'
+    : undefined;
   const walletPrimaryButtonLabel = resolveWalletPrimaryButtonLabel({
     busyLabel: tradeWalletBusyLabel,
     connectLabel: tradePrimaryConnectsAppWallet
@@ -204,23 +207,28 @@ export default function useP2PWalletHeaderControl({
     walletAddress
   });
   const walletPrimaryButtonIsAddress = Boolean(walletAddress && onCotiNetwork);
-  const walletNeedsPrivacyRepair =
-    snapAesStatus === 'installed-aes-stale' ||
-    snapAesStatus === 'key-mismatch' ||
-    snapAesStatus === 'repair-needed';
   const walletNeedsPrivateTokenSetup = walletPrivateTokenPrivacyAction === 'setup';
-  const walletNeedsPrivateTokenRepair = walletPrivateTokenPrivacyAction === 'repair';
   const walletNeedsPrivateTokenPrivacyAction = walletPrivateTokenPrivacyAction !== 'none';
-  const showInlineAesAction = Boolean(
-    walletAddress &&
-    onCotiNetwork &&
-    (!walletHasAes || walletNeedsPrivacyRepair || walletNeedsPrivateTokenPrivacyAction)
-  );
-  const walletReadiness = resolveWalletReadiness({
+  const walletKind = !walletAddress ? 'none' : connectedWithBurner ? 'app' : 'browser';
+  const headerModel = resolveWalletHeaderViewModel({
     chainId,
     hasAesReady: walletHasAes,
-    walletAddress
+    policy: 'browser-first',
+    privateTokenPrivacyAction: walletPrivateTokenPrivacyAction,
+    snapStatus: snapAesStatus,
+    unlocking: connectingWalletId === 'aes',
+    walletAesHealth,
+    walletAddress,
+    walletKind
   });
+  const effectiveSnapAesStatus: PrivacyUnlockSnapStatus = headerModel.effectiveSnapStatus;
+  const walletNeedsPrivacyRepair =
+    walletAesHealth?.status === 'repair-needed' ||
+    walletAesHealth?.status === 'key-mismatch' ||
+    effectiveSnapAesStatus === 'repair-needed' ||
+    effectiveSnapAesStatus === 'key-mismatch' ||
+    effectiveSnapAesStatus === 'installed-aes-stale';
+  const privacyDisplay = headerModel.privacyDisplay;
   const walletModeLabel = resolveWalletModeLabel({
     appWithBrowserLabel: 'browser',
     browserWalletLabel: connectedWalletLabel,
@@ -229,20 +237,8 @@ export default function useP2PWalletHeaderControl({
     hasBrowserWalletAvailable: hasConnectedBrowserWallet,
     walletAddress
   });
-  const walletStatusLabel =
-    snapAesStatus === 'repair-needed'
-      ? 'Privacy key needs refresh'
-      : snapAesStatus === 'key-mismatch'
-        ? 'Privacy key mismatch'
-        : walletNeedsPrivateTokenRepair
-          ? 'Private token refresh needed'
-        : walletReadiness.statusLabel;
-  const walletStatusTone =
-    snapAesStatus === 'repair-needed' || snapAesStatus === 'key-mismatch'
-      ? 'warning'
-      : walletNeedsPrivateTokenRepair
-        ? 'warning'
-      : walletReadiness.statusTone;
+  const walletStatusLabel = privacyDisplay.statusLabel;
+  const walletStatusTone = privacyDisplay.statusTone;
   const tradeWalletActions = useMemo(
     () =>
       resolveWalletHeaderActionVisibility({
@@ -308,8 +304,9 @@ export default function useP2PWalletHeaderControl({
       disabled={Boolean(connectingWalletId)}
     />
   ) : null;
+  const showTradePrivacyStatusAction = headerModel.showPrivacyAction;
   const tradePrivacyPrompt =
-    walletNeedsPrivateTokenPrivacyAction && walletHasAes && !walletNeedsPrivacyRepair
+    walletNeedsPrivateTokenPrivacyAction && walletHasAes
       ? {
           label: connectingWalletId === 'aes'
             ? walletNeedsPrivateTokenSetup
@@ -326,9 +323,8 @@ export default function useP2PWalletHeaderControl({
                 : 'Refresh this wallet privacy key or private-token balance visibility.'
         }
       : resolveWalletPrivacyUnlockPrompt({
-          connectedWithAppWallet: connectedWithBurner,
           hasAesReady: walletHasAes && !walletNeedsPrivacyRepair,
-          snapStatus: snapAesStatus,
+          snapStatus: walletNeedsPrivacyRepair ? 'repair-needed' : effectiveSnapAesStatus,
           unlocking: connectingWalletId === 'aes'
         });
   const tradeWalletSwitchAction = useMemo(() => {
@@ -422,17 +418,21 @@ export default function useP2PWalletHeaderControl({
         primaryMetaLabel={walletPrimaryButtonIsAddress && walletPrimaryButtonCopied ? 'Copied' : undefined}
         primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
         primaryDisabled={
-          Boolean(connectingWalletId) || (!walletAddress && !preferredWalletOption && !tradePrimaryConnectsAppWallet)
+          walletConnectionBusy || (!walletAddress && !preferredWalletOption && !tradePrimaryConnectsAppWallet)
         }
         onPrimaryAction={handleWalletPrimaryAction}
         modeLabel={walletModeLabel}
         statusLabel={walletStatusLabel}
         statusTone={walletStatusTone}
         statusActionDisabled={Boolean(connectingWalletId)}
-        statusActionLabel={showInlineAesAction ? tradePrivacyPrompt.label : undefined}
-        statusActionTitle={tradePrivacyPrompt.title}
+        statusActionLabel={
+          showTradePrivacyStatusAction ? privacyDisplay.actionLabel ?? tradePrivacyPrompt.label : undefined
+        }
+        statusActionTitle={
+          showTradePrivacyStatusAction ? privacyDisplay.actionTitle ?? tradePrivacyPrompt.title : undefined
+        }
         onStatusAction={
-          showInlineAesAction
+          showTradePrivacyStatusAction
             ? () => {
                 signAesForCurrentWallet().catch(() => {});
               }
@@ -538,6 +538,7 @@ export default function useP2PWalletHeaderControl({
       connectBurnerWallet,
       connectWallet,
       connectedWithBurner,
+      connectedWalletLabel,
       connectingWalletId,
       compactMobileWallet,
       disconnectWallet,
@@ -548,7 +549,6 @@ export default function useP2PWalletHeaderControl({
       selectedWalletId,
       setAppWalletMenuOpen,
       setWalletMenuOpen,
-      showInlineAesAction,
       signAesForCurrentWallet,
       tradeAppWalletSwitchButton,
       tradePrivacyPrompt.label,
@@ -558,6 +558,7 @@ export default function useP2PWalletHeaderControl({
       visibleShowTradeBrowserWalletMenuSection,
       visibleTradeMenuBrowserWalletOptions,
       walletAddress,
+      walletAesHealth,
       walletMenuOpen,
       walletModeLabel,
       walletPrimaryButtonClass,
@@ -565,7 +566,12 @@ export default function useP2PWalletHeaderControl({
       walletPrimaryButtonIsAddress,
       walletPrimaryButtonLabel,
       walletStatusLabel,
-      walletStatusTone
+      walletStatusTone,
+      walletConnectionBusy,
+      privacyDisplay.actionLabel,
+      privacyDisplay.actionTitle,
+      effectiveSnapAesStatus,
+      showTradePrivacyStatusAction
     ]
   );
 

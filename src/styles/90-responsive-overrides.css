@@ -380,7 +380,7 @@
   }
 
   .top-header .top-header-mobile-wallet .p2p-wallet-status-text span,
-  .top-header .top-header-mobile-wallet .p2p-wallet-status-text strong,
+  .top-header .top-header-mobile-wallet .p2p-wallet-status-indicator,
   .top-header .top-header-mobile-wallet .p2p-wallet-status-button {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1272,12 +1272,15 @@
   }
 
   .p2p-filter-bar {
-    grid-template-columns: minmax(0, 1fr) minmax(108px, 0.5fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "search search"
+      "pair type"
+      "sort reset";
     gap: 8px;
   }
 
-  .p2p-filter-search,
-  .p2p-filter-sort {
+  .p2p-filter-search {
     grid-column: 1 / -1;
   }
 
@@ -1493,7 +1496,7 @@
     font-size: 0.58rem;
   }
 
-  .p2p-wallet-status-text strong,
+  .p2p-wallet-status-indicator,
   .p2p-wallet-status-button {
     font-size: 0.7rem;
     line-height: 1.05;
@@ -2874,7 +2877,7 @@
     font-size: 0.54rem;
   }
 
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status-text strong,
+  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status-indicator,
   .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status-button {
     font-size: 0.66rem;
   }
@@ -2968,13 +2971,17 @@
   }
 
   .app-shell-trades .p2p-filter-bar {
-    grid-template-columns: minmax(0, 1fr) minmax(86px, 0.42fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "search search"
+      "pair type"
+      "sort reset";
     gap: 6px;
     padding-top: 7px;
   }
 
   .app-shell-trades .p2p-filter-search {
-    grid-column: auto;
+    grid-column: 1 / -1;
   }
 
   .app-shell-trades .p2p-filter-sort {

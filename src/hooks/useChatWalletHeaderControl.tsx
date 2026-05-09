@@ -18,11 +18,11 @@ import {
 import {
   resolveAppWalletSwitchOptions,
   resolveWalletHeaderActionVisibility,
+  resolveWalletHeaderViewModel,
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
   resolveWalletPrivacyUnlockPrompt,
-  resolveWalletReadiness
 } from '../lib/walletSession';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
 import type { BrowserWalletSession } from './useWalletOnboarding';
@@ -180,25 +180,21 @@ export default function useChatWalletHeaderControl({
     initializingBurner ||
     (!walletAddress && chatPrimaryConnectsBrowserWallet && !chatPreferredBrowserWalletOption) ||
     (!walletAddress && !chatPrimaryConnectsBrowserWallet && burnerStorageBlocked);
-  const chatWalletReadiness = resolveWalletReadiness({
+  const walletNeedsPrivacyRepair =
+    walletAesHealth?.status === 'repair-needed' || walletAesHealth?.status === 'key-mismatch';
+  const chatWalletHeaderModel = resolveWalletHeaderViewModel({
     chainId,
     hasAesReady,
-    walletAddress
+    policy: 'app-first',
+    snapStatus: walletNeedsPrivacyRepair ? 'repair-needed' : 'unknown',
+    unlocking: connectingMethod === 'metamask',
+    walletAesHealth,
+    walletAddress,
+    walletKind: !walletAddress ? 'none' : chatWalletIsAppWallet ? 'app' : 'browser'
   });
-  const chatWalletStatusLabel =
-    walletAesHealth?.status === 'repairing'
-      ? 'Repairing privacy key'
-      : walletAesHealth?.status === 'repair-needed'
-        ? 'Privacy key needs refresh'
-      : walletAesHealth?.status === 'key-mismatch'
-        ? 'Privacy key mismatch'
-        : chatWalletReadiness.statusLabel;
-  const chatWalletStatusTone =
-    walletAesHealth?.status === 'repairing' ||
-    walletAesHealth?.status === 'repair-needed' ||
-    walletAesHealth?.status === 'key-mismatch'
-      ? 'warning'
-      : chatWalletReadiness.statusTone;
+  const chatWalletPrivacyDisplay = chatWalletHeaderModel.privacyDisplay;
+  const chatWalletStatusLabel = chatWalletPrivacyDisplay.statusLabel;
+  const chatWalletStatusTone = chatWalletPrivacyDisplay.statusTone;
   const chatWarmBrowserWalletLabel = browserWalletSession?.walletLabel ?? chatPreferredBrowserWalletOption?.label ?? 'Browser wallet';
   const chatDisplayBrowserWalletLabel =
     activeSignerSource === 'metamask'
@@ -267,9 +263,6 @@ export default function useChatWalletHeaderControl({
     />
   ) : null;
 
-  const walletNeedsPrivacyRepair =
-    walletAesHealth?.status === 'repair-needed' || walletAesHealth?.status === 'key-mismatch';
-
   const unlockChatPrivacy = useCallback(async () => {
     const provider = getConnectedProvider();
     if (!walletAddress || !provider) {
@@ -302,7 +295,10 @@ export default function useChatWalletHeaderControl({
     unlocking: connectingMethod === 'metamask'
   });
   const showChatPrivacyStatusAction =
-    isConnected && activeSignerSource === 'metamask' && onCotiNetwork && (!hasAesReady || walletNeedsPrivacyRepair);
+    isConnected &&
+    activeSignerSource === 'metamask' &&
+    onCotiNetwork &&
+    chatWalletHeaderModel.showPrivacyAction;
   const chatWalletSwitchAction =
     showChatBrowserQuickAction && chatPreferredBrowserWalletOption ? (
       <button

@@ -4,6 +4,7 @@ const COTI_SNAP_ID = 'npm:@coti-io/coti-snap';
 
 type SnapResponse = Record<string, unknown>;
 type CotiSnapConnectionStatus = 'ready' | 'not-installed' | 'unsupported' | 'rejected' | 'error';
+const SET_AES_KEY_ALLOWED_ORIGINS = new Set(['https://metamask.coti.io', 'https://dev.metamask.coti.io']);
 
 export type CotiSnapAesStatus =
   | 'unknown'
@@ -27,6 +28,15 @@ export type CotiSnapAesKeyResult =
   | { status: 'wrong-network' }
   | { status: 'rejected' }
   | { status: 'error' };
+
+const getCurrentOrigin = (): string | null => {
+  const maybeWindow = globalThis as { window?: { location?: { origin?: unknown } } };
+  const origin = maybeWindow.window?.location?.origin;
+  return typeof origin === 'string' && origin.trim() ? origin.trim() : null;
+};
+
+export const canStoreCotiSnapAesKeyFromCurrentOrigin = (origin: string | null = getCurrentOrigin()): boolean =>
+  !origin || SET_AES_KEY_ALLOWED_ORIGINS.has(origin);
 
 export type CotiSnapWalletContext = {
   expectedChainId?: number;
@@ -151,6 +161,11 @@ const requestAndConnectCotiSnap = async (
   return connectInstalledCotiSnapToWallet(provider);
 };
 
+const buildSnapChainParams = (context?: CotiSnapWalletContext): Record<string, unknown> | undefined => {
+  const chainId = context?.expectedChainId ? String(context.expectedChainId) : undefined;
+  return chainId ? { chainId } : undefined;
+};
+
 export const getCotiSnapAesStatus = async (provider: Eip1193Provider): Promise<CotiSnapAesStatus> => {
   const snaps = await getInstalledSnaps(provider);
   if (!snaps) {
@@ -177,14 +192,20 @@ export const getCotiSnapAesKeyResult = async (
     return { status: connected };
   }
 
-  const hasAesKey = await invokeInstalledCotiSnap<boolean>(provider, 'has-aes-key');
+  const connectedWalletContext = await confirmSnapWalletContext(provider, context);
+  if (connectedWalletContext !== 'ready') {
+    return { status: connectedWalletContext };
+  }
+
+  const snapChainParams = buildSnapChainParams(context);
+  const hasAesKey = await invokeInstalledCotiSnap<boolean>(provider, 'has-aes-key', snapChainParams);
   if (!hasAesKey.ok) {
     return { status: hasAesKey.status };
   }
   if (!hasAesKey.value) {
     return { status: 'missing-aes' };
   }
-  const aesKey = await invokeInstalledCotiSnap<unknown>(provider, 'get-aes-key');
+  const aesKey = await invokeInstalledCotiSnap<unknown>(provider, 'get-aes-key', snapChainParams);
   if (!aesKey.ok) {
     return { status: aesKey.status };
   }
@@ -206,6 +227,9 @@ export const storeCotiSnapAesKeyResult = async (
   if (!aesKey?.trim()) {
     return 'error';
   }
+  if (!canStoreCotiSnapAesKeyFromCurrentOrigin()) {
+    return 'unsupported';
+  }
   const walletContext = await confirmSnapWalletContext(provider, context);
   if (walletContext !== 'ready') {
     return walletContext;
@@ -214,7 +238,10 @@ export const storeCotiSnapAesKeyResult = async (
   if (connected !== 'ready') {
     return connected;
   }
-  const stored = await invokeInstalledCotiSnap(provider, 'set-aes-key', { newUserAesKey: aesKey.trim() });
+  const stored = await invokeInstalledCotiSnap(provider, 'set-aes-key', {
+    newUserAesKey: aesKey.trim(),
+    ...buildSnapChainParams(context)
+  });
   return stored.ok ? 'ready' : stored.status;
 };
 
@@ -238,6 +265,6 @@ export const deleteCotiSnapAesKeyResult = async (
   if (connected !== 'ready') {
     return connected;
   }
-  const deleted = await invokeInstalledCotiSnap(provider, 'delete-aes-key');
+  const deleted = await invokeInstalledCotiSnap(provider, 'delete-aes-key', buildSnapChainParams(context));
   return deleted.ok ? 'ready' : deleted.status;
 };

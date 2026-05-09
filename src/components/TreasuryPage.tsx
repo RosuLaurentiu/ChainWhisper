@@ -538,7 +538,7 @@ function TreasuryChartSkeleton() {
 
 export default function TreasuryPage({ isCompactLayout = false }: { isCompactLayout?: boolean }) {
   const [metric, setMetric] = useState<MetricKey>('cotiInPool');
-  const [timeframe, setTimeframe] = useState<TimeframeKey>('30d');
+  const [timeframe, setTimeframe] = useState<TimeframeKey>('all');
   const [livePoint, setLivePoint] = useState<TreasurySnapshot | null>(null);
   const [snapshots, setSnapshots] = useState<TreasurySnapshot[]>([]);
   const [status, setStatus] = useState<TreasuryStatus>('loading');

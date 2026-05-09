@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  canStoreCotiSnapAesKeyFromCurrentOrigin,
   deleteCotiSnapAesKeyResult,
   getCotiSnapAesKey,
   getCotiSnapAesKeyResult,
   getCotiSnapAesStatus,
-  storeCotiSnapAesKey
+  storeCotiSnapAesKey,
+  storeCotiSnapAesKeyResult
 } from './cotiSnap';
 import type { Eip1193Provider } from './appShared';
 
@@ -83,21 +85,25 @@ describe('getCotiSnapAesStatus', () => {
 describe('getCotiSnapAesKey', () => {
   it('connects the Snap to the active wallet before returning an AES key', async () => {
     const invokedMethods: string[] = [];
+    const invokedParams: Array<Record<string, unknown> | undefined> = [];
     const aesKey = await getCotiSnapAesKeyResult(
       provider(({ method, params }) => {
         if (method === 'wallet_getSnaps') return { [snapId]: {} };
         if (method === 'wallet_invokeSnap') {
           const snapMethod = params?.request?.method ?? '';
           invokedMethods.push(snapMethod);
+          invokedParams.push(params?.request?.params);
           if (snapMethod === 'get-aes-key') return ' aes-key ';
           return true;
         }
         return null;
-      })
+      }),
+      { expectedChainId: 2632500, walletAddress: '0x1111111111111111111111111111111111111111' }
     );
 
     expect(aesKey).toEqual({ status: 'ready', aesKey: 'aes-key' });
     expect(invokedMethods).toEqual(['connect-to-wallet', 'has-aes-key', 'get-aes-key']);
+    expect(invokedParams).toEqual([undefined, { chainId: '2632500' }, { chainId: '2632500' }]);
   });
 
   it('returns rejected instead of reading stale AES when Snap wallet sync fails', async () => {
@@ -132,6 +138,36 @@ describe('getCotiSnapAesKey', () => {
 
     expect(aesKey).toEqual({ status: 'wallet-mismatch' });
     expect(invokedMethods).toEqual([]);
+  });
+
+  it('rechecks the active account after the Snap connect prompt before reading AES', async () => {
+    const invokedMethods: string[] = [];
+    let connected = false;
+    const aesKey = await getCotiSnapAesKeyResult(
+      provider(({ method, params }) => {
+        if (method === 'eth_accounts') {
+          return connected
+            ? ['0x2222222222222222222222222222222222222222']
+            : ['0x1111111111111111111111111111111111111111'];
+        }
+        if (method === 'wallet_getSnaps') return { [snapId]: {} };
+        if (method === 'wallet_invokeSnap') {
+          const snapMethod = params?.request?.method ?? '';
+          invokedMethods.push(snapMethod);
+          if (snapMethod === 'connect-to-wallet') {
+            connected = true;
+            return true;
+          }
+          if (snapMethod === 'has-aes-key') return true;
+          if (snapMethod === 'get-aes-key') return 'wrong-wallet-key';
+        }
+        return null;
+      }),
+      { walletAddress: '0x1111111111111111111111111111111111111111' }
+    );
+
+    expect(aesKey).toEqual({ status: 'wallet-mismatch' });
+    expect(invokedMethods).toEqual(['connect-to-wallet']);
   });
 
   it('does not read AES when MetaMask is not on COTI Mainnet', async () => {
@@ -176,6 +212,35 @@ describe('getCotiSnapAesKey', () => {
 });
 
 describe('storeCotiSnapAesKey', () => {
+  it('knows only COTI companion origins may update Snap AES storage', () => {
+    expect(canStoreCotiSnapAesKeyFromCurrentOrigin('https://metamask.coti.io')).toBe(true);
+    expect(canStoreCotiSnapAesKeyFromCurrentOrigin('https://dev.metamask.coti.io')).toBe(true);
+    expect(canStoreCotiSnapAesKeyFromCurrentOrigin('http://localhost:5173')).toBe(false);
+  });
+
+  it('does not invoke set-aes-key from unauthorized app origins', async () => {
+    const invokedMethods: string[] = [];
+    vi.stubGlobal('window', { location: { origin: 'http://localhost:5173' } });
+
+    await expect(
+      storeCotiSnapAesKeyResult(
+        provider(({ method, params }) => {
+          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_invokeSnap') {
+            invokedMethods.push(params?.request?.method ?? '');
+            return true;
+          }
+          return null;
+        }),
+        'aes-key',
+        { walletAddress: '0x1111111111111111111111111111111111111111' }
+      )
+    ).resolves.toBe('unsupported');
+
+    expect(invokedMethods).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
   it('connects the Snap to the active wallet before storing AES', async () => {
     const invokedMethods: string[] = [];
     await storeCotiSnapAesKey(

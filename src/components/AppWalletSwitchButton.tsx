@@ -15,6 +15,7 @@ type AppWalletSwitchButtonProps = {
   menuOpen: boolean;
   onSelectWallet: (option: AppWalletSwitchOption) => void;
   onToggleMenu: () => void;
+  menuLabel?: string;
   options: AppWalletSwitchOption[];
   title?: string;
 };
@@ -22,6 +23,7 @@ type AppWalletSwitchButtonProps = {
 export default function AppWalletSwitchButton({
   disabled = false,
   menuOpen,
+  menuLabel = 'App wallets',
   onSelectWallet,
   onToggleMenu,
   options,
@@ -59,8 +61,8 @@ export default function AppWalletSwitchButton({
       </button>
 
       {menuOpen ? (
-        <div id={menuId} className="p2p-app-wallet-switch-menu" role="menu" aria-label="Saved app wallets">
-          <span>App wallets</span>
+        <div id={menuId} className="p2p-app-wallet-switch-menu" role="menu" aria-label={menuLabel}>
+          <span>{menuLabel}</span>
           {options.map((option) => (
             <button
               key={option.key}

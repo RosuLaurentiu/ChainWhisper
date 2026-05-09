@@ -8,7 +8,7 @@ import {
 } from '../lib/appShared/core';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 
-export type TradePageView = 'public' | 'create' | 'trade' | 'mine';
+export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
 
 export type TradeRouteState = {
   view: TradePageView;
@@ -111,6 +111,9 @@ export const resolveTradeRouteFromParts = (
   }
   if (lowerPathname === '/trades/open') {
     return createEmptyTradeRoute();
+  }
+  if (lowerPathname === '/trades/open/counter') {
+    return { view: 'counter', tradeId: null, accessSecret: '', routeError: '' };
   }
 
   const encodedMatch = pathname.match(/^\/trades\/l\/([^/?#]+)$/i);

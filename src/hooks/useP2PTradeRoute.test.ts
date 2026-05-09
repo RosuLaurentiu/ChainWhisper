@@ -21,6 +21,7 @@ describe('P2P trade route helpers', () => {
       escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
     });
     expect(resolveTradeRouteFromParts('/trades/open')).toMatchObject({ view: 'trade', tradeId: null });
+    expect(resolveTradeRouteFromParts('/trades/open/counter')).toMatchObject({ view: 'counter', tradeId: null });
   });
 
   it('resolves compact private trade links with escrow aliases', () => {

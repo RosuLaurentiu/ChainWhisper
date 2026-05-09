@@ -52,6 +52,48 @@ export type WalletPrivacyUnlockPrompt = {
   title: string;
 };
 
+export type WalletPrivacyDisplayStatus =
+  | 'disconnected'
+  | 'wrong-network'
+  | 'locked'
+  | 'unlocking'
+  | 'repairing'
+  | 'ready'
+  | 'ready-unverified'
+  | 'setup-needed'
+  | 'refresh-needed'
+  | 'key-mismatch';
+
+export type WalletPrivacyDisplayState = {
+  actionLabel?: string;
+  actionTitle?: string;
+  showAction: boolean;
+  status: WalletPrivacyDisplayStatus;
+  statusLabel: string;
+  statusTone: WalletStatusTone;
+};
+
+export type WalletHeaderPolicy = 'app-first' | 'browser-first';
+
+export type WalletHeaderWalletKind = 'none' | 'app' | 'browser';
+
+export type WalletHeaderPrivacyActionKind =
+  | 'none'
+  | 'unlock-browser-aes'
+  | 'repair-browser-aes'
+  | 'retry-app-aes'
+  | 'setup-private-tokens'
+  | 'repair-private-tokens';
+
+export type WalletHeaderViewModel = {
+  effectiveSnapStatus: PrivacyUnlockSnapStatus;
+  policy: WalletHeaderPolicy;
+  privacyActionKind: WalletHeaderPrivacyActionKind;
+  privacyDisplay: WalletPrivacyDisplayState;
+  showPrivacyAction: boolean;
+  walletKind: WalletHeaderWalletKind;
+};
+
 type WalletOptionLike = {
   id: string;
 };
@@ -284,7 +326,7 @@ export const resolveWalletPrivacyUnlockPrompt = ({
     case 'installed':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'COTI Snap is installed. Click to recover or create the AES key for this wallet.'
+        title: 'COTI Snap is installed. Click to read the AES key for this MetaMask wallet.'
       };
     case 'installed-aes-ready':
       return {
@@ -294,7 +336,7 @@ export const resolveWalletPrivacyUnlockPrompt = ({
     case 'installed-aes-missing':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'COTI Snap is installed; approve AES access or recover your key once.'
+        title: 'COTI Snap has no AES key for this account. Make sure this account was selected during Snap install. Onboard it in the COTI Snap wallet, then unlock again.'
       };
     case 'installed-aes-stale':
     case 'key-mismatch':
@@ -330,6 +372,227 @@ export const resolveWalletPrivacyUnlockPrompt = ({
         title: 'Unlock privacy to reveal private balances, receipts, and encrypted trade history.'
       };
   }
+};
+
+export const resolveWalletPrivacyDisplayState = ({
+  chainId,
+  connectedWithAppWallet = false,
+  hasAesReady,
+  privateTokenPrivacyAction = 'none',
+  snapStatus = 'unknown',
+  unlocking,
+  walletAesHealth,
+  walletAddress
+}: {
+  chainId: number | null;
+  connectedWithAppWallet?: boolean;
+  hasAesReady: boolean;
+  privateTokenPrivacyAction?: 'none' | 'setup' | 'repair';
+  snapStatus?: PrivacyUnlockSnapStatus;
+  unlocking: boolean;
+  walletAesHealth?: WalletAesHealthState | null;
+  walletAddress: string;
+}): WalletPrivacyDisplayState => {
+  const isConnected = normalizeWalletKey(walletAddress).length > 0;
+  if (!isConnected) {
+    return {
+      showAction: false,
+      status: 'disconnected',
+      statusLabel: WALLET_STATUS_LABEL.disconnected,
+      statusTone: 'muted'
+    };
+  }
+
+  if (!isSessionOnCotiNetwork(chainId)) {
+    return {
+      showAction: false,
+      status: 'wrong-network',
+      statusLabel: WALLET_STATUS_LABEL.wrongNetwork,
+      statusTone: 'warning'
+    };
+  }
+
+  const prompt = resolveWalletPrivacyUnlockPrompt({
+    connectedWithAppWallet,
+    hasAesReady:
+      hasAesReady &&
+      walletAesHealth?.status !== 'key-mismatch' &&
+      walletAesHealth?.status !== 'repair-needed' &&
+      snapStatus !== 'key-mismatch' &&
+      snapStatus !== 'repair-needed' &&
+      snapStatus !== 'installed-aes-stale',
+    snapStatus,
+    unlocking
+  });
+
+  if (unlocking) {
+    return {
+      actionLabel: prompt.label,
+      actionTitle: prompt.title,
+      showAction: true,
+      status: 'unlocking',
+      statusLabel: 'Unlocking privacy',
+      statusTone: 'warning'
+    };
+  }
+
+  if (walletAesHealth?.status === 'repairing') {
+    return {
+      showAction: false,
+      status: 'repairing',
+      statusLabel: 'Repairing privacy key',
+      statusTone: 'warning'
+    };
+  }
+
+  if (walletAesHealth?.status === 'key-mismatch' || snapStatus === 'key-mismatch') {
+    return {
+      actionLabel: prompt.label,
+      actionTitle: prompt.title,
+      showAction: true,
+      status: 'key-mismatch',
+      statusLabel: 'Privacy key mismatch',
+      statusTone: 'warning'
+    };
+  }
+
+  if (
+    walletAesHealth?.status === 'repair-needed' ||
+    snapStatus === 'repair-needed' ||
+    snapStatus === 'installed-aes-stale'
+  ) {
+    return {
+      actionLabel: prompt.label,
+      actionTitle: prompt.title,
+      showAction: true,
+      status: 'refresh-needed',
+      statusLabel: 'Privacy refresh needed',
+      statusTone: 'warning'
+    };
+  }
+
+  if (hasAesReady && privateTokenPrivacyAction === 'setup') {
+    return {
+      actionLabel: 'Set up tokens',
+      actionTitle: 'Set up latest PrivateERC20 balance visibility for this wallet.',
+      showAction: true,
+      status: 'ready',
+      statusLabel: WALLET_STATUS_LABEL.ready,
+      statusTone: 'ready'
+    };
+  }
+
+  if (hasAesReady && privateTokenPrivacyAction === 'repair') {
+    return {
+      actionLabel: 'Refresh privacy',
+      actionTitle: 'Refresh latest PrivateERC20 balance visibility for this wallet.',
+      showAction: true,
+      status: 'ready',
+      statusLabel: WALLET_STATUS_LABEL.ready,
+      statusTone: 'ready'
+    };
+  }
+
+  if (!hasAesReady) {
+    return {
+      actionLabel: prompt.label,
+      actionTitle: prompt.title,
+      showAction: true,
+      status: 'locked',
+      statusLabel: WALLET_STATUS_LABEL.privacyLocked,
+      statusTone: 'locked'
+    };
+  }
+
+  if (walletAesHealth?.status === 'ready-unverified') {
+    return {
+      showAction: false,
+      status: 'ready-unverified',
+      statusLabel: WALLET_STATUS_LABEL.ready,
+      statusTone: 'ready'
+    };
+  }
+
+  return {
+    showAction: false,
+    status: 'ready',
+    statusLabel: WALLET_STATUS_LABEL.ready,
+    statusTone: 'ready'
+  };
+};
+
+export const resolveWalletHeaderViewModel = ({
+  chainId,
+  hasAesReady,
+  policy,
+  privateTokenPrivacyAction = 'none',
+  snapStatus = 'unknown',
+  unlocking,
+  walletAesHealth,
+  walletAddress,
+  walletKind
+}: {
+  chainId: number | null;
+  hasAesReady: boolean;
+  policy: WalletHeaderPolicy;
+  privateTokenPrivacyAction?: 'none' | 'setup' | 'repair';
+  snapStatus?: PrivacyUnlockSnapStatus;
+  unlocking: boolean;
+  walletAesHealth?: WalletAesHealthState | null;
+  walletAddress: string;
+  walletKind: WalletHeaderWalletKind;
+}): WalletHeaderViewModel => {
+  const effectiveWalletKind = normalizeWalletKey(walletAddress) ? walletKind : 'none';
+  const connectedWithAppWallet = effectiveWalletKind === 'app';
+  const effectiveSnapStatus = connectedWithAppWallet ? 'unknown' : snapStatus;
+  const privacyDisplay = resolveWalletPrivacyDisplayState({
+    chainId,
+    connectedWithAppWallet,
+    hasAesReady,
+    privateTokenPrivacyAction,
+    snapStatus: effectiveSnapStatus,
+    unlocking,
+    walletAesHealth,
+    walletAddress
+  });
+
+  let privacyActionKind: WalletHeaderPrivacyActionKind = 'none';
+  if (normalizeWalletKey(walletAddress) && isSessionOnCotiNetwork(chainId)) {
+    const aesRepairNeeded =
+      walletAesHealth?.status === 'repair-needed' ||
+      walletAesHealth?.status === 'key-mismatch' ||
+      effectiveSnapStatus === 'repair-needed' ||
+      effectiveSnapStatus === 'key-mismatch' ||
+      effectiveSnapStatus === 'installed-aes-stale';
+    if (hasAesReady && !aesRepairNeeded && privateTokenPrivacyAction === 'setup') {
+      privacyActionKind = 'setup-private-tokens';
+    } else if (hasAesReady && !aesRepairNeeded && privateTokenPrivacyAction === 'repair') {
+      privacyActionKind = 'repair-private-tokens';
+    } else if (effectiveWalletKind === 'browser') {
+      if (privacyDisplay.status === 'locked') {
+        privacyActionKind = 'unlock-browser-aes';
+      } else if (privacyDisplay.status === 'key-mismatch' || privacyDisplay.status === 'refresh-needed') {
+        privacyActionKind = 'repair-browser-aes';
+      }
+    } else if (effectiveWalletKind === 'app' && privacyDisplay.status === 'locked') {
+      privacyActionKind = 'retry-app-aes';
+    }
+  }
+
+  const showPrivacyAction =
+    privacyActionKind === 'setup-private-tokens' ||
+    privacyActionKind === 'repair-private-tokens' ||
+    privacyActionKind === 'unlock-browser-aes' ||
+    privacyActionKind === 'repair-browser-aes';
+
+  return {
+    effectiveSnapStatus,
+    policy,
+    privacyActionKind,
+    privacyDisplay,
+    showPrivacyAction,
+    walletKind: effectiveWalletKind
+  };
 };
 
 export const resolveWalletBlockedActionLabel = ({
