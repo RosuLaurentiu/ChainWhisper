@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import { resolveRecentPeersWithMeta } from '../lib/appLookup';
-import {
-  mergeDirectHistoryEntries,
-  resolveDirectUnreadState
-} from '../lib/directConversationSyncHelpers';
-import {
-  mergeDirectSyncOptions,
-  resolveDirectSyncRange,
-  resolveOlderDirectHistoryRange
-} from '../lib/directSyncPlan';
+import { mergeDirectHistoryEntries, resolveDirectUnreadState } from '../lib/directConversationSyncHelpers';
+import { mergeDirectSyncOptions } from '../lib/directSyncPlan';
 import {
   applyConversationPreferenceStateToContact,
   AUTO_STATE_BACKUP_BLOCK_DISTANCE,
@@ -18,10 +11,6 @@ import {
   CHAT_CONTRACT_ADDRESS,
   debugLog,
   extractUserCiphertext,
-  FAST_CONTACT_PREVIEW_BATCH_SIZE,
-  FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK,
-  HISTORY_PAGINATION_BLOCK_WINDOW,
-  INITIAL_SYNC_LOOKBACK_BLOCKS,
   isWalletAddress,
   loadCotiEthersModule,
   loadCotiReadProvider,
@@ -30,18 +19,24 @@ import {
   normalizeConversationPreferenceState,
   normalizeLastReadAllTs,
   parseChatMessagePayload,
-  parseReadCursorText,
   parseStateBackupText,
   type BackupLocalStateOptions,
   type ChatMessage,
   type Contact,
   type ConversationBlockRange,
-  type ConversationLog,
   type ConversationPreferenceState,
   type HistoryEntry,
   type StateBackupPayload,
   type SyncConversationOptions
 } from '../lib/appShared';
+import {
+  buildChatGcMessageKey,
+  CHAT_GC_DEEP_THREAD_PAGE_SIZE,
+  CHAT_GC_THREAD_PAGE_SIZE,
+  normalizeChatGcMessageId,
+  parseChatGcMessageView,
+  type ChatGcMessageView
+} from '../lib/chatGc';
 
 type StateSetter<T> = (next: T | ((previous: T) => T)) => void;
 type MemoSignerBundle = {
@@ -102,6 +97,71 @@ type UseDirectConversationSyncArgs = {
   walletAddress: string;
 };
 
+type ParsedDirectMessage = {
+  entry?: HistoryEntry;
+  contactAddress: string;
+  contactName?: string;
+  conversationState?: ConversationPreferenceState;
+  latestIncomingTime?: number;
+};
+
+const toMessageIdArray = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.map(normalizeChatGcMessageId).filter((messageId): messageId is string => Boolean(messageId));
+};
+
+const readConversationMessageCount = async (contract: unknown, walletAddress: string, peerAddress: string): Promise<number> => {
+  const countRaw = await (contract as {
+    conversationMessageCount: (me: string, peer: string) => Promise<unknown>;
+  }).conversationMessageCount(walletAddress, peerAddress);
+  const count = Number(countRaw);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+};
+
+const readConversationMessageIds = async (
+  contract: unknown,
+  walletAddress: string,
+  peerAddress: string,
+  offset: number,
+  limit: number
+): Promise<string[]> => {
+  if (limit <= 0) {
+    return [];
+  }
+  const idsRaw = await (contract as {
+    getConversationMessagePage: (me: string, peer: string, offset: number, limit: number) => Promise<unknown>;
+  }).getConversationMessagePage(walletAddress, peerAddress, Math.max(0, offset), Math.max(0, limit));
+  return toMessageIdArray(idsRaw);
+};
+
+const readMessageView = async (
+  contract: unknown,
+  messageId: string,
+  viewerAddress: string
+): Promise<ChatGcMessageView | null> => {
+  try {
+    const raw = await (contract as {
+      getMessage: (messageId: string, options?: { from?: string }) => Promise<unknown>;
+    }).getMessage(messageId, { from: viewerAddress });
+    return parseChatGcMessageView(raw);
+  } catch {
+    return null;
+  }
+};
+
+const readMessageChunk = async (
+  contract: unknown,
+  messageId: string,
+  chunkIndex: number,
+  viewerAddress: string
+): Promise<unknown> => {
+  return (contract as {
+    getMessageChunk: (messageId: string, chunkIndex: number, options?: { from?: string }) => Promise<unknown>;
+  }).getMessageChunk(messageId, chunkIndex, { from: viewerAddress });
+};
+
 export default function useDirectConversationSync(args: UseDirectConversationSyncArgs) {
   const argsRef = useRef(args);
   argsRef.current = args;
@@ -110,9 +170,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
   const pendingSyncOptionsRef = useRef<SyncConversationOptions | null>(null);
   const lastSyncedBlockRef = useRef<Record<string, number>>({});
   const lastActiveContactSyncedBlockRef = useRef<Record<string, number>>({});
-  const oldestLoadedBlockByContactRef = useRef<Record<string, number>>({});
+  const oldestLoadedOffsetByContactRef = useRef<Record<string, number>>({});
   const hasOlderHistoryByContactRef = useRef<Record<string, boolean>>({});
-  const conversationRangeByContactRef = useRef<Record<string, ConversationBlockRange>>({});
   const loadingOlderHistoryRef = useRef(false);
   const autoPrefetchedRecentHistoryByContactRef = useRef<Record<string, boolean>>({});
   const syncConversationHistoryImplRef = useRef<(options?: SyncConversationOptions) => Promise<void>>(async () => {});
@@ -121,9 +180,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
   const resetConversationHistoryCaches = useCallback(() => {
     lastSyncedBlockRef.current = {};
     lastActiveContactSyncedBlockRef.current = {};
-    oldestLoadedBlockByContactRef.current = {};
+    oldestLoadedOffsetByContactRef.current = {};
     hasOlderHistoryByContactRef.current = {};
-    conversationRangeByContactRef.current = {};
     autoPrefetchedRecentHistoryByContactRef.current = {};
   }, []);
 
@@ -145,14 +203,107 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     await syncConversationHistory({ deep: true });
   }, [syncConversationHistory]);
 
+  const parseMessageById = useCallback(
+    async (
+      contract: unknown,
+      messageId: string,
+      requestedWalletAddress: string,
+      signer: Wallet | JsonRpcSigner,
+      cacheKey: string
+    ): Promise<ParsedDirectMessage | null> => {
+      const walletKey = requestedWalletAddress.toLowerCase();
+      const view = await readMessageView(contract, messageId, requestedWalletAddress);
+      if (!view) {
+        return null;
+      }
+
+      const fromKey = view.from.toLowerCase();
+      const toKey = view.to.toLowerCase();
+      if (fromKey !== walletKey && toKey !== walletKey) {
+        return null;
+      }
+
+      const direction: HistoryEntry['direction'] = fromKey === walletKey ? 'outgoing' : 'incoming';
+      const contactAddress = direction === 'outgoing' ? view.to : view.from;
+      const contactKey = contactAddress.toLowerCase();
+      const messageKey = buildChatGcMessageKey(view.id);
+      const logIndex = view.idNumber;
+      let plaintext = '(Unable to decrypt message)';
+
+      try {
+        const parts: string[] = [];
+        const firstCiphertext = extractUserCiphertext(view.ciphertext);
+        if (firstCiphertext && firstCiphertext.value.length > 0) {
+          parts.push(await argsRef.current.decryptMemoPlaintextWithRecovery(signer, cacheKey, firstCiphertext));
+        }
+        for (let chunkIndex = 1; chunkIndex < view.chunkCount; chunkIndex += 1) {
+          const chunk = await readMessageChunk(contract, view.id, chunkIndex, requestedWalletAddress);
+          const chunkCiphertext = extractUserCiphertext(chunk);
+          if (!chunkCiphertext || chunkCiphertext.value.length === 0) {
+            continue;
+          }
+          parts.push(await argsRef.current.decryptMemoPlaintextWithRecovery(signer, cacheKey, chunkCiphertext));
+        }
+        if (parts.length > 0) {
+          plaintext = parts.join('');
+        }
+      } catch {
+        plaintext = '(Unable to decrypt message)';
+      }
+
+      if (direction === 'outgoing' && contactKey === walletKey) {
+        const backupPayload = parseStateBackupText(plaintext);
+        if (backupPayload) {
+          return null;
+        }
+      }
+
+      const parsedMessage = parseChatMessagePayload(plaintext);
+      const normalizedState = normalizeConversationPreferenceState(parsedMessage.embeddedConversationState);
+      const shouldSuppressVisibleRow =
+        parsedMessage.cleanText.trim().length === 0 &&
+        (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState);
+
+      return {
+        contactAddress,
+        contactName:
+          direction === 'incoming'
+            ? parsedMessage.embeddedNickname
+            : parsedMessage.embeddedContactName ?? parsedMessage.embeddedNickname,
+        conversationState: normalizedState,
+        latestIncomingTime: direction === 'incoming' ? view.timestamp || view.blockNumber : undefined,
+        entry: shouldSuppressVisibleRow
+          ? undefined
+          : {
+              id: messageKey,
+              contact: contactAddress,
+              direction,
+              text: parsedMessage.cleanText,
+              replyToMessageId: parsedMessage.replyToMessageId,
+              replyToText: parsedMessage.replyToText,
+              replyToTxHash: parsedMessage.replyToTxHash,
+              replyToBlockNumber: parsedMessage.replyToBlockNumber,
+              replyToLogIndex: parsedMessage.replyToLogIndex,
+              reactionToTxHash: parsedMessage.embeddedReaction?.targetTxHash,
+              reactionToBlockNumber: parsedMessage.embeddedReaction?.targetBlockNumber,
+              reactionToLogIndex: parsedMessage.embeddedReaction?.targetLogIndex,
+              reactionEmoji: parsedMessage.embeddedReaction?.emoji,
+              txHash: messageKey,
+              blockNumber: view.blockNumber,
+              logIndex,
+              timestamp: view.timestamp
+            }
+      };
+    },
+    []
+  );
+
   syncConversationHistoryImplRef.current = async (options?: SyncConversationOptions) => {
     const {
-      applyStateBackupPayload,
       backupLocalStateToSelf,
       chainId,
       contacts,
       currentWalletKeyRef,
-      decryptMemoPlaintextWithRecovery,
       fetchOnChainNicknames,
       getMemoSigner,
       hasAesReady,
@@ -160,12 +311,9 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       lastReadAllTsRef,
       lastReadByContactRef,
       lastStateBackupBlockRef,
-      messagesByContact,
       notificationSuppressedContactAddressSet,
-      parseEncryptedChatMessagePayload,
       pinnedContactStateRef,
       readStateFeaturesEnabled,
-      resolveBlockTimestampMap,
       setContacts,
       setError,
       setMessagesByContact,
@@ -177,7 +325,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     } = argsRef.current;
 
     setError('');
-    debugLog('[sync] start', { walletAddress, options, hasAesReady, chainId });
+    debugLog('[sync] ChatGC start', { walletAddress, options, hasAesReady, chainId });
 
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
@@ -192,11 +340,11 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
     try {
       const runInBackground = Boolean(options?.background);
-      const shouldLoadContactPreviews = Boolean(options?.contactsOnly && options?.previewPerContact);
       syncingHistoryRef.current = true;
       if (!runInBackground) {
         setSyncingHistory(true);
       }
+
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
@@ -206,750 +354,174 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         return;
       }
 
-      const walletKey = requestedWalletKey;
       const activeContactAddress = argsRef.current.activeContact?.trim() ?? '';
       const useActiveContactOnly =
         Boolean(options?.activeContactOnly) &&
         !options?.contactsOnly &&
         !options?.deep &&
         isWalletAddress(activeContactAddress);
-      const activeContactKey = activeContactAddress.toLowerCase();
-      const activeContactSyncKey = useActiveContactOnly ? `${walletKey}:${activeContactKey}` : '';
-      const activeContactSyncedBlock = useActiveContactOnly
-        ? lastActiveContactSyncedBlockRef.current[activeContactSyncKey]
-        : undefined;
-      const globalSyncedBlock = lastSyncedBlockRef.current[walletKey];
-      const lastSyncedBlockForRange =
-        useActiveContactOnly &&
-        typeof activeContactSyncedBlock === 'number' &&
-        typeof globalSyncedBlock === 'number'
-          ? Math.max(activeContactSyncedBlock, globalSyncedBlock)
-          : useActiveContactOnly
-            ? activeContactSyncedBlock ?? globalSyncedBlock
-            : globalSyncedBlock;
-      const syncRange = resolveDirectSyncRange({
-        initialLookbackBlocks: INITIAL_SYNC_LOOKBACK_BLOCKS,
-        latestBlock,
-        lastSyncedBlock: lastSyncedBlockForRange,
-        options
-      });
-      if (!syncRange.shouldQuery) {
-        return;
-      }
-      const { fromBlock, toBlock } = syncRange;
-
+      const shouldLoadContactPreviews = Boolean(options?.contactsOnly && options?.previewPerContact);
+      const entries: HistoryEntry[] = [];
       const discoveredContacts = new Set<string>();
       const discoveredNicknames = new Map<string, string>();
-      const discoveredConversationStates = new Map<
-        string,
-        { state: ConversationPreferenceState; blockNumber: number; logIndex: number }
-      >();
+      const discoveredConversationStates = new Map<string, ConversationPreferenceState>();
       const latestIncomingMessageTimeByContact = new Map<string, number>();
-      const entries: HistoryEntry[] = [];
-      const previewByContact = new Map<string, HistoryEntry>();
-      let latestStateBackup:
-        | {
-            payload: StateBackupPayload;
-            blockNumber: number;
-            logIndex: number;
-          }
-        | null = null;
-
-      const trackDiscoveredConversationState = (
-        address: string,
-        state: ConversationPreferenceState | undefined,
-        blockNumber: number,
-        logIndex: number
-      ) => {
-        const normalizedAddress = address.trim().toLowerCase();
-        if (!isWalletAddress(normalizedAddress)) {
-          return;
-        }
-
-        const normalizedState = normalizeConversationPreferenceState(state);
-        if (!normalizedState) {
-          return;
-        }
-
-        const existingState = discoveredConversationStates.get(normalizedAddress);
-        const shouldReplace =
-          !existingState ||
-          blockNumber > existingState.blockNumber ||
-          (blockNumber === existingState.blockNumber && logIndex > existingState.logIndex);
-        if (shouldReplace) {
-          discoveredConversationStates.set(normalizedAddress, {
-            state: normalizedState,
-            blockNumber,
-            logIndex
-          });
-        }
-      };
 
       const recentPeersWithMeta = useActiveContactOnly
         ? []
         : await resolveRecentPeersWithMeta(contract, requestedWalletAddress);
-      if (useActiveContactOnly) {
-        discoveredContacts.add(activeContactAddress);
-      } else {
-        for (const peer of recentPeersWithMeta) {
-          discoveredContacts.add(peer.address);
-        }
-      }
-
-      let incomingLogs: ConversationLog[] = [];
-      let outgoingLogs: ConversationLog[] = [];
-      const useFastPreviewPath = shouldLoadContactPreviews && recentPeersWithMeta.length > 0;
-
-      if (useActiveContactOnly) {
-        const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, activeContactAddress);
-        const outgoingFilter = contract.filters.MessageSubmitted(activeContactAddress, requestedWalletAddress);
-        const [incomingLogsRaw, outgoingLogsRaw] = await Promise.all([
-          contract.queryFilter(incomingFilter, fromBlock, toBlock),
-          contract.queryFilter(outgoingFilter, fromBlock, toBlock)
-        ]);
-        incomingLogs = incomingLogsRaw as ConversationLog[];
-        outgoingLogs = outgoingLogsRaw as ConversationLog[];
-      } else if (useFastPreviewPath) {
-        const previewCandidates = recentPeersWithMeta.filter(
-          (peer) => peer.lastBlock > 0 && peer.lastBlock <= toBlock
-        );
-
-        for (
-          let batchStart = 0;
-          batchStart < previewCandidates.length;
-          batchStart += FAST_CONTACT_PREVIEW_BATCH_SIZE
-        ) {
-          const batch = previewCandidates.slice(batchStart, batchStart + FAST_CONTACT_PREVIEW_BATCH_SIZE);
-          const batchResults = await Promise.all(
-            batch.map(async (peer): Promise<{ incoming: ConversationLog[]; outgoing: ConversationLog[] }> => {
-              const headBlock = peer.lastBlock;
-              const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, peer.address);
-              const outgoingFilter = contract.filters.MessageSubmitted(peer.address, requestedWalletAddress);
-
-              try {
-                let [incomingPreviewLogs, outgoingPreviewLogs] = await Promise.all([
-                  contract.queryFilter(incomingFilter, headBlock, headBlock),
-                  contract.queryFilter(outgoingFilter, headBlock, headBlock)
-                ]);
-
-                if (incomingPreviewLogs.length === 0 && outgoingPreviewLogs.length === 0 && headBlock > 0) {
-                  const fallbackStart = Math.max(0, headBlock - FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK);
-                  [incomingPreviewLogs, outgoingPreviewLogs] = await Promise.all([
-                    contract.queryFilter(incomingFilter, fallbackStart, headBlock),
-                    contract.queryFilter(outgoingFilter, fallbackStart, headBlock)
-                  ]);
-                }
-
-                return {
-                  incoming: incomingPreviewLogs as ConversationLog[],
-                  outgoing: outgoingPreviewLogs as ConversationLog[]
-                };
-              } catch {
-                return { incoming: [], outgoing: [] };
-              }
-            })
-          );
-
-          if (currentWalletKeyRef.current !== requestedWalletKey) {
-            return;
-          }
-
-          for (const result of batchResults) {
-            incomingLogs.push(...result.incoming);
-            outgoingLogs.push(...result.outgoing);
-          }
-        }
-      } else {
-        const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, null);
-        const outgoingFilter = contract.filters.MessageSubmitted(null, requestedWalletAddress);
-        const [incomingLogsRaw, outgoingLogsRaw] = await Promise.all([
-          contract.queryFilter(incomingFilter, fromBlock, toBlock),
-          contract.queryFilter(outgoingFilter, fromBlock, toBlock)
-        ]);
-        incomingLogs = incomingLogsRaw as ConversationLog[];
-        outgoingLogs = outgoingLogsRaw as ConversationLog[];
-      }
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-
-      const blockNumbers = new Set<number>();
-      for (const log of incomingLogs) {
-        blockNumbers.add(log.blockNumber);
-      }
-      for (const log of outgoingLogs) {
-        blockNumbers.add(log.blockNumber);
-      }
-
-      const blockTimestampMap = await resolveBlockTimestampMap(readProvider, blockNumbers);
-
-      const updateLatestIncomingMessageTime = (address: string, blockNumber: number): void => {
-        const normalizedAddress = address.trim().toLowerCase();
-        if (!isWalletAddress(normalizedAddress)) {
+      const peersToRead = new Map<string, string>();
+      const addPeer = (address?: string | null) => {
+        const normalized = address?.trim() ?? '';
+        if (!isWalletAddress(normalized) || normalized.toLowerCase() === requestedWalletKey) {
           return;
         }
-
-        const blockTimestamp = blockTimestampMap.get(blockNumber);
-        if (typeof blockTimestamp !== 'number' || blockTimestamp <= 0) {
-          return;
-        }
-
-        const existingObserved = latestIncomingMessageTimeByContact.get(normalizedAddress) ?? 0;
-        if (blockTimestamp > existingObserved) {
-          latestIncomingMessageTimeByContact.set(normalizedAddress, blockTimestamp);
-        }
+        peersToRead.set(normalized.toLowerCase(), normalized);
+        discoveredContacts.add(normalized);
       };
 
-      for (const log of incomingLogs) {
-        const logArgs = (log as { args?: Record<string, unknown> }).args;
-        const from = String(logArgs?.from ?? '');
-        if (!isWalletAddress(from)) {
-          continue;
+      if (useActiveContactOnly) {
+        addPeer(activeContactAddress);
+      } else {
+        for (const peer of recentPeersWithMeta) {
+          addPeer(peer.address);
         }
-
-        const isSelfIncoming = from.toLowerCase() === walletKey;
-        if (isSelfIncoming) {
-          const selfCiphertext = extractUserCiphertext(logArgs?.messageForRecipient);
-          let isSystemSelfMessage = false;
-          if (selfCiphertext && selfCiphertext.value.length > 0) {
-            try {
-              const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, selfCiphertext);
-              const backupPayload = parseStateBackupText(plain);
-              if (backupPayload) {
-                isSystemSelfMessage = true;
-                if (
-                  !latestStateBackup ||
-                  log.blockNumber > latestStateBackup.blockNumber ||
-                  (log.blockNumber === latestStateBackup.blockNumber && log.index > latestStateBackup.logIndex)
-                ) {
-                  latestStateBackup = {
-                    payload: backupPayload,
-                    blockNumber: log.blockNumber,
-                    logIndex: log.index
-                  };
-                  debugLog('[restore] found state backup', {
-                    address: walletKey,
-                    nickname: backupPayload.nickname,
-                    tx: log.transactionHash,
-                    block: log.blockNumber,
-                    index: log.index
-                  });
-                }
-              }
-              if (parseReadCursorText(plain)) {
-                isSystemSelfMessage = true;
-              }
-            } catch {
-            }
-          }
-          if (isSystemSelfMessage) {
-            continue;
-          }
+        if (options?.deep) {
+          contacts.forEach((contact) => addPeer(contact.address));
         }
+      }
 
-        discoveredContacts.add(from);
-        updateLatestIncomingMessageTime(from, log.blockNumber);
-
-        if (options?.contactsOnly && !shouldLoadContactPreviews) {
-          continue;
-        }
-
-        if (shouldLoadContactPreviews) {
-          const contactKey = from.toLowerCase();
-          const existingPreview = previewByContact.get(contactKey);
-          const isNewerPreview =
-            !existingPreview ||
-            log.blockNumber > existingPreview.blockNumber ||
-            (log.blockNumber === existingPreview.blockNumber && log.index > existingPreview.logIndex);
-
-          if (!isNewerPreview) {
+      if (!options?.contactsOnly || shouldLoadContactPreviews || useActiveContactOnly) {
+        for (const peerAddress of peersToRead.values()) {
+          const count = await readConversationMessageCount(contract, requestedWalletAddress, peerAddress).catch(() => 0);
+          if (count <= 0) {
+            hasOlderHistoryByContactRef.current[peerAddress.toLowerCase()] = false;
             continue;
           }
 
-          const userCiphertext = extractUserCiphertext(logArgs?.messageForRecipient);
-          let messageText = '(Unable to decrypt message)';
-          let replyToMessageId: string | undefined;
-          let replyToText: string | undefined;
-          let replyToTxHash: string | undefined;
-          let replyToBlockNumber: number | undefined;
-          let replyToLogIndex: number | undefined;
-          let reactionToTxHash: string | undefined;
-          let reactionToBlockNumber: number | undefined;
-          let reactionToLogIndex: number | undefined;
-          let reactionEmoji: string | undefined;
-          if (userCiphertext && userCiphertext.value.length > 0) {
-            try {
-              const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
-              messageText = parsedMessage.cleanText;
-              replyToMessageId = parsedMessage.replyToMessageId;
-              replyToText = parsedMessage.replyToText;
-              replyToTxHash = parsedMessage.replyToTxHash;
-              replyToBlockNumber = parsedMessage.replyToBlockNumber;
-              replyToLogIndex = parsedMessage.replyToLogIndex;
-              reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-              reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-              reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-              reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-              if (
-                messageText.trim().length === 0 &&
-                (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-              ) {
-                continue;
-              }
-              if (parsedMessage.embeddedNickname) {
-                discoveredNicknames.set(contactKey, parsedMessage.embeddedNickname);
-                debugLog('[sync] discovered nickname', {
-                  address: contactKey,
-                  nickname: parsedMessage.embeddedNickname,
-                  tx: log.transactionHash,
-                  block: log.blockNumber,
-                  index: log.index
-                });
-              }
-            } catch {
-              messageText = '(Unable to decrypt message)';
-            }
-          }
+          const limit = shouldLoadContactPreviews
+            ? 1
+            : Math.min(options?.deep ? CHAT_GC_DEEP_THREAD_PAGE_SIZE : CHAT_GC_THREAD_PAGE_SIZE, count);
+          const offset = Math.max(0, count - limit);
+          const ids = await readConversationMessageIds(contract, requestedWalletAddress, peerAddress, offset, limit);
+          oldestLoadedOffsetByContactRef.current[peerAddress.toLowerCase()] = offset;
+          hasOlderHistoryByContactRef.current[peerAddress.toLowerCase()] = offset > 0;
 
-          previewByContact.set(contactKey, {
-            id: `${log.transactionHash}-${log.index}-in`,
-            contact: from,
-            direction: 'incoming',
-            text: messageText,
-            replyToMessageId,
-            replyToText,
-            replyToTxHash,
-            replyToBlockNumber,
-            replyToLogIndex,
-            reactionToTxHash,
-            reactionToBlockNumber,
-            reactionToLogIndex,
-            reactionEmoji,
-            txHash: log.transactionHash,
-            blockNumber: log.blockNumber,
-            logIndex: log.index,
-            timestamp: blockTimestampMap.get(log.blockNumber)
-          });
-          continue;
-        }
-
-        const userCiphertext = extractUserCiphertext(logArgs?.messageForRecipient);
-        let messageText = '(Unable to decrypt message)';
-        let replyToMessageId: string | undefined;
-        let replyToText: string | undefined;
-        let replyToTxHash: string | undefined;
-        let replyToBlockNumber: number | undefined;
-        let replyToLogIndex: number | undefined;
-        let reactionToTxHash: string | undefined;
-        let reactionToBlockNumber: number | undefined;
-        let reactionToLogIndex: number | undefined;
-        let reactionEmoji: string | undefined;
-        if (userCiphertext && userCiphertext.value.length > 0) {
-          try {
-            const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
-            messageText = parsedMessage.cleanText;
-            replyToMessageId = parsedMessage.replyToMessageId;
-            replyToText = parsedMessage.replyToText;
-            replyToTxHash = parsedMessage.replyToTxHash;
-            replyToBlockNumber = parsedMessage.replyToBlockNumber;
-            replyToLogIndex = parsedMessage.replyToLogIndex;
-            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-            if (
-              messageText.trim().length === 0 &&
-              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-            ) {
+          for (const messageId of ids) {
+            const parsed = await parseMessageById(contract, messageId, requestedWalletAddress, signer, cacheKey);
+            if (!parsed) {
               continue;
             }
-            if (parsedMessage.embeddedNickname) {
-              discoveredNicknames.set(from.toLowerCase(), parsedMessage.embeddedNickname);
-              debugLog('[sync] discovered nickname', {
-                address: from.toLowerCase(),
-                nickname: parsedMessage.embeddedNickname,
-                tx: log.transactionHash,
-                block: log.blockNumber,
-                index: log.index
-              });
+            discoveredContacts.add(parsed.contactAddress);
+            if (parsed.entry) {
+              entries.push(parsed.entry);
             }
-          } catch {
-            messageText = '(Unable to decrypt message)';
+            if (parsed.contactName) {
+              discoveredNicknames.set(parsed.contactAddress.toLowerCase(), parsed.contactName);
+            }
+            if (parsed.conversationState) {
+              discoveredConversationStates.set(parsed.contactAddress.toLowerCase(), parsed.conversationState);
+            }
+            if (typeof parsed.latestIncomingTime === 'number' && parsed.latestIncomingTime > 0) {
+              latestIncomingMessageTimeByContact.set(parsed.contactAddress.toLowerCase(), parsed.latestIncomingTime);
+            }
           }
         }
-
-        entries.push({
-          id: `${log.transactionHash}-${log.index}-in`,
-          contact: from,
-          direction: 'incoming',
-          text: messageText,
-          replyToMessageId,
-          replyToText,
-          replyToTxHash,
-          replyToBlockNumber,
-          replyToLogIndex,
-          reactionToTxHash,
-          reactionToBlockNumber,
-          reactionToLogIndex,
-          reactionEmoji,
-          txHash: log.transactionHash,
-          blockNumber: log.blockNumber,
-          logIndex: log.index,
-          timestamp: blockTimestampMap.get(log.blockNumber)
-        });
       }
 
-      for (const log of outgoingLogs) {
-        const logArgs = (log as { args?: Record<string, unknown> }).args;
-        const recipient = String(logArgs?.recipient ?? '');
-        if (!isWalletAddress(recipient)) {
-          continue;
-        }
-
-        if (recipient.toLowerCase() === walletKey) {
-          const selfCiphertext = extractUserCiphertext(logArgs?.messageForSender);
-          if (selfCiphertext && selfCiphertext.value.length > 0) {
-            try {
-              const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, selfCiphertext);
-              const backupPayload = parseStateBackupText(plain);
-              if (backupPayload) {
-                if (
-                  !latestStateBackup ||
-                  log.blockNumber > latestStateBackup.blockNumber ||
-                  (log.blockNumber === latestStateBackup.blockNumber && log.index > latestStateBackup.logIndex)
-                ) {
-                  latestStateBackup = {
-                    payload: backupPayload,
-                    blockNumber: log.blockNumber,
-                    logIndex: log.index
-                  };
-                }
-              }
-              if (parseReadCursorText(plain)) {
-                continue;
-              }
-            } catch {
-            }
-          }
-          continue;
-        }
-
-        discoveredContacts.add(recipient);
-
-        if (options?.contactsOnly && !shouldLoadContactPreviews) {
-          continue;
-        }
-
-        if (shouldLoadContactPreviews) {
-          const contactKey = recipient.toLowerCase();
-          const existingPreview = previewByContact.get(contactKey);
-          const isNewerPreview =
-            !existingPreview ||
-            log.blockNumber > existingPreview.blockNumber ||
-            (log.blockNumber === existingPreview.blockNumber && log.index > existingPreview.logIndex);
-
-          if (!isNewerPreview) {
-            continue;
-          }
-
-          const userCiphertext = extractUserCiphertext(logArgs?.messageForSender);
-          let messageText = '(Unable to decrypt message)';
-          let replyToMessageId: string | undefined;
-          let replyToText: string | undefined;
-          let replyToTxHash: string | undefined;
-          let replyToBlockNumber: number | undefined;
-          let replyToLogIndex: number | undefined;
-          let reactionToTxHash: string | undefined;
-          let reactionToBlockNumber: number | undefined;
-          let reactionToLogIndex: number | undefined;
-          let reactionEmoji: string | undefined;
-          if (userCiphertext && userCiphertext.value.length > 0) {
-            try {
-              const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
-              messageText = parsedMessage.cleanText;
-              replyToMessageId = parsedMessage.replyToMessageId;
-              replyToText = parsedMessage.replyToText;
-              replyToTxHash = parsedMessage.replyToTxHash;
-              replyToBlockNumber = parsedMessage.replyToBlockNumber;
-              replyToLogIndex = parsedMessage.replyToLogIndex;
-              reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-              reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-              reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-              reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-              if (parsedMessage.embeddedContactName) {
-                discoveredNicknames.set(contactKey, parsedMessage.embeddedContactName);
-              }
-              trackDiscoveredConversationState(
-                contactKey,
-                parsedMessage.embeddedConversationState,
-                log.blockNumber,
-                log.index
-              );
-              if (
-                messageText.trim().length === 0 &&
-                (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-              ) {
-                continue;
-              }
-            } catch {
-              messageText = '(Unable to decrypt message)';
-            }
-          }
-
-          previewByContact.set(contactKey, {
-            id: `${log.transactionHash}-${log.index}-out`,
-            contact: recipient,
-            direction: 'outgoing',
-            text: messageText,
-            replyToMessageId,
-            replyToText,
-            replyToTxHash,
-            replyToBlockNumber,
-            replyToLogIndex,
-            reactionToTxHash,
-            reactionToBlockNumber,
-            reactionToLogIndex,
-            reactionEmoji,
-            txHash: log.transactionHash,
-            blockNumber: log.blockNumber,
-            logIndex: log.index,
-            timestamp: blockTimestampMap.get(log.blockNumber)
-          });
-          continue;
-        }
-
-        const userCiphertext = extractUserCiphertext(logArgs?.messageForSender);
-        let messageText = '(Unable to decrypt message)';
-        let replyToMessageId: string | undefined;
-        let replyToText: string | undefined;
-        let replyToTxHash: string | undefined;
-        let replyToBlockNumber: number | undefined;
-        let replyToLogIndex: number | undefined;
-        let reactionToTxHash: string | undefined;
-        let reactionToBlockNumber: number | undefined;
-        let reactionToLogIndex: number | undefined;
-        let reactionEmoji: string | undefined;
-        if (userCiphertext && userCiphertext.value.length > 0) {
-          try {
-            const parsedMessage = await parseEncryptedChatMessagePayload(signer, cacheKey, userCiphertext);
-            messageText = parsedMessage.cleanText;
-            replyToMessageId = parsedMessage.replyToMessageId;
-            replyToText = parsedMessage.replyToText;
-            replyToTxHash = parsedMessage.replyToTxHash;
-            replyToBlockNumber = parsedMessage.replyToBlockNumber;
-            replyToLogIndex = parsedMessage.replyToLogIndex;
-            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-            if (parsedMessage.embeddedContactName) {
-              discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
-            }
-            trackDiscoveredConversationState(
-              recipient.toLowerCase(),
-              parsedMessage.embeddedConversationState,
-              log.blockNumber,
-              log.index
-            );
-            if (
-              messageText.trim().length === 0 &&
-              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-            ) {
-              continue;
-            }
-          } catch {
-            messageText = '(Unable to decrypt message)';
-          }
-        }
-
-        entries.push({
-          id: `${log.transactionHash}-${log.index}-out`,
-          contact: recipient,
-          direction: 'outgoing',
-          text: messageText,
-          replyToMessageId,
-          replyToText,
-          replyToTxHash,
-          replyToBlockNumber,
-          replyToLogIndex,
-          reactionToTxHash,
-          reactionToBlockNumber,
-          reactionToLogIndex,
-          reactionEmoji,
-          txHash: log.transactionHash,
-          blockNumber: log.blockNumber,
-          logIndex: log.index,
-          timestamp: blockTimestampMap.get(log.blockNumber)
-        });
-      }
-
-      if (shouldLoadContactPreviews) {
-        entries.push(...previewByContact.values());
-      }
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
 
-      if (!options?.contactsOnly || shouldLoadContactPreviews) {
-        entries.sort((left, right) => {
-          if (left.blockNumber !== right.blockNumber) {
-            return left.blockNumber - right.blockNumber;
-          }
-          return left.logIndex - right.logIndex;
-        });
-
-        const earliestBlockByContact = new Map<string, number>();
-        for (const entry of entries) {
-          const key = entry.contact.toLowerCase();
-          const existingEarliest = earliestBlockByContact.get(key);
-          if (typeof existingEarliest !== 'number' || entry.blockNumber < existingEarliest) {
-            earliestBlockByContact.set(key, entry.blockNumber);
-          }
-        }
-
-        for (const [contactKey, earliestBlock] of earliestBlockByContact.entries()) {
-          const knownEarliest = oldestLoadedBlockByContactRef.current[contactKey];
-          if (typeof knownEarliest !== 'number' || earliestBlock < knownEarliest) {
-            oldestLoadedBlockByContactRef.current[contactKey] = earliestBlock;
-          }
-          const knownRange = conversationRangeByContactRef.current[contactKey];
-          hasOlderHistoryByContactRef.current[contactKey] =
-            typeof knownRange?.firstBlock === 'number' ? earliestBlock > knownRange.firstBlock : true;
-        }
-
-        setMessagesByContact((previous) => mergeDirectHistoryEntries(previous, entries, requestedWalletAddress));
-      }
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-
-      const nicknameLookupAddresses = Array.from(
-        new Set([...Array.from(discoveredContacts), ...contacts.map((contact) => contact.address)])
-      );
-      const onChainNicknames = await fetchOnChainNicknames(nicknameLookupAddresses);
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-
-      setContacts((previous) => {
-        const mergedContacts = mergeUniqueContacts(previous, Array.from(discoveredContacts));
-
-        return mergedContacts.map((contact) => {
-          const key = contact.address.toLowerCase();
-          const nickname = discoveredNicknames.get(key) ?? onChainNicknames.get(key);
-          const discoveredConversationState = discoveredConversationStates.get(key)?.state;
-
-          let nextContact = contact;
-          if (nickname && contact.name !== nickname) {
-            nextContact = { ...nextContact, name: nickname };
-          }
-
-          if (discoveredConversationState && !options?.skipContactStateUpdate) {
-            nextContact = applyConversationPreferenceStateToContact(
-              nextContact,
-              discoveredConversationState
-            );
-          }
-          const pinned = pinnedContactStateRef.current.get(key);
-          if (pinned) {
-            nextContact = applyConversationPreferenceStateToContact(nextContact, pinned);
-          }
-          return nextContact;
-        });
-      });
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-
-      if (latestStateBackup) {
-        applyStateBackupPayload(
-          walletKey,
-          latestStateBackup.payload,
-          latestStateBackup.blockNumber
+      if (entries.length > 0) {
+        setMessagesByContact((previous) =>
+          mergeDirectHistoryEntries(previous, entries, requestedWalletAddress, {
+            pruneOptimisticOutgoing: true
+          })
         );
       }
 
-      const unreadCandidateAddresses = Array.from(
-        new Set([...Array.from(discoveredContacts), ...contacts.map((contact) => contact.address)])
-      )
-        .map((address) => address.trim().toLowerCase())
-        .filter((address) => isWalletAddress(address) && address !== walletKey);
-
-      if (!readStateFeaturesEnabled) {
-        if (Object.keys(unreadMapRef.current || {}).length > 0) {
-          unreadMapRef.current = {};
-          setUnreadMap({});
-        }
-      } else if (unreadCandidateAddresses.length > 0) {
-        const latestMessageTimeByContact = new Map<string, number>();
-        for (const address of unreadCandidateAddresses) {
-          const observed = latestIncomingMessageTimeByContact.get(address) ?? 0;
-          const localMessages = messagesByContact[address] ?? [];
-          let latestIncomingFromLocal = 0;
-          for (const message of localMessages) {
-            if (message.direction !== 'incoming' || typeof message.timestamp !== 'number') {
-              continue;
-            }
-            const ts = Number(message.timestamp);
-            if (ts > latestIncomingFromLocal) {
-              latestIncomingFromLocal = ts;
-            }
-          }
-          latestMessageTimeByContact.set(address, Math.max(observed, latestIncomingFromLocal));
-        }
-
-        const activeKey = argsRef.current.activeContact?.toLowerCase();
-        const pageVisible =
-          typeof document !== 'undefined' &&
-          !document.hidden &&
-          (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
-        const unreadState = resolveDirectUnreadState({
-          activeKey,
-          candidateAddresses: unreadCandidateAddresses,
-          globalReadTs: lastReadAllTsRef.current,
-          latestMessageTimeByContact,
-          pageVisible,
-          previousReadByContact: lastReadByContactRef.current,
-          previousUnread: unreadMapRef.current || {},
-          suppressedKeys: notificationSuppressedContactAddressSet,
-          walletKey
-        });
-
-        if (unreadState.unreadChanged) {
-          unreadMapRef.current = unreadState.nextUnread;
-          setUnreadMap(unreadState.nextUnread);
-        }
-
-        if (unreadState.readByContactChanged) {
-          lastReadByContactRef.current = unreadState.nextReadByContact;
-        }
-      }
-
-      const knownBackupBlockNumber =
-        latestStateBackup?.blockNumber ?? lastStateBackupBlockRef.current[walletKey];
-      const lastAutoBackupAttemptBlock =
-        lastAutoBackupAttemptBlockRef.current[walletKey] ?? -AUTO_STATE_BACKUP_RETRY_BLOCKS;
-      const blocksSinceAutoBackupAttempt = latestBlock - lastAutoBackupAttemptBlock;
-      const hasLocalStateSnapshot =
-        normalizeLastReadAllTs(lastReadAllTsRef.current) > 0;
-      const shouldAutoBackupForDistance =
-        hasLocalStateSnapshot &&
-        typeof knownBackupBlockNumber === 'number' &&
-        latestBlock - knownBackupBlockNumber >= AUTO_STATE_BACKUP_BLOCK_DISTANCE &&
-        blocksSinceAutoBackupAttempt >= AUTO_STATE_BACKUP_RETRY_BLOCKS;
-
-      if (shouldAutoBackupForDistance) {
-        lastAutoBackupAttemptBlockRef.current[walletKey] = latestBlock;
-        backupLocalStateToSelf({ force: true, background: true }).catch(() => {});
-      }
-
-      if (useActiveContactOnly && activeContactSyncKey && typeof options?.toBlock !== 'number') {
-        lastActiveContactSyncedBlockRef.current[activeContactSyncKey] = latestBlock;
-      } else if ((options?.updateHead || !options?.contactsOnly) && typeof options?.toBlock !== 'number') {
-        lastSyncedBlockRef.current[walletKey] = latestBlock;
-      }
+      const onChainNicknames =
+        discoveredContacts.size > 0 ? await fetchOnChainNicknames(Array.from(discoveredContacts)) : new Map<string, string>();
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
+      }
+
+      if (discoveredContacts.size > 0 || discoveredNicknames.size > 0 || discoveredConversationStates.size > 0) {
+        setContacts((previous) => {
+          let nextContacts = mergeUniqueContacts(previous, Array.from(discoveredContacts));
+          nextContacts = nextContacts.map((contact) => {
+            const key = contact.address.toLowerCase();
+            let nextContact = contact;
+            const nickname = discoveredNicknames.get(key) ?? onChainNicknames.get(key);
+            if (nickname && contact.name !== nickname) {
+              nextContact = { ...nextContact, name: nickname };
+            }
+            if (!options?.skipContactStateUpdate) {
+              const pinnedState = pinnedContactStateRef.current.get(key);
+              const discoveredState = discoveredConversationStates.get(key);
+              nextContact = applyConversationPreferenceStateToContact(nextContact, pinnedState ?? discoveredState);
+            }
+            return nextContact;
+          });
+          return nextContacts;
+        });
+      }
+
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
+      }
+
+      const candidateAddresses = Array.from(
+        new Set([
+          ...contacts.map((contact) => contact.address),
+          ...Array.from(discoveredContacts),
+          ...recentPeersWithMeta.map((peer) => peer.address)
+        ])
+      );
+      const activeKey = isWalletAddress(activeContactAddress) ? activeContactAddress.toLowerCase() : undefined;
+      const pageVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+      const unreadResolution = resolveDirectUnreadState({
+        activeKey,
+        candidateAddresses,
+        globalReadTs: normalizeLastReadAllTs(lastReadAllTsRef.current),
+        latestMessageTimeByContact: latestIncomingMessageTimeByContact,
+        pageVisible,
+        previousReadByContact: lastReadByContactRef.current,
+        previousUnread: unreadMapRef.current,
+        suppressedKeys: notificationSuppressedContactAddressSet,
+        walletKey: requestedWalletKey
+      });
+      if (unreadResolution.readByContactChanged) {
+        lastReadByContactRef.current = unreadResolution.nextReadByContact;
+      }
+      if (unreadResolution.unreadChanged) {
+        unreadMapRef.current = unreadResolution.nextUnread;
+        setUnreadMap(unreadResolution.nextUnread);
+      }
+
+      if (readStateFeaturesEnabled) {
+        const knownBackupBlockNumber = lastStateBackupBlockRef.current[requestedWalletKey];
+        const knownAutoBackupAttemptBlock = lastAutoBackupAttemptBlockRef.current[requestedWalletKey] ?? 0;
+        const blocksSinceAutoBackupAttempt = latestBlock - knownAutoBackupAttemptBlock;
+        const hasLocalStateSnapshot = normalizeLastReadAllTs(lastReadAllTsRef.current) > 0;
+        const shouldAutoBackupForDistance =
+          hasLocalStateSnapshot &&
+          typeof knownBackupBlockNumber === 'number' &&
+          latestBlock - knownBackupBlockNumber >= AUTO_STATE_BACKUP_BLOCK_DISTANCE &&
+          blocksSinceAutoBackupAttempt >= AUTO_STATE_BACKUP_RETRY_BLOCKS;
+
+        if (shouldAutoBackupForDistance) {
+          lastAutoBackupAttemptBlockRef.current[requestedWalletKey] = latestBlock;
+          backupLocalStateToSelf({ force: true, background: true }).catch(() => {});
+        }
+      }
+
+      if (useActiveContactOnly && typeof options?.toBlock !== 'number') {
+        lastActiveContactSyncedBlockRef.current[`${requestedWalletKey}:${activeContactAddress.toLowerCase()}`] =
+          latestBlock;
+      } else if ((options?.updateHead || !options?.contactsOnly) && typeof options?.toBlock !== 'number') {
+        lastSyncedBlockRef.current[requestedWalletKey] = latestBlock;
       }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -957,14 +529,12 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         ...previous,
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
-
     } catch (syncError) {
       try {
-        console.error('[sync] error', syncError);
+        console.error('[sync] ChatGC error', syncError);
       } catch {}
       if (!options?.background) {
-        const message = syncError instanceof Error ? syncError.message : 'Failed to sync history.';
-        setError(message);
+        setError(syncError instanceof Error ? syncError.message : 'Failed to sync history.');
       }
     } finally {
       syncingHistoryRef.current = false;
@@ -984,13 +554,10 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     const {
       activeContact,
       currentWalletKeyRef,
-      decryptMemoPlaintextWithRecovery,
       fetchOnChainNicknames,
       getMemoSigner,
       hasAesReady,
       messagesByContact,
-      resolveBlockTimestampMap,
-      resolveConversationBlockRange,
       setContacts,
       setError,
       setLoadingOlderHistory,
@@ -999,19 +566,12 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       walletAddress
     } = argsRef.current;
 
-    if (
-      loadingOlderHistoryRef.current ||
-      syncingHistoryRef.current ||
-      !walletAddress ||
-      !activeContact ||
-      !hasAesReady
-    ) {
+    if (loadingOlderHistoryRef.current || syncingHistoryRef.current || !walletAddress || !activeContact || !hasAesReady) {
       return;
     }
 
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
-    const walletKey = requestedWalletKey;
     const contactAddress = activeContact.trim();
     if (!isWalletAddress(contactAddress)) {
       return;
@@ -1031,221 +591,44 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
-      const latestBlock = await readProvider.getBlockNumber();
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-      const cachedConversationRange = conversationRangeByContactRef.current[contactKey];
-      const resolvedConversationRange =
-        cachedConversationRange ??
-        (await resolveConversationBlockRange(contract, requestedWalletAddress, contactAddress));
-      if (!resolvedConversationRange || resolvedConversationRange.lastBlock <= 0) {
-        hasOlderHistoryByContactRef.current[contactKey] = false;
-        return;
-      }
-      conversationRangeByContactRef.current[contactKey] = resolvedConversationRange;
-      const conversationFirstBlock = Math.max(0, resolvedConversationRange.firstBlock);
-      const cappedConversationLastBlock = Math.min(latestBlock, resolvedConversationRange.lastBlock);
-      if (cappedConversationLastBlock < conversationFirstBlock) {
-        hasOlderHistoryByContactRef.current[contactKey] = false;
-        return;
-      }
-
-      const historyRange = resolveOlderDirectHistoryRange({
-        conversationFirstBlock: resolvedConversationRange.firstBlock,
-        conversationLastBlock: resolvedConversationRange.lastBlock,
-        historyWindowBlocks: HISTORY_PAGINATION_BLOCK_WINDOW,
-        knownEarliestBlock: oldestLoadedBlockByContactRef.current[contactKey],
-        knownMessages: messagesByContact[contactKey] ?? [],
-        latestBlock
-      });
-      if (!historyRange.shouldQuery) {
-        hasOlderHistoryByContactRef.current[contactKey] = false;
-        return;
-      }
-
-      const { fromBlock, toBlock } = historyRange;
-
-      const incomingFilter = contract.filters.MessageSubmitted(requestedWalletAddress, contactAddress);
-      const outgoingFilter = contract.filters.MessageSubmitted(contactAddress, requestedWalletAddress);
-      const [incomingLogs, outgoingLogs] = await Promise.all([
-        contract.queryFilter(incomingFilter, fromBlock, toBlock),
-        contract.queryFilter(outgoingFilter, fromBlock, toBlock)
-      ]);
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
 
-      oldestLoadedBlockByContactRef.current[contactKey] = fromBlock;
-      if (historyRange.hasReachedStart) {
+      const count = await readConversationMessageCount(contract, requestedWalletAddress, contactAddress);
+      const loadedConfirmedCount = (messagesByContact[contactKey] ?? []).filter(
+        (message) => !message.id.startsWith('local-') && message.txHash?.startsWith('chatgc:')
+      ).length;
+      const currentOffset =
+        oldestLoadedOffsetByContactRef.current[contactKey] ?? Math.max(0, count - loadedConfirmedCount);
+      if (count <= 0 || currentOffset <= 0) {
         hasOlderHistoryByContactRef.current[contactKey] = false;
-      }
-
-      const blockNumbers = new Set<number>();
-      for (const log of incomingLogs) {
-        blockNumbers.add(log.blockNumber);
-      }
-      for (const log of outgoingLogs) {
-        blockNumbers.add(log.blockNumber);
-      }
-
-      const blockTimestampMap = await resolveBlockTimestampMap(readProvider, blockNumbers);
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
+
+      const nextOffset = Math.max(0, currentOffset - CHAT_GC_THREAD_PAGE_SIZE);
+      const limit = currentOffset - nextOffset;
+      const ids = await readConversationMessageIds(contract, requestedWalletAddress, contactAddress, nextOffset, limit);
+      oldestLoadedOffsetByContactRef.current[contactKey] = nextOffset;
+      hasOlderHistoryByContactRef.current[contactKey] = nextOffset > 0;
 
       const entries: HistoryEntry[] = [];
       const discoveredNicknames = new Map<string, string>();
-
-      for (const log of incomingLogs) {
-        const logArgs = (log as { args?: Record<string, unknown> }).args;
-        const from = String(logArgs?.from ?? '');
-        if (!isWalletAddress(from) || from.toLowerCase() !== contactKey) {
+      for (const messageId of ids) {
+        const parsed = await parseMessageById(contract, messageId, requestedWalletAddress, signer, cacheKey);
+        if (!parsed) {
           continue;
         }
-
-        const userCiphertext = extractUserCiphertext(logArgs?.messageForRecipient);
-        let messageText = '(Unable to decrypt message)';
-        let replyToMessageId: string | undefined;
-        let replyToText: string | undefined;
-        let replyToTxHash: string | undefined;
-        let replyToBlockNumber: number | undefined;
-        let replyToLogIndex: number | undefined;
-        let reactionToTxHash: string | undefined;
-        let reactionToBlockNumber: number | undefined;
-        let reactionToLogIndex: number | undefined;
-        let reactionEmoji: string | undefined;
-
-        if (userCiphertext && userCiphertext.value.length > 0) {
-          try {
-            const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, userCiphertext);
-            if (from.toLowerCase() === walletKey) {
-              const backupPayload = parseStateBackupText(plain);
-              if (backupPayload) {
-                continue;
-              }
-            }
-
-            const parsedMessage = parseChatMessagePayload(plain);
-            messageText = parsedMessage.cleanText;
-            replyToMessageId = parsedMessage.replyToMessageId;
-            replyToText = parsedMessage.replyToText;
-            replyToTxHash = parsedMessage.replyToTxHash;
-            replyToBlockNumber = parsedMessage.replyToBlockNumber;
-            replyToLogIndex = parsedMessage.replyToLogIndex;
-            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-            if (
-              messageText.trim().length === 0 &&
-              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-            ) {
-              continue;
-            }
-            if (parsedMessage.embeddedNickname) {
-              discoveredNicknames.set(from.toLowerCase(), parsedMessage.embeddedNickname);
-            }
-          } catch {
-            messageText = '(Unable to decrypt message)';
-          }
+        if (parsed.entry) {
+          entries.push(parsed.entry);
         }
-
-        entries.push({
-          id: `${log.transactionHash}-${log.index}-in`,
-          contact: from,
-          direction: 'incoming',
-          text: messageText,
-          replyToMessageId,
-          replyToText,
-          replyToTxHash,
-          replyToBlockNumber,
-          replyToLogIndex,
-          reactionToTxHash,
-          reactionToBlockNumber,
-          reactionToLogIndex,
-          reactionEmoji,
-          txHash: log.transactionHash,
-          blockNumber: log.blockNumber,
-          logIndex: log.index,
-          timestamp: blockTimestampMap.get(log.blockNumber)
-        });
+        if (parsed.contactName) {
+          discoveredNicknames.set(parsed.contactAddress.toLowerCase(), parsed.contactName);
+        }
       }
 
-      for (const log of outgoingLogs) {
-        const logArgs = (log as { args?: Record<string, unknown> }).args;
-        const recipient = String(logArgs?.recipient ?? '');
-        if (!isWalletAddress(recipient) || recipient.toLowerCase() !== contactKey) {
-          continue;
-        }
-
-        const userCiphertext = extractUserCiphertext(logArgs?.messageForSender);
-        let messageText = '(Unable to decrypt message)';
-        let replyToMessageId: string | undefined;
-        let replyToText: string | undefined;
-        let replyToTxHash: string | undefined;
-        let replyToBlockNumber: number | undefined;
-        let replyToLogIndex: number | undefined;
-        let reactionToTxHash: string | undefined;
-        let reactionToBlockNumber: number | undefined;
-        let reactionToLogIndex: number | undefined;
-        let reactionEmoji: string | undefined;
-
-        if (userCiphertext && userCiphertext.value.length > 0) {
-          try {
-            const plain = await decryptMemoPlaintextWithRecovery(signer, cacheKey, userCiphertext);
-            if (recipient.toLowerCase() === walletKey) {
-              const backupPayload = parseStateBackupText(plain);
-              if (backupPayload) {
-                continue;
-              }
-              continue;
-            }
-
-            const parsedMessage = parseChatMessagePayload(plain);
-            messageText = parsedMessage.cleanText;
-            replyToMessageId = parsedMessage.replyToMessageId;
-            replyToText = parsedMessage.replyToText;
-            replyToTxHash = parsedMessage.replyToTxHash;
-            replyToBlockNumber = parsedMessage.replyToBlockNumber;
-            replyToLogIndex = parsedMessage.replyToLogIndex;
-            reactionToTxHash = parsedMessage.embeddedReaction?.targetTxHash;
-            reactionToBlockNumber = parsedMessage.embeddedReaction?.targetBlockNumber;
-            reactionToLogIndex = parsedMessage.embeddedReaction?.targetLogIndex;
-            reactionEmoji = parsedMessage.embeddedReaction?.emoji;
-            if (parsedMessage.embeddedContactName) {
-              discoveredNicknames.set(recipient.toLowerCase(), parsedMessage.embeddedContactName);
-            }
-            if (
-              messageText.trim().length === 0 &&
-              (parsedMessage.embeddedContactName || parsedMessage.embeddedConversationState)
-            ) {
-              continue;
-            }
-          } catch {
-            messageText = '(Unable to decrypt message)';
-          }
-        }
-
-        entries.push({
-          id: `${log.transactionHash}-${log.index}-out`,
-          contact: recipient,
-          direction: 'outgoing',
-          text: messageText,
-          replyToMessageId,
-          replyToText,
-          replyToTxHash,
-          replyToBlockNumber,
-          replyToLogIndex,
-          reactionToTxHash,
-          reactionToBlockNumber,
-          reactionToLogIndex,
-          reactionEmoji,
-          txHash: log.transactionHash,
-          blockNumber: log.blockNumber,
-          logIndex: log.index,
-          timestamp: blockTimestampMap.get(log.blockNumber)
-        });
+      if (currentWalletKeyRef.current !== requestedWalletKey) {
+        return;
       }
 
       if (entries.length > 0) {
@@ -1255,17 +638,13 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
           })
         );
       }
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
 
       const onChainNicknames = await fetchOnChainNicknames([contactAddress]);
-      const onChainNicknameForContact = onChainNicknames.get(contactKey);
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
       }
 
-      if (discoveredNicknames.size > 0 || onChainNicknameForContact) {
+      if (discoveredNicknames.size > 0 || onChainNicknames.get(contactKey)) {
         setContacts((previous) =>
           previous.map((contact) => {
             const nickname =
@@ -1274,16 +653,9 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
             if (!nickname || contact.name === nickname) {
               return contact;
             }
-
-            return {
-              ...contact,
-              name: nickname
-            };
+            return { ...contact, name: nickname };
           })
         );
-      }
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
       }
 
       const nextOnboardInfo = signer.getUserOnboardInfo();
@@ -1292,8 +664,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
       }));
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : 'Failed to load older history.';
-      setError(message);
+      setError(loadError instanceof Error ? loadError.message : 'Failed to load older history.');
     } finally {
       loadingOlderHistoryRef.current = false;
       setLoadingOlderHistory(false);

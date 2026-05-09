@@ -686,7 +686,8 @@ export const COTI_NETWORK = {
 export const TIP_NATIVE_TOKEN_SYMBOL = COTI_NETWORK.nativeCurrency.symbol;
 export const TIP_NATIVE_TOKEN_DECIMALS = COTI_NETWORK.nativeCurrency.decimals;
 
-export const CHAT_CONTRACT_ADDRESS = '0xF4cab1599aafBBB68677682354B7c1760bCF6c48';
+export const CHAT_CONTRACT_ADDRESS = '0xE5101D33986c91565D2C9f8b49AAF0b8FFeE2243';
+export const LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS = '0xF4cab1599aafBBB68677682354B7c1760bCF6c48';
 export const GROUP_ADMIN_BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 export const REWARD_TOKEN_ADDRESS = '0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8';
 export const PRIVATE_REWARD_TOKEN_ADDRESS = '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a';
@@ -702,18 +703,39 @@ export const MAX_ERC20_APPROVAL = (1n << 256n) - 1n;
 export const PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE = MAX_ERC20_APPROVAL;
 export const CHAT_CONTRACT_ABI = [
   'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
+  'function submitMultipart(address recipient, ((uint256[] value), bytes[] signature)[] messages) payable',
+  'function getMessage(uint256 messageId) view returns (tuple(uint256 id,address from,address to,uint64 blockNumber,uint64 timestamp,uint32 chunkCount,uint256 valueSent,uint256 feeTaken,(tuple(uint256[] value) ciphertext,tuple(uint256[] value) userCiphertext) ciphertext))',
+  'function getMessageChunk(uint256 messageId,uint256 chunkIndex) view returns ((tuple(uint256[] value) ciphertext,tuple(uint256[] value) userCiphertext) ciphertext)',
+  'function getMessageMetadata(uint256 messageId) view returns (address from,address to,uint64 blockNumber,uint64 timestamp,uint32 chunkCount,uint256 valueSent,uint256 feeTaken)',
+  'function inboxCount(address account) view returns (uint256)',
+  'function sentCount(address account) view returns (uint256)',
+  'function getInboxPage(address account,uint256 offset,uint256 limit) view returns (uint256[])',
+  'function getSentPage(address account,uint256 offset,uint256 limit) view returns (uint256[])',
+  'function getRecentConversations(address account,uint256 limit) view returns (tuple(address peer,uint256 messageId,uint64 blockNumber,uint64 timestamp)[])',
+  'function conversationMessageCount(address me,address peer) view returns (uint256)',
+  'function getConversationMessagePage(address me,address peer,uint256 offset,uint256 limit) view returns (uint256[])',
   'function setMyNickname(string name)',
   'function nicknames(address account) view returns (string)',
   'function getConversationBlockRange(address me, address peer) view returns (uint256 firstBlock, uint256 lastBlock)',
   'function getFirstBlockForConversation(address me, address peer) view returns (uint256)',
   'function getLastBlockForConversation(address me, address peer) view returns (uint256)',
-  'function getRecentPeers(address user) view returns (address[100])',
-  'function getRecentPeersWithMeta(address user) view returns (address[100] peers, uint256[100] lastBlocks, uint256[100] lastTimes)',
-  'function maxRecentPeers() view returns (uint256)',
   'function getLastMessageTime(address me, address peer) view returns (uint256)',
+  'function MAX_CHUNK_CELLS() view returns (uint8)',
+  'function MAX_SINGLE_MESSAGE_CELLS() view returns (uint8)',
+  'function MAX_CHUNKS_PER_MESSAGE() view returns (uint32)',
+  'function MAX_RECENT_CONVERSATIONS() view returns (uint256)',
   'function NICKNAME_MAX_BYTES() view returns (uint256)',
   'function feeAmount() view returns (uint256)',
   'event NicknameSet(address indexed user, string nickname)',
+  'event MessageSubmitted(uint256 indexed messageId, address indexed recipient, address indexed from, uint256 valueSent, uint256 feeTaken, uint32 chunkCount)'
+] as const;
+
+export const LEGACY_CHAT_BACKUP_CONTRACT_ABI = [
+  'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
+  'function getConversationBlockRange(address me, address peer) view returns (uint256 firstBlock, uint256 lastBlock)',
+  'function getFirstBlockForConversation(address me, address peer) view returns (uint256)',
+  'function getLastBlockForConversation(address me, address peer) view returns (uint256)',
+  'function feeAmount() view returns (uint256)',
   'event MessageSubmitted(address indexed recipient, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender)'
 ] as const;
 

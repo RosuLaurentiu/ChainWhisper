@@ -14,6 +14,7 @@ import {
   type ConversationBlockRange,
   type RecentPeerMeta
 } from './appShared';
+import { CHAT_GC_RECENT_CONVERSATION_LIMIT, parseChatGcConversationRefs } from './chatGc';
 
 type PromiseRef<T> = { current: Promise<T> | null };
 type BooleanRef = { current: boolean };
@@ -49,6 +50,94 @@ type SaveMyNicknameOnChainArgs = {
     updater: (previous: Record<string, OnboardInfo>) => Record<string, OnboardInfo>
   ) => void;
   setError: (value: string) => void;
+};
+
+export const isAlreadyKnownTransactionError = (error: unknown): boolean => {
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [error];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+
+    if (typeof current === 'string') {
+      if (current.toLowerCase().includes('already known')) {
+        return true;
+      }
+      continue;
+    }
+
+    if (typeof current !== 'object') {
+      continue;
+    }
+
+    for (const value of Object.values(current as Record<string, unknown>)) {
+      stack.push(value);
+    }
+  }
+
+  return false;
+};
+
+export const extractRawTransactionFromError = (error: unknown): string | undefined => {
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [error];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+
+    if (typeof current === 'string') {
+      const rawTransaction = current.match(/0x[0-9a-fA-F]{100,}/)?.[0];
+      if (rawTransaction) {
+        return rawTransaction;
+      }
+      continue;
+    }
+
+    if (Array.isArray(current)) {
+      stack.push(...current);
+      continue;
+    }
+
+    if (typeof current === 'object') {
+      stack.push(...Object.values(current as Record<string, unknown>));
+    }
+  }
+
+  return undefined;
+};
+
+const waitForKnownTransaction = async (
+  cotiEthers: Awaited<ReturnType<typeof loadCotiEthersModule>>,
+  error: unknown
+): Promise<boolean> => {
+  if (!isAlreadyKnownTransactionError(error)) {
+    return false;
+  }
+
+  const rawTransaction = extractRawTransactionFromError(error);
+  if (!rawTransaction || !cotiEthers.Transaction?.from) {
+    return false;
+  }
+
+  try {
+    const parsedTransaction = cotiEthers.Transaction.from(rawTransaction) as { hash?: string };
+    const hash = parsedTransaction.hash;
+    if (!hash || !/^0x[a-fA-F0-9]{64}$/.test(hash)) {
+      return false;
+    }
+
+    const readProvider = await loadCotiReadProvider(true);
+    const receipt = await readProvider.waitForTransaction(hash, 1, 90_000);
+    return Number((receipt as { status?: number | bigint } | null | undefined)?.status ?? 0) === 1;
+  } catch {
+    return false;
+  }
 };
 
 export const getNicknameMaxLength = async ({
@@ -162,13 +251,7 @@ export const saveMyNicknameOnChain = async ({
     return true;
   }
 
-  try {
-    const { signer, cacheKey } = await getMemoSigner();
-    const cotiEthers = await loadCotiEthersModule();
-    const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-    const tx = await contract.setMyNickname(nextNickname);
-    await tx.wait();
-
+  const applySavedNickname = (cacheKey: string, signer: Wallet | JsonRpcSigner): void => {
     onChainNicknameCacheRef.current[address] = nextNickname;
     setMyNickname(nextNickname);
     setContacts((previous) =>
@@ -182,9 +265,30 @@ export const saveMyNicknameOnChain = async ({
       ...previous,
       [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
     }));
+  };
+
+  try {
+    const { signer, cacheKey } = await getMemoSigner();
+    const cotiEthers = await loadCotiEthersModule();
+    const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
+    try {
+      const tx = await contract.setMyNickname(nextNickname);
+      await tx.wait();
+    } catch (submitError) {
+      const recovered = await waitForKnownTransaction(cotiEthers, submitError);
+      if (!recovered) {
+        throw submitError;
+      }
+    }
+
+    applySavedNickname(cacheKey, signer);
     return true;
   } catch (nicknameError) {
-    const message = nicknameError instanceof Error ? nicknameError.message : 'Failed to save nickname on chain.';
+    const message = isAlreadyKnownTransactionError(nicknameError)
+      ? 'Nickname update is already pending. Wait for it to confirm, then refresh chat.'
+      : nicknameError instanceof Error
+        ? nicknameError.message
+        : 'Failed to save nickname on chain.';
     setError(message);
     return false;
   }
@@ -217,6 +321,23 @@ export const resolveRecentPeersWithMeta = async (contract: unknown, user: string
     return [];
   }
 
+  const userKey = user.toLowerCase();
+  const getRecentConversationsFn = (contract as {
+    getRecentConversations?: (userArg: string, limitArg: number) => Promise<unknown>;
+  }).getRecentConversations;
+  if (getRecentConversationsFn) {
+    try {
+      const recentConversationsRaw = await getRecentConversationsFn(user, CHAT_GC_RECENT_CONVERSATION_LIMIT);
+      const recentConversations = parseChatGcConversationRefs(recentConversationsRaw)
+        .filter((peer) => peer.address.toLowerCase() !== userKey)
+        .map(({ address, lastBlock, lastTime }) => ({ address, lastBlock, lastTime }));
+      if (recentConversations.length > 0) {
+        return recentConversations;
+      }
+    } catch {
+    }
+  }
+
   const getRecentPeersWithMetaFn = (contract as { getRecentPeersWithMeta?: (userArg: string) => Promise<unknown> })
     .getRecentPeersWithMeta;
   if (!getRecentPeersWithMetaFn) {
@@ -225,7 +346,6 @@ export const resolveRecentPeersWithMeta = async (contract: unknown, user: string
 
   try {
     const recentPeersRaw = await getRecentPeersWithMetaFn(user);
-    const userKey = user.toLowerCase();
     return parseRecentPeersWithMetaResult(recentPeersRaw).filter((peer) => peer.address.toLowerCase() !== userKey);
   } catch {
     return [];

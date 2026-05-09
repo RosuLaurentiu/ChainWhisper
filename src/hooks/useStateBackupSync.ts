@@ -3,14 +3,14 @@ import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
   buildStateBackupPayload,
   buildStateBackupText,
-  CHAT_CONTRACT_ABI,
-  CHAT_CONTRACT_ADDRESS,
   COTI_NETWORK,
   createStateBackupFingerprint,
   debugLog,
   decodeMemoPlaintextStrict,
   extractUserCiphertext,
   isWalletAddress,
+  LEGACY_CHAT_BACKUP_CONTRACT_ABI,
+  LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS,
   loadCotiEthersModule,
   loadCotiReadProvider,
   loadCotiWsProvider,
@@ -115,8 +115,6 @@ export function useStateBackupSync({
   postConnectDataSyncRunIdRef,
   readStateSyncEnabled,
   resolveConversationBlockRangeRef,
-  resolveRequiredFeeForSendRef,
-  resolveSubmitSelectorRef,
   setLastReadAllTs,
   setSessionOnboardInfo,
   setUnreadGroupMap,
@@ -133,6 +131,8 @@ export function useStateBackupSync({
   const lastAutoBackupAttemptBlockRef = useRef<Record<string, number>>({});
   const readStateBackupTimerRef = useRef<number | null>(null);
   const lastReadStateBackupSubmittedAtRef = useRef(0);
+  const legacyBackupFeeCacheRef = useRef<bigint | null>(null);
+  const legacyBackupFeeRequestRef = useRef<Promise<bigint> | null>(null);
 
   const clearCachedStateBackupMemo = useCallback(() => {
     cachedStateBackupMemoRef.current = {};
@@ -142,6 +142,38 @@ export function useStateBackupSync({
     if (readStateBackupTimerRef.current !== null) {
       window.clearTimeout(readStateBackupTimerRef.current);
       readStateBackupTimerRef.current = null;
+    }
+  }, []);
+
+  const resolveLegacyBackupFee = useCallback(async (): Promise<bigint> => {
+    if (legacyBackupFeeCacheRef.current !== null) {
+      return legacyBackupFeeCacheRef.current;
+    }
+
+    if (!legacyBackupFeeRequestRef.current) {
+      legacyBackupFeeRequestRef.current = (async () => {
+        try {
+          const cotiEthers = await loadCotiEthersModule();
+          const readProvider = await loadCotiReadProvider(true);
+          const readContract = new cotiEthers.Contract(
+            LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS,
+            LEGACY_CHAT_BACKUP_CONTRACT_ABI,
+            readProvider
+          );
+          const fee = await readContract.feeAmount();
+          const normalizedFee = typeof fee === 'bigint' ? fee : BigInt(String(fee ?? '0'));
+          legacyBackupFeeCacheRef.current = normalizedFee;
+          return normalizedFee;
+        } catch {
+          return 0n;
+        }
+      })();
+    }
+
+    try {
+      return await legacyBackupFeeRequestRef.current;
+    } finally {
+      legacyBackupFeeRequestRef.current = null;
     }
   }, []);
 
@@ -202,7 +234,11 @@ export function useStateBackupSync({
         const { signer, cacheKey } = await getMemoSignerRef.current();
         const cotiEthers = await loadCotiEthersModule();
         const readProvider = await loadCotiReadProvider(true);
-        const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+        const contract = new cotiEthers.Contract(
+          LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS,
+          LEGACY_CHAT_BACKUP_CONTRACT_ABI,
+          readProvider
+        );
         const latestBlock = await readProvider.getBlockNumber();
         const selfFilter = contract.filters.MessageSubmitted(targetAddress, targetAddress);
         const selfConversationRange = await resolveConversationBlockRangeRef.current(
@@ -404,7 +440,11 @@ export function useStateBackupSync({
         backupInFlightRef.current = true;
 
         const { signer, cacheKey } = await getMemoSignerRef.current();
-        const selector = await resolveSubmitSelectorRef.current();
+        const cotiEthers = await loadCotiEthersModule();
+        const selector = new cotiEthers.Interface(LEGACY_CHAT_BACKUP_CONTRACT_ABI).getFunction('submit')?.selector;
+        if (!selector) {
+          return;
+        }
         const snapshotLastReadAllTs = normalizeLastReadAllTs(lastReadAllTsRef.current);
         const payload = buildStateBackupPayload(snapshotLastReadAllTs);
         const nextFingerprint = createStateBackupFingerprint(snapshotLastReadAllTs);
@@ -414,14 +454,17 @@ export function useStateBackupSync({
 
         const backupText = buildStateBackupText(payload);
         const encodedMemo = encodeMemoForActiveSignerRef.current(backupText);
-        const cotiEthers = await loadCotiEthersModule();
-        const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-        const requiredFee = await resolveRequiredFeeForSendRef.current();
+        const contract = new cotiEthers.Contract(
+          LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS,
+          LEGACY_CHAT_BACKUP_CONTRACT_ABI,
+          signer
+        );
+        const requiredFee = await resolveLegacyBackupFee();
         const cachedMemoEntry = cachedStateBackupMemoRef.current[walletKey];
         const hasReusableMemo = cachedMemoEntry?.fingerprint === nextFingerprint;
 
         const buildMemoPayload = async (): Promise<SubmitMemoPayload> => {
-          const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
+          const encryptedMemo = await signer.encryptValue(encodedMemo, LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS, selector);
           return parseSubmitMemoPayload(encryptedMemo);
         };
 
@@ -468,8 +511,7 @@ export function useStateBackupSync({
       getMemoSignerRef,
       lastReadAllTsRef,
       readStateSyncEnabled,
-      resolveRequiredFeeForSendRef,
-      resolveSubmitSelectorRef,
+      resolveLegacyBackupFee,
       setSessionOnboardInfo,
       walletAddress
     ]
@@ -540,7 +582,11 @@ export function useStateBackupSync({
       try {
         const [cotiEthers, wsProvider] = await Promise.all([loadCotiEthersModule(), loadCotiWsProvider()]);
         if (cancelled) return;
-        const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, wsProvider);
+        const contract = new cotiEthers.Contract(
+          LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS,
+          LEGACY_CHAT_BACKUP_CONTRACT_ABI,
+          wsProvider
+        );
         const selfFilter = contract.filters.MessageSubmitted(walletAddress, walletAddress);
         contract.on(selfFilter, scheduleRemoteRestore);
         offListener = () => contract.off(selfFilter, scheduleRemoteRestore);

@@ -12,6 +12,14 @@ import {
   parseSubmitMemoPayload,
   type ConversationPreferenceState
 } from './appShared';
+import {
+  CHAT_GC_MAX_CHUNKS_PER_MESSAGE,
+  CHAT_GC_MAX_SINGLE_MESSAGE_CELLS,
+  encryptedInputToSubmitMemoTuple,
+  isLikelySingleSubmitSizeError,
+  splitUtf8SafeChunks,
+  submitMemoPayloadToTuple
+} from './chatGc';
 
 type DirectSigner = Wallet | JsonRpcSigner;
 
@@ -58,11 +66,48 @@ export const submitDirectMemo = async ({
 
   const cotiEthers = await loadCotiEthersModule();
   const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-  const encodedMemo = encodeMemo(plainText);
-  const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
-  const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
-  const memoTuple = [[submitMemoPayload.ciphertextValue], submitMemoPayload.signature] as const;
-  const tx = await contract.submit(normalizedAddress, memoTuple, { value: requiredFee });
+  const contractInterface = new cotiEthers.Interface(CHAT_CONTRACT_ABI);
+  const multipartSelector = contractInterface.getFunction('submitMultipart')?.selector;
+  if (!multipartSelector) {
+    throw new Error('Chat multipart selector is unavailable.');
+  }
+
+  const sendTransaction = async (): Promise<unknown> => {
+    try {
+      const encodedMemo = encodeMemo(plainText);
+      const encryptedMemo = await signer.encryptValue(encodedMemo, CHAT_CONTRACT_ADDRESS, selector);
+      const submitMemoPayload = parseSubmitMemoPayload(encryptedMemo);
+      if (submitMemoPayload.ciphertextValue.length <= CHAT_GC_MAX_SINGLE_MESSAGE_CELLS) {
+        try {
+          return await contract.submit(normalizedAddress, submitMemoPayloadToTuple(submitMemoPayload), { value: requiredFee });
+        } catch (submitError) {
+          if (!isLikelySingleSubmitSizeError(submitError)) {
+            throw submitError;
+          }
+        }
+      }
+    } catch (singleSubmitError) {
+      if (!isLikelySingleSubmitSizeError(singleSubmitError)) {
+        throw singleSubmitError;
+      }
+    }
+
+    const chunks = splitUtf8SafeChunks(plainText);
+    if (chunks.length > CHAT_GC_MAX_CHUNKS_PER_MESSAGE) {
+      throw new Error('Message is too long for private chat. Try a shorter message or smaller attachment.');
+    }
+
+    const encryptedChunks = await Promise.all(
+      chunks.map(async (chunk) => {
+        const encryptedChunk = await signer.encryptValue(encodeMemo(chunk), CHAT_CONTRACT_ADDRESS, multipartSelector);
+        return encryptedInputToSubmitMemoTuple(encryptedChunk);
+      })
+    );
+
+    return contract.submitMultipart(normalizedAddress, encryptedChunks, { value: requiredFee });
+  };
+
+  const tx = await sendTransaction();
   const waitableTx = tx as { hash?: unknown; wait?: () => Promise<unknown> };
   const wait =
     typeof waitableTx.wait === 'function'

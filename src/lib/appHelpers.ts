@@ -189,6 +189,7 @@ const SHARED_TX_REFERENCE_PREFIX_BASE64_LENGTH = 6;
 const SHARED_TX_REFERENCE_REGEX = new RegExp(
   `^x([0-9a-z]+)-([A-Za-z0-9\\-_]{${SHARED_TX_REFERENCE_PREFIX_BASE64_LENGTH}})$`
 );
+const CHAT_GC_MESSAGE_REFERENCE_REGEX = /^chatgc:\d+:0x[a-f0-9]{40}:\d+$/;
 
 const isSafeReferencePart = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -243,6 +244,10 @@ export const buildMessageReferenceKeys = ({ txHash, blockNumber, logIndex }: Mes
   }
 
   const normalizedTxHash = txHash?.trim().toLowerCase() ?? '';
+  if (CHAT_GC_MESSAGE_REFERENCE_REGEX.test(normalizedTxHash)) {
+    keys.add(`m:${normalizedTxHash}`);
+  }
+
   if (/^0x[a-f0-9]{64}$/.test(normalizedTxHash)) {
     keys.add(`t:${normalizedTxHash}`);
     const compactSharedReference = buildSharedTxReference(normalizedTxHash, blockNumber);

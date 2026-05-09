@@ -4548,16 +4548,16 @@ export default function App() {
     }
 
     const targetTxHash = targetMessage.txHash?.trim().toLowerCase() ?? '';
-    if (!/^0x[a-f0-9]{64}$/.test(targetTxHash)) {
-      setError('Wait for the message to confirm on-chain before adding a reaction.');
-      return;
-    }
-
     const targetReferenceKeyCandidates = buildMessageReferenceKeys({
       txHash: targetMessage.txHash,
       blockNumber: targetMessage.blockNumber,
       logIndex: targetMessage.logIndex
     });
+    if (targetReferenceKeyCandidates.length === 0) {
+      setError('Wait for the message to confirm on-chain before adding a reaction.');
+      return;
+    }
+
     const targetReferenceKey =
       targetReferenceKeyCandidates.map((key) => activeThreadMessageReferenceLookup.get(key)).find(Boolean) ??
       targetReferenceKeyCandidates[0] ??
@@ -5175,24 +5175,15 @@ export default function App() {
             `Insufficient COTI balance. Keep at least ${formatTokenAmount(requiredFeeForTipNotice, TIP_NATIVE_TOKEN_DECIMALS, 6)} COTI for the tip note fee.`
           );
         }
-        const tx = await signer.sendTransaction({
-          to: recipient,
-          value: tipAmount
-        });
-        await tx.wait();
       } else {
         const tipTokenContract = new cotiEthers.Contract(tokenAddress, ERC20_TOKEN_ABI, signer);
         const tx = await tipTokenContract.transfer(recipient, tipAmount);
         await tx.wait();
+        transferSucceeded = true;
       }
-      transferSucceeded = true;
 
       setTopUpMetricsNonce((previous) => previous + 1);
-      if (tipToken === 'coti') {
-        setTipNativeBalanceWei((previous) =>
-          previous === null ? previous : previous > tipAmount ? previous - tipAmount : 0n
-        );
-      } else if (tipToken === 'wisp') {
+      if (tipToken === 'wisp') {
         setRewardTokenBalanceWei((previous) =>
           previous === null ? previous : previous > tipAmount ? previous - tipAmount : 0n
         );
@@ -5210,11 +5201,12 @@ export default function App() {
       const encryptedTipMemo = await signer.encryptValue(encodedTipMemo, CHAT_CONTRACT_ADDRESS, selector);
       const submitTipMemoPayload = parseSubmitMemoPayload(encryptedTipMemo);
       const tipMemoTuple = [[submitTipMemoPayload.ciphertextValue], submitTipMemoPayload.signature] as const;
-      const tipMemoTx = await contract.submit(recipient, tipMemoTuple, { value: requiredFee });
+      const nativeValue = tipToken === 'coti' ? requiredFee + tipAmount : requiredFee;
+      const tipMemoTx = await contract.submit(recipient, tipMemoTuple, { value: nativeValue });
       await tipMemoTx.wait();
       if (tipToken === 'coti') {
         setTipNativeBalanceWei((previous) =>
-          previous === null ? previous : previous > requiredFee ? previous - requiredFee : 0n
+          previous === null ? previous : previous > nativeValue ? previous - nativeValue : 0n
         );
       }
 
@@ -6427,10 +6419,10 @@ export default function App() {
         markCotiWsHealthyNow();
         const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, wsProvider);
 
-        const incomingFilter = contract.filters.MessageSubmitted(walletAddress, null);
-        const outgoingFilter = contract.filters.MessageSubmitted(null, walletAddress);
+        const incomingFilter = contract.filters.MessageSubmitted(null, walletAddress, null);
+        const outgoingFilter = contract.filters.MessageSubmitted(null, null, walletAddress);
         const nicknameFilter = contract.filters.NicknameSet();
-        const resolveDirectRealtimeSyncOptions = (recipient: unknown, from: unknown): SyncConversationOptions => {
+        const resolveDirectRealtimeSyncOptions = (_messageId: unknown, recipient: unknown, from: unknown): SyncConversationOptions => {
           const activeContactKey = activeContactRef.current?.trim().toLowerCase() ?? '';
           const recipientKey = String(recipient ?? '').trim().toLowerCase();
           const fromKey = String(from ?? '').trim().toLowerCase();
@@ -6448,8 +6440,8 @@ export default function App() {
             updateHead: true
           };
         };
-        const handleMessageSubmitted = (recipient: unknown, from: unknown) => {
-          scheduleRealtimeSync(resolveDirectRealtimeSyncOptions(recipient, from));
+        const handleMessageSubmitted = (messageId: unknown, recipient: unknown, from: unknown) => {
+          scheduleRealtimeSync(resolveDirectRealtimeSyncOptions(messageId, recipient, from));
         };
         const handleNicknameSet = (user: unknown, nickname: unknown) => {
           const userAddress = String(user ?? '').trim().toLowerCase();

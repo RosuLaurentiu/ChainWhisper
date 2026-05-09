@@ -52,6 +52,56 @@ describe('directConversationSyncHelpers', () => {
     });
   });
 
+  it('dedupes ChatGC confirmed messages against optimistic messages with transaction hashes', () => {
+    const optimistic: ChatMessage = {
+      id: 'local-2',
+      direction: 'outgoing',
+      text: 'hello',
+      deliveryState: 'sent',
+      timestamp: 98,
+      txHash: `0x${'11'.repeat(32)}`
+    };
+
+    const confirmed = entry({
+      id: 'chatgc:2632500:0xe5101d33986c91565d2c9f8b49aaf0b8ffee2243:1',
+      txHash: 'chatgc:2632500:0xe5101d33986c91565d2c9f8b49aaf0b8ffee2243:1',
+      timestamp: 100
+    });
+    const next = mergeDirectHistoryEntries({ [peer]: [optimistic] }, [confirmed], wallet);
+
+    expect(next[peer]).toHaveLength(1);
+    expect(next[peer][0]).toMatchObject({
+      id: confirmed.id,
+      txHash: confirmed.txHash
+    });
+  });
+
+  it('dedupes ChatGC optimistic messages during contact preview syncs', () => {
+    const optimistic: ChatMessage = {
+      id: 'local-preview',
+      direction: 'outgoing',
+      text: 'hello',
+      deliveryState: 'sent',
+      timestamp: 98,
+      txHash: `0x${'22'.repeat(32)}`
+    };
+
+    const confirmed = entry({
+      id: 'chatgc:2632500:0xe5101d33986c91565d2c9f8b49aaf0b8ffee2243:2',
+      txHash: 'chatgc:2632500:0xe5101d33986c91565d2c9f8b49aaf0b8ffee2243:2',
+      timestamp: 100
+    });
+    const next = mergeDirectHistoryEntries(
+      { [peer]: [optimistic] },
+      [confirmed],
+      wallet,
+      { pruneOptimisticOutgoing: true }
+    );
+
+    expect(next[peer]).toHaveLength(1);
+    expect(next[peer][0].id).toBe(confirmed.id);
+  });
+
   it('keeps existing messages when adding older history without optimistic pruning', () => {
     const existing: ChatMessage = {
       id: 'existing',

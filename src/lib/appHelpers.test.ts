@@ -56,6 +56,13 @@ describe('message reference helpers', () => {
     ).toBe(true);
   });
 
+  it('matches ChatGC scoped message IDs without relying on raw numeric IDs', () => {
+    const scopedId = 'chatgc:2632500:0xe5101d33986c91565d2c9f8b49aaf0b8ffee2243:42';
+
+    expect(buildMessageReferenceKeys({ txHash: scopedId })).toEqual([`m:${scopedId}`]);
+    expect(messageReferencesMatch({ txHash: scopedId }, { txHash: scopedId.toUpperCase() })).toBe(true);
+  });
+
   it('preserves user-authored message line breaks', () => {
     const plain = 'first line\nsecond line';
     const payload = buildMessageWithReplyPayload(plain);

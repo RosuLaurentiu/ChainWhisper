@@ -1,4 +1,4 @@
-import { messageReferencesMatch } from './appHelpers';
+import { buildMessageReferenceKeys, messageReferencesMatch, type MessageReferenceCandidate } from './appHelpers';
 import {
   isWalletAddress,
   normalizeMessagesByContact,
@@ -43,7 +43,7 @@ const findMatchingOptimisticOutgoingIndex = (
       candidate.direction !== 'outgoing' ||
       candidate.text !== entry.text ||
       (candidate.replyToText ?? '') !== (entry.replyToText ?? '') ||
-      !messageReferencesMatch(
+      !optimisticReferencesMatch(
         {
           txHash: candidate.replyToTxHash,
           blockNumber: candidate.replyToBlockNumber,
@@ -55,7 +55,7 @@ const findMatchingOptimisticOutgoingIndex = (
           logIndex: entry.replyToLogIndex
         }
       ) ||
-      !messageReferencesMatch(
+      !optimisticReferencesMatch(
         {
           txHash: candidate.reactionToTxHash,
           blockNumber: candidate.reactionToBlockNumber,
@@ -100,6 +100,18 @@ const findMatchingOptimisticOutgoingIndex = (
   }
 
   return matchedLocalIndex;
+};
+
+const optimisticReferencesMatch = (
+  left: MessageReferenceCandidate,
+  right: MessageReferenceCandidate
+): boolean => {
+  const leftKeys = buildMessageReferenceKeys(left);
+  const rightKeys = buildMessageReferenceKeys(right);
+  if (leftKeys.length === 0 && rightKeys.length === 0) {
+    return true;
+  }
+  return messageReferencesMatch(left, right);
 };
 
 export const mergeDirectHistoryEntries = (
