@@ -469,7 +469,17 @@ export default function P2PTradingPage({
     sharedWalletSession?.sessionOnboardInfo?.[walletKey]?.aesKey &&
     sharedWalletAesHealth?.status !== 'key-mismatch'
   );
-  const walletHasAes = hasSessionAesKey(walletAddress, onboardInfoByAddress) || sharedWalletHasAes;
+  const effectiveOnboardInfoByAddress = useMemo(() => {
+    if (!walletKey || sharedWalletKey !== walletKey) {
+      return onboardInfoByAddress;
+    }
+    return mergeOnboardInfoByAddress(
+      onboardInfoByAddress,
+      walletKey,
+      sharedWalletSession?.sessionOnboardInfo?.[walletKey]
+    );
+  }, [onboardInfoByAddress, sharedWalletKey, sharedWalletSession?.sessionOnboardInfo, walletKey]);
+  const walletHasAes = hasSessionAesKey(walletAddress, effectiveOnboardInfoByAddress) || sharedWalletHasAes;
   const activeWalletScopedSnapAesState = resolveWalletScopedSnapAesState(
     walletScopedSnapAesState,
     walletAddress,
@@ -684,15 +694,6 @@ export default function P2PTradingPage({
       sharedBurnerIsNotLocal ||
       sharedBrowserIsNotLocal;
 
-    if (
-      !sharedAddress ||
-      !shouldApplySharedWallet ||
-      connectingWalletId ||
-      skippedSharedWalletKeyRef.current === sharedWalletKey
-    ) {
-      return;
-    }
-
     const sharedOnboardInfo = sharedWalletSession?.sessionOnboardInfo[sharedWalletKey];
     const mergeSharedOnboardInfo = () => {
       if (!sharedOnboardInfo) {
@@ -701,7 +702,21 @@ export default function P2PTradingPage({
       setOnboardInfoByAddress((previous) =>
         mergeOnboardInfoByAddress(previous, sharedWalletKey, sharedOnboardInfo)
       );
+      signerCacheRef.current[sharedWalletKey]?.setUserOnboardInfo(sharedOnboardInfo);
     };
+
+    if (sharedAddress && sharedWalletKey === walletKey) {
+      mergeSharedOnboardInfo();
+    }
+
+    if (
+      !sharedAddress ||
+      !shouldApplySharedWallet ||
+      connectingWalletId ||
+      skippedSharedWalletKeyRef.current === sharedWalletKey
+    ) {
+      return;
+    }
 
     if (sharedWalletSession?.activeSignerSource === 'metamask' && sharedWalletSession.browserProvider) {
       providerRef.current = sharedWalletSession.browserProvider;
@@ -769,25 +784,25 @@ export default function P2PTradingPage({
       return;
     }
 
-      onWalletSessionChange({
-        activeSignerSource: activeWalletSource,
+    onWalletSessionChange({
+      activeSignerSource: activeWalletSource,
       activeBurnerWalletId: selectedBurnerWalletId,
       browserProvider: browserProvider ?? null,
       browserWalletId: activeWalletSource === 'metamask' ? selectedWalletId : '',
       browserWalletLabel: activeWalletSource === 'metamask' ? connectedWalletLabel || 'Browser wallet' : '',
       burnerWallet: activeWalletSource === 'burner' ? appWallet : null,
       burnerWallets,
-        chainId,
-        sessionOnboardInfo: onboardInfoByAddress,
-        walletAesHealthByAddress: sharedWalletSession?.walletAesHealthByAddress,
-        walletAddress: nextAddress
-      });
+      chainId,
+      sessionOnboardInfo: effectiveOnboardInfoByAddress,
+      walletAesHealthByAddress: sharedWalletSession?.walletAesHealthByAddress,
+      walletAddress: nextAddress
+    });
   }, [
     burnerWallets,
     chainId,
     connectedWalletLabel,
     onWalletSessionChange,
-    onboardInfoByAddress,
+    effectiveOnboardInfoByAddress,
     selectedBurnerWalletId,
     selectedWalletId,
     sharedWalletSession?.walletAesHealthByAddress,
@@ -1028,7 +1043,7 @@ export default function P2PTradingPage({
         });
         const signer = new cotiEthers.Wallet(selectedRecord.privateKey, rpcProvider);
         const cacheKey = signer.address.toLowerCase();
-        const cachedOnboardInfo = onboardInfoByAddress[cacheKey];
+        const cachedOnboardInfo = effectiveOnboardInfoByAddress[cacheKey];
         if (cachedOnboardInfo) {
           signer.setUserOnboardInfo(cachedOnboardInfo);
         }
@@ -1082,7 +1097,7 @@ export default function P2PTradingPage({
         setConnectingWalletId('');
       }
     },
-    [markSharedWalletSkippedAfterLocalAppSwitch, onboardInfoByAddress]
+    [effectiveOnboardInfoByAddress, markSharedWalletSkippedAfterLocalAppSwitch]
   );
 
   const connectBurnerWallet = useCallback(
@@ -1271,7 +1286,7 @@ export default function P2PTradingPage({
     chainId,
     ensureCotiNetwork,
     mergeOnboardInfoByAddress,
-    onboardInfoByAddress,
+    onboardInfoByAddress: effectiveOnboardInfoByAddress,
     providerRef,
     setChainId,
     setOnboardInfoByAddress,
