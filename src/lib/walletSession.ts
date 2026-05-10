@@ -9,6 +9,7 @@ import {
 import type { WalletAesHealthState } from './cotiAesUnlock';
 
 export type SharedWalletSession = {
+  actions?: WalletSessionActions;
   activeSignerSource: SignerSource;
   activeBurnerWalletId?: string;
   browserProvider: Eip1193Provider | null;
@@ -22,6 +23,22 @@ export type SharedWalletSession = {
   sessionOnboardInfo: Record<string, OnboardInfo>;
   walletAesHealthByAddress?: Record<string, WalletAesHealthState>;
   walletAddress: string;
+};
+
+export type WalletBrowserConnectOptions = {
+  forceAccountPicker?: boolean;
+  forceFreshPrivacy?: boolean;
+  preparePrivacy?: boolean;
+};
+
+export type WalletSessionActions = {
+  connectAppWallet: (walletId?: string) => Promise<void> | void;
+  connectBrowserWallet: (walletId?: string, options?: WalletBrowserConnectOptions) => Promise<unknown>;
+  disconnect: () => Promise<void> | void;
+  generateAppWallet: () => Promise<void> | void;
+  importAppWallet: () => Promise<void> | void;
+  switchAppWallet: (walletIdOrAddress: string) => Promise<void> | void;
+  unlockPrivacy: (options?: { forceFreshPrivacy?: boolean }) => Promise<unknown>;
 };
 
 export type WalletStatusTone = 'ready' | 'warning' | 'locked' | 'muted';

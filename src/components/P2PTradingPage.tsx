@@ -148,8 +148,7 @@ import {
 } from '../lib/tradeCounterSupport';
 import { applyTradeRecoveryPayloadToSnapshot } from '../lib/tradeRecoveryPayload';
 import {
-  clearWalletTransactionFlow,
-  isWalletTransactionFlowActive,
+  isWalletTransactionPromptActive,
   recordWalletTransactionFlowStage,
   runWalletTransactionFlow
 } from '../lib/walletTransactionFlow';
@@ -363,6 +362,7 @@ export default function P2PTradingPage({
     sharedWalletSession?.activeSignerSource === 'metamask' ? sharedWalletSession : null;
   const initialSharedAppWallet =
     sharedWalletSession?.activeSignerSource === 'burner' ? sharedWalletSession : null;
+  const sharedWalletActions = sharedWalletSession?.actions;
   const [walletAddress, setWalletAddress] = useState(() => initialSharedWalletAddress);
   const [chainId, setChainId] = useState<number | null>(() =>
     initialSharedWalletAddress ? sharedWalletSession?.chainId ?? null : null
@@ -461,7 +461,6 @@ export default function P2PTradingPage({
       : {}
   );
   const skippedSharedWalletKeyRef = useRef('');
-  const pendingEmptyAccountSyncRef = useRef<number | null>(null);
   const tradeLinkInputRef = useRef<HTMLInputElement | null>(null);
 
   const allowedBrowserWalletOptions = useMemo(
@@ -544,7 +543,6 @@ export default function P2PTradingPage({
       stalePrivateTokenAddressSet.has(tokenAddress.toLowerCase()),
     [cotiSnapAesStatus, stalePrivateTokenAddressSet]
   );
-  const tradePrimaryWalletKind = walletPreference?.kind === 'app' ? 'app' : 'browser';
   const routeView = route.view;
   const routeTradeId = route.tradeId;
   const routeEscrowContract = route.escrowContract;
@@ -771,6 +769,17 @@ export default function P2PTradingPage({
     const sharedWalletKey = sharedAddress.toLowerCase();
     if (!sharedAddress) {
       skippedSharedWalletKeyRef.current = '';
+      if (sharedWalletSession && walletAddress && !connectingWalletId) {
+        providerRef.current = null;
+        burnerWalletRef.current = null;
+        signerCacheRef.current = {};
+        setWalletAddress('');
+        setChainId(null);
+        setConnectedWalletLabel('Wallet');
+        setSelectedWalletId('');
+        setSelectedBurnerWalletId('');
+        setWalletError('');
+      }
     }
     const localBurnerWalletKey = burnerWalletRef.current?.address.toLowerCase() ?? '';
     const localBrowserProvider = providerRef.current;
@@ -1079,6 +1088,28 @@ export default function P2PTradingPage({
       setTradeActionError('');
       setConnectingWalletId(walletOption?.id ?? 'wallet');
 
+      if (sharedWalletActions?.connectBrowserWallet) {
+        try {
+          await sharedWalletActions.connectBrowserWallet(walletOption?.id ?? walletId, {
+            forceAccountPicker
+          });
+          if (walletOption?.id) {
+            setSelectedWalletId(walletOption.id);
+            saveWalletPreference({ kind: 'browser', browserWalletId: walletOption.id });
+            try {
+              window.localStorage.setItem(WALLET_STATUS_STORAGE_KEY, walletOption.id);
+            } catch {
+            }
+          }
+          setWalletError('');
+        } catch (error) {
+          setWalletError(getProviderErrorMessage(error, 'Failed to connect wallet.'));
+        } finally {
+          setConnectingWalletId('');
+        }
+        return;
+      }
+
       if (!provider) {
         setWalletError(
           isMobileBrowserUserAgent()
@@ -1111,7 +1142,7 @@ export default function P2PTradingPage({
         setConnectingWalletId('');
       }
     },
-    [attachWallet, browserWalletOptions, ensureCotiNetwork, preferredWalletOption]
+    [attachWallet, browserWalletOptions, ensureCotiNetwork, preferredWalletOption, sharedWalletActions]
   );
 
   const unlockBurnerWalletWithPin = useCallback(
@@ -1199,6 +1230,23 @@ export default function P2PTradingPage({
     async (walletId?: string) => {
       setWalletError('');
       setTradeActionError('');
+      if (sharedWalletActions?.connectAppWallet || sharedWalletActions?.switchAppWallet) {
+        setConnectingWalletId('burner');
+        try {
+          if (walletId && sharedWalletActions.switchAppWallet) {
+            await Promise.resolve(sharedWalletActions.switchAppWallet(walletId));
+          } else if (sharedWalletActions.connectAppWallet) {
+            await Promise.resolve(sharedWalletActions.connectAppWallet(walletId));
+          }
+          setWalletError('');
+        } catch (error) {
+          setWalletError(getProviderErrorMessage(error, 'Failed to connect app wallet.'));
+        } finally {
+          setConnectingWalletId('');
+        }
+        return;
+      }
+
       const warmBurnerWallet = burnerWalletRef.current;
       const walletSelector = walletId?.trim() ?? '';
       const walletSelectorKey = walletSelector.toLowerCase();
@@ -1256,27 +1304,43 @@ export default function P2PTradingPage({
 
       await unlockBurnerWalletWithPin(walletId, '');
     },
-    [burnerWallets, markSharedWalletSkippedAfterLocalAppSwitch, unlockBurnerWalletWithPin]
+    [burnerWallets, markSharedWalletSkippedAfterLocalAppSwitch, sharedWalletActions, unlockBurnerWalletWithPin]
   );
 
   const beginGenerateBurnerWallet = useCallback(() => {
     setWalletError('');
     setTradeActionError('');
+    if (sharedWalletActions?.generateAppWallet) {
+      setWalletMenuOpen(false);
+      Promise.resolve(sharedWalletActions.generateAppWallet()).catch((error) => {
+        setWalletError(getProviderErrorMessage(error, 'Failed to generate app wallet.'));
+      });
+      return;
+    }
+
     setPendingBurnerAction('generate');
     setPendingBurnerWalletId('');
     setBurnerPinMode(chooseBurnerPinMode());
     setBurnerPinInput('');
     setWalletMenuOpen(false);
     setShowBurnerPinModal(true);
-  }, [chooseBurnerPinMode]);
+  }, [chooseBurnerPinMode, sharedWalletActions]);
 
   const beginImportBurnerWallet = useCallback(() => {
     setWalletError('');
     setTradeActionError('');
+    if (sharedWalletActions?.importAppWallet) {
+      setWalletMenuOpen(false);
+      Promise.resolve(sharedWalletActions.importAppWallet()).catch((error) => {
+        setWalletError(getProviderErrorMessage(error, 'Failed to import app wallet.'));
+      });
+      return;
+    }
+
     setBurnerImportInput('');
     setWalletMenuOpen(false);
     setShowBurnerImportModal(true);
-  }, []);
+  }, [sharedWalletActions]);
 
   const submitBurnerImport = useCallback(async () => {
     setWalletError('');
@@ -1333,47 +1397,6 @@ export default function P2PTradingPage({
     pendingBurnerAction,
     pendingBurnerWalletId,
     unlockBurnerWalletWithPin
-  ]);
-
-  useEffect(() => {
-    const sharedWalletAddress = sharedWalletSession?.walletAddress.trim() ?? '';
-    if (
-      tradePrimaryWalletKind === 'app' ||
-      sharedWalletAddress ||
-      providerRef.current ||
-      walletAddress ||
-      connectingWalletId ||
-      !preferredWalletOption?.provider?.request
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    const restoreAuthorizedWallet = async () => {
-      try {
-        const accounts = (await preferredWalletOption.provider.request({ method: 'eth_accounts' })) as string[];
-        const selected = accounts[0] ?? '';
-        if (cancelled || !selected) {
-          return;
-        }
-
-        await attachWallet(preferredWalletOption.provider, selected, preferredWalletOption.label, preferredWalletOption.id);
-        setWalletError('');
-      } catch {
-      }
-    };
-
-    restoreAuthorizedWallet();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    attachWallet,
-    connectingWalletId,
-    preferredWalletOption,
-    sharedWalletSession?.walletAddress,
-    tradePrimaryWalletKind,
-    walletAddress
   ]);
 
   const getTradeSigner = useP2PTradeSigner({
@@ -2309,7 +2332,7 @@ export default function P2PTradingPage({
 
   const flushQueuedP2PSync = useCallback(() => {
     if (
-      isWalletTransactionFlowActive({
+      isWalletTransactionPromptActive({
         chainId,
         provider: connectedWithBurner ? null : providerRef.current,
         walletAddress
@@ -2345,7 +2368,7 @@ export default function P2PTradingPage({
         tradeId: request.tradeId
       });
       if (
-        isWalletTransactionFlowActive({
+        isWalletTransactionPromptActive({
           chainId,
           provider: connectedWithBurner ? null : providerRef.current,
           walletAddress
@@ -3906,131 +3929,6 @@ export default function P2PTradingPage({
   };
 
   useEffect(() => {
-    const provider = providerRef.current;
-    if (!provider?.on || !provider?.removeListener) {
-      return;
-    }
-
-    const clearPendingEmptyAccountSync = () => {
-      if (pendingEmptyAccountSyncRef.current !== null) {
-        window.clearTimeout(pendingEmptyAccountSyncRef.current);
-        pendingEmptyAccountSyncRef.current = null;
-      }
-    };
-    const clearWalletScopedSession = (previousWalletKey: string, selectedWalletKey: string) => {
-      if (previousWalletKey) {
-        clearCotiAesUnlockRequest(previousWalletKey, provider);
-        clearFallbackAesSessionOnboardInfo(previousWalletKey, provider);
-      }
-      if (selectedWalletKey) {
-        clearCotiAesUnlockRequest(selectedWalletKey, provider);
-      }
-      signerCacheRef.current = {};
-      setWalletScopedSnapAesState(null);
-      clearWalletBalances();
-      setOnboardInfoByAddress((previous) => {
-        const next = { ...previous };
-        if (selectedWalletKey) {
-          delete next[selectedWalletKey];
-        }
-        if (previousWalletKey) {
-          delete next[previousWalletKey];
-        }
-        return next;
-      });
-    };
-    const handleAccountsChanged = (accounts: unknown) => {
-      const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
-      const selected = nextAccounts[0] ?? '';
-      const selectedWalletKey = selected.trim().toLowerCase();
-      const previousWalletKey = walletAddress.trim().toLowerCase();
-      const previousFlowInput = {
-        chainId,
-        provider,
-        walletAddress: previousWalletKey
-      };
-      const previousWalletFlowActive = previousWalletKey && isWalletTransactionFlowActive(previousFlowInput);
-      if (previousWalletFlowActive && (!selectedWalletKey || selectedWalletKey === previousWalletKey)) {
-        clearPendingEmptyAccountSync();
-        return;
-      }
-      if (previousWalletFlowActive && selectedWalletKey !== previousWalletKey) {
-        clearWalletTransactionFlow(previousFlowInput);
-      }
-      if (!selectedWalletKey && previousWalletKey) {
-        clearPendingEmptyAccountSync();
-        pendingEmptyAccountSyncRef.current = window.setTimeout(async () => {
-          pendingEmptyAccountSyncRef.current = null;
-          if (
-            isWalletTransactionFlowActive({
-              chainId,
-              provider,
-              walletAddress: previousWalletKey
-            })
-          ) {
-            return;
-          }
-          const currentAccounts = await provider.request({ method: 'eth_accounts' }).catch(() => []) as unknown;
-          const currentSelected = Array.isArray(currentAccounts) ? String(currentAccounts[0] ?? '') : '';
-          const currentSelectedWalletKey = currentSelected.trim().toLowerCase();
-          if (currentSelectedWalletKey) {
-            if (currentSelectedWalletKey !== previousWalletKey) {
-              clearWalletScopedSession(previousWalletKey, currentSelectedWalletKey);
-            }
-            setWalletAddress(currentSelected);
-            return;
-          }
-          clearWalletScopedSession(previousWalletKey, '');
-          setWalletAddress('');
-          setChainId(null);
-        }, 2500);
-        return;
-      }
-      clearPendingEmptyAccountSync();
-      if (selectedWalletKey !== previousWalletKey) {
-        clearWalletScopedSession(previousWalletKey, selectedWalletKey);
-      }
-      setWalletAddress(selected);
-      if (!selected) {
-        setChainId(null);
-      }
-    };
-    const handleChainChanged = (newChainId: unknown) => {
-      if (
-        walletAddress &&
-        isWalletTransactionFlowActive({
-          chainId,
-          provider,
-          walletAddress
-        })
-      ) {
-        return;
-      }
-      if (typeof newChainId === 'string' || typeof newChainId === 'number') {
-        const nextChainId = normalizeChainId(newChainId);
-        if (chainId !== null && nextChainId !== chainId && walletAddress) {
-          const currentWalletKey = walletAddress.trim().toLowerCase();
-          clearWalletTransactionFlow({
-            chainId,
-            provider,
-            walletAddress
-          });
-          clearWalletScopedSession(currentWalletKey, '');
-        }
-        setChainId(nextChainId);
-      }
-    };
-
-    provider.on('accountsChanged', handleAccountsChanged);
-    provider.on('chainChanged', handleChainChanged);
-    return () => {
-      clearPendingEmptyAccountSync();
-      provider.removeListener?.('accountsChanged', handleAccountsChanged);
-      provider.removeListener?.('chainChanged', handleChainChanged);
-    };
-  }, [chainId, clearWalletBalances, walletAddress]);
-
-  useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
     let pollIntervalId: number | null = null;
@@ -4045,7 +3943,7 @@ export default function P2PTradingPage({
         return;
       }
       if (
-        isWalletTransactionFlowActive({
+        isWalletTransactionPromptActive({
           chainId,
           provider: providerRef.current,
           walletAddress
@@ -4072,7 +3970,7 @@ export default function P2PTradingPage({
         return;
       }
       if (
-        isWalletTransactionFlowActive({
+        isWalletTransactionPromptActive({
           chainId,
           provider: providerRef.current,
           walletAddress

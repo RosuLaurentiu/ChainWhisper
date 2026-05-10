@@ -6,7 +6,9 @@ import {
   clearWalletTransactionFlowMemoryForTest,
   clearWalletTransactionFlowsForTest,
   endWalletTransactionFlow,
+  getWalletTransactionFlowState,
   isWalletTransactionFlowActive,
+  isWalletTransactionPromptActive,
   runWalletTransactionFlow
 } from './walletTransactionFlow';
 
@@ -53,6 +55,8 @@ describe('walletTransactionFlow', () => {
     });
 
     expect(isWalletTransactionFlowActive()).toBe(true);
+    expect(getWalletTransactionFlowState()).toBe('memory-active');
+    expect(isWalletTransactionPromptActive()).toBe(true);
     expect(
       isWalletTransactionFlowActive({
         chainId: 2632500,
@@ -70,6 +74,7 @@ describe('walletTransactionFlow', () => {
 
     endWalletTransactionFlow(flow);
     expect(isWalletTransactionFlowActive()).toBe(false);
+    expect(getWalletTransactionFlowState()).toBe('inactive');
   });
 
   it('supports nested transaction flows for the same wallet session', () => {
@@ -119,6 +124,8 @@ describe('walletTransactionFlow', () => {
 
     clearWalletTransactionFlowMemoryForTest();
     expect(isWalletTransactionFlowActive(input)).toBe(true);
+    expect(getWalletTransactionFlowState(input)).toBe('stored-handoff');
+    expect(isWalletTransactionPromptActive(input)).toBe(false);
 
     endWalletTransactionFlow(flow);
     expect(isWalletTransactionFlowActive(input)).toBe(false);

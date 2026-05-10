@@ -12,7 +12,7 @@ import {
   resolveTradeEscrowContractConfig
 } from '../lib/appChain';
 import type { TradePageView } from './useP2PTradeRoute';
-import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
+import { isWalletTransactionPromptActive } from '../lib/walletTransactionFlow';
 
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
 
@@ -134,7 +134,7 @@ export default function useP2PTradeData({
   const refreshPublicTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
     const requestSessionKey = syncSessionKey;
-    if (isWalletTransactionFlowActive()) {
+    if (isWalletTransactionPromptActive()) {
       return;
     }
     if (publicTradesRefreshRef.current) {
@@ -184,7 +184,7 @@ export default function useP2PTradeData({
   const refreshMyTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
     const requestSessionKey = syncSessionKey;
-    if (isWalletTransactionFlowActive()) {
+    if (isWalletTransactionPromptActive()) {
       return;
     }
     if (!walletAddress) {
@@ -291,7 +291,7 @@ export default function useP2PTradeData({
 
   const refreshTradeDetail = useCallback(
     async (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions): Promise<TradeSnapshot | null> => {
-      if (isWalletTransactionFlowActive()) {
+      if (isWalletTransactionPromptActive()) {
         return detailTradeRef.current;
       }
       const snapshot = await readTradeDetail(tradeId, escrowContract);
@@ -320,21 +320,21 @@ export default function useP2PTradeData({
   );
 
   useEffect(() => {
-    if (isWalletTransactionFlowActive()) {
+    if (isWalletTransactionPromptActive()) {
       return;
     }
     refreshPublicTrades({ silent: publicTradesRef.current.length > 0 }).catch(() => {});
   }, [refreshPublicTrades]);
 
   useEffect(() => {
-    if (isWalletTransactionFlowActive()) {
+    if (isWalletTransactionPromptActive()) {
       return;
     }
     refreshMyTrades({ silent: myTradesRef.current.length > 0 }).catch(() => {});
   }, [refreshMyTrades]);
 
   useEffect(() => {
-    if (isWalletTransactionFlowActive()) {
+    if (isWalletTransactionPromptActive()) {
       return;
     }
     if (routeView !== 'trade' || routeTradeId === null) {

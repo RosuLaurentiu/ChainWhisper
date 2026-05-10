@@ -82,7 +82,8 @@ import {
 import {
   hasSessionAesKey,
   resolveWalletBlockedActionLabel,
-  type SharedWalletSession
+  type SharedWalletSession,
+  type WalletSessionActions
 } from './lib/walletSession';
 import {
   getPathForAppPage,
@@ -7161,8 +7162,51 @@ export default function App() {
     walletAesHealth: walletAesHealthByAddress[walletAddress.trim().toLowerCase()] ?? null,
     walletAddress
   });
+  const sharedWalletActions = useMemo<WalletSessionActions>(
+    () => ({
+      connectAppWallet: async (walletId?: string) => {
+        if (walletId) {
+          await Promise.resolve(handleSwitchActiveBurnerWallet(walletId));
+          return;
+        }
+        await beginBurnerPinFlow('stored');
+      },
+      connectBrowserWallet: (walletId?: string, options = {}) =>
+        activateBrowserWalletSession(walletId, {
+          forceAccountPicker: options.forceAccountPicker,
+          forceFreshPrivacy: options.forceFreshPrivacy,
+          preparePrivacy: options.preparePrivacy
+        }),
+      disconnect: disconnectWallet,
+      generateAppWallet: () => beginBurnerPinFlow('generate'),
+      importAppWallet: () => {
+        setShowBurnerImportModal(true);
+      },
+      switchAppWallet: (walletIdOrAddress: string) => Promise.resolve(handleSwitchActiveBurnerWallet(walletIdOrAddress)),
+      unlockPrivacy: (options = {}) => {
+        if (activeSignerSource === 'metamask') {
+          return activateBrowserWalletSession(currentInjectedWalletOption?.id ?? preferredBrowserWalletId, {
+            forceFreshPrivacy: options.forceFreshPrivacy,
+            preparePrivacy: true
+          });
+        }
+        return beginBurnerPinFlow('stored');
+      }
+    }),
+    [
+      activateBrowserWalletSession,
+      activeSignerSource,
+      beginBurnerPinFlow,
+      currentInjectedWalletOption?.id,
+      disconnectWallet,
+      handleSwitchActiveBurnerWallet,
+      preferredBrowserWalletId,
+      setShowBurnerImportModal
+    ]
+  );
   const sharedTradeWalletSession = useMemo<SharedWalletSession>(
     () => ({
+      actions: sharedWalletActions,
       activeSignerSource,
       browserProvider: activeProvider ?? browserWalletSession?.provider ?? null,
       browserWalletId: currentInjectedWalletOption?.id ?? browserWalletSession?.walletId ?? preferredBrowserWalletId,
@@ -7199,6 +7243,7 @@ export default function App() {
       preferredBrowserWalletId,
       preferredInjectedWalletOption?.label,
       sessionOnboardInfo,
+      sharedWalletActions,
       setWalletAesHealth,
       walletAesHealthByAddress,
       walletAddress

@@ -11,6 +11,8 @@ export type WalletTransactionSessionInput = {
   walletAddress?: string | null;
 };
 
+export type WalletTransactionFlowState = 'inactive' | 'memory-active' | 'stored-handoff';
+
 type StoredWalletTransactionFlow = {
   count: number;
   expiresAt: number;
@@ -225,17 +227,28 @@ export const endWalletTransactionFlow = (flow: WalletTransactionFlow | null | un
 };
 
 export const isWalletTransactionFlowActive = (input?: WalletTransactionSessionInput): boolean => {
+  return getWalletTransactionFlowState(input) !== 'inactive';
+};
+
+export const getWalletTransactionFlowState = (input?: WalletTransactionSessionInput): WalletTransactionFlowState => {
   if (input) {
     const sessionKey = getWalletTransactionSessionKey(input);
-    return (activeFlowCounts.get(sessionKey) ?? 0) > 0 || Boolean(readStoredFlows()[sessionKey]);
+    if ((activeFlowCounts.get(sessionKey) ?? 0) > 0) {
+      return 'memory-active';
+    }
+    return readStoredFlows()[sessionKey] ? 'stored-handoff' : 'inactive';
   }
 
   for (const count of activeFlowCounts.values()) {
     if (count > 0) {
-      return true;
+      return 'memory-active';
     }
   }
-  return Object.keys(readStoredFlows()).length > 0;
+  return Object.keys(readStoredFlows()).length > 0 ? 'stored-handoff' : 'inactive';
+};
+
+export const isWalletTransactionPromptActive = (input?: WalletTransactionSessionInput): boolean => {
+  return getWalletTransactionFlowState(input) === 'memory-active';
 };
 
 export const recordWalletTransactionFlowStage = (

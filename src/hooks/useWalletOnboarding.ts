@@ -39,6 +39,7 @@ export type BrowserWalletSession = {
 };
 
 type BrowserWalletActivationOptions = {
+  forceAccountPicker?: boolean;
   forceFreshPrivacy?: boolean;
   preparePrivacy?: boolean;
 };
@@ -321,6 +322,14 @@ export function useWalletOnboarding({
 
       try {
         setStatus(`Connecting ${walletLabel}...`);
+        if (options?.forceAccountPicker) {
+          await provider
+            .request({
+              method: 'wallet_requestPermissions',
+              params: [{ eth_accounts: {} }]
+            })
+            .catch(() => null);
+        }
         const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
         const selected = accounts[0] ?? '';
 
@@ -411,7 +420,17 @@ export function useWalletOnboarding({
       setConnectingWalletLabel(targetSession.walletLabel);
 
       try {
-        const accounts = (await targetSession.provider.request({ method: 'eth_accounts' })) as string[];
+        if (options?.forceAccountPicker) {
+          await targetSession.provider
+            .request({
+              method: 'wallet_requestPermissions',
+              params: [{ eth_accounts: {} }]
+            })
+            .catch(() => null);
+        }
+        const accounts = (await targetSession.provider.request({
+          method: options?.forceAccountPicker ? 'eth_requestAccounts' : 'eth_accounts'
+        })) as string[];
         const selected =
           accounts.find((account) => account.toLowerCase() === targetSession.address.toLowerCase()) ?? accounts[0] ?? '';
         if (!selected) {
