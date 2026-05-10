@@ -23,6 +23,7 @@ import { canUseWalletAuthorityForDirectAccess } from '../lib/tradeCounterSupport
 import { doesAccessSecretMatchHash, normalizeAccessHash, PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../lib/tradeLinks';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 import { isHiddenLiquidityTrade } from '../lib/p2pTradeView';
+import type { TradeNavigationOptions } from './useP2PTradeRoute';
 
 type TradeSigner = JsonRpcSigner | Wallet;
 export type CounterAcceptMode = 'close-related' | 'accept-only';
@@ -125,11 +126,16 @@ const carryKnownDirectTerms = (latestSnapshot: TradeSnapshot, sourceSnapshot: Tr
   };
 };
 
+const TERMINAL_HANDOFF_NAVIGATION: TradeNavigationOptions = {
+  rememberPendingTerminalRoute: true,
+  replace: true
+};
+
 type UseP2PTradeActionsArgs = {
   connectedWithBurner: boolean;
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   mergeTradeSnapshot: (snapshot: TradeSnapshot) => void;
-  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
+  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string, options?: TradeNavigationOptions) => void;
   refreshTradeDataInBackground: (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => void;
   refreshTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
@@ -194,7 +200,7 @@ export default function useP2PTradeActions({
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
         let accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract, TERMINAL_HANDOFF_NAVIGATION);
         let latestSnapshot = carryKnownDirectTerms(
           (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot,
           snapshot
@@ -353,7 +359,7 @@ export default function useP2PTradeActions({
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract, TERMINAL_HANDOFF_NAVIGATION);
         const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
         if (latestSnapshot.counterParentTradeId) {
           throw new Error('Counter offers must be accepted in full so the original trade can close atomically.');
@@ -466,7 +472,7 @@ export default function useP2PTradeActions({
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract, TERMINAL_HANDOFF_NAVIGATION);
         const signer = await getTradeSigner(false);
         await cancelTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'cancelled' };
@@ -488,7 +494,7 @@ export default function useP2PTradeActions({
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract, TERMINAL_HANDOFF_NAVIGATION);
         const signer = await getTradeSigner(false);
         await declineTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'declined' };

@@ -10,6 +10,12 @@ import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 
 export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
 
+export type TradeNavigationOptions = {
+  clearPendingTerminalRoute?: boolean;
+  rememberPendingTerminalRoute?: boolean;
+  replace?: boolean;
+};
+
 export type TradeRouteState = {
   view: TradePageView;
   tradeId: number | null;
@@ -24,6 +30,17 @@ export type ResolvedTradeLinkInput = {
   accessSecret?: string;
 };
 
+type PendingTradeTerminalRoute = {
+  escrowContract?: string;
+  path: string;
+  timestamp: number;
+  tradeId: number;
+};
+
+type TradeRouteStorage = Pick<Storage, 'getItem' | 'removeItem' | 'setItem'>;
+
+const PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
+const PENDING_TRADE_TERMINAL_ROUTE_TTL_MS = 10 * 60 * 1000;
 const createEmptyPublicRoute = (): TradeRouteState => ({ view: 'public', tradeId: null, accessSecret: '', routeError: '' });
 const createEmptyTradeRoute = (): TradeRouteState => ({ view: 'trade', tradeId: null, accessSecret: '', routeError: '' });
 
@@ -40,6 +57,128 @@ const normalizeTradeSearch = (value: string): string => {
 };
 
 const normalizeTradeHash = (value: string): string => value.replace(/^#/, '').trim();
+
+const getSessionRouteStorage = (): TradeRouteStorage | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+};
+
+const getCurrentTradePath = (): string => {
+  if (typeof window === 'undefined') {
+    return '/trades';
+  }
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+};
+
+const parseTradePathRoute = (path: string): TradeRouteState | null => {
+  try {
+    const url = new URL(path, 'https://chainwhisper.local');
+    return resolveTradeRouteFromParts(url.pathname, url.search, url.hash);
+  } catch {
+    return null;
+  }
+};
+
+export const clearPendingTradeTerminalRoute = (storage: TradeRouteStorage | null = getSessionRouteStorage()): void => {
+  try {
+    storage?.removeItem(PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY);
+  } catch {
+  }
+};
+
+export const readPendingTradeTerminalRoute = (
+  storage: TradeRouteStorage | null = getSessionRouteStorage(),
+  now = Date.now()
+): PendingTradeTerminalRoute | null => {
+  if (!storage) {
+    return null;
+  }
+
+  try {
+    const raw = storage.getItem(PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<PendingTradeTerminalRoute>;
+    const timestamp = typeof parsed.timestamp === 'number' ? parsed.timestamp : 0;
+    const tradeId = typeof parsed.tradeId === 'number' ? parsed.tradeId : 0;
+    const path = typeof parsed.path === 'string' ? parsed.path : '';
+    const route = path ? parseTradePathRoute(path) : null;
+    if (
+      !path ||
+      !Number.isSafeInteger(tradeId) ||
+      tradeId <= 0 ||
+      !route ||
+      route.view !== 'trade' ||
+      route.tradeId !== tradeId ||
+      now - timestamp > PENDING_TRADE_TERMINAL_ROUTE_TTL_MS
+    ) {
+      storage.removeItem(PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY);
+      return null;
+    }
+    return {
+      escrowContract: typeof parsed.escrowContract === 'string' ? parsed.escrowContract : route.escrowContract,
+      path,
+      timestamp,
+      tradeId
+    };
+  } catch {
+    try {
+      storage.removeItem(PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY);
+    } catch {
+    }
+    return null;
+  }
+};
+
+export const rememberPendingTradeTerminalRoute = (
+  path: string,
+  storage: TradeRouteStorage | null = getSessionRouteStorage(),
+  now = Date.now()
+): PendingTradeTerminalRoute | null => {
+  if (!storage) {
+    return null;
+  }
+
+  const route = parseTradePathRoute(path);
+  if (!route || route.view !== 'trade' || route.tradeId === null) {
+    clearPendingTradeTerminalRoute(storage);
+    return null;
+  }
+
+  const pendingRoute: PendingTradeTerminalRoute = {
+    escrowContract: route.escrowContract,
+    path,
+    timestamp: now,
+    tradeId: route.tradeId
+  };
+  try {
+    storage.setItem(PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY, JSON.stringify(pendingRoute));
+    return pendingRoute;
+  } catch {
+    return null;
+  }
+};
+
+export const resolvePendingTradeTerminalRoutePath = (
+  route: TradeRouteState,
+  currentPath: string,
+  storage: TradeRouteStorage | null = getSessionRouteStorage(),
+  now = Date.now()
+): string | null => {
+  const normalizedCurrentPath = normalizeTradePathname(currentPath.split('?')[0]?.split('#')[0] ?? currentPath);
+  if (route.view !== 'public' || normalizedCurrentPath !== '/trades') {
+    return null;
+  }
+
+  return readPendingTradeTerminalRoute(storage, now)?.path ?? null;
+};
 
 export const normalizeAccessSecret = (value?: string | null): string => {
   const secret = value?.trim() ?? '';
@@ -170,6 +309,16 @@ export const resolveTradeRouteFromLocation = (): TradeRouteState => {
   return resolveTradeRouteFromParts(window.location.pathname, window.location.search, window.location.hash);
 };
 
+const restorePendingTradeTerminalRouteFromLocation = (): TradeRouteState => {
+  const route = resolveTradeRouteFromLocation();
+  const pendingPath = resolvePendingTradeTerminalRoutePath(route, getCurrentTradePath());
+  if (!pendingPath || typeof window === 'undefined') {
+    return route;
+  }
+  window.history.replaceState(window.history.state, '', pendingPath);
+  return resolveTradeRouteFromLocation();
+};
+
 export const resolveTradeLinkInput = (value: string): ResolvedTradeLinkInput | null => {
   const raw = value.trim();
   if (!raw) {
@@ -249,16 +398,16 @@ export const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escro
 
 type UseP2PTradeRouteResult = {
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
-  navigateToTradePath: (path: string) => void;
-  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
+  navigateToTradePath: (path: string, options?: TradeNavigationOptions) => void;
+  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string, options?: TradeNavigationOptions) => void;
   route: TradeRouteState;
   showEmptyTradeRoute: () => void;
 };
 
 export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
-  const [route, setRoute] = useState<TradeRouteState>(() => resolveTradeRouteFromLocation());
+  const [route, setRoute] = useState<TradeRouteState>(() => restorePendingTradeTerminalRouteFromLocation());
 
-  const navigateToTradePath = useCallback((path: string) => {
+  const navigateToTradePath = useCallback((path: string, options?: TradeNavigationOptions) => {
     if (typeof window === 'undefined') {
       return;
     }
@@ -270,10 +419,25 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     nextUrl.hash = targetUrl.hash;
     const nextPath = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
     const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (currentPath !== nextPath) {
-      window.history.pushState(window.history.state, '', nextPath);
+    const targetRoute = resolveTradeRouteFromParts(targetUrl.pathname, targetUrl.search, targetUrl.hash);
+
+    if (options?.rememberPendingTerminalRoute) {
+      rememberPendingTradeTerminalRoute(nextPath);
+    } else if (
+      options?.clearPendingTerminalRoute !== false &&
+      (targetRoute.view !== 'trade' || targetRoute.tradeId === null)
+    ) {
+      clearPendingTradeTerminalRoute();
     }
-    setRoute(resolveTradeRouteFromLocation());
+
+    if (currentPath !== nextPath) {
+      if (options?.replace) {
+        window.history.replaceState(window.history.state, '', nextPath);
+      } else {
+        window.history.pushState(window.history.state, '', nextPath);
+      }
+    }
+    setRoute(restorePendingTradeTerminalRouteFromLocation());
   }, []);
 
   const buildTradeShareUrl = useCallback((tradeId: number, accessSecret?: string, escrowContract?: string): string => {
@@ -291,13 +455,14 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
   }, []);
 
   const openTrade = useCallback(
-    (tradeId: number, accessSecret?: string, escrowContract?: string) => {
-      navigateToTradePath(buildTradeLinkPath(tradeId, accessSecret, escrowContract));
+    (tradeId: number, accessSecret?: string, escrowContract?: string, options?: TradeNavigationOptions) => {
+      navigateToTradePath(buildTradeLinkPath(tradeId, accessSecret, escrowContract), options);
     },
     [navigateToTradePath]
   );
 
   const showEmptyTradeRoute = useCallback(() => {
+    clearPendingTradeTerminalRoute();
     setRoute(createEmptyTradeRoute());
   }, []);
 
@@ -307,13 +472,17 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     }
 
     const syncRoute = () => {
-      setRoute(resolveTradeRouteFromLocation());
+      setRoute(restorePendingTradeTerminalRouteFromLocation());
     };
     window.addEventListener('popstate', syncRoute);
     window.addEventListener('hashchange', syncRoute);
+    window.addEventListener('focus', syncRoute);
+    document.addEventListener('visibilitychange', syncRoute);
     return () => {
       window.removeEventListener('popstate', syncRoute);
       window.removeEventListener('hashchange', syncRoute);
+      window.removeEventListener('focus', syncRoute);
+      document.removeEventListener('visibilitychange', syncRoute);
     };
   }, []);
 

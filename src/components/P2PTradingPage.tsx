@@ -96,7 +96,11 @@ import {
 } from '../lib/walletOptions';
 import { hasSessionAesKey, type SharedWalletSession } from '../lib/walletSession';
 import useP2PWalletHeaderControl from '../hooks/useP2PWalletHeaderControl';
-import useP2PTradeRoute, { normalizeAccessSecret, resolveTradeLinkInput } from '../hooks/useP2PTradeRoute';
+import useP2PTradeRoute, {
+  clearPendingTradeTerminalRoute,
+  normalizeAccessSecret,
+  resolveTradeLinkInput
+} from '../hooks/useP2PTradeRoute';
 import useP2PTradeData from '../hooks/useP2PTradeData';
 import useP2PTradeActions from '../hooks/useP2PTradeActions';
 import useP2PTradeComposerActions from '../hooks/useP2PTradeComposerActions';
@@ -184,6 +188,10 @@ type P2PTradingPageProps = {
 };
 
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 20_000;
+const TERMINAL_HANDOFF_NAVIGATION = {
+  rememberPendingTerminalRoute: true,
+  replace: true
+} as const;
 const EMPTY_STALE_TOKEN_ADDRESSES: string[] = [];
 type TradeSigner = JsonRpcSigner | Wallet;
 type RecurringFundingBalanceResult = {
@@ -3015,7 +3023,12 @@ export default function P2PTradingPage({
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
-        openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        openTrade(
+          snapshot.tradeId,
+          resolvedRouteAccessSecret || undefined,
+          snapshot.escrowContract,
+          TERMINAL_HANDOFF_NAVIGATION
+        );
         const needsAes = recurring.mode !== 'public' || inputAsset.kind === 'private-erc20';
         const signer = await getTradeSigner(needsAes);
         if (inputAsset.kind === 'private-erc20' && inputAsset.tokenAddress) {
@@ -3096,7 +3109,12 @@ export default function P2PTradingPage({
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
-        openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        openTrade(
+          snapshot.tradeId,
+          resolvedRouteAccessSecret || undefined,
+          snapshot.escrowContract,
+          TERMINAL_HANDOFF_NAVIGATION
+        );
         const signer = await getTradeSigner(false);
         await updateRecurringOrderStatusOnChain({
           signer,
@@ -4741,6 +4759,7 @@ export default function P2PTradingPage({
     walletStatusStorageKey: WALLET_STATUS_STORAGE_KEY
   });
   const disconnectWallet = useCallback(async () => {
+    clearPendingTradeTerminalRoute();
     burnerPinRef.current = '';
     await disconnectP2PWallet();
   }, [disconnectP2PWallet]);

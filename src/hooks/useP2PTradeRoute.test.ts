@@ -5,9 +5,30 @@ import {
   RECURRING_OTC_CONTRACT_ADDRESS
 } from '../lib/appShared/core';
 import { encodeTradeLink } from '../lib/tradeLinks';
-import { buildTradeLinkPath, resolveTradeLinkInput, resolveTradeRouteFromParts } from './useP2PTradeRoute';
+import {
+  buildTradeLinkPath,
+  clearPendingTradeTerminalRoute,
+  readPendingTradeTerminalRoute,
+  rememberPendingTradeTerminalRoute,
+  resolvePendingTradeTerminalRoutePath,
+  resolveTradeLinkInput,
+  resolveTradeRouteFromParts
+} from './useP2PTradeRoute';
 
 const ACCESS_SECRET = `0x${'12'.repeat(32)}`;
+
+const createMemoryStorage = () => {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    }
+  };
+};
 
 describe('P2P trade route helpers', () => {
   it('resolves top-level trade routes without changing route ownership', () => {
@@ -70,5 +91,36 @@ describe('P2P trade route helpers', () => {
     expect(buildTradeLinkPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
       `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
     );
+  });
+
+  it('remembers and restores a pending terminal route from the desk route', () => {
+    const storage = createMemoryStorage();
+    const pending = rememberPendingTradeTerminalRoute('/trades/recurring?order=7', storage, 1_000);
+
+    expect(pending).toMatchObject({
+      path: '/trades/recurring?order=7',
+      tradeId: 7
+    });
+    expect(readPendingTradeTerminalRoute(storage, 1_500)).toMatchObject({ tradeId: 7 });
+    expect(resolvePendingTradeTerminalRoutePath(resolveTradeRouteFromParts('/trades'), '/trades', storage, 1_500)).toBe(
+      '/trades/recurring?order=7'
+    );
+  });
+
+  it('expires and clears stale pending terminal routes', () => {
+    const storage = createMemoryStorage();
+    rememberPendingTradeTerminalRoute('/trades/recurring?order=7', storage, 1_000);
+
+    expect(readPendingTradeTerminalRoute(storage, 1_000 + 10 * 60 * 1000 + 1)).toBeNull();
+    expect(readPendingTradeTerminalRoute(storage, 1_500)).toBeNull();
+  });
+
+  it('clears pending terminal routes explicitly', () => {
+    const storage = createMemoryStorage();
+    rememberPendingTradeTerminalRoute('/trades/recurring?order=7', storage, 1_000);
+
+    clearPendingTradeTerminalRoute(storage);
+
+    expect(readPendingTradeTerminalRoute(storage, 1_500)).toBeNull();
   });
 });
