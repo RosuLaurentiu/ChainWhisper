@@ -99,7 +99,11 @@ import {
   isMobileBrowserUserAgent,
   orderInjectedWalletOptions
 } from '../lib/walletOptions';
-import { hasSessionAesKey, type SharedWalletSession } from '../lib/walletSession';
+import {
+  hasSessionAesKey,
+  resolveTradingBrowserWalletState,
+  type SharedWalletSession
+} from '../lib/walletSession';
 import useP2PWalletHeaderControl from '../hooks/useP2PWalletHeaderControl';
 import useP2PTradeRoute, {
   clearPendingTradeTerminalRoute,
@@ -361,16 +365,17 @@ export default function P2PTradingPage({
   const initialSharedAppWallet =
     sharedWalletSession?.activeSignerSource === 'burner' ? sharedWalletSession : null;
   const sharedWalletActions = sharedWalletSession?.actions;
-  const [walletAddress, setWalletAddress] = useState(() => initialSharedWalletAddress);
-  const [chainId, setChainId] = useState<number | null>(() =>
+  const sharedWalletActionsAvailable = Boolean(sharedWalletActions);
+  const [localWalletAddress, setWalletAddress] = useState(() => initialSharedWalletAddress);
+  const [localChainId, setChainId] = useState<number | null>(() =>
     initialSharedWalletAddress ? sharedWalletSession?.chainId ?? null : null
   );
   const [walletError, setWalletError] = useState('');
-  const [selectedWalletId, setSelectedWalletId] = useState(() =>
+  const [localSelectedWalletId, setSelectedWalletId] = useState(() =>
     initialSharedBrowserWallet?.browserWalletId || readInitialTradeBrowserWalletId()
   );
   const [connectingWalletId, setConnectingWalletId] = useState('');
-  const [connectedWalletLabel, setConnectedWalletLabel] = useState(
+  const [localConnectedWalletLabel, setConnectedWalletLabel] = useState(
     () => initialSharedBrowserWallet?.browserWalletLabel || (initialSharedAppWallet ? 'App wallet' : 'Wallet')
   );
   const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>(
@@ -465,6 +470,25 @@ export default function P2PTradingPage({
     () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
     [injectedWalletOptions]
   );
+  const tradingBrowserWalletState = resolveTradingBrowserWalletState({
+    localBrowserProvider: providerRef.current,
+    localChainId,
+    localConnectedWalletLabel,
+    localSelectedWalletId,
+    localWalletAddress,
+    sharedWalletSession
+  });
+  const walletAddress = tradingBrowserWalletState.walletAddress;
+  const chainId = tradingBrowserWalletState.chainId;
+  const selectedWalletId = tradingBrowserWalletState.selectedWalletId;
+  const connectedWalletLabel = tradingBrowserWalletState.connectedWalletLabel;
+  const effectiveBrowserProvider = tradingBrowserWalletState.browserProvider;
+  useEffect(() => {
+    if (!tradingBrowserWalletState.usesSharedBrowserWallet) {
+      return;
+    }
+    providerRef.current = effectiveBrowserProvider;
+  }, [effectiveBrowserProvider, tradingBrowserWalletState.usesSharedBrowserWallet]);
   const prioritizedBrowserWalletId = selectedWalletId || preferredBrowserWalletId;
   const browserWalletOptions = useMemo(
     () => orderInjectedWalletOptions(allowedBrowserWalletOptions, prioritizedBrowserWalletId, 'metamask'),
@@ -511,7 +535,7 @@ export default function P2PTradingPage({
   const activeWalletScopedSnapAesState = resolveWalletScopedSnapAesState(
     walletScopedSnapAesState,
     walletAddress,
-    providerRef.current
+    effectiveBrowserProvider
   );
   const cotiSnapAesStatus = activeWalletScopedSnapAesState?.status ?? 'unknown';
   const activeStaleTokenAddresses =
@@ -524,14 +548,14 @@ export default function P2PTradingPage({
     (status: CotiSnapAesStatus, staleTokenAddresses: string[] = []) => {
       setWalletScopedSnapAesState(
         createWalletScopedSnapAesState({
-          provider: providerRef.current,
+          provider: effectiveBrowserProvider,
           staleTokenAddresses,
           status,
           walletAddress
         })
       );
     },
-    [walletAddress]
+    [effectiveBrowserProvider, walletAddress]
   );
   const isPrivateTokenSnapStale = useCallback(
     (tokenAddress: string): boolean =>
@@ -559,13 +583,20 @@ export default function P2PTradingPage({
   const getTradeWalletFlowInput = useCallback(
     () => ({
       chainId,
-      provider: connectedWithBurner ? null : providerRef.current,
+      provider: connectedWithBurner ? null : effectiveBrowserProvider,
       providerKey: connectedWithBurner
         ? 'app-wallet'
         : sharedWalletSession?.browserWalletId || selectedWalletId || undefined,
       walletAddress
     }),
-    [chainId, connectedWithBurner, selectedWalletId, sharedWalletSession?.browserWalletId, walletAddress]
+    [
+      chainId,
+      connectedWithBurner,
+      effectiveBrowserProvider,
+      selectedWalletId,
+      sharedWalletSession?.browserWalletId,
+      walletAddress
+    ]
   );
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
@@ -615,7 +646,7 @@ export default function P2PTradingPage({
 
   useEffect(() => {
     let cancelled = false;
-    const provider = providerRef.current;
+    const provider = effectiveBrowserProvider;
 
     if (!walletAddress) {
       setActiveCotiSnapAesStatus('unknown');
@@ -659,10 +690,17 @@ export default function P2PTradingPage({
     return () => {
       cancelled = true;
     };
-  }, [connectedWithBurner, cotiSnapAesStatus, setActiveCotiSnapAesStatus, walletAddress, walletHasAes]);
+  }, [
+    connectedWithBurner,
+    cotiSnapAesStatus,
+    effectiveBrowserProvider,
+    setActiveCotiSnapAesStatus,
+    walletAddress,
+    walletHasAes
+  ]);
 
   useEffect(() => {
-    const provider = providerRef.current;
+    const provider = effectiveBrowserProvider;
     if (
       connectedWithBurner ||
       !provider ||
@@ -697,6 +735,7 @@ export default function P2PTradingPage({
   }, [
     chainId,
     connectedWithBurner,
+    effectiveBrowserProvider,
     setActiveCotiSnapAesStatus,
     sharedWalletSession,
     walletAddress,
@@ -783,6 +822,19 @@ export default function P2PTradingPage({
   useEffect(() => {
     const sharedAddress = sharedWalletSession?.walletAddress.trim() ?? '';
     const sharedWalletKey = sharedAddress.toLowerCase();
+    if (sharedWalletActionsAvailable && sharedWalletSession?.activeSignerSource === 'metamask') {
+      const sharedOnboardInfo = sharedWalletSession?.sessionOnboardInfo[sharedWalletKey];
+      if (sharedAddress && sharedOnboardInfo) {
+        setOnboardInfoByAddress((previous) =>
+          mergeOnboardInfoByAddress(previous, sharedWalletKey, sharedOnboardInfo)
+        );
+        signerCacheRef.current[sharedWalletKey]?.setUserOnboardInfo(sharedOnboardInfo);
+      }
+      if (sharedWalletSession.browserWalletId) {
+        saveWalletPreference({ kind: 'browser', browserWalletId: sharedWalletSession.browserWalletId });
+      }
+      return;
+    }
     if (!sharedAddress) {
       skippedSharedWalletKeyRef.current = '';
       if (sharedWalletSession && walletAddress && !connectingWalletId) {
@@ -802,15 +854,15 @@ export default function P2PTradingPage({
       }
     }
     const localBurnerWalletKey = burnerWalletRef.current?.address.toLowerCase() ?? '';
-    const localBrowserProvider = providerRef.current;
     const sharedBurnerIsNotLocal =
       sharedWalletSession?.activeSignerSource === 'burner' &&
       (!localBurnerWalletKey || localBurnerWalletKey !== sharedWalletKey);
     const sharedBrowserIsNotLocal =
+      !sharedWalletActionsAvailable &&
       sharedWalletSession?.activeSignerSource === 'metamask' &&
       Boolean(sharedWalletSession.browserProvider) &&
       (
-        localBrowserProvider !== sharedWalletSession.browserProvider ||
+        providerRef.current !== sharedWalletSession.browserProvider ||
         walletKey !== sharedWalletKey
       );
     const shouldApplySharedWallet =
@@ -842,7 +894,11 @@ export default function P2PTradingPage({
       return;
     }
 
-    if (sharedWalletSession?.activeSignerSource === 'metamask' && sharedWalletSession.browserProvider) {
+    if (
+      !sharedWalletActionsAvailable &&
+      sharedWalletSession?.activeSignerSource === 'metamask' &&
+      sharedWalletSession.browserProvider
+    ) {
       providerRef.current = sharedWalletSession.browserProvider;
       burnerWalletRef.current = null;
       signerCacheRef.current = {};
@@ -892,6 +948,7 @@ export default function P2PTradingPage({
     sharedWalletSession?.chainId,
     sharedWalletSession?.sessionOnboardInfo,
     sharedWalletSession?.walletAddress,
+    sharedWalletActionsAvailable,
     walletAddress,
     walletKey
   ]);
@@ -1572,8 +1629,30 @@ export default function P2PTradingPage({
     if (previousWalletKey === walletKey) {
       return;
     }
+    if (
+      sharedWalletActionsAvailable &&
+      previousWalletKey &&
+      !walletKey &&
+      isWalletTransactionFlowActive({
+        chainId,
+        provider: effectiveBrowserProvider,
+        providerKey: selectedWalletId,
+        walletAddress: previousWalletKey
+      })
+    ) {
+      recordWalletTransactionFlowStage(
+        {
+          chainId,
+          provider: effectiveBrowserProvider,
+          providerKey: selectedWalletId,
+          walletAddress: previousWalletKey
+        },
+        'trading-wallet-clear-held'
+      );
+      return;
+    }
     previousWalletKeyRef.current = walletKey;
-    const provider = providerRef.current;
+    const provider = effectiveBrowserProvider;
     if (previousWalletKey) {
       clearCotiAesUnlockRequest(previousWalletKey, provider);
     }
@@ -1604,7 +1683,11 @@ export default function P2PTradingPage({
     }
   }, [
     clearWalletBalances,
+    chainId,
     connectedWithBurner,
+    effectiveBrowserProvider,
+    selectedWalletId,
+    sharedWalletActionsAvailable,
     sharedWalletSession?.sessionOnboardInfo,
     sharedWalletSession?.walletAddress,
     walletKey
@@ -2383,7 +2466,7 @@ export default function P2PTradingPage({
   }, [flushQueuedP2PSync]);
 
   const signAesForCurrentWallet = useCallback(async () => {
-    const provider = providerRef.current;
+    const provider = effectiveBrowserProvider;
     const burnerSigner = burnerWalletRef.current;
     const activeBrowserProvider = !connectedWithBurner ? provider : null;
     const activeBurnerSigner = connectedWithBurner ? burnerSigner : null;
@@ -2598,6 +2681,7 @@ export default function P2PTradingPage({
   }, [
     cotiSnapAesStatus,
     connectedWithBurner,
+    effectiveBrowserProvider,
     getTradeSigner,
     refreshWalletBalances,
     reloadPrivateBalancesWithUnlockedSigner,
@@ -4952,8 +5036,16 @@ export default function P2PTradingPage({
   const disconnectWallet = useCallback(async () => {
     clearPendingTradeTerminalRoute();
     burnerPinRef.current = '';
+    if (sharedWalletActions?.disconnect) {
+      setWalletError('');
+      setTradeActionError('');
+      setWalletMenuOpen(false);
+      setAppWalletMenuOpen(false);
+      await Promise.resolve(sharedWalletActions.disconnect());
+      return;
+    }
     await disconnectP2PWallet();
-  }, [disconnectP2PWallet]);
+  }, [disconnectP2PWallet, sharedWalletActions]);
   const getConnectedProvider = useCallback(() => providerRef.current, []);
   const {
     handleWalletPrimaryAction,

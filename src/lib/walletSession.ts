@@ -42,6 +42,56 @@ export type WalletSessionActions = {
   unlockPrivacy: (options?: { forceFreshPrivacy?: boolean }) => Promise<unknown>;
 };
 
+export type TradingBrowserWalletState = {
+  browserProvider: Eip1193Provider | null;
+  chainId: number | null;
+  connectedWalletLabel: string;
+  selectedWalletId: string;
+  usesSharedBrowserWallet: boolean;
+  walletAddress: string;
+};
+
+export const resolveTradingBrowserWalletState = ({
+  localBrowserProvider,
+  localChainId,
+  localConnectedWalletLabel,
+  localSelectedWalletId,
+  localWalletAddress,
+  sharedWalletSession
+}: {
+  localBrowserProvider: Eip1193Provider | null;
+  localChainId: number | null;
+  localConnectedWalletLabel: string;
+  localSelectedWalletId: string;
+  localWalletAddress: string;
+  sharedWalletSession?: SharedWalletSession;
+}): TradingBrowserWalletState => {
+  const sharedAddress = sharedWalletSession?.walletAddress.trim() ?? '';
+  const usesSharedBrowserWallet = Boolean(
+    sharedWalletSession?.actions && sharedWalletSession.activeSignerSource === 'metamask'
+  );
+
+  if (!usesSharedBrowserWallet) {
+    return {
+      browserProvider: localBrowserProvider,
+      chainId: localChainId,
+      connectedWalletLabel: localConnectedWalletLabel,
+      selectedWalletId: localSelectedWalletId,
+      usesSharedBrowserWallet,
+      walletAddress: localWalletAddress
+    };
+  }
+
+  return {
+    browserProvider: sharedWalletSession?.browserProvider ?? null,
+    chainId: sharedWalletSession?.chainId ?? null,
+    connectedWalletLabel: sharedWalletSession?.browserWalletLabel || 'Browser wallet',
+    selectedWalletId: sharedWalletSession?.browserWalletId ?? localSelectedWalletId,
+    usesSharedBrowserWallet,
+    walletAddress: sharedAddress
+  };
+};
+
 export type WalletStatusTone = 'ready' | 'warning' | 'locked' | 'muted';
 
 export type WalletReadiness = {

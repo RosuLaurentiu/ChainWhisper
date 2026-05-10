@@ -3,6 +3,7 @@ import type { OnboardInfo } from '@coti-io/coti-ethers';
 import { COTI_NETWORK, hasInsufficientFundsError } from './appShared/core';
 import {
   hasSessionAesKey,
+  resolveTradingBrowserWalletState,
   resolveAppWalletSwitchOptions,
   resolveWalletConnectionPrimaryAction,
   resolveWalletBlockedActionLabel,
@@ -13,7 +14,8 @@ import {
   resolveWalletPrimaryButtonLabel,
   resolveWalletPrivacyDisplayState,
   resolveWalletPrivacyUnlockPrompt,
-  resolveWalletReadiness
+  resolveWalletReadiness,
+  type SharedWalletSession
 } from './walletSession';
 
 describe('resolveWalletReadiness', () => {
@@ -68,6 +70,93 @@ describe('resolveWalletModeLabel', () => {
       })
     ).toBe('CipherTrade + app');
     expect(resolveWalletModeLabel({ connectedWithAppWallet: false, walletAddress: '' })).toBe('No wallet connected');
+  });
+});
+
+describe('resolveTradingBrowserWalletState', () => {
+  const localProvider = { request: async () => [] };
+  const sharedProvider = { request: async () => [] };
+  const sharedActions = {} as NonNullable<SharedWalletSession['actions']>;
+
+  const buildSharedSession = (
+    overrides: Partial<SharedWalletSession> = {}
+  ): SharedWalletSession => ({
+    actions: sharedActions,
+    activeSignerSource: 'metamask',
+    browserProvider: sharedProvider,
+    browserWalletId: 'metamask',
+    browserWalletLabel: 'MetaMask',
+    burnerWallet: null,
+    chainId: COTI_NETWORK.chainIdDecimal,
+    sessionOnboardInfo: {},
+    walletAddress: '0xShared',
+    ...overrides
+  });
+
+  it('uses the App-owned browser wallet state for Trading when shared actions exist', () => {
+    expect(
+      resolveTradingBrowserWalletState({
+        localBrowserProvider: localProvider,
+        localChainId: 1,
+        localConnectedWalletLabel: 'Local MetaMask',
+        localSelectedWalletId: 'local-metamask',
+        localWalletAddress: '0xLocal',
+        sharedWalletSession: buildSharedSession()
+      })
+    ).toMatchObject({
+      browserProvider: sharedProvider,
+      chainId: COTI_NETWORK.chainIdDecimal,
+      connectedWalletLabel: 'MetaMask',
+      selectedWalletId: 'metamask',
+      usesSharedBrowserWallet: true,
+      walletAddress: '0xShared'
+    });
+  });
+
+  it('keeps app-wallet sessions out of the Trading browser-wallet derivation', () => {
+    expect(
+      resolveTradingBrowserWalletState({
+        localBrowserProvider: localProvider,
+        localChainId: 1,
+        localConnectedWalletLabel: 'Local MetaMask',
+        localSelectedWalletId: 'local-metamask',
+        localWalletAddress: '0xLocal',
+        sharedWalletSession: buildSharedSession({
+          activeSignerSource: 'burner',
+          browserProvider: null,
+          walletAddress: '0xAppWallet'
+        })
+      })
+    ).toMatchObject({
+      browserProvider: localProvider,
+      chainId: 1,
+      connectedWalletLabel: 'Local MetaMask',
+      selectedWalletId: 'local-metamask',
+      usesSharedBrowserWallet: false,
+      walletAddress: '0xLocal'
+    });
+  });
+
+  it('does not fall back to stale local browser state when App owns a disconnected browser session', () => {
+    expect(
+      resolveTradingBrowserWalletState({
+        localBrowserProvider: localProvider,
+        localChainId: 1,
+        localConnectedWalletLabel: 'Local MetaMask',
+        localSelectedWalletId: 'local-metamask',
+        localWalletAddress: '0xLocal',
+        sharedWalletSession: buildSharedSession({
+          browserProvider: null,
+          chainId: null,
+          walletAddress: ''
+        })
+      })
+    ).toMatchObject({
+      browserProvider: null,
+      chainId: null,
+      usesSharedBrowserWallet: true,
+      walletAddress: ''
+    });
   });
 });
 
