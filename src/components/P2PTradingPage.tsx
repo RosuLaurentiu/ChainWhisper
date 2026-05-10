@@ -3015,6 +3015,7 @@ export default function P2PTradingPage({
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
+        openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         const needsAes = recurring.mode !== 'public' || inputAsset.kind === 'private-erc20';
         const signer = await getTradeSigner(needsAes);
         if (inputAsset.kind === 'private-erc20' && inputAsset.tokenAddress) {
@@ -3095,6 +3096,7 @@ export default function P2PTradingPage({
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
+        openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         const signer = await getTradeSigner(false);
         await updateRecurringOrderStatusOnChain({
           signer,

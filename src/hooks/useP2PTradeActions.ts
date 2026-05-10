@@ -193,11 +193,12 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        let accessSecret = resolveAccessSecretForSnapshot(snapshot);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
         let latestSnapshot = carryKnownDirectTerms(
           (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot,
           snapshot
         );
-        let accessSecret = resolveAccessSecretForSnapshot(snapshot);
         let latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
         const directTermsNeedHydration = latestEscrowConfig.directVisible && !hasHydratedTradeAmounts(latestSnapshot);
         const directRevealNeedsAes =
@@ -351,6 +352,8 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
         const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
         if (latestSnapshot.counterParentTradeId) {
           throw new Error('Counter offers must be accepted in full so the original trade can close atomically.');
@@ -382,7 +385,6 @@ export default function useP2PTradeActions({
           }
         }
 
-        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
         await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, walletAddress);
 
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
@@ -463,11 +465,12 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
         const signer = await getTradeSigner(false);
         await cancelTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'cancelled' };
         mergeTradeSnapshot(nextSnapshot);
-        openTrade(snapshot.tradeId, resolveAccessSecretForSnapshot(snapshot) || undefined, snapshot.escrowContract);
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to cancel trade.';
@@ -484,11 +487,12 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
+        openTrade(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
         const signer = await getTradeSigner(false);
         await declineTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'declined' };
         mergeTradeSnapshot(nextSnapshot);
-        openTrade(snapshot.tradeId, resolveAccessSecretForSnapshot(snapshot) || undefined, snapshot.escrowContract);
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to refuse trade.';
