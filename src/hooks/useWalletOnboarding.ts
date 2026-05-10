@@ -16,7 +16,11 @@ import {
 } from '../lib/walletOptions';
 import { buildWalletAesHealthState, clearCotiAesUnlockRequest, getOrRecoverAesForWallet } from '../lib/cotiAesUnlock';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
-import { clearWalletTransactionFlow, isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
+import {
+  clearWalletTransactionFlow,
+  isWalletTransactionFlowActive,
+  recordWalletTransactionFlowStage
+} from '../lib/walletTransactionFlow';
 import useInjectedWalletOptions from './useInjectedWalletOptions';
 
 type UseWalletOnboardingArgs = {
@@ -202,6 +206,19 @@ export function useWalletOnboarding({
         return;
       }
       const selected = accounts[0] ?? '';
+      const previousWalletKey = currentWalletKeyRef.current;
+      const activeChainId = chainIdRef.current;
+      const providerKey = browserWalletSessionRef.current?.walletId || currentInjectedWalletOption?.id || selectedInjectedWalletId;
+      const previousFlowInput = {
+        chainId: activeChainId,
+        provider,
+        providerKey,
+        walletAddress: previousWalletKey
+      };
+      if (!selected && previousWalletKey && isWalletTransactionFlowActive(previousFlowInput)) {
+        recordWalletTransactionFlowStage(previousFlowInput, 'accounts-empty-ignored-refresh');
+        return;
+      }
       resetBrowserPrivacySessionForWalletChange(selected);
       setWalletAddress(selected);
 
@@ -214,7 +231,12 @@ export function useWalletOnboarding({
         setStatus('Disconnected');
       }
     },
-    [getConnectedProvider, resetBrowserPrivacySessionForWalletChange]
+    [
+      currentInjectedWalletOption?.id,
+      getConnectedProvider,
+      resetBrowserPrivacySessionForWalletChange,
+      selectedInjectedWalletId
+    ]
   );
 
   const onboardAddressAes = useCallback(
@@ -551,13 +573,17 @@ export function useWalletOnboarding({
       const selectedWalletKey = selected.trim().toLowerCase();
       const previousWalletKey = currentWalletKeyRef.current;
       const activeChainId = chainIdRef.current;
+      const providerKey =
+        browserWalletSessionRef.current?.walletId || currentInjectedWalletOption?.id || selectedInjectedWalletId;
       const previousFlowInput = {
         chainId: activeChainId,
         provider,
+        providerKey,
         walletAddress: previousWalletKey
       };
       const walletFlowActive = previousWalletKey && isWalletTransactionFlowActive(previousFlowInput);
       if (walletFlowActive && (!selectedWalletKey || selectedWalletKey === previousWalletKey)) {
+        recordWalletTransactionFlowStage(previousFlowInput, 'accounts-empty-ignored-event');
         return;
       }
       if (walletFlowActive && selectedWalletKey !== previousWalletKey) {
@@ -585,14 +611,26 @@ export function useWalletOnboarding({
       }
       const activeWalletKey = currentWalletKeyRef.current;
       const activeChainId = chainIdRef.current;
+      const providerKey =
+        browserWalletSessionRef.current?.walletId || currentInjectedWalletOption?.id || selectedInjectedWalletId;
       if (
         activeWalletKey &&
         isWalletTransactionFlowActive({
           chainId: activeChainId,
           provider,
+          providerKey,
           walletAddress: activeWalletKey
         })
       ) {
+        recordWalletTransactionFlowStage(
+          {
+            chainId: activeChainId,
+            provider,
+            providerKey,
+            walletAddress: activeWalletKey
+          },
+          'chain-change-ignored-during-flow'
+        );
         return;
       }
       if (typeof newChainId === 'string' || typeof newChainId === 'number') {
@@ -600,6 +638,7 @@ export function useWalletOnboarding({
           clearWalletTransactionFlow({
             chainId: activeChainId,
             provider,
+            providerKey,
             walletAddress: activeWalletKey
           });
         }
@@ -616,8 +655,10 @@ export function useWalletOnboarding({
     };
   }, [
     getConnectedProvider,
+    currentInjectedWalletOption?.id,
     refreshWalletState,
     resetBrowserPrivacySessionForWalletChange,
+    selectedInjectedWalletId,
     setBrowserWalletSession,
     setError
   ]);

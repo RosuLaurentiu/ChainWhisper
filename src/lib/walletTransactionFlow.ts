@@ -8,6 +8,7 @@ export type WalletTransactionFlow = {
 export type WalletTransactionSessionInput = {
   chainId?: number | null;
   provider?: Eip1193Provider | null;
+  providerKey?: string | null;
   walletAddress?: string | null;
 };
 
@@ -33,6 +34,9 @@ let flowIdCounter = 0;
 
 const normalizeWalletAddress = (walletAddress?: string | null): string =>
   walletAddress?.trim().toLowerCase() || 'no-wallet';
+
+const normalizeProviderKey = (providerKey?: string | null): string =>
+  providerKey?.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') || '';
 
 const resolveProviderKind = (provider?: Eip1193Provider | null): string => {
   if (!provider || typeof provider !== 'object') {
@@ -69,7 +73,12 @@ const resolveProviderKind = (provider?: Eip1193Provider | null): string => {
   return 'browser-wallet';
 };
 
-const getProviderFlowKey = (provider?: Eip1193Provider | null): string => {
+const getProviderFlowKey = (provider?: Eip1193Provider | null, providerKey?: string | null): string => {
+  const normalizedProviderKey = normalizeProviderKey(providerKey);
+  if (normalizedProviderKey) {
+    return normalizedProviderKey;
+  }
+
   if (!provider || typeof provider !== 'object') {
     return 'no-provider';
   }
@@ -93,11 +102,12 @@ const getProviderFlowKey = (provider?: Eip1193Provider | null): string => {
 export const getWalletTransactionSessionKey = ({
   chainId,
   provider,
+  providerKey,
   walletAddress
 }: WalletTransactionSessionInput): string =>
   [
     normalizeWalletAddress(walletAddress),
-    getProviderFlowKey(provider),
+    getProviderFlowKey(provider, providerKey),
     chainId ?? 'no-chain'
   ].join(':');
 
@@ -276,7 +286,7 @@ export const clearWalletTransactionFlow = (input?: WalletTransactionSessionInput
   }
 
   const walletKey = normalizeWalletAddress(input.walletAddress);
-  const providerKey = getProviderFlowKey(input.provider);
+  const providerKey = getProviderFlowKey(input.provider, input.providerKey);
   const shouldClearSessionKey = (sessionKey: string): boolean => {
     const [sessionWalletKey, sessionProviderKey, sessionChainKey] = sessionKey.split(':');
     if (sessionWalletKey !== walletKey || sessionProviderKey !== providerKey) {

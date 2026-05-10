@@ -12,9 +12,14 @@ import {
   resolveTradeEscrowContractConfig
 } from '../lib/appChain';
 import type { TradePageView } from './useP2PTradeRoute';
-import { isWalletTransactionPromptActive } from '../lib/walletTransactionFlow';
+import { getWalletTransactionFlowState } from '../lib/walletTransactionFlow';
 
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
+
+const shouldHoldTradeReadForWalletFlow = (silent: boolean, hasExistingData: boolean): boolean => {
+  const flowState = getWalletTransactionFlowState();
+  return flowState === 'memory-active' || (flowState === 'stored-handoff' && (silent || hasExistingData));
+};
 
 const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContract'>): string =>
   buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
@@ -134,7 +139,7 @@ export default function useP2PTradeData({
   const refreshPublicTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
     const requestSessionKey = syncSessionKey;
-    if (isWalletTransactionPromptActive()) {
+    if (shouldHoldTradeReadForWalletFlow(silent, publicTradesRef.current.length > 0)) {
       return;
     }
     if (publicTradesRefreshRef.current) {
@@ -184,7 +189,7 @@ export default function useP2PTradeData({
   const refreshMyTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
     const requestSessionKey = syncSessionKey;
-    if (isWalletTransactionPromptActive()) {
+    if (shouldHoldTradeReadForWalletFlow(silent, myTradesRef.current.length > 0)) {
       return;
     }
     if (!walletAddress) {
@@ -291,7 +296,12 @@ export default function useP2PTradeData({
 
   const refreshTradeDetail = useCallback(
     async (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions): Promise<TradeSnapshot | null> => {
-      if (isWalletTransactionPromptActive()) {
+      const currentDetail = detailTradeRef.current;
+      const hasCurrentDetail =
+        Boolean(currentDetail) &&
+        currentDetail?.tradeId === tradeId &&
+        (currentDetail?.escrowContract ?? '').toLowerCase() === (escrowContract ?? '').toLowerCase();
+      if (shouldHoldTradeReadForWalletFlow(Boolean(options?.silent), hasCurrentDetail)) {
         return detailTradeRef.current;
       }
       const snapshot = await readTradeDetail(tradeId, escrowContract);
@@ -320,24 +330,24 @@ export default function useP2PTradeData({
   );
 
   useEffect(() => {
-    if (isWalletTransactionPromptActive()) {
+    if (shouldHoldTradeReadForWalletFlow(publicTradesRef.current.length > 0, publicTradesRef.current.length > 0)) {
       return;
     }
     refreshPublicTrades({ silent: publicTradesRef.current.length > 0 }).catch(() => {});
   }, [refreshPublicTrades]);
 
   useEffect(() => {
-    if (isWalletTransactionPromptActive()) {
+    if (shouldHoldTradeReadForWalletFlow(myTradesRef.current.length > 0, myTradesRef.current.length > 0)) {
       return;
     }
     refreshMyTrades({ silent: myTradesRef.current.length > 0 }).catch(() => {});
   }, [refreshMyTrades]);
 
   useEffect(() => {
-    if (isWalletTransactionPromptActive()) {
-      return;
-    }
     if (routeView !== 'trade' || routeTradeId === null) {
+      if (getWalletTransactionFlowState() !== 'inactive' && detailTradeRef.current) {
+        return;
+      }
       setDetailTrade(null);
       setDetailTradeError(routeError);
       setTradeAccessBlocked(false);
@@ -351,6 +361,9 @@ export default function useP2PTradeData({
       Boolean(currentDetail) &&
       currentDetail?.tradeId === routeTradeId &&
       (currentDetail?.escrowContract ?? '').toLowerCase() === (routeEscrowContract ?? '').toLowerCase();
+    if (shouldHoldTradeReadForWalletFlow(hasCurrentDetail, hasCurrentDetail)) {
+      return;
+    }
     setLoadingDetailTrade(!hasCurrentDetail);
     if (!hasCurrentDetail) {
       setDetailTradeError('');

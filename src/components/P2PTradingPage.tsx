@@ -148,7 +148,7 @@ import {
 } from '../lib/tradeCounterSupport';
 import { applyTradeRecoveryPayloadToSnapshot } from '../lib/tradeRecoveryPayload';
 import {
-  isWalletTransactionPromptActive,
+  isWalletTransactionFlowActive,
   recordWalletTransactionFlowStage,
   runWalletTransactionFlow
 } from '../lib/walletTransactionFlow';
@@ -556,28 +556,29 @@ export default function P2PTradingPage({
       : '';
   const resolvedRouteAccessSecret = routeAccessSecret || storedRouteAccessSecret;
   const routeError = route.routeError;
+  const getTradeWalletFlowInput = useCallback(
+    () => ({
+      chainId,
+      provider: connectedWithBurner ? null : providerRef.current,
+      providerKey: connectedWithBurner
+        ? 'app-wallet'
+        : sharedWalletSession?.browserWalletId || selectedWalletId || undefined,
+      walletAddress
+    }),
+    [chainId, connectedWithBurner, selectedWalletId, sharedWalletSession?.browserWalletId, walletAddress]
+  );
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
       const activeWalletFlow = sharedWalletActions?.runWalletTransactionFlow;
       try {
         if (activeWalletFlow) {
           return await activeWalletFlow(async () => {
-            recordWalletTransactionFlowStage({
-              chainId,
-              provider: sharedWalletSession?.activeSignerSource === 'metamask'
-                ? sharedWalletSession.browserProvider
-                : null,
-              walletAddress: sharedWalletSession?.walletAddress || walletAddress
-            }, 'trading-flow-requested');
+            recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-flow-requested');
             return operation();
           });
         }
 
-        const input = {
-          chainId,
-          provider: connectedWithBurner ? null : providerRef.current,
-          walletAddress
-        };
+        const input = getTradeWalletFlowInput();
         recordWalletTransactionFlowStage(input, 'trading-flow-requested');
         return await runWalletTransactionFlow(input, operation);
       } finally {
@@ -587,13 +588,8 @@ export default function P2PTradingPage({
       }
     },
     [
-      chainId,
-      connectedWithBurner,
+      getTradeWalletFlowInput,
       sharedWalletActions,
-      sharedWalletSession?.activeSignerSource,
-      sharedWalletSession?.browserProvider,
-      sharedWalletSession?.walletAddress,
-      walletAddress
     ]
   );
   const directTradeRecipientNormalized = directTradeRecipient.trim();
@@ -790,6 +786,10 @@ export default function P2PTradingPage({
     if (!sharedAddress) {
       skippedSharedWalletKeyRef.current = '';
       if (sharedWalletSession && walletAddress && !connectingWalletId) {
+        if (isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+          recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-shared-empty-ignored');
+          return;
+        }
         providerRef.current = null;
         burnerWalletRef.current = null;
         signerCacheRef.current = {};
@@ -881,6 +881,7 @@ export default function P2PTradingPage({
   }, [
     connectingWalletId,
     connectedWithBurner,
+    getTradeWalletFlowInput,
     sharedWalletSession?.activeSignerSource,
     sharedWalletSession?.activeBurnerWalletId,
     sharedWalletSession?.browserProvider,
@@ -2312,15 +2313,6 @@ export default function P2PTradingPage({
   );
 
   const flushQueuedP2PSync = useCallback(() => {
-    if (
-      isWalletTransactionPromptActive({
-        chainId,
-        provider: connectedWithBurner ? null : providerRef.current,
-        walletAddress
-      })
-    ) {
-      return;
-    }
     if (p2pSyncTimerRef.current !== null) {
       window.clearTimeout(p2pSyncTimerRef.current);
       p2pSyncTimerRef.current = null;
@@ -2329,9 +2321,13 @@ export default function P2PTradingPage({
     if (!queued) {
       return;
     }
+    if (queued.reason !== 'manual' && isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+      recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-sync-flush-held');
+      return;
+    }
     queuedTradeDataRefreshRef.current = null;
     runP2PSyncRequest(queued);
-  }, [chainId, connectedWithBurner, runP2PSyncRequest, walletAddress]);
+  }, [getTradeWalletFlowInput, runP2PSyncRequest]);
 
   const scheduleP2PSync = useCallback(
     (request: {
@@ -2348,21 +2344,8 @@ export default function P2PTradingPage({
         signer: request.signer,
         tradeId: request.tradeId
       });
-      if (
-        isWalletTransactionPromptActive({
-          chainId,
-          provider: connectedWithBurner ? null : providerRef.current,
-          walletAddress
-        })
-      ) {
-        recordWalletTransactionFlowStage(
-          {
-            chainId,
-            provider: connectedWithBurner ? null : providerRef.current,
-            walletAddress
-          },
-          'trading-sync-queued'
-        );
+      if (request.reason !== 'manual' && isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+        recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-sync-queued');
         return;
       }
       if (request.reason === 'manual' || request.reason === 'wallet-action') {
@@ -2377,7 +2360,7 @@ export default function P2PTradingPage({
         flushQueuedP2PSync();
       }, REALTIME_SYNC_DEBOUNCE_MS);
     },
-    [chainId, connectedWithBurner, flushQueuedP2PSync, mergeQueuedP2PSync, walletAddress]
+    [flushQueuedP2PSync, getTradeWalletFlowInput, mergeQueuedP2PSync]
   );
 
   const refreshTradeDataInBackground = useCallback(
@@ -3923,13 +3906,8 @@ export default function P2PTradingPage({
       if (cancelled || (typeof document !== 'undefined' && document.hidden)) {
         return;
       }
-      if (
-        isWalletTransactionPromptActive({
-          chainId,
-          provider: providerRef.current,
-          walletAddress
-        })
-      ) {
+      if (isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+        recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-realtime-dispatch-held');
         return;
       }
       lastRealtimeSyncDispatchAt = Date.now();
@@ -3950,13 +3928,8 @@ export default function P2PTradingPage({
       if (cancelled) {
         return;
       }
-      if (
-        isWalletTransactionPromptActive({
-          chainId,
-          provider: providerRef.current,
-          walletAddress
-        })
-      ) {
+      if (isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+        recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-realtime-schedule-held');
         return;
       }
 
@@ -4182,6 +4155,7 @@ export default function P2PTradingPage({
     routeTradeId,
     routeView,
     scheduleP2PSync,
+    getTradeWalletFlowInput,
     walletAddress
   ]);
 

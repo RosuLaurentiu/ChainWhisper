@@ -823,17 +823,40 @@ export default function App() {
     onWalletAesHealthChange: setWalletAesHealth,
     walletAesHealthByAddress
   });
+  const sharedWalletTransactionRuntimeRef = useRef({
+    activeSignerSource,
+    chainId,
+    provider: activeSignerSource === 'metamask' ? activeProvider ?? browserWalletSession?.provider ?? null : null,
+    providerKey:
+      activeSignerSource === 'metamask'
+        ? currentInjectedWalletOption?.id ?? browserWalletSession?.walletId ?? preferredBrowserWalletId
+        : 'app-wallet',
+    walletAddress
+  });
+  sharedWalletTransactionRuntimeRef.current = {
+    activeSignerSource,
+    chainId,
+    provider: activeSignerSource === 'metamask' ? activeProvider ?? browserWalletSession?.provider ?? getConnectedProvider() : null,
+    providerKey:
+      activeSignerSource === 'metamask'
+        ? currentInjectedWalletOption?.id ?? browserWalletSession?.walletId ?? preferredBrowserWalletId
+        : 'app-wallet',
+    walletAddress
+  };
   const runSharedWalletTransactionFlow = useCallback(
-    async <T,>(operation: () => Promise<T>): Promise<T> =>
-      runWalletTransactionFlow(
+    async <T,>(operation: () => Promise<T>): Promise<T> => {
+      const runtime = sharedWalletTransactionRuntimeRef.current;
+      return runWalletTransactionFlow(
         {
-          chainId,
-          provider: activeSignerSource === 'metamask' ? getConnectedProvider() : null,
-          walletAddress
+          chainId: runtime.chainId,
+          provider: runtime.activeSignerSource === 'metamask' ? runtime.provider : null,
+          providerKey: runtime.providerKey,
+          walletAddress: runtime.walletAddress
         },
         operation
-      ),
-    [activeSignerSource, chainId, getConnectedProvider, walletAddress]
+      );
+    },
+    []
   );
   const {
     beginBurnerPinFlow,

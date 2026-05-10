@@ -131,6 +131,38 @@ describe('walletTransactionFlow', () => {
     expect(isWalletTransactionFlowActive(input)).toBe(false);
   });
 
+  it('keeps session-backed flows stable across mobile provider remounts when provider key is supplied', () => {
+    const firstProvider = createProvider();
+    const remountedProvider = createProvider();
+    const input = {
+      chainId: 2632500,
+      provider: firstProvider,
+      providerKey: 'metamask',
+      walletAddress: '0x0000000000000000000000000000000000000001'
+    };
+    const flow = beginWalletTransactionFlow(input);
+
+    clearWalletTransactionFlowMemoryForTest();
+    expect(
+      isWalletTransactionFlowActive({
+        chainId: 2632500,
+        provider: remountedProvider,
+        providerKey: 'metamask',
+        walletAddress: '0x0000000000000000000000000000000000000001'
+      })
+    ).toBe(true);
+    expect(
+      isWalletTransactionFlowActive({
+        chainId: 2632500,
+        provider: remountedProvider,
+        providerKey: 'ciphertrade',
+        walletAddress: '0x0000000000000000000000000000000000000001'
+      })
+    ).toBe(false);
+
+    endWalletTransactionFlow(flow);
+  });
+
   it('expires stale session-backed wallet transaction flows', () => {
     vi.useFakeTimers();
     try {
@@ -160,7 +192,7 @@ describe('walletTransactionFlow', () => {
     clearWalletTransactionFlowMemoryForTest();
     expect(isWalletTransactionFlowActive({ chainId: 2632500, provider, walletAddress })).toBe(true);
 
-    clearWalletTransactionFlow({ provider, walletAddress });
+    clearWalletTransactionFlow({ provider, providerKey: 'metamask', walletAddress });
 
     expect(isWalletTransactionFlowActive({ chainId: 2632500, provider, walletAddress })).toBe(false);
     expect(isWalletTransactionFlowActive({ chainId: 2632501, provider, walletAddress })).toBe(false);

@@ -29,7 +29,7 @@ import {
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from '../lib/appHelpers';
-import { isWalletTransactionPromptActive } from '../lib/walletTransactionFlow';
+import { getWalletTransactionFlowState } from '../lib/walletTransactionFlow';
 
 type TradeSigner = JsonRpcSigner | Wallet;
 type TradeTokenKind = Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
@@ -41,6 +41,11 @@ type TradeTokenInfoRequest = {
 type ReloadPrivateBalancesResult = {
   failedTokenAddresses: string[];
   readyTokenAddresses: string[];
+};
+
+const shouldHoldBalanceReadForWalletFlow = (silent: boolean): boolean => {
+  const flowState = getWalletTransactionFlowState();
+  return flowState === 'memory-active' || (flowState === 'stored-handoff' && silent);
 };
 
 export type WalletBalanceRefreshReason =
@@ -590,7 +595,7 @@ export default function useP2PTradeTokenData({
 
   const refreshWalletBalances = useCallback(
     async (options?: WalletBalanceRefreshOptions): Promise<void> => {
-      if (isWalletTransactionPromptActive()) {
+      if (shouldHoldBalanceReadForWalletFlow(Boolean(options?.silent))) {
         return;
       }
       if (balanceRefreshRef.current) {
@@ -651,14 +656,14 @@ export default function useP2PTradeTokenData({
   }, [clearWalletBalances, walletKey]);
 
   useEffect(() => {
-    if (isWalletTransactionPromptActive()) {
+    if (shouldHoldBalanceReadForWalletFlow(false)) {
       return;
     }
     refreshWalletBalances({ reason: 'connect', silent: false }).catch(() => {});
   }, [refreshWalletBalances]);
 
   useEffect(() => {
-    if (isWalletTransactionPromptActive()) {
+    if (getWalletTransactionFlowState() === 'memory-active') {
       return;
     }
     const requestedTokens = [
@@ -695,7 +700,7 @@ export default function useP2PTradeTokenData({
   ]);
 
   useEffect(() => {
-    if (isWalletTransactionPromptActive()) {
+    if (getWalletTransactionFlowState() === 'memory-active') {
       return;
     }
     for (const token of VERIFIED_ECOSYSTEM_TOKENS) {
