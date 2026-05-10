@@ -50,6 +50,22 @@ const providerWithFlags = (
   }) as Eip1193Provider;
 
 describe('detectWalletSnapCapability', () => {
+  it('times out hanging Snap discovery so unlock can fall back', async () => {
+    vi.useFakeTimers();
+    const capability = detectWalletSnapCapability(
+      provider(({ method }) => {
+        if (method === 'wallet_getSnaps') {
+          return new Promise(() => {});
+        }
+        return null;
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(capability).resolves.toBe('unsupported');
+    vi.useRealTimers();
+  });
+
   it('treats providers with Snap discovery as Snap-capable', async () => {
     await expect(
       detectWalletSnapCapability(provider(({ method }) => (method === 'wallet_getSnaps' ? {} : null)))
@@ -248,6 +264,26 @@ describe('getCotiSnapAesKey', () => {
         })
       )
     ).resolves.toEqual({ status: 'unsupported' });
+  });
+
+  it('does not request or invoke Snap when passive discovery hangs', async () => {
+    vi.useFakeTimers();
+    const requestedMethods: string[] = [];
+    const aesKey = getCotiSnapAesKeyResult(
+      provider(({ method }) => {
+        requestedMethods.push(method);
+        if (method === 'wallet_getSnaps') {
+          return new Promise(() => {});
+        }
+        return null;
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(aesKey).resolves.toEqual({ status: 'unsupported' });
+    expect(requestedMethods).not.toContain('wallet_requestSnaps');
+    expect(requestedMethods).not.toContain('wallet_invokeSnap');
+    vi.useRealTimers();
   });
 
   it('skips Snap install prompts for MetaMask Mobile and lets callers use fallback AES', async () => {

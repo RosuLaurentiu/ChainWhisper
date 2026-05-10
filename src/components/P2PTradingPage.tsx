@@ -2278,10 +2278,7 @@ export default function P2PTradingPage({
     setWalletError('');
     setConnectingWalletId('aes');
     try {
-      if (activeBrowserProvider) {
-        const snapStatus = await getCotiSnapAesStatus(activeBrowserProvider).catch((): CotiSnapAesStatus => 'error');
-        setActiveCotiSnapAesStatus(snapStatus);
-      } else if (activeBurnerSigner) {
+      if (activeBurnerSigner) {
         setActiveCotiSnapAesStatus('unsupported');
       }
       const signer = await getTradeSigner(false);

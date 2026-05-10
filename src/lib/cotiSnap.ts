@@ -1,6 +1,7 @@
 import { COTI_NETWORK, normalizeChainId, type Eip1193Provider } from './appShared';
 
 const COTI_SNAP_ID = 'npm:@coti-io/coti-snap';
+const PASSIVE_SNAP_RPC_TIMEOUT_MS = 1500;
 
 type SnapResponse = Record<string, unknown>;
 type CotiSnapConnectionStatus = 'ready' | 'not-installed' | 'unsupported' | 'unsupported-mobile' | 'rejected' | 'error';
@@ -85,9 +86,31 @@ const isUnsupportedSnapError = (error: unknown): boolean => {
   );
 };
 
+const requestPassiveProviderRpc = async <T>(
+  provider: Eip1193Provider,
+  request: { method: string; params?: object | unknown[] },
+  timeoutMs = PASSIVE_SNAP_RPC_TIMEOUT_MS
+): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      provider.request(request) as Promise<T>,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(Object.assign(new Error(`Passive wallet RPC timed out: ${request.method}`), { code: 'CW_TIMEOUT' }));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
 const getInstalledSnaps = async (provider: Eip1193Provider): Promise<Record<string, SnapResponse> | null> => {
   try {
-    return (await provider.request({ method: 'wallet_getSnaps' })) as Record<string, SnapResponse> | null;
+    return await requestPassiveProviderRpc<Record<string, SnapResponse> | null>(provider, { method: 'wallet_getSnaps' });
   } catch {
     return null;
   }
@@ -98,13 +121,15 @@ export const detectWalletSnapCapability = async (
   userAgent = getNavigatorUserAgent()
 ): Promise<WalletSnapCapability> => {
   try {
-    await provider.request({ method: 'wallet_getSnaps' });
+    await requestPassiveProviderRpc(provider, { method: 'wallet_getSnaps' });
     return 'supported';
   } catch (error) {
     if (isMetaMaskMobileContext(provider, userAgent)) {
       return 'unsupported-mobile';
     }
-    return isUnsupportedSnapError(error) ? 'unsupported' : 'unknown';
+    return isUnsupportedSnapError(error) || (error as { code?: unknown })?.code === 'CW_TIMEOUT'
+      ? 'unsupported'
+      : 'unknown';
   }
 };
 
@@ -119,14 +144,16 @@ const confirmSnapWalletContext = async (
 
   try {
     if (expectedWallet) {
-      const accounts = (await provider.request({ method: 'eth_accounts' })) as string[];
+      const accounts = await requestPassiveProviderRpc<string[]>(provider, { method: 'eth_accounts' });
       const activeWallet = normalizeWalletAddress(Array.isArray(accounts) ? accounts[0] : '');
       if (activeWallet !== expectedWallet) {
         return 'wallet-mismatch';
       }
     }
 
-    const activeChainId = normalizeChainId((await provider.request({ method: 'eth_chainId' })) as string | number);
+    const activeChainId = normalizeChainId(
+      await requestPassiveProviderRpc<string | number>(provider, { method: 'eth_chainId' })
+    );
     return activeChainId === expectedChainId ? 'ready' : 'wrong-network';
   } catch {
     return 'error';
@@ -139,6 +166,9 @@ const requestSnap = async (provider: Eip1193Provider): Promise<CotiSnapConnectio
     return 'unsupported-mobile';
   }
   if (capability === 'unsupported') {
+    return 'unsupported';
+  }
+  if (capability === 'unknown') {
     return 'unsupported';
   }
 
@@ -248,6 +278,9 @@ export const getCotiSnapAesKeyResult = async (
   const capability = await detectWalletSnapCapability(provider, context?.userAgent);
   if (capability === 'unsupported-mobile' || capability === 'unsupported') {
     return { status: capability };
+  }
+  if (capability === 'unknown') {
+    return { status: 'unsupported' };
   }
 
   const connected = await requestAndConnectCotiSnap(provider);
