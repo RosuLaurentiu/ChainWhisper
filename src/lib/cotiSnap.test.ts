@@ -82,6 +82,22 @@ describe('detectWalletSnapCapability', () => {
       )
     ).resolves.toBe('unsupported-mobile');
   });
+
+  it('treats MetaMask Mobile as Snap-unsupported before probing Snap RPCs', async () => {
+    const requestedMethods: string[] = [];
+    await expect(
+      detectWalletSnapCapability(
+        providerWithFlags(({ method }) => {
+          requestedMethods.push(method);
+          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          return null;
+        }, { isMetaMask: true }),
+        'Mozilla/5.0 (Linux; Android 14) Mobile MetaMaskMobile'
+      )
+    ).resolves.toBe('unsupported-mobile');
+
+    expect(requestedMethods).toEqual([]);
+  });
 });
 
 describe('getCotiSnapAesStatus', () => {
@@ -307,6 +323,28 @@ describe('getCotiSnapAesKey', () => {
 
     expect(requestedMethods).not.toContain('wallet_requestSnaps');
     expect(requestedMethods).not.toContain('wallet_invokeSnap');
+  });
+
+  it('skips Snap RPCs on MetaMask Mobile even if Snap discovery would answer', async () => {
+    const requestedMethods: string[] = [];
+
+    await expect(
+      getCotiSnapAesKeyResult(
+        providerWithFlags(({ method }) => {
+          requestedMethods.push(method);
+          if (method === 'eth_accounts') return ['0x1111111111111111111111111111111111111111'];
+          if (method === 'eth_chainId') return '0x282b34';
+          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          return null;
+        }, { isMetaMask: true }),
+        {
+          userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile',
+          walletAddress: '0x1111111111111111111111111111111111111111'
+        }
+      )
+    ).resolves.toEqual({ status: 'unsupported-mobile' });
+
+    expect(requestedMethods).toEqual(['eth_accounts', 'eth_chainId']);
   });
 });
 

@@ -2278,6 +2278,9 @@ export default function P2PTradingPage({
     setWalletError('');
     setConnectingWalletId('aes');
     try {
+      if (activeBrowserProvider) {
+        clearCotiAesUnlockRequest(walletAddress, activeBrowserProvider);
+      }
       if (activeBurnerSigner) {
         setActiveCotiSnapAesStatus('unsupported');
       }

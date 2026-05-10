@@ -120,13 +120,14 @@ export const detectWalletSnapCapability = async (
   provider: Eip1193Provider,
   userAgent = getNavigatorUserAgent()
 ): Promise<WalletSnapCapability> => {
+  if (isMetaMaskMobileContext(provider, userAgent)) {
+    return 'unsupported-mobile';
+  }
+
   try {
     await requestPassiveProviderRpc(provider, { method: 'wallet_getSnaps' });
     return 'supported';
   } catch (error) {
-    if (isMetaMaskMobileContext(provider, userAgent)) {
-      return 'unsupported-mobile';
-    }
     return isUnsupportedSnapError(error) || (error as { code?: unknown })?.code === 'CW_TIMEOUT'
       ? 'unsupported'
       : 'unknown';
