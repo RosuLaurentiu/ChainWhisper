@@ -23,6 +23,7 @@ import {
 } from '../lib/walletSession';
 import type { PrivateTokenBalancePrivacyAction } from '../lib/appHelpers';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
+import { buildMetaMaskMobileDeepLink, isMobileBrowserUserAgent } from '../lib/walletOptions';
 
 type UseP2PWalletHeaderControlArgs = {
   appWalletMenuOpen: boolean;
@@ -146,8 +147,12 @@ export default function useP2PWalletHeaderControl({
     ]
   );
   const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
-  const tradePrimaryConnectsAppWallet = !walletAddress && tradeHasSavedAppWallet && !preferredWalletOption;
-  const showTradeDisconnectedAppAction = Boolean(!walletAddress && preferredWalletOption);
+  const showMobileWalletAppOpenAction = Boolean(!walletAddress && !preferredWalletOption && isMobileBrowserUserAgent());
+  const tradePrimaryConnectsAppWallet =
+    !walletAddress && tradeHasSavedAppWallet && !preferredWalletOption && !showMobileWalletAppOpenAction;
+  const showTradeDisconnectedAppAction = Boolean(
+    !walletAddress && tradeHasSavedAppWallet && (preferredWalletOption || showMobileWalletAppOpenAction)
+  );
   const walletConnectionBusy = Boolean(connectingWalletId && connectingWalletId !== 'aes');
   const tradeWalletBusyLabel = walletConnectionBusy
     ? connectingWalletId === 'burner'
@@ -158,6 +163,8 @@ export default function useP2PWalletHeaderControl({
     busyLabel: tradeWalletBusyLabel,
     connectLabel: tradePrimaryConnectsAppWallet
       ? 'Connect app wallet'
+      : showMobileWalletAppOpenAction
+        ? 'Open MetaMask'
       : preferredWalletOption
         ? `Connect ${preferredWalletOption.label}`
         : 'Wallet unavailable',
@@ -186,6 +193,11 @@ export default function useP2PWalletHeaderControl({
       return;
     }
 
+    if (showMobileWalletAppOpenAction) {
+      window.location.href = buildMetaMaskMobileDeepLink();
+      return;
+    }
+
     connectWallet(preferredWalletOption?.id).catch(() => {});
   }, [
     connectBurnerWallet,
@@ -196,6 +208,7 @@ export default function useP2PWalletHeaderControl({
     onCotiNetwork,
     preferredWalletOption?.id,
     setWalletError,
+    showMobileWalletAppOpenAction,
     tradePrimaryConnectsAppWallet,
     walletAddress,
     walletAddressCopyKey
@@ -418,7 +431,8 @@ export default function useP2PWalletHeaderControl({
         primaryMetaLabel={walletPrimaryButtonIsAddress && walletPrimaryButtonCopied ? 'Copied' : undefined}
         primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
         primaryDisabled={
-          walletConnectionBusy || (!walletAddress && !preferredWalletOption && !tradePrimaryConnectsAppWallet)
+          walletConnectionBusy ||
+          (!walletAddress && !preferredWalletOption && !tradePrimaryConnectsAppWallet && !showMobileWalletAppOpenAction)
         }
         onPrimaryAction={handleWalletPrimaryAction}
         modeLabel={walletModeLabel}
@@ -472,7 +486,9 @@ export default function useP2PWalletHeaderControl({
                   })
                 ) : (
                   <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                    MetaMask or CipherTrade not detected
+                    {showMobileWalletAppOpenAction
+                      ? 'Open this page in MetaMask Mobile or a supported wallet app'
+                      : 'MetaMask or CipherTrade not detected'}
                   </button>
                 )}
               </div>

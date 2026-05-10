@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   canStoreCotiSnapAesKeyFromCurrentOrigin,
   deleteCotiSnapAesKeyResult,
+  detectWalletSnapCapability,
   getCotiSnapAesKey,
   getCotiSnapAesKeyResult,
   getCotiSnapAesStatus,
@@ -39,6 +40,34 @@ const provider = (handler: (request: ProviderRequest) => unknown): Eip1193Provid
     }
   }) as unknown as Eip1193Provider;
 
+const providerWithFlags = (
+  handler: (request: ProviderRequest) => unknown,
+  flags: Record<string, unknown>
+): Eip1193Provider =>
+  ({
+    ...(provider(handler) as object),
+    ...flags
+  }) as Eip1193Provider;
+
+describe('detectWalletSnapCapability', () => {
+  it('treats providers with Snap discovery as Snap-capable', async () => {
+    await expect(
+      detectWalletSnapCapability(provider(({ method }) => (method === 'wallet_getSnaps' ? {} : null)))
+    ).resolves.toBe('supported');
+  });
+
+  it('treats MetaMask Mobile without Snap RPCs as mobile-unsupported', async () => {
+    await expect(
+      detectWalletSnapCapability(
+        providerWithFlags(() => {
+          throw Object.assign(new Error('method not supported'), { code: 4200 });
+        }, { isMetaMask: true }),
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
+      )
+    ).resolves.toBe('unsupported-mobile');
+  });
+});
+
 describe('getCotiSnapAesStatus', () => {
   it('detects unsupported Snap discovery without prompting install', async () => {
     await expect(
@@ -63,6 +92,17 @@ describe('getCotiSnapAesStatus', () => {
         })
       )
     ).resolves.toBe('installed');
+  });
+
+  it('does not ask mobile MetaMask users to install desktop-only Snaps', async () => {
+    await expect(
+      getCotiSnapAesStatus(
+        providerWithFlags(() => {
+          throw Object.assign(new Error('method not supported'), { code: 4200 });
+        }, { isMetaMask: true }),
+        'Mozilla/5.0 (Linux; Android 14) Mobile MetaMaskMobile'
+      )
+    ).resolves.toBe('unsupported-mobile');
   });
 
   it('does not invoke Snap RPC methods during passive status checks', async () => {
@@ -208,6 +248,29 @@ describe('getCotiSnapAesKey', () => {
         })
       )
     ).resolves.toEqual({ status: 'unsupported' });
+  });
+
+  it('skips Snap install prompts for MetaMask Mobile and lets callers use fallback AES', async () => {
+    const requestedMethods: string[] = [];
+
+    await expect(
+      getCotiSnapAesKeyResult(
+        providerWithFlags(({ method }) => {
+          requestedMethods.push(method);
+          if (method === 'wallet_getSnaps') {
+            throw Object.assign(new Error('method not supported'), { code: 4200 });
+          }
+          return null;
+        }, { isMetaMask: true }),
+        {
+          userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile',
+          walletAddress: '0x1111111111111111111111111111111111111111'
+        }
+      )
+    ).resolves.toEqual({ status: 'unsupported-mobile' });
+
+    expect(requestedMethods).not.toContain('wallet_requestSnaps');
+    expect(requestedMethods).not.toContain('wallet_invokeSnap');
   });
 });
 

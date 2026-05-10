@@ -234,6 +234,28 @@ describe('getOrRecoverAesForWallet', () => {
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
   });
 
+  it('allows mobile Snap-unsupported wallets to use fallback AES even when Snap is preferred', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer();
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+
+    await expect(
+      getOrRecoverAesForWalletResult({
+        provider: activeProvider,
+        requireSnapAes: true,
+        signer: activeSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({
+      status: 'ready',
+      onboardInfo: { aesKey: 'fallback-aes' },
+      source: 'fallback'
+    });
+
+    expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
+  });
+
   it('checks Snap before the fallback AES signature when fallback is needed', async () => {
     const calls: string[] = [];
     const activeProvider = provider();

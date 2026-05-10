@@ -2,6 +2,25 @@ import type { InjectedWalletOption } from './appShared';
 
 export type InjectedWalletPriority = 'metamask' | 'selected';
 
+const getNavigatorUserAgent = (): string => {
+  const maybeNavigator = globalThis as { navigator?: { userAgent?: unknown } };
+  return typeof maybeNavigator.navigator?.userAgent === 'string' ? maybeNavigator.navigator.userAgent : '';
+};
+
+const getCurrentDappUrl = (): string => {
+  const maybeWindow = globalThis as { window?: { location?: { href?: unknown } } };
+  const href = maybeWindow.window?.location?.href;
+  return typeof href === 'string' && href.trim() ? href.trim() : '';
+};
+
+export const isMobileBrowserUserAgent = (userAgent = getNavigatorUserAgent()): boolean =>
+  /android|iphone|ipad|ipod|mobile/i.test(userAgent);
+
+export const buildMetaMaskMobileDeepLink = (dappUrl = getCurrentDappUrl()): string => {
+  const normalizedUrl = dappUrl.trim().replace(/^https?:\/\//i, '');
+  return normalizedUrl ? `https://metamask.app.link/dapp/${encodeURI(normalizedUrl)}` : 'https://metamask.app.link';
+};
+
 export const isPreferredMetaMaskWalletOption = (option: InjectedWalletOption): boolean =>
   Boolean(option.provider.isMetaMask && !option.provider.isBraveWallet);
 

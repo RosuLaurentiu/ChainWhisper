@@ -117,7 +117,7 @@ describe('wallet header labels', () => {
       })
     ).toMatchObject({
       label: 'Unlock privacy',
-      title: 'COTI Snap is installed. Click to read the AES key for this MetaMask wallet.'
+      title: 'Unlock with COTI Snap.'
     });
     expect(
       resolveWalletPrivacyUnlockPrompt({
@@ -132,7 +132,14 @@ describe('wallet header labels', () => {
         snapStatus: 'unsupported',
         unlocking: false
       }).title
-    ).toContain('fallback');
+    ).toContain('wallet AES');
+    expect(
+      resolveWalletPrivacyUnlockPrompt({
+        hasAesReady: false,
+        snapStatus: 'unsupported-mobile',
+        unlocking: false
+      }).title
+    ).toContain('MetaMask Mobile does not support Snaps');
     expect(
       resolveWalletPrivacyUnlockPrompt({
         hasAesReady: false,

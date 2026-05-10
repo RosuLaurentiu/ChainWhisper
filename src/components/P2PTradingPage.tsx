@@ -91,6 +91,7 @@ import {
 import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption,
+  isMobileBrowserUserAgent,
   orderInjectedWalletOptions
 } from '../lib/walletOptions';
 import { hasSessionAesKey, type SharedWalletSession } from '../lib/walletSession';
@@ -969,7 +970,11 @@ export default function P2PTradingPage({
       setConnectingWalletId(walletOption?.id ?? 'wallet');
 
       if (!provider) {
-        setWalletError('MetaMask or CipherTrade is required to connect a browser wallet.');
+        setWalletError(
+          isMobileBrowserUserAgent()
+            ? 'Open this page in MetaMask Mobile or a supported wallet app, then connect again.'
+            : 'MetaMask or CipherTrade is required to connect a browser wallet.'
+        );
         setConnectingWalletId('');
         return;
       }
@@ -2215,7 +2220,6 @@ export default function P2PTradingPage({
         forceLegacyRefresh: false,
         forceRefresh: true,
         provider: activeBrowserProvider ?? undefined,
-        requireSnapAes: Boolean(activeBrowserProvider),
         signer,
         walletAddress
       });
@@ -2227,6 +2231,8 @@ export default function P2PTradingPage({
               ? 'rejected'
               : unlockResult.reason === 'unsupported'
                 ? 'unsupported'
+                : unlockResult.reason === 'unsupported-mobile'
+                  ? 'unsupported-mobile'
                 : unlockResult.reason === 'not-installed'
                   ? 'not-installed'
                   : unlockResult.reason === 'unrecoverable'
@@ -2240,6 +2246,8 @@ export default function P2PTradingPage({
               ? 'Switch MetaMask to COTI Mainnet before unlocking privacy.'
               : unlockResult.reason === 'missing-aes'
                 ? 'COTI Snap has no AES key for this active MetaMask account. If the account was not selected during Snap install, reconnect/reinstall the Snap with that account selected. Then open https://metamask.coti.io/wallet with this MetaMask account active, onboard or recover its AES key, return here, and click Unlock privacy.'
+                : unlockResult.reason === 'unsupported-mobile'
+                  ? 'MetaMask Mobile does not support Snaps here. Unlock privacy will use wallet AES instead.'
                 : unlockResult.reason === 'not-installed'
                   ? 'Install or approve COTI Snap for MetaMask, then click Unlock privacy again.'
                   : unlockResult.reason === 'rejected'

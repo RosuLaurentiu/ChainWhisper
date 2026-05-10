@@ -37,6 +37,7 @@ export type WalletReadiness = {
 export type PrivacyUnlockSnapStatus =
   | 'unknown'
   | 'unsupported'
+  | 'unsupported-mobile'
   | 'not-installed'
   | 'installed'
   | 'installed-aes-ready'
@@ -326,12 +327,12 @@ export const resolveWalletPrivacyUnlockPrompt = ({
     case 'installed':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'COTI Snap is installed. Click to read the AES key for this MetaMask wallet.'
+        title: 'Unlock with COTI Snap.'
       };
     case 'installed-aes-ready':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'Recover the COTI AES key from the MetaMask Snap.'
+        title: 'Unlock with COTI Snap.'
       };
     case 'installed-aes-missing':
       return {
@@ -353,12 +354,17 @@ export const resolveWalletPrivacyUnlockPrompt = ({
     case 'not-installed':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'Install or approve COTI Snap, with the COTI wallet fallback kept available.'
+        title: 'COTI Snap is not installed for this wallet. Unlock privacy will use wallet AES if Snap is unavailable.'
+      };
+    case 'unsupported-mobile':
+      return {
+        label: WALLET_ACTION_LABEL.unlockPrivacy,
+        title: 'MetaMask Mobile does not support Snaps here. Unlock privacy will use wallet AES.'
       };
     case 'unsupported':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'This wallet does not expose MetaMask Snap discovery; use the COTI wallet fallback.'
+        title: 'COTI Snap is unavailable for this wallet provider. Unlock privacy will use wallet AES.'
       };
     case 'error':
       return {

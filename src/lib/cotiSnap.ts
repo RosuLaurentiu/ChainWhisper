@@ -3,12 +3,15 @@ import { COTI_NETWORK, normalizeChainId, type Eip1193Provider } from './appShare
 const COTI_SNAP_ID = 'npm:@coti-io/coti-snap';
 
 type SnapResponse = Record<string, unknown>;
-type CotiSnapConnectionStatus = 'ready' | 'not-installed' | 'unsupported' | 'rejected' | 'error';
+type CotiSnapConnectionStatus = 'ready' | 'not-installed' | 'unsupported' | 'unsupported-mobile' | 'rejected' | 'error';
 const SET_AES_KEY_ALLOWED_ORIGINS = new Set(['https://metamask.coti.io', 'https://dev.metamask.coti.io']);
+
+export type WalletSnapCapability = 'supported' | 'unsupported' | 'unsupported-mobile' | 'unknown';
 
 export type CotiSnapAesStatus =
   | 'unknown'
   | 'unsupported'
+  | 'unsupported-mobile'
   | 'not-installed'
   | 'installed'
   | 'installed-aes-ready'
@@ -24,6 +27,7 @@ export type CotiSnapAesKeyResult =
   | { status: 'missing-aes' }
   | { status: 'not-installed' }
   | { status: 'unsupported' }
+  | { status: 'unsupported-mobile' }
   | { status: 'wallet-mismatch' }
   | { status: 'wrong-network' }
   | { status: 'rejected' }
@@ -40,7 +44,27 @@ export const canStoreCotiSnapAesKeyFromCurrentOrigin = (origin: string | null = 
 
 export type CotiSnapWalletContext = {
   expectedChainId?: number;
+  userAgent?: string;
   walletAddress?: string;
+};
+
+const getNavigatorUserAgent = (): string => {
+  const maybeNavigator = globalThis as { navigator?: { userAgent?: unknown } };
+  return typeof maybeNavigator.navigator?.userAgent === 'string' ? maybeNavigator.navigator.userAgent : '';
+};
+
+const isMobileUserAgent = (userAgent = getNavigatorUserAgent()): boolean =>
+  /android|iphone|ipad|ipod|mobile/i.test(userAgent);
+
+const isMetaMaskMobileContext = (
+  provider: Eip1193Provider,
+  userAgent = getNavigatorUserAgent()
+): boolean => {
+  const providerWithFlags = provider as Eip1193Provider & { isMetaMask?: boolean };
+  return Boolean(
+    isMobileUserAgent(userAgent) &&
+      (providerWithFlags.isMetaMask || /metamaskmobile|metamask/i.test(userAgent))
+  );
 };
 
 const isUserRejectedError = (error: unknown): boolean => {
@@ -66,6 +90,21 @@ const getInstalledSnaps = async (provider: Eip1193Provider): Promise<Record<stri
     return (await provider.request({ method: 'wallet_getSnaps' })) as Record<string, SnapResponse> | null;
   } catch {
     return null;
+  }
+};
+
+export const detectWalletSnapCapability = async (
+  provider: Eip1193Provider,
+  userAgent = getNavigatorUserAgent()
+): Promise<WalletSnapCapability> => {
+  try {
+    await provider.request({ method: 'wallet_getSnaps' });
+    return 'supported';
+  } catch (error) {
+    if (isMetaMaskMobileContext(provider, userAgent)) {
+      return 'unsupported-mobile';
+    }
+    return isUnsupportedSnapError(error) ? 'unsupported' : 'unknown';
   }
 };
 
@@ -95,6 +134,14 @@ const confirmSnapWalletContext = async (
 };
 
 const requestSnap = async (provider: Eip1193Provider): Promise<CotiSnapConnectionStatus> => {
+  const capability = await detectWalletSnapCapability(provider);
+  if (capability === 'unsupported-mobile') {
+    return 'unsupported-mobile';
+  }
+  if (capability === 'unsupported') {
+    return 'unsupported';
+  }
+
   try {
     const snaps = await getInstalledSnaps(provider);
     if (snaps && Object.prototype.hasOwnProperty.call(snaps, COTI_SNAP_ID)) {
@@ -166,7 +213,18 @@ const buildSnapChainParams = (context?: CotiSnapWalletContext): Record<string, u
   return chainId ? { chainId } : undefined;
 };
 
-export const getCotiSnapAesStatus = async (provider: Eip1193Provider): Promise<CotiSnapAesStatus> => {
+export const getCotiSnapAesStatus = async (
+  provider: Eip1193Provider,
+  userAgent = getNavigatorUserAgent()
+): Promise<CotiSnapAesStatus> => {
+  const capability = await detectWalletSnapCapability(provider, userAgent);
+  if (capability === 'unsupported-mobile') {
+    return 'unsupported-mobile';
+  }
+  if (capability === 'unsupported') {
+    return 'unsupported';
+  }
+
   const snaps = await getInstalledSnaps(provider);
   if (!snaps) {
     return 'unsupported';
@@ -185,6 +243,11 @@ export const getCotiSnapAesKeyResult = async (
   const walletContext = await confirmSnapWalletContext(provider, context);
   if (walletContext !== 'ready') {
     return { status: walletContext };
+  }
+
+  const capability = await detectWalletSnapCapability(provider, context?.userAgent);
+  if (capability === 'unsupported-mobile' || capability === 'unsupported') {
+    return { status: capability };
   }
 
   const connected = await requestAndConnectCotiSnap(provider);

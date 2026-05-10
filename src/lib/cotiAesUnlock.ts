@@ -332,7 +332,8 @@ export const getOrRecoverAesForWalletResult = async ({
       }
       if (
         requireSnapAes &&
-        snapResult.status !== 'unsupported'
+        snapResult.status !== 'unsupported' &&
+        snapResult.status !== 'unsupported-mobile'
       ) {
         return {
           status: 'fallback-unavailable' as const,
