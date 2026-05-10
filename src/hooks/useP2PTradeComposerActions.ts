@@ -95,7 +95,7 @@ type UseP2PTradeComposerActionsArgs = {
   editingTrade: TradeSnapshot | null;
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   hashTradeAccessSecret: (accessSecret: string) => Promise<string>;
-  loadWalletBalances: () => Promise<void>;
+  loadWalletBalances: (signer?: TradeSigner) => Promise<void>;
   mergeTradeSnapshot: (snapshot: TradeSnapshot) => void;
   navigateToTradePath: (path: string) => void;
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
@@ -579,7 +579,7 @@ export default function useP2PTradeComposerActions({
       setTradeHidePrivateLiquidity(false);
       openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
       await Promise.all([
-        loadWalletBalances(),
+        loadWalletBalances(signer),
         refreshMyTrades(),
         snapshot.isPublic ? refreshPublicTrades() : Promise.resolve()
       ]);

@@ -129,7 +129,8 @@ type UseP2PTradeActionsArgs = {
   connectedWithBurner: boolean;
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   mergeTradeSnapshot: (snapshot: TradeSnapshot) => void;
-  refreshTradeDataInBackground: (tradeId?: number, escrowContract?: string) => void;
+  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
+  refreshTradeDataInBackground: (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => void;
   refreshTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   rememberTradeAccessSecret?: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
@@ -152,6 +153,7 @@ export default function useP2PTradeActions({
   connectedWithBurner,
   getTradeSigner,
   mergeTradeSnapshot,
+  openTrade,
   refreshTradeDataInBackground,
   refreshTradeDetail,
   resolveKnownTradeAccessSecret,
@@ -309,10 +311,11 @@ export default function useP2PTradeActions({
           acceptedTxHash
         };
         mergeTradeSnapshot(nextSnapshot);
+        openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
         if (closedRelatedCounter) {
-          refreshTradeDataInBackground(latestSnapshot.counterParentTradeId);
+          refreshTradeDataInBackground(latestSnapshot.counterParentTradeId, undefined, signer);
         }
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to accept trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
@@ -324,6 +327,7 @@ export default function useP2PTradeActions({
       connectedWithBurner,
       getTradeSigner,
       mergeTradeSnapshot,
+      openTrade,
       rememberTradeAccessSecret,
       refreshTradeDataInBackground,
       refreshTradeDetail,
@@ -433,7 +437,8 @@ export default function useP2PTradeActions({
             }
           });
         }
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+        openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to fill trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
@@ -444,6 +449,7 @@ export default function useP2PTradeActions({
     [
       getTradeSigner,
       mergeTradeSnapshot,
+      openTrade,
       refreshTradeDataInBackground,
       refreshTradeDetail,
       resolveAccessSecretForSnapshot,
@@ -461,7 +467,8 @@ export default function useP2PTradeActions({
         await cancelTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'cancelled' };
         mergeTradeSnapshot(nextSnapshot);
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, resolveAccessSecretForSnapshot(snapshot) || undefined, snapshot.escrowContract);
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to cancel trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
@@ -469,7 +476,7 @@ export default function useP2PTradeActions({
         setProcessingTradeActionId('');
       }
     },
-    [getTradeSigner, mergeTradeSnapshot, refreshTradeDataInBackground, setTradeActionError]
+    [getTradeSigner, mergeTradeSnapshot, openTrade, refreshTradeDataInBackground, resolveAccessSecretForSnapshot, setTradeActionError]
   );
 
   const declineTrade = useCallback(
@@ -481,7 +488,8 @@ export default function useP2PTradeActions({
         await declineTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'declined' };
         mergeTradeSnapshot(nextSnapshot);
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, resolveAccessSecretForSnapshot(snapshot) || undefined, snapshot.escrowContract);
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to refuse trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
@@ -489,7 +497,7 @@ export default function useP2PTradeActions({
         setProcessingTradeActionId('');
       }
     },
-    [getTradeSigner, mergeTradeSnapshot, refreshTradeDataInBackground, setTradeActionError]
+    [getTradeSigner, mergeTradeSnapshot, openTrade, refreshTradeDataInBackground, resolveAccessSecretForSnapshot, setTradeActionError]
   );
 
   return {

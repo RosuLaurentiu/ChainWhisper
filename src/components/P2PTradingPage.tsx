@@ -2225,9 +2225,9 @@ export default function P2PTradingPage({
   ]);
 
   const refreshTradeDataInBackground = useCallback(
-    (tradeId?: number, escrowContract?: string) => {
+    (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => {
       void Promise.allSettled([
-        refreshWalletBalances({ reason: 'trade-action', silent: true }),
+        refreshWalletBalances({ reason: 'trade-action', signer, silent: true }),
         refreshMyTrades({ silent: true }),
         refreshPublicTrades({ silent: true }),
         tradeId ? refreshTradeDetail(tradeId, escrowContract, { silent: true }).catch(() => null) : Promise.resolve(null)
@@ -2476,7 +2476,7 @@ export default function P2PTradingPage({
     editingTrade,
     getTradeSigner,
     hashTradeAccessSecret,
-    loadWalletBalances: () => refreshWalletBalances({ reason: 'trade-action', silent: true }),
+    loadWalletBalances: (signer?: TradeSigner) => refreshWalletBalances({ reason: 'trade-action', signer, silent: true }),
     mergeTradeSnapshot,
     navigateToTradePath,
     openTrade,
@@ -2929,10 +2929,11 @@ export default function P2PTradingPage({
         openTrade(result.orderId, undefined, result.escrowContract);
       }
       await Promise.allSettled([
-        refreshWalletBalances({ reason: 'trade-action', silent: true }),
+        refreshWalletBalances({ reason: 'trade-action', signer, silent: true }),
         refreshMyTrades({ silent: true }),
         refreshPublicTrades({ silent: true })
       ]);
+      openTrade(result.orderId, undefined, result.escrowContract);
     } catch (error) {
       const message = error instanceof Error
         ? error.message
@@ -2976,6 +2977,7 @@ export default function P2PTradingPage({
     connectedWithBurner,
     getTradeSigner,
     mergeTradeSnapshot,
+    openTrade,
     refreshTradeDataInBackground,
     refreshTradeDetail,
     resolveKnownTradeAccessSecret,
@@ -3047,7 +3049,8 @@ export default function P2PTradingPage({
         } else {
           setRecurringSellFillInput('');
         }
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const outputAsset = side === 'buy' ? recurring.quoteAsset : recurring.baseAsset;
         const fallbackMessage =
@@ -3064,6 +3067,7 @@ export default function P2PTradingPage({
     [
       getTradeSigner,
       onCotiNetwork,
+      openTrade,
       recurringBuyFillInput,
       recurringSellFillInput,
       refreshTradeDataInBackground,
@@ -3097,7 +3101,8 @@ export default function P2PTradingPage({
           orderId: recurring.orderId,
           action
         });
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract);
+        openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Recurring order update failed.';
         setTradeActionError(getProviderErrorMessage(error, message));
@@ -3105,7 +3110,7 @@ export default function P2PTradingPage({
         setProcessingRecurringAction('');
       }
     },
-    [getTradeSigner, onCotiNetwork, refreshTradeDataInBackground, walletAddress]
+    [getTradeSigner, onCotiNetwork, openTrade, refreshTradeDataInBackground, resolvedRouteAccessSecret, walletAddress]
   );
 
   const formatRecurringTokenAmount = (asset: TradeAssetPayload, amount: string, hidden = false): string => {

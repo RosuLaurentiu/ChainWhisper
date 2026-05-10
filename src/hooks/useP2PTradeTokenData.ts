@@ -370,7 +370,10 @@ export default function useP2PTradeTokenData({
             balanceWei: previous[tokenKey]?.balanceWei ?? null,
             loading: true,
             walletKey,
-            aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
+            aesReady:
+              token.kind === 'private-erc20'
+                ? aesReady || previous[tokenKey]?.privateBalanceState?.status === 'ready'
+                : undefined,
             privateBalanceState:
               token.kind === 'private-erc20'
                 ? previous[tokenKey]?.privateBalanceState?.status === 'ready'
@@ -443,7 +446,10 @@ export default function useP2PTradeTokenData({
                   : resolveBalanceWeiAfterRefresh(previousEntry?.balanceWei ?? null, balanceWei, silent),
               loading: false,
               walletKey,
-              aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
+              aesReady:
+                token.kind === 'private-erc20'
+                  ? aesReady || nextPrivateBalanceState?.status === 'ready'
+                  : undefined,
               privateBalanceState: nextPrivateBalanceState
             }
           };
@@ -458,21 +464,36 @@ export default function useP2PTradeTokenData({
         if (silent) {
           return;
         }
-        setCustomTradeTokenInfoByAddress((previous) => ({
-          ...previous,
-          [tokenKey]: {
-            kind: token.kind,
-            address: normalizedAddress,
-            symbol: shortenAddress(normalizedAddress),
-            decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
-            balanceWei: null,
-            loading: false,
-            error: 'Unable to load token.',
-            walletKey,
-            aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
-            privateBalanceState: token.kind === 'private-erc20' ? { status: 'unsupported' } : undefined
+        setCustomTradeTokenInfoByAddress((previous) => {
+          const previousEntry = previous[tokenKey];
+          if (token.kind === 'private-erc20' && previousEntry?.privateBalanceState?.status === 'ready') {
+            return {
+              ...previous,
+              [tokenKey]: {
+                ...previousEntry,
+                aesReady: true,
+                error: 'Unable to refresh token.',
+                loading: false,
+                walletKey
+              }
+            };
           }
-        }));
+          return {
+            ...previous,
+            [tokenKey]: {
+              kind: token.kind,
+              address: normalizedAddress,
+              symbol: shortenAddress(normalizedAddress),
+              decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
+              balanceWei: null,
+              loading: false,
+              error: 'Unable to load token.',
+              walletKey,
+              aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
+              privateBalanceState: token.kind === 'private-erc20' ? { status: 'unsupported' } : undefined
+            }
+          };
+        });
       }
     },
     [balanceRefreshSessionKey, getTradeSigner, readCurrentPrivateBalanceState, walletAddress, walletHasAes, walletKey]
