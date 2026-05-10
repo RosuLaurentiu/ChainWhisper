@@ -45,7 +45,7 @@ import {
 } from './lib/cotiAesUnlock';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import { submitGroupMemo } from './lib/groupChatChain';
-import { runWalletTransactionFlow } from './lib/walletTransactionFlow';
+import { isWalletTransactionFlowActive, runWalletTransactionFlow } from './lib/walletTransactionFlow';
 import {
   submitDirectMemo,
   submitHiddenContactNameMemo,
@@ -758,7 +758,11 @@ export default function App() {
   });
   const resetBurnerSessionRef = useRef<() => void>(() => {});
   const schedulePostUnlockRefresh = useCallback(() => {
-    window.setTimeout(() => {
+    const runRefresh = () => {
+      if (isWalletTransactionFlowActive()) {
+        window.setTimeout(runRefresh, 500);
+        return;
+      }
       try {
         syncConversationHistoryRef.current({
           contactsOnly: true,
@@ -767,7 +771,8 @@ export default function App() {
           background: true
         }).catch(() => {});
       } catch {}
-    }, 300);
+    };
+    window.setTimeout(runRefresh, 300);
   }, []);
   const walletPreference = useStoredWalletPreference();
   const preferredBrowserWalletId = getPreferredBrowserWalletId(walletPreference);
@@ -858,6 +863,15 @@ export default function App() {
     },
     []
   );
+  const activateBrowserWalletSessionGuarded = useCallback(
+    async (
+      walletId?: string,
+      options?: Parameters<typeof activateBrowserWalletSession>[1]
+    ) => {
+      return runSharedWalletTransactionFlow(() => activateBrowserWalletSession(walletId, options));
+    },
+    [activateBrowserWalletSession, runSharedWalletTransactionFlow]
+  );
   const {
     beginBurnerPinFlow,
     beginRevealBurnerBackup,
@@ -899,6 +913,7 @@ export default function App() {
     ensureCotiNetwork,
     loadMyNicknameFromChainRef,
     preferredInjectedWalletOption,
+    runWalletTransactionFlow: runSharedWalletTransactionFlow,
     runPostConnectDataSyncUntilAppliedRef,
     schedulePostUnlockRefresh,
     sessionOnboardInfo,
@@ -3344,6 +3359,7 @@ export default function App() {
     postConnectDataSyncRunIdRef,
     readStateSyncEnabled: readStateFeaturesEnabled,
     resolveConversationBlockRangeRef,
+    runWalletTransactionFlow: runSharedWalletTransactionFlow,
     resolveRequiredFeeForSendRef,
     resolveSubmitSelectorRef,
     setLastReadAllTs,
@@ -4190,6 +4206,7 @@ export default function App() {
     newGroupMembersInput,
     newGroupTitle,
     processingGroupAction,
+    runWalletTransactionFlow: runSharedWalletTransactionFlow,
     setActiveGroupId,
     setActiveGroupJoinCodes,
     setError,
@@ -5547,6 +5564,9 @@ export default function App() {
 
   useEffect(() => {
     const syncPageWithLocation = () => {
+      if (isWalletTransactionFlowActive()) {
+        return;
+      }
       const nextRoute = resolveAppRouteFromLocation();
       setActivePage(nextRoute.page);
 
@@ -6371,6 +6391,9 @@ export default function App() {
     };
 
     const scheduleRealtimeSync = (options?: SyncConversationOptions) => {
+      if (isWalletTransactionFlowActive()) {
+        return;
+      }
       mergeRealtimeSyncOptions(options);
       if (cancelled) {
         return;
@@ -6630,6 +6653,9 @@ export default function App() {
     };
 
     const scheduleRealtimeSync = (options?: SyncGroupOptions) => {
+      if (isWalletTransactionFlowActive()) {
+        return;
+      }
       mergeRealtimeSyncOptions(options);
       if (cancelled) {
         return;
@@ -7137,7 +7163,7 @@ export default function App() {
   } = useChatWalletHeaderControl({
     activeSignerSource,
     appWallet: burnerWalletRef.current,
-    activateBrowserWalletSession,
+    activateBrowserWalletSession: activateBrowserWalletSessionGuarded,
     beginBurnerPinFlow,
     beginRevealBurnerBackup,
     browserWalletSession,
@@ -7191,7 +7217,7 @@ export default function App() {
         await beginBurnerPinFlow('stored');
       },
       connectBrowserWallet: (walletId?: string, options = {}) =>
-        activateBrowserWalletSession(walletId, {
+        activateBrowserWalletSessionGuarded(walletId, {
           forceAccountPicker: options.forceAccountPicker,
           forceFreshPrivacy: options.forceFreshPrivacy,
           preparePrivacy: options.preparePrivacy
@@ -7205,7 +7231,7 @@ export default function App() {
       switchAppWallet: (walletIdOrAddress: string) => Promise.resolve(handleSwitchActiveBurnerWallet(walletIdOrAddress)),
       unlockPrivacy: (options = {}) => {
         if (activeSignerSource === 'metamask') {
-          return activateBrowserWalletSession(currentInjectedWalletOption?.id ?? preferredBrowserWalletId, {
+          return activateBrowserWalletSessionGuarded(currentInjectedWalletOption?.id ?? preferredBrowserWalletId, {
             forceFreshPrivacy: options.forceFreshPrivacy,
             preparePrivacy: true
           });
@@ -7214,7 +7240,7 @@ export default function App() {
       }
     }),
     [
-      activateBrowserWalletSession,
+      activateBrowserWalletSessionGuarded,
       activeSignerSource,
       beginBurnerPinFlow,
       currentInjectedWalletOption?.id,

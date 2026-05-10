@@ -2606,6 +2606,39 @@ export default function P2PTradingPage({
     walletAddress
   ]);
 
+  const unlockPrivacyForTradingWallet = useCallback(async () => {
+    if (!sharedWalletActions?.unlockPrivacy) {
+      await signAesForCurrentWallet();
+      return;
+    }
+
+    const forceFreshPrivacy =
+      sharedWalletAesHealth?.status === 'repair-needed' ||
+      sharedWalletAesHealth?.status === 'key-mismatch' ||
+      cotiSnapAesStatus === 'installed-aes-stale' ||
+      cotiSnapAesStatus === 'key-mismatch' ||
+      cotiSnapAesStatus === 'repair-needed';
+
+    setWalletError('');
+    setConnectingWalletId('aes');
+    try {
+      await Promise.resolve(sharedWalletActions.unlockPrivacy({ forceFreshPrivacy }));
+      globalThis.setTimeout(() => {
+        refreshTradeDataInBackground();
+      }, 0);
+    } catch (error) {
+      setWalletError(getProviderErrorMessage(error, 'AES signature was not completed.'));
+    } finally {
+      setConnectingWalletId('');
+    }
+  }, [
+    cotiSnapAesStatus,
+    refreshTradeDataInBackground,
+    sharedWalletActions,
+    sharedWalletAesHealth?.status,
+    signAesForCurrentWallet
+  ]);
+
   const {
     beginCounterTrade,
     beginEditTrade,
@@ -4955,7 +4988,7 @@ export default function P2PTradingPage({
     setWalletError,
     setWalletMenuOpen,
     sharedWalletSession,
-    signAesForCurrentWallet,
+    signAesForCurrentWallet: unlockPrivacyForTradingWallet,
     snapAesStatus: cotiSnapAesStatus,
     walletAddress,
     walletAesHealth: sharedWalletAesHealth,

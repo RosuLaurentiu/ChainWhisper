@@ -42,6 +42,7 @@ type UseBurnerWalletArgs = {
   ensureCotiNetwork: (provider: Eip1193Provider) => Promise<void>;
   loadMyNicknameFromChainRef: MutableRefObject<(address: string) => Promise<string>>;
   preferredInjectedWalletOption: InjectedWalletOption | null;
+  runWalletTransactionFlow?: <T>(operation: () => Promise<T>) => Promise<T>;
   runPostConnectDataSyncUntilAppliedRef: MutableRefObject<(address: string) => Promise<void>>;
   schedulePostUnlockRefresh: () => void;
   sessionOnboardInfo: Record<string, OnboardInfo>;
@@ -66,6 +67,7 @@ export function useBurnerWallet({
   ensureCotiNetwork,
   loadMyNicknameFromChainRef,
   preferredInjectedWalletOption,
+  runWalletTransactionFlow,
   runPostConnectDataSyncUntilAppliedRef,
   schedulePostUnlockRefresh,
   sessionOnboardInfo,
@@ -620,7 +622,7 @@ export function useBurnerWallet({
       return;
     }
 
-    try {
+    const performTopUp = async () => {
       setStatus('Top up in progress...');
       if (walletOption?.id) {
         setSelectedInjectedWalletId(walletOption.id);
@@ -661,6 +663,14 @@ export function useBurnerWallet({
       } else {
         setStatus('Burner topped up. Unlock burner wallet to continue.');
       }
+    };
+
+    try {
+      if (runWalletTransactionFlow) {
+        await runWalletTransactionFlow(performTopUp);
+      } else {
+        await performTopUp();
+      }
     } catch (fundError) {
       const message = getProviderErrorMessage(fundError, 'Failed to top up burner wallet.');
       setError(message);
@@ -671,6 +681,7 @@ export function useBurnerWallet({
     ensureCotiNetwork,
     initializeBurnerWallet,
     preferredInjectedWalletOption,
+    runWalletTransactionFlow,
     setError,
     setSelectedInjectedWalletId,
     setStatus,

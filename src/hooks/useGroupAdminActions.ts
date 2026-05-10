@@ -84,6 +84,7 @@ type UseGroupAdminActionsArgs = {
   setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
   setShowQuickActionsModal: StateSetter<boolean>;
   setStatus: (message: string) => void;
+  runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   syncGroupData: (options?: SyncGroupOptions) => Promise<void>;
   walletAddress: string;
 };
@@ -139,6 +140,7 @@ export default function useGroupAdminActions({
   setSessionOnboardInfo,
   setShowQuickActionsModal,
   setStatus,
+  runWalletTransactionFlow,
   syncGroupData,
   walletAddress
 }: UseGroupAdminActionsArgs) {
@@ -240,14 +242,16 @@ export default function useGroupAdminActions({
       try {
         setProcessingGroupAction(true);
         setRevokingGroupJoinCodeHash(normalizedCodeHash);
-        const { signer, cacheKey } = await getMemoSigner();
-        await revokeGroupJoinCode({
-          signer,
-          groupId: activeGroupId,
-          codeHash: normalizedCodeHash
-        });
+        await runWalletTransactionFlow(async () => {
+          const { signer, cacheKey } = await getMemoSigner();
+          await revokeGroupJoinCode({
+            signer,
+            groupId: activeGroupId,
+            codeHash: normalizedCodeHash
+          });
 
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+          updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        });
 
         if (generatedGroupJoinCodeHash.trim().toLowerCase() === normalizedCodeHash) {
           setGeneratedGroupInviteCode('');
@@ -271,6 +275,7 @@ export default function useGroupAdminActions({
       isActiveGroupAdmin,
       loadActiveJoinCodesForGroup,
       processingGroupAction,
+      runWalletTransactionFlow,
       setError,
       setGeneratedGroupInviteCode,
       setGeneratedGroupJoinCodeHash,
@@ -296,15 +301,17 @@ export default function useGroupAdminActions({
     );
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await createGroupOnChain({
-        signer,
-        title,
-        isPrivate: newGroupIsPrivate,
-        initialMembers
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await createGroupOnChain({
+          signer,
+          title,
+          isPrivate: newGroupIsPrivate,
+          initialMembers
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       setNewGroupTitle('');
       setNewGroupIsPrivate(false);
@@ -322,6 +329,7 @@ export default function useGroupAdminActions({
     newGroupIsPrivate,
     newGroupMembersInput,
     newGroupTitle,
+    runWalletTransactionFlow,
     setError,
     setNewGroupIsPrivate,
     setNewGroupMembersInput,
@@ -368,15 +376,17 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await inviteMembersToGroupOnChain({
-        signer,
-        groupId: activeGroupId,
-        accounts,
-        ttlSeconds: ttlParsed
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await inviteMembersToGroupOnChain({
+          signer,
+          groupId: activeGroupId,
+          accounts,
+          ttlSeconds: ttlParsed
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       setGroupInviteMembersInput('');
       await syncGroupData({ deep: true });
@@ -393,6 +403,7 @@ export default function useGroupAdminActions({
     groupInviteMembersInput,
     groupInviteTtlInput,
     isActiveGroupAdmin,
+    runWalletTransactionFlow,
     setError,
     setGroupInviteMembersInput,
     setProcessingGroupAction,
@@ -423,19 +434,22 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      const nextJoinCode = await createGroupJoinCode({
-        groupId: activeGroupId,
-        signer,
-        requestedWalletAddress,
-        ttlSeconds,
-        groupJoinCodeMode,
-        groupJoinCodeMaxUsesInput
+      const nextJoinCode = await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        const generatedJoinCode = await createGroupJoinCode({
+          groupId: activeGroupId,
+          signer,
+          requestedWalletAddress,
+          ttlSeconds,
+          groupJoinCodeMode,
+          groupJoinCodeMaxUsesInput
+        });
+
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        return generatedJoinCode;
       });
       setGeneratedGroupInviteCode(nextJoinCode.generatedGroupInviteCode);
       setGeneratedGroupJoinCodeHash(nextJoinCode.codeHash);
-
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
 
       loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
       await syncGroupData({ background: true, overviewOnly: true });
@@ -453,6 +467,7 @@ export default function useGroupAdminActions({
     groupJoinCodeMode,
     isActiveGroupAdmin,
     loadActiveJoinCodesForGroup,
+    runWalletTransactionFlow,
     setError,
     setGeneratedGroupInviteCode,
     setGeneratedGroupJoinCodeHash,
@@ -484,13 +499,15 @@ export default function useGroupAdminActions({
     setError('');
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await acceptGroupInviteOnChain({
-        signer,
-        groupId
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await acceptGroupInviteOnChain({
+          signer,
+          groupId
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       await syncGroupData({ deep: true });
       activateGroup(groupId);
@@ -503,6 +520,7 @@ export default function useGroupAdminActions({
   }, [
     activateGroup,
     getMemoSigner,
+    runWalletTransactionFlow,
     setError,
     setProcessingGroupAction,
     setSessionOnboardInfo,
@@ -560,15 +578,17 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await joinWithGroupCode({
-        signer,
-        parsedJoinCode,
-        chainId,
-        nowTs
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await joinWithGroupCode({
+          signer,
+          parsedJoinCode,
+          chainId,
+          nowTs
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       setGroupJoinCodeInput('');
       await syncGroupData({ deep: true });
@@ -587,6 +607,7 @@ export default function useGroupAdminActions({
     getMemoSigner,
     groupJoinCodeInput,
     processingGroupAction,
+    runWalletTransactionFlow,
     setError,
     setGroupJoinCodeInput,
     setProcessingGroupAction,
@@ -621,14 +642,16 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await removeMemberFromGroupOnChain({
-        signer,
-        groupId: activeGroupId,
-        account
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await removeMemberFromGroupOnChain({
+          signer,
+          groupId: activeGroupId,
+          account
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       await syncGroupData({ deep: true });
     } catch (removeError) {
@@ -641,6 +664,7 @@ export default function useGroupAdminActions({
     activeGroupId,
     getMemoSigner,
     isActiveGroupAdmin,
+    runWalletTransactionFlow,
     setError,
     setProcessingGroupAction,
     setSessionOnboardInfo,
@@ -704,15 +728,17 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await renameGroupOnChain({
-        signer,
-        groupId,
-        title: nextTitle,
-        isPrivate: Boolean(activeGroupMeta?.isPrivate)
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await renameGroupOnChain({
+          signer,
+          groupId,
+          title: nextTitle,
+          isPrivate: Boolean(activeGroupMeta?.isPrivate)
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       cancelRenameActiveGroup();
       await syncGroupData({ deep: true });
@@ -729,6 +755,7 @@ export default function useGroupAdminActions({
     getMemoSigner,
     groupRenameInput,
     isActiveGroupAdmin,
+    runWalletTransactionFlow,
     setError,
     setProcessingGroupAction,
     setSessionOnboardInfo,
@@ -754,13 +781,15 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await leaveGroupOnChain({
-        signer,
-        groupId
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await leaveGroupOnChain({
+          signer,
+          groupId
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       if (activeGroupIdRef.current === groupId) {
         setActiveGroupId(null);
@@ -778,6 +807,7 @@ export default function useGroupAdminActions({
     activeGroupMeta,
     getMemoSigner,
     isActiveGroupAdmin,
+    runWalletTransactionFlow,
     setActiveGroupId,
     setError,
     setProcessingGroupAction,
@@ -807,13 +837,15 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await handoffAdminAndLeaveGroupOnChain({
-        signer,
-        groupId
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await handoffAdminAndLeaveGroupOnChain({
+          signer,
+          groupId
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       if (activeGroupIdRef.current === groupId) {
         setActiveGroupId(null);
@@ -832,6 +864,7 @@ export default function useGroupAdminActions({
     activeGroupMeta,
     getMemoSigner,
     isActiveGroupAdmin,
+    runWalletTransactionFlow,
     setActiveGroupId,
     setError,
     setProcessingGroupAction,
@@ -861,13 +894,15 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await disbandGroupOnChain({
-        signer,
-        groupId
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await disbandGroupOnChain({
+          signer,
+          groupId
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       setGeneratedGroupInviteCode('');
       setGeneratedGroupJoinCodeHash('');
@@ -887,6 +922,7 @@ export default function useGroupAdminActions({
     activeGroupMeta,
     getMemoSigner,
     isActiveGroupAdmin,
+    runWalletTransactionFlow,
     setActiveGroupId,
     setError,
     setGeneratedGroupInviteCode,
@@ -900,13 +936,15 @@ export default function useGroupAdminActions({
     setError('');
     try {
       setProcessingGroupAction(true);
-      const { signer, cacheKey } = await getMemoSigner();
-      await declineGroupInviteOnChain({
-        signer,
-        groupId
-      });
+      await runWalletTransactionFlow(async () => {
+        const { signer, cacheKey } = await getMemoSigner();
+        await declineGroupInviteOnChain({
+          signer,
+          groupId
+        });
 
-      updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      });
 
       await syncGroupData({ deep: true });
     } catch (declineError) {
@@ -917,6 +955,7 @@ export default function useGroupAdminActions({
     }
   }, [
     getMemoSigner,
+    runWalletTransactionFlow,
     setError,
     setProcessingGroupAction,
     setSessionOnboardInfo,

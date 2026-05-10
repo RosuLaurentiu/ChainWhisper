@@ -26,6 +26,7 @@ import {
   type StateBackupPayload,
   type SubmitMemoPayload
 } from '../lib/appShared';
+import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 
 type MemoSignerBundle = {
   signer: Wallet | JsonRpcSigner;
@@ -93,6 +94,7 @@ type UseStateBackupSyncArgs = {
   >;
   resolveRequiredFeeForSendRef: MutableRefObject<() => Promise<bigint>>;
   resolveSubmitSelectorRef: MutableRefObject<() => Promise<string>>;
+  runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setLastReadAllTs: Dispatch<SetStateAction<number>>;
   setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
   setUnreadGroupMap: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -115,6 +117,7 @@ export function useStateBackupSync({
   postConnectDataSyncRunIdRef,
   readStateSyncEnabled,
   resolveConversationBlockRangeRef,
+  runWalletTransactionFlow,
   setLastReadAllTs,
   setSessionOnboardInfo,
   setUnreadGroupMap,
@@ -130,9 +133,11 @@ export function useStateBackupSync({
   const lastStateBackupBlockRef = useRef<Record<string, number>>({});
   const lastAutoBackupAttemptBlockRef = useRef<Record<string, number>>({});
   const readStateBackupTimerRef = useRef<number | null>(null);
+  const deferredStateBackupTimerRef = useRef<number | null>(null);
   const lastReadStateBackupSubmittedAtRef = useRef(0);
   const legacyBackupFeeCacheRef = useRef<bigint | null>(null);
   const legacyBackupFeeRequestRef = useRef<Promise<bigint> | null>(null);
+  const backupLocalStateToSelfRef = useRef<(options?: BackupLocalStateOptions) => Promise<void>>(async () => {});
 
   const clearCachedStateBackupMemo = useCallback(() => {
     cachedStateBackupMemoRef.current = {};
@@ -144,6 +149,27 @@ export function useStateBackupSync({
       readStateBackupTimerRef.current = null;
     }
   }, []);
+
+  const clearDeferredStateBackup = useCallback(() => {
+    if (deferredStateBackupTimerRef.current !== null) {
+      window.clearTimeout(deferredStateBackupTimerRef.current);
+      deferredStateBackupTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleDeferredStateBackup = useCallback(
+    (options?: BackupLocalStateOptions) => {
+      if (deferredStateBackupTimerRef.current !== null) {
+        return;
+      }
+
+      deferredStateBackupTimerRef.current = window.setTimeout(() => {
+        deferredStateBackupTimerRef.current = null;
+        backupLocalStateToSelfRef.current({ ...(options ?? {}), background: true }).catch(() => {});
+      }, 3000);
+    },
+    []
+  );
 
   const resolveLegacyBackupFee = useCallback(async (): Promise<bigint> => {
     if (legacyBackupFeeCacheRef.current !== null) {
@@ -426,6 +452,11 @@ export function useStateBackupSync({
 
   const backupLocalStateToSelf = useCallback(
     async (options?: BackupLocalStateOptions) => {
+      if (options?.background && isWalletTransactionFlowActive()) {
+        scheduleDeferredStateBackup(options);
+        return;
+      }
+
       if (backupInFlightRef.current) {
         return;
       }
@@ -439,66 +470,71 @@ export function useStateBackupSync({
       try {
         backupInFlightRef.current = true;
 
-        const { signer, cacheKey } = await getMemoSignerRef.current();
-        const cotiEthers = await loadCotiEthersModule();
-        const selector = new cotiEthers.Interface(LEGACY_CHAT_BACKUP_CONTRACT_ABI).getFunction('submit')?.selector;
-        if (!selector) {
-          return;
-        }
-        const snapshotLastReadAllTs = normalizeLastReadAllTs(lastReadAllTsRef.current);
-        const payload = buildStateBackupPayload(snapshotLastReadAllTs);
-        const nextFingerprint = createStateBackupFingerprint(snapshotLastReadAllTs);
-        if (!options?.force && lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
-          return;
-        }
-
-        const backupText = buildStateBackupText(payload);
-        const encodedMemo = encodeMemoForActiveSignerRef.current(backupText);
-        const contract = new cotiEthers.Contract(
-          LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS,
-          LEGACY_CHAT_BACKUP_CONTRACT_ABI,
-          signer
-        );
-        const requiredFee = await resolveLegacyBackupFee();
-        const cachedMemoEntry = cachedStateBackupMemoRef.current[walletKey];
-        const hasReusableMemo = cachedMemoEntry?.fingerprint === nextFingerprint;
-
-        const buildMemoPayload = async (): Promise<SubmitMemoPayload> => {
-          const encryptedMemo = await signer.encryptValue(encodedMemo, LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS, selector);
-          return parseSubmitMemoPayload(encryptedMemo);
-        };
-
-        let memoPayload = hasReusableMemo ? cachedMemoEntry.memo : await buildMemoPayload();
-        if (!hasReusableMemo) {
-          cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
-        }
-
-        const submitWithMemoPayload = async (payloadToSubmit: SubmitMemoPayload): Promise<void> => {
-          const memoTuple = [[payloadToSubmit.ciphertextValue], payloadToSubmit.signature] as const;
-          await contract.submit(walletAddress, memoTuple, { value: requiredFee });
-        };
-
-        try {
-          await submitWithMemoPayload(memoPayload);
-        } catch (submitError) {
-          if (!hasReusableMemo) {
-            throw submitError;
+        await runWalletTransactionFlow(async () => {
+          const { signer, cacheKey } = await getMemoSignerRef.current();
+          const cotiEthers = await loadCotiEthersModule();
+          const selector = new cotiEthers.Interface(LEGACY_CHAT_BACKUP_CONTRACT_ABI).getFunction('submit')?.selector;
+          if (!selector) {
+            return;
+          }
+          const snapshotLastReadAllTs = normalizeLastReadAllTs(lastReadAllTsRef.current);
+          const payload = buildStateBackupPayload(snapshotLastReadAllTs);
+          const nextFingerprint = createStateBackupFingerprint(snapshotLastReadAllTs);
+          if (!options?.force && lastBackedUpStateFingerprintRef.current[walletKey] === nextFingerprint) {
+            return;
           }
 
-          memoPayload = await buildMemoPayload();
-          cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
-          await submitWithMemoPayload(memoPayload);
-        }
+          const backupText = buildStateBackupText(payload);
+          const encodedMemo = encodeMemoForActiveSignerRef.current(backupText);
+          const contract = new cotiEthers.Contract(
+            LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS,
+            LEGACY_CHAT_BACKUP_CONTRACT_ABI,
+            signer
+          );
+          const requiredFee = await resolveLegacyBackupFee();
+          const cachedMemoEntry = cachedStateBackupMemoRef.current[walletKey];
+          const hasReusableMemo = cachedMemoEntry?.fingerprint === nextFingerprint;
 
-        applyStateBackupPayload(walletKey, payload);
-        lastBackedUpStateFingerprintRef.current[walletKey] = nextFingerprint;
-        lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
+          const buildMemoPayload = async (): Promise<SubmitMemoPayload> => {
+            const encryptedMemo = await signer.encryptValue(encodedMemo, LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS, selector);
+            return parseSubmitMemoPayload(encryptedMemo);
+          };
 
-        const nextOnboardInfo = signer.getUserOnboardInfo();
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-        }));
+          let memoPayload = hasReusableMemo ? cachedMemoEntry.memo : await buildMemoPayload();
+          if (!hasReusableMemo) {
+            cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
+          }
+
+          const submitWithMemoPayload = async (payloadToSubmit: SubmitMemoPayload): Promise<void> => {
+            const memoTuple = [[payloadToSubmit.ciphertextValue], payloadToSubmit.signature] as const;
+            const tx = await contract.submit(walletAddress, memoTuple, { value: requiredFee });
+            if (typeof (tx as { wait?: () => Promise<unknown> }).wait === 'function') {
+              await (tx as { wait: () => Promise<unknown> }).wait();
+            }
+          };
+
+          try {
+            await submitWithMemoPayload(memoPayload);
+          } catch (submitError) {
+            if (!hasReusableMemo) {
+              throw submitError;
+            }
+
+            memoPayload = await buildMemoPayload();
+            cachedStateBackupMemoRef.current[walletKey] = { fingerprint: nextFingerprint, memo: memoPayload };
+            await submitWithMemoPayload(memoPayload);
+          }
+
+          applyStateBackupPayload(walletKey, payload);
+          lastBackedUpStateFingerprintRef.current[walletKey] = nextFingerprint;
+          lastAppliedStateBackupTsRef.current[walletKey] = payload.updatedAt;
+
+          const nextOnboardInfo = signer.getUserOnboardInfo();
+          setSessionOnboardInfo((previous) => ({
+            ...previous,
+            [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+          }));
+        });
       } catch {
         // Background backup failures should not interrupt the UI.
       } finally {
@@ -512,10 +548,16 @@ export function useStateBackupSync({
       lastReadAllTsRef,
       readStateSyncEnabled,
       resolveLegacyBackupFee,
+      runWalletTransactionFlow,
+      scheduleDeferredStateBackup,
       setSessionOnboardInfo,
       walletAddress
     ]
   );
+
+  useEffect(() => {
+    backupLocalStateToSelfRef.current = backupLocalStateToSelf;
+  }, [backupLocalStateToSelf]);
 
   useEffect(() => {
     const normalizedWalletAddress = walletAddress.trim();
@@ -612,8 +654,9 @@ export function useStateBackupSync({
   useEffect(() => {
     return () => {
       clearScheduledReadStateBackup();
+      clearDeferredStateBackup();
     };
-  }, [clearScheduledReadStateBackup]);
+  }, [clearDeferredStateBackup, clearScheduledReadStateBackup]);
 
   return {
     applyStateBackupPayload,
