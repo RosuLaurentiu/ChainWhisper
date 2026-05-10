@@ -18,20 +18,11 @@ import {
   fillPrivateFixedPriceTradeOnChain,
   fillTradeOnChain
 } from '../lib/tradeActions';
-import {
-  ensureTradeRequestPaymentReady,
-  resolveTradeEscrowContractConfig,
-  revealDirectTradeTermsForWallet
-} from '../lib/appChain';
+import { resolveTradeEscrowContractConfig, revealDirectTradeTermsForWallet } from '../lib/appChain';
 import { canUseWalletAuthorityForDirectAccess } from '../lib/tradeCounterSupport';
 import { doesAccessSecretMatchHash, normalizeAccessHash, PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../lib/tradeLinks';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 import { isHiddenLiquidityTrade } from '../lib/p2pTradeView';
-import {
-  shouldPreserveP2PTradeActionResumeForError,
-  type P2PTradeActionResumeStage,
-  type RememberP2PTradeActionResumeInput
-} from '../lib/p2pTradeActionResume';
 
 type TradeSigner = JsonRpcSigner | Wallet;
 export type CounterAcceptMode = 'close-related' | 'accept-only';
@@ -139,10 +130,6 @@ type UseP2PTradeActionsArgs = {
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   mergeTradeSnapshot: (snapshot: TradeSnapshot) => void;
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
-  clearTradeActionResume?: () => void;
-  rememberTradeActionResume?: (
-    input: Omit<RememberP2PTradeActionResumeInput, 'chainId' | 'provider' | 'terminalPath' | 'walletAddress'>
-  ) => void;
   rememberTradeTerminalReturn: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   refreshTradeDataInBackground: (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => void;
   refreshTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
@@ -151,8 +138,8 @@ type UseP2PTradeActionsArgs = {
   resolvedRouteAccessSecret: string;
   routeEscrowContract?: string;
   routeTradeId: number | null;
+  runTradeWalletPromptFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setTradeActionError: Dispatch<SetStateAction<string>>;
-  updateTradeActionResumeStage?: (stage: P2PTradeActionResumeStage) => void;
   walletAddress: string;
 };
 
@@ -169,8 +156,6 @@ export default function useP2PTradeActions({
   getTradeSigner,
   mergeTradeSnapshot,
   openTrade,
-  clearTradeActionResume,
-  rememberTradeActionResume,
   rememberTradeTerminalReturn,
   refreshTradeDataInBackground,
   refreshTradeDetail,
@@ -179,8 +164,8 @@ export default function useP2PTradeActions({
   resolvedRouteAccessSecret,
   routeEscrowContract,
   routeTradeId,
+  runTradeWalletPromptFlow,
   setTradeActionError,
-  updateTradeActionResumeStage,
   walletAddress
 }: UseP2PTradeActionsArgs): UseP2PTradeActionsResult {
   const [processingTradeActionId, setProcessingTradeActionId] = useState('');
@@ -212,18 +197,9 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        await runTradeWalletPromptFlow(async () => {
         let accessSecret = resolveAccessSecretForSnapshot(snapshot);
         rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        rememberTradeActionResume?.({
-          accessSecret: accessSecret || undefined,
-          actionKind: 'accept',
-          baselineFilledRequestAmount: snapshot.fillState?.filledRequestAmount,
-          baselineRemainingRequestAmount: snapshot.fillState?.remainingRequestAmount,
-          baselineStatus: snapshot.status,
-          counterAcceptMode,
-          escrowContract: snapshot.escrowContract,
-          tradeId: snapshot.tradeId
-        });
         let latestSnapshot = carryKnownDirectTerms(
           (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot,
           snapshot
@@ -234,7 +210,6 @@ export default function useP2PTradeActions({
           directTermsNeedHydration &&
           !accessSecret &&
           canUseWalletAuthorityForDirectAccess(latestSnapshot, walletAddress);
-        updateTradeActionResumeStage?.('aes-ready');
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request) || directRevealNeedsAes);
         if (directTermsNeedHydration) {
           const revealResult = await revealDirectTradeTermsForWallet({
@@ -251,16 +226,6 @@ export default function useP2PTradeActions({
           if (revealResult.recoveredAccessSecret) {
             accessSecret = revealResult.recoveredAccessSecret;
             rememberTradeAccessSecret?.(latestSnapshot.tradeId, revealResult.recoveredAccessSecret, latestSnapshot.escrowContract);
-            rememberTradeActionResume?.({
-              accessSecret,
-              actionKind: 'accept',
-              baselineFilledRequestAmount: snapshot.fillState?.filledRequestAmount,
-              baselineRemainingRequestAmount: snapshot.fillState?.remainingRequestAmount,
-              baselineStatus: snapshot.status,
-              counterAcceptMode,
-              escrowContract: latestSnapshot.escrowContract,
-              tradeId: latestSnapshot.tradeId
-            });
           }
         }
         await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, walletAddress);
@@ -277,15 +242,6 @@ export default function useP2PTradeActions({
         if (latestSnapshot.counterParentTradeId && counterAcceptMode === 'accept-only' && !latestEscrowConfig.directVisible) {
           throw new Error('Accept only is available for Direct OTC counter offers.');
         }
-        updateTradeActionResumeStage?.('allowance-ready');
-        await ensureTradeRequestPaymentReady({
-          signer,
-          ownerAddress: walletAddress,
-          requestAsset: acceptRequestAsset,
-          requestAmountWei: remainingRequestAmount,
-          spenderAddress: latestSnapshot.escrowContract
-        });
-        updateTradeActionResumeStage?.('submit-trade');
         const shouldUsePrivateFillPath =
           acceptDirectCounterOnly ||
           ((isHiddenLiquidityTrade(latestSnapshot) || latestEscrowConfig.directVisible) && !latestSnapshot.counterParentTradeId);
@@ -336,7 +292,6 @@ export default function useP2PTradeActions({
                 });
         const acceptedViaCounter = Boolean(latestSnapshot.counterParentTradeId);
         const closedRelatedCounter = Boolean(latestSnapshot.counterParentTradeId && counterAcceptMode === 'close-related');
-        updateTradeActionResumeStage?.('confirm-refresh');
         const nextSnapshot: TradeSnapshot = {
           ...latestSnapshot,
           taker:
@@ -367,31 +322,26 @@ export default function useP2PTradeActions({
           refreshTradeDataInBackground(latestSnapshot.counterParentTradeId, undefined, signer);
         }
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        clearTradeActionResume?.();
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to accept trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
-        if (!shouldPreserveP2PTradeActionResumeForError(error)) {
-          clearTradeActionResume?.();
-        }
       } finally {
         setProcessingTradeActionId('');
       }
     },
     [
       connectedWithBurner,
-      clearTradeActionResume,
       getTradeSigner,
       mergeTradeSnapshot,
       openTrade,
-      rememberTradeActionResume,
       rememberTradeTerminalReturn,
       rememberTradeAccessSecret,
       refreshTradeDataInBackground,
       refreshTradeDetail,
       resolveAccessSecretForSnapshot,
+      runTradeWalletPromptFlow,
       setTradeActionError,
-      updateTradeActionResumeStage,
       walletAddress
     ]
   );
@@ -410,18 +360,9 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        await runTradeWalletPromptFlow(async () => {
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
         rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        rememberTradeActionResume?.({
-          accessSecret: accessSecret || undefined,
-          actionKind: 'partial-fill',
-          amountInput,
-          baselineFilledRequestAmount: snapshot.fillState?.filledRequestAmount,
-          baselineRemainingRequestAmount: snapshot.fillState?.remainingRequestAmount,
-          baselineStatus: snapshot.status,
-          escrowContract: snapshot.escrowContract,
-          tradeId: snapshot.tradeId
-        });
         const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
         if (latestSnapshot.counterParentTradeId) {
           throw new Error('Counter offers must be accepted in full so the original trade can close atomically.');
@@ -455,28 +396,7 @@ export default function useP2PTradeActions({
 
         await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, walletAddress);
 
-        rememberTradeActionResume?.({
-          accessSecret: accessSecret || undefined,
-          actionKind: 'partial-fill',
-          amountInput,
-          amountWei: requestedAmount.toString(),
-          baselineFilledRequestAmount: snapshot.fillState?.filledRequestAmount,
-          baselineRemainingRequestAmount: snapshot.fillState?.remainingRequestAmount,
-          baselineStatus: snapshot.status,
-          escrowContract: latestSnapshot.escrowContract,
-          tradeId: latestSnapshot.tradeId
-        });
-        updateTradeActionResumeStage?.('aes-ready');
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
-        updateTradeActionResumeStage?.('allowance-ready');
-        await ensureTradeRequestPaymentReady({
-          signer,
-          ownerAddress: walletAddress,
-          requestAsset: withTradeAssetAmount(latestSnapshot.request, requestedAmount),
-          requestAmountWei: requestedAmount,
-          spenderAddress: latestSnapshot.escrowContract
-        });
-        updateTradeActionResumeStage?.('submit-trade');
         const fillResult = latestSnapshotHiddenLiquidity
           ? await fillPrivateFixedPriceTradeOnChain({
               signer,
@@ -529,31 +449,25 @@ export default function useP2PTradeActions({
           });
         }
         openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
-        updateTradeActionResumeStage?.('confirm-refresh');
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        clearTradeActionResume?.();
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to fill trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
-        if (!shouldPreserveP2PTradeActionResumeForError(error)) {
-          clearTradeActionResume?.();
-        }
       } finally {
         setProcessingTradeActionId('');
       }
     },
     [
-      clearTradeActionResume,
       getTradeSigner,
       mergeTradeSnapshot,
       openTrade,
-      rememberTradeActionResume,
       rememberTradeTerminalReturn,
       refreshTradeDataInBackground,
       refreshTradeDetail,
       resolveAccessSecretForSnapshot,
+      runTradeWalletPromptFlow,
       setTradeActionError,
-      updateTradeActionResumeStage,
       walletAddress
     ]
   );
@@ -563,43 +477,30 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        await runTradeWalletPromptFlow(async () => {
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
         rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        rememberTradeActionResume?.({
-          accessSecret: accessSecret || undefined,
-          actionKind: 'cancel',
-          baselineStatus: snapshot.status,
-          escrowContract: snapshot.escrowContract,
-          tradeId: snapshot.tradeId
-        });
-        updateTradeActionResumeStage?.('submit-trade');
         const signer = await getTradeSigner(false);
         await cancelTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'cancelled' };
         mergeTradeSnapshot(nextSnapshot);
-        updateTradeActionResumeStage?.('confirm-refresh');
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        clearTradeActionResume?.();
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to cancel trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
-        if (!shouldPreserveP2PTradeActionResumeForError(error)) {
-          clearTradeActionResume?.();
-        }
       } finally {
         setProcessingTradeActionId('');
       }
     },
     [
-      clearTradeActionResume,
       getTradeSigner,
       mergeTradeSnapshot,
       refreshTradeDataInBackground,
-      rememberTradeActionResume,
       rememberTradeTerminalReturn,
       resolveAccessSecretForSnapshot,
-      setTradeActionError,
-      updateTradeActionResumeStage
+      runTradeWalletPromptFlow,
+      setTradeActionError
     ]
   );
 
@@ -608,43 +509,30 @@ export default function useP2PTradeActions({
       setTradeActionError('');
       try {
         setProcessingTradeActionId(getSnapshotKey(snapshot));
+        await runTradeWalletPromptFlow(async () => {
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
         rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        rememberTradeActionResume?.({
-          accessSecret: accessSecret || undefined,
-          actionKind: 'decline',
-          baselineStatus: snapshot.status,
-          escrowContract: snapshot.escrowContract,
-          tradeId: snapshot.tradeId
-        });
-        updateTradeActionResumeStage?.('submit-trade');
         const signer = await getTradeSigner(false);
         await declineTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
         const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'declined' };
         mergeTradeSnapshot(nextSnapshot);
-        updateTradeActionResumeStage?.('confirm-refresh');
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        clearTradeActionResume?.();
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to refuse trade.';
         setTradeActionError(getOnChainFailureMessage(error, message));
-        if (!shouldPreserveP2PTradeActionResumeForError(error)) {
-          clearTradeActionResume?.();
-        }
       } finally {
         setProcessingTradeActionId('');
       }
     },
     [
-      clearTradeActionResume,
       getTradeSigner,
       mergeTradeSnapshot,
       refreshTradeDataInBackground,
-      rememberTradeActionResume,
       rememberTradeTerminalReturn,
       resolveAccessSecretForSnapshot,
-      setTradeActionError,
-      updateTradeActionResumeStage
+      runTradeWalletPromptFlow,
+      setTradeActionError
     ]
   );
 

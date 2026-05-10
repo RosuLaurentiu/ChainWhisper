@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
 
 const PENDING_TERMINAL_ROUTE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
-const PENDING_TRADE_ACTION_KEY = 'chainwhisper:p2p:trade-action-resume:v1';
 
 test.describe('trading V1 routes', () => {
   test('uses the recurring read path for recurring links', async ({ page }) => {
@@ -59,36 +58,12 @@ test.describe('trading V1 routes', () => {
         })
       );
     }, PENDING_TERMINAL_ROUTE_KEY);
-    await page.evaluate((storageKey) => {
-      window.sessionStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          actionKind: 'recurring-fill',
-          autoResumeAttempts: 0,
-          chainId: 2632500,
-          createdAt: Date.now(),
-          expiresAt: Date.now() + 600000,
-          lastAttemptAt: Date.now(),
-          sessionKey: '0x0000000000000000000000000000000000000001:no-provider:2632500',
-          stage: 'started',
-          stageAttempts: 0,
-          status: 'pending',
-          terminalPath: '/trades/recurring?order=1',
-          tradeId: 1,
-          updatedAt: Date.now(),
-          version: 1,
-          walletAddress: '0x0000000000000000000000000000000000000001'
-        })
-      );
-    }, PENDING_TRADE_ACTION_KEY);
 
     await page.getByRole('button', { name: 'Desk' }).click();
 
     await expect(page).toHaveURL(/\/trades$/);
     const pendingRoute = await page.evaluate((storageKey) => window.sessionStorage.getItem(storageKey), PENDING_TERMINAL_ROUTE_KEY);
     expect(pendingRoute).toBeNull();
-    const pendingAction = await page.evaluate((storageKey) => window.sessionStorage.getItem(storageKey), PENDING_TRADE_ACTION_KEY);
-    expect(pendingAction).toBeNull();
   });
 
   test('shows the two-sided recurring builder', async ({ page }) => {

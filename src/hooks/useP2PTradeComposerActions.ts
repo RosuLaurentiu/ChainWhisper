@@ -105,6 +105,7 @@ type UseP2PTradeComposerActionsArgs = {
   rememberTradeAccessSecret: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   resolveRequiredFeeForTradeCreate: () => Promise<bigint>;
+  runTradeWalletPromptFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setCounterParentTrade: Dispatch<SetStateAction<TradeSnapshot | null>>;
   setCreatedTradeId: Dispatch<SetStateAction<number | null>>;
   setCreatedTradeLink: Dispatch<SetStateAction<string>>;
@@ -159,6 +160,7 @@ export default function useP2PTradeComposerActions({
   rememberTradeAccessSecret,
   resolveKnownTradeAccessSecret,
   resolveRequiredFeeForTradeCreate,
+  runTradeWalletPromptFlow,
   setCounterParentTrade,
   setCreatedTradeId,
   setCreatedTradeLink,
@@ -365,6 +367,7 @@ export default function useP2PTradeComposerActions({
 
     try {
       setCreatingTrade(true);
+      await runTradeWalletPromptFlow(async () => {
       const isCounterTrade = counterParentTrade !== null;
       const isCounterReplacement = Boolean(counterParentTrade?.counterParentTradeId);
       const editSourceTrade = editingTrade;
@@ -584,6 +587,7 @@ export default function useP2PTradeComposerActions({
         snapshot.isPublic ? refreshPublicTrades() : Promise.resolve()
       ]);
       openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create trade.';
       setTradeActionError(getOnChainFailureMessage(error, message));
@@ -608,6 +612,7 @@ export default function useP2PTradeComposerActions({
     rememberTradeAccessSecret,
     resolveKnownTradeAccessSecret,
     resolveRequiredFeeForTradeCreate,
+    runTradeWalletPromptFlow,
     setCounterParentTrade,
     setCreatedTradeId,
     setCreatedTradeLink,

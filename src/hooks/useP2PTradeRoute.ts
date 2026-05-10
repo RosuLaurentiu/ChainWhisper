@@ -6,7 +6,7 @@ import {
   TRADE_ESCROW_CONTRACT_ADDRESS,
   isWalletAddress
 } from '../lib/appShared/core';
-import { clearP2PTradeActionResume } from '../lib/p2pTradeActionResume';
+import { isP2PTradeWalletPromptActive } from '../lib/p2pTradeWalletPromptGuard';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 
 export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
@@ -427,7 +427,6 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
       (targetRoute.view !== 'trade' || targetRoute.tradeId === null)
     ) {
       clearPendingTradeTerminalRoute();
-      clearP2PTradeActionResume();
     }
 
     if (currentPath !== nextPath) {
@@ -470,7 +469,6 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
 
   const showEmptyTradeRoute = useCallback(() => {
     clearPendingTradeTerminalRoute();
-    clearP2PTradeActionResume();
     setRoute(createEmptyTradeRoute());
   }, []);
 
@@ -479,7 +477,13 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
       return;
     }
 
-    const syncRoute = () => {
+    const syncRoute = (event?: Event) => {
+      if (
+        (event?.type === 'focus' || event?.type === 'visibilitychange') &&
+        isP2PTradeWalletPromptActive()
+      ) {
+        return;
+      }
       setRoute(restorePendingTradeTerminalRouteFromLocation());
     };
     window.addEventListener('popstate', syncRoute);
