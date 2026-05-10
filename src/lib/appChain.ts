@@ -2715,6 +2715,16 @@ export const readPrivateTokenAccountEncryptionAddress = async (
   return typeof currentAddress === 'string' && isWalletAddress(currentAddress) ? currentAddress : null;
 };
 
+const PRIVATE_TOKEN_ENCRYPTION_SETUP_CACHE_TTL_MS = 120_000;
+const privateTokenEncryptionSetupInFlight = new Map<string, Promise<boolean>>();
+const privateTokenEncryptionSetupReadyAt = new Map<string, number>();
+
+const buildPrivateTokenEncryptionSetupKey = (
+  tokenAddress: string,
+  ownerAddress: string,
+  encryptionAddress: string
+): string => `${tokenAddress.toLowerCase()}:${ownerAddress.toLowerCase()}:${encryptionAddress.toLowerCase()}`;
+
 export const ensurePrivateTokenAccountEncryptionAddress = async ({
   signer,
   tokenAddress,
@@ -2732,13 +2742,36 @@ export const ensurePrivateTokenAccountEncryptionAddress = async ({
     return false;
   }
 
-  const currentAddress = await readPrivateTokenAccountEncryptionAddress(tokenAddress, ownerAddress).catch(() => null);
-  if (currentAddress?.toLowerCase() === encryptionAddress.toLowerCase()) {
+  const setupKey = buildPrivateTokenEncryptionSetupKey(tokenAddress, ownerAddress, encryptionAddress);
+  const lastReadyAt = privateTokenEncryptionSetupReadyAt.get(setupKey) ?? 0;
+  if (lastReadyAt > 0 && Date.now() - lastReadyAt < PRIVATE_TOKEN_ENCRYPTION_SETUP_CACHE_TTL_MS) {
     return false;
   }
 
-  await refreshPrivateTokenAccountEncryptionAddress(signer, tokenAddress, encryptionAddress, tokenSymbol);
-  return true;
+  const currentAddress = await readPrivateTokenAccountEncryptionAddress(tokenAddress, ownerAddress).catch(() => null);
+  if (currentAddress?.toLowerCase() === encryptionAddress.toLowerCase()) {
+    privateTokenEncryptionSetupReadyAt.set(setupKey, Date.now());
+    return false;
+  }
+
+  const existingSetup = privateTokenEncryptionSetupInFlight.get(setupKey);
+  if (existingSetup) {
+    return existingSetup;
+  }
+
+  const setupPromise = (async () => {
+    await refreshPrivateTokenAccountEncryptionAddress(signer, tokenAddress, encryptionAddress, tokenSymbol);
+    privateTokenEncryptionSetupReadyAt.set(setupKey, Date.now());
+    return true;
+  })();
+  privateTokenEncryptionSetupInFlight.set(setupKey, setupPromise);
+  try {
+    return await setupPromise;
+  } finally {
+    if (privateTokenEncryptionSetupInFlight.get(setupKey) === setupPromise) {
+      privateTokenEncryptionSetupInFlight.delete(setupKey);
+    }
+  }
 };
 
 const refreshPrivateTokenAccountEncryptionAddress = async (

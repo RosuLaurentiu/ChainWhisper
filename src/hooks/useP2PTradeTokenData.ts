@@ -18,7 +18,6 @@ import {
   type TradeAssetPayload
 } from '../lib/appShared';
 import {
-  ensurePrivateTokenAccountEncryptionAddress,
   readCurrentPrivateErc20BalanceWei,
   readPrivateTokenAccountEncryptionAddress
 } from '../lib/appChain';
@@ -476,12 +475,6 @@ export default function useP2PTradeTokenData({
             typeof decimalsRaw === 'number' || typeof decimalsRaw === 'bigint'
               ? normalizeTokenDecimals(Number(decimalsRaw))
               : FALLBACK_REWARD_TOKEN_DECIMALS;
-          await ensurePrivateTokenAccountEncryptionAddress({
-            signer,
-            tokenAddress: normalizedAddress,
-            ownerAddress: walletAddress,
-            tokenSymbol: symbol
-          }).catch(() => null);
           const privateBalanceState = await readCurrentPrivateBalanceState(normalizedAddress, signer, {
             aesReady: true
           }).catch((): PrivateTokenBalanceState => ({ status: 'unsupported' }));
