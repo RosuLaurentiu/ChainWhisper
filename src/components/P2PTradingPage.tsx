@@ -153,9 +153,14 @@ import {
 import { applyTradeRecoveryPayloadToSnapshot } from '../lib/tradeRecoveryPayload';
 import {
   isWalletTransactionFlowActive,
+  readWalletTransactionFlowTrace,
   recordWalletTransactionFlowStage,
   runWalletTransactionFlow
 } from '../lib/walletTransactionFlow';
+import {
+  getCurrentRouteForDiagnostics,
+  logMobileWalletDiagnostic
+} from '../lib/mobileWalletDiagnostics';
 import {
   WALLET_STATUS_STORAGE_KEY,
   buildOfferFromSnapshot,
@@ -601,18 +606,34 @@ export default function P2PTradingPage({
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
       const activeWalletFlow = sharedWalletActions?.runWalletTransactionFlow;
+      const routeBefore = getCurrentRouteForDiagnostics();
       try {
         if (activeWalletFlow) {
           return await activeWalletFlow(async () => {
-            recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-flow-requested');
+            const flowInput = getTradeWalletFlowInput();
+            recordWalletTransactionFlowStage(flowInput, 'trading-flow-requested');
+            logMobileWalletDiagnostic('trading-flow-start', {
+              routeBefore,
+              trace: readWalletTransactionFlowTrace(flowInput)
+            });
             return operation();
           });
         }
 
         const input = getTradeWalletFlowInput();
         recordWalletTransactionFlowStage(input, 'trading-flow-requested');
+        logMobileWalletDiagnostic('trading-flow-start', {
+          routeBefore,
+          trace: readWalletTransactionFlowTrace(input)
+        });
         return await runWalletTransactionFlow(input, operation);
       } finally {
+        const flowInput = getTradeWalletFlowInput();
+        logMobileWalletDiagnostic('trading-flow-finish', {
+          routeAfter: getCurrentRouteForDiagnostics(),
+          routeBefore,
+          trace: readWalletTransactionFlowTrace(flowInput)
+        });
         globalThis.setTimeout(() => {
           flushQueuedTradeDataRefreshRef.current();
         }, 0);
@@ -1448,6 +1469,7 @@ export default function P2PTradingPage({
     setChainId,
     setOnboardInfoByAddress,
     signerCacheRef,
+    sharedGetSigner: sharedWalletActions?.getSigner,
     walletAddress
   });
 

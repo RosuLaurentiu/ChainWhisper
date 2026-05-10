@@ -7,6 +7,7 @@ import {
   mergeOnboardInfo,
   normalizeChainId,
   type Eip1193Provider,
+  type InjectedWalletOption,
   type SignerSource
 } from '../lib/appShared';
 import { saveWalletPreference } from '../lib/appStorage';
@@ -14,8 +15,17 @@ import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption
 } from '../lib/walletOptions';
-import { buildWalletAesHealthState, clearCotiAesUnlockRequest, getOrRecoverAesForWallet } from '../lib/cotiAesUnlock';
+import {
+  buildWalletAesHealthState,
+  clearCotiAesUnlockRequest,
+  getOrRecoverAesForWallet,
+  readFallbackAesSessionOnboardInfo
+} from '../lib/cotiAesUnlock';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
+import {
+  logMobileWalletDiagnostic,
+  maskWalletForDiagnostics
+} from '../lib/mobileWalletDiagnostics';
 import {
   clearWalletTransactionFlow,
   isWalletTransactionFlowActive,
@@ -26,6 +36,7 @@ import {
 import useInjectedWalletOptions from './useInjectedWalletOptions';
 
 type UseWalletOnboardingArgs = {
+  allowPassiveBrowserRestore?: boolean;
   clearCachedStateBackupMemo: () => void;
   loadMyNicknameFromChainRef: MutableRefObject<(address: string) => Promise<string>>;
   resetBurnerSessionRef: MutableRefObject<() => void>;
@@ -50,7 +61,49 @@ type BrowserWalletActivationOptions = {
   preparePrivacy?: boolean;
 };
 
+export type PassiveBrowserWalletRestoreResult = {
+  address: string;
+  chainId: number | null;
+  onboardInfo: OnboardInfo | null;
+  provider: Eip1193Provider;
+  walletId: string;
+  walletLabel: string;
+};
+
+export const readPassiveBrowserWalletRestore = async (
+  walletOption: InjectedWalletOption | null | undefined
+): Promise<PassiveBrowserWalletRestoreResult | null> => {
+  const provider = walletOption?.provider ?? null;
+  if (!provider) {
+    return null;
+  }
+
+  const accounts = (await provider.request({ method: 'eth_accounts' })) as string[];
+  const selected = accounts[0] ?? '';
+  logMobileWalletDiagnostic('passive-restore-accounts', {
+    accountsCount: Array.isArray(accounts) ? accounts.length : 0,
+    selected: maskWalletForDiagnostics(selected),
+    walletId: walletOption?.id ?? ''
+  });
+  if (!selected) {
+    return null;
+  }
+
+  const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
+  const normalizedChainId = normalizeChainId(currentChain);
+  const onboardInfo = readFallbackAesSessionOnboardInfo(selected, provider);
+  return {
+    address: selected,
+    chainId: normalizedChainId,
+    onboardInfo,
+    provider,
+    walletId: walletOption?.id ?? '',
+    walletLabel: walletOption?.label ?? 'Wallet'
+  };
+};
+
 export function useWalletOnboarding({
+  allowPassiveBrowserRestore = true,
   clearCachedStateBackupMemo,
   loadMyNicknameFromChainRef,
   resetBurnerSessionRef,
@@ -76,6 +129,7 @@ export function useWalletOnboarding({
   const activeProviderRef = useRef<Eip1193Provider | null>(null);
   const browserWalletSessionRef = useRef<BrowserWalletSession | null>(null);
   const chainIdRef = useRef<number | null>(null);
+  const passiveRestoreInFlightRef = useRef(false);
   const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
   const currentWalletKeyRef = useRef('');
   const activeSignerSourceRef = useRef<SignerSource>('burner');
@@ -124,6 +178,30 @@ export function useWalletOnboarding({
     browserWalletSessionRef.current = session;
     setBrowserWalletSessionState(session);
   }, []);
+
+  const schedulePostConnectSync = useCallback(
+    (selected: string) => {
+      const selectedWalletKey = selected.toLowerCase();
+      window.setTimeout(() => {
+        void (async () => {
+          try {
+            const nickname = await loadMyNicknameFromChainRef.current(selected);
+            if (currentWalletKeyRef.current !== selectedWalletKey) {
+              return;
+            }
+            setMyNickname(nickname);
+          } catch {
+            // Post-connect sync should not block successful connection.
+          } finally {
+            if (currentWalletKeyRef.current === selectedWalletKey) {
+              runPostConnectDataSyncUntilAppliedRef.current(selected).catch(() => {});
+            }
+          }
+        })();
+      }, 0);
+    },
+    [loadMyNicknameFromChainRef, runPostConnectDataSyncUntilAppliedRef, setMyNickname]
+  );
 
   const resetBrowserPrivacySessionForWalletChange = useCallback((nextAddress: string) => {
     const nextWalletKey = nextAddress.trim().toLowerCase();
@@ -382,24 +460,7 @@ export function useWalletOnboarding({
         });
         setStatus(`Connected (${walletLabel})`);
         const onboardInfo = options?.preparePrivacy ? await onboardAddressAes(selected, provider, options) : null;
-        const selectedWalletKey = selected.toLowerCase();
-        window.setTimeout(() => {
-          void (async () => {
-            try {
-              const nickname = await loadMyNicknameFromChainRef.current(selected);
-              if (currentWalletKeyRef.current !== selectedWalletKey) {
-                return;
-              }
-              setMyNickname(nickname);
-            } catch {
-              // Post-connect sync should not block successful connection.
-            } finally {
-              if (currentWalletKeyRef.current === selectedWalletKey) {
-                runPostConnectDataSyncUntilAppliedRef.current(selected).catch(() => {});
-              }
-            }
-          })();
-        }, 0);
+        schedulePostConnectSync(selected);
         return onboardInfo;
       } catch (connectionError) {
         const message = getProviderErrorMessage(connectionError, 'Failed to connect wallet.');
@@ -414,15 +475,13 @@ export function useWalletOnboarding({
     },
     [
       injectedWalletOptions,
-      loadMyNicknameFromChainRef,
       onboardAddressAes,
       preferredInjectedWalletOption,
       resetBrowserPrivacySessionForWalletChange,
-      runPostConnectDataSyncUntilAppliedRef,
+      schedulePostConnectSync,
       setBrowserWalletSession,
       setConnectedProvider,
       setError,
-      setMyNickname
     ]
   );
 
@@ -484,23 +543,7 @@ export function useWalletOnboarding({
           ? await onboardAddressAes(selected, targetSession.provider, options)
           : null;
 
-        const selectedWalletKey = selected.toLowerCase();
-        window.setTimeout(() => {
-          void (async () => {
-            try {
-              const nickname = await loadMyNicknameFromChainRef.current(selected);
-              if (currentWalletKeyRef.current !== selectedWalletKey) {
-                return;
-              }
-              setMyNickname(nickname);
-            } catch {
-            } finally {
-              if (currentWalletKeyRef.current === selectedWalletKey) {
-                runPostConnectDataSyncUntilAppliedRef.current(selected).catch(() => {});
-              }
-            }
-          })();
-        }, 0);
+        schedulePostConnectSync(selected);
         return onboardInfo;
       } catch (connectionError) {
         const message = getProviderErrorMessage(connectionError, 'Failed to activate wallet.');
@@ -513,14 +556,12 @@ export function useWalletOnboarding({
     },
     [
       connectAndOnboard,
-      loadMyNicknameFromChainRef,
       onboardAddressAes,
       resetBrowserPrivacySessionForWalletChange,
-      runPostConnectDataSyncUntilAppliedRef,
+      schedulePostConnectSync,
       setBrowserWalletSession,
       setConnectedProvider,
       setError,
-      setMyNickname
     ]
   );
 
@@ -562,6 +603,106 @@ export function useWalletOnboarding({
     setBrowserWalletSession,
     setConnectedProvider,
     setError
+  ]);
+
+  useEffect(() => {
+    if (
+      passiveRestoreInFlightRef.current ||
+      !allowPassiveBrowserRestore ||
+      connectingMethod ||
+      browserWalletSessionRef.current ||
+      currentWalletKeyRef.current ||
+      activeSignerSourceRef.current !== 'burner'
+    ) {
+      return;
+    }
+
+    const walletOption = preferredInjectedWalletOption;
+    if (!walletOption?.provider) {
+      return;
+    }
+
+    let cancelled = false;
+    passiveRestoreInFlightRef.current = true;
+    logMobileWalletDiagnostic('passive-restore-start', {
+      walletId: walletOption.id
+    });
+
+    readPassiveBrowserWalletRestore(walletOption)
+      .then((restore) => {
+        if (cancelled || !restore) {
+          if (!restore) {
+            logMobileWalletDiagnostic('passive-restore-empty', {
+              walletId: walletOption.id
+            });
+          }
+          return;
+        }
+
+        const walletKey = restore.address.toLowerCase();
+        setConnectedProvider(restore.provider);
+        setConnectionMethod('metamask');
+        setActiveSignerSource('metamask');
+        setSelectedInjectedWalletId(restore.walletId);
+        resetBrowserPrivacySessionForWalletChange(restore.address);
+        setWalletAddress(restore.address);
+        setChainId(restore.chainId);
+        setBrowserWalletSession({
+          address: restore.address,
+          chainId: restore.chainId,
+          provider: restore.provider,
+          walletId: restore.walletId,
+          walletLabel: restore.walletLabel
+        });
+        saveWalletPreference({ kind: 'browser', browserWalletId: restore.walletId });
+        setStatus(`Connected (${restore.walletLabel})`);
+
+        if (restore.onboardInfo?.aesKey && restore.chainId === COTI_NETWORK.chainIdDecimal) {
+          setSessionOnboardInfo((previous) => ({
+            ...previous,
+            [walletKey]: mergeOnboardInfo(previous[walletKey], restore.onboardInfo ?? undefined)
+          }));
+          onWalletAesHealthChange?.(
+            restore.address,
+            buildWalletAesHealthState({
+              status: 'ready-unverified',
+              walletAddress: restore.address
+            })
+          );
+          setOnboardStatus('AES key ready');
+        }
+
+        logMobileWalletDiagnostic('passive-restore-connected', {
+          chainId: restore.chainId,
+          hasFallbackAes: Boolean(restore.onboardInfo?.aesKey),
+          selected: maskWalletForDiagnostics(restore.address),
+          walletId: restore.walletId
+        });
+        schedulePostConnectSync(restore.address);
+      })
+      .catch((error) => {
+        logMobileWalletDiagnostic('passive-restore-error', {
+          message: error instanceof Error ? error.message : String(error),
+          walletId: walletOption.id
+        });
+      })
+      .finally(() => {
+        passiveRestoreInFlightRef.current = false;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    allowPassiveBrowserRestore,
+    connectingMethod,
+    onWalletAesHealthChange,
+    preferredInjectedWalletOption,
+    resetBrowserPrivacySessionForWalletChange,
+    schedulePostConnectSync,
+    setActiveSignerSource,
+    setBrowserWalletSession,
+    setConnectedProvider
   ]);
 
   useEffect(() => {

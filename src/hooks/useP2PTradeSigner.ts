@@ -7,6 +7,7 @@ import {
   type Eip1193Provider
 } from '../lib/appShared';
 import { getOrRecoverAesForWallet, hydrateSignerWithFallbackAesSession } from '../lib/cotiAesUnlock';
+import type { WalletSessionActions } from '../lib/walletSession';
 
 export type P2PTradeSigner = JsonRpcSigner | Wallet;
 export type P2PTradeSignerOptions = {
@@ -29,7 +30,16 @@ type UseP2PTradeSignerArgs = {
   setChainId: Dispatch<SetStateAction<number | null>>;
   setOnboardInfoByAddress: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
   signerCacheRef: MutableRefObject<Record<string, P2PTradeSigner>>;
+  sharedGetSigner?: WalletSessionActions['getSigner'];
   walletAddress: string;
+};
+
+export const getSharedP2PTradeSigner = (
+  sharedGetSigner: WalletSessionActions['getSigner'] | undefined,
+  requireAes: boolean,
+  options: P2PTradeSignerOptions = {}
+): Promise<P2PTradeSigner> | null => {
+  return sharedGetSigner ? sharedGetSigner(requireAes, options) : null;
 };
 
 export default function useP2PTradeSigner({
@@ -42,10 +52,16 @@ export default function useP2PTradeSigner({
   setChainId,
   setOnboardInfoByAddress,
   signerCacheRef,
+  sharedGetSigner,
   walletAddress
 }: UseP2PTradeSignerArgs): (requireAes: boolean, options?: P2PTradeSignerOptions) => Promise<P2PTradeSigner> {
   return useCallback(
     async (requireAes: boolean, options: P2PTradeSignerOptions = {}): Promise<P2PTradeSigner> => {
+      const sharedSigner = getSharedP2PTradeSigner(sharedGetSigner, requireAes, options);
+      if (sharedSigner) {
+        return sharedSigner;
+      }
+
       const burnerSigner = burnerWalletRef.current;
       if (burnerSigner && walletAddress && burnerSigner.address.toLowerCase() === walletAddress.toLowerCase()) {
         const cacheKey = burnerSigner.address.toLowerCase();
@@ -123,6 +139,7 @@ export default function useP2PTradeSigner({
       setChainId,
       setOnboardInfoByAddress,
       signerCacheRef,
+      sharedGetSigner,
       walletAddress
     ]
   );

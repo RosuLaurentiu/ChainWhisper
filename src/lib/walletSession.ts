@@ -1,4 +1,4 @@
-import type { OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
   COTI_NETWORK,
   shortenAddress,
@@ -31,11 +31,16 @@ export type WalletBrowserConnectOptions = {
   preparePrivacy?: boolean;
 };
 
+export type WalletSessionSignerOptions = {
+  refreshAes?: boolean;
+};
+
 export type WalletSessionActions = {
   connectAppWallet: (walletId?: string) => Promise<void> | void;
   connectBrowserWallet: (walletId?: string, options?: WalletBrowserConnectOptions) => Promise<unknown>;
   disconnect: () => Promise<void> | void;
   generateAppWallet: () => Promise<void> | void;
+  getSigner: (requireAes: boolean, options?: WalletSessionSignerOptions) => Promise<JsonRpcSigner | Wallet>;
   importAppWallet: () => Promise<void> | void;
   runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   switchAppWallet: (walletIdOrAddress: string) => Promise<void> | void;

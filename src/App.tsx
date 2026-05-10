@@ -41,6 +41,7 @@ import {
 import {
   buildWalletAesHealthState,
   getOrRecoverAesForWallet,
+  hydrateSignerWithFallbackAesSession,
   type WalletAesHealthState
 } from './lib/cotiAesUnlock';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
@@ -149,6 +150,7 @@ import {
   MAX_MESSAGE_LENGTH,
   mergeOnboardInfo,
   markCotiWsHealthyNow,
+  normalizeChainId,
   normalizeContactName,
   normalizeConversationPreferenceState,
   normalizeLastReadAllTs,
@@ -819,6 +821,7 @@ export default function App() {
     signerCacheRef,
     walletAddress
   } = useWalletOnboarding({
+    allowPassiveBrowserRestore: walletPreference?.kind === 'browser',
     clearCachedStateBackupMemo,
     loadMyNicknameFromChainRef,
     resetBurnerSessionRef,
@@ -7207,6 +7210,112 @@ export default function App() {
     walletAesHealth: walletAesHealthByAddress[walletAddress.trim().toLowerCase()] ?? null,
     walletAddress
   });
+  const getSharedWalletSigner = useCallback<WalletSessionActions['getSigner']>(
+    async (requireAes, options = {}) => {
+      if (activeSignerSource === 'metamask') {
+        const provider = getConnectedProvider();
+        if (!provider) {
+          throw new Error('Wallet provider not detected. Connect without burner first.');
+        }
+
+        if (!walletAddress) {
+          throw new Error('Connect your wallet first.');
+        }
+
+        if (chainId !== COTI_NETWORK.chainIdDecimal) {
+          await ensureCotiNetwork(provider);
+          const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
+          setChainId(normalizeChainId(currentChain));
+        }
+
+        const cacheKey = walletAddress.toLowerCase();
+        const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
+        let signer = signerCacheRef.current[cacheKey];
+        if (!signer) {
+          const browserProvider = await createCotiBrowserProvider(provider);
+          signer = await browserProvider.getSigner(walletAddress, cachedOnboardInfo);
+          signer.disableAutoOnboard();
+          signerCacheRef.current[cacheKey] = signer;
+        } else if (cachedOnboardInfo) {
+          signer.setUserOnboardInfo(cachedOnboardInfo);
+        }
+
+        if (!signer.getUserOnboardInfo()?.aesKey) {
+          hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
+        }
+
+        signer.disableAutoOnboard();
+        if (requireAes && (options.refreshAes || !signer.getUserOnboardInfo()?.aesKey)) {
+          await getOrRecoverAesForWallet({
+            forceRefresh: options.refreshAes,
+            provider,
+            signer,
+            walletAddress
+          });
+        }
+
+        const onboardInfo = signer.getUserOnboardInfo();
+        if (onboardInfo?.aesKey) {
+          setSessionOnboardInfo((previous) => ({
+            ...previous,
+            [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+          }));
+          setWalletAesHealth(walletAddress, buildWalletAesHealthState({
+            status: 'ready-unverified',
+            walletAddress
+          }));
+          setOnboardStatus('AES key ready');
+        }
+
+        return signer;
+      }
+
+      const signer = burnerWalletRef.current;
+      if (!signer) {
+        throw new Error('Burner wallet not initialized.');
+      }
+
+      const cacheKey = signer.address.toLowerCase();
+      const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
+      if (cachedOnboardInfo) {
+        signer.setUserOnboardInfo(cachedOnboardInfo);
+      }
+
+      signer.disableAutoOnboard();
+      if (requireAes && (options.refreshAes || !signer.getUserOnboardInfo()?.aesKey)) {
+        await getOrRecoverAesForWallet({
+          forceRefresh: options.refreshAes,
+          signer,
+          walletAddress: signer.address
+        });
+      }
+
+      const onboardInfo = signer.getUserOnboardInfo();
+      if (onboardInfo?.aesKey) {
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+        }));
+        setOnboardStatus('AES key ready');
+      }
+
+      return signer;
+    },
+    [
+      activeSignerSource,
+      burnerWalletRef,
+      chainId,
+      ensureCotiNetwork,
+      getConnectedProvider,
+      sessionOnboardInfo,
+      setChainId,
+      setOnboardStatus,
+      setSessionOnboardInfo,
+      setWalletAesHealth,
+      signerCacheRef,
+      walletAddress
+    ]
+  );
   const sharedWalletActions = useMemo<WalletSessionActions>(
     () => ({
       connectAppWallet: async (walletId?: string) => {
@@ -7224,6 +7333,7 @@ export default function App() {
         }),
       disconnect: disconnectWallet,
       generateAppWallet: () => beginBurnerPinFlow('generate'),
+      getSigner: getSharedWalletSigner,
       importAppWallet: () => {
         setShowBurnerImportModal(true);
       },
@@ -7245,6 +7355,7 @@ export default function App() {
       beginBurnerPinFlow,
       currentInjectedWalletOption?.id,
       disconnectWallet,
+      getSharedWalletSigner,
       handleSwitchActiveBurnerWallet,
       preferredBrowserWalletId,
       runSharedWalletTransactionFlow,
