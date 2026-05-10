@@ -188,10 +188,6 @@ type P2PTradingPageProps = {
 };
 
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 20_000;
-const TERMINAL_HANDOFF_NAVIGATION = {
-  rememberOnly: true,
-  rememberPendingTerminalRoute: true
-} as const;
 const EMPTY_STALE_TOKEN_ADDRESSES: string[] = [];
 type TradeSigner = JsonRpcSigner | Wallet;
 type RecurringFundingBalanceResult = {
@@ -332,7 +328,14 @@ export default function P2PTradingPage({
   onHeaderWalletControlChange,
   onWalletSessionChange
 }: P2PTradingPageProps) {
-  const { buildTradeShareUrl, navigateToTradePath, openTrade, route, showEmptyTradeRoute } = useP2PTradeRoute();
+  const {
+    buildTradeShareUrl,
+    navigateToTradePath,
+    openTrade,
+    rememberTradeTerminalReturn,
+    route,
+    showEmptyTradeRoute
+  } = useP2PTradeRoute();
   const walletPreference = useStoredWalletPreference();
   const preferredBrowserWalletId = getPreferredBrowserWalletId(walletPreference);
   const initialSharedWalletAddress = sharedWalletSession?.walletAddress.trim() ?? '';
@@ -2986,6 +2989,7 @@ export default function P2PTradingPage({
     getTradeSigner,
     mergeTradeSnapshot,
     openTrade,
+    rememberTradeTerminalReturn,
     refreshTradeDataInBackground,
     refreshTradeDetail,
     resolveKnownTradeAccessSecret,
@@ -3023,12 +3027,7 @@ export default function P2PTradingPage({
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
-        openTrade(
-          snapshot.tradeId,
-          resolvedRouteAccessSecret || undefined,
-          snapshot.escrowContract,
-          TERMINAL_HANDOFF_NAVIGATION
-        );
+        rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         const needsAes = recurring.mode !== 'public' || inputAsset.kind === 'private-erc20';
         const signer = await getTradeSigner(needsAes);
         if (inputAsset.kind === 'private-erc20' && inputAsset.tokenAddress) {
@@ -3084,6 +3083,7 @@ export default function P2PTradingPage({
       openTrade,
       recurringBuyFillInput,
       recurringSellFillInput,
+      rememberTradeTerminalReturn,
       refreshTradeDataInBackground,
       resolvedRouteAccessSecret,
       walletAddress
@@ -3109,12 +3109,7 @@ export default function P2PTradingPage({
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
-        openTrade(
-          snapshot.tradeId,
-          resolvedRouteAccessSecret || undefined,
-          snapshot.escrowContract,
-          TERMINAL_HANDOFF_NAVIGATION
-        );
+        rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         const signer = await getTradeSigner(false);
         await updateRecurringOrderStatusOnChain({
           signer,
@@ -3130,7 +3125,7 @@ export default function P2PTradingPage({
         setProcessingRecurringAction('');
       }
     },
-    [getTradeSigner, onCotiNetwork, openTrade, refreshTradeDataInBackground, resolvedRouteAccessSecret, walletAddress]
+    [getTradeSigner, onCotiNetwork, openTrade, refreshTradeDataInBackground, rememberTradeTerminalReturn, resolvedRouteAccessSecret, walletAddress]
   );
 
   const formatRecurringTokenAmount = (asset: TradeAssetPayload, amount: string, hidden = false): string => {

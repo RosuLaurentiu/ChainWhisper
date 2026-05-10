@@ -11,9 +11,7 @@ import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
 
 export type TradeNavigationOptions = {
-  rememberOnly?: boolean;
   clearPendingTerminalRoute?: boolean;
-  rememberPendingTerminalRoute?: boolean;
   replace?: boolean;
 };
 
@@ -401,6 +399,7 @@ type UseP2PTradeRouteResult = {
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   navigateToTradePath: (path: string, options?: TradeNavigationOptions) => void;
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string, options?: TradeNavigationOptions) => void;
+  rememberTradeTerminalReturn: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   route: TradeRouteState;
   showEmptyTradeRoute: () => void;
 };
@@ -422,25 +421,21 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const targetRoute = resolveTradeRouteFromParts(targetUrl.pathname, targetUrl.search, targetUrl.hash);
 
-    if (options?.rememberPendingTerminalRoute) {
-      rememberPendingTradeTerminalRoute(nextPath);
-    } else if (
+    if (
       options?.clearPendingTerminalRoute !== false &&
       (targetRoute.view !== 'trade' || targetRoute.tradeId === null)
     ) {
       clearPendingTradeTerminalRoute();
     }
 
-    if (!options?.rememberOnly && currentPath !== nextPath) {
+    if (currentPath !== nextPath) {
       if (options?.replace) {
         window.history.replaceState(window.history.state, '', nextPath);
       } else {
         window.history.pushState(window.history.state, '', nextPath);
       }
     }
-    if (!options?.rememberOnly) {
-      setRoute(restorePendingTradeTerminalRouteFromLocation());
-    }
+    setRoute(restorePendingTradeTerminalRouteFromLocation());
   }, []);
 
   const buildTradeShareUrl = useCallback((tradeId: number, accessSecret?: string, escrowContract?: string): string => {
@@ -462,6 +457,13 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
       navigateToTradePath(buildTradeLinkPath(tradeId, accessSecret, escrowContract), options);
     },
     [navigateToTradePath]
+  );
+
+  const rememberTradeTerminalReturn = useCallback(
+    (tradeId: number, accessSecret?: string, escrowContract?: string) => {
+      rememberPendingTradeTerminalRoute(buildTradeLinkPath(tradeId, accessSecret, escrowContract));
+    },
+    []
   );
 
   const showEmptyTradeRoute = useCallback(() => {
@@ -493,6 +495,7 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     buildTradeShareUrl,
     navigateToTradePath,
     openTrade,
+    rememberTradeTerminalReturn,
     route,
     showEmptyTradeRoute
   };
