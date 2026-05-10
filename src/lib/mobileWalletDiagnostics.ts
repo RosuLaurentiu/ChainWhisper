@@ -23,11 +23,16 @@ export const maskWalletForDiagnostics = (value?: string | null): string => {
   return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
 };
 
+const sanitizePathForDiagnostics = (pathname: string): string =>
+  pathname.toLowerCase().startsWith('/trades/') ? '/trades/[route]' : pathname;
+
 export const getCurrentRouteForDiagnostics = (): string => {
   if (typeof window === 'undefined') {
     return '';
   }
-  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  const searchLabel = window.location.search ? '?[params]' : '';
+  const hashLabel = window.location.hash ? '#[redacted]' : '';
+  return `${sanitizePathForDiagnostics(window.location.pathname)}${searchLabel}${hashLabel}`;
 };
 
 export const logMobileWalletDiagnostic = (event: string, detail: Record<string, unknown> = {}): void => {

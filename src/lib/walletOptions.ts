@@ -16,9 +16,12 @@ const getCurrentDappUrl = (): string => {
 export const isMobileBrowserUserAgent = (userAgent = getNavigatorUserAgent()): boolean =>
   /android|iphone|ipad|ipod|mobile/i.test(userAgent);
 
+const encodeMetaMaskDappUrl = (dappUrl: string): string =>
+  encodeURI(dappUrl).replace(/[?#]/g, (value) => encodeURIComponent(value));
+
 export const buildMetaMaskMobileDeepLink = (dappUrl = getCurrentDappUrl()): string => {
   const normalizedUrl = dappUrl.trim().replace(/^https?:\/\//i, '');
-  return normalizedUrl ? `https://metamask.app.link/dapp/${encodeURI(normalizedUrl)}` : 'https://metamask.app.link';
+  return normalizedUrl ? `https://metamask.app.link/dapp/${encodeMetaMaskDappUrl(normalizedUrl)}` : 'https://metamask.app.link';
 };
 
 export const isPreferredMetaMaskWalletOption = (option: InjectedWalletOption): boolean =>

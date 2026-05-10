@@ -54,8 +54,8 @@ describe('walletOptions', () => {
   });
 
   it('builds a MetaMask mobile dapp deeplink for the current page', () => {
-    expect(buildMetaMaskMobileDeepLink('https://chainwhisper.example/trades/open/1?escrow=direct')).toBe(
-      'https://metamask.app.link/dapp/chainwhisper.example/trades/open/1?escrow=direct'
+    expect(buildMetaMaskMobileDeepLink('https://chainwhisper.example/trades/open/1?escrow=direct#secret')).toBe(
+      'https://metamask.app.link/dapp/chainwhisper.example/trades/open/1%3Fescrow=direct%23secret'
     );
   });
 });
