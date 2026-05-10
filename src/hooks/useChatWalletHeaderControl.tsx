@@ -11,8 +11,10 @@ import {
   type SignerSource
 } from '../lib/appShared';
 import {
+  buildMetaMaskMobileDeepLink,
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption,
+  isMobileBrowserUserAgent,
   orderInjectedWalletOptions
 } from '../lib/walletOptions';
 import {
@@ -148,9 +150,12 @@ export default function useChatWalletHeaderControl({
   const chatWalletAddressCopyKey = walletAddress ? `wallet-address:${walletAddress.toLowerCase()}` : '';
   const chatWalletIsAppWallet = isConnected && activeSignerSource === 'burner';
   const chatPrimaryConnectsBrowserWallet = !walletAddress && burnerStorageBlocked && Boolean(chatPreferredBrowserWalletOption);
+  const showMobileWalletAppOpenAction = Boolean(!walletAddress && !chatPreferredBrowserWalletOption && isMobileBrowserUserAgent());
   const chatWalletPrimaryConnectLabel =
     chatPrimaryConnectsBrowserWallet && chatPreferredBrowserWalletOption
       ? `Connect ${chatPreferredBrowserWalletOption.label}`
+      : burnerStorageBlocked && showMobileWalletAppOpenAction
+        ? 'Open MetaMask'
       : burnerStorageBlocked
         ? 'Wallet unavailable'
         : hasSavedBurnerWallet
@@ -179,7 +184,7 @@ export default function useChatWalletHeaderControl({
     connectingMethod !== null ||
     initializingBurner ||
     (!walletAddress && chatPrimaryConnectsBrowserWallet && !chatPreferredBrowserWalletOption) ||
-    (!walletAddress && !chatPrimaryConnectsBrowserWallet && burnerStorageBlocked);
+    (!walletAddress && !chatPrimaryConnectsBrowserWallet && burnerStorageBlocked && !showMobileWalletAppOpenAction);
   const walletNeedsPrivacyRepair =
     walletAesHealth?.status === 'repair-needed' || walletAesHealth?.status === 'key-mismatch';
   const chatWalletHeaderModel = resolveWalletHeaderViewModel({
@@ -361,6 +366,11 @@ export default function useChatWalletHeaderControl({
       return;
     }
 
+    if (showMobileWalletAppOpenAction) {
+      window.location.href = buildMetaMaskMobileDeepLink();
+      return;
+    }
+
     if (!burnerStorageBlocked) {
       beginBurnerPinFlow(hasSavedBurnerWallet ? 'stored' : 'generate').catch(() => {});
     }
@@ -513,8 +523,20 @@ export default function useChatWalletHeaderControl({
                   );
                 })
               ) : (
-                <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                  MetaMask or CipherTrade not detected
+                <button
+                  type="button"
+                  className="p2p-wallet-action"
+                  onClick={() => {
+                    if (showMobileWalletAppOpenAction) {
+                      window.location.href = buildMetaMaskMobileDeepLink();
+                    }
+                  }}
+                  disabled={!showMobileWalletAppOpenAction}
+                  role="menuitem"
+                >
+                  {showMobileWalletAppOpenAction
+                    ? 'Open this page in MetaMask Mobile or a supported wallet app'
+                    : 'MetaMask or CipherTrade not detected'}
                 </button>
               )}
             </div>

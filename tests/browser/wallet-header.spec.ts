@@ -78,4 +78,18 @@ test.describe('route wallet header policy', () => {
       await expect(page.getByRole('menuitem', { name: /^MetaMask$/i })).toHaveCount(0);
     }
   });
+
+  test('replaces Trades wallet header state when navigating back to Chat', async ({ page }) => {
+    await page.goto('/trades');
+    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^P2P Trades$/ })).toBeVisible();
+    await expect(page.locator(walletPanel)).toBeVisible();
+
+    const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' }).first();
+    await appMenu.getByRole('button', { name: 'Chat' }).click();
+
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^Chat$/ })).toBeVisible();
+    await expect(page.locator(walletPanel)).toBeVisible();
+    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^P2P Trades$/ })).toHaveCount(0);
+  });
 });
