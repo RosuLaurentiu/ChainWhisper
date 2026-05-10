@@ -2404,7 +2404,10 @@ export default function P2PTradingPage({
     if (!queued) {
       return;
     }
-    if (queued.reason !== 'manual' && isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+    if (
+      queued.reason !== 'manual' &&
+      (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive())
+    ) {
       recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-sync-flush-held');
       return;
     }
@@ -2427,7 +2430,10 @@ export default function P2PTradingPage({
         signer: request.signer,
         tradeId: request.tradeId
       });
-      if (request.reason !== 'manual' && isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+      if (
+        request.reason !== 'manual' &&
+        (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive())
+      ) {
         recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-sync-queued');
         return;
       }
@@ -4023,7 +4029,7 @@ export default function P2PTradingPage({
       if (cancelled || (typeof document !== 'undefined' && document.hidden)) {
         return;
       }
-      if (isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+      if (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive()) {
         recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-realtime-dispatch-held');
         return;
       }
@@ -4045,7 +4051,7 @@ export default function P2PTradingPage({
       if (cancelled) {
         return;
       }
-      if (isWalletTransactionFlowActive(getTradeWalletFlowInput())) {
+      if (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive()) {
         recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-realtime-schedule-held');
         return;
       }

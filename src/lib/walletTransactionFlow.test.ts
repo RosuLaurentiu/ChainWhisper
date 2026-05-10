@@ -9,7 +9,9 @@ import {
   getWalletTransactionFlowState,
   isWalletTransactionFlowActive,
   isWalletTransactionPromptActive,
-  runWalletTransactionFlow
+  runWalletTransactionFlow,
+  shouldIgnoreBrowserWalletAccountsDuringFlow,
+  shouldIgnoreBrowserWalletRefreshDuringFlow
 } from './walletTransactionFlow';
 
 const createProvider = (): Eip1193Provider => ({
@@ -196,5 +198,34 @@ describe('walletTransactionFlow', () => {
 
     expect(isWalletTransactionFlowActive({ chainId: 2632500, provider, walletAddress })).toBe(false);
     expect(isWalletTransactionFlowActive({ chainId: 2632501, provider, walletAddress })).toBe(false);
+  });
+
+  it('suppresses transient browser account events while a mobile wallet flow is active', () => {
+    expect(
+      shouldIgnoreBrowserWalletAccountsDuringFlow({
+        previousWalletKey: '0x0000000000000000000000000000000000000001',
+        walletFlowActive: true
+      })
+    ).toBe(true);
+    expect(
+      shouldIgnoreBrowserWalletAccountsDuringFlow({
+        previousWalletKey: '',
+        walletFlowActive: true
+      })
+    ).toBe(false);
+    expect(
+      shouldIgnoreBrowserWalletRefreshDuringFlow({
+        previousWalletKey: '0x0000000000000000000000000000000000000001',
+        selectedWalletKey: '',
+        walletFlowActive: true
+      })
+    ).toBe(true);
+    expect(
+      shouldIgnoreBrowserWalletRefreshDuringFlow({
+        previousWalletKey: '0x0000000000000000000000000000000000000001',
+        selectedWalletKey: '0x0000000000000000000000000000000000000001',
+        walletFlowActive: true
+      })
+    ).toBe(false);
   });
 });

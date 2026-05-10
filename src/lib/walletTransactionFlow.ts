@@ -35,6 +35,33 @@ let flowIdCounter = 0;
 const normalizeWalletAddress = (walletAddress?: string | null): string =>
   walletAddress?.trim().toLowerCase() || 'no-wallet';
 
+const normalizeComparableWalletAddress = (walletAddress?: string | null): string =>
+  walletAddress?.trim().toLowerCase() ?? '';
+
+export const shouldIgnoreBrowserWalletAccountsDuringFlow = ({
+  previousWalletKey,
+  walletFlowActive
+}: {
+  previousWalletKey?: string | null;
+  walletFlowActive: boolean;
+}): boolean => Boolean(normalizeComparableWalletAddress(previousWalletKey) && walletFlowActive);
+
+export const shouldIgnoreBrowserWalletRefreshDuringFlow = ({
+  previousWalletKey,
+  selectedWalletKey,
+  walletFlowActive
+}: {
+  previousWalletKey?: string | null;
+  selectedWalletKey?: string | null;
+  walletFlowActive: boolean;
+}): boolean => {
+  const previous = normalizeComparableWalletAddress(previousWalletKey);
+  if (!previous || !walletFlowActive) {
+    return false;
+  }
+  return normalizeComparableWalletAddress(selectedWalletKey) !== previous;
+};
+
 const normalizeProviderKey = (providerKey?: string | null): string =>
   providerKey?.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') || '';
 

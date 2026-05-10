@@ -19,7 +19,9 @@ import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
 import {
   clearWalletTransactionFlow,
   isWalletTransactionFlowActive,
-  recordWalletTransactionFlowStage
+  recordWalletTransactionFlowStage,
+  shouldIgnoreBrowserWalletAccountsDuringFlow,
+  shouldIgnoreBrowserWalletRefreshDuringFlow
 } from '../lib/walletTransactionFlow';
 import useInjectedWalletOptions from './useInjectedWalletOptions';
 
@@ -215,8 +217,17 @@ export function useWalletOnboarding({
         providerKey,
         walletAddress: previousWalletKey
       };
-      if (!selected && previousWalletKey && isWalletTransactionFlowActive(previousFlowInput)) {
-        recordWalletTransactionFlowStage(previousFlowInput, 'accounts-empty-ignored-refresh');
+      const walletFlowActive =
+        Boolean(previousWalletKey && isWalletTransactionFlowActive(previousFlowInput)) ||
+        isWalletTransactionFlowActive();
+      if (
+        shouldIgnoreBrowserWalletRefreshDuringFlow({
+          previousWalletKey,
+          selectedWalletKey: selected,
+          walletFlowActive
+        })
+      ) {
+        recordWalletTransactionFlowStage(previousFlowInput, 'accounts-refresh-ignored-during-flow');
         return;
       }
       resetBrowserPrivacySessionForWalletChange(selected);
@@ -570,7 +581,6 @@ export function useWalletOnboarding({
       }
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
       const selected = nextAccounts[0] ?? '';
-      const selectedWalletKey = selected.trim().toLowerCase();
       const previousWalletKey = currentWalletKeyRef.current;
       const activeChainId = chainIdRef.current;
       const providerKey =
@@ -581,13 +591,12 @@ export function useWalletOnboarding({
         providerKey,
         walletAddress: previousWalletKey
       };
-      const walletFlowActive = previousWalletKey && isWalletTransactionFlowActive(previousFlowInput);
-      if (walletFlowActive && (!selectedWalletKey || selectedWalletKey === previousWalletKey)) {
-        recordWalletTransactionFlowStage(previousFlowInput, 'accounts-empty-ignored-event');
+      const walletFlowActive =
+        Boolean(previousWalletKey && isWalletTransactionFlowActive(previousFlowInput)) ||
+        isWalletTransactionFlowActive();
+      if (shouldIgnoreBrowserWalletAccountsDuringFlow({ previousWalletKey, walletFlowActive })) {
+        recordWalletTransactionFlowStage(previousFlowInput, 'accounts-event-ignored-during-flow');
         return;
-      }
-      if (walletFlowActive && selectedWalletKey !== previousWalletKey) {
-        clearWalletTransactionFlow(previousFlowInput);
       }
       resetBrowserPrivacySessionForWalletChange(selected);
       setWalletAddress(selected);
@@ -613,22 +622,15 @@ export function useWalletOnboarding({
       const activeChainId = chainIdRef.current;
       const providerKey =
         browserWalletSessionRef.current?.walletId || currentInjectedWalletOption?.id || selectedInjectedWalletId;
-      if (
-        activeWalletKey &&
-        isWalletTransactionFlowActive({
-          chainId: activeChainId,
-          provider,
-          providerKey,
-          walletAddress: activeWalletKey
-        })
-      ) {
+      const activeFlowInput = {
+        chainId: activeChainId,
+        provider,
+        providerKey,
+        walletAddress: activeWalletKey
+      };
+      if (activeWalletKey && (isWalletTransactionFlowActive(activeFlowInput) || isWalletTransactionFlowActive())) {
         recordWalletTransactionFlowStage(
-          {
-            chainId: activeChainId,
-            provider,
-            providerKey,
-            walletAddress: activeWalletKey
-          },
+          activeFlowInput,
           'chain-change-ignored-during-flow'
         );
         return;
