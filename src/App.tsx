@@ -61,7 +61,6 @@ import {
 import {
   getStoredGroupRemovalNoticeMarker as getStoredGroupRemovalNoticeMarkerStorage,
   getPreferredBrowserWalletId,
-  saveWalletPreference,
   setStoredGroupRemovalNoticeMarker as setStoredGroupRemovalNoticeMarkerStorage
 } from './lib/appStorage';
 import { sendChatImageAttachment } from './lib/chatImageAttachment';
@@ -790,7 +789,6 @@ export default function App() {
     activeProvider,
     activeSignerSource,
     activateBrowserWalletSession,
-    adoptBrowserWalletSession,
     browserWalletSession,
     chainId,
     connectingMethod,
@@ -858,11 +856,9 @@ export default function App() {
     openChangeBurnerPin,
     resetBurnerSession,
     savedBurnerWalletCount,
-    setActiveBurnerWalletId,
     setBurnerBalanceWei,
     setBurnerImportInput,
     setBurnerPinInput,
-    setBurnerWallets,
     setShowBurnerImportModal,
     setTopUpMetricsNonce,
     setTopUpMessageTarget,
@@ -7182,6 +7178,7 @@ export default function App() {
       importAppWallet: () => {
         setShowBurnerImportModal(true);
       },
+      runWalletTransactionFlow: runSharedWalletTransactionFlow,
       switchAppWallet: (walletIdOrAddress: string) => Promise.resolve(handleSwitchActiveBurnerWallet(walletIdOrAddress)),
       unlockPrivacy: (options = {}) => {
         if (activeSignerSource === 'metamask') {
@@ -7201,6 +7198,7 @@ export default function App() {
       disconnectWallet,
       handleSwitchActiveBurnerWallet,
       preferredBrowserWalletId,
+      runSharedWalletTransactionFlow,
       setShowBurnerImportModal
     ]
   );
@@ -7247,81 +7245,6 @@ export default function App() {
       setWalletAesHealth,
       walletAesHealthByAddress,
       walletAddress
-    ]
-  );
-  const handleTradeWalletSessionChange = useCallback(
-    (session: SharedWalletSession) => {
-      const nextAddress = session.walletAddress.trim();
-      const nextWalletKey = nextAddress.toLowerCase();
-      if (!nextAddress) {
-        return;
-      }
-
-      const mergeSharedAes = () => {
-        const onboardInfo = session.sessionOnboardInfo[nextWalletKey];
-        if (!onboardInfo) {
-          return;
-        }
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [nextWalletKey]: mergeOnboardInfo(previous[nextWalletKey], onboardInfo)
-        }));
-      };
-
-      if (session.activeSignerSource === 'metamask' && session.browserProvider) {
-        adoptBrowserWalletSession({
-          address: nextAddress,
-          chainId: session.chainId,
-          provider: session.browserProvider,
-          walletId: session.browserWalletId,
-          walletLabel: session.browserWalletLabel || 'Browser wallet'
-        });
-        mergeSharedAes();
-        return;
-      }
-
-      if (session.activeSignerSource === 'burner' && session.burnerWallet) {
-        burnerWalletRef.current = session.burnerWallet;
-        const selectedBurnerRecord = session.burnerWallets?.find(
-          (walletRecord) =>
-            walletRecord.address?.toLowerCase() === nextWalletKey ||
-            (session.activeBurnerWalletId && walletRecord.id === session.activeBurnerWalletId)
-        );
-        if (selectedBurnerRecord) {
-          burnerRecordRef.current = {
-            ...selectedBurnerRecord,
-            address: session.burnerWallet.address
-          };
-        }
-        if (session.burnerWallets?.length) {
-          setBurnerWallets(session.burnerWallets);
-        }
-        setActiveBurnerWalletId(session.activeBurnerWalletId ?? selectedBurnerRecord?.id ?? '');
-        setActiveSignerSource('burner');
-        setConnectionMethod(null);
-        setConnectedProvider(null);
-        setSelectedInjectedWalletId('');
-        setWalletAddress(nextAddress);
-        setChainId(COTI_NETWORK.chainIdDecimal);
-        setStatus('Connected (app wallet)');
-        saveWalletPreference({ kind: 'app' });
-        mergeSharedAes();
-      }
-    },
-    [
-      adoptBrowserWalletSession,
-      burnerRecordRef,
-      burnerWalletRef,
-      setActiveBurnerWalletId,
-      setActiveSignerSource,
-      setBurnerWallets,
-      setChainId,
-      setConnectedProvider,
-      setConnectionMethod,
-      setSelectedInjectedWalletId,
-      setSessionOnboardInfo,
-      setStatus,
-      setWalletAddress
     ]
   );
   // --- Stable callbacks for ContactsSidebar ---
@@ -7884,7 +7807,6 @@ export default function App() {
               sharedWalletSession={sharedTradeWalletSession}
               onDisconnectWallet={disconnectWallet}
               onHeaderWalletControlChange={setTradeHeaderWalletControl}
-              onWalletSessionChange={handleTradeWalletSessionChange}
             />
           </Suspense>
         </AppErrorBoundary>

@@ -201,7 +201,6 @@ type P2PTradingPageProps = {
   sharedWalletSession?: SharedWalletSession;
   onDisconnectWallet?: () => Promise<void> | void;
   onHeaderWalletControlChange?: (walletControl: ReactNode | null) => void;
-  onWalletSessionChange?: (walletSession: SharedWalletSession) => void;
 };
 
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 20_000;
@@ -343,8 +342,7 @@ export default function P2PTradingPage({
   isMobileNav = false,
   sharedWalletSession,
   onDisconnectWallet,
-  onHeaderWalletControlChange,
-  onWalletSessionChange
+  onHeaderWalletControlChange
 }: P2PTradingPageProps) {
   const {
     buildTradeShareUrl,
@@ -378,7 +376,7 @@ export default function P2PTradingPage({
   const [burnerWallets, setBurnerWallets] = useState<BurnerWalletRecord[]>(
     () => initialSharedAppWallet?.burnerWallets ?? []
   );
-  const [selectedBurnerWalletId, setSelectedBurnerWalletId] = useState(
+  const [, setSelectedBurnerWalletId] = useState(
     () => initialSharedAppWallet?.activeBurnerWalletId ?? ''
   );
   const [pendingBurnerWalletId, setPendingBurnerWalletId] = useState('');
@@ -560,13 +558,27 @@ export default function P2PTradingPage({
   const routeError = route.routeError;
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
-      const input = {
-        chainId,
-        provider: connectedWithBurner ? null : providerRef.current,
-        walletAddress
-      };
-      recordWalletTransactionFlowStage(input, 'trading-flow-requested');
+      const activeWalletFlow = sharedWalletActions?.runWalletTransactionFlow;
       try {
+        if (activeWalletFlow) {
+          return await activeWalletFlow(async () => {
+            recordWalletTransactionFlowStage({
+              chainId,
+              provider: sharedWalletSession?.activeSignerSource === 'metamask'
+                ? sharedWalletSession.browserProvider
+                : null,
+              walletAddress: sharedWalletSession?.walletAddress || walletAddress
+            }, 'trading-flow-requested');
+            return operation();
+          });
+        }
+
+        const input = {
+          chainId,
+          provider: connectedWithBurner ? null : providerRef.current,
+          walletAddress
+        };
+        recordWalletTransactionFlowStage(input, 'trading-flow-requested');
         return await runWalletTransactionFlow(input, operation);
       } finally {
         globalThis.setTimeout(() => {
@@ -574,7 +586,15 @@ export default function P2PTradingPage({
         }, 0);
       }
     },
-    [chainId, connectedWithBurner, walletAddress]
+    [
+      chainId,
+      connectedWithBurner,
+      sharedWalletActions,
+      sharedWalletSession?.activeSignerSource,
+      sharedWalletSession?.browserProvider,
+      sharedWalletSession?.walletAddress,
+      walletAddress
+    ]
   );
   const directTradeRecipientNormalized = directTradeRecipient.trim();
   const directTradeRecipientIsValid =
@@ -873,45 +893,6 @@ export default function P2PTradingPage({
     sharedWalletSession?.walletAddress,
     walletAddress,
     walletKey
-  ]);
-
-  useEffect(() => {
-    const nextAddress = walletAddress.trim();
-    if (!nextAddress || !onWalletSessionChange) {
-      return;
-    }
-
-    const browserProvider = providerRef.current;
-    const appWallet = burnerWalletRef.current;
-    const activeWalletSource = connectedWithBurner && appWallet ? 'burner' : browserProvider ? 'metamask' : appWallet ? 'burner' : null;
-    if (!activeWalletSource) {
-      return;
-    }
-
-    onWalletSessionChange({
-      activeSignerSource: activeWalletSource,
-      activeBurnerWalletId: selectedBurnerWalletId,
-      browserProvider: browserProvider ?? null,
-      browserWalletId: activeWalletSource === 'metamask' ? selectedWalletId : '',
-      browserWalletLabel: activeWalletSource === 'metamask' ? connectedWalletLabel || 'Browser wallet' : '',
-      burnerWallet: activeWalletSource === 'burner' ? appWallet : null,
-      burnerWallets,
-      chainId,
-      sessionOnboardInfo: effectiveOnboardInfoByAddress,
-      walletAesHealthByAddress: sharedWalletSession?.walletAesHealthByAddress,
-      walletAddress: nextAddress
-    });
-  }, [
-    burnerWallets,
-    chainId,
-    connectedWalletLabel,
-    onWalletSessionChange,
-    effectiveOnboardInfoByAddress,
-    selectedBurnerWalletId,
-    selectedWalletId,
-    sharedWalletSession?.walletAesHealthByAddress,
-    connectedWithBurner,
-    walletAddress
   ]);
 
   const toggleTradeRateDirection = useCallback((tradeId: number, escrowContract?: string) => {

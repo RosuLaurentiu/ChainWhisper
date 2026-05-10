@@ -69,6 +69,7 @@ export function useWalletOnboarding({
 
   const activeProviderRef = useRef<Eip1193Provider | null>(null);
   const browserWalletSessionRef = useRef<BrowserWalletSession | null>(null);
+  const chainIdRef = useRef<number | null>(null);
   const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
   const currentWalletKeyRef = useRef('');
   const activeSignerSourceRef = useRef<SignerSource>('burner');
@@ -91,6 +92,10 @@ export function useWalletOnboarding({
   useEffect(() => {
     currentWalletKeyRef.current = walletAddress.trim().toLowerCase();
   }, [walletAddress]);
+
+  useEffect(() => {
+    chainIdRef.current = chainId;
+  }, [chainId]);
 
   useEffect(() => {
     activeSignerSourceRef.current = activeSignerSource;
@@ -140,21 +145,6 @@ export function useWalletOnboarding({
     });
     setOnboardStatus('Not onboarded');
   }, []);
-
-  const adoptBrowserWalletSession = useCallback((session: BrowserWalletSession) => {
-    activeProviderRef.current = session.provider;
-    setActiveProvider(session.provider);
-    browserWalletSessionRef.current = session;
-    setBrowserWalletSessionState(session);
-    setConnectionMethod('metamask');
-    setActiveSignerSource('metamask');
-    setSelectedInjectedWalletId(session.walletId);
-    resetBrowserPrivacySessionForWalletChange(session.address);
-    setWalletAddress(session.address);
-    setChainId(session.chainId);
-    setStatus(`Connected (${session.walletLabel || 'Browser wallet'})`);
-    saveWalletPreference({ kind: 'browser', browserWalletId: session.walletId });
-  }, [resetBrowserPrivacySessionForWalletChange, setActiveSignerSource]);
 
   const getConnectedProvider = useCallback((): Eip1193Provider | null => {
     if (connectionMethod === 'metamask') {
@@ -559,8 +549,13 @@ export function useWalletOnboarding({
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
       const selected = nextAccounts[0] ?? '';
       const selectedWalletKey = selected.trim().toLowerCase();
-      const previousWalletKey = walletAddress.trim().toLowerCase();
-      const previousFlowInput = { chainId, provider, walletAddress };
+      const previousWalletKey = currentWalletKeyRef.current;
+      const activeChainId = chainIdRef.current;
+      const previousFlowInput = {
+        chainId: activeChainId,
+        provider,
+        walletAddress: previousWalletKey
+      };
       const walletFlowActive = previousWalletKey && isWalletTransactionFlowActive(previousFlowInput);
       if (walletFlowActive && (!selectedWalletKey || selectedWalletKey === previousWalletKey)) {
         return;
@@ -588,12 +583,25 @@ export function useWalletOnboarding({
       if (activeSignerSourceRef.current !== 'metamask') {
         return;
       }
-      if (walletAddress && isWalletTransactionFlowActive({ chainId, provider, walletAddress })) {
+      const activeWalletKey = currentWalletKeyRef.current;
+      const activeChainId = chainIdRef.current;
+      if (
+        activeWalletKey &&
+        isWalletTransactionFlowActive({
+          chainId: activeChainId,
+          provider,
+          walletAddress: activeWalletKey
+        })
+      ) {
         return;
       }
       if (typeof newChainId === 'string' || typeof newChainId === 'number') {
-        if (walletAddress) {
-          clearWalletTransactionFlow({ chainId, provider, walletAddress });
+        if (activeWalletKey) {
+          clearWalletTransactionFlow({
+            chainId: activeChainId,
+            provider,
+            walletAddress: activeWalletKey
+          });
         }
         setChainId(normalizeChainId(newChainId));
       }
@@ -607,22 +615,17 @@ export function useWalletOnboarding({
       provider.removeListener?.('chainChanged', handleChainChanged);
     };
   }, [
-    activeProvider,
-    chainId,
-    connectionMethod,
     getConnectedProvider,
     refreshWalletState,
     resetBrowserPrivacySessionForWalletChange,
     setBrowserWalletSession,
-    setError,
-    walletAddress
+    setError
   ]);
 
   return {
     activeProvider,
     activeSignerSource,
     activateBrowserWalletSession,
-    adoptBrowserWalletSession,
     browserWalletSession,
     chainId,
     connectAndOnboard,

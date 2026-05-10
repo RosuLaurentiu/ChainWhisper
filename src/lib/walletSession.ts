@@ -37,6 +37,7 @@ export type WalletSessionActions = {
   disconnect: () => Promise<void> | void;
   generateAppWallet: () => Promise<void> | void;
   importAppWallet: () => Promise<void> | void;
+  runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   switchAppWallet: (walletIdOrAddress: string) => Promise<void> | void;
   unlockPrivacy: (options?: { forceFreshPrivacy?: boolean }) => Promise<unknown>;
 };
