@@ -189,8 +189,8 @@ type P2PTradingPageProps = {
 
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 20_000;
 const TERMINAL_HANDOFF_NAVIGATION = {
-  rememberPendingTerminalRoute: true,
-  replace: true
+  rememberOnly: true,
+  rememberPendingTerminalRoute: true
 } as const;
 const EMPTY_STALE_TOKEN_ADDRESSES: string[] = [];
 type TradeSigner = JsonRpcSigner | Wallet;

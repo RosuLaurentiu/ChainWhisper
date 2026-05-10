@@ -127,8 +127,8 @@ const carryKnownDirectTerms = (latestSnapshot: TradeSnapshot, sourceSnapshot: Tr
 };
 
 const TERMINAL_HANDOFF_NAVIGATION: TradeNavigationOptions = {
-  rememberPendingTerminalRoute: true,
-  replace: true
+  rememberOnly: true,
+  rememberPendingTerminalRoute: true
 };
 
 type UseP2PTradeActionsArgs = {

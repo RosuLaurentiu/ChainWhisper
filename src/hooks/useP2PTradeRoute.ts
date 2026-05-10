@@ -11,6 +11,7 @@ import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
 
 export type TradeNavigationOptions = {
+  rememberOnly?: boolean;
   clearPendingTerminalRoute?: boolean;
   rememberPendingTerminalRoute?: boolean;
   replace?: boolean;
@@ -430,14 +431,16 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
       clearPendingTradeTerminalRoute();
     }
 
-    if (currentPath !== nextPath) {
+    if (!options?.rememberOnly && currentPath !== nextPath) {
       if (options?.replace) {
         window.history.replaceState(window.history.state, '', nextPath);
       } else {
         window.history.pushState(window.history.state, '', nextPath);
       }
     }
-    setRoute(restorePendingTradeTerminalRouteFromLocation());
+    if (!options?.rememberOnly) {
+      setRoute(restorePendingTradeTerminalRouteFromLocation());
+    }
   }, []);
 
   const buildTradeShareUrl = useCallback((tradeId: number, accessSecret?: string, escrowContract?: string): string => {
