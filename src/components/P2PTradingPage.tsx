@@ -56,7 +56,6 @@ import {
 } from '../lib/cotiAesUnlock';
 import { getCotiSnapAesStatus, type CotiSnapAesStatus } from '../lib/cotiSnap';
 import {
-  ensurePrivateTokenAccountEncryptionAddress,
   fetchPrivateOrderFillReceiptsForWallet,
   fetchRecurringExecutionRowsForWallet,
   fetchRecurringPrivateInventorySnapshotsForWallet,
@@ -70,7 +69,6 @@ import {
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
   HOTDOG_PRIVATE_TOKEN_ADDRESS,
-  VERIFIED_ECOSYSTEM_TOKENS,
   buildTradeCustomTokenInfoKey,
   getOnChainFailureMessage,
   resolvePrivateTokenBalancePrivacyAction,
@@ -1391,9 +1389,10 @@ export default function P2PTradingPage({
       [
         walletKey || 'no-wallet',
         chainId ?? 'no-chain',
-        connectedWithBurner ? 'app' : selectedWalletId || 'browser'
+        connectedWithBurner ? 'app' : selectedWalletId || 'browser',
+        walletHasAes ? 'aes' : 'locked'
       ].join(':'),
-    [chainId, connectedWithBurner, selectedWalletId, walletKey]
+    [chainId, connectedWithBurner, selectedWalletId, walletHasAes, walletKey]
   );
 
   const {
@@ -2276,66 +2275,6 @@ export default function P2PTradingPage({
       setOnboardInfoByAddress((previous) =>
         mergeOnboardInfoByAddress(previous, walletAddress.toLowerCase(), unlockResult.onboardInfo)
       );
-      const tokensToUnlock = new Map<string, { address: string; symbol: string }>();
-      const addPrivateTokenToUnlock = (address: string, symbol: string) => {
-        if (isWalletAddress(address)) {
-          tokensToUnlock.set(address.toLowerCase(), { address, symbol });
-        }
-      };
-      addPrivateTokenToUnlock(PRIVATE_REWARD_TOKEN_ADDRESS, privateRewardTokenSymbol || 'pWISP');
-      addPrivateTokenToUnlock(HOTDOG_PRIVATE_TOKEN_ADDRESS, hotdogPrivateTokenSymbol || 'HOTDOG');
-      for (const token of VERIFIED_ECOSYSTEM_TOKENS) {
-        if (token.kind === 'private-erc20' && token.address.toLowerCase() === HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase()) {
-          continue;
-        }
-        if (token.kind === 'private-erc20' && token.address.toLowerCase() === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
-          continue;
-        }
-        const info = customTradeTokenInfoByAddress[buildTradeCustomTokenInfoKey('private-erc20', token.address)];
-        if (info && (info.balanceWei !== null || info.privateBalanceState?.status === 'setup-needed')) {
-          addPrivateTokenToUnlock(token.address, info?.symbol?.trim() || shortenAddress(token.address));
-        }
-      }
-      const selectedPrivateTokenCandidates = [
-        {
-          selection: tradeOfferTokenSelection,
-          customAddress: tradeOfferCustomTokenAddress
-        },
-        {
-          selection: tradeRequestTokenSelection,
-          customAddress: tradeRequestCustomTokenAddress
-        }
-      ];
-      for (const candidate of selectedPrivateTokenCandidates) {
-        if (resolveTradePresetKind(candidate.selection) !== 'private-erc20') {
-          continue;
-        }
-        const address = isWalletAddress(candidate.selection)
-          ? candidate.selection
-          : isWalletAddress(candidate.customAddress)
-            ? candidate.customAddress
-            : '';
-        if (address) {
-          const info = customTradeTokenInfoByAddress[buildTradeCustomTokenInfoKey('private-erc20', address)];
-          addPrivateTokenToUnlock(address, info?.symbol?.trim() || shortenAddress(address));
-        }
-      }
-
-      for (const token of tokensToUnlock.values()) {
-        await ensurePrivateTokenAccountEncryptionAddress({
-          signer,
-          tokenAddress: token.address,
-          ownerAddress: walletAddress,
-          tokenSymbol: token.symbol
-        }).catch((error) => {
-          setWalletError(
-            getProviderErrorMessage(
-              error,
-              `Privacy is unlocked, but ${token.symbol} balance visibility could not be refreshed.`
-            )
-          );
-        });
-      }
 
       let finalUnlockResult = unlockResult;
       let reloadResult = await reloadPrivateBalancesWithUnlockedSigner(signer);
@@ -2464,19 +2403,12 @@ export default function P2PTradingPage({
     }
   }, [
     cotiSnapAesStatus,
-    customTradeTokenInfoByAddress,
     connectedWithBurner,
     getTradeSigner,
-    hotdogPrivateTokenSymbol,
-    privateRewardTokenSymbol,
     refreshWalletBalances,
     reloadPrivateBalancesWithUnlockedSigner,
     setActiveCotiSnapAesStatus,
     sharedWalletSession,
-    tradeOfferCustomTokenAddress,
-    tradeOfferTokenSelection,
-    tradeRequestCustomTokenAddress,
-    tradeRequestTokenSelection,
     walletAddress
   ]);
 

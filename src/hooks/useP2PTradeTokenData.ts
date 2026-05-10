@@ -78,9 +78,20 @@ export const resolveBalanceWeiAfterRefresh = (
 
 export const resolvePrivateBalanceStateAfterRefresh = (
   previous: PrivateTokenBalanceState,
-  next: PrivateTokenBalanceState,
-  silent: boolean
-): PrivateTokenBalanceState => (silent && next.status !== 'ready' && previous.status === 'ready' ? previous : next);
+  next: PrivateTokenBalanceState
+): PrivateTokenBalanceState => {
+  return next.status !== 'ready' && previous.status === 'ready' ? previous : next;
+};
+
+export const resolvePrivateBalanceWeiAfterRefresh = (
+  previous: bigint | null,
+  next: PrivateTokenBalanceState
+): bigint | null => {
+  if (next.status === 'ready') {
+    return next.balanceWei;
+  }
+  return previous;
+};
 
 type UseP2PTradeTokenDataResult = {
   clearWalletBalances: () => void;
@@ -297,18 +308,16 @@ export default function useP2PTradeTokenData({
           ? await readCurrentPrivateBalanceState(PRIVATE_REWARD_TOKEN_ADDRESS, signer)
           : { status: 'locked' as const };
       setPrivateRewardTokenBalanceState((previous) =>
-        resolvePrivateBalanceStateAfterRefresh(previous, privateBalanceState, silent)
+        resolvePrivateBalanceStateAfterRefresh(previous, privateBalanceState)
       );
       setPrivateRewardTokenBalanceWei((previous) =>
-        resolveBalanceWeiAfterRefresh(
-          previous,
-          privateBalanceState.status === 'ready' ? privateBalanceState.balanceWei : null,
-          silent
-        )
+        resolvePrivateBalanceWeiAfterRefresh(previous, privateBalanceState)
       );
     } else if (!silent) {
-      setPrivateRewardTokenBalanceState({ status: 'locked' });
-      setPrivateRewardTokenBalanceWei(null);
+      setPrivateRewardTokenBalanceState((previous) =>
+        previous.status === 'ready' ? previous : { status: 'locked' }
+      );
+      setPrivateRewardTokenBalanceWei((previous) => previous);
     }
   }, [
     balanceRefreshSessionKey,
@@ -351,7 +360,13 @@ export default function useP2PTradeTokenData({
             walletKey,
             aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
             privateBalanceState:
-              token.kind === 'private-erc20' ? (aesReady ? { status: 'setup-pending' } : { status: 'locked' }) : undefined
+              token.kind === 'private-erc20'
+                ? previous[tokenKey]?.privateBalanceState?.status === 'ready'
+                  ? previous[tokenKey]?.privateBalanceState
+                  : aesReady
+                    ? { status: 'setup-pending' }
+                    : { status: 'locked' }
+                : undefined
           }
         }));
       }
@@ -400,8 +415,7 @@ export default function useP2PTradeTokenData({
             token.kind === 'private-erc20' && privateBalanceState
               ? resolvePrivateBalanceStateAfterRefresh(
                   previousEntry?.privateBalanceState ?? LOCKED_PRIVATE_BALANCE_STATE,
-                  privateBalanceState,
-                  silent
+                  privateBalanceState
                 )
               : privateBalanceState;
           return {
@@ -411,7 +425,10 @@ export default function useP2PTradeTokenData({
               address: normalizedAddress,
               symbol,
               decimals,
-              balanceWei: resolveBalanceWeiAfterRefresh(previousEntry?.balanceWei ?? null, balanceWei, silent),
+              balanceWei:
+                token.kind === 'private-erc20' && nextPrivateBalanceState
+                  ? resolvePrivateBalanceWeiAfterRefresh(previousEntry?.balanceWei ?? null, nextPrivateBalanceState)
+                  : resolveBalanceWeiAfterRefresh(previousEntry?.balanceWei ?? null, balanceWei, silent),
               loading: false,
               walletKey,
               aesReady: token.kind === 'private-erc20' ? aesReady : undefined,
@@ -517,8 +534,12 @@ export default function useP2PTradeTokenData({
       if (privateRewardResult) {
         setPrivateRewardTokenSymbol(privateRewardResult.symbol);
         setPrivateRewardTokenDecimals(privateRewardResult.decimals);
-        setPrivateRewardTokenBalanceState(privateRewardResult.privateBalanceState);
-        setPrivateRewardTokenBalanceWei(privateRewardResult.balanceWei);
+        setPrivateRewardTokenBalanceState((previous) =>
+          resolvePrivateBalanceStateAfterRefresh(previous, privateRewardResult.privateBalanceState)
+        );
+        setPrivateRewardTokenBalanceWei((previous) =>
+          resolvePrivateBalanceWeiAfterRefresh(previous, privateRewardResult.privateBalanceState)
+        );
       }
 
       return {
