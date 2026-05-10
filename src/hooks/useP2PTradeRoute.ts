@@ -6,7 +6,7 @@ import {
   TRADE_ESCROW_CONTRACT_ADDRESS,
   isWalletAddress
 } from '../lib/appShared/core';
-import { isP2PTradeWalletPromptActive } from '../lib/p2pTradeWalletPromptGuard';
+import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 
 export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
@@ -480,7 +480,7 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     const syncRoute = (event?: Event) => {
       if (
         (event?.type === 'focus' || event?.type === 'visibilitychange') &&
-        isP2PTradeWalletPromptActive()
+        isWalletTransactionFlowActive()
       ) {
         return;
       }

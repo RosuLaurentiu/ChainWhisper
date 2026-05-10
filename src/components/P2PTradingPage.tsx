@@ -136,10 +136,9 @@ import {
 } from '../lib/tradeCounterSupport';
 import { applyTradeRecoveryPayloadToSnapshot } from '../lib/tradeRecoveryPayload';
 import {
-  beginP2PTradeWalletPromptFlow,
-  endP2PTradeWalletPromptFlow,
-  isP2PTradeWalletPromptActive
-} from '../lib/p2pTradeWalletPromptGuard';
+  isWalletTransactionFlowActive,
+  runWalletTransactionFlow
+} from '../lib/walletTransactionFlow';
 import {
   WALLET_STATUS_STORAGE_KEY,
   buildOfferFromSnapshot,
@@ -545,16 +544,11 @@ export default function P2PTradingPage({
   const routeError = route.routeError;
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
-      const flow = beginP2PTradeWalletPromptFlow({
+      return runWalletTransactionFlow({
         chainId,
         provider: providerRef.current,
         walletAddress
-      });
-      try {
-        return await operation();
-      } finally {
-        endP2PTradeWalletPromptFlow(flow);
-      }
+      }, operation);
     },
     [chainId, walletAddress]
   );
@@ -3815,7 +3809,7 @@ export default function P2PTradingPage({
       const previousWalletKey = walletAddress.trim().toLowerCase();
       if (
         previousWalletKey &&
-        isP2PTradeWalletPromptActive({
+        isWalletTransactionFlowActive({
           chainId,
           provider,
           walletAddress: previousWalletKey
@@ -3829,7 +3823,7 @@ export default function P2PTradingPage({
         pendingEmptyAccountSyncRef.current = window.setTimeout(async () => {
           pendingEmptyAccountSyncRef.current = null;
           if (
-            isP2PTradeWalletPromptActive({
+            isWalletTransactionFlowActive({
               chainId,
               provider,
               walletAddress: previousWalletKey
@@ -3865,7 +3859,7 @@ export default function P2PTradingPage({
     const handleChainChanged = (newChainId: unknown) => {
       if (
         walletAddress &&
-        isP2PTradeWalletPromptActive({
+        isWalletTransactionFlowActive({
           chainId,
           provider,
           walletAddress
@@ -3907,7 +3901,7 @@ export default function P2PTradingPage({
         return;
       }
       if (
-        isP2PTradeWalletPromptActive({
+        isWalletTransactionFlowActive({
           chainId,
           provider: providerRef.current,
           walletAddress
@@ -3928,7 +3922,7 @@ export default function P2PTradingPage({
         return;
       }
       if (
-        isP2PTradeWalletPromptActive({
+        isWalletTransactionFlowActive({
           chainId,
           provider: providerRef.current,
           walletAddress

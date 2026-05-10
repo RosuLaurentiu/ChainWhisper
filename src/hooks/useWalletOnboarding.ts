@@ -16,6 +16,7 @@ import {
 } from '../lib/walletOptions';
 import { buildWalletAesHealthState, clearCotiAesUnlockRequest, getOrRecoverAesForWallet } from '../lib/cotiAesUnlock';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
+import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 import useInjectedWalletOptions from './useInjectedWalletOptions';
 
 type UseWalletOnboardingArgs = {
@@ -538,6 +539,9 @@ export function useWalletOnboarding({
       }
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
       const selected = nextAccounts[0] ?? '';
+      if (!selected && walletAddress && isWalletTransactionFlowActive({ chainId, provider, walletAddress })) {
+        return;
+      }
       resetBrowserPrivacySessionForWalletChange(selected);
       setWalletAddress(selected);
       setBrowserWalletSession(
@@ -558,6 +562,9 @@ export function useWalletOnboarding({
       if (activeSignerSourceRef.current !== 'metamask') {
         return;
       }
+      if (walletAddress && isWalletTransactionFlowActive({ chainId, provider, walletAddress })) {
+        return;
+      }
       if (typeof newChainId === 'string' || typeof newChainId === 'number') {
         setChainId(normalizeChainId(newChainId));
       }
@@ -572,12 +579,14 @@ export function useWalletOnboarding({
     };
   }, [
     activeProvider,
+    chainId,
     connectionMethod,
     getConnectedProvider,
     refreshWalletState,
     resetBrowserPrivacySessionForWalletChange,
     setBrowserWalletSession,
-    setError
+    setError,
+    walletAddress
   ]);
 
   return {

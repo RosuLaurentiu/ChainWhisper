@@ -45,6 +45,7 @@ import {
 } from './lib/cotiAesUnlock';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
 import { submitGroupMemo } from './lib/groupChatChain';
+import { runWalletTransactionFlow } from './lib/walletTransactionFlow';
 import {
   submitDirectMemo,
   submitHiddenContactNameMemo,
@@ -823,6 +824,18 @@ export default function App() {
     onWalletAesHealthChange: setWalletAesHealth,
     walletAesHealthByAddress
   });
+  const runSharedWalletTransactionFlow = useCallback(
+    async <T,>(operation: () => Promise<T>): Promise<T> =>
+      runWalletTransactionFlow(
+        {
+          chainId,
+          provider: activeSignerSource === 'metamask' ? getConnectedProvider() : null,
+          walletAddress
+        },
+        operation
+      ),
+    [activeSignerSource, chainId, getConnectedProvider, walletAddress]
+  );
   const {
     beginBurnerPinFlow,
     beginRevealBurnerBackup,
@@ -2135,6 +2148,7 @@ export default function App() {
 
     try {
       setSwappingTokens(true);
+      await runSharedWalletTransactionFlow(async () => {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const swapContract = new cotiEthers.Contract(activeSwapVaultContractAddress, SWAP_VAULT_CONTRACT_ABI, signer);
@@ -2299,6 +2313,7 @@ export default function App() {
         ? ` Auto-switched fee mode to COTI because amount exceeded ${swapPrivateRewardTokenSymbol} balance minus token fee.`
         : '';
       setSwapStatusMessage(`${swapDirectionStatus}${feeStatus}${fallbackStatus}${autoModeStatus}`);
+      });
     } catch (swapError) {
       const message = getProviderErrorMessage(swapError, 'Swap failed.');
       setError(message);
@@ -3261,18 +3276,20 @@ export default function App() {
     });
 
   const saveMyNicknameOnChain = async (overrideNickname?: string): Promise<boolean> => {
-    return saveMyNicknameOnChainLookup({
-      walletAddress,
-      nickname: myNickname,
-      overrideNickname,
-      getNicknameMaxLength,
-      onChainNicknameCacheRef,
-      getMemoSigner,
-      setMyNickname,
-      setContacts,
-      setSessionOnboardInfo,
-      setError
-    });
+    return runSharedWalletTransactionFlow(() =>
+      saveMyNicknameOnChainLookup({
+        walletAddress,
+        nickname: myNickname,
+        overrideNickname,
+        getNicknameMaxLength,
+        onChainNicknameCacheRef,
+        getMemoSigner,
+        setMyNickname,
+        setContacts,
+        setSessionOnboardInfo,
+        setError
+      })
+    );
   };
 
   const loadMyNicknameFromChain = async (
@@ -4274,6 +4291,7 @@ export default function App() {
         ]
       }));
 
+      await runSharedWalletTransactionFlow(async () => {
       const { signer, cacheKey } = await getMemoSigner();
       const selector = await resolveGroupSubmitSelector();
       const paymentMode = groupFeeModeSelection === 'token' ? 1 : 0;
@@ -4351,6 +4369,7 @@ export default function App() {
       setReplyingToMessage(null);
       await syncGroupData({ background: true, activeMessagesOnly: true });
       setTopUpMetricsNonce((previous) => previous + 1);
+      });
     } catch (sendError) {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -4383,25 +4402,27 @@ export default function App() {
       throw new Error('Contact name cannot be empty.');
     }
 
-    const { signer, cacheKey } = await getMemoSigner();
-    const selector = await resolveSubmitSelector();
-    const requiredFee = await resolveRequiredFeeForSend();
-    const { txHash } = await submitHiddenContactNameMemo({
-      signer,
-      contactAddress: normalizedAddress,
-      contactName: normalizedContactName,
-      selector,
-      requiredFee,
-      encodeMemo: encodeMemoForActiveSigner
+    return runSharedWalletTransactionFlow(async () => {
+      const { signer, cacheKey } = await getMemoSigner();
+      const selector = await resolveSubmitSelector();
+      const requiredFee = await resolveRequiredFeeForSend();
+      const { txHash } = await submitHiddenContactNameMemo({
+        signer,
+        contactAddress: normalizedAddress,
+        contactName: normalizedContactName,
+        selector,
+        requiredFee,
+        encodeMemo: encodeMemoForActiveSigner
+      });
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      return txHash;
     });
-
-    const nextOnboardInfo = signer.getUserOnboardInfo();
-    setSessionOnboardInfo((previous) => ({
-      ...previous,
-      [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-    }));
-
-    return txHash;
   };
 
   const syncContactNameAliasFromInput = async (contactAddress: string, contactName: string): Promise<void> => {
@@ -4459,29 +4480,31 @@ export default function App() {
       throw new Error('Conversation state is empty.');
     }
 
-    const { signer, cacheKey } = await getMemoSigner();
-    const selector = await resolveSubmitSelector();
-    const requiredFee = await resolveRequiredFeeForSend();
-    const normalizedVisibleNotice = visibleNotice.replace(/\r?\n/g, ' ').trim().slice(0, MAX_MESSAGE_LENGTH);
-    const submittedTx = await submitHiddenConversationStateMemo({
-      signer,
-      contactAddress: normalizedAddress,
-      state: normalizedState,
-      visibleNotice: normalizedVisibleNotice,
-      selector,
-      requiredFee,
-      encodeMemo: encodeMemoForActiveSigner
+    return runSharedWalletTransactionFlow(async () => {
+      const { signer, cacheKey } = await getMemoSigner();
+      const selector = await resolveSubmitSelector();
+      const requiredFee = await resolveRequiredFeeForSend();
+      const normalizedVisibleNotice = visibleNotice.replace(/\r?\n/g, ' ').trim().slice(0, MAX_MESSAGE_LENGTH);
+      const submittedTx = await submitHiddenConversationStateMemo({
+        signer,
+        contactAddress: normalizedAddress,
+        state: normalizedState,
+        visibleNotice: normalizedVisibleNotice,
+        selector,
+        requiredFee,
+        encodeMemo: encodeMemoForActiveSigner
+      });
+
+      const nextOnboardInfo = signer.getUserOnboardInfo();
+      setSessionOnboardInfo((previous) => ({
+        ...previous,
+        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+      }));
+
+      await submittedTx.wait();
+
+      return submittedTx.txHash;
     });
-
-    const nextOnboardInfo = signer.getUserOnboardInfo();
-    setSessionOnboardInfo((previous) => ({
-      ...previous,
-      [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-    }));
-
-    await submittedTx.wait();
-
-    return submittedTx.txHash;
   };
 
   const syncConversationStateFromInput = async (
@@ -4603,6 +4626,7 @@ export default function App() {
       setSendingReaction(true);
       setReactionPickerMessageId(null);
 
+      await runSharedWalletTransactionFlow(async () => {
       if (threadGroupId !== null) {
         const groupKey = String(threadGroupId);
         setMessagesByGroup((previous) => ({
@@ -4772,6 +4796,7 @@ export default function App() {
       if (activeSignerSource === 'burner') {
         setTopUpMetricsNonce((previous) => previous + 1);
       }
+      });
     } catch (reactionError) {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -4889,6 +4914,7 @@ export default function App() {
         ]
       }));
 
+      await runSharedWalletTransactionFlow(async () => {
       const { signer, cacheKey } = await getMemoSigner();
       const selector = await resolveSubmitSelector();
       const requiredFee = await resolveRequiredFeeForSend();
@@ -5013,6 +5039,7 @@ export default function App() {
       if (activeSignerSource === 'burner') {
         setTopUpMetricsNonce((previous) => previous + 1);
       }
+      });
     } catch (sendError) {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -5065,6 +5092,7 @@ export default function App() {
     parsedTradeRequestAmountWei,
     processingTradeActionId,
     replyingToMessage,
+    runWalletTransactionFlow: runSharedWalletTransactionFlow,
     resolveRequiredFeeForTradeCreate,
     resolveTradeSnapshotForOffer,
     selectedTradeOfferToken,
@@ -5164,6 +5192,7 @@ export default function App() {
     let transferSucceeded = false;
     try {
       setTipping(true);
+      await runSharedWalletTransactionFlow(async () => {
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       let requiredFeeForTipNotice: bigint | null = null;
@@ -5217,6 +5246,7 @@ export default function App() {
       }));
       syncConversationHistory({ background: true, activeContactOnly: true }).catch(() => {});
       setTipAmountInput('');
+      });
     } catch (tipError) {
       const rawMessage = tipError instanceof Error ? tipError.message : '';
       const message = rawMessage || (transferSucceeded ? 'Tip sent, but notification message failed.' : 'Failed to send tip.');

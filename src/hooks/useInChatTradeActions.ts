@@ -50,6 +50,7 @@ type UseInChatTradeActionsArgs = {
   parsedTradeRequestAmountWei: bigint | null;
   processingTradeActionId: string;
   replyingToMessage: ChatMessage | null;
+  runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   resolveRequiredFeeForTradeCreate: () => Promise<bigint>;
   resolveTradeSnapshotForOffer: (offerMessage: TradeOfferMessagePayload) => Promise<TradeSnapshot>;
   selectedTradeOfferToken: ResolvedTradeToken | null;
@@ -94,6 +95,7 @@ export default function useInChatTradeActions({
   parsedTradeRequestAmountWei,
   processingTradeActionId,
   replyingToMessage,
+  runWalletTransactionFlow,
   resolveRequiredFeeForTradeCreate,
   resolveTradeSnapshotForOffer,
   selectedTradeOfferToken,
@@ -168,6 +170,7 @@ export default function useInChatTradeActions({
           buildTradeSnapshotKey(pendingCounterContext.offer.tradeId, pendingCounterContext.offer.escrowContract)
         );
       }
+      await runWalletTransactionFlow(async () => {
       const { signer, cacheKey } = await getMemoSigner();
       const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
       let counteredSnapshot: TradeSnapshot | null = null;
@@ -303,6 +306,7 @@ export default function useInChatTradeActions({
       setTradeCounterContext(null);
       setTradeComposerOpen(false);
       await sendMessage(buildTradeOfferMessagePayload(tradeMessagePayload), overrideReplyTarget ?? replyingToMessage);
+      });
     } catch (tradeError) {
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -338,6 +342,7 @@ export default function useInChatTradeActions({
     try {
       const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
       setProcessingTradeActionId(tradeKey);
+      await runWalletTransactionFlow(async () => {
       const snapshot = await resolveTradeSnapshotForOffer(offer);
       if (snapshot.hiddenLiquidity) {
         throw new Error('Open the shared P2P trade link to fill private orders.');
@@ -425,6 +430,7 @@ export default function useInChatTradeActions({
         }),
         sourceMessage
       );
+      });
     } catch (tradeError) {
       const message =
         tradeError instanceof Error
@@ -446,6 +452,7 @@ export default function useInChatTradeActions({
     try {
       const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
       setProcessingTradeActionId(tradeKey);
+      await runWalletTransactionFlow(async () => {
       const snapshot = await resolveTradeSnapshotForOffer(offer);
       const { signer, cacheKey } = await getMemoSigner();
       await declineTradeOnChain({
@@ -480,6 +487,7 @@ export default function useInChatTradeActions({
         }),
         sourceMessage
       );
+      });
     } catch (tradeError) {
       const message =
         tradeError instanceof Error
@@ -501,6 +509,7 @@ export default function useInChatTradeActions({
     try {
       const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
       setProcessingTradeActionId(tradeKey);
+      await runWalletTransactionFlow(async () => {
       const snapshot = await resolveTradeSnapshotForOffer(offer);
       const { signer, cacheKey } = await getMemoSigner();
       await cancelTradeOnChain({
@@ -535,6 +544,7 @@ export default function useInChatTradeActions({
         }),
         sourceMessage
       );
+      });
     } catch (tradeError) {
       const message =
         tradeError instanceof Error

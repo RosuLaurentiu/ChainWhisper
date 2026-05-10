@@ -59,7 +59,7 @@ test.describe('trading V1 routes', () => {
       );
     }, PENDING_TERMINAL_ROUTE_KEY);
 
-    await page.getByRole('button', { name: 'Desk' }).click();
+    await page.getByRole('button', { name: 'Desk', exact: true }).click();
 
     await expect(page).toHaveURL(/\/trades$/);
     const pendingRoute = await page.evaluate((storageKey) => window.sessionStorage.getItem(storageKey), PENDING_TERMINAL_ROUTE_KEY);
