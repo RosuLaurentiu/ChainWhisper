@@ -7114,6 +7114,7 @@ export default function App() {
     injectedWalletOptions,
     initializingBurner,
     isConnected,
+    isMobileLayout: isMobileNav,
     lastCopiedKey,
     loadingTopUpQuote,
     onCotiNetwork,

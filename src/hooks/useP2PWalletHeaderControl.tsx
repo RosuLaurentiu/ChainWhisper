@@ -148,6 +148,7 @@ export default function useP2PWalletHeaderControl({
   );
   const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
   const isMobileBrowser = isMobileBrowserUserAgent();
+  const canUseMobileWalletHandoff = isMobileBrowser || compactMobileWallet;
   const walletConnectionBusy = Boolean(connectingWalletId && connectingWalletId !== 'aes');
   const tradeWalletBusyLabel = walletConnectionBusy
     ? connectingWalletId === 'burner'
@@ -157,7 +158,7 @@ export default function useP2PWalletHeaderControl({
   const walletPrimaryAction = resolveWalletConnectionPrimaryAction({
     busyLabel: tradeWalletBusyLabel,
     hasSavedAppWallet: tradeHasSavedAppWallet,
-    isMobileBrowser,
+    isMobileBrowser: canUseMobileWalletHandoff,
     onCotiNetwork,
     policy: 'browser-first',
     preferredBrowserWalletId: preferredWalletOption?.id,
@@ -520,12 +521,18 @@ export default function useP2PWalletHeaderControl({
                     className={connectedWithBurner ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
                     onClick={() => {
                       setWalletMenuOpen(false);
-                      connectBurnerWallet().catch(() => {});
+                      if (tradeHasSavedAppWallet) {
+                        connectBurnerWallet().catch(() => {});
+                      }
                     }}
-                    disabled={Boolean(connectingWalletId)}
+                    disabled={Boolean(connectingWalletId) || !tradeHasSavedAppWallet}
                     role="menuitem"
                   >
-                    {connectingWalletId === 'burner' ? 'Unlocking...' : 'Connect app wallet'}
+                    {connectingWalletId === 'burner'
+                      ? 'Unlocking...'
+                      : tradeHasSavedAppWallet
+                        ? 'Connect app wallet'
+                        : 'No saved app wallet'}
                   </button>
                 )}
               <button type="button" className="p2p-wallet-action" onClick={beginGenerateBurnerWallet} role="menuitem">

@@ -64,6 +64,7 @@ type UseChatWalletHeaderControlArgs = {
   injectedWalletOptions: InjectedWalletOption[];
   initializingBurner: boolean;
   isConnected: boolean;
+  isMobileLayout?: boolean;
   lastCopiedKey: string | null;
   loadingTopUpQuote: boolean;
   onCotiNetwork: boolean;
@@ -117,6 +118,7 @@ export default function useChatWalletHeaderControl({
   injectedWalletOptions,
   initializingBurner,
   isConnected,
+  isMobileLayout = false,
   lastCopiedKey,
   loadingTopUpQuote,
   onCotiNetwork,
@@ -159,14 +161,16 @@ export default function useChatWalletHeaderControl({
     busyLabel: chatWalletBusyLabel,
     hasAppWalletStorage: !burnerStorageBlocked,
     hasSavedAppWallet: hasSavedBurnerWallet,
-    isMobileBrowser: isMobileBrowserUserAgent(),
+    isMobileBrowser: isMobileLayout || isMobileBrowserUserAgent(),
     onCotiNetwork,
     policy: 'app-first',
     preferredBrowserWalletId: chatPreferredBrowserWalletOption?.id,
     preferredBrowserWalletLabel: chatPreferredBrowserWalletOption?.label,
     walletAddress
   });
-  const showMobileWalletAppOpenAction = chatWalletPrimaryAction.kind === 'open-browser-wallet-app';
+  const showMobileBrowserWalletOpenAction = Boolean(
+    !walletAddress && !chatPreferredBrowserWalletOption && (isMobileLayout || isMobileBrowserUserAgent())
+  );
   const chatWalletPrimaryButtonLabel = chatWalletPrimaryAction.label;
   const chatWalletPrimaryMetaLabel =
     walletAddress && onCotiNetwork && lastCopiedKey === chatWalletAddressCopyKey ? 'Copied' : undefined;
@@ -519,15 +523,15 @@ export default function useChatWalletHeaderControl({
                   type="button"
                   className="p2p-wallet-action"
                   onClick={() => {
-                    if (showMobileWalletAppOpenAction) {
+                    if (showMobileBrowserWalletOpenAction) {
                       window.location.href = buildMetaMaskMobileDeepLink();
                     }
                   }}
-                  disabled={!showMobileWalletAppOpenAction}
+                  disabled={!showMobileBrowserWalletOpenAction}
                   role="menuitem"
                 >
-                  {showMobileWalletAppOpenAction
-                    ? 'Open this page in MetaMask Mobile or a supported wallet app'
+                  {showMobileBrowserWalletOpenAction
+                    ? 'Open MetaMask Mobile'
                     : 'MetaMask or CipherTrade not detected'}
                 </button>
               )}

@@ -17,6 +17,11 @@ test.describe('mobile layout polish', () => {
 
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
     await expect(page.getByRole('button', { name: /Generate app wallet|Connect app wallet|Wallet unavailable/i })).toBeVisible();
+    await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Open Wallet menu$/ }).click();
+    await expect(page.getByRole('menuitem', { name: /^Open MetaMask Mobile$/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /MetaMask or CipherTrade not detected/i })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: /^No saved app wallet$/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /^Generate wallet$/ })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -24,6 +29,13 @@ test.describe('mobile layout polish', () => {
     await page.goto('/trades');
 
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
+    await expect(page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Open MetaMask$/ })).toBeVisible();
+    await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Open Wallet menu$/ }).click();
+    await expect(page.getByRole('menuitem', { name: /^Open MetaMask Mobile$/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /MetaMask or CipherTrade not detected/i })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: /^No saved app wallet$/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /^Generate wallet$/ })).toBeVisible();
+    await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Close Wallet menu$/ }).click();
     const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' });
     await expect(appMenu).toBeHidden();
     await page.getByRole('button', { name: 'Show app menu' }).click();
