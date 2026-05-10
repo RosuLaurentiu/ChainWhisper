@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import type { Eip1193Provider } from '../lib/appShared';
+import { clearFallbackAesSessionOnboardInfo } from '../lib/cotiAesUnlock';
 
 type CachedTradeSigner = JsonRpcSigner | Wallet;
 
@@ -52,6 +53,9 @@ export default function useP2PWalletDisconnect({
     providerRef.current = null;
     burnerWalletRef.current = null;
     signerCacheRef.current = {};
+    if (walletAddress) {
+      clearFallbackAesSessionOnboardInfo(walletAddress, currentProvider);
+    }
     setWalletAddress('');
     setChainId(null);
     setConnectedWalletLabel('Wallet');

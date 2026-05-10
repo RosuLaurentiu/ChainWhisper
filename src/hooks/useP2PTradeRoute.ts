@@ -268,7 +268,11 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     nextUrl.pathname = targetUrl.pathname;
     nextUrl.search = targetUrl.search;
     nextUrl.hash = targetUrl.hash;
-    window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+    const nextPath = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentPath !== nextPath) {
+      window.history.pushState(window.history.state, '', nextPath);
+    }
     setRoute(resolveTradeRouteFromLocation());
   }, []);
 

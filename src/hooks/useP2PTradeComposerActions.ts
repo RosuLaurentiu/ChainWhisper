@@ -583,6 +583,7 @@ export default function useP2PTradeComposerActions({
         refreshMyTrades(),
         snapshot.isPublic ? refreshPublicTrades() : Promise.resolve()
       ]);
+      openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create trade.';
       setTradeActionError(getOnChainFailureMessage(error, message));

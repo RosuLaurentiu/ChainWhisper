@@ -6,7 +6,7 @@ import {
   normalizeChainId,
   type Eip1193Provider
 } from '../lib/appShared';
-import { getOrRecoverAesForWallet } from '../lib/cotiAesUnlock';
+import { getOrRecoverAesForWallet, hydrateSignerWithFallbackAesSession } from '../lib/cotiAesUnlock';
 
 export type P2PTradeSigner = JsonRpcSigner | Wallet;
 export type P2PTradeSignerOptions = {
@@ -89,6 +89,9 @@ export default function useP2PTradeSigner({
         signerCacheRef.current[cacheKey] = signer;
       } else if (onboardInfoByAddress[cacheKey]) {
         signer.setUserOnboardInfo(onboardInfoByAddress[cacheKey]);
+      }
+      if (!signer.getUserOnboardInfo()?.aesKey) {
+        hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
       }
 
       signer.disableAutoOnboard();

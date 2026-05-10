@@ -93,6 +93,14 @@ export const resolvePrivateBalanceWeiAfterRefresh = (
   return previous;
 };
 
+export const resolvePrivateBalanceAesReady = ({
+  signer,
+  walletHasAes
+}: {
+  signer?: TradeSigner;
+  walletHasAes: boolean;
+}): boolean => walletHasAes || Boolean(signer);
+
 type UseP2PTradeTokenDataResult = {
   clearWalletBalances: () => void;
   customTradeTokenInfoByAddress: Record<string, TradeCustomTokenInfo>;
@@ -301,7 +309,11 @@ export default function useP2PTradeTokenData({
       return;
     }
 
-    if (walletHasAes) {
+    const aesReady = resolvePrivateBalanceAesReady({
+      signer: options?.signer,
+      walletHasAes
+    });
+    if (aesReady) {
       const signer = options?.signer ?? (await getTradeSigner(false).catch(() => null));
       const privateBalanceState =
         signer !== null
@@ -575,7 +587,10 @@ export default function useP2PTradeTokenData({
           await Promise.all(
             privateTokenRequests.map((token) =>
               loadCustomTokenInfo(token, {
-                aesReady: walletHasAes || Boolean(currentOptions?.signer),
+                aesReady: resolvePrivateBalanceAesReady({
+                  signer: currentOptions?.signer,
+                  walletHasAes
+                }),
                 signer: currentOptions?.signer,
                 silent: Boolean(currentOptions?.silent)
               }).catch(() => {})

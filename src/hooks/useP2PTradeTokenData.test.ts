@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   resolveBalanceWeiAfterRefresh,
+  resolvePrivateBalanceAesReady,
   resolvePrivateBalanceWeiAfterRefresh,
   resolvePrivateBalanceStateAfterRefresh
 } from './useP2PTradeTokenData';
@@ -27,5 +28,11 @@ describe('wallet balance refresh helpers', () => {
     expect(resolvePrivateBalanceWeiAfterRefresh(123n, { status: 'decrypt-failed' })).toBe(123n);
     expect(resolvePrivateBalanceWeiAfterRefresh(123n, { status: 'setup-needed' })).toBe(123n);
     expect(resolvePrivateBalanceWeiAfterRefresh(123n, { status: 'ready', balanceWei: 456n })).toBe(456n);
+  });
+
+  it('treats an explicit unlocked signer as AES-ready during stale refresh closures', () => {
+    expect(resolvePrivateBalanceAesReady({ walletHasAes: false })).toBe(false);
+    expect(resolvePrivateBalanceAesReady({ walletHasAes: true })).toBe(true);
+    expect(resolvePrivateBalanceAesReady({ signer: {} as never, walletHasAes: false })).toBe(true);
   });
 });

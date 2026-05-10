@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OnboardInfo } from '@coti-io/coti-ethers';
 import type { Eip1193Provider } from './appShared';
 import {
+  clearFallbackAesSessionOnboardInfo,
   clearCotiAesUnlockRequest,
   createWalletScopedSnapAesState,
   getOrRecoverValidatedAesForWallet,
   getCotiAesWalletSessionKey,
   getOrRecoverAesForWallet,
   getOrRecoverAesForWalletResult,
+  readFallbackAesSessionOnboardInfo,
   isWalletScopedPrivateTokenSnapStale,
   repairCotiAesForWallet,
   resetSignerOnboardInfoForFreshAes,
@@ -31,6 +33,30 @@ const provider = (): Eip1193Provider =>
   ({
     request: vi.fn()
   }) as unknown as Eip1193Provider;
+
+const metaMaskProvider = (): Eip1193Provider =>
+  ({
+    isMetaMask: true,
+    request: vi.fn()
+  }) as unknown as Eip1193Provider;
+
+const createMemoryStorage = (): Storage => {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: vi.fn(() => values.clear()),
+    getItem: vi.fn((key: string) => values.get(key) ?? null),
+    key: vi.fn((index: number) => Array.from(values.keys())[index] ?? null),
+    removeItem: vi.fn((key: string) => {
+      values.delete(key);
+    }),
+    setItem: vi.fn((key: string, value: string) => {
+      values.set(key, value);
+    })
+  };
+};
 
 const rsaKey = {
   privateKey: new Uint8Array([1, 2, 3]),
@@ -121,6 +147,12 @@ describe('getOrRecoverAesForWallet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearCotiAesUnlockRequest(walletAddress);
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        sessionStorage: createMemoryStorage()
+      }
+    });
   });
 
   it('reuses one in-flight Snap AES request per wallet and provider', async () => {
@@ -214,6 +246,55 @@ describe('getOrRecoverAesForWallet', () => {
 
     expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
+  });
+
+  it('stores fallback AES in session storage and rehydrates it for the same wallet/provider', async () => {
+    const firstProvider = metaMaskProvider();
+    const firstSigner = signer();
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+
+    await expect(
+      getOrRecoverAesForWallet({
+        provider: firstProvider,
+        signer: firstSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({ aesKey: 'fallback-aes' });
+
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, firstProvider)).toMatchObject({
+      aesKey: 'fallback-aes'
+    });
+
+    vi.mocked(getCotiSnapAesKeyResult).mockClear();
+    const secondProvider = metaMaskProvider();
+    const secondSigner = signer();
+    await expect(
+      getOrRecoverAesForWallet({
+        provider: secondProvider,
+        signer: secondSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({ aesKey: 'fallback-aes' });
+
+    expect(getCotiSnapAesKeyResult).not.toHaveBeenCalled();
+    expect(secondSigner.generateOrRecoverAes).not.toHaveBeenCalled();
+  });
+
+  it('clears wallet-scoped fallback AES session storage', async () => {
+    const activeProvider = metaMaskProvider();
+    const activeSigner = signer();
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+    await getOrRecoverAesForWallet({
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    });
+
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toMatchObject({
+      aesKey: 'fallback-aes'
+    });
+    clearFallbackAesSessionOnboardInfo(walletAddress, activeProvider);
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
   });
 
   it('does not fall back to legacy AES when a MetaMask Snap AES key is required but missing', async () => {

@@ -47,8 +47,10 @@ import { getPreferredBrowserWalletId, saveWalletPreference } from '../lib/appSto
 import {
   buildWalletAesHealthState,
   clearCotiAesUnlockRequest,
+  clearFallbackAesSessionOnboardInfo,
   createWalletScopedSnapAesState,
   getOrRecoverAesForWalletResult,
+  readFallbackAesSessionOnboardInfo,
   resetOnboardInfoForFreshAes,
   resetSignerOnboardInfoForFreshAes,
   resolveWalletScopedSnapAesState,
@@ -429,6 +431,7 @@ export default function P2PTradingPage({
       : {}
   );
   const skippedSharedWalletKeyRef = useRef('');
+  const pendingEmptyAccountSyncRef = useRef<number | null>(null);
   const tradeLinkInputRef = useRef<HTMLInputElement | null>(null);
 
   const allowedBrowserWalletOptions = useMemo(
@@ -592,6 +595,49 @@ export default function P2PTradingPage({
       cancelled = true;
     };
   }, [connectedWithBurner, cotiSnapAesStatus, setActiveCotiSnapAesStatus, walletAddress, walletHasAes]);
+
+  useEffect(() => {
+    const provider = providerRef.current;
+    if (
+      connectedWithBurner ||
+      !provider ||
+      !walletAddress ||
+      !walletKey ||
+      walletHasAes ||
+      chainId !== COTI_NETWORK.chainIdDecimal
+    ) {
+      return;
+    }
+
+    const storedOnboardInfo = readFallbackAesSessionOnboardInfo(walletAddress, provider);
+    if (!storedOnboardInfo?.aesKey) {
+      return;
+    }
+
+    setOnboardInfoByAddress((previous) =>
+      mergeOnboardInfoByAddress(previous, walletKey, storedOnboardInfo)
+    );
+    const cachedSigner = signerCacheRef.current[walletKey];
+    if (cachedSigner) {
+      cachedSigner.setUserOnboardInfo(mergeOnboardInfo(cachedSigner.getUserOnboardInfo(), storedOnboardInfo));
+    }
+    setActiveCotiSnapAesStatus('installed-aes-ready');
+    sharedWalletSession?.onWalletAesHealthChange?.(
+      walletAddress,
+      buildWalletAesHealthState({
+        status: 'ready-unverified',
+        walletAddress
+      })
+    );
+  }, [
+    chainId,
+    connectedWithBurner,
+    setActiveCotiSnapAesStatus,
+    sharedWalletSession,
+    walletAddress,
+    walletHasAes,
+    walletKey
+  ]);
 
   useEffect(() => {
     if (!connectedWithBurner || !walletKey || walletHasAes) {
@@ -2315,6 +2361,7 @@ export default function P2PTradingPage({
           })
         );
         setActiveCotiSnapAesStatus('repair-needed', reloadResult.failedTokenAddresses);
+        clearFallbackAesSessionOnboardInfo(walletAddress, activeBrowserProvider);
         const repairedUnlockResult = await getOrRecoverAesForWalletResult({
           allowLegacyFallback: true,
           allowUnrecoverableReset: true,
@@ -2326,6 +2373,7 @@ export default function P2PTradingPage({
           walletAddress
         });
         if (repairedUnlockResult.status !== 'ready') {
+          clearFallbackAesSessionOnboardInfo(walletAddress, activeBrowserProvider);
           resetSignerOnboardInfoForFreshAes(signer);
           setOnboardInfoByAddress((previous) => {
             const next = { ...previous };
@@ -3673,31 +3721,62 @@ export default function P2PTradingPage({
       return;
     }
 
+    const clearPendingEmptyAccountSync = () => {
+      if (pendingEmptyAccountSyncRef.current !== null) {
+        window.clearTimeout(pendingEmptyAccountSyncRef.current);
+        pendingEmptyAccountSyncRef.current = null;
+      }
+    };
+    const clearWalletScopedSession = (previousWalletKey: string, selectedWalletKey: string) => {
+      if (previousWalletKey) {
+        clearCotiAesUnlockRequest(previousWalletKey, provider);
+        clearFallbackAesSessionOnboardInfo(previousWalletKey, provider);
+      }
+      if (selectedWalletKey) {
+        clearCotiAesUnlockRequest(selectedWalletKey, provider);
+      }
+      signerCacheRef.current = {};
+      setWalletScopedSnapAesState(null);
+      clearWalletBalances();
+      setOnboardInfoByAddress((previous) => {
+        const next = { ...previous };
+        if (selectedWalletKey) {
+          delete next[selectedWalletKey];
+        }
+        if (previousWalletKey) {
+          delete next[previousWalletKey];
+        }
+        return next;
+      });
+    };
     const handleAccountsChanged = (accounts: unknown) => {
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
       const selected = nextAccounts[0] ?? '';
       const selectedWalletKey = selected.trim().toLowerCase();
       const previousWalletKey = walletAddress.trim().toLowerCase();
+      if (!selectedWalletKey && previousWalletKey) {
+        clearPendingEmptyAccountSync();
+        pendingEmptyAccountSyncRef.current = window.setTimeout(async () => {
+          pendingEmptyAccountSyncRef.current = null;
+          const currentAccounts = await provider.request({ method: 'eth_accounts' }).catch(() => []) as unknown;
+          const currentSelected = Array.isArray(currentAccounts) ? String(currentAccounts[0] ?? '') : '';
+          const currentSelectedWalletKey = currentSelected.trim().toLowerCase();
+          if (currentSelectedWalletKey) {
+            if (currentSelectedWalletKey !== previousWalletKey) {
+              clearWalletScopedSession(previousWalletKey, currentSelectedWalletKey);
+            }
+            setWalletAddress(currentSelected);
+            return;
+          }
+          clearWalletScopedSession(previousWalletKey, '');
+          setWalletAddress('');
+          setChainId(null);
+        }, 2500);
+        return;
+      }
+      clearPendingEmptyAccountSync();
       if (selectedWalletKey !== previousWalletKey) {
-        if (previousWalletKey) {
-          clearCotiAesUnlockRequest(previousWalletKey, provider);
-        }
-        if (selectedWalletKey) {
-          clearCotiAesUnlockRequest(selectedWalletKey, provider);
-        }
-        signerCacheRef.current = {};
-        setWalletScopedSnapAesState(null);
-        clearWalletBalances();
-        setOnboardInfoByAddress((previous) => {
-          const next = { ...previous };
-          if (selectedWalletKey) {
-            delete next[selectedWalletKey];
-          }
-          if (previousWalletKey) {
-            delete next[previousWalletKey];
-          }
-          return next;
-        });
+        clearWalletScopedSession(previousWalletKey, selectedWalletKey);
       }
       setWalletAddress(selected);
       if (!selected) {
@@ -3706,17 +3785,23 @@ export default function P2PTradingPage({
     };
     const handleChainChanged = (newChainId: unknown) => {
       if (typeof newChainId === 'string' || typeof newChainId === 'number') {
-        setChainId(normalizeChainId(newChainId));
+        const nextChainId = normalizeChainId(newChainId);
+        if (chainId !== null && nextChainId !== chainId && walletAddress) {
+          const currentWalletKey = walletAddress.trim().toLowerCase();
+          clearWalletScopedSession(currentWalletKey, '');
+        }
+        setChainId(nextChainId);
       }
     };
 
     provider.on('accountsChanged', handleAccountsChanged);
     provider.on('chainChanged', handleChainChanged);
     return () => {
+      clearPendingEmptyAccountSync();
       provider.removeListener?.('accountsChanged', handleAccountsChanged);
       provider.removeListener?.('chainChanged', handleChainChanged);
     };
-  }, [clearWalletBalances, walletAddress]);
+  }, [chainId, clearWalletBalances, walletAddress]);
 
   useEffect(() => {
     let cancelled = false;

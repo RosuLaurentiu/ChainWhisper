@@ -85,12 +85,84 @@ export type WalletScopedAesValidationResult = CotiAesValidationResult & {
 const providerIds = new WeakMap<object, number>();
 let nextProviderId = 1;
 const inFlightUnlocks = new Map<string, Promise<PrivacyUnlockResult>>();
+const FALLBACK_AES_SESSION_STORAGE_PREFIX = 'chainwhisper:fallback-aes:v1:';
 
 const normalizeWalletKey = (walletAddress: string): string => walletAddress.trim().toLowerCase();
+
+const getStableProviderId = (provider?: Eip1193Provider | null): string => {
+  if (!provider || (typeof provider !== 'object' && typeof provider !== 'function')) {
+    return 'no-provider';
+  }
+
+  const providerWithFlags = provider as Eip1193Provider & {
+    isBackpack?: boolean;
+    isBraveWallet?: boolean;
+    isCipher?: boolean;
+    isCipherTrade?: boolean;
+    isCipherWallet?: boolean;
+    isCoinbaseWallet?: boolean;
+    isCypher?: boolean;
+    isCypherTrade?: boolean;
+    isCypherWallet?: boolean;
+    isFrame?: boolean;
+    isMetaMask?: boolean;
+    isOKXWallet?: boolean;
+    isPhantom?: boolean;
+    isRabby?: boolean;
+    isTally?: boolean;
+    isTrust?: boolean;
+    isTrustWallet?: boolean;
+  };
+  if (
+    providerWithFlags.isCipherTrade ||
+    providerWithFlags.isCipherWallet ||
+    providerWithFlags.isCipher ||
+    providerWithFlags.isCypherTrade ||
+    providerWithFlags.isCypherWallet ||
+    providerWithFlags.isCypher
+  ) {
+    return 'ciphertrade';
+  }
+  if (providerWithFlags.isMetaMask && providerWithFlags.isBraveWallet) {
+    return 'brave-wallet';
+  }
+  if (providerWithFlags.isMetaMask) {
+    return 'metamask';
+  }
+  if (providerWithFlags.isRabby) {
+    return 'rabby';
+  }
+  if (providerWithFlags.isCoinbaseWallet) {
+    return 'coinbase-wallet';
+  }
+  if (providerWithFlags.isTrust || providerWithFlags.isTrustWallet) {
+    return 'trust-wallet';
+  }
+  if (providerWithFlags.isFrame) {
+    return 'frame';
+  }
+  if (providerWithFlags.isPhantom) {
+    return 'phantom';
+  }
+  if (providerWithFlags.isBackpack) {
+    return 'backpack';
+  }
+  if (providerWithFlags.isOKXWallet) {
+    return 'okx-wallet';
+  }
+  if (providerWithFlags.isTally) {
+    return 'tally';
+  }
+  return '';
+};
 
 const getProviderId = (provider?: Eip1193Provider | null): string => {
   if (!provider || (typeof provider !== 'object' && typeof provider !== 'function')) {
     return 'no-provider';
+  }
+  const stableProviderId = getStableProviderId(provider);
+  if (stableProviderId) {
+    return stableProviderId;
   }
   const providerObject = provider as object;
   const existing = providerIds.get(providerObject);
@@ -105,6 +177,137 @@ const getProviderId = (provider?: Eip1193Provider | null): string => {
 
 export const getCotiAesWalletSessionKey = (walletAddress: string, provider?: Eip1193Provider | null): string =>
   `${normalizeWalletKey(walletAddress)}:${getProviderId(provider)}:${COTI_NETWORK.chainIdDecimal}`;
+
+const getFallbackAesStorage = (): Storage | null => {
+  try {
+    const maybeWindow = globalThis as {
+      sessionStorage?: Storage;
+      window?: { sessionStorage?: Storage };
+    };
+    return maybeWindow.window?.sessionStorage ?? maybeWindow.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const getFallbackAesSessionStorageKey = (walletAddress: string, provider?: Eip1193Provider | null): string =>
+  `${FALLBACK_AES_SESSION_STORAGE_PREFIX}${getCotiAesWalletSessionKey(walletAddress, provider)}`;
+
+export const readFallbackAesSessionOnboardInfo = (
+  walletAddress: string,
+  provider?: Eip1193Provider | null
+): OnboardInfo | null => {
+  const walletKey = normalizeWalletKey(walletAddress);
+  const storage = getFallbackAesStorage();
+  if (!walletKey || !provider || !storage) {
+    return null;
+  }
+
+  try {
+    const raw = storage.getItem(getFallbackAesSessionStorageKey(walletAddress, provider));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as {
+      aesKey?: unknown;
+      chainId?: unknown;
+      providerId?: unknown;
+      walletKey?: unknown;
+    };
+    const aesKey = typeof parsed.aesKey === 'string' ? parsed.aesKey.trim() : '';
+    if (
+      !aesKey ||
+      parsed.walletKey !== walletKey ||
+      parsed.providerId !== getProviderId(provider) ||
+      parsed.chainId !== COTI_NETWORK.chainIdDecimal
+    ) {
+      return null;
+    }
+    return { aesKey } as OnboardInfo;
+  } catch {
+    return null;
+  }
+};
+
+export const storeFallbackAesSessionOnboardInfo = (
+  walletAddress: string,
+  provider: Eip1193Provider | null | undefined,
+  onboardInfo?: OnboardInfo
+): boolean => {
+  const walletKey = normalizeWalletKey(walletAddress);
+  const aesKey = typeof onboardInfo?.aesKey === 'string' ? onboardInfo.aesKey.trim() : '';
+  const storage = getFallbackAesStorage();
+  if (!walletKey || !provider || !aesKey || !storage) {
+    return false;
+  }
+
+  try {
+    storage.setItem(
+      getFallbackAesSessionStorageKey(walletAddress, provider),
+      JSON.stringify({
+        aesKey,
+        chainId: COTI_NETWORK.chainIdDecimal,
+        providerId: getProviderId(provider),
+        savedAt: Date.now(),
+        walletKey
+      })
+    );
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const clearFallbackAesSessionOnboardInfo = (
+  walletAddress: string,
+  provider?: Eip1193Provider | null
+): void => {
+  const walletKey = normalizeWalletKey(walletAddress);
+  const storage = getFallbackAesStorage();
+  if (!walletKey || !storage) {
+    return;
+  }
+
+  try {
+    if (provider) {
+      storage.removeItem(getFallbackAesSessionStorageKey(walletAddress, provider));
+      return;
+    }
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (!key?.startsWith(FALLBACK_AES_SESSION_STORAGE_PREFIX)) {
+        continue;
+      }
+      const raw = storage.getItem(key);
+      if (!raw) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(raw) as { walletKey?: unknown };
+        if (parsed.walletKey === walletKey) {
+          storage.removeItem(key);
+        }
+      } catch {
+      }
+    }
+  } catch {
+  }
+};
+
+export const hydrateSignerWithFallbackAesSession = (
+  signer: CotiAesSigner,
+  walletAddress: string,
+  provider?: Eip1193Provider | null
+): OnboardInfo | null => {
+  const storedOnboardInfo = readFallbackAesSessionOnboardInfo(walletAddress, provider);
+  if (!storedOnboardInfo?.aesKey) {
+    return null;
+  }
+
+  const onboardInfo = mergeAesKey(signer.getUserOnboardInfo(), storedOnboardInfo.aesKey);
+  signer.setUserOnboardInfo(onboardInfo);
+  return onboardInfo;
+};
 
 const getSnapWalletContext = (walletAddress: string) => ({
   expectedChainId: COTI_NETWORK.chainIdDecimal,
@@ -305,6 +508,16 @@ export const getOrRecoverAesForWalletResult = async ({
       source: 'cache'
     };
   }
+  if (!forceRefresh && !forceLegacyRefresh) {
+    const storedOnboardInfo = hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
+    if (storedOnboardInfo?.aesKey) {
+      return {
+        status: 'ready',
+        onboardInfo: storedOnboardInfo,
+        source: 'cache'
+      };
+    }
+  }
 
   const unlockKey = getCotiAesWalletSessionKey(walletAddress, provider);
   const existingUnlock = inFlightUnlocks.get(unlockKey);
@@ -371,6 +584,7 @@ export const getOrRecoverAesForWalletResult = async ({
     }
     await signer.generateOrRecoverAes();
     const recoveredOnboardInfo = requireOnboardInfo(signer.getUserOnboardInfo());
+    storeFallbackAesSessionOnboardInfo(walletAddress, provider, recoveredOnboardInfo);
     return {
       status: 'ready' as const,
       onboardInfo: recoveredOnboardInfo,
