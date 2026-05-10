@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import {
   COTI_NETWORK,
   TIP_NATIVE_TOKEN_SYMBOL,
+  DIRECT_TRADE_ESCROW_CONTRACT_ABI,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   BURNER_PIN_MIN_LENGTH,
@@ -29,6 +33,7 @@ import {
   REALTIME_SYNC_DEBOUNCE_MS,
   REALTIME_SYNC_FALLBACK_INTERVAL_MS,
   PRIVATE_REWARD_TOKEN_ADDRESS,
+  RECURRING_OTC_CONTRACT_ABI,
   RECURRING_OTC_CONTRACT_ADDRESS,
   REWARD_TOKEN_ADDRESS,
   resetCotiWsProvider,
@@ -111,6 +116,13 @@ import useInjectedWalletOptions from '../hooks/useInjectedWalletOptions';
 import { useStoredWalletPreference } from '../hooks/useStoredWalletPreference';
 import { doesAccessSecretMatchHash, normalizeAccessHash, PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../lib/tradeLinks';
 import {
+  mergeP2PSyncRequests,
+  shouldUseSilentP2PSync,
+  type P2PSyncDomain,
+  type P2PSyncReason,
+  type P2PSyncRequest
+} from '../lib/p2pSyncCoordinator';
+import {
   createRecurringOrderOnChain,
   editRecurringOrderOnChain,
   fillRecurringOrderSideOnChain,
@@ -136,7 +148,9 @@ import {
 } from '../lib/tradeCounterSupport';
 import { applyTradeRecoveryPayloadToSnapshot } from '../lib/tradeRecoveryPayload';
 import {
+  clearWalletTransactionFlow,
   isWalletTransactionFlowActive,
+  recordWalletTransactionFlowStage,
   runWalletTransactionFlow
 } from '../lib/walletTransactionFlow';
 import {
@@ -194,6 +208,7 @@ type P2PTradingPageProps = {
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 20_000;
 const EMPTY_STALE_TOKEN_ADDRESSES: string[] = [];
 type TradeSigner = JsonRpcSigner | Wallet;
+type QueuedTradeDataRefresh = P2PSyncRequest<TradeSigner>;
 type RecurringFundingBalanceResult = {
   balanceWei: bigint | null;
   unavailableMessage?: string;
@@ -535,6 +550,9 @@ export default function P2PTradingPage({
   const routeEscrowContract = route.escrowContract;
   const routeIsRecurringOrder = routeEscrowContract?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase();
   const routeAccessSecret = route.accessSecret;
+  const queuedTradeDataRefreshRef = useRef<QueuedTradeDataRefresh | null>(null);
+  const flushQueuedTradeDataRefreshRef = useRef<() => void>(() => {});
+  const p2pSyncTimerRef = useRef<number | null>(null);
   const storedRouteAccessSecret =
     routeTradeId !== null
       ? knownTradeAccessSecrets[buildTradeSnapshotKey(routeTradeId, routeEscrowContract)] ??
@@ -544,13 +562,21 @@ export default function P2PTradingPage({
   const routeError = route.routeError;
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
-      return runWalletTransactionFlow({
+      const input = {
         chainId,
-        provider: providerRef.current,
+        provider: connectedWithBurner ? null : providerRef.current,
         walletAddress
-      }, operation);
+      };
+      recordWalletTransactionFlowStage(input, 'trading-flow-requested');
+      try {
+        return await runWalletTransactionFlow(input, operation);
+      } finally {
+        globalThis.setTimeout(() => {
+          flushQueuedTradeDataRefreshRef.current();
+        }, 0);
+      }
     },
-    [chainId, walletAddress]
+    [chainId, connectedWithBurner, walletAddress]
   );
   const directTradeRecipientNormalized = directTradeRecipient.trim();
   const directTradeRecipientIsValid =
@@ -1909,6 +1935,7 @@ export default function P2PTradingPage({
     myTradesError,
     publicTrades,
     publicTradesError,
+    readTradeDetail,
     refreshMyTrades,
     refreshPublicTrades,
     refreshTradeDetail,
@@ -1926,6 +1953,11 @@ export default function P2PTradingPage({
     routeEscrowContract,
     routeTradeId,
     routeView,
+    syncSessionKey: [
+      walletKey || 'no-wallet',
+      chainId ?? 'no-chain',
+      connectedWithBurner ? 'app' : selectedWalletId || 'browser'
+    ].join(':'),
     walletAddress,
     walletKey
   });
@@ -2249,17 +2281,119 @@ export default function P2PTradingPage({
     tradeRequestAmountInput
   ]);
 
-  const refreshTradeDataInBackground = useCallback(
-    (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => {
+  const mergeQueuedP2PSync = useCallback((request: QueuedTradeDataRefresh) => {
+    queuedTradeDataRefreshRef.current = mergeP2PSyncRequests(queuedTradeDataRefreshRef.current, request);
+  }, []);
+
+  const runP2PSyncRequest = useCallback(
+    (request: QueuedTradeDataRefresh) => {
+      const domains = request.domains;
+      const silent = shouldUseSilentP2PSync(request.reason);
       void Promise.allSettled([
-        refreshWalletBalances({ reason: 'trade-action', signer, silent: true }),
-        refreshMyTrades({ silent: true }),
-        refreshPublicTrades({ silent: true }),
-        tradeId ? refreshTradeDetail(tradeId, escrowContract, { silent: true }).catch(() => null) : Promise.resolve(null)
+        domains.has('balances')
+          ? refreshWalletBalances({ reason: request.reason === 'manual' ? 'manual' : 'trade-action', signer: request.signer, silent })
+          : Promise.resolve(),
+        domains.has('wallet-trades') && walletAddress
+          ? refreshMyTrades({ silent })
+          : Promise.resolve(),
+        domains.has('public-trades')
+          ? refreshPublicTrades({ silent })
+          : Promise.resolve(),
+        domains.has('trade-detail') && request.tradeId
+          ? refreshTradeDetail(request.tradeId, request.escrowContract, { silent }).catch(() => null)
+          : Promise.resolve(null)
       ]);
     },
-    [refreshMyTrades, refreshPublicTrades, refreshTradeDetail, refreshWalletBalances]
+    [refreshMyTrades, refreshPublicTrades, refreshTradeDetail, refreshWalletBalances, walletAddress]
   );
+
+  const flushQueuedP2PSync = useCallback(() => {
+    if (
+      isWalletTransactionFlowActive({
+        chainId,
+        provider: connectedWithBurner ? null : providerRef.current,
+        walletAddress
+      })
+    ) {
+      return;
+    }
+    if (p2pSyncTimerRef.current !== null) {
+      window.clearTimeout(p2pSyncTimerRef.current);
+      p2pSyncTimerRef.current = null;
+    }
+    const queued = queuedTradeDataRefreshRef.current;
+    if (!queued) {
+      return;
+    }
+    queuedTradeDataRefreshRef.current = null;
+    runP2PSyncRequest(queued);
+  }, [chainId, connectedWithBurner, runP2PSyncRequest, walletAddress]);
+
+  const scheduleP2PSync = useCallback(
+    (request: {
+      domains: P2PSyncDomain[];
+      escrowContract?: string;
+      reason: P2PSyncReason;
+      signer?: TradeSigner;
+      tradeId?: number;
+    }) => {
+      mergeQueuedP2PSync({
+        domains: new Set(request.domains),
+        escrowContract: request.escrowContract,
+        reason: request.reason,
+        signer: request.signer,
+        tradeId: request.tradeId
+      });
+      if (
+        isWalletTransactionFlowActive({
+          chainId,
+          provider: connectedWithBurner ? null : providerRef.current,
+          walletAddress
+        })
+      ) {
+        recordWalletTransactionFlowStage(
+          {
+            chainId,
+            provider: connectedWithBurner ? null : providerRef.current,
+            walletAddress
+          },
+          'trading-sync-queued'
+        );
+        return;
+      }
+      if (request.reason === 'manual' || request.reason === 'wallet-action') {
+        flushQueuedP2PSync();
+        return;
+      }
+      if (p2pSyncTimerRef.current !== null) {
+        return;
+      }
+      p2pSyncTimerRef.current = window.setTimeout(() => {
+        p2pSyncTimerRef.current = null;
+        flushQueuedP2PSync();
+      }, REALTIME_SYNC_DEBOUNCE_MS);
+    },
+    [chainId, connectedWithBurner, flushQueuedP2PSync, mergeQueuedP2PSync, walletAddress]
+  );
+
+  const refreshTradeDataInBackground = useCallback(
+    (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => {
+      const targetTradeId = tradeId ?? (routeView === 'trade' ? routeTradeId ?? undefined : undefined);
+      const targetEscrow = escrowContract ?? (targetTradeId ? routeEscrowContract : undefined);
+      scheduleP2PSync({
+        domains: ['balances', 'wallet-trades', 'public-trades', ...(targetTradeId ? (['trade-detail'] as const) : [])],
+        escrowContract: targetEscrow,
+        reason: 'wallet-action',
+        signer,
+        tradeId: targetTradeId
+      });
+    },
+    [routeEscrowContract, routeTradeId, routeView, scheduleP2PSync]
+  );
+
+  useEffect(() => {
+    flushQueuedTradeDataRefreshRef.current = flushQueuedP2PSync;
+  }, [flushQueuedP2PSync]);
 
   const signAesForCurrentWallet = useCallback(async () => {
     const provider = providerRef.current;
@@ -2501,12 +2635,21 @@ export default function P2PTradingPage({
     editingTrade,
     getTradeSigner,
     hashTradeAccessSecret,
-    loadWalletBalances: (signer?: TradeSigner) => refreshWalletBalances({ reason: 'trade-action', signer, silent: true }),
+    loadWalletBalances: (signer?: TradeSigner) => {
+      refreshTradeDataInBackground(undefined, undefined, signer);
+      return Promise.resolve();
+    },
     mergeTradeSnapshot,
     navigateToTradePath,
     openTrade,
-    refreshMyTrades,
-    refreshPublicTrades,
+    refreshMyTrades: () => {
+      refreshTradeDataInBackground();
+      return Promise.resolve();
+    },
+    refreshPublicTrades: () => {
+      refreshTradeDataInBackground();
+      return Promise.resolve();
+    },
     rememberPrivateTradeLiquidity,
     rememberTradeAccessSecret,
     resolveKnownTradeAccessSecret,
@@ -2955,11 +3098,7 @@ export default function P2PTradingPage({
         setRecurringRemoveSellInventoryInput('');
         openTrade(result.orderId, undefined, result.escrowContract);
       }
-      await Promise.allSettled([
-        refreshWalletBalances({ reason: 'trade-action', signer, silent: true }),
-        refreshMyTrades({ silent: true }),
-        refreshPublicTrades({ silent: true })
-      ]);
+      refreshTradeDataInBackground(result.orderId, result.escrowContract, signer);
       openTrade(result.orderId, undefined, result.escrowContract);
       });
     } catch (error) {
@@ -2980,9 +3119,7 @@ export default function P2PTradingPage({
     recurringSellPriceInput,
     buildTradeShareUrl,
     editingRecurringOrder,
-    refreshMyTrades,
-    refreshPublicTrades,
-    refreshWalletBalances,
+    refreshTradeDataInBackground,
     runTradeWalletPromptFlow,
     openTrade,
     recurringAddBuyBudgetInput,
@@ -3009,7 +3146,7 @@ export default function P2PTradingPage({
     openTrade,
     rememberTradeTerminalReturn,
     refreshTradeDataInBackground,
-    refreshTradeDetail,
+    readTradeDetail,
     resolveKnownTradeAccessSecret,
     rememberTradeAccessSecret,
     resolvedRouteAccessSecret,
@@ -3807,16 +3944,18 @@ export default function P2PTradingPage({
       const selected = nextAccounts[0] ?? '';
       const selectedWalletKey = selected.trim().toLowerCase();
       const previousWalletKey = walletAddress.trim().toLowerCase();
-      if (
-        previousWalletKey &&
-        isWalletTransactionFlowActive({
-          chainId,
-          provider,
-          walletAddress: previousWalletKey
-        })
-      ) {
+      const previousFlowInput = {
+        chainId,
+        provider,
+        walletAddress: previousWalletKey
+      };
+      const previousWalletFlowActive = previousWalletKey && isWalletTransactionFlowActive(previousFlowInput);
+      if (previousWalletFlowActive && (!selectedWalletKey || selectedWalletKey === previousWalletKey)) {
         clearPendingEmptyAccountSync();
         return;
+      }
+      if (previousWalletFlowActive && selectedWalletKey !== previousWalletKey) {
+        clearWalletTransactionFlow(previousFlowInput);
       }
       if (!selectedWalletKey && previousWalletKey) {
         clearPendingEmptyAccountSync();
@@ -3871,6 +4010,11 @@ export default function P2PTradingPage({
         const nextChainId = normalizeChainId(newChainId);
         if (chainId !== null && nextChainId !== chainId && walletAddress) {
           const currentWalletKey = walletAddress.trim().toLowerCase();
+          clearWalletTransactionFlow({
+            chainId,
+            provider,
+            walletAddress
+          });
           clearWalletScopedSession(currentWalletKey, '');
         }
         setChainId(nextChainId);
@@ -3896,7 +4040,7 @@ export default function P2PTradingPage({
     let realtimeSyncTimerId: number | null = null;
     let lastRealtimeSyncDispatchAt = 0;
 
-    const dispatchRealtimeSync = (reason: 'focus' | 'interval' | 'trade-action' = 'interval') => {
+    const dispatchRealtimeSync = (reason: P2PSyncReason = 'interval') => {
       if (cancelled || (typeof document !== 'undefined' && document.hidden)) {
         return;
       }
@@ -3910,14 +4054,20 @@ export default function P2PTradingPage({
         return;
       }
       lastRealtimeSyncDispatchAt = Date.now();
-      refreshWalletBalances({ reason, silent: true }).catch(() => {});
-      refreshPublicTrades({ silent: true }).catch(() => {});
-      if (walletAddress) {
-        refreshMyTrades({ silent: true }).catch(() => {});
-      }
+      scheduleP2PSync({
+        domains: [
+          'balances',
+          'public-trades',
+          ...(walletAddress ? (['wallet-trades'] as const) : []),
+          ...(routeView === 'trade' && routeTradeId ? (['trade-detail'] as const) : [])
+        ],
+        escrowContract: routeEscrowContract,
+        reason,
+        tradeId: routeTradeId ?? undefined
+      });
     };
 
-    const scheduleRealtimeSync = (reason: 'focus' | 'interval' | 'trade-action' = 'interval') => {
+    const scheduleRealtimeSync = (reason: P2PSyncReason = 'interval') => {
       if (cancelled) {
         return;
       }
@@ -3995,38 +4145,109 @@ export default function P2PTradingPage({
         }
         markCotiWsHealthyNow();
 
-        const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, wsProvider);
+        const eventSubscriptions: Array<{
+          abi: readonly string[];
+          address: string;
+          events: string[];
+        }> = [
+          {
+            abi: TRADE_ESCROW_CONTRACT_ABI,
+            address: TRADE_ESCROW_CONTRACT_ADDRESS,
+            events: [
+              'TradeOpened',
+              'TradeAccepted',
+              'TradeCancelled',
+              'TradeDeclined',
+              'TradeExpired',
+              'TradePartiallyFilled',
+              'TradeFilled',
+              'TradeReplaced',
+              'CounterTradeAccepted',
+              'ParentTradeClosedByDirectCounter'
+            ]
+          },
+          {
+            abi: PRIVATE_TRADE_ESCROW_CONTRACT_ABI,
+            address: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+            events: [
+              'PrivateOrderOpened',
+              'PrivateOrderFilled',
+              'TradeAccepted',
+              'TradeCancelled',
+              'TradeDeclined',
+              'TradeExpired',
+              'TradeFilled',
+              'TradeReplaced',
+              'ParentTradeClosedByDirectCounter'
+            ]
+          },
+          {
+            abi: DIRECT_TRADE_ESCROW_CONTRACT_ABI,
+            address: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+            events: [
+              'DirectTradeOpened',
+              'DirectTradeAccepted',
+              'DirectTradeFilled',
+              'DirectTradeCancelled',
+              'DirectTradeDeclined',
+              'DirectTradeExpired',
+              'DirectTradeReplaced',
+              'CounterTradeAccepted',
+              'ParentTradeClosedByCounter',
+              'SiblingCounterClosed'
+            ]
+          },
+          {
+            abi: RECURRING_OTC_CONTRACT_ABI,
+            address: RECURRING_OTC_CONTRACT_ADDRESS,
+            events: [
+              'RecurringOrderOpened',
+              'RecurringOrderEdited',
+              'RecurringOrderExecuted',
+              'RecurringOrderPaused',
+              'RecurringOrderResumed',
+              'RecurringOrderCancelled',
+              'RecurringOrderInventorySettled',
+              'PrivateRecurringFillReceipt',
+              'PrivateRecurringInventorySnapshot',
+              'PrivateRecurringAccountSnapshotUpdated'
+            ]
+          }
+        ];
         const handleTradeEvent = () => {
-          scheduleRealtimeSync('trade-action');
+          scheduleRealtimeSync('chain-event');
         };
-
-        const openedFilter = contract.filters.TradeOpened();
-        const acceptedFilter = contract.filters.TradeAccepted();
-        const cancelledFilter = contract.filters.TradeCancelled();
-        const declinedFilter = contract.filters.TradeDeclined();
-        const expiredFilter = contract.filters.TradeExpired();
-
-        contract.on(openedFilter, handleTradeEvent);
-        contract.on(acceptedFilter, handleTradeEvent);
-        contract.on(cancelledFilter, handleTradeEvent);
-        contract.on(declinedFilter, handleTradeEvent);
-        contract.on(expiredFilter, handleTradeEvent);
+        const activeSubscriptions: Array<{
+          contract: { off: (filter: never, listener: () => void) => unknown };
+          filter: never;
+        }> = [];
+        for (const subscription of eventSubscriptions) {
+          const contract = new cotiEthers.Contract(subscription.address, subscription.abi, wsProvider);
+          for (const eventName of subscription.events) {
+            const filterFactory = (contract.filters as Record<string, (() => unknown) | undefined>)[eventName];
+            if (!filterFactory) {
+              continue;
+            }
+            const filter = filterFactory() as never;
+            contract.on(filter, handleTradeEvent);
+            activeSubscriptions.push({
+              contract: contract as { off: (filter: never, listener: () => void) => unknown },
+              filter
+            });
+          }
+        }
 
         if (cancelled) {
-          contract.off(openedFilter, handleTradeEvent);
-          contract.off(acceptedFilter, handleTradeEvent);
-          contract.off(cancelledFilter, handleTradeEvent);
-          contract.off(declinedFilter, handleTradeEvent);
-          contract.off(expiredFilter, handleTradeEvent);
+          for (const subscription of activeSubscriptions) {
+            subscription.contract.off(subscription.filter, handleTradeEvent);
+          }
           return;
         }
 
         unsubscribe = () => {
-          contract.off(openedFilter, handleTradeEvent);
-          contract.off(acceptedFilter, handleTradeEvent);
-          contract.off(cancelledFilter, handleTradeEvent);
-          contract.off(declinedFilter, handleTradeEvent);
-          contract.off(expiredFilter, handleTradeEvent);
+          for (const subscription of activeSubscriptions) {
+            subscription.contract.off(subscription.filter, handleTradeEvent);
+          }
         };
         clearPollFallback();
       } catch {
@@ -4075,7 +4296,15 @@ export default function P2PTradingPage({
         window.clearTimeout(realtimeSyncTimerId);
       }
     };
-  }, [chainId, hasActiveListRefresh, refreshMyTrades, refreshPublicTrades, refreshWalletBalances, walletAddress]);
+  }, [
+    chainId,
+    hasActiveListRefresh,
+    routeEscrowContract,
+    routeTradeId,
+    routeView,
+    scheduleP2PSync,
+    walletAddress
+  ]);
 
   const tradePricePairLabel =
     tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken

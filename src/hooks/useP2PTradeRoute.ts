@@ -311,6 +311,9 @@ export const resolveTradeRouteFromLocation = (): TradeRouteState => {
 
 const restorePendingTradeTerminalRouteFromLocation = (): TradeRouteState => {
   const route = resolveTradeRouteFromLocation();
+  if (isWalletTransactionFlowActive()) {
+    return route;
+  }
   const pendingPath = resolvePendingTradeTerminalRoutePath(route, getCurrentTradePath());
   if (!pendingPath || typeof window === 'undefined') {
     return route;

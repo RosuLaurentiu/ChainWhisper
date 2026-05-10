@@ -29,6 +29,7 @@ import {
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from '../lib/appHelpers';
+import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 
 type TradeSigner = JsonRpcSigner | Wallet;
 type TradeTokenKind = Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
@@ -589,6 +590,9 @@ export default function useP2PTradeTokenData({
 
   const refreshWalletBalances = useCallback(
     async (options?: WalletBalanceRefreshOptions): Promise<void> => {
+      if (isWalletTransactionFlowActive()) {
+        return;
+      }
       if (balanceRefreshRef.current) {
         balanceRefreshQueuedRef.current = {
           ...(balanceRefreshQueuedRef.current ?? {}),
@@ -647,10 +651,16 @@ export default function useP2PTradeTokenData({
   }, [clearWalletBalances, walletKey]);
 
   useEffect(() => {
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
     refreshWalletBalances({ reason: 'connect', silent: false }).catch(() => {});
   }, [refreshWalletBalances]);
 
   useEffect(() => {
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
     const requestedTokens = [
       {
         address: tradeOfferCustomTokenAddress,
@@ -685,6 +695,9 @@ export default function useP2PTradeTokenData({
   ]);
 
   useEffect(() => {
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
     for (const token of VERIFIED_ECOSYSTEM_TOKENS) {
       const key = buildTradeCustomTokenInfoKey(token.kind, token.address);
       const existing = customTradeTokenInfoByAddress[key];

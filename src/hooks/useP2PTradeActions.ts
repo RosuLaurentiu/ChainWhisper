@@ -132,7 +132,7 @@ type UseP2PTradeActionsArgs = {
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   rememberTradeTerminalReturn: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   refreshTradeDataInBackground: (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => void;
-  refreshTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
+  readTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   rememberTradeAccessSecret?: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   resolvedRouteAccessSecret: string;
@@ -158,7 +158,7 @@ export default function useP2PTradeActions({
   openTrade,
   rememberTradeTerminalReturn,
   refreshTradeDataInBackground,
-  refreshTradeDetail,
+  readTradeDetail,
   resolveKnownTradeAccessSecret,
   rememberTradeAccessSecret,
   resolvedRouteAccessSecret,
@@ -201,7 +201,7 @@ export default function useP2PTradeActions({
         let accessSecret = resolveAccessSecretForSnapshot(snapshot);
         rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
         let latestSnapshot = carryKnownDirectTerms(
-          (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot,
+          (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot,
           snapshot
         );
         let latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
@@ -338,7 +338,7 @@ export default function useP2PTradeActions({
       rememberTradeTerminalReturn,
       rememberTradeAccessSecret,
       refreshTradeDataInBackground,
-      refreshTradeDetail,
+      readTradeDetail,
       resolveAccessSecretForSnapshot,
       runTradeWalletPromptFlow,
       setTradeActionError,
@@ -363,7 +363,7 @@ export default function useP2PTradeActions({
         await runTradeWalletPromptFlow(async () => {
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
         rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        const latestSnapshot = (await refreshTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
+        const latestSnapshot = (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
         if (latestSnapshot.counterParentTradeId) {
           throw new Error('Counter offers must be accepted in full so the original trade can close atomically.');
         }
@@ -464,7 +464,7 @@ export default function useP2PTradeActions({
       openTrade,
       rememberTradeTerminalReturn,
       refreshTradeDataInBackground,
-      refreshTradeDetail,
+      readTradeDetail,
       resolveAccessSecretForSnapshot,
       runTradeWalletPromptFlow,
       setTradeActionError,

@@ -16,7 +16,7 @@ import {
 } from '../lib/walletOptions';
 import { buildWalletAesHealthState, clearCotiAesUnlockRequest, getOrRecoverAesForWallet } from '../lib/cotiAesUnlock';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
-import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
+import { clearWalletTransactionFlow, isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 import useInjectedWalletOptions from './useInjectedWalletOptions';
 
 type UseWalletOnboardingArgs = {
@@ -539,8 +539,15 @@ export function useWalletOnboarding({
       }
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
       const selected = nextAccounts[0] ?? '';
-      if (!selected && walletAddress && isWalletTransactionFlowActive({ chainId, provider, walletAddress })) {
+      const selectedWalletKey = selected.trim().toLowerCase();
+      const previousWalletKey = walletAddress.trim().toLowerCase();
+      const previousFlowInput = { chainId, provider, walletAddress };
+      const walletFlowActive = previousWalletKey && isWalletTransactionFlowActive(previousFlowInput);
+      if (walletFlowActive && (!selectedWalletKey || selectedWalletKey === previousWalletKey)) {
         return;
+      }
+      if (walletFlowActive && selectedWalletKey !== previousWalletKey) {
+        clearWalletTransactionFlow(previousFlowInput);
       }
       resetBrowserPrivacySessionForWalletChange(selected);
       setWalletAddress(selected);
@@ -566,6 +573,9 @@ export function useWalletOnboarding({
         return;
       }
       if (typeof newChainId === 'string' || typeof newChainId === 'number') {
+        if (walletAddress) {
+          clearWalletTransactionFlow({ chainId, provider, walletAddress });
+        }
         setChainId(normalizeChainId(newChainId));
       }
     };

@@ -12,6 +12,7 @@ import {
   resolveTradeEscrowContractConfig
 } from '../lib/appChain';
 import type { TradePageView } from './useP2PTradeRoute';
+import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
 
@@ -47,6 +48,7 @@ type UseP2PTradeDataArgs = TokenMetadata & {
   routeEscrowContract?: string;
   routeTradeId: number | null;
   routeView: TradePageView;
+  syncSessionKey: string;
   walletAddress: string;
   walletKey: string;
 };
@@ -66,6 +68,7 @@ type UseP2PTradeDataResult = {
   publicTradesError: string;
   refreshMyTrades: (options?: TradeRefreshOptions) => Promise<void>;
   refreshPublicTrades: (options?: TradeRefreshOptions) => Promise<void>;
+  readTradeDetail: (tradeId: number, escrowContract?: string) => Promise<TradeSnapshot | null>;
   refreshTradeDetail: (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions) => Promise<TradeSnapshot | null>;
   setDetailTrade: Dispatch<SetStateAction<TradeSnapshot | null>>;
   setDetailTradeError: Dispatch<SetStateAction<string>>;
@@ -83,6 +86,7 @@ export default function useP2PTradeData({
   routeEscrowContract,
   routeTradeId,
   routeView,
+  syncSessionKey,
   walletAddress,
   walletKey
 }: UseP2PTradeDataArgs): UseP2PTradeDataResult {
@@ -100,6 +104,26 @@ export default function useP2PTradeData({
   const myTradesRefreshRef = useRef<Promise<void> | null>(null);
   const publicTradesRefreshQueuedRef = useRef(false);
   const myTradesRefreshQueuedRef = useRef(false);
+  const detailTradeRef = useRef<TradeSnapshot | null>(null);
+  const publicTradesRef = useRef<TradeSnapshot[]>([]);
+  const myTradesRef = useRef<TradeSnapshot[]>([]);
+  const latestSyncSessionKeyRef = useRef(syncSessionKey);
+
+  useEffect(() => {
+    detailTradeRef.current = detailTrade;
+  }, [detailTrade]);
+
+  useEffect(() => {
+    publicTradesRef.current = publicTrades;
+  }, [publicTrades]);
+
+  useEffect(() => {
+    myTradesRef.current = myTrades;
+  }, [myTrades]);
+
+  useEffect(() => {
+    latestSyncSessionKeyRef.current = syncSessionKey;
+  }, [syncSessionKey]);
 
   const enrichMakerPrivateProgressForList = useCallback(
     async (snapshots: TradeSnapshot[]): Promise<TradeSnapshot[]> =>
@@ -109,6 +133,10 @@ export default function useP2PTradeData({
 
   const refreshPublicTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
+    const requestSessionKey = syncSessionKey;
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
     if (publicTradesRefreshRef.current) {
       publicTradesRefreshQueuedRef.current = true;
       return publicTradesRefreshRef.current;
@@ -129,9 +157,11 @@ export default function useP2PTradeData({
             privateRewardTokenDecimals,
             limit: 80
           });
-          setPublicTrades(sortTrades(snapshots));
-          if (silent) {
-            setPublicTradesError('');
+          if (latestSyncSessionKeyRef.current === requestSessionKey) {
+            setPublicTrades(sortTrades(snapshots));
+            if (silent) {
+              setPublicTradesError('');
+            }
           }
         } catch {
           if (!silent) {
@@ -149,10 +179,14 @@ export default function useP2PTradeData({
 
     publicTradesRefreshRef.current = refreshRequest;
     return refreshRequest;
-  }, [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]);
+  }, [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol, syncSessionKey]);
 
   const refreshMyTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
+    const requestSessionKey = syncSessionKey;
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
     if (!walletAddress) {
       setMyTrades([]);
       return;
@@ -178,9 +212,11 @@ export default function useP2PTradeData({
             limit: 80
           });
           const snapshots = await enrichMakerPrivateProgressForList(snapshotsRaw);
-          setMyTrades(sortTrades(snapshots));
-          if (silent) {
-            setMyTradesError('');
+          if (latestSyncSessionKeyRef.current === requestSessionKey) {
+            setMyTrades(sortTrades(snapshots));
+            if (silent) {
+              setMyTradesError('');
+            }
           }
         } catch {
           if (!silent) {
@@ -204,6 +240,7 @@ export default function useP2PTradeData({
     privateRewardTokenSymbol,
     rewardTokenDecimals,
     rewardTokenSymbol,
+    syncSessionKey,
     walletAddress
   ]);
 
@@ -228,8 +265,8 @@ export default function useP2PTradeData({
     [walletKey]
   );
 
-  const refreshTradeDetail = useCallback(
-    async (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions): Promise<TradeSnapshot | null> => {
+  const readTradeDetail = useCallback(
+    async (tradeId: number, escrowContract?: string): Promise<TradeSnapshot | null> => {
       const snapshotRaw = await fetchTradeSnapshotById(tradeId, {
         rewardTokenSymbol,
         rewardTokenDecimals,
@@ -239,7 +276,28 @@ export default function useP2PTradeData({
         accessSecret: resolvedRouteAccessSecret || undefined,
         callerAddress: walletAddress || undefined
       });
-      const snapshot = await enrichMakerPrivateProgress(snapshotRaw);
+      return enrichMakerPrivateProgress(snapshotRaw);
+    },
+    [
+      enrichMakerPrivateProgress,
+      privateRewardTokenDecimals,
+      privateRewardTokenSymbol,
+      rewardTokenDecimals,
+      rewardTokenSymbol,
+      resolvedRouteAccessSecret,
+      walletAddress
+    ]
+  );
+
+  const refreshTradeDetail = useCallback(
+    async (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions): Promise<TradeSnapshot | null> => {
+      if (isWalletTransactionFlowActive()) {
+        return detailTradeRef.current;
+      }
+      const snapshot = await readTradeDetail(tradeId, escrowContract);
+      if (!snapshot) {
+        return null;
+      }
       mergeTradeSnapshot(snapshot);
       if (options?.silent) {
         setDetailTradeError('');
@@ -247,13 +305,8 @@ export default function useP2PTradeData({
       return snapshot;
     },
     [
-      enrichMakerPrivateProgress,
       mergeTradeSnapshot,
-      privateRewardTokenDecimals,
-      privateRewardTokenSymbol,
-      rewardTokenDecimals,
-      rewardTokenSymbol,
-      resolvedRouteAccessSecret
+      readTradeDetail
     ]
   );
 
@@ -267,14 +320,23 @@ export default function useP2PTradeData({
   );
 
   useEffect(() => {
-    refreshPublicTrades().catch(() => {});
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
+    refreshPublicTrades({ silent: publicTradesRef.current.length > 0 }).catch(() => {});
   }, [refreshPublicTrades]);
 
   useEffect(() => {
-    refreshMyTrades().catch(() => {});
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
+    refreshMyTrades({ silent: myTradesRef.current.length > 0 }).catch(() => {});
   }, [refreshMyTrades]);
 
   useEffect(() => {
+    if (isWalletTransactionFlowActive()) {
+      return;
+    }
     if (routeView !== 'trade' || routeTradeId === null) {
       setDetailTrade(null);
       setDetailTradeError(routeError);
@@ -284,9 +346,16 @@ export default function useP2PTradeData({
     }
 
     let cancelled = false;
-    setLoadingDetailTrade(true);
-    setDetailTradeError('');
-    setTradeAccessBlocked(false);
+    const currentDetail = detailTradeRef.current;
+    const hasCurrentDetail =
+      Boolean(currentDetail) &&
+      currentDetail?.tradeId === routeTradeId &&
+      (currentDetail?.escrowContract ?? '').toLowerCase() === (routeEscrowContract ?? '').toLowerCase();
+    setLoadingDetailTrade(!hasCurrentDetail);
+    if (!hasCurrentDetail) {
+      setDetailTradeError('');
+      setTradeAccessBlocked(false);
+    }
 
     const loadDetail = async () => {
       try {
@@ -329,11 +398,11 @@ export default function useP2PTradeData({
           setDetailTrade(snapshot);
         }
       } catch (loadError) {
-        if (!cancelled) {
+        if (!cancelled && !hasCurrentDetail) {
           setDetailTradeError(loadError instanceof Error ? loadError.message : 'Trade was not found on the escrow contract.');
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && !hasCurrentDetail) {
           setLoadingDetailTrade(false);
         }
       }
@@ -360,6 +429,7 @@ export default function useP2PTradeData({
     publicTradesError,
     refreshMyTrades,
     refreshPublicTrades,
+    readTradeDetail,
     refreshTradeDetail,
     setDetailTrade,
     setDetailTradeError,
