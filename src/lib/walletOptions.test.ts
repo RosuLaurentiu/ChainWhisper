@@ -53,9 +53,15 @@ describe('walletOptions', () => {
     expect(isMobileBrowserUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe(false);
   });
 
-  it('builds a MetaMask mobile dapp deeplink for the current page', () => {
+  it('builds a MetaMask mobile dapp deeplink through the stable chat redirect for trade routes', () => {
     expect(buildMetaMaskMobileDeepLink('https://chainwhisper.example/trades/open/1?escrow=direct#secret')).toBe(
-      'https://metamask.app.link/dapp/chainwhisper.example/trades/open/1%3Fescrow=direct%23secret'
+      'https://metamask.app.link/dapp/chainwhisper.example/chat%3Fp=%252Ftrades%252Fopen%252F1%253Fescrow%253Ddirect%2523secret'
+    );
+  });
+
+  it('keeps non-trade MetaMask mobile dapp deeplinks direct', () => {
+    expect(buildMetaMaskMobileDeepLink('https://chainwhisper.example/chat')).toBe(
+      'https://metamask.app.link/dapp/chainwhisper.example/chat'
     );
   });
 });

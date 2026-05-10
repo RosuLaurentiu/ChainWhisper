@@ -19,8 +19,22 @@ export const isMobileBrowserUserAgent = (userAgent = getNavigatorUserAgent()): b
 const encodeMetaMaskDappUrl = (dappUrl: string): string =>
   encodeURI(dappUrl).replace(/[?#]/g, (value) => encodeURIComponent(value));
 
+const buildMetaMaskDappTargetUrl = (dappUrl: string): string => {
+  const trimmed = dappUrl.trim();
+  const normalizedUrl = trimmed.replace(/^https?:\/\//i, '');
+  try {
+    const parsedUrl = new URL(trimmed.match(/^https?:\/\//i) ? trimmed : `https://${trimmed}`);
+    if (parsedUrl.pathname.toLowerCase().startsWith('/trades')) {
+      const tradeRoute = `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+      return `${parsedUrl.host}/chat?p=${encodeURIComponent(tradeRoute)}`;
+    }
+  } catch {
+  }
+  return normalizedUrl;
+};
+
 export const buildMetaMaskMobileDeepLink = (dappUrl = getCurrentDappUrl()): string => {
-  const normalizedUrl = dappUrl.trim().replace(/^https?:\/\//i, '');
+  const normalizedUrl = buildMetaMaskDappTargetUrl(dappUrl);
   return normalizedUrl ? `https://metamask.app.link/dapp/${encodeMetaMaskDappUrl(normalizedUrl)}` : 'https://metamask.app.link';
 };
 
