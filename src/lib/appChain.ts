@@ -2870,6 +2870,45 @@ export const ensurePrivateTokenSpendReady = async ({
   }
 };
 
+export const ensureTradeRequestPaymentReady = async ({
+  signer,
+  ownerAddress,
+  requestAsset,
+  requestAmountWei,
+  spenderAddress = TRADE_ESCROW_CONTRACT_ADDRESS
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  requestAsset: TradeAssetPayload;
+  requestAmountWei: bigint;
+  spenderAddress?: string;
+}): Promise<void> => {
+  if (requestAmountWei <= 0n || requestAsset.kind === 'native' || !requestAsset.tokenAddress) {
+    return;
+  }
+
+  if (requestAsset.kind === 'private-erc20') {
+    await ensurePrivateTokenSpendReady({
+      signer,
+      ownerAddress,
+      tokenAddress: requestAsset.tokenAddress,
+      spenderAddress,
+      requiredAmount: requestAmountWei,
+      tokenSymbol: requestAsset.symbol
+    });
+    return;
+  }
+
+  await ensureTradeTokenAllowance(
+    signer,
+    ownerAddress,
+    requestAsset.tokenAddress,
+    requestAmountWei,
+    requestAsset.kind,
+    spenderAddress
+  );
+};
+
 export const ensureTradeTokenAllowance = async (
   signer: Wallet | JsonRpcSigner,
   ownerAddress: string,

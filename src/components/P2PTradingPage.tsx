@@ -62,6 +62,7 @@ import {
   fetchRecurringExecutionRowsForWallet,
   fetchRecurringPrivateInventorySnapshotsForWallet,
   fetchRecurringPrivateFillReceiptsForWallet,
+  ensureTradeRequestPaymentReady,
   readCurrentPrivateErc20BalanceWei,
   readPrivateTradeRemainingOfferWei,
   recoverTradeAccessPayloadForMaker,
@@ -97,6 +98,7 @@ import {
 import { hasSessionAesKey, type SharedWalletSession } from '../lib/walletSession';
 import useP2PWalletHeaderControl from '../hooks/useP2PWalletHeaderControl';
 import useP2PTradeRoute, {
+  buildTradeLinkPath,
   clearPendingTradeTerminalRoute,
   normalizeAccessSecret,
   resolveTradeLinkInput
@@ -135,6 +137,17 @@ import {
   getCounterOfferUnavailableReason
 } from '../lib/tradeCounterSupport';
 import { applyTradeRecoveryPayloadToSnapshot } from '../lib/tradeRecoveryPayload';
+import {
+  bumpP2PTradeActionAutoResumeAttempt,
+  clearP2PTradeActionResume,
+  readP2PTradeActionResumeForSession,
+  rememberP2PTradeActionResume,
+  shouldPreserveP2PTradeActionResumeForError,
+  updateP2PTradeActionResumeStage,
+  type P2PTradeActionResume,
+  type P2PTradeActionResumeStage,
+  type RememberP2PTradeActionResumeInput
+} from '../lib/p2pTradeActionResume';
 import {
   WALLET_STATUS_STORAGE_KEY,
   buildOfferFromSnapshot,
@@ -226,6 +239,60 @@ const formatPriceInputFromTerms = (
   const scaledPrice =
     (quoteAmount * decimalScale(baseDecimals) * priceScale) / (baseAmount * decimalScale(quoteDecimals));
   return formatDecimalInput(scaledPrice, RECURRING_PRICE_DECIMALS);
+};
+
+const parseResumeAmount = (value?: string): bigint | null => {
+  if (!value || !/^\d+$/.test(value)) {
+    return null;
+  }
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+};
+
+const hasResumeActionAlreadyProgressed = (
+  pending: P2PTradeActionResume,
+  snapshot: TradeSnapshot
+): boolean => {
+  if (pending.actionKind === 'recurring-fill') {
+    const baselineExecutionCount = pending.baselineRecurringExecutionCount;
+    const currentExecutionCount = snapshot.recurringOrder?.executionCount;
+    return (
+      typeof baselineExecutionCount === 'number' &&
+      typeof currentExecutionCount === 'number' &&
+      currentExecutionCount > baselineExecutionCount
+    );
+  }
+
+  if (pending.actionKind === 'recurring-status') {
+    return Boolean(pending.baselineStatus && snapshot.status !== pending.baselineStatus);
+  }
+
+  if (pending.actionKind === 'cancel' || pending.actionKind === 'decline' || pending.actionKind === 'accept') {
+    if (pending.baselineStatus && snapshot.status !== pending.baselineStatus) {
+      return true;
+    }
+  }
+
+  const baselineFilledRequest = parseResumeAmount(pending.baselineFilledRequestAmount);
+  const currentFilledRequest = parseResumeAmount(snapshot.fillState?.filledRequestAmount);
+  if (
+    baselineFilledRequest !== null &&
+    currentFilledRequest !== null &&
+    currentFilledRequest > baselineFilledRequest
+  ) {
+    return true;
+  }
+
+  const baselineRemainingRequest = parseResumeAmount(pending.baselineRemainingRequestAmount);
+  const currentRemainingRequest = parseResumeAmount(snapshot.fillState?.remainingRequestAmount);
+  return (
+    baselineRemainingRequest !== null &&
+    currentRemainingRequest !== null &&
+    currentRemainingRequest < baselineRemainingRequest
+  );
 };
 
 const bytesEqual = (left?: Uint8Array | null, right?: Uint8Array | null): boolean => {
@@ -410,6 +477,7 @@ export default function P2PTradingPage({
   const [recurringBuyFillInput, setRecurringBuyFillInput] = useState('');
   const [recurringSellFillInput, setRecurringSellFillInput] = useState('');
   const [processingRecurringAction, setProcessingRecurringAction] = useState('');
+  const [tradeActionResumeTick, setTradeActionResumeTick] = useState(0);
   const [revealingPrivateTradeKey, setRevealingPrivateTradeKey] = useState('');
   const [createdTradeId, setCreatedTradeId] = useState<number | null>(null);
   const [createdTradeLink, setCreatedTradeLink] = useState('');
@@ -443,6 +511,7 @@ export default function P2PTradingPage({
   );
   const skippedSharedWalletKeyRef = useRef('');
   const pendingEmptyAccountSyncRef = useRef<number | null>(null);
+  const autoResumingTradeActionRef = useRef('');
   const tradeLinkInputRef = useRef<HTMLInputElement | null>(null);
 
   const allowedBrowserWalletOptions = useMemo(
@@ -538,6 +607,40 @@ export default function P2PTradingPage({
       : '';
   const resolvedRouteAccessSecret = routeAccessSecret || storedRouteAccessSecret;
   const routeError = route.routeError;
+  const rememberTradeActionResumeForWallet = useCallback(
+    (
+      input: Omit<RememberP2PTradeActionResumeInput, 'chainId' | 'provider' | 'terminalPath' | 'walletAddress'>
+    ): void => {
+      if (!walletAddress) {
+        return;
+      }
+      rememberP2PTradeActionResume({
+        ...input,
+        chainId,
+        provider: providerRef.current,
+        terminalPath: buildTradeLinkPath(input.tradeId, input.accessSecret, input.escrowContract),
+        walletAddress
+      });
+    },
+    [chainId, walletAddress]
+  );
+  const clearTradeActionResumeForWallet = useCallback((): void => {
+    clearP2PTradeActionResume();
+  }, []);
+  const updateTradeActionResumeStageForWallet = useCallback((stage: P2PTradeActionResumeStage): void => {
+    updateP2PTradeActionResumeStage(stage);
+  }, []);
+  const readActiveTradeActionResume = useCallback(
+    (): P2PTradeActionResume | null =>
+      walletAddress
+        ? readP2PTradeActionResumeForSession({
+            chainId,
+            provider: providerRef.current,
+            walletAddress
+          })
+        : null,
+    [chainId, walletAddress]
+  );
   const directTradeRecipientNormalized = directTradeRecipient.trim();
   const directTradeRecipientIsValid =
     directTradeRecipientNormalized.length > 0 && isWalletAddress(directTradeRecipientNormalized);
@@ -1539,6 +1642,7 @@ export default function P2PTradingPage({
     signerCacheRef.current = {};
     setWalletScopedSnapAesState(null);
     clearWalletBalances();
+    clearP2PTradeActionResume();
     const sharedWalletKey = sharedWalletSession?.walletAddress.trim().toLowerCase() ?? '';
     const sharedHasNextWalletAes = Boolean(
       walletKey &&
@@ -2985,10 +3089,12 @@ export default function P2PTradingPage({
     partialFillTrade,
     processingTradeActionId
   } = useP2PTradeActions({
+    clearTradeActionResume: clearTradeActionResumeForWallet,
     connectedWithBurner,
     getTradeSigner,
     mergeTradeSnapshot,
     openTrade,
+    rememberTradeActionResume: rememberTradeActionResumeForWallet,
     rememberTradeTerminalReturn,
     refreshTradeDataInBackground,
     refreshTradeDetail,
@@ -2998,11 +3104,12 @@ export default function P2PTradingPage({
     routeEscrowContract,
     routeTradeId,
     setTradeActionError,
+    updateTradeActionResumeStage: updateTradeActionResumeStageForWallet,
     walletAddress
   });
 
   const fillRecurringOrderSide = useCallback(
-    async (snapshot: TradeSnapshot, side: 'buy' | 'sell') => {
+    async (snapshot: TradeSnapshot, side: 'buy' | 'sell', amountInputOverride?: string) => {
       const recurring = snapshot.recurringOrder;
       if (!recurring) {
         return;
@@ -3016,7 +3123,7 @@ export default function P2PTradingPage({
         return;
       }
       const inputAsset = side === 'buy' ? recurring.baseAsset : recurring.quoteAsset;
-      const inputValue = side === 'buy' ? recurringBuyFillInput : recurringSellFillInput;
+      const inputValue = amountInputOverride ?? (side === 'buy' ? recurringBuyFillInput : recurringSellFillInput);
       const inputAmountWei = parseTokenAmountInput(inputValue, inputAsset.decimals);
       if (inputAmountWei === null || inputAmountWei <= 0n) {
         setTradeActionError(side === 'buy' ? `Enter ${inputAsset.symbol} to sell.` : `Enter ${inputAsset.symbol} budget.`);
@@ -3028,7 +3135,19 @@ export default function P2PTradingPage({
       setProcessingRecurringAction(actionKey);
       try {
         rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        rememberTradeActionResumeForWallet({
+          accessSecret: resolvedRouteAccessSecret || undefined,
+          actionKind: 'recurring-fill',
+          amountInput: inputValue,
+          amountWei: inputAmountWei.toString(),
+          baselineRecurringExecutionCount: recurring.executionCount,
+          baselineStatus: snapshot.status,
+          escrowContract: snapshot.escrowContract,
+          recurringSide: side,
+          tradeId: snapshot.tradeId
+        });
         const needsAes = recurring.mode !== 'public' || inputAsset.kind === 'private-erc20';
+        updateTradeActionResumeStageForWallet('aes-ready');
         const signer = await getTradeSigner(needsAes);
         if (inputAsset.kind === 'private-erc20' && inputAsset.tokenAddress) {
           const privateInputBalance = await readCurrentPrivateErc20BalanceWei(
@@ -3038,15 +3157,26 @@ export default function P2PTradingPage({
           ).catch(() => null);
           if (privateInputBalance === null) {
             setTradeActionError(`Unlock privacy and refresh your ${inputAsset.symbol} balance before selling.`);
+            clearTradeActionResumeForWallet();
             return;
           }
           if (privateInputBalance < inputAmountWei) {
             setTradeActionError(
               `Not enough ${inputAsset.symbol}. Available: ${formatTokenAmount(privateInputBalance, inputAsset.decimals, 6)} ${inputAsset.symbol}.`
             );
+            clearTradeActionResumeForWallet();
             return;
           }
         }
+        updateTradeActionResumeStageForWallet('allowance-ready');
+        await ensureTradeRequestPaymentReady({
+          signer,
+          ownerAddress: walletAddress,
+          requestAsset: inputAsset,
+          requestAmountWei: inputAmountWei,
+          spenderAddress: snapshot.escrowContract
+        });
+        updateTradeActionResumeStageForWallet('submit-trade');
         await fillRecurringOrderSideOnChain({
           signer,
           ownerAddress: walletAddress,
@@ -3063,7 +3193,9 @@ export default function P2PTradingPage({
           setRecurringSellFillInput('');
         }
         openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        updateTradeActionResumeStageForWallet('confirm-refresh');
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
+        clearTradeActionResumeForWallet();
       } catch (error) {
         const outputAsset = side === 'buy' ? recurring.quoteAsset : recurring.baseAsset;
         const fallbackMessage =
@@ -3071,8 +3203,11 @@ export default function P2PTradingPage({
             ? `Private ${inputAsset.symbol} transfer failed. Check your balance, unlock privacy, and try again.`
             : outputAsset.kind === 'private-erc20'
               ? `Private ${outputAsset.symbol} payout failed. Unlock privacy for this wallet and try again.`
-              : 'Recurring order fill failed.';
+            : 'Recurring order fill failed.';
         setTradeActionError(getOnChainFailureMessage(error, fallbackMessage));
+        if (!shouldPreserveP2PTradeActionResumeForError(error)) {
+          clearTradeActionResumeForWallet();
+        }
       } finally {
         setProcessingRecurringAction('');
       }
@@ -3083,9 +3218,12 @@ export default function P2PTradingPage({
       openTrade,
       recurringBuyFillInput,
       recurringSellFillInput,
+      clearTradeActionResumeForWallet,
+      rememberTradeActionResumeForWallet,
       rememberTradeTerminalReturn,
       refreshTradeDataInBackground,
       resolvedRouteAccessSecret,
+      updateTradeActionResumeStageForWallet,
       walletAddress
     ]
   );
@@ -3110,6 +3248,16 @@ export default function P2PTradingPage({
       setProcessingRecurringAction(actionKey);
       try {
         rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        rememberTradeActionResumeForWallet({
+          accessSecret: resolvedRouteAccessSecret || undefined,
+          actionKind: 'recurring-status',
+          baselineRecurringExecutionCount: recurring.executionCount,
+          baselineStatus: snapshot.status,
+          escrowContract: snapshot.escrowContract,
+          recurringStatusAction: action,
+          tradeId: snapshot.tradeId
+        });
+        updateTradeActionResumeStageForWallet('submit-trade');
         const signer = await getTradeSigner(false);
         await updateRecurringOrderStatusOnChain({
           signer,
@@ -3117,16 +3265,154 @@ export default function P2PTradingPage({
           action
         });
         openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+        updateTradeActionResumeStageForWallet('confirm-refresh');
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
+        clearTradeActionResumeForWallet();
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Recurring order update failed.';
         setTradeActionError(getProviderErrorMessage(error, message));
+        if (!shouldPreserveP2PTradeActionResumeForError(error)) {
+          clearTradeActionResumeForWallet();
+        }
       } finally {
         setProcessingRecurringAction('');
       }
     },
-    [getTradeSigner, onCotiNetwork, openTrade, refreshTradeDataInBackground, rememberTradeTerminalReturn, resolvedRouteAccessSecret, walletAddress]
+    [
+      clearTradeActionResumeForWallet,
+      getTradeSigner,
+      onCotiNetwork,
+      openTrade,
+      refreshTradeDataInBackground,
+      rememberTradeActionResumeForWallet,
+      rememberTradeTerminalReturn,
+      resolvedRouteAccessSecret,
+      updateTradeActionResumeStageForWallet,
+      walletAddress
+    ]
   );
+
+  const resolveTradeActionResumeSnapshot = useCallback(
+    (pending: P2PTradeActionResume): TradeSnapshot | null => {
+      const pendingKey = buildTradeSnapshotKey(pending.tradeId, pending.escrowContract);
+      if (detailTrade && getSnapshotKey(detailTrade) === pendingKey) {
+        return detailTrade;
+      }
+      return (
+        [...myTrades, ...publicTrades].find((snapshot) => getSnapshotKey(snapshot) === pendingKey) ??
+        null
+      );
+    },
+    [detailTrade, myTrades, publicTrades]
+  );
+
+  useEffect(() => {
+    if (!walletAddress || !onCotiNetwork || processingTradeActionId || processingRecurringAction) {
+      return;
+    }
+
+    const pending = readActiveTradeActionResume();
+    if (!pending) {
+      return;
+    }
+
+    if (pending.status === 'paused') {
+      setTradeActionError(pending.pauseReason ?? 'Trade action paused. Tap the action again to continue.');
+      return;
+    }
+
+    const currentRouteKey =
+      routeTradeId !== null ? buildTradeSnapshotKey(routeTradeId, routeEscrowContract) : '';
+    const pendingRouteKey = buildTradeSnapshotKey(pending.tradeId, pending.escrowContract);
+    if (currentRouteKey !== pendingRouteKey) {
+      return;
+    }
+
+    const snapshot = resolveTradeActionResumeSnapshot(pending);
+    if (!snapshot) {
+      return;
+    }
+
+    if (hasResumeActionAlreadyProgressed(pending, snapshot)) {
+      clearTradeActionResumeForWallet();
+      refreshTradeDataInBackground(pending.tradeId, pending.escrowContract);
+      setTradeActionError('');
+      return;
+    }
+
+    if (snapshot.status !== 'open' && pending.actionKind !== 'recurring-status') {
+      clearTradeActionResumeForWallet();
+      return;
+    }
+
+    if (pending.stage === 'submit-trade') {
+      const retryDelayMs = 12_000;
+      const retryInMs = retryDelayMs - (Date.now() - pending.lastAttemptAt);
+      if (retryInMs > 0) {
+        const retryTimer = window.setTimeout(() => {
+          setTradeActionResumeTick((current) => current + 1);
+        }, retryInMs);
+        return () => window.clearTimeout(retryTimer);
+      }
+    }
+
+    const attempted = bumpP2PTradeActionAutoResumeAttempt(pending);
+    if (!attempted) {
+      setTradeActionError('Trade action paused after repeated mobile wallet returns. Tap the action again to continue.');
+      return;
+    }
+
+    const resumeKey = `${attempted.sessionKey}:${attempted.actionKind}:${attempted.tradeId}:${attempted.autoResumeAttempts}`;
+    if (autoResumingTradeActionRef.current === resumeKey) {
+      return;
+    }
+    autoResumingTradeActionRef.current = resumeKey;
+
+    const resumeTimer = window.setTimeout(() => {
+      const run = async () => {
+        try {
+          setTradeActionError('Continuing pending wallet action...');
+          if (attempted.actionKind === 'accept') {
+            await acceptTrade(snapshot, attempted.counterAcceptMode ?? 'close-related');
+          } else if (attempted.actionKind === 'partial-fill') {
+            await partialFillTrade(snapshot, attempted.amountInput ?? '');
+          } else if (attempted.actionKind === 'cancel') {
+            await cancelTrade(snapshot);
+          } else if (attempted.actionKind === 'decline') {
+            await declineTrade(snapshot);
+          } else if (attempted.actionKind === 'recurring-fill') {
+            await fillRecurringOrderSide(snapshot, attempted.recurringSide ?? 'buy', attempted.amountInput ?? '');
+          } else if (attempted.actionKind === 'recurring-status') {
+            await updateRecurringOrderStatus(snapshot, attempted.recurringStatusAction ?? 'pause');
+          }
+        } finally {
+          if (autoResumingTradeActionRef.current === resumeKey) {
+            autoResumingTradeActionRef.current = '';
+          }
+        }
+      };
+      run().catch(() => {});
+    }, 300);
+    return () => window.clearTimeout(resumeTimer);
+  }, [
+    acceptTrade,
+    cancelTrade,
+    clearTradeActionResumeForWallet,
+    declineTrade,
+    fillRecurringOrderSide,
+    onCotiNetwork,
+    partialFillTrade,
+    processingRecurringAction,
+    processingTradeActionId,
+    readActiveTradeActionResume,
+    refreshTradeDataInBackground,
+    resolveTradeActionResumeSnapshot,
+    routeEscrowContract,
+    routeTradeId,
+    tradeActionResumeTick,
+    updateRecurringOrderStatus,
+    walletAddress
+  ]);
 
   const formatRecurringTokenAmount = (asset: TradeAssetPayload, amount: string, hidden = false): string => {
     if (hidden) {
@@ -4755,6 +5041,7 @@ export default function P2PTradingPage({
   });
   const disconnectWallet = useCallback(async () => {
     clearPendingTradeTerminalRoute();
+    clearP2PTradeActionResume();
     burnerPinRef.current = '';
     await disconnectP2PWallet();
   }, [disconnectP2PWallet]);
