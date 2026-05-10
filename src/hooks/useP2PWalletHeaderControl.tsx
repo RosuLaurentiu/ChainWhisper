@@ -15,8 +15,8 @@ import {
   resolveAppWalletSwitchOptions,
   resolveWalletHeaderActionVisibility,
   resolveWalletHeaderViewModel,
+  resolveWalletConnectionPrimaryAction,
   resolveWalletPrimaryButtonClassName,
-  resolveWalletPrimaryButtonLabel,
   resolveWalletPrivacyUnlockPrompt,
   type PrivacyUnlockSnapStatus,
   type SharedWalletSession
@@ -147,71 +147,69 @@ export default function useP2PWalletHeaderControl({
     ]
   );
   const tradeHasSavedAppWallet = burnerWallets.length > 0 || parseBurnerWalletStorageState().kind !== 'none';
-  const showMobileWalletAppOpenAction = Boolean(!walletAddress && !preferredWalletOption && isMobileBrowserUserAgent());
-  const tradePrimaryConnectsAppWallet =
-    !walletAddress && tradeHasSavedAppWallet && !preferredWalletOption && !showMobileWalletAppOpenAction;
-  const showTradeDisconnectedAppAction = Boolean(
-    !walletAddress && tradeHasSavedAppWallet && (preferredWalletOption || showMobileWalletAppOpenAction)
-  );
+  const isMobileBrowser = isMobileBrowserUserAgent();
   const walletConnectionBusy = Boolean(connectingWalletId && connectingWalletId !== 'aes');
   const tradeWalletBusyLabel = walletConnectionBusy
     ? connectingWalletId === 'burner'
       ? 'Unlocking...'
       : 'Connecting...'
     : undefined;
-  const walletPrimaryButtonLabel = resolveWalletPrimaryButtonLabel({
+  const walletPrimaryAction = resolveWalletConnectionPrimaryAction({
     busyLabel: tradeWalletBusyLabel,
-    connectLabel: tradePrimaryConnectsAppWallet
-      ? 'Connect app wallet'
-      : showMobileWalletAppOpenAction
-        ? 'Open MetaMask'
-      : preferredWalletOption
-        ? `Connect ${preferredWalletOption.label}`
-        : 'Wallet unavailable',
+    hasSavedAppWallet: tradeHasSavedAppWallet,
+    isMobileBrowser,
     onCotiNetwork,
+    policy: 'browser-first',
+    preferredBrowserWalletId: preferredWalletOption?.id,
+    preferredBrowserWalletLabel: preferredWalletOption?.label,
     walletAddress
   });
+  const walletPrimaryButtonLabel = walletPrimaryAction.label;
+  const tradePrimaryConnectsAppWallet = walletPrimaryAction.kind === 'connect-app-wallet';
+  const showMobileBrowserWalletOpenAction = walletPrimaryAction.kind === 'open-browser-wallet-app';
+  const showTradeDisconnectedAppAction = Boolean(!walletAddress && tradeHasSavedAppWallet);
   const walletAddressCopyKey = walletAddress ? `trade-wallet-address:${walletAddress.toLowerCase()}` : '';
   const handleWalletPrimaryAction = useCallback(() => {
-    if (walletAddress && !onCotiNetwork) {
-      const provider = getConnectedProvider();
-      if (provider) {
-        ensureCotiNetwork(provider).catch((error) => {
-          setWalletError(getProviderErrorMessage(error, 'Failed to switch network.'));
-        });
+    switch (walletPrimaryAction.kind) {
+      case 'switch-network': {
+        const provider = getConnectedProvider();
+        if (provider) {
+          ensureCotiNetwork(provider).catch((error) => {
+            setWalletError(getProviderErrorMessage(error, 'Failed to switch network.'));
+          });
+        }
+        return;
       }
-      return;
+      case 'copy-address':
+        copyWithFeedback(walletAddress, walletAddressCopyKey).catch(() => {});
+        return;
+      case 'connect-app-wallet':
+        connectBurnerWallet().catch(() => {});
+        return;
+      case 'generate-app-wallet':
+        beginGenerateBurnerWallet();
+        return;
+      case 'open-browser-wallet-app':
+        window.location.href = buildMetaMaskMobileDeepLink();
+        return;
+      case 'connect-browser-wallet':
+        connectWallet(walletPrimaryAction.browserWalletId).catch(() => {});
+        return;
+      default:
+        return;
     }
-
-    if (walletAddress) {
-      copyWithFeedback(walletAddress, walletAddressCopyKey).catch(() => {});
-      return;
-    }
-
-    if (tradePrimaryConnectsAppWallet) {
-      connectBurnerWallet().catch(() => {});
-      return;
-    }
-
-    if (showMobileWalletAppOpenAction) {
-      window.location.href = buildMetaMaskMobileDeepLink();
-      return;
-    }
-
-    connectWallet(preferredWalletOption?.id).catch(() => {});
   }, [
+    beginGenerateBurnerWallet,
     connectBurnerWallet,
     connectWallet,
     copyWithFeedback,
     ensureCotiNetwork,
     getConnectedProvider,
-    onCotiNetwork,
-    preferredWalletOption?.id,
     setWalletError,
-    showMobileWalletAppOpenAction,
-    tradePrimaryConnectsAppWallet,
     walletAddress,
-    walletAddressCopyKey
+    walletAddressCopyKey,
+    walletPrimaryAction.browserWalletId,
+    walletPrimaryAction.kind
   ]);
   const walletPrimaryButtonCopied = lastCopiedKey === walletAddressCopyKey;
   const walletPrimaryButtonClass = resolveWalletPrimaryButtonClassName({
@@ -430,10 +428,7 @@ export default function useP2PWalletHeaderControl({
         primaryAddon={tradeAppWalletSwitchButton}
         primaryMetaLabel={walletPrimaryButtonIsAddress && walletPrimaryButtonCopied ? 'Copied' : undefined}
         primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
-        primaryDisabled={
-          walletConnectionBusy ||
-          (!walletAddress && !preferredWalletOption && !tradePrimaryConnectsAppWallet && !showMobileWalletAppOpenAction)
-        }
+        primaryDisabled={walletPrimaryAction.disabled}
         onPrimaryAction={handleWalletPrimaryAction}
         modeLabel={walletModeLabel}
         statusLabel={walletStatusLabel}
@@ -485,9 +480,19 @@ export default function useP2PWalletHeaderControl({
                     );
                   })
                 ) : (
-                  <button type="button" className="p2p-wallet-action" disabled role="menuitem">
-                    {showMobileWalletAppOpenAction
-                      ? 'Open this page in MetaMask Mobile or a supported wallet app'
+                  <button
+                    type="button"
+                    className="p2p-wallet-action"
+                    onClick={() => {
+                      if (showMobileBrowserWalletOpenAction) {
+                        window.location.href = buildMetaMaskMobileDeepLink();
+                      }
+                    }}
+                    disabled={!showMobileBrowserWalletOpenAction}
+                    role="menuitem"
+                  >
+                    {showMobileBrowserWalletOpenAction
+                      ? 'Open MetaMask Mobile'
                       : 'MetaMask or CipherTrade not detected'}
                   </button>
                 )}
@@ -565,6 +570,7 @@ export default function useP2PWalletHeaderControl({
       selectedWalletId,
       setAppWalletMenuOpen,
       setWalletMenuOpen,
+      showMobileBrowserWalletOpenAction,
       signAesForCurrentWallet,
       tradeAppWalletSwitchButton,
       tradePrivacyPrompt.label,
@@ -581,6 +587,7 @@ export default function useP2PWalletHeaderControl({
       walletPrimaryButtonCopied,
       walletPrimaryButtonIsAddress,
       walletPrimaryButtonLabel,
+      walletPrimaryAction.disabled,
       walletStatusLabel,
       walletStatusTone,
       walletConnectionBusy,

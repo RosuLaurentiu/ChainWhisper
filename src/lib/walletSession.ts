@@ -111,6 +111,23 @@ export type WalletHeaderActionVisibility<TWalletOption extends WalletOptionLike>
   showDisconnectedBrowserAction: boolean;
 };
 
+export type WalletConnectionPrimaryActionKind =
+  | 'none'
+  | 'copy-address'
+  | 'switch-network'
+  | 'connect-browser-wallet'
+  | 'open-browser-wallet-app'
+  | 'connect-app-wallet'
+  | 'generate-app-wallet'
+  | 'wallet-unavailable';
+
+export type WalletConnectionPrimaryActionModel = {
+  browserWalletId?: string;
+  disabled: boolean;
+  kind: WalletConnectionPrimaryActionKind;
+  label: string;
+};
+
 export type AppWalletSwitchOptionModel = {
   active: boolean;
   address: string;
@@ -265,6 +282,111 @@ export const resolveWalletPrimaryButtonLabel = ({
     return shortenAddress(walletAddress);
   }
   return connectLabel;
+};
+
+export const resolveWalletConnectionPrimaryAction = ({
+  busyLabel,
+  hasAppWalletStorage = true,
+  hasSavedAppWallet,
+  isMobileBrowser = false,
+  onCotiNetwork,
+  policy,
+  preferredBrowserWalletId,
+  preferredBrowserWalletLabel,
+  walletAddress
+}: {
+  busyLabel?: string;
+  hasAppWalletStorage?: boolean;
+  hasSavedAppWallet: boolean;
+  isMobileBrowser?: boolean;
+  onCotiNetwork: boolean;
+  policy: WalletHeaderPolicy;
+  preferredBrowserWalletId?: string;
+  preferredBrowserWalletLabel?: string;
+  walletAddress: string;
+}): WalletConnectionPrimaryActionModel => {
+  const trimmedBusyLabel = busyLabel?.trim();
+  const normalizedWallet = normalizeWalletKey(walletAddress);
+  if (trimmedBusyLabel) {
+    return {
+      disabled: true,
+      kind: 'none',
+      label: trimmedBusyLabel
+    };
+  }
+
+  if (normalizedWallet && !onCotiNetwork) {
+    return {
+      disabled: false,
+      kind: 'switch-network',
+      label: WALLET_ACTION_LABEL.switchNetwork
+    };
+  }
+
+  if (normalizedWallet) {
+    return {
+      disabled: false,
+      kind: 'copy-address',
+      label: shortenAddress(walletAddress)
+    };
+  }
+
+  const browserLabel = preferredBrowserWalletLabel?.trim() || 'Browser wallet';
+  if (policy === 'browser-first') {
+    if (preferredBrowserWalletId) {
+      return {
+        browserWalletId: preferredBrowserWalletId,
+        disabled: false,
+        kind: 'connect-browser-wallet',
+        label: `Connect ${browserLabel}`
+      };
+    }
+
+    if (isMobileBrowser) {
+      return {
+        disabled: false,
+        kind: 'open-browser-wallet-app',
+        label: 'Open MetaMask'
+      };
+    }
+
+    return {
+      disabled: true,
+      kind: 'wallet-unavailable',
+      label: hasSavedAppWallet && hasAppWalletStorage ? 'Browser wallet unavailable' : 'Wallet unavailable'
+    };
+  }
+
+  if (hasAppWalletStorage) {
+    return {
+      disabled: false,
+      kind: hasSavedAppWallet ? 'connect-app-wallet' : 'generate-app-wallet',
+      label: hasSavedAppWallet ? 'Connect app wallet' : 'Generate app wallet'
+    };
+  }
+
+  if (preferredBrowserWalletId) {
+    return {
+      browserWalletId: preferredBrowserWalletId,
+      disabled: false,
+      kind: 'connect-browser-wallet',
+      label: `Connect ${browserLabel}`
+    };
+  }
+
+  if (isMobileBrowser) {
+    return {
+      disabled: false,
+      kind: 'open-browser-wallet-app',
+      label: 'Open MetaMask'
+    };
+  }
+
+  return {
+    disabled: true,
+    kind: 'wallet-unavailable',
+    label: 'Wallet unavailable'
+  };
 };
 
 export const resolveWalletPrimaryButtonClassName = ({
@@ -586,8 +708,6 @@ export const resolveWalletHeaderViewModel = ({
   }
 
   const showPrivacyAction =
-    privacyActionKind === 'setup-private-tokens' ||
-    privacyActionKind === 'repair-private-tokens' ||
     privacyActionKind === 'unlock-browser-aes' ||
     privacyActionKind === 'repair-browser-aes';
 

@@ -19,11 +19,11 @@ import {
 } from '../lib/walletOptions';
 import {
   resolveAppWalletSwitchOptions,
+  resolveWalletConnectionPrimaryAction,
   resolveWalletHeaderActionVisibility,
   resolveWalletHeaderViewModel,
   resolveWalletModeLabel,
   resolveWalletPrimaryButtonClassName,
-  resolveWalletPrimaryButtonLabel,
   resolveWalletPrivacyUnlockPrompt,
 } from '../lib/walletSession';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
@@ -149,30 +149,25 @@ export default function useChatWalletHeaderControl({
 
   const chatWalletAddressCopyKey = walletAddress ? `wallet-address:${walletAddress.toLowerCase()}` : '';
   const chatWalletIsAppWallet = isConnected && activeSignerSource === 'burner';
-  const chatPrimaryConnectsBrowserWallet = !walletAddress && burnerStorageBlocked && Boolean(chatPreferredBrowserWalletOption);
-  const showMobileWalletAppOpenAction = Boolean(!walletAddress && !chatPreferredBrowserWalletOption && isMobileBrowserUserAgent());
-  const chatWalletPrimaryConnectLabel =
-    chatPrimaryConnectsBrowserWallet && chatPreferredBrowserWalletOption
-      ? `Connect ${chatPreferredBrowserWalletOption.label}`
-      : burnerStorageBlocked && showMobileWalletAppOpenAction
-        ? 'Open MetaMask'
-      : burnerStorageBlocked
-        ? 'Wallet unavailable'
-        : hasSavedBurnerWallet
-          ? 'Connect app wallet'
-          : 'Generate app wallet';
   const chatWalletBusyLabel =
     connectingMethod === 'metamask'
       ? `Connecting ${connectingWalletLabel || preferredInjectedWalletOption?.label || 'Wallet'}...`
       : initializingBurner
         ? 'Unlocking...'
         : undefined;
-  const chatWalletPrimaryButtonLabel = resolveWalletPrimaryButtonLabel({
+  const chatWalletPrimaryAction = resolveWalletConnectionPrimaryAction({
     busyLabel: chatWalletBusyLabel,
-    connectLabel: chatWalletPrimaryConnectLabel,
+    hasAppWalletStorage: !burnerStorageBlocked,
+    hasSavedAppWallet: hasSavedBurnerWallet,
+    isMobileBrowser: isMobileBrowserUserAgent(),
     onCotiNetwork,
+    policy: 'app-first',
+    preferredBrowserWalletId: chatPreferredBrowserWalletOption?.id,
+    preferredBrowserWalletLabel: chatPreferredBrowserWalletOption?.label,
     walletAddress
   });
+  const showMobileWalletAppOpenAction = chatWalletPrimaryAction.kind === 'open-browser-wallet-app';
+  const chatWalletPrimaryButtonLabel = chatWalletPrimaryAction.label;
   const chatWalletPrimaryMetaLabel =
     walletAddress && onCotiNetwork && lastCopiedKey === chatWalletAddressCopyKey ? 'Copied' : undefined;
   const chatWalletPrimaryButtonClass = resolveWalletPrimaryButtonClassName({
@@ -183,8 +178,7 @@ export default function useChatWalletHeaderControl({
   const chatWalletPrimaryDisabled =
     connectingMethod !== null ||
     initializingBurner ||
-    (!walletAddress && chatPrimaryConnectsBrowserWallet && !chatPreferredBrowserWalletOption) ||
-    (!walletAddress && !chatPrimaryConnectsBrowserWallet && burnerStorageBlocked && !showMobileWalletAppOpenAction);
+    chatWalletPrimaryAction.disabled;
   const walletNeedsPrivacyRepair =
     walletAesHealth?.status === 'repair-needed' || walletAesHealth?.status === 'key-mismatch';
   const chatWalletHeaderModel = resolveWalletHeaderViewModel({
@@ -344,35 +338,33 @@ export default function useChatWalletHeaderControl({
     ) : null;
 
   const handleChatWalletPrimaryAction = () => {
-    if (walletAddress && !onCotiNetwork) {
-      const provider = getConnectedProvider();
-      if (provider) {
-        ensureCotiNetwork(provider).catch((providerError) => {
-          setError(getProviderErrorMessage(providerError, 'Failed to switch network.'));
-        });
+    switch (chatWalletPrimaryAction.kind) {
+      case 'switch-network': {
+        const provider = getConnectedProvider();
+        if (provider) {
+          ensureCotiNetwork(provider).catch((providerError) => {
+            setError(getProviderErrorMessage(providerError, 'Failed to switch network.'));
+          });
+        }
+        return;
       }
-      return;
-    }
-
-    if (walletAddress) {
-      copyWithFeedback(walletAddress, chatWalletAddressCopyKey).catch(() => {});
-      return;
-    }
-
-    if (chatPrimaryConnectsBrowserWallet) {
-      if (chatPreferredBrowserWalletOption) {
-        activateBrowserWalletSession(chatPreferredBrowserWalletOption.id).catch(() => {});
-      }
-      return;
-    }
-
-    if (showMobileWalletAppOpenAction) {
-      window.location.href = buildMetaMaskMobileDeepLink();
-      return;
-    }
-
-    if (!burnerStorageBlocked) {
-      beginBurnerPinFlow(hasSavedBurnerWallet ? 'stored' : 'generate').catch(() => {});
+      case 'copy-address':
+        copyWithFeedback(walletAddress, chatWalletAddressCopyKey).catch(() => {});
+        return;
+      case 'connect-browser-wallet':
+        activateBrowserWalletSession(chatWalletPrimaryAction.browserWalletId).catch(() => {});
+        return;
+      case 'open-browser-wallet-app':
+        window.location.href = buildMetaMaskMobileDeepLink();
+        return;
+      case 'connect-app-wallet':
+        beginBurnerPinFlow('stored').catch(() => {});
+        return;
+      case 'generate-app-wallet':
+        beginBurnerPinFlow('generate').catch(() => {});
+        return;
+      default:
+        return;
     }
   };
 

@@ -4,6 +4,7 @@ import { COTI_NETWORK, hasInsufficientFundsError } from './appShared/core';
 import {
   hasSessionAesKey,
   resolveAppWalletSwitchOptions,
+  resolveWalletConnectionPrimaryAction,
   resolveWalletBlockedActionLabel,
   resolveWalletHeaderActionVisibility,
   resolveWalletHeaderViewModel,
@@ -178,6 +179,109 @@ describe('wallet header labels', () => {
   });
 });
 
+describe('resolveWalletConnectionPrimaryAction', () => {
+  it('keeps Trades browser-first while exposing app wallet as a separate secondary path', () => {
+    expect(
+      resolveWalletConnectionPrimaryAction({
+        hasSavedAppWallet: true,
+        onCotiNetwork: false,
+        policy: 'browser-first',
+        preferredBrowserWalletId: 'metamask',
+        preferredBrowserWalletLabel: 'MetaMask',
+        walletAddress: ''
+      })
+    ).toMatchObject({
+      browserWalletId: 'metamask',
+      disabled: false,
+      kind: 'connect-browser-wallet',
+      label: 'Connect MetaMask'
+    });
+
+    expect(
+      resolveWalletConnectionPrimaryAction({
+        hasSavedAppWallet: true,
+        isMobileBrowser: true,
+        onCotiNetwork: false,
+        policy: 'browser-first',
+        walletAddress: ''
+      })
+    ).toMatchObject({
+      disabled: false,
+      kind: 'open-browser-wallet-app',
+      label: 'Open MetaMask'
+    });
+
+    expect(
+      resolveWalletConnectionPrimaryAction({
+        hasSavedAppWallet: true,
+        onCotiNetwork: false,
+        policy: 'browser-first',
+        walletAddress: ''
+      })
+    ).toMatchObject({
+      disabled: true,
+      kind: 'wallet-unavailable',
+      label: 'Browser wallet unavailable'
+    });
+  });
+
+  it('keeps Chat and Shield app-first when no wallet is connected', () => {
+    expect(
+      resolveWalletConnectionPrimaryAction({
+        hasSavedAppWallet: true,
+        onCotiNetwork: false,
+        policy: 'app-first',
+        preferredBrowserWalletId: 'metamask',
+        preferredBrowserWalletLabel: 'MetaMask',
+        walletAddress: ''
+      })
+    ).toMatchObject({
+      disabled: false,
+      kind: 'connect-app-wallet',
+      label: 'Connect app wallet'
+    });
+
+    expect(
+      resolveWalletConnectionPrimaryAction({
+        hasSavedAppWallet: false,
+        onCotiNetwork: false,
+        policy: 'app-first',
+        walletAddress: ''
+      })
+    ).toMatchObject({
+      disabled: false,
+      kind: 'generate-app-wallet',
+      label: 'Generate app wallet'
+    });
+  });
+
+  it('uses network and copy actions for connected wallets regardless of page policy', () => {
+    expect(
+      resolveWalletConnectionPrimaryAction({
+        hasSavedAppWallet: true,
+        onCotiNetwork: false,
+        policy: 'browser-first',
+        walletAddress: '0x1234567890abcdef'
+      })
+    ).toMatchObject({
+      kind: 'switch-network',
+      label: 'Switch to COTI'
+    });
+
+    expect(
+      resolveWalletConnectionPrimaryAction({
+        hasSavedAppWallet: true,
+        onCotiNetwork: true,
+        policy: 'app-first',
+        walletAddress: '0x1234567890abcdef'
+      })
+    ).toMatchObject({
+      kind: 'copy-address',
+      label: '0x1234...cdef'
+    });
+  });
+});
+
 describe('resolveWalletPrivacyDisplayState', () => {
   it('returns one display state for locked, setup, ready, refresh, and mismatch cases', () => {
     const walletAddress = '0x1234567890abcdef';
@@ -337,11 +441,11 @@ describe('resolveWalletHeaderViewModel', () => {
         status: 'ready',
         statusLabel: 'Ready'
       },
-      showPrivacyAction: true
+      showPrivacyAction: false
     });
   });
 
-  it('keeps the AES status ready while surfacing private-token refresh as an action', () => {
+  it('keeps the AES status ready without turning the status pill into a token refresh button', () => {
     expect(
       resolveWalletHeaderViewModel({
         chainId: COTI_NETWORK.chainIdDecimal,
@@ -359,7 +463,7 @@ describe('resolveWalletHeaderViewModel', () => {
         status: 'ready',
         statusLabel: 'Ready'
       },
-      showPrivacyAction: true
+      showPrivacyAction: false
     });
   });
 
