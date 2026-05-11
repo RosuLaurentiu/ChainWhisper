@@ -9,10 +9,10 @@ import {
 import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 import {
-  buildWalletBootstrapPath,
+  freezeWalletBootstrapUrlAfterEntry,
   isWalletBootstrapRoute,
-  resolveWalletBootstrapTargetPath,
-  writeWalletBootstrapActiveRoutePath
+  resolveWalletBootstrapActiveRoute,
+  writeWalletBootstrapActiveRouteState
 } from '../lib/walletBootstrapRoute';
 
 export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
@@ -79,7 +79,7 @@ const getCurrentTradePath = (): string => {
   if (typeof window === 'undefined') {
     return '/trades';
   }
-  const bootstrapTargetPath = resolveWalletBootstrapTargetPath();
+  const bootstrapTargetPath = resolveWalletBootstrapActiveRoute();
   if (bootstrapTargetPath.toLowerCase().startsWith('/trades')) {
     return bootstrapTargetPath;
   }
@@ -302,7 +302,7 @@ export const resolveTradeRouteFromLocation = (): TradeRouteState => {
     return createEmptyPublicRoute();
   }
 
-  const bootstrapTargetPath = resolveWalletBootstrapTargetPath();
+  const bootstrapTargetPath = resolveWalletBootstrapActiveRoute();
   if (bootstrapTargetPath) {
     try {
       const bootstrapTargetUrl = new URL(bootstrapTargetPath, window.location.origin);
@@ -341,9 +341,7 @@ const restorePendingTradeTerminalRouteFromLocation = (): TradeRouteState => {
     return route;
   }
   if (isWalletBootstrapRoute(window.location.pathname)) {
-    const bootstrapPath = buildWalletBootstrapPath(pendingPath);
-    writeWalletBootstrapActiveRoutePath(pendingPath);
-    window.history.replaceState(window.history.state, '', bootstrapPath);
+    writeWalletBootstrapActiveRouteState(pendingPath, { replace: true });
   } else {
     window.history.replaceState(window.history.state, '', pendingPath);
   }
@@ -427,6 +425,24 @@ export const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escro
   return `/trades/l/${code}${search}`;
 };
 
+export const buildTradeRoutePath = (route: TradeRouteState): string => {
+  if (route.view === 'create') {
+    return '/trades/create';
+  }
+  if (route.view === 'mine') {
+    return '/trades/mine';
+  }
+  if (route.view === 'counter') {
+    return '/trades/open/counter';
+  }
+  if (route.view === 'trade') {
+    return route.tradeId
+      ? buildTradeLinkPath(route.tradeId, route.accessSecret || undefined, route.escrowContract)
+      : '/trades/open';
+  }
+  return '/trades';
+};
+
 type UseP2PTradeRouteResult = {
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   navigateToTradePath: (path: string, options?: TradeNavigationOptions) => void;
@@ -450,7 +466,6 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     nextUrl.search = targetUrl.search;
     nextUrl.hash = targetUrl.hash;
     const nextPath = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
-    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const targetRoute = resolveTradeRouteFromParts(targetUrl.pathname, targetUrl.search, targetUrl.hash);
 
     if (
@@ -461,15 +476,12 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     }
 
     if (isWalletBootstrapRoute(window.location.pathname)) {
-      const nextBootstrapPath = buildWalletBootstrapPath(nextPath);
-      writeWalletBootstrapActiveRoutePath(nextPath);
-      if (currentPath !== nextBootstrapPath) {
-        window.history.replaceState(window.history.state, '', nextBootstrapPath);
-      }
+      writeWalletBootstrapActiveRouteState(nextPath, { replace: Boolean(options?.replace) });
       setRoute(restorePendingTradeTerminalRouteFromLocation());
       return;
     }
 
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (currentPath !== nextPath) {
       if (options?.replace) {
         window.history.replaceState(window.history.state, '', nextPath);
@@ -516,6 +528,10 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
+    }
+    if (isWalletBootstrapRoute(window.location.pathname)) {
+      freezeWalletBootstrapUrlAfterEntry();
+      setRoute(restorePendingTradeTerminalRouteFromLocation());
     }
 
     const syncRoute = (event?: Event) => {

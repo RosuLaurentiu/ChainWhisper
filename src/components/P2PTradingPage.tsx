@@ -119,7 +119,8 @@ import useP2PWalletHeaderControl from '../hooks/useP2PWalletHeaderControl';
 import useP2PTradeRoute, {
   clearPendingTradeTerminalRoute,
   normalizeAccessSecret,
-  resolveTradeLinkInput
+  resolveTradeLinkInput,
+  resolveTradeRouteFromParts
 } from '../hooks/useP2PTradeRoute';
 import useP2PTradeData from '../hooks/useP2PTradeData';
 import useP2PTradeActions from '../hooks/useP2PTradeActions';
@@ -172,6 +173,11 @@ import {
   getCurrentRouteForDiagnostics,
   logMobileWalletDiagnostic
 } from '../lib/mobileWalletDiagnostics';
+import {
+  isWalletBootstrapRoute,
+  isWalletBootstrapStableUrl,
+  resolveWalletBootstrapActiveRoute
+} from '../lib/walletBootstrapRoute';
 import {
   WALLET_STATUS_STORAGE_KEY,
   buildOfferFromSnapshot,
@@ -614,6 +620,99 @@ export default function P2PTradingPage({
       walletAddress
     ]
   );
+  const assertMetaMaskMobilePromptReady = useCallback(async (): Promise<void> => {
+    if (typeof window === 'undefined' || !isWalletBootstrapRoute(window.location.pathname)) {
+      return;
+    }
+
+    const routeKey = `${route.view}:${route.tradeId ?? ''}:${route.escrowContract ? 'contract' : 'default'}`;
+    const buildRouteIdentity = (candidate: typeof route): string =>
+      [
+        candidate.view,
+        candidate.tradeId ?? '',
+        candidate.escrowContract?.toLowerCase() ?? '',
+        candidate.accessSecret ?? ''
+      ].join(':');
+    const activeRoutePath = resolveWalletBootstrapActiveRoute();
+    let activeTradeRoute = null as typeof route | null;
+    try {
+      const activeUrl = new URL(activeRoutePath, window.location.origin);
+      activeTradeRoute = resolveTradeRouteFromParts(activeUrl.pathname, activeUrl.search, activeUrl.hash);
+    } catch {
+      activeTradeRoute = null;
+    }
+    const routeReady =
+      isWalletBootstrapStableUrl(window.location.pathname, window.location.search) &&
+      !window.location.hash &&
+      activeRoutePath.toLowerCase().startsWith('/trades') &&
+      activeTradeRoute !== null &&
+      buildRouteIdentity(activeTradeRoute) === buildRouteIdentity(route);
+
+    if (!routeReady) {
+      logMobileWalletDiagnostic('prompt-readiness-blocked', {
+        reason: 'bootstrap-route-not-stable',
+        routeKey
+      });
+      throw new Error('MetaMask Mobile is still preparing this trading page. Wait a moment and try again.');
+    }
+
+    if (connectedWithBurner) {
+      logMobileWalletDiagnostic('prompt-readiness-pass', {
+        providerSource: 'app-wallet',
+        routeKey
+      });
+      return;
+    }
+
+    if (!effectiveBrowserProvider || !walletAddress) {
+      logMobileWalletDiagnostic('prompt-readiness-blocked', {
+        reason: 'wallet-not-connected',
+        routeKey
+      });
+      throw new Error('Connect MetaMask Mobile before signing this trade action.');
+    }
+
+    logMetaMaskMobileRequestMethod('eth_accounts', 'injected-metamask', {
+      reason: 'prompt-readiness'
+    });
+    const accounts = ((await effectiveBrowserProvider.request({ method: 'eth_accounts' })) as string[] | unknown) ?? [];
+    const connectedWalletKey = walletAddress.trim().toLowerCase();
+    const accountReady = Array.isArray(accounts) && accounts.some((account) =>
+      typeof account === 'string' && account.toLowerCase() === connectedWalletKey
+    );
+    if (!accountReady) {
+      logMobileWalletDiagnostic('prompt-readiness-blocked', {
+        accountsCount: Array.isArray(accounts) ? accounts.length : 0,
+        reason: 'account-mismatch',
+        routeKey
+      });
+      throw new Error('MetaMask Mobile is not connected to the active ChainWhisper wallet. Reconnect MetaMask before signing.');
+    }
+
+    logMetaMaskMobileRequestMethod('eth_chainId', 'injected-metamask', {
+      reason: 'prompt-readiness'
+    });
+    const currentChain = (await effectiveBrowserProvider.request({ method: 'eth_chainId' })) as string | number;
+    const currentChainId = normalizeChainId(currentChain);
+    if (currentChainId !== COTI_NETWORK.chainIdDecimal) {
+      logMobileWalletDiagnostic('prompt-readiness-blocked', {
+        chainId: currentChainId,
+        reason: 'wrong-chain',
+        routeKey
+      });
+      throw new Error('Switch MetaMask Mobile to COTI Mainnet before signing this trade action.');
+    }
+
+    logMobileWalletDiagnostic('prompt-readiness-pass', {
+      providerSource: 'injected-metamask',
+      routeKey
+    });
+  }, [
+    connectedWithBurner,
+    effectiveBrowserProvider,
+    route,
+    walletAddress
+  ]);
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
       const activeWalletFlow = sharedWalletActions?.runWalletTransactionFlow;
@@ -627,6 +726,7 @@ export default function P2PTradingPage({
               routeBefore,
               trace: readWalletTransactionFlowTrace(flowInput)
             });
+            await assertMetaMaskMobilePromptReady();
             return await operation();
           });
         }
@@ -637,7 +737,10 @@ export default function P2PTradingPage({
           routeBefore,
           trace: readWalletTransactionFlowTrace(input)
         });
-        return await runWalletTransactionFlow(input, operation);
+        return await runWalletTransactionFlow(input, async () => {
+          await assertMetaMaskMobilePromptReady();
+          return await operation();
+        });
       } finally {
         const flowInput = getTradeWalletFlowInput();
         logMobileWalletDiagnostic('trading-flow-finish', {
@@ -655,6 +758,7 @@ export default function P2PTradingPage({
       }
     },
     [
+      assertMetaMaskMobilePromptReady,
       getTradeWalletFlowInput,
       sharedWalletActions,
     ]

@@ -55,7 +55,7 @@ test.describe('trading V1 routes', () => {
     try {
       await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}${shellPath}`);
 
-      await expect(page).toHaveURL(new RegExp(`/wallet-connect\\?p=${encodeURIComponent('/trades/recurring?order=1')}`));
+      await expect(page).toHaveURL(/\/wallet-connect$/);
       await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
       await expect(page.getByText('Trading Terminal')).toBeVisible();
     } finally {
@@ -71,12 +71,13 @@ test.describe('trading V1 routes', () => {
     try {
       await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}/wallet-connect?p=${encodeURIComponent('/trades')}`);
 
+      await expect(page).toHaveURL(/\/wallet-connect$/);
       await expect(page.getByRole('button', { name: 'Trades', exact: true })).toHaveAttribute('aria-current', 'page');
       await page.getByRole('button', { name: 'Chat', exact: true }).click();
-      await expect(page).toHaveURL(/\/wallet-connect\?p=%2Fchat/);
+      await expect(page).toHaveURL(/\/wallet-connect$/);
       await expect(page.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-current', 'page');
       await page.getByRole('button', { name: 'Trades', exact: true }).click();
-      await expect(page).toHaveURL(/\/wallet-connect\?p=%2Ftrades/);
+      await expect(page).toHaveURL(/\/wallet-connect$/);
       await expect(page.getByRole('button', { name: 'Trades', exact: true })).toHaveAttribute('aria-current', 'page');
     } finally {
       await context.close();

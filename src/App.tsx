@@ -94,10 +94,9 @@ import {
 } from './shell/routing';
 import { isTradeMobileShellRoute } from './lib/tradeMobileShell';
 import {
-  buildWalletBootstrapPath,
+  freezeWalletBootstrapUrlAfterEntry,
   isWalletBootstrapRoute,
-  syncWalletBootstrapRouteFromLocation,
-  writeWalletBootstrapActiveRoutePath
+  writeWalletBootstrapActiveRouteState
 } from './lib/walletBootstrapRoute';
 import { getAppWalletPolicy } from './shell/walletPolicy';
 import { attachWsDisconnectListeners } from './shell/realtimeConnection';
@@ -5542,11 +5541,9 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const nextPath = getPathForAppPage(page);
       if (isWalletBootstrapRoute(window.location.pathname)) {
-        const nextBootstrapPath = buildWalletBootstrapPath(nextPath);
-        writeWalletBootstrapActiveRoutePath(nextPath);
-        if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextBootstrapPath) {
-          window.history.replaceState(window.history.state, '', nextBootstrapPath);
-        }
+        writeWalletBootstrapActiveRouteState(nextPath, {
+          replace: resolveNavigationPathFromLocation() === nextPath
+        });
         return;
       }
       const currentPath = resolveNavigationPathFromLocation();
@@ -5587,11 +5584,9 @@ export default function App() {
     nextUrl.hash = targetUrl.hash;
     if (isWalletBootstrapRoute(window.location.pathname)) {
       const targetPath = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
-      const nextBootstrapPath = buildWalletBootstrapPath(targetPath);
-      writeWalletBootstrapActiveRoutePath(targetPath);
-      if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextBootstrapPath) {
-        window.history.replaceState(window.history.state, '', nextBootstrapPath);
-      }
+      writeWalletBootstrapActiveRouteState(targetPath, {
+        replace: resolveNavigationPathFromLocation() === targetPath
+      });
       setActivePage(resolveAppRouteFromPath(targetPath).page);
       return;
     }
@@ -5610,7 +5605,7 @@ export default function App() {
       const currentPath = resolveNavigationPathFromLocation();
       const preserveWalletBootstrap = isWalletBootstrapRoute(window.location.pathname);
       if (preserveWalletBootstrap) {
-        syncWalletBootstrapRouteFromLocation();
+        freezeWalletBootstrapUrlAfterEntry();
       }
       const canonicalPath =
         nextRoute.page === 'trades' && currentPath.toLowerCase().startsWith('/trades')

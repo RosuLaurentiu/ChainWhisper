@@ -1,5 +1,6 @@
 export const WALLET_BOOTSTRAP_PATH = '/wallet-connect';
 export const WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY = 'chainwhisper:wallet-bootstrap-active-route:v1';
+export const WALLET_BOOTSTRAP_HISTORY_STATE_KEY = 'chainwhisperWalletBootstrapRoute';
 
 type WalletBootstrapRouteStorage = Pick<Storage, 'getItem' | 'removeItem' | 'setItem'>;
 
@@ -10,9 +11,14 @@ type WalletBootstrapRouteRecord = {
 };
 
 type WalletBootstrapLocation = Pick<Location, 'pathname' | 'search' | 'hash' | 'origin'>;
+type WalletBootstrapHistory = Pick<History, 'pushState' | 'replaceState' | 'state'>;
+type WalletBootstrapHistoryState = Record<string, unknown> & {
+  [WALLET_BOOTSTRAP_HISTORY_STATE_KEY]?: Partial<WalletBootstrapRouteRecord>;
+};
 
 const DEFAULT_BOOTSTRAP_TARGET_PATH = '/';
 const FALLBACK_ORIGIN = 'https://chainwhisper.local';
+const MOBILE_WALLET_DIAGNOSTICS_KEY = 'chainwhisper:mobile-wallet-diagnostics';
 
 const normalizeBootstrapPathname = (pathname: string): string => {
   const normalized = pathname.trim().replace(/\/+$/, '');
@@ -55,13 +61,54 @@ const getSessionStorage = (): WalletBootstrapRouteStorage | null => {
   }
 };
 
+const getHistory = (): WalletBootstrapHistory | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.history;
+  } catch {
+    return null;
+  }
+};
+
 const getOrigin = (location?: Pick<Location, 'origin'> | null): string => {
   const origin = location?.origin || getWindowLocation()?.origin || FALLBACK_ORIGIN;
   return origin || FALLBACK_ORIGIN;
 };
 
+const readDiagnosticsFlag = (storage?: WalletBootstrapRouteStorage | null): boolean => {
+  try {
+    return storage?.getItem(MOBILE_WALLET_DIAGNOSTICS_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const isBootstrapDiagnosticsEnabled = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return readDiagnosticsFlag(window.sessionStorage) || readDiagnosticsFlag(window.localStorage);
+};
+
+const sanitizeBootstrapPathForDiagnostics = (path: string): string => {
+  const pathname = path.split('?')[0]?.split('#')[0] ?? path;
+  return pathname.toLowerCase().startsWith('/trades/') ? '/trades/[route]' : path.replace(/#.+$/, '#[redacted]');
+};
+
+const logWalletBootstrapDiagnostic = (event: string, detail: Record<string, unknown> = {}): void => {
+  if (!isBootstrapDiagnosticsEnabled()) {
+    return;
+  }
+  console.info('[ChainWhisper mobile wallet]', event, detail);
+};
+
 export const isWalletBootstrapRoute = (pathname: string): boolean =>
   normalizeBootstrapPathname(pathname).toLowerCase() === WALLET_BOOTSTRAP_PATH;
+
+export const isWalletBootstrapStableUrl = (pathname: string, search = ''): boolean =>
+  isWalletBootstrapRoute(pathname) && !hasWalletBootstrapEntryParam({ search });
 
 export const normalizeWalletBootstrapTargetPath = (
   value: string | null | undefined,
@@ -87,6 +134,16 @@ export const normalizeWalletBootstrapTargetPath = (
   } catch {
     return '';
   }
+};
+
+const normalizeRouteRecord = (
+  value: Partial<WalletBootstrapRouteRecord> | null | undefined,
+  origin = getOrigin()
+): WalletBootstrapRouteRecord | null => {
+  const activePath = normalizeWalletBootstrapTargetPath(value?.activePath, origin);
+  const entryPath = normalizeWalletBootstrapTargetPath(value?.entryPath, origin);
+  const timestamp = typeof value?.timestamp === 'number' ? value.timestamp : 0;
+  return activePath && entryPath && timestamp ? { activePath, entryPath, timestamp } : null;
 };
 
 export const getWalletBootstrapEntryPathFromLocation = (
@@ -117,6 +174,16 @@ export const hasWalletBootstrapEntryParam = (
   }
 };
 
+export const readWalletBootstrapHistoryRouteRecord = (
+  state: unknown = getHistory()?.state,
+  origin = getOrigin()
+): WalletBootstrapRouteRecord | null => {
+  if (!state || typeof state !== 'object') {
+    return null;
+  }
+  return normalizeRouteRecord((state as WalletBootstrapHistoryState)[WALLET_BOOTSTRAP_HISTORY_STATE_KEY], origin);
+};
+
 export const readWalletBootstrapRouteRecord = (
   storage: WalletBootstrapRouteStorage | null = getSessionStorage(),
   origin = getOrigin()
@@ -132,15 +199,13 @@ export const readWalletBootstrapRouteRecord = (
     }
 
     const parsed = JSON.parse(raw) as Partial<WalletBootstrapRouteRecord>;
-    const activePath = normalizeWalletBootstrapTargetPath(parsed.activePath, origin);
-    const entryPath = normalizeWalletBootstrapTargetPath(parsed.entryPath, origin);
-    const timestamp = typeof parsed.timestamp === 'number' ? parsed.timestamp : 0;
-    if (!activePath || !entryPath || !timestamp) {
+    const record = normalizeRouteRecord(parsed, origin);
+    if (!record) {
       storage.removeItem(WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY);
       return null;
     }
 
-    return { activePath, entryPath, timestamp };
+    return record;
   } catch {
     try {
       storage?.removeItem(WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY);
@@ -149,6 +214,12 @@ export const readWalletBootstrapRouteRecord = (
     return null;
   }
 };
+
+const shouldUseStoredRouteRecord = (
+  record: WalletBootstrapRouteRecord | null,
+  entryParamPresent: boolean,
+  entryPath: string
+): record is WalletBootstrapRouteRecord => Boolean(record && (!entryParamPresent || record.entryPath === entryPath));
 
 export const writeWalletBootstrapActiveRoutePath = (
   targetPath: string,
@@ -192,8 +263,65 @@ export const writeWalletBootstrapActiveRoutePath = (
   }
 };
 
-export const resolveWalletBootstrapTargetPath = (
+const mergeHistoryState = (
+  state: unknown,
+  record: WalletBootstrapRouteRecord
+): WalletBootstrapHistoryState => {
+  const base = state && typeof state === 'object' ? { ...(state as Record<string, unknown>) } : {};
+  return {
+    ...base,
+    [WALLET_BOOTSTRAP_HISTORY_STATE_KEY]: record
+  };
+};
+
+export const writeWalletBootstrapActiveRouteState = (
+  targetPath: string,
   options: {
+    entryPath?: string;
+    history?: WalletBootstrapHistory | null;
+    location?: WalletBootstrapLocation | null;
+    now?: number;
+    origin?: string;
+    replace?: boolean;
+    storage?: WalletBootstrapRouteStorage | null;
+    updateHistory?: boolean;
+  } = {}
+): WalletBootstrapRouteRecord | null => {
+  const location = options.location ?? getWindowLocation();
+  const origin = options.origin ?? getOrigin(location);
+  const record = writeWalletBootstrapActiveRoutePath(targetPath, {
+    entryPath: options.entryPath,
+    location,
+    now: options.now,
+    origin,
+    storage: options.storage
+  });
+  if (!record || options.updateHistory === false) {
+    return record;
+  }
+
+  const history = options.history ?? getHistory();
+  if (!history) {
+    return record;
+  }
+
+  const nextState = mergeHistoryState(history.state, record);
+  try {
+    const update = options.replace ? history.replaceState.bind(history) : history.pushState.bind(history);
+    update(nextState, '', WALLET_BOOTSTRAP_PATH);
+    logWalletBootstrapDiagnostic('bootstrap-route-state-updated', {
+      mode: options.replace ? 'replace' : 'push',
+      routeKey: sanitizeBootstrapPathForDiagnostics(record.activePath)
+    });
+  } catch {
+  }
+
+  return record;
+};
+
+export const resolveWalletBootstrapActiveRoute = (
+  options: {
+    historyState?: unknown;
     location?: WalletBootstrapLocation | null;
     storage?: WalletBootstrapRouteStorage | null;
   } = {}
@@ -206,9 +334,14 @@ export const resolveWalletBootstrapTargetPath = (
   const origin = getOrigin(location);
   const entryParamPresent = hasWalletBootstrapEntryParam(location);
   const entryPath = getWalletBootstrapEntryPathFromLocation(location);
+  const historyRoute = readWalletBootstrapHistoryRouteRecord(options.historyState ?? getHistory()?.state, origin);
   const storedRoute = readWalletBootstrapRouteRecord(options.storage ?? getSessionStorage(), origin);
 
-  if (storedRoute && (!entryParamPresent || storedRoute.entryPath === entryPath)) {
+  if (shouldUseStoredRouteRecord(historyRoute, entryParamPresent, entryPath)) {
+    return historyRoute.activePath;
+  }
+
+  if (shouldUseStoredRouteRecord(storedRoute, entryParamPresent, entryPath)) {
     return storedRoute.activePath;
   }
 
@@ -219,8 +352,11 @@ export const resolveWalletBootstrapTargetPath = (
   return DEFAULT_BOOTSTRAP_TARGET_PATH;
 };
 
+export const resolveWalletBootstrapTargetPath = resolveWalletBootstrapActiveRoute;
+
 export const syncWalletBootstrapRouteFromLocation = (
   options: {
+    history?: WalletBootstrapHistory | null;
     location?: WalletBootstrapLocation | null;
     storage?: WalletBootstrapRouteStorage | null;
   } = {}
@@ -234,11 +370,54 @@ export const syncWalletBootstrapRouteFromLocation = (
     location,
     storage: options.storage
   });
-  writeWalletBootstrapActiveRoutePath(targetPath, {
+  writeWalletBootstrapActiveRouteState(targetPath, {
     entryPath: getWalletBootstrapEntryPathFromLocation(location) || targetPath,
+    history: options.history,
+    location,
+    replace: true,
+    storage: options.storage
+  });
+  return targetPath;
+};
+
+export const freezeWalletBootstrapUrlAfterEntry = (
+  options: {
+    history?: WalletBootstrapHistory | null;
+    location?: WalletBootstrapLocation | null;
+    storage?: WalletBootstrapRouteStorage | null;
+  } = {}
+): string => {
+  const location = options.location ?? getWindowLocation();
+  if (!location || !isWalletBootstrapRoute(location.pathname)) {
+    return '';
+  }
+
+  const entryPath = getWalletBootstrapEntryPathFromLocation(location);
+  if (entryPath) {
+    logWalletBootstrapDiagnostic('bootstrap-entry-parsed', {
+      routeKey: sanitizeBootstrapPathForDiagnostics(entryPath)
+    });
+  }
+
+  const wasStable = isWalletBootstrapStableUrl(location.pathname, location.search) && !location.hash;
+  const targetPath = resolveWalletBootstrapActiveRoute({
     location,
     storage: options.storage
   });
+  writeWalletBootstrapActiveRouteState(targetPath, {
+    entryPath: entryPath || targetPath,
+    history: options.history,
+    location,
+    replace: true,
+    storage: options.storage
+  });
+
+  if (!wasStable) {
+    logWalletBootstrapDiagnostic('bootstrap-url-frozen', {
+      routeKey: sanitizeBootstrapPathForDiagnostics(targetPath)
+    });
+  }
+
   return targetPath;
 };
 
