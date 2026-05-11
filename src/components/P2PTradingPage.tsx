@@ -100,6 +100,9 @@ import {
   orderInjectedWalletOptions
 } from '../lib/walletOptions';
 import {
+  isWalletBootstrapRoute
+} from '../lib/walletBootstrapRoute';
+import {
   hasSessionAesKey,
   resolveTradingBrowserWalletState,
   type SharedWalletSession
@@ -157,6 +160,22 @@ import {
   recordWalletTransactionFlowStage,
   runWalletTransactionFlow
 } from '../lib/walletTransactionFlow';
+import {
+  clearPendingTradingWrite,
+  markPendingTradingWriteResuming,
+  pendingTradingWriteCanResumeAgain,
+  pendingTradingWriteMatchesWallet,
+  readPendingTradingWrite,
+  sanitizePendingTradingWriteForDiagnostics,
+  writePendingTradingWrite,
+  type PendingCreateRecurringTradingWrite,
+  type PendingCreateTradingWrite,
+  type PendingRecurringStatusAction,
+  type PendingRecurringFillSide,
+  type PendingTradingCounterAcceptMode,
+  type PendingTradingWrite,
+  type PendingTradingWriteDraft
+} from '../lib/pendingTradingWrite';
 import {
   getCurrentRouteForDiagnostics,
   logMobileWalletDiagnostic
@@ -470,6 +489,8 @@ export default function P2PTradingPage({
   );
   const skippedSharedWalletKeyRef = useRef('');
   const tradeLinkInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingTradingWriteResumeInFlightRef = useRef(false);
+  const resumingPendingTradingWriteRef = useRef(false);
 
   const allowedBrowserWalletOptions = useMemo(
     () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
@@ -611,8 +632,16 @@ export default function P2PTradingPage({
         if (activeWalletFlow) {
           return await activeWalletFlow(async () => {
             const flowInput = getTradeWalletFlowInput();
+            const pendingWrite = readPendingTradingWrite();
+            if (pendingWrite) {
+              recordWalletTransactionFlowStage(flowInput, `trading-write-recorded:${pendingWrite.kind}`);
+            }
             recordWalletTransactionFlowStage(flowInput, 'trading-flow-requested');
+            if (pendingWrite) {
+              recordWalletTransactionFlowStage(flowInput, `wallet-prompt-opening:${pendingWrite.kind}`);
+            }
             logMobileWalletDiagnostic('trading-flow-start', {
+              pendingWrite: pendingWrite ? sanitizePendingTradingWriteForDiagnostics(pendingWrite) : null,
               routeBefore,
               trace: readWalletTransactionFlowTrace(flowInput)
             });
@@ -621,8 +650,16 @@ export default function P2PTradingPage({
         }
 
         const input = getTradeWalletFlowInput();
+        const pendingWrite = readPendingTradingWrite();
+        if (pendingWrite) {
+          recordWalletTransactionFlowStage(input, `trading-write-recorded:${pendingWrite.kind}`);
+        }
         recordWalletTransactionFlowStage(input, 'trading-flow-requested');
+        if (pendingWrite) {
+          recordWalletTransactionFlowStage(input, `wallet-prompt-opening:${pendingWrite.kind}`);
+        }
         logMobileWalletDiagnostic('trading-flow-start', {
+          pendingWrite: pendingWrite ? sanitizePendingTradingWriteForDiagnostics(pendingWrite) : null,
           routeBefore,
           trace: readWalletTransactionFlowTrace(input)
         });
@@ -643,6 +680,94 @@ export default function P2PTradingPage({
       getTradeWalletFlowInput,
       sharedWalletActions,
     ]
+  );
+  const resolvePendingTradingWriteRoutePath = useCallback((): string => {
+    if (route.view === 'trade' && route.tradeId !== null) {
+      const escrow = route.escrowContract ? `?escrow=${route.escrowContract}` : '';
+      return `/trades/open/${route.tradeId}${escrow}`;
+    }
+    if (route.view === 'counter') {
+      return '/trades/open/counter';
+    }
+    if (route.view === 'create') {
+      return '/trades/create';
+    }
+    if (route.view === 'mine') {
+      return '/trades/mine';
+    }
+    return '/trades';
+  }, [route.escrowContract, route.tradeId, route.view]);
+  const isTradingWriteResumeEnabled = useCallback((): boolean => {
+    if (typeof window === 'undefined' || connectedWithBurner) {
+      return false;
+    }
+    return isWalletBootstrapRoute(window.location.pathname);
+  }, [connectedWithBurner]);
+  const buildPendingTradingWriteBase = useCallback(
+    () => ({
+      chainId,
+      routePath: resolvePendingTradingWriteRoutePath(),
+      walletAddress
+    }),
+    [chainId, resolvePendingTradingWriteRoutePath, walletAddress]
+  );
+  const pendingTradingWriteRouteMatches = useCallback(
+    (write: PendingTradingWrite): boolean => {
+      if (write.routePath === '/trades') {
+        return route.view === 'public';
+      }
+      if (write.routePath === '/trades/create') {
+        return route.view === 'create';
+      }
+      if (write.routePath === '/trades/open/counter') {
+        return route.view === 'counter' || route.view === 'create';
+      }
+      if (write.routePath === '/trades/mine') {
+        return route.view === 'mine';
+      }
+      const match = write.routePath.match(/^\/trades\/open\/(\d+)/);
+      if (!match) {
+        return false;
+      }
+      const tradeId = Number.parseInt(match[1], 10);
+      return route.view === 'trade' && route.tradeId === tradeId;
+    },
+    [route.tradeId, route.view]
+  );
+  const runTrackedTradingWrite = useCallback(
+    async <T,>(write: PendingTradingWriteDraft, operation: () => Promise<T>): Promise<T> => {
+      let recordedWrite: PendingTradingWrite | null = null;
+      if (isTradingWriteResumeEnabled() && !resumingPendingTradingWriteRef.current) {
+        recordedWrite = writePendingTradingWrite(write);
+        if (recordedWrite) {
+          logMobileWalletDiagnostic('trading-write-recorded', {
+            write: sanitizePendingTradingWriteForDiagnostics(recordedWrite)
+          });
+        }
+      }
+
+      try {
+        const result = await operation();
+        if (recordedWrite) {
+          logMobileWalletDiagnostic('trading-write-cleared', {
+            reason: 'operation-finished',
+            write: sanitizePendingTradingWriteForDiagnostics(recordedWrite)
+          });
+          clearPendingTradingWrite();
+        }
+        return result;
+      } catch (error) {
+        if (recordedWrite) {
+          logMobileWalletDiagnostic('trading-write-cleared', {
+            reason: 'operation-error',
+            write: sanitizePendingTradingWriteForDiagnostics(recordedWrite)
+          });
+          clearPendingTradingWrite();
+        }
+        throw error;
+      }
+    },
+    [isTradingWriteResumeEnabled]
   );
   const directTradeRecipientNormalized = directTradeRecipient.trim();
   const directTradeRecipientIsValid =
@@ -1459,7 +1584,7 @@ export default function P2PTradingPage({
     unlockBurnerWalletWithPin
   ]);
 
-  const getTradeSigner = useP2PTradeSigner({
+  const resolveTradeSigner = useP2PTradeSigner({
     burnerWalletRef,
     chainId,
     ensureCotiNetwork,
@@ -1472,6 +1597,20 @@ export default function P2PTradingPage({
     sharedGetSigner: sharedWalletActions?.getSigner,
     walletAddress
   });
+  const getTradeSigner = useCallback(
+    async (requireAes: boolean, options?: Parameters<typeof resolveTradeSigner>[1]) => {
+      const flowInput = getTradeWalletFlowInput();
+      if (isWalletTransactionFlowActive(flowInput)) {
+        recordWalletTransactionFlowStage(flowInput, requireAes ? 'trading-signer-requested-aes' : 'trading-signer-requested');
+      }
+      const signer = await resolveTradeSigner(requireAes, options);
+      if (isWalletTransactionFlowActive(flowInput)) {
+        recordWalletTransactionFlowStage(flowInput, 'trading-signer-ready');
+      }
+      return signer;
+    },
+    [getTradeWalletFlowInput, resolveTradeSigner]
+  );
 
   const recoverMakerTradeAccessSecret = useCallback(
     async (snapshot: TradeSnapshot, forceReveal = false): Promise<TradeSnapshot> => {
@@ -2756,7 +2895,7 @@ export default function P2PTradingPage({
     beginEditTrade,
     clearCounterTrade,
     clearEditTrade,
-    createTrade,
+    createTrade: createTradeRaw,
     startFreshTrade
   } = useP2PTradeComposerActions({
     buildTradeShareUrl,
@@ -3093,7 +3232,7 @@ export default function P2PTradingPage({
     }
   }, [counterParentTrade, editingTrade]);
 
-  const createRecurringOrder = useCallback(async () => {
+  const createRecurringOrderRaw = useCallback(async () => {
     const recurringOrderBeingEdited = editingRecurringOrder?.recurringOrder ?? null;
     const baseToken = tradeComposerModel.selectedTradeOfferToken;
     const quoteToken = tradeComposerModel.selectedTradeRequestToken;
@@ -3266,10 +3405,10 @@ export default function P2PTradingPage({
   ]);
 
   const {
-    acceptTrade,
-    cancelTrade,
-    declineTrade,
-    partialFillTrade,
+    acceptTrade: acceptTradeRaw,
+    cancelTrade: cancelTradeRaw,
+    declineTrade: declineTradeRaw,
+    partialFillTrade: partialFillTradeRaw,
     processingTradeActionId
   } = useP2PTradeActions({
     connectedWithBurner,
@@ -3289,7 +3428,7 @@ export default function P2PTradingPage({
     walletAddress
   });
 
-  const fillRecurringOrderSide = useCallback(
+  const fillRecurringOrderSideRaw = useCallback(
     async (snapshot: TradeSnapshot, side: 'buy' | 'sell', amountInputOverride?: string) => {
       const recurring = snapshot.recurringOrder;
       if (!recurring) {
@@ -3381,7 +3520,7 @@ export default function P2PTradingPage({
     ]
   );
 
-  const updateRecurringOrderStatus = useCallback(
+  const updateRecurringOrderStatusRaw = useCallback(
     async (snapshot: TradeSnapshot, action: 'pause' | 'resume' | 'cancel') => {
       const recurring = snapshot.recurringOrder;
       if (!recurring) {
@@ -3429,6 +3568,503 @@ export default function P2PTradingPage({
       walletAddress
     ]
   );
+
+  const createTradeRawRef = useRef(createTradeRaw);
+  const createRecurringOrderRawRef = useRef(createRecurringOrderRaw);
+  const acceptTradeRawRef = useRef(acceptTradeRaw);
+  const partialFillTradeRawRef = useRef(partialFillTradeRaw);
+  const cancelTradeRawRef = useRef(cancelTradeRaw);
+  const declineTradeRawRef = useRef(declineTradeRaw);
+  const fillRecurringOrderSideRawRef = useRef(fillRecurringOrderSideRaw);
+  const updateRecurringOrderStatusRawRef = useRef(updateRecurringOrderStatusRaw);
+
+  useEffect(() => {
+    createTradeRawRef.current = createTradeRaw;
+  }, [createTradeRaw]);
+  useEffect(() => {
+    createRecurringOrderRawRef.current = createRecurringOrderRaw;
+  }, [createRecurringOrderRaw]);
+  useEffect(() => {
+    acceptTradeRawRef.current = acceptTradeRaw;
+  }, [acceptTradeRaw]);
+  useEffect(() => {
+    partialFillTradeRawRef.current = partialFillTradeRaw;
+  }, [partialFillTradeRaw]);
+  useEffect(() => {
+    cancelTradeRawRef.current = cancelTradeRaw;
+  }, [cancelTradeRaw]);
+  useEffect(() => {
+    declineTradeRawRef.current = declineTradeRaw;
+  }, [declineTradeRaw]);
+  useEffect(() => {
+    fillRecurringOrderSideRawRef.current = fillRecurringOrderSideRaw;
+  }, [fillRecurringOrderSideRaw]);
+  useEffect(() => {
+    updateRecurringOrderStatusRawRef.current = updateRecurringOrderStatusRaw;
+  }, [updateRecurringOrderStatusRaw]);
+
+  const createTrade = useCallback(
+    async () =>
+      runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          context: {
+            counterParentEscrowContract: counterParentTrade?.escrowContract,
+            counterParentTradeId: counterParentTrade?.tradeId,
+            editingEscrowContract: editingTrade?.escrowContract,
+            editingTradeId: editingTrade?.tradeId
+          },
+          form: {
+            directTradeRecipient,
+            tradeHasNoExpiry,
+            tradeHidePrivateLiquidity,
+            tradeOfferAmountInput,
+            tradeOfferCustomTokenAddress,
+            tradeOfferTokenSelection,
+            tradePriceInput,
+            tradePricingEditedFields,
+            tradeRequestAmountInput,
+            tradeRequestCustomTokenAddress,
+            tradeRequestTokenSelection,
+            tradeVisibility
+          },
+          kind: 'create-trade'
+        },
+        () => createTradeRaw()
+      ),
+    [
+      buildPendingTradingWriteBase,
+      counterParentTrade?.escrowContract,
+      counterParentTrade?.tradeId,
+      createTradeRaw,
+      directTradeRecipient,
+      editingTrade?.escrowContract,
+      editingTrade?.tradeId,
+      runTrackedTradingWrite,
+      tradeHasNoExpiry,
+      tradeHidePrivateLiquidity,
+      tradeOfferAmountInput,
+      tradeOfferCustomTokenAddress,
+      tradeOfferTokenSelection,
+      tradePriceInput,
+      tradePricingEditedFields,
+      tradeRequestAmountInput,
+      tradeRequestCustomTokenAddress,
+      tradeRequestTokenSelection,
+      tradeVisibility
+    ]
+  );
+
+  const createRecurringOrder = useCallback(
+    async () =>
+      runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          context: {
+            editingEscrowContract: editingRecurringOrder?.escrowContract,
+            editingTradeId: editingRecurringOrder?.tradeId
+          },
+          form: {
+            recurringAddBuyBudgetInput,
+            recurringAddSellInventoryInput,
+            recurringBuyPriceInput,
+            recurringBuyReceiveEditable,
+            recurringBuyReceiveInput,
+            recurringHidePrivateAmounts,
+            recurringRemoveBuyBudgetInput,
+            recurringRemoveSellInventoryInput,
+            recurringSellPriceInput,
+            recurringSellReceiveEditable,
+            recurringSellReceiveInput,
+            tradeOfferCustomTokenAddress,
+            tradeOfferTokenSelection,
+            tradeRequestCustomTokenAddress,
+            tradeRequestTokenSelection
+          },
+          kind: 'create-recurring'
+        },
+        () => createRecurringOrderRaw()
+      ),
+    [
+      buildPendingTradingWriteBase,
+      createRecurringOrderRaw,
+      editingRecurringOrder?.escrowContract,
+      editingRecurringOrder?.tradeId,
+      recurringAddBuyBudgetInput,
+      recurringAddSellInventoryInput,
+      recurringBuyPriceInput,
+      recurringBuyReceiveEditable,
+      recurringBuyReceiveInput,
+      recurringHidePrivateAmounts,
+      recurringRemoveBuyBudgetInput,
+      recurringRemoveSellInventoryInput,
+      recurringSellPriceInput,
+      recurringSellReceiveEditable,
+      recurringSellReceiveInput,
+      runTrackedTradingWrite,
+      tradeOfferCustomTokenAddress,
+      tradeOfferTokenSelection,
+      tradeRequestCustomTokenAddress,
+      tradeRequestTokenSelection
+    ]
+  );
+
+  const acceptTrade = useCallback(
+    async (snapshot: TradeSnapshot, counterAcceptMode?: PendingTradingCounterAcceptMode) =>
+      runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          counterAcceptMode,
+          escrowContract: snapshot.escrowContract,
+          kind: 'accept-trade',
+          tradeId: snapshot.tradeId
+        },
+        () => acceptTradeRaw(snapshot, counterAcceptMode)
+      ),
+    [acceptTradeRaw, buildPendingTradingWriteBase, runTrackedTradingWrite]
+  );
+
+  const partialFillTrade = useCallback(
+    async (snapshot: TradeSnapshot, amountInput: string) =>
+      runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          amountInput,
+          escrowContract: snapshot.escrowContract,
+          kind: 'partial-fill',
+          tradeId: snapshot.tradeId
+        },
+        () => partialFillTradeRaw(snapshot, amountInput)
+      ),
+    [buildPendingTradingWriteBase, partialFillTradeRaw, runTrackedTradingWrite]
+  );
+
+  const cancelTrade = useCallback(
+    async (snapshot: TradeSnapshot) =>
+      runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          escrowContract: snapshot.escrowContract,
+          kind: 'cancel-trade',
+          tradeId: snapshot.tradeId
+        },
+        () => cancelTradeRaw(snapshot)
+      ),
+    [buildPendingTradingWriteBase, cancelTradeRaw, runTrackedTradingWrite]
+  );
+
+  const declineTrade = useCallback(
+    async (snapshot: TradeSnapshot) =>
+      runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          escrowContract: snapshot.escrowContract,
+          kind: 'decline-trade',
+          tradeId: snapshot.tradeId
+        },
+        () => declineTradeRaw(snapshot)
+      ),
+    [buildPendingTradingWriteBase, declineTradeRaw, runTrackedTradingWrite]
+  );
+
+  const fillRecurringOrderSide = useCallback(
+    async (snapshot: TradeSnapshot, side: PendingRecurringFillSide, amountInputOverride?: string) => {
+      const amountInput = amountInputOverride ?? (side === 'buy' ? recurringBuyFillInput : recurringSellFillInput);
+      return runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          amountInput,
+          escrowContract: snapshot.escrowContract,
+          kind: 'fill-recurring-side',
+          side,
+          tradeId: snapshot.tradeId
+        },
+        () => fillRecurringOrderSideRaw(snapshot, side, amountInput)
+      );
+    },
+    [
+      buildPendingTradingWriteBase,
+      fillRecurringOrderSideRaw,
+      recurringBuyFillInput,
+      recurringSellFillInput,
+      runTrackedTradingWrite
+    ]
+  );
+
+  const updateRecurringOrderStatus = useCallback(
+    async (snapshot: TradeSnapshot, action: PendingRecurringStatusAction) =>
+      runTrackedTradingWrite(
+        {
+          ...buildPendingTradingWriteBase(),
+          action,
+          escrowContract: snapshot.escrowContract,
+          kind: 'update-recurring-status',
+          tradeId: snapshot.tradeId
+        },
+        () => updateRecurringOrderStatusRaw(snapshot, action)
+      ),
+    [buildPendingTradingWriteBase, runTrackedTradingWrite, updateRecurringOrderStatusRaw]
+  );
+
+  const waitForPendingTradingWriteHydration = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        globalThis.setTimeout(resolve, 0);
+      }),
+    []
+  );
+
+  const restorePendingCreateTradeForm = useCallback(
+    async (write: PendingCreateTradingWrite): Promise<boolean> => {
+      let counterParent: TradeSnapshot | null = null;
+      let editingSnapshot: TradeSnapshot | null = null;
+      if (write.context.counterParentTradeId) {
+        counterParent = await readTradeDetail(
+          write.context.counterParentTradeId,
+          write.context.counterParentEscrowContract
+        );
+        if (!counterParent || counterParent.status !== 'open') {
+          return false;
+        }
+      }
+      if (write.context.editingTradeId) {
+        editingSnapshot = await readTradeDetail(write.context.editingTradeId, write.context.editingEscrowContract);
+        if (!editingSnapshot || editingSnapshot.status !== 'open') {
+          return false;
+        }
+      }
+
+      const form = write.form;
+      setTradeCreateMode('one-off');
+      setEditingRecurringOrder(null);
+      setCounterParentTrade(counterParent);
+      setEditingTrade(editingSnapshot);
+      setTradeVisibility(form.tradeVisibility === 'direct' || form.tradeVisibility === 'unlisted' ? form.tradeVisibility : 'public');
+      setDirectTradeRecipient(form.directTradeRecipient);
+      setTradeOfferTokenSelection(form.tradeOfferTokenSelection as TradeTokenPresetKey);
+      setTradeRequestTokenSelection(form.tradeRequestTokenSelection as TradeTokenPresetKey);
+      setTradeOfferCustomTokenAddress(form.tradeOfferCustomTokenAddress);
+      setTradeRequestCustomTokenAddress(form.tradeRequestCustomTokenAddress);
+      setTradeOfferAmountInput(form.tradeOfferAmountInput);
+      setTradeRequestAmountInput(form.tradeRequestAmountInput);
+      setTradePriceInput(form.tradePriceInput);
+      setTradePricingEditedFields(
+        form.tradePricingEditedFields.filter((field): field is TradePricingField =>
+          field === 'baseAmount' || field === 'quoteAmount' || field === 'price'
+        )
+      );
+      setTradeHasNoExpiry(form.tradeHasNoExpiry);
+      setTradeHidePrivateLiquidity(form.tradeHidePrivateLiquidity);
+      navigateToTradePath(write.context.counterParentTradeId ? '/trades/open/counter' : '/trades/create', {
+        clearPendingTerminalRoute: false,
+        replace: true
+      });
+      await waitForPendingTradingWriteHydration();
+      return true;
+    },
+    [navigateToTradePath, readTradeDetail, waitForPendingTradingWriteHydration]
+  );
+
+  const restorePendingRecurringCreateForm = useCallback(
+    async (write: PendingCreateRecurringTradingWrite): Promise<boolean> => {
+      let editingSnapshot: TradeSnapshot | null = null;
+      if (write.context.editingTradeId) {
+        editingSnapshot = await readTradeDetail(write.context.editingTradeId, write.context.editingEscrowContract);
+        if (!editingSnapshot || !editingSnapshot.recurringOrder || editingSnapshot.status !== 'open') {
+          return false;
+        }
+      }
+
+      const form = write.form;
+      clearEditTrade();
+      clearCounterTrade();
+      setTradeCreateMode('recurring');
+      setEditingRecurringOrder(editingSnapshot);
+      setTradeOfferTokenSelection(form.tradeOfferTokenSelection as TradeTokenPresetKey);
+      setTradeRequestTokenSelection(form.tradeRequestTokenSelection as TradeTokenPresetKey);
+      setTradeOfferCustomTokenAddress(form.tradeOfferCustomTokenAddress);
+      setTradeRequestCustomTokenAddress(form.tradeRequestCustomTokenAddress);
+      setRecurringHidePrivateAmounts(form.recurringHidePrivateAmounts);
+      setRecurringBuyPriceInput(form.recurringBuyPriceInput);
+      setRecurringSellPriceInput(form.recurringSellPriceInput);
+      setRecurringAddBuyBudgetInput(form.recurringAddBuyBudgetInput);
+      setRecurringAddSellInventoryInput(form.recurringAddSellInventoryInput);
+      setRecurringBuyReceiveInput(form.recurringBuyReceiveInput);
+      setRecurringSellReceiveInput(form.recurringSellReceiveInput);
+      setRecurringBuyReceiveEditable(form.recurringBuyReceiveEditable);
+      setRecurringSellReceiveEditable(form.recurringSellReceiveEditable);
+      setRecurringRemoveBuyBudgetInput(form.recurringRemoveBuyBudgetInput);
+      setRecurringRemoveSellInventoryInput(form.recurringRemoveSellInventoryInput);
+      navigateToTradePath('/trades/create', { clearPendingTerminalRoute: false, replace: true });
+      await waitForPendingTradingWriteHydration();
+      return true;
+    },
+    [
+      clearCounterTrade,
+      clearEditTrade,
+      navigateToTradePath,
+      readTradeDetail,
+      waitForPendingTradingWriteHydration
+    ]
+  );
+
+  const resumePendingTradingWrite = useCallback(
+    async (write: PendingTradingWrite): Promise<boolean> => {
+      if (!pendingTradingWriteRouteMatches(write)) {
+        return false;
+      }
+
+      resumingPendingTradingWriteRef.current = true;
+      try {
+        if (write.kind === 'create-trade') {
+          const restored = await restorePendingCreateTradeForm(write);
+          if (!restored) {
+            return false;
+          }
+          await createTradeRawRef.current();
+          return true;
+        }
+
+        if (write.kind === 'create-recurring') {
+          const restored = await restorePendingRecurringCreateForm(write);
+          if (!restored) {
+            return false;
+          }
+          await createRecurringOrderRawRef.current();
+          return true;
+        }
+
+        const snapshot = await readTradeDetail(write.tradeId, write.escrowContract);
+        if (!snapshot || snapshot.status !== 'open') {
+          return false;
+        }
+
+        if (write.kind === 'accept-trade') {
+          await acceptTradeRawRef.current(snapshot, write.counterAcceptMode);
+          return true;
+        }
+        if (write.kind === 'partial-fill') {
+          await partialFillTradeRawRef.current(snapshot, write.amountInput);
+          return true;
+        }
+        if (write.kind === 'cancel-trade') {
+          await cancelTradeRawRef.current(snapshot);
+          return true;
+        }
+        if (write.kind === 'decline-trade') {
+          await declineTradeRawRef.current(snapshot);
+          return true;
+        }
+        if (write.kind === 'fill-recurring-side') {
+          if (!snapshot.recurringOrder || snapshot.recurringOrder.recurringStatus === 'cancelled') {
+            return false;
+          }
+          await fillRecurringOrderSideRawRef.current(snapshot, write.side, write.amountInput);
+          return true;
+        }
+        if (write.kind === 'update-recurring-status') {
+          if (!snapshot.recurringOrder) {
+            return false;
+          }
+          await updateRecurringOrderStatusRawRef.current(snapshot, write.action);
+          return true;
+        }
+        return false;
+      } finally {
+        resumingPendingTradingWriteRef.current = false;
+      }
+    },
+    [
+      pendingTradingWriteRouteMatches,
+      readTradeDetail,
+      restorePendingCreateTradeForm,
+      restorePendingRecurringCreateForm
+    ]
+  );
+
+  useEffect(() => {
+    if (!isTradingWriteResumeEnabled() || pendingTradingWriteResumeInFlightRef.current) {
+      return;
+    }
+
+    const pendingWrite = readPendingTradingWrite();
+    if (!pendingWrite) {
+      return;
+    }
+    if (!walletAddress) {
+      return;
+    }
+    if (pendingWrite.chainId !== null && chainId === null) {
+      return;
+    }
+    if (!pendingTradingWriteMatchesWallet(pendingWrite, walletAddress, chainId)) {
+      clearPendingTradingWrite();
+      logMobileWalletDiagnostic('trading-write-cleared', {
+        reason: 'wallet-or-chain-mismatch',
+        write: sanitizePendingTradingWriteForDiagnostics(pendingWrite)
+      });
+      return;
+    }
+    if (!pendingTradingWriteRouteMatches(pendingWrite)) {
+      clearPendingTradingWrite();
+      logMobileWalletDiagnostic('trading-write-cleared', {
+        reason: 'route-mismatch',
+        write: sanitizePendingTradingWriteForDiagnostics(pendingWrite)
+      });
+      return;
+    }
+    if (!pendingTradingWriteCanResumeAgain(pendingWrite)) {
+      clearPendingTradingWrite();
+      logMobileWalletDiagnostic('trading-write-cleared', {
+        reason: 'resume-limit',
+        write: sanitizePendingTradingWriteForDiagnostics(pendingWrite)
+      });
+      setTradeActionError((previous) => previous || 'Wallet prompt was interrupted. Try the action again.');
+      return;
+    }
+
+    const resumingWrite = markPendingTradingWriteResuming();
+    if (!resumingWrite) {
+      return;
+    }
+    pendingTradingWriteResumeInFlightRef.current = true;
+    const flowInput = getTradeWalletFlowInput();
+    recordWalletTransactionFlowStage(flowInput, `pre-sign-reload-detected:${resumingWrite.kind}`);
+    recordWalletTransactionFlowStage(flowInput, `trading-write-resuming:${resumingWrite.kind}`);
+    logMobileWalletDiagnostic('pre-sign-reload-detected', {
+      write: sanitizePendingTradingWriteForDiagnostics(resumingWrite)
+    });
+    logMobileWalletDiagnostic('trading-write-resumed', {
+      write: sanitizePendingTradingWriteForDiagnostics(resumingWrite)
+    });
+
+    resumePendingTradingWrite(resumingWrite)
+      .then((resumed) => {
+        clearPendingTradingWrite();
+        logMobileWalletDiagnostic('trading-write-cleared', {
+          reason: resumed ? 'resume-finished' : 'resume-skipped',
+          write: sanitizePendingTradingWriteForDiagnostics(resumingWrite)
+        });
+      })
+      .catch((error) => {
+        clearPendingTradingWrite();
+        setTradeActionError(getProviderErrorMessage(error, 'Wallet prompt was interrupted. Try the action again.'));
+        logMobileWalletDiagnostic('trading-write-cleared', {
+          reason: 'resume-error',
+          write: sanitizePendingTradingWriteForDiagnostics(resumingWrite)
+        });
+      })
+      .finally(() => {
+        pendingTradingWriteResumeInFlightRef.current = false;
+      });
+  }, [
+    chainId,
+    getTradeWalletFlowInput,
+    isTradingWriteResumeEnabled,
+    pendingTradingWriteRouteMatches,
+    resumePendingTradingWrite,
+    walletAddress
+  ]);
 
   const formatRecurringTokenAmount = (asset: TradeAssetPayload, amount: string, hidden = false): string => {
     if (hidden) {
