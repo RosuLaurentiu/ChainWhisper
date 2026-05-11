@@ -1,7 +1,9 @@
 import type { Hex, MetamaskConnectEVM } from '@metamask/connect-evm';
 import {
   COTI_NETWORK,
+  getInjectedWalletOptions,
   normalizeChainId,
+  rememberInjectedWalletProvider,
   type Eip1193Provider,
   type InjectedWalletOption
 } from './appShared';
@@ -20,8 +22,17 @@ export type MetaMaskConnectMobileSession = {
   address: string;
   chainId: number | null;
   provider: Eip1193Provider;
+  source: 'connect-evm';
   walletId: typeof METAMASK_CONNECT_MOBILE_WALLET_ID;
   walletLabel: typeof METAMASK_CONNECT_MOBILE_WALLET_LABEL;
+};
+
+export type MetaMaskMobileProviderSource = 'connect-evm' | 'injected-metamask' | 'promoted-to-injected';
+
+type Eip6963ProviderInfo = {
+  name?: string;
+  rdns?: string;
+  uuid?: string;
 };
 
 type MetaMaskConnectProvider = Eip1193Provider & {
@@ -82,6 +93,109 @@ const isMetaMaskWalletIdentity = (
 };
 
 const normalizeAccounts = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+
+const META_MASK_MOBILE_REQUEST_METHODS = new Set([
+  'eth_accounts',
+  'eth_requestAccounts',
+  'personal_sign',
+  'eth_sendTransaction',
+  'wallet_switchEthereumChain'
+]);
+
+export const logMetaMaskMobileProviderSelection = (
+  source: MetaMaskMobileProviderSource,
+  detail: Record<string, unknown> = {}
+): void => {
+  logMobileWalletDiagnostic('metamask-mobile-provider-selected', {
+    source,
+    ...detail
+  });
+};
+
+export const logMetaMaskMobileRequestMethod = (
+  method: string,
+  source: MetaMaskMobileProviderSource,
+  detail: Record<string, unknown> = {}
+): void => {
+  if (!META_MASK_MOBILE_REQUEST_METHODS.has(method)) {
+    return;
+  }
+
+  logMobileWalletDiagnostic('metamask-mobile-provider-request', {
+    method,
+    source,
+    ...detail
+  });
+};
+
+export const resolveMetaMaskMobileInjectedWalletOption = (
+  options?: readonly InjectedWalletOption[] | null
+): InjectedWalletOption | null => {
+  const candidates = options && options.length > 0 ? [...options] : getInjectedWalletOptions();
+  return candidates.find(isPreferredMetaMaskWalletOption) ?? null;
+};
+
+export const waitForMetaMaskMobileInjectedWalletOption = async ({
+  initialOptions,
+  pollMs = 75,
+  timeoutMs = 900
+}: {
+  initialOptions?: readonly InjectedWalletOption[] | null;
+  pollMs?: number;
+  timeoutMs?: number;
+} = {}): Promise<InjectedWalletOption | null> => {
+  const immediate = resolveMetaMaskMobileInjectedWalletOption(initialOptions);
+  if (immediate || typeof window === 'undefined') {
+    return immediate;
+  }
+
+  return new Promise((resolve) => {
+    let completed = false;
+    let pollTimer: number | null = null;
+    let timeoutTimer: number | null = null;
+
+    const cleanup = () => {
+      window.removeEventListener('ethereum#initialized', check);
+      window.removeEventListener('eip6963:announceProvider', handleProviderAnnouncement);
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+      }
+      if (timeoutTimer !== null) {
+        window.clearTimeout(timeoutTimer);
+      }
+    };
+
+    const finish = (option: InjectedWalletOption | null) => {
+      if (completed) {
+        return;
+      }
+      completed = true;
+      cleanup();
+      resolve(option);
+    };
+
+    function check() {
+      const option = resolveMetaMaskMobileInjectedWalletOption();
+      if (option) {
+        finish(option);
+        return;
+      }
+      pollTimer = window.setTimeout(check, pollMs);
+    }
+
+    function handleProviderAnnouncement(event: Event) {
+      const detail = (event as CustomEvent<{ provider?: Eip1193Provider; info?: Eip6963ProviderInfo }>).detail;
+      rememberInjectedWalletProvider(detail?.provider, detail?.info);
+      check();
+    }
+
+    window.addEventListener('ethereum#initialized', check);
+    window.addEventListener('eip6963:announceProvider', handleProviderAnnouncement);
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    timeoutTimer = window.setTimeout(() => finish(resolveMetaMaskMobileInjectedWalletOption()), timeoutMs);
+    check();
+  });
+};
 
 const getProviderChainId = async (
   client: MetamaskConnectEVM,
@@ -162,6 +276,12 @@ export const shouldUseMetaMaskConnectMobile = ({
   const selectedProvider = provider ?? walletOption?.provider ?? null;
   const selectedWalletId = walletId ?? walletOption?.id ?? '';
   const selectedWalletLabel = walletLabel ?? walletOption?.label ?? '';
+  if (resolveMetaMaskMobileInjectedWalletOption(walletOption ? [walletOption] : undefined)) {
+    return false;
+  }
+  if (!walletOption && resolveMetaMaskMobileInjectedWalletOption()) {
+    return false;
+  }
   const walletIsMetaMask = walletOption
     ? isPreferredMetaMaskWalletOption(walletOption)
     : !selectedWalletId && !selectedWalletLabel && !selectedProvider
@@ -276,6 +396,7 @@ export const readMetaMaskConnectMobileSession = async (): Promise<MetaMaskConnec
     address,
     chainId,
     provider,
+    source: 'connect-evm',
     walletId: METAMASK_CONNECT_MOBILE_WALLET_ID,
     walletLabel: METAMASK_CONNECT_MOBILE_WALLET_LABEL
   };
@@ -309,6 +430,7 @@ export const connectMetaMaskMobile = async (
     address,
     chainId: normalizeChainId(result.chainId),
     provider,
+    source: 'connect-evm',
     walletId: METAMASK_CONNECT_MOBILE_WALLET_ID,
     walletLabel: METAMASK_CONNECT_MOBILE_WALLET_LABEL
   };

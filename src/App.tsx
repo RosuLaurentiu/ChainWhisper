@@ -816,6 +816,7 @@ export default function App() {
     getConnectedProvider,
     injectedWalletOptions,
     preferredInjectedWalletOption,
+    resolveWalletPromptProvider,
     sessionOnboardInfo,
     setActiveSignerSource,
     setChainId,
@@ -7247,7 +7248,7 @@ export default function App() {
   const getSharedWalletSigner = useCallback<WalletSessionActions['getSigner']>(
     async (requireAes, options = {}) => {
       if (activeSignerSource === 'metamask') {
-        const provider = getConnectedProvider();
+        const provider = await resolveWalletPromptProvider(getConnectedProvider(), walletAddress);
         if (!provider) {
           throw new Error('Wallet provider not detected. Connect without burner first.');
         }
@@ -7341,6 +7342,7 @@ export default function App() {
       chainId,
       ensureCotiNetwork,
       getConnectedProvider,
+      resolveWalletPromptProvider,
       sessionOnboardInfo,
       setChainId,
       setOnboardStatus,

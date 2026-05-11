@@ -23,9 +23,11 @@ import {
   getMetaMaskConnectMobileClient,
   METAMASK_CONNECT_MOBILE_WALLET_ID,
   readMetaMaskConnectMobileSession,
+  resolveMetaMaskMobileInjectedWalletOption,
   resetMetaMaskConnectMobileForTests,
   shouldUseMetaMaskConnectMobile,
-  switchMetaMaskConnectMobileToCoti
+  switchMetaMaskConnectMobileToCoti,
+  waitForMetaMaskMobileInjectedWalletOption
 } from './metamaskConnectMobile';
 
 const createMemoryStorage = (): Storage => {
@@ -60,15 +62,21 @@ const createMockClient = (provider: Eip1193Provider) => ({
 describe('metamaskConnectMobile', () => {
   beforeEach(() => {
     resetMetaMaskConnectMobileForTests();
+    const eventTarget = new EventTarget();
     vi.stubGlobal('navigator', {
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile'
     });
     vi.stubGlobal('window', {
+      addEventListener: eventTarget.addEventListener.bind(eventTarget),
+      clearTimeout,
+      dispatchEvent: eventTarget.dispatchEvent.bind(eventTarget),
       localStorage: createMemoryStorage(),
       location: {
         origin: 'https://chainwhisper.example',
         pathname: '/wallet-connect'
       },
+      removeEventListener: eventTarget.removeEventListener.bind(eventTarget),
+      setTimeout,
       sessionStorage: createMemoryStorage()
     });
     mocks.createEVMClient.mockReset();
@@ -187,7 +195,7 @@ describe('metamaskConnectMobile', () => {
     });
   });
 
-  it('only selects Connect EVM for mobile MetaMask bootstrap contexts', () => {
+  it('does not select Connect EVM when injected MetaMask is available', () => {
     const metamaskOption = {
       id: 'metamask',
       label: 'MetaMask',
@@ -196,6 +204,13 @@ describe('metamaskConnectMobile', () => {
         request: vi.fn()
       } as unknown as Eip1193Provider
     } satisfies InjectedWalletOption;
+
+    expect(resolveMetaMaskMobileInjectedWalletOption([metamaskOption])).toBe(metamaskOption);
+    expect(shouldUseMetaMaskConnectMobile({ walletOption: metamaskOption })).toBe(false);
+    expect(shouldUseMetaMaskConnectMobile({ walletOption: metamaskOption, userAgent: 'Mozilla Desktop' })).toBe(false);
+  });
+
+  it('selects Connect EVM only for mobile MetaMask bootstrap when no injected provider exists', () => {
     const cipherOption = {
       id: 'ciphertrade',
       label: 'CipherTrade',
@@ -204,9 +219,35 @@ describe('metamaskConnectMobile', () => {
       } as unknown as Eip1193Provider
     } satisfies InjectedWalletOption;
 
-    expect(shouldUseMetaMaskConnectMobile({ walletOption: metamaskOption })).toBe(true);
+    expect(shouldUseMetaMaskConnectMobile({ walletId: 'metamask' })).toBe(true);
     expect(shouldUseMetaMaskConnectMobile({ walletOption: cipherOption })).toBe(false);
-    expect(shouldUseMetaMaskConnectMobile({ walletOption: metamaskOption, userAgent: 'Mozilla Desktop' })).toBe(false);
+  });
+
+  it('waits for an injected MetaMask provider before falling back to Connect EVM', async () => {
+    const provider = {
+      isMetaMask: true,
+      request: vi.fn()
+    } as unknown as Eip1193Provider;
+    const waitPromise = waitForMetaMaskMobileInjectedWalletOption({ pollMs: 10, timeoutMs: 200 });
+    const event = new Event('eip6963:announceProvider') as CustomEvent;
+    Object.defineProperty(event, 'detail', {
+      value: {
+        info: {
+          name: 'MetaMask',
+          rdns: 'io.metamask'
+        },
+        provider
+      }
+    });
+
+    window.dispatchEvent(event);
+
+    await expect(waitPromise).resolves.toMatchObject({
+      id: 'metamask',
+      label: 'MetaMask',
+      provider
+    });
+    expect(mocks.createEVMClient).not.toHaveBeenCalled();
   });
 
   it('exposes the COTI hex chain in generated options', () => {

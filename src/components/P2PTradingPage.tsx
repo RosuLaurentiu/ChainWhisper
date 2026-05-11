@@ -101,8 +101,12 @@ import {
 } from '../lib/walletOptions';
 import {
   connectMetaMaskMobile,
+  logMetaMaskMobileProviderSelection,
+  logMetaMaskMobileRequestMethod,
   METAMASK_CONNECT_MOBILE_WALLET_ID,
   METAMASK_CONNECT_MOBILE_WALLET_LABEL,
+  resolveMetaMaskMobileInjectedWalletOption,
+  waitForMetaMaskMobileInjectedWalletOption,
   shouldUseMetaMaskConnectMobile
 } from '../lib/metamaskConnectMobile';
 import { ensureProviderOnCotiNetwork } from '../lib/walletNetwork';
@@ -1118,9 +1122,18 @@ export default function P2PTradingPage({
 
   const connectWallet = useCallback(
     async (walletId?: string, forceAccountPicker = false) => {
-      const walletOption =
+      let walletOption =
         (walletId ? browserWalletOptions.find((option) => option.id === walletId) ?? null : preferredWalletOption) ??
         preferredWalletOption;
+      if (!walletOption && shouldUseMetaMaskConnectMobile({ walletId, walletOption })) {
+        walletOption = await waitForMetaMaskMobileInjectedWalletOption();
+      }
+      const injectedMetaMaskOption = walletOption
+        ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
+        : resolveMetaMaskMobileInjectedWalletOption();
+      if (injectedMetaMaskOption && (!walletId || walletId === 'metamask' || walletId === METAMASK_CONNECT_MOBILE_WALLET_ID)) {
+        walletOption = injectedMetaMaskOption;
+      }
       const useMetaMaskConnectMobile = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
       const provider = walletOption?.provider ?? null;
       const walletLabel = useMetaMaskConnectMobile
@@ -1171,13 +1184,24 @@ export default function P2PTradingPage({
         if (!activeWalletProvider) {
           throw new Error('Wallet provider is not available.');
         }
-        if (!mobileSession && forceAccountPicker) {
+        const usingInjectedMetaMaskMobile = Boolean(
+          !mobileSession && walletOption && resolveMetaMaskMobileInjectedWalletOption([walletOption])
+        );
+        if (!mobileSession && forceAccountPicker && !usingInjectedMetaMaskMobile) {
           await activeWalletProvider
             .request({
               method: 'wallet_requestPermissions',
               params: [{ eth_accounts: {} }]
             })
             .catch(() => null);
+        }
+        if (usingInjectedMetaMaskMobile && walletOption) {
+          logMetaMaskMobileProviderSelection('injected-metamask', {
+            walletId: walletOption.id
+          });
+          logMetaMaskMobileRequestMethod('eth_requestAccounts', 'injected-metamask', {
+            walletId: walletOption.id
+          });
         }
         const accounts = mobileSession
           ? [mobileSession.address]
