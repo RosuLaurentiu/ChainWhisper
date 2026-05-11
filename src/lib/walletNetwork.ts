@@ -5,6 +5,7 @@ import {
 } from './appShared';
 import {
   isMetaMaskConnectMobileProvider,
+  logMetaMaskMobileRequestMethod,
   switchMetaMaskConnectMobileToCoti
 } from './metamaskConnectMobile';
 
@@ -17,6 +18,8 @@ export const ensureProviderOnCotiNetwork = async (provider: Eip1193Provider): Pr
   if (!provider) {
     throw new Error('Wallet provider is not available.');
   }
+  const providerFlags = provider as Eip1193Provider & { isBraveWallet?: boolean; isMetaMask?: boolean };
+  const injectedMetaMaskSource = providerFlags.isMetaMask && !providerFlags.isBraveWallet ? 'injected-metamask' : null;
 
   try {
     const currentChainId = await getProviderChainId(provider);
@@ -33,6 +36,9 @@ export const ensureProviderOnCotiNetwork = async (provider: Eip1193Provider): Pr
   }
 
   try {
+    if (injectedMetaMaskSource) {
+      logMetaMaskMobileRequestMethod('wallet_switchEthereumChain', injectedMetaMaskSource);
+    }
     await provider.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: COTI_NETWORK.chainIdHex }]
@@ -41,6 +47,9 @@ export const ensureProviderOnCotiNetwork = async (provider: Eip1193Provider): Pr
     const errorWithCode = switchError as { code?: number; message?: string };
 
     if (errorWithCode.code === 4902) {
+      if (injectedMetaMaskSource) {
+        logMetaMaskMobileRequestMethod('wallet_addEthereumChain', injectedMetaMaskSource);
+      }
       await provider.request({
         method: 'wallet_addEthereumChain',
         params: [
@@ -53,6 +62,9 @@ export const ensureProviderOnCotiNetwork = async (provider: Eip1193Provider): Pr
           }
         ]
       });
+      if (injectedMetaMaskSource) {
+        logMetaMaskMobileRequestMethod('wallet_switchEthereumChain', injectedMetaMaskSource);
+      }
       await provider.request({
         method: 'wallet_switchEthereumChain',
         params: [{ chainId: COTI_NETWORK.chainIdHex }]

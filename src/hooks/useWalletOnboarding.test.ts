@@ -2,7 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InjectedWalletOption } from '../lib/appShared';
 import { COTI_NETWORK } from '../lib/appShared';
 import { storeFallbackAesSessionOnboardInfo } from '../lib/cotiAesUnlock';
+import { METAMASK_CONNECT_MOBILE_WALLET_ID, resetMetaMaskConnectMobileForTests } from '../lib/metamaskConnectMobile';
 import { readPassiveBrowserWalletRestore } from './useWalletOnboarding';
+
+const mocks = vi.hoisted(() => ({
+  createEVMClient: vi.fn(),
+  clientGetAccount: vi.fn(),
+  clientGetChainId: vi.fn(),
+  clientGetProvider: vi.fn(),
+  providerOn: vi.fn(),
+  providerRequest: vi.fn()
+}));
+
+vi.mock('@metamask/connect-evm', () => ({
+  createEVMClient: mocks.createEVMClient
+}));
 
 const createMemoryStorage = (): Storage => {
   const values = new Map<string, string>();
@@ -48,18 +62,32 @@ const createWalletOption = (accounts: string[] = [], chainId = COTI_NETWORK.chai
 describe('readPassiveBrowserWalletRestore', () => {
   beforeEach(() => {
     const storage = createMemoryStorage();
+    resetMetaMaskConnectMobileForTests();
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 Desktop'
+    });
     vi.stubGlobal('window', {
+      clearTimeout,
       localStorage: createMemoryStorage(),
       location: {
+        origin: 'https://chainwhisper.example',
         hash: '',
         pathname: '/trades',
         search: ''
       },
+      setTimeout,
       sessionStorage: storage
     });
+    mocks.createEVMClient.mockReset();
+    mocks.clientGetAccount.mockReset();
+    mocks.clientGetChainId.mockReset();
+    mocks.clientGetProvider.mockReset();
+    mocks.providerOn.mockReset();
+    mocks.providerRequest.mockReset();
   });
 
   afterEach(() => {
+    resetMetaMaskConnectMobileForTests();
     vi.unstubAllGlobals();
   });
 
@@ -96,5 +124,47 @@ describe('readPassiveBrowserWalletRestore', () => {
     expect(restore?.onboardInfo).toMatchObject({
       aesKey: 'session-aes'
     });
+  });
+
+  it('prefers a MetaMask Connect Mobile session on wallet bootstrap even when injected MetaMask exists', async () => {
+    const walletAddress = '0x0000000000000000000000000000000000000003';
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile'
+    });
+    window.location.pathname = '/wallet-connect';
+    const { methods, option } = createWalletOption([walletAddress]);
+    const connectProvider = {
+      on: mocks.providerOn,
+      request: mocks.providerRequest.mockImplementation(async ({ method }: { method: string }) => {
+        if (method === 'eth_accounts') {
+          return [walletAddress];
+        }
+        if (method === 'eth_chainId') {
+          return COTI_NETWORK.chainIdHex;
+        }
+        throw new Error(`Unexpected Connect EVM method: ${method}`);
+      })
+    };
+    mocks.clientGetAccount.mockReturnValue(walletAddress);
+    mocks.clientGetChainId.mockReturnValue(COTI_NETWORK.chainIdHex);
+    mocks.clientGetProvider.mockReturnValue(connectProvider);
+    mocks.createEVMClient.mockResolvedValue({
+      accounts: [],
+      getAccount: mocks.clientGetAccount,
+      getChainId: mocks.clientGetChainId,
+      getProvider: mocks.clientGetProvider,
+      status: 'connected'
+    });
+
+    const restore = await readPassiveBrowserWalletRestore(option);
+
+    expect(restore).toMatchObject({
+      address: walletAddress,
+      source: 'metamask-connect-mobile',
+      walletId: METAMASK_CONNECT_MOBILE_WALLET_ID
+    });
+    expect(mocks.createEVMClient).toHaveBeenCalledTimes(1);
+    expect(mocks.providerRequest).toHaveBeenCalledWith({ method: 'eth_accounts' });
+    expect(methods).toEqual([]);
   });
 });

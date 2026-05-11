@@ -106,7 +106,6 @@ import {
   METAMASK_CONNECT_MOBILE_WALLET_ID,
   METAMASK_CONNECT_MOBILE_WALLET_LABEL,
   resolveMetaMaskMobileInjectedWalletOption,
-  waitForMetaMaskMobileInjectedWalletOption,
   shouldUseMetaMaskConnectMobile
 } from '../lib/metamaskConnectMobile';
 import { ensureProviderOnCotiNetwork } from '../lib/walletNetwork';
@@ -645,6 +644,10 @@ export default function P2PTradingPage({
           routeBefore,
           trace: readWalletTransactionFlowTrace(flowInput)
         });
+        logMobileWalletDiagnostic('write-finished', {
+          routeAfter: getCurrentRouteForDiagnostics(),
+          routeBefore
+        });
         globalThis.setTimeout(() => {
           flushQueuedTradeDataRefreshRef.current();
         }, 0);
@@ -1103,6 +1106,9 @@ export default function P2PTradingPage({
   const attachWallet = useCallback(
     async (provider: Eip1193Provider, address: string, walletLabel: string, walletId?: string) => {
       skippedSharedWalletKeyRef.current = '';
+      if (providerRef.current !== provider) {
+        signerCacheRef.current = {};
+      }
       providerRef.current = provider;
       setWalletAddress(address);
       setConnectedWalletLabel(walletLabel);
@@ -1122,19 +1128,21 @@ export default function P2PTradingPage({
 
   const connectWallet = useCallback(
     async (walletId?: string, forceAccountPicker = false) => {
-      let walletOption =
-        (walletId ? browserWalletOptions.find((option) => option.id === walletId) ?? null : preferredWalletOption) ??
-        preferredWalletOption;
-      if (!walletOption && shouldUseMetaMaskConnectMobile({ walletId, walletOption })) {
-        walletOption = await waitForMetaMaskMobileInjectedWalletOption();
-      }
-      const injectedMetaMaskOption = walletOption
-        ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
-        : resolveMetaMaskMobileInjectedWalletOption();
-      if (injectedMetaMaskOption && (!walletId || walletId === 'metamask' || walletId === METAMASK_CONNECT_MOBILE_WALLET_ID)) {
-        walletOption = injectedMetaMaskOption;
+      let walletOption = walletId
+        ? browserWalletOptions.find((option) => option.id === walletId) ?? null
+        : preferredWalletOption;
+      if (!walletOption && walletId !== 'metamask' && walletId !== METAMASK_CONNECT_MOBILE_WALLET_ID) {
+        walletOption = preferredWalletOption;
       }
       const useMetaMaskConnectMobile = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
+      if (!useMetaMaskConnectMobile) {
+        const injectedMetaMaskOption = walletOption
+          ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
+          : resolveMetaMaskMobileInjectedWalletOption();
+        if (injectedMetaMaskOption && (!walletId || walletId === 'metamask' || walletId === METAMASK_CONNECT_MOBILE_WALLET_ID)) {
+          walletOption = injectedMetaMaskOption;
+        }
+      }
       const provider = walletOption?.provider ?? null;
       const walletLabel = useMetaMaskConnectMobile
         ? METAMASK_CONNECT_MOBILE_WALLET_LABEL
@@ -2530,6 +2538,9 @@ export default function P2PTradingPage({
 
     setWalletError('');
     setConnectingWalletId('aes');
+    logMobileWalletDiagnostic('privacy-unlock-start', {
+      source: activeBrowserProvider ? 'browser-wallet' : 'app-wallet'
+    });
     try {
       if (activeBrowserProvider) {
         clearCotiAesUnlockRequest(walletAddress, activeBrowserProvider);
@@ -2754,6 +2765,9 @@ export default function P2PTradingPage({
 
     setWalletError('');
     setConnectingWalletId('aes');
+    logMobileWalletDiagnostic('privacy-unlock-start', {
+      source: 'shared-wallet-session'
+    });
     try {
       await Promise.resolve(sharedWalletActions.unlockPrivacy({ forceFreshPrivacy }));
       globalThis.setTimeout(() => {

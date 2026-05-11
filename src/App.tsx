@@ -7377,10 +7377,11 @@ export default function App() {
       switchAppWallet: (walletIdOrAddress: string) => Promise.resolve(handleSwitchActiveBurnerWallet(walletIdOrAddress)),
       unlockPrivacy: (options = {}) => {
         if (activeSignerSource === 'metamask') {
-          return activateBrowserWalletSessionGuarded(currentInjectedWalletOption?.id ?? preferredBrowserWalletId, {
-            forceFreshPrivacy: options.forceFreshPrivacy,
-            preparePrivacy: true
-          });
+          return runSharedWalletTransactionFlow(() =>
+            getSharedWalletSigner(true, {
+              refreshAes: options.forceFreshPrivacy
+            })
+          );
         }
         return beginBurnerPinFlow('stored');
       }
@@ -7389,11 +7390,9 @@ export default function App() {
       activateBrowserWalletSessionGuarded,
       activeSignerSource,
       beginBurnerPinFlow,
-      currentInjectedWalletOption?.id,
       disconnectWallet,
       getSharedWalletSigner,
       handleSwitchActiveBurnerWallet,
-      preferredBrowserWalletId,
       runSharedWalletTransactionFlow,
       setShowBurnerImportModal
     ]
@@ -7403,7 +7402,10 @@ export default function App() {
       actions: sharedWalletActions,
       activeSignerSource,
       browserProvider: activeProvider ?? browserWalletSession?.provider ?? null,
-      browserWalletId: currentInjectedWalletOption?.id ?? browserWalletSession?.walletId ?? preferredBrowserWalletId,
+      browserWalletId:
+        browserWalletSession?.source === 'metamask-connect-mobile'
+          ? browserWalletSession.walletId
+          : currentInjectedWalletOption?.id ?? browserWalletSession?.walletId ?? preferredBrowserWalletId,
       browserWalletLabel:
         currentInjectedWalletOption?.label ??
         browserWalletSession?.walletLabel ??
@@ -7424,6 +7426,7 @@ export default function App() {
       activeProvider,
       activeSignerSource,
       browserWalletSession?.provider,
+      browserWalletSession?.source,
       browserWalletSession?.walletId,
       browserWalletSession?.walletLabel,
       burnerWalletSelectionValue,

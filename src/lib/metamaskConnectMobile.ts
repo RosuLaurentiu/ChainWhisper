@@ -27,7 +27,7 @@ export type MetaMaskConnectMobileSession = {
   walletLabel: typeof METAMASK_CONNECT_MOBILE_WALLET_LABEL;
 };
 
-export type MetaMaskMobileProviderSource = 'connect-evm' | 'injected-metamask' | 'promoted-to-injected';
+export type MetaMaskMobileProviderSource = 'connect-evm' | 'injected-metamask';
 
 type Eip6963ProviderInfo = {
   name?: string;
@@ -37,6 +37,7 @@ type Eip6963ProviderInfo = {
 
 type MetaMaskConnectProvider = Eip1193Provider & {
   __chainWhisperMetaMaskConnectMobile?: true;
+  __chainWhisperMetaMaskRequestWrapped?: true;
   isMetaMask?: boolean;
 };
 
@@ -99,6 +100,7 @@ const META_MASK_MOBILE_REQUEST_METHODS = new Set([
   'eth_requestAccounts',
   'personal_sign',
   'eth_sendTransaction',
+  'wallet_addEthereumChain',
   'wallet_switchEthereumChain'
 ]);
 
@@ -247,6 +249,14 @@ const markProvider = (provider: Eip1193Provider): Eip1193Provider => {
   try {
     connectProvider.__chainWhisperMetaMaskConnectMobile = true;
     connectProvider.isMetaMask = true;
+    if (!connectProvider.__chainWhisperMetaMaskRequestWrapped) {
+      const originalRequest = connectProvider.request.bind(connectProvider);
+      connectProvider.request = async (requestArgs) => {
+        logMetaMaskMobileRequestMethod(requestArgs.method, 'connect-evm');
+        return originalRequest(requestArgs);
+      };
+      connectProvider.__chainWhisperMetaMaskRequestWrapped = true;
+    }
   } catch {
     // The SDK provider is normally extensible; if that changes, the provider is still usable as EIP-1193.
   }
@@ -276,12 +286,6 @@ export const shouldUseMetaMaskConnectMobile = ({
   const selectedProvider = provider ?? walletOption?.provider ?? null;
   const selectedWalletId = walletId ?? walletOption?.id ?? '';
   const selectedWalletLabel = walletLabel ?? walletOption?.label ?? '';
-  if (resolveMetaMaskMobileInjectedWalletOption(walletOption ? [walletOption] : undefined)) {
-    return false;
-  }
-  if (!walletOption && resolveMetaMaskMobileInjectedWalletOption()) {
-    return false;
-  }
   const walletIsMetaMask = walletOption
     ? isPreferredMetaMaskWalletOption(walletOption)
     : !selectedWalletId && !selectedWalletLabel && !selectedProvider

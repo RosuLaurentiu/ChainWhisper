@@ -7,6 +7,7 @@ import {
   prepareIT256,
   type itUint256
 } from '@coti-io/coti-sdk-typescript';
+import { logMobileWalletDiagnostic } from './mobileWalletDiagnostics';
 
 type PrivateUint256Signer = Wallet | JsonRpcSigner;
 
@@ -137,6 +138,9 @@ export const encryptPrivateUint256Input = async (
     ) => Promise<itUint256 | PrivateUint256Input>;
   }).encryptValue256;
   if (typeof nativeEncryptValue256 === 'function') {
+    logMobileWalletDiagnostic('private-amount-sign', {
+      source: 'native-encrypt'
+    });
     return normalizePrivateUint256Input(
       await nativeEncryptValue256.call(signer, plaintextValue, contractAddress, functionSelector)
     );
@@ -151,5 +155,8 @@ export const encryptPrivateUint256Input = async (
     );
   }
 
+  logMobileWalletDiagnostic('private-amount-sign', {
+    source: 'browser-signer'
+  });
   return encryptWithBrowserSigner(signer, plaintext, contractAddress, functionSelector, aesKey);
 };

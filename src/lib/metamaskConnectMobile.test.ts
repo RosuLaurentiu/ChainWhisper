@@ -195,7 +195,7 @@ describe('metamaskConnectMobile', () => {
     });
   });
 
-  it('does not select Connect EVM when injected MetaMask is available', () => {
+  it('selects Connect EVM for MetaMask Mobile bootstrap even when injected MetaMask is available', () => {
     const metamaskOption = {
       id: 'metamask',
       label: 'MetaMask',
@@ -206,11 +206,11 @@ describe('metamaskConnectMobile', () => {
     } satisfies InjectedWalletOption;
 
     expect(resolveMetaMaskMobileInjectedWalletOption([metamaskOption])).toBe(metamaskOption);
-    expect(shouldUseMetaMaskConnectMobile({ walletOption: metamaskOption })).toBe(false);
+    expect(shouldUseMetaMaskConnectMobile({ walletOption: metamaskOption })).toBe(true);
     expect(shouldUseMetaMaskConnectMobile({ walletOption: metamaskOption, userAgent: 'Mozilla Desktop' })).toBe(false);
   });
 
-  it('selects Connect EVM only for mobile MetaMask bootstrap when no injected provider exists', () => {
+  it('selects Connect EVM only for mobile MetaMask bootstrap and not CipherTrade', () => {
     const cipherOption = {
       id: 'ciphertrade',
       label: 'CipherTrade',

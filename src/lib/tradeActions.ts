@@ -21,6 +21,7 @@ import {
   type TradeAssetPayload
 } from './appShared';
 import { buildDirectTradeTerms, encryptDirectTradeTerms } from './directTradeTerms';
+import { logMobileWalletDiagnostic } from './mobileWalletDiagnostics';
 import { EMPTY_PRIVATE_UINT256_INPUT, encryptPrivateUint256Input } from './privateUint256';
 import { PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE } from './tradeCounterSupport';
 import { buildTradeRecoveryPayload, encryptTradeRecoveryPayloadForSigner } from './tradeRecoveryPayload';
@@ -33,6 +34,10 @@ type TradeAssetSelection = Pick<TradeAssetPayload, 'kind' | 'tokenAddress'>;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const PRIVATE_TRADE_WRITE_GAS_LIMIT = 8_000_000n;
+
+const logTradeContractWrite = (action: string): void => {
+  logMobileWalletDiagnostic('contract-write', { action });
+};
 
 const createTradeContract = async (runner: TradeSigner, escrowContract?: string) => {
   const cotiEthers = await loadCotiEthersModule();
@@ -83,6 +88,7 @@ export const closeCounterTradeOnChain = async ({
   actorRole: 'maker' | 'taker';
 }): Promise<'cancelled' | 'declined'> => {
   const tradeContract = await createTradeContract(signer);
+  logTradeContractWrite(actorRole === 'maker' ? 'cancelTrade' : 'declineTrade');
   const tx =
     actorRole === 'maker' ? await tradeContract.cancelTrade(tradeId) : await tradeContract.declineTrade(tradeId);
   requireSuccessfulReceipt(await tx.wait(), 'Failed to close the original trade.');
@@ -389,6 +395,7 @@ export const createTradeOnChain = async ({
       termsHash ?? ZERO_BYTES32,
       encryptedHiddenOfferAmount
     ] as const;
+    logTradeContractWrite(createFunctionName);
     const createTx = hasMakerRecoveryPayload
       ? await tradeContract.createPrivateOrderWithRecoveryNote(
           ...privateOrderArgs,
@@ -462,6 +469,7 @@ export const createTradeOnChain = async ({
       requestAmount: requestAsset.kind === 'private-erc20' ? 0n : requestAmountWei
     };
     const valueToSend = (offerAsset.kind === 'native' ? offerAmountWei : 0n) + nativeFeeWei;
+    logTradeContractWrite(createFunctionName);
     const createTx = parentTradeId
       ? parentEscrowIsExternal
         ? await tradeContract.createDirectCounterTradeForParent(
@@ -530,6 +538,7 @@ export const createTradeOnChain = async ({
     offerAsset.kind === 'private-erc20'
       ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
       : { value: valueToSend };
+  logTradeContractWrite(shouldUseAdvancedCreate ? 'createTradeAdvanced' : 'createTrade');
   const createTx = shouldUseAdvancedCreate
     ? await tradeContract.createTradeAdvanced(
         offerAssetTuple,
@@ -664,6 +673,7 @@ export const createRecurringOrderOnChain = async ({
       : '');
   const hasMakerRecoveryPayload = Boolean(resolvedMakerRecoveryPayload);
 
+  logTradeContractWrite(isPrivateOrder ? 'createPrivateRecurringOrder' : 'createRecurringOrder');
   const createTx = isPrivateOrder
     ? await (async () => {
         const functionName = hasMakerRecoveryPayload
@@ -839,6 +849,7 @@ export const editRecurringOrderOnChain = async ({
   const publicRemoveBaseInventory = isPrivateOrder && baseAsset.kind === 'private-erc20' ? 0n : removeBaseInventoryWei;
   const publicRemoveQuoteInventory = isPrivateOrder && quoteAsset.kind === 'private-erc20' ? 0n : removeQuoteInventoryWei;
 
+  logTradeContractWrite('editRecurringOrder');
   const editTx = await recurringContract.editOrder(
     orderId,
     buildRecurringTermsTuple(buyBaseAmountWei, buyQuoteAmountWei),
@@ -899,6 +910,7 @@ export const fillRecurringOrderSideOnChain = async ({
       gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
     };
     const fillAccessSecret = accessSecret ?? ZERO_BYTES32;
+    logTradeContractWrite(functionName);
     const fillTx =
       side === 'buy'
         ? await recurringContract.fillPrivateBuySideWithSecret(orderId, publicAmount, encryptedAmount, 0n, fillAccessSecret, txOverrides)
@@ -915,6 +927,7 @@ export const fillRecurringOrderSideOnChain = async ({
       ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
       : { value: inputAsset.kind === 'native' ? inputAmountWei : 0n };
   const fillAccessSecret = accessSecret ?? ZERO_BYTES32;
+  logTradeContractWrite(side === 'buy' ? 'fillBuySideWithSecret' : 'fillSellSideWithSecret');
   const fillTx =
     side === 'buy'
       ? await recurringContract.fillBuySideWithSecret(orderId, inputAmountWei, 0n, fillAccessSecret, txOverrides)
@@ -936,6 +949,7 @@ export const updateRecurringOrderStatusOnChain = async ({
   action: 'pause' | 'resume' | 'cancel';
 }): Promise<void> => {
   const recurringContract = await createRecurringOrderContract(signer);
+  logTradeContractWrite(`${action}RecurringOrder`);
   const tx =
     action === 'pause'
       ? await recurringContract.pauseOrder(orderId)
@@ -968,6 +982,7 @@ export const acceptTradeOnChain = async ({
     requestAsset.kind === 'private-erc20'
       ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
       : { value: requestAsset.kind === 'native' ? resolvedRequestAmountWei : 0n };
+  logTradeContractWrite(accessSecret ? 'acceptTradeWithSecret' : 'acceptTrade');
   const acceptTx = accessSecret
     ? await tradeContract.acceptTradeWithSecret(tradeId, accessSecret, txOverrides)
     : await tradeContract.acceptTrade(tradeId, txOverrides);
@@ -1030,10 +1045,12 @@ export const acceptCounterTradeAndCloseParentOnChain = async ({
       requestAsset.kind === 'private-erc20'
         ? await encryptPrivateUint256Input(signer, resolvedRequestAmountWei, resolvedEscrowContract, selector)
         : EMPTY_PRIVATE_UINT256_INPUT;
+    logTradeContractWrite(functionName);
     acceptTx = accessSecret
       ? await tradeContract.acceptCounterTradeAdvancedAndCloseParent(tradeId, encryptedRequestAmount, accessSecret, txOverrides)
       : await tradeContract.acceptCounterTradeAndCloseParent(tradeId, encryptedRequestAmount, txOverrides);
   } else {
+    logTradeContractWrite(accessSecret ? 'acceptCounterTradeAdvancedAndCloseParent' : 'acceptCounterTradeAndCloseParent');
     acceptTx = accessSecret
       ? await tradeContract.acceptCounterTradeAdvancedAndCloseParent(tradeId, accessSecret, txOverrides)
       : await tradeContract.acceptCounterTradeAndCloseParent(tradeId, txOverrides);
@@ -1072,6 +1089,7 @@ export const fillTradeOnChain = async ({
     requestAsset.kind === 'private-erc20'
       ? { value: 0n, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
       : { value: requestAsset.kind === 'native' ? requestAmountWei : 0n };
+  logTradeContractWrite(accessSecret ? 'fillTradeAdvanced' : 'fillTrade');
   const fillTx = accessSecret
     ? await tradeContract.fillTradeAdvanced(tradeId, requestAmountWei, minOfferAmountOut, accessSecret, txOverrides)
     : await tradeContract.fillTrade(tradeId, requestAmountWei, minOfferAmountOut, txOverrides);
@@ -1132,6 +1150,7 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
       value: requestAsset.kind === 'native' ? requestAmountWei : 0n,
       gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
     };
+    logTradeContractWrite(functionName);
     const fillTx = accessSecret
       ? await tradeContract.acceptDirectTradeWithSecret(tradeId, encryptedRequestAmount, accessSecret, txOverrides)
       : await tradeContract.acceptDirectTrade(tradeId, encryptedRequestAmount, txOverrides);
@@ -1162,6 +1181,15 @@ export const fillPrivateFixedPriceTradeOnChain = async ({
     value: requestAsset.kind === 'native' ? requestAmountWei : 0n,
     gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT
   };
+  logTradeContractWrite(
+    requestIsPrivate
+      ? accessSecret
+        ? 'fillPrivateOrderWithSecret'
+        : 'fillPrivateOrder'
+      : accessSecret
+        ? 'fillHybridPrivateOrderWithSecret'
+        : 'fillHybridPrivateOrder'
+  );
   const fillTx = requestIsPrivate
     ? accessSecret
       ? await tradeContract.fillPrivateOrderWithSecret(tradeId, encryptedRequestAmount, accessSecret, txOverrides)
@@ -1307,6 +1335,7 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
     termsHash ?? ZERO_BYTES32,
     encryptedHiddenOfferAmount
   ] as const;
+  logTradeContractWrite(editFunctionName);
   const editTx = hasMakerRecoveryPayload
     ? await tradeContract.cancelAndReplacePrivateOrderWithRecoveryNote(
         ...editArgs,
@@ -1363,6 +1392,7 @@ export const editTradeOnChain = async ({
     offerAsset.kind === 'private-erc20'
       ? { value: valueToSend, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
       : { value: valueToSend };
+  logTradeContractWrite('editTrade');
   const editTx = await tradeContract.editTrade(
     originalTradeId,
     buildTradeAssetTuple(offerAsset, offerAmountWei),
@@ -1448,6 +1478,7 @@ export const editDirectTradeOnChain = async ({
   const cotiEthers = await loadCotiEthersModule();
   const termsHash = cotiEthers.keccak256(termsPayload);
   const encryptedAccessSecret = await encryptDirectAccessSecretInput(signer, resolvedDirectAccessSecret, editSelector);
+  logTradeContractWrite('editDirectTrade');
   const editTx = await directContract.editDirectTrade(
     originalTradeId,
     [resolveTradeAssetTypeValue(offerAsset.kind), offerAsset.tokenAddress ?? ZERO_ADDRESS],
@@ -1568,6 +1599,7 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
   const counteredEscrowIsDirect =
     !counteredEscrowContract ||
     counteredEscrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+  logTradeContractWrite(counteredEscrowIsDirect ? 'counterTradeAndCloseCounteredTrade' : 'createDirectCounterTradeForParent');
   const counterTx = counteredEscrowIsDirect
     ? await directContract.counterTradeAndCloseCounteredTrade(counteredTradeId, ...directAssetArgs, {
         value: valueToSend,
@@ -1609,6 +1641,7 @@ const runTradeActionOnChain = async ({
   const config = resolveTradeEscrowContractConfig(escrowContract);
   const tradeContract = await createTradeContract(signer, config.address);
   const overrides = config.hiddenOnly ? { gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT } : undefined;
+  logTradeContractWrite(action === 'decline' ? 'declineTrade' : 'cancelTrade');
   const tx =
     action === 'decline'
       ? await tradeContract.declineTrade(tradeId, overrides ?? {})

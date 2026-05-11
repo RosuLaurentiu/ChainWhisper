@@ -44,6 +44,7 @@ import {
 } from './appShared';
 import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHelpers';
 import { applyDirectTradeTermsToSnapshot, decryptDirectTradeTerms } from './directTradeTerms';
+import { logMobileWalletDiagnostic } from './mobileWalletDiagnostics';
 import { encryptPrivateUint256Input } from './privateUint256';
 import {
   decryptTradeRecoveryPayloadForSigner,
@@ -2684,6 +2685,9 @@ const approvePrivateTokenSpender = async (
     tokenAddress,
     allowanceSelector
   );
+  logMobileWalletDiagnostic('token-approval', {
+    tokenKind: 'private-erc20'
+  });
   const privateTokenWriteContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_VNEXT_ABI, signer);
   const writeFunction = privateTokenWriteContract[writePlan.selectorSignature] as (
     spender: string,
@@ -2968,6 +2972,9 @@ export const ensureTradeTokenAllowance = async (
     return;
   }
 
+  logMobileWalletDiagnostic('token-approval', {
+    tokenKind: 'erc20'
+  });
   const approveTx = await tokenContract.approve(spenderAddress, MAX_ERC20_APPROVAL);
   await approveTx.wait();
 };
