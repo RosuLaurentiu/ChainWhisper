@@ -8,6 +8,12 @@ import {
 } from '../lib/appShared/core';
 import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
+import {
+  buildWalletBootstrapPath,
+  isWalletBootstrapRoute,
+  resolveWalletBootstrapTargetPath,
+  writeWalletBootstrapActiveRoutePath
+} from '../lib/walletBootstrapRoute';
 
 export type TradePageView = 'public' | 'create' | 'trade' | 'counter' | 'mine';
 
@@ -72,6 +78,10 @@ const getSessionRouteStorage = (): TradeRouteStorage | null => {
 const getCurrentTradePath = (): string => {
   if (typeof window === 'undefined') {
     return '/trades';
+  }
+  const bootstrapTargetPath = resolveWalletBootstrapTargetPath();
+  if (bootstrapTargetPath.toLowerCase().startsWith('/trades')) {
+    return bootstrapTargetPath;
   }
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 };
@@ -292,6 +302,18 @@ export const resolveTradeRouteFromLocation = (): TradeRouteState => {
     return createEmptyPublicRoute();
   }
 
+  const bootstrapTargetPath = resolveWalletBootstrapTargetPath();
+  if (bootstrapTargetPath) {
+    try {
+      const bootstrapTargetUrl = new URL(bootstrapTargetPath, window.location.origin);
+      return bootstrapTargetUrl.pathname.toLowerCase().startsWith('/trades')
+        ? resolveTradeRouteFromParts(bootstrapTargetUrl.pathname, bootstrapTargetUrl.search, bootstrapTargetUrl.hash)
+        : createEmptyPublicRoute();
+    } catch {
+      return createEmptyPublicRoute();
+    }
+  }
+
   const redirectedPath = new URLSearchParams(window.location.search).get('p');
   if (redirectedPath) {
     try {
@@ -318,7 +340,13 @@ const restorePendingTradeTerminalRouteFromLocation = (): TradeRouteState => {
   if (!pendingPath || typeof window === 'undefined') {
     return route;
   }
-  window.history.replaceState(window.history.state, '', pendingPath);
+  if (isWalletBootstrapRoute(window.location.pathname)) {
+    const bootstrapPath = buildWalletBootstrapPath(pendingPath);
+    writeWalletBootstrapActiveRoutePath(pendingPath);
+    window.history.replaceState(window.history.state, '', bootstrapPath);
+  } else {
+    window.history.replaceState(window.history.state, '', pendingPath);
+  }
   return resolveTradeRouteFromLocation();
 };
 
@@ -430,6 +458,16 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
       (targetRoute.view !== 'trade' || targetRoute.tradeId === null)
     ) {
       clearPendingTradeTerminalRoute();
+    }
+
+    if (isWalletBootstrapRoute(window.location.pathname)) {
+      const nextBootstrapPath = buildWalletBootstrapPath(nextPath);
+      writeWalletBootstrapActiveRoutePath(nextPath);
+      if (currentPath !== nextBootstrapPath) {
+        window.history.replaceState(window.history.state, '', nextBootstrapPath);
+      }
+      setRoute(restorePendingTradeTerminalRouteFromLocation());
+      return;
     }
 
     if (currentPath !== nextPath) {

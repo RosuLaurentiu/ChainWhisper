@@ -1845,13 +1845,19 @@ export const getMetaMaskProvider = (): InjectedEthereumProvider | null => {
   );
 };
 
+export const isProviderRequestAlreadyPending = (error: unknown): boolean => {
+  const rawMessage = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const normalized = rawMessage.toLowerCase();
+  const codeCandidate = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  return codeCandidate === -32002 || normalized.includes('already pending');
+};
+
 export const getProviderErrorMessage = (error: unknown, fallbackMessage: string): string => {
   const rawMessage = error instanceof Error ? error.message : '';
-  const normalized = rawMessage.toLowerCase();
   const codeCandidate = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   const code = typeof codeCandidate === 'number' ? codeCandidate : null;
 
-  if (code === -32002 || normalized.includes('already pending')) {
+  if (isProviderRequestAlreadyPending(error)) {
     return 'A wallet request is already pending. Open your wallet and approve or reject it first.';
   }
 
@@ -1861,6 +1867,7 @@ export const getProviderErrorMessage = (error: unknown, fallbackMessage: string)
 
   return rawMessage || fallbackMessage;
 };
+
 export const isProviderActionRejected = (error: unknown): boolean => {
   const codeCandidate = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   if (codeCandidate === 4001 || codeCandidate === 'ACTION_REJECTED') {

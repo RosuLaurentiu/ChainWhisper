@@ -87,11 +87,18 @@ import {
 } from './lib/walletSession';
 import {
   getPathForAppPage,
+  resolveAppRouteFromPath,
   resolveAppRouteFromLocation,
   resolveNavigationPathFromLocation,
   type AppPage
 } from './shell/routing';
 import { isTradeMobileShellRoute } from './lib/tradeMobileShell';
+import {
+  buildWalletBootstrapPath,
+  isWalletBootstrapRoute,
+  syncWalletBootstrapRouteFromLocation,
+  writeWalletBootstrapActiveRoutePath
+} from './lib/walletBootstrapRoute';
 import { getAppWalletPolicy } from './shell/walletPolicy';
 import { attachWsDisconnectListeners } from './shell/realtimeConnection';
 import { useAppShellStore } from './state/appShellStore';
@@ -5526,6 +5533,14 @@ export default function App() {
     setActivePage(page);
     if (typeof window !== 'undefined') {
       const nextPath = getPathForAppPage(page);
+      if (isWalletBootstrapRoute(window.location.pathname)) {
+        const nextBootstrapPath = buildWalletBootstrapPath(nextPath);
+        writeWalletBootstrapActiveRoutePath(nextPath);
+        if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextBootstrapPath) {
+          window.history.replaceState(window.history.state, '', nextBootstrapPath);
+        }
+        return;
+      }
       const currentPath = resolveNavigationPathFromLocation();
       const nextHash = '';
       if (
@@ -5562,6 +5577,16 @@ export default function App() {
     nextUrl.pathname = targetUrl.pathname;
     nextUrl.search = targetUrl.search;
     nextUrl.hash = targetUrl.hash;
+    if (isWalletBootstrapRoute(window.location.pathname)) {
+      const targetPath = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
+      const nextBootstrapPath = buildWalletBootstrapPath(targetPath);
+      writeWalletBootstrapActiveRoutePath(targetPath);
+      if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextBootstrapPath) {
+        window.history.replaceState(window.history.state, '', nextBootstrapPath);
+      }
+      setActivePage(resolveAppRouteFromPath(targetPath).page);
+      return;
+    }
     window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
     setActivePage(resolveAppRouteFromLocation().page);
   }, []);
@@ -5575,6 +5600,10 @@ export default function App() {
       setActivePage(nextRoute.page);
 
       const currentPath = resolveNavigationPathFromLocation();
+      const preserveWalletBootstrap = isWalletBootstrapRoute(window.location.pathname);
+      if (preserveWalletBootstrap) {
+        syncWalletBootstrapRouteFromLocation();
+      }
       const canonicalPath =
         nextRoute.page === 'trades' && currentPath.toLowerCase().startsWith('/trades')
           ? currentPath
@@ -5583,6 +5612,7 @@ export default function App() {
       const preserveTradeShell =
         nextRoute.page === 'trades' && isTradeMobileShellRoute(window.location.pathname, window.location.search);
       if (
+        !preserveWalletBootstrap &&
         !preserveTradeShell &&
         (currentPath !== canonicalPath ||
           window.location.hash !== canonicalHash ||

@@ -1,3 +1,8 @@
+import {
+  normalizeWalletBootstrapTargetPath,
+  resolveWalletBootstrapTargetPath
+} from '../lib/walletBootstrapRoute';
+
 export type AppPage = 'home' | 'chat' | 'swap' | 'treasury' | 'trades';
 
 export type AppRoute = {
@@ -32,16 +37,28 @@ export const resolveNavigationPathFromLocation = (): string => {
     return '/';
   }
 
-  const redirectedPath = new URLSearchParams(window.location.search).get('p');
+  const bootstrapTargetPath = resolveWalletBootstrapTargetPath();
+  if (bootstrapTargetPath) {
+    return normalizeAppPathname(bootstrapTargetPath);
+  }
+
+  const redirectedPath = normalizeWalletBootstrapTargetPath(
+    new URLSearchParams(window.location.search).get('p'),
+    window.location.origin
+  );
   return normalizeAppPathname(redirectedPath || window.location.pathname);
 };
 
-export const resolveAppRouteFromLocation = (): AppRoute => {
-  if (typeof window === 'undefined') {
-    return { page: 'home' };
+const resolveRoutePathname = (path: string): string => {
+  try {
+    return normalizeAppPathname(new URL(path, 'https://chainwhisper.local').pathname);
+  } catch {
+    return normalizeAppPathname(path.split('?')[0]?.split('#')[0] ?? path);
   }
+};
 
-  const normalizedPathname = resolveNavigationPathFromLocation().toLowerCase();
+export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
+  const normalizedPathname = resolveRoutePathname(path).toLowerCase();
   if (normalizedPathname === '/' || normalizedPathname === '/home') {
     return { page: 'home' };
   }
@@ -62,7 +79,7 @@ export const resolveAppRouteFromLocation = (): AppRoute => {
     return { page: 'chat' };
   }
 
-  const normalizedHash = window.location.hash.replace(/^#/, '').trim().toLowerCase();
+  const normalizedHash = hash.replace(/^#/, '').trim().toLowerCase();
   if (
     normalizedHash === 'home' ||
     normalizedHash === 'chat' ||
@@ -88,4 +105,12 @@ export const resolveAppRouteFromLocation = (): AppRoute => {
   }
 
   return { page: 'home' };
+};
+
+export const resolveAppRouteFromLocation = (): AppRoute => {
+  if (typeof window === 'undefined') {
+    return { page: 'home' };
+  }
+
+  return resolveAppRouteFromPath(resolveNavigationPathFromLocation(), window.location.hash);
 };

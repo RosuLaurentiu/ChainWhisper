@@ -46,18 +46,38 @@ test.describe('trading V1 routes', () => {
     await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
   });
 
-  test('keeps the MetaMask Mobile trade shell URL while rendering the terminal', async ({ browser, baseURL }) => {
+  test('keeps the MetaMask Mobile wallet bootstrap URL while rendering the terminal', async ({ browser, baseURL }) => {
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
     });
     const page = await context.newPage();
-    const shellPath = `/trades?p=${encodeURIComponent('/trades/recurring?order=1')}`;
+    const shellPath = `/wallet-connect?p=${encodeURIComponent('/trades/recurring?order=1')}`;
     try {
       await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}${shellPath}`);
 
-      await expect(page).toHaveURL(new RegExp(`/trades\\?p=${encodeURIComponent('/trades/recurring?order=1')}`));
+      await expect(page).toHaveURL(new RegExp(`/wallet-connect\\?p=${encodeURIComponent('/trades/recurring?order=1')}`));
       await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
       await expect(page.getByText('Trading Terminal')).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('keeps MetaMask Mobile bootstrap stable across app navigation', async ({ browser, baseURL }) => {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}/wallet-connect?p=${encodeURIComponent('/trades')}`);
+
+      await expect(page.getByRole('button', { name: 'Trades', exact: true })).toHaveAttribute('aria-current', 'page');
+      await page.getByRole('button', { name: 'Chat', exact: true }).click();
+      await expect(page).toHaveURL(/\/wallet-connect\?p=%2Fchat/);
+      await expect(page.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+      await page.getByRole('button', { name: 'Trades', exact: true }).click();
+      await expect(page).toHaveURL(/\/wallet-connect\?p=%2Ftrades/);
+      await expect(page.getByRole('button', { name: 'Trades', exact: true })).toHaveAttribute('aria-current', 'page');
     } finally {
       await context.close();
     }

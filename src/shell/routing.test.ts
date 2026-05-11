@@ -5,6 +5,7 @@ const stubLocation = (pathname: string, search = '', hash = '') => {
   vi.stubGlobal('window', {
     location: {
       hash,
+      origin: 'https://chainwhisper.example',
       pathname,
       search
     }
@@ -45,5 +46,26 @@ describe('app routing', () => {
 
     expect(resolveNavigationPathFromLocation()).toBe('/trades/l/abc?escrow=direct');
     expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+  });
+
+  it('resolves wallet bootstrap trade URLs through the redirected path', () => {
+    stubLocation('/wallet-connect', `?p=${encodeURIComponent('/trades/l/abc?escrow=direct')}`);
+
+    expect(resolveNavigationPathFromLocation()).toBe('/trades/l/abc?escrow=direct');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+  });
+
+  it('resolves wallet bootstrap chat URLs through the redirected path', () => {
+    stubLocation('/wallet-connect', `?p=${encodeURIComponent('/chat')}`);
+
+    expect(resolveNavigationPathFromLocation()).toBe('/chat');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'chat' });
+  });
+
+  it('falls back safely for invalid wallet bootstrap routes', () => {
+    stubLocation('/wallet-connect', `?p=${encodeURIComponent('https://evil.example/chat')}`);
+
+    expect(resolveNavigationPathFromLocation()).toBe('/');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'home' });
   });
 });

@@ -161,7 +161,6 @@ import {
   getCurrentRouteForDiagnostics,
   logMobileWalletDiagnostic
 } from '../lib/mobileWalletDiagnostics';
-import { beginMobileWalletPromptRouteShim } from '../lib/mobileWalletPromptRoute';
 import {
   WALLET_STATUS_STORAGE_KEY,
   buildOfferFromSnapshot,
@@ -604,16 +603,6 @@ export default function P2PTradingPage({
       walletAddress
     ]
   );
-  const shouldUseMobileTradePromptRouteShim = useMemo(() => {
-    const providerWithFlags = effectiveBrowserProvider as (Eip1193Provider & { isMetaMask?: boolean }) | null;
-    const browserWalletId = sharedWalletSession?.browserWalletId || selectedWalletId;
-    return (
-      isMobileBrowserUserAgent() &&
-      !connectedWithBurner &&
-      Boolean(effectiveBrowserProvider) &&
-      (browserWalletId === 'metamask' || providerWithFlags?.isMetaMask === true)
-    );
-  }, [connectedWithBurner, effectiveBrowserProvider, selectedWalletId, sharedWalletSession?.browserWalletId]);
   const runTradeWalletPromptFlow = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T> => {
       const activeWalletFlow = sharedWalletActions?.runWalletTransactionFlow;
@@ -627,15 +616,7 @@ export default function P2PTradingPage({
               routeBefore,
               trace: readWalletTransactionFlowTrace(flowInput)
             });
-            const restorePromptRoute = beginMobileWalletPromptRouteShim({
-              enabled: shouldUseMobileTradePromptRouteShim,
-              onTrace: logMobileWalletDiagnostic
-            });
-            try {
-              return await operation();
-            } finally {
-              restorePromptRoute();
-            }
+            return await operation();
           });
         }
 
@@ -645,17 +626,7 @@ export default function P2PTradingPage({
           routeBefore,
           trace: readWalletTransactionFlowTrace(input)
         });
-        return await runWalletTransactionFlow(input, async () => {
-          const restorePromptRoute = beginMobileWalletPromptRouteShim({
-            enabled: shouldUseMobileTradePromptRouteShim,
-            onTrace: logMobileWalletDiagnostic
-          });
-          try {
-            return await operation();
-          } finally {
-            restorePromptRoute();
-          }
-        });
+        return await runWalletTransactionFlow(input, operation);
       } finally {
         const flowInput = getTradeWalletFlowInput();
         logMobileWalletDiagnostic('trading-flow-finish', {
@@ -670,7 +641,6 @@ export default function P2PTradingPage({
     },
     [
       getTradeWalletFlowInput,
-      shouldUseMobileTradePromptRouteShim,
       sharedWalletActions,
     ]
   );
@@ -2749,17 +2719,9 @@ export default function P2PTradingPage({
   ]);
 
   const unlockPrivacyForTradingWallet = useCallback(async () => {
-    const restorePromptRoute = beginMobileWalletPromptRouteShim({
-      enabled: shouldUseMobileTradePromptRouteShim,
-      onTrace: logMobileWalletDiagnostic
-    });
     if (!sharedWalletActions?.unlockPrivacy) {
-      try {
-        await signAesForCurrentWallet();
-        return;
-      } finally {
-        restorePromptRoute();
-      }
+      await signAesForCurrentWallet();
+      return;
     }
 
     const forceFreshPrivacy =
@@ -2779,13 +2741,11 @@ export default function P2PTradingPage({
     } catch (error) {
       setWalletError(getProviderErrorMessage(error, 'AES signature was not completed.'));
     } finally {
-      restorePromptRoute();
       setConnectingWalletId('');
     }
   }, [
     cotiSnapAesStatus,
     refreshTradeDataInBackground,
-    shouldUseMobileTradePromptRouteShim,
     sharedWalletActions,
     sharedWalletAesHealth?.status,
     signAesForCurrentWallet

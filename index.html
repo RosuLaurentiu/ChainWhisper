@@ -13,6 +13,10 @@
 
         const normalizedPath = restoredPath.startsWith('/') ? restoredPath : `/${restoredPath}`;
         const normalizedCurrentPath = currentUrl.pathname.replace(/\/+$/, '') || '/';
+        if (normalizedCurrentPath.toLowerCase() === '/wallet-connect') {
+          return;
+        }
+
         if (
           normalizedCurrentPath.toLowerCase() === '/trades' &&
           normalizedPath.toLowerCase().startsWith('/trades')

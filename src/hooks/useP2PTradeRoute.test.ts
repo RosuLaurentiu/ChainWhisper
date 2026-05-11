@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -12,6 +12,7 @@ import {
   rememberPendingTradeTerminalRoute,
   resolvePendingTradeTerminalRoutePath,
   resolveTradeLinkInput,
+  resolveTradeRouteFromLocation,
   resolveTradeRouteFromParts
 } from './useP2PTradeRoute';
 
@@ -31,6 +32,10 @@ const createMemoryStorage = () => {
 };
 
 describe('P2P trade route helpers', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('resolves top-level trade routes without changing route ownership', () => {
     expect(resolveTradeRouteFromParts('/trades')).toMatchObject({ view: 'public', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/create')).toMatchObject({ view: 'create', tradeId: null });
@@ -122,5 +127,26 @@ describe('P2P trade route helpers', () => {
     clearPendingTradeTerminalRoute(storage);
 
     expect(readPendingTradeTerminalRoute(storage, 1_500)).toBeNull();
+  });
+
+  it('resolves wallet bootstrap trade links while keeping public share paths canonical', () => {
+    vi.stubGlobal('window', {
+      location: {
+        hash: '',
+        origin: 'https://chainwhisper.example',
+        pathname: '/wallet-connect',
+        search: `?p=${encodeURIComponent('/trades/recurring?order=7')}`
+      },
+      sessionStorage: createMemoryStorage()
+    });
+
+    expect(resolveTradeRouteFromLocation()).toMatchObject({
+      view: 'trade',
+      tradeId: 7,
+      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+    });
+    expect(buildTradeLinkPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
+      `/trades/recurring?order=7#${ACCESS_SECRET}`
+    );
   });
 });

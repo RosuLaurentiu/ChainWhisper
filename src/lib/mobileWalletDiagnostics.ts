@@ -1,3 +1,8 @@
+import {
+  isWalletBootstrapRoute,
+  resolveWalletBootstrapTargetPath
+} from './walletBootstrapRoute';
+
 const MOBILE_WALLET_DIAGNOSTICS_KEY = 'chainwhisper:mobile-wallet-diagnostics';
 
 const readDiagnosticsFlag = (storage?: Storage | null): boolean => {
@@ -29,6 +34,10 @@ const sanitizePathForDiagnostics = (pathname: string): string =>
 export const getCurrentRouteForDiagnostics = (): string => {
   if (typeof window === 'undefined') {
     return '';
+  }
+  if (isWalletBootstrapRoute(window.location.pathname)) {
+    const activeRoute = resolveWalletBootstrapTargetPath();
+    return `/wallet-connect?p=${activeRoute ? sanitizePathForDiagnostics(activeRoute) : '[route]'}`;
   }
   const searchLabel = window.location.search ? '?[params]' : '';
   const hashLabel = window.location.hash ? '#[redacted]' : '';

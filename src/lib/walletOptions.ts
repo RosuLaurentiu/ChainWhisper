@@ -1,8 +1,5 @@
 import type { InjectedWalletOption } from './appShared';
-import {
-  TRADE_ROUTE_PREFIX,
-  buildTradeMobileShellPath
-} from './tradeMobileShell';
+import { buildWalletBootstrapDappTargetUrl } from './walletBootstrapRoute';
 
 export type InjectedWalletPriority = 'metamask' | 'selected';
 
@@ -27,21 +24,12 @@ const encodeMetaMaskDappUrl = (dappUrl: string): string =>
 
 const buildMetaMaskDappTargetUrl = (dappUrl: string): string => {
   const trimmed = dappUrl.trim();
-  const normalizedUrl = trimmed.replace(/^https?:\/\//i, '');
-  try {
-    const parsedUrl = new URL(trimmed.match(/^https?:\/\//i) ? trimmed : `https://${trimmed}`);
-    if (parsedUrl.pathname.toLowerCase().startsWith(TRADE_ROUTE_PREFIX)) {
-      const tradeRoute = `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
-      return `${parsedUrl.host}${buildTradeMobileShellPath(tradeRoute)}`;
-    }
-  } catch {
-  }
-  return normalizedUrl;
+  return buildWalletBootstrapDappTargetUrl(trimmed) || trimmed.replace(/^https?:\/\//i, '');
 };
 
 export const buildMetaMaskMobileDeepLink = (dappUrl = getCurrentDappUrl()): string => {
   const normalizedUrl = buildMetaMaskDappTargetUrl(dappUrl);
-  return normalizedUrl ? `https://metamask.app.link/dapp/${encodeMetaMaskDappUrl(normalizedUrl)}` : 'https://metamask.app.link';
+  return normalizedUrl ? `https://link.metamask.io/dapp/${encodeMetaMaskDappUrl(normalizedUrl)}` : 'https://link.metamask.io';
 };
 
 export const isPreferredMetaMaskWalletOption = (option: InjectedWalletOption): boolean =>

@@ -4,6 +4,7 @@ import {
   COTI_NETWORK,
   createCotiBrowserProvider,
   getProviderErrorMessage,
+  isProviderRequestAlreadyPending,
   mergeOnboardInfo,
   normalizeChainId,
   type Eip1193Provider,
@@ -465,8 +466,10 @@ export function useWalletOnboarding({
       } catch (connectionError) {
         const message = getProviderErrorMessage(connectionError, 'Failed to connect wallet.');
         setError(message);
-        setStatus('Disconnected');
-        setOnboardStatus('Not onboarded');
+        if (!isProviderRequestAlreadyPending(connectionError)) {
+          setStatus('Disconnected');
+          setOnboardStatus('Not onboarded');
+        }
         return null;
       } finally {
         setConnectingMethod(null);
