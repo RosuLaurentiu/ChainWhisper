@@ -828,6 +828,7 @@ export default function App() {
     setStatus,
     setWalletAddress,
     signerCacheRef,
+    signerProviderCacheRef,
     walletAddress
   } = useWalletOnboarding({
     allowPassiveBrowserRestore: walletPreference?.kind === 'browser',
@@ -2989,12 +2990,18 @@ export default function App() {
 
       const cacheKey = walletAddress.toLowerCase();
       const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
-      let signer = signerCacheRef.current[cacheKey];
+      let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
+      if (signer && signerProviderCacheRef.current[cacheKey] !== provider) {
+        delete signerCacheRef.current[cacheKey];
+        delete signerProviderCacheRef.current[cacheKey];
+        signer = undefined;
+      }
       if (!signer) {
         const browserProvider = await createCotiBrowserProvider(provider);
         signer = await browserProvider.getSigner(walletAddress, cachedOnboardInfo);
         signer.disableAutoOnboard();
         signerCacheRef.current[cacheKey] = signer;
+        signerProviderCacheRef.current[cacheKey] = provider;
       } else if (cachedOnboardInfo) {
         signer.setUserOnboardInfo(cachedOnboardInfo);
       }
@@ -7248,7 +7255,8 @@ export default function App() {
   const getSharedWalletSigner = useCallback<WalletSessionActions['getSigner']>(
     async (requireAes, options = {}) => {
       if (activeSignerSource === 'metamask') {
-        const provider = await resolveWalletPromptProvider(getConnectedProvider(), walletAddress);
+        const connectedProvider = getConnectedProvider();
+        const provider = await resolveWalletPromptProvider(connectedProvider, walletAddress);
         if (!provider) {
           throw new Error('Wallet provider not detected. Connect without burner first.');
         }
@@ -7257,7 +7265,7 @@ export default function App() {
           throw new Error('Connect your wallet first.');
         }
 
-        if (chainId !== COTI_NETWORK.chainIdDecimal) {
+        if (chainId !== COTI_NETWORK.chainIdDecimal || provider !== connectedProvider) {
           await ensureCotiNetwork(provider);
           const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
           setChainId(normalizeChainId(currentChain));
@@ -7265,12 +7273,18 @@ export default function App() {
 
         const cacheKey = walletAddress.toLowerCase();
         const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
-        let signer = signerCacheRef.current[cacheKey];
+        let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
+        if (signer && signerProviderCacheRef.current[cacheKey] !== provider) {
+          delete signerCacheRef.current[cacheKey];
+          delete signerProviderCacheRef.current[cacheKey];
+          signer = undefined;
+        }
         if (!signer) {
           const browserProvider = await createCotiBrowserProvider(provider);
           signer = await browserProvider.getSigner(walletAddress, cachedOnboardInfo);
           signer.disableAutoOnboard();
           signerCacheRef.current[cacheKey] = signer;
+          signerProviderCacheRef.current[cacheKey] = provider;
         } else if (cachedOnboardInfo) {
           signer.setUserOnboardInfo(cachedOnboardInfo);
         }
@@ -7349,6 +7363,7 @@ export default function App() {
       setSessionOnboardInfo,
       setWalletAesHealth,
       signerCacheRef,
+      signerProviderCacheRef,
       walletAddress
     ]
   );

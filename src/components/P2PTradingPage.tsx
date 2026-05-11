@@ -1134,8 +1134,16 @@ export default function P2PTradingPage({
       if (!walletOption && walletId !== 'metamask' && walletId !== METAMASK_CONNECT_MOBILE_WALLET_ID) {
         walletOption = preferredWalletOption;
       }
-      const useMetaMaskConnectMobile = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
-      if (!useMetaMaskConnectMobile) {
+      const useMetaMaskConnectMobileContext = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
+      const mobileInjectedOption = useMetaMaskConnectMobileContext
+        ? walletOption
+          ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
+          : resolveMetaMaskMobileInjectedWalletOption()
+        : null;
+      const useMetaMaskConnectMobile = useMetaMaskConnectMobileContext && !mobileInjectedOption;
+      if (mobileInjectedOption) {
+        walletOption = mobileInjectedOption;
+      } else if (!useMetaMaskConnectMobileContext) {
         const injectedMetaMaskOption = walletOption
           ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
           : resolveMetaMaskMobileInjectedWalletOption();

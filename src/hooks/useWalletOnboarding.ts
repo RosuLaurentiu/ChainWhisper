@@ -136,10 +136,33 @@ export const readPassiveBrowserWalletRestore = async (
   walletOption: InjectedWalletOption | null | undefined
 ): Promise<PassiveBrowserWalletRestoreResult | null> => {
   if (shouldUseMetaMaskConnectMobile({ walletOption })) {
+    const injectedOption = walletOption
+      ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
+      : resolveMetaMaskMobileInjectedWalletOption();
+    if (injectedOption) {
+      try {
+        const injectedRestore = await readInjectedPassiveBrowserWalletRestore(injectedOption);
+        if (injectedRestore) {
+          logMetaMaskMobileProviderSelection('injected-metamask', {
+            reason: 'mobile-in-app-restore',
+            walletId: injectedOption.id
+          });
+          return injectedRestore;
+        }
+      } catch (error) {
+        logMobileWalletDiagnostic('mobile-injected-restore-error', {
+          message: error instanceof Error ? error.message : String(error),
+          walletId: injectedOption.id
+        });
+      }
+    }
+
     try {
       const session = await readMetaMaskConnectMobileSession();
       if (session) {
-        logMetaMaskMobileProviderSelection('connect-evm');
+        logMetaMaskMobileProviderSelection('connect-evm', {
+          reason: injectedOption ? 'mobile-injected-not-authorized' : 'mobile-injected-unavailable'
+        });
         return {
           ...session,
           onboardInfo: readFallbackAesSessionOnboardInfo(session.address, session.provider),
@@ -150,17 +173,6 @@ export const readPassiveBrowserWalletRestore = async (
       logMobileWalletDiagnostic('metamask-connect-session-restore-error', {
         message: error instanceof Error ? error.message : String(error)
       });
-    }
-
-    const injectedFallbackOption = walletOption
-      ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
-      : resolveMetaMaskMobileInjectedWalletOption();
-    if (injectedFallbackOption) {
-      logMetaMaskMobileProviderSelection('injected-metamask', {
-        reason: 'connect-evm-no-session',
-        walletId: injectedFallbackOption.id
-      });
-      return readInjectedPassiveBrowserWalletRestore(injectedFallbackOption);
     }
 
     return null;
@@ -210,6 +222,7 @@ export function useWalletOnboarding({
   const chainIdRef = useRef<number | null>(null);
   const passiveRestoreInFlightRef = useRef(false);
   const signerCacheRef = useRef<Record<string, JsonRpcSigner>>({});
+  const signerProviderCacheRef = useRef<Record<string, Eip1193Provider>>({});
   const currentWalletKeyRef = useRef('');
   const activeSignerSourceRef = useRef<SignerSource>('burner');
 
@@ -251,6 +264,7 @@ export function useWalletOnboarding({
   const setConnectedProvider = useCallback((provider: Eip1193Provider | null) => {
     if (activeProviderRef.current !== provider) {
       signerCacheRef.current = {};
+      signerProviderCacheRef.current = {};
     }
     activeProviderRef.current = provider;
     setActiveProvider(provider);
@@ -299,6 +313,7 @@ export function useWalletOnboarding({
       clearCotiAesUnlockRequest(nextWalletKey, activeProviderRef.current);
     }
     signerCacheRef.current = {};
+    signerProviderCacheRef.current = {};
     setSessionOnboardInfo((previous) => {
       const next = { ...previous };
       if (nextWalletKey) {
@@ -329,9 +344,39 @@ export function useWalletOnboarding({
         browserWalletSessionRef.current?.source === 'metamask-connect-mobile' ||
         isMetaMaskConnectMobileProvider(provider)
       ) {
-        void expectedAddress;
+        const injectedOption = resolveMetaMaskMobileInjectedWalletOption();
+        if (injectedOption?.provider) {
+          try {
+            logMetaMaskMobileRequestMethod('eth_accounts', 'injected-metamask', {
+              reason: 'mobile-in-app-signing',
+              walletId: injectedOption.id
+            });
+            const accounts = (await injectedOption.provider.request({ method: 'eth_accounts' })) as string[];
+            const expectedWalletKey = expectedAddress?.trim().toLowerCase() ?? '';
+            const hasUsableAccount = expectedWalletKey
+              ? accounts.some((account) => account.toLowerCase() === expectedWalletKey)
+              : accounts.length > 0;
+            if (hasUsableAccount) {
+              logMetaMaskMobileProviderSelection('injected-metamask', {
+                reason: 'mobile-in-app-signing',
+                walletId: injectedOption.id
+              });
+              return injectedOption.provider;
+            }
+            logMobileWalletDiagnostic('mobile-injected-signing-unavailable', {
+              accountsCount: Array.isArray(accounts) ? accounts.length : 0,
+              expected: maskWalletForDiagnostics(expectedAddress ?? ''),
+              walletId: injectedOption.id
+            });
+          } catch (error) {
+            logMobileWalletDiagnostic('mobile-injected-signing-error', {
+              message: error instanceof Error ? error.message : String(error),
+              walletId: injectedOption.id
+            });
+          }
+        }
         logMetaMaskMobileProviderSelection('connect-evm', {
-          reason: 'wallet-prompt',
+          reason: injectedOption ? 'mobile-injected-signing-fallback' : 'mobile-injected-missing',
           walletId: browserWalletSessionRef.current?.walletId ?? METAMASK_CONNECT_MOBILE_WALLET_ID
         });
         return browserWalletSessionRef.current?.provider ?? provider;
@@ -427,9 +472,20 @@ export function useWalletOnboarding({
           return next;
         });
       }
-      const signer = await browserProvider.getSigner(address, refreshMismatch ? undefined : sessionOnboardInfo[cacheKey]);
+      let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
+      if (signer && signerProviderCacheRef.current[cacheKey] !== promptProvider) {
+        delete signerCacheRef.current[cacheKey];
+        delete signerProviderCacheRef.current[cacheKey];
+        signer = undefined;
+      }
+      if (!signer) {
+        signer = await browserProvider.getSigner(address, refreshMismatch ? undefined : sessionOnboardInfo[cacheKey]);
+        signerCacheRef.current[cacheKey] = signer;
+        signerProviderCacheRef.current[cacheKey] = promptProvider;
+      } else if (!refreshMismatch && sessionOnboardInfo[cacheKey]) {
+        signer.setUserOnboardInfo(sessionOnboardInfo[cacheKey]);
+      }
       signer.disableAutoOnboard();
-      signerCacheRef.current[cacheKey] = signer;
 
       if (refreshMismatch) {
         onWalletAesHealthChange?.(
@@ -492,8 +548,16 @@ export function useWalletOnboarding({
       if (!walletOption && walletId !== 'metamask' && !isMetaMaskConnectMobileWalletId(walletId)) {
         walletOption = preferredInjectedWalletOption;
       }
-      const useMetaMaskConnectMobile = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
-      if (!useMetaMaskConnectMobile) {
+      const useMetaMaskConnectMobileContext = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
+      const mobileInjectedOption = useMetaMaskConnectMobileContext
+        ? walletOption
+          ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
+          : resolveMetaMaskMobileInjectedWalletOption()
+        : null;
+      const useMetaMaskConnectMobile = useMetaMaskConnectMobileContext && !mobileInjectedOption;
+      if (mobileInjectedOption) {
+        walletOption = mobileInjectedOption;
+      } else if (!useMetaMaskConnectMobileContext) {
         const injectedMetaMaskOption = walletOption
           ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
           : resolveMetaMaskMobileInjectedWalletOption();
@@ -629,6 +693,50 @@ export function useWalletOnboarding({
       try {
         const useMetaMaskConnectMobile = targetSession.source === 'metamask-connect-mobile';
         if (useMetaMaskConnectMobile && options?.forceAccountPicker) {
+          const injectedOption = resolveMetaMaskMobileInjectedWalletOption();
+          if (injectedOption?.provider) {
+            logMetaMaskMobileProviderSelection('injected-metamask', {
+              reason: 'mobile-in-app-force-account-picker',
+              walletId: injectedOption.id
+            });
+            logMetaMaskMobileRequestMethod('eth_requestAccounts', 'injected-metamask', {
+              walletId: injectedOption.id
+            });
+            const accounts = (await injectedOption.provider.request({ method: 'eth_requestAccounts' })) as string[];
+            const selected = accounts[0] ?? '';
+            if (!selected) {
+              throw new Error('No wallet account selected.');
+            }
+            setConnectedProvider(injectedOption.provider);
+            setConnectionMethod('metamask');
+            setActiveSignerSource('metamask');
+            setSelectedInjectedWalletId(injectedOption.id);
+            resetBrowserPrivacySessionForWalletChange(selected);
+            setWalletAddress(selected);
+            saveWalletPreference({ kind: 'browser', browserWalletId: injectedOption.id });
+            logMetaMaskMobileRequestMethod('eth_chainId', 'injected-metamask', {
+              walletId: injectedOption.id
+            });
+            const normalizedChainId = normalizeChainId(
+              (await injectedOption.provider.request({ method: 'eth_chainId' })) as string | number
+            );
+            setChainId(normalizedChainId);
+            setBrowserWalletSession({
+              address: selected,
+              chainId: normalizedChainId,
+              provider: injectedOption.provider,
+              source: 'injected',
+              walletId: injectedOption.id,
+              walletLabel: injectedOption.label
+            });
+            setStatus(`Connected (${injectedOption.label})`);
+            const onboardInfo = options?.preparePrivacy
+              ? await onboardAddressAes(selected, injectedOption.provider, options)
+              : null;
+            schedulePostConnectSync(selected);
+            return onboardInfo;
+          }
+
           const mobileSession = await connectMetaMaskMobile({ forceAccountPicker: true });
           const selected = mobileSession.address;
           setConnectedProvider(mobileSession.provider);
@@ -659,10 +767,18 @@ export function useWalletOnboarding({
             })
             .catch(() => null);
         }
-        const restoredMobileSession = useMetaMaskConnectMobile
+        const restoredInjectedSession = useMetaMaskConnectMobile
+          ? await (async () => {
+              const injectedOption = resolveMetaMaskMobileInjectedWalletOption();
+              return injectedOption ? readInjectedPassiveBrowserWalletRestore(injectedOption) : null;
+            })()
+          : null;
+        const restoredMobileSession = useMetaMaskConnectMobile && !restoredInjectedSession
           ? await readMetaMaskConnectMobileSession()
           : null;
-        const accounts = restoredMobileSession
+        const accounts = restoredInjectedSession
+          ? [restoredInjectedSession.address]
+          : restoredMobileSession
           ? [restoredMobileSession.address]
           : ((await targetSession.provider.request({
               method: options?.forceAccountPicker ? 'eth_requestAccounts' : 'eth_accounts'
@@ -675,16 +791,19 @@ export function useWalletOnboarding({
           return connectAndOnboard(targetSession.walletId || walletId, options);
         }
 
-        const activeWalletProvider = restoredMobileSession?.provider ?? targetSession.provider;
+        const activeWalletProvider = restoredInjectedSession?.provider ?? restoredMobileSession?.provider ?? targetSession.provider;
+        const activeWalletId = restoredInjectedSession?.walletId ?? restoredMobileSession?.walletId ?? targetSession.walletId;
+        const activeWalletLabel = restoredInjectedSession?.walletLabel ?? restoredMobileSession?.walletLabel ?? targetSession.walletLabel;
         setConnectedProvider(activeWalletProvider);
         setConnectionMethod('metamask');
         setActiveSignerSource('metamask');
-        setSelectedInjectedWalletId(targetSession.walletId);
+        setSelectedInjectedWalletId(activeWalletId);
         resetBrowserPrivacySessionForWalletChange(selected);
         setWalletAddress(selected);
-        saveWalletPreference({ kind: 'browser', browserWalletId: targetSession.walletId });
+        saveWalletPreference({ kind: 'browser', browserWalletId: activeWalletId });
 
         const normalizedChainId =
+          restoredInjectedSession?.chainId ??
           restoredMobileSession?.chainId ??
           normalizeChainId((await activeWalletProvider.request({ method: 'eth_chainId' })) as string | number);
         setChainId(normalizedChainId);
@@ -692,10 +811,17 @@ export function useWalletOnboarding({
           ...targetSession,
           address: selected,
           chainId: normalizedChainId,
-          provider: activeWalletProvider
+          provider: activeWalletProvider,
+          source: restoredInjectedSession
+            ? 'injected' as const
+            : restoredMobileSession
+              ? 'metamask-connect-mobile' as const
+              : targetSession.source,
+          walletId: activeWalletId,
+          walletLabel: activeWalletLabel
         };
         setBrowserWalletSession(nextSession);
-        setStatus(`Connected (${targetSession.walletLabel})`);
+        setStatus(`Connected (${activeWalletLabel})`);
         const onboardInfo = options?.preparePrivacy
           ? await onboardAddressAes(selected, activeWalletProvider, options)
           : null;
@@ -755,6 +881,7 @@ export function useWalletOnboarding({
     setConnectedProvider(null);
     setBrowserWalletSession(null);
     signerCacheRef.current = {};
+    signerProviderCacheRef.current = {};
     clearCachedStateBackupMemo();
   }, [
     clearCachedStateBackupMemo,
@@ -1012,6 +1139,7 @@ export function useWalletOnboarding({
     setStatus,
     setWalletAddress,
     signerCacheRef,
+    signerProviderCacheRef,
     status,
     walletAddress
   };

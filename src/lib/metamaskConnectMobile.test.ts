@@ -195,7 +195,7 @@ describe('metamaskConnectMobile', () => {
     });
   });
 
-  it('selects Connect EVM for MetaMask Mobile bootstrap even when injected MetaMask is available', () => {
+  it('detects MetaMask Mobile bootstrap context even when injected MetaMask is available', () => {
     const metamaskOption = {
       id: 'metamask',
       label: 'MetaMask',

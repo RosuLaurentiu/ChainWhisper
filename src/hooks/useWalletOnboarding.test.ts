@@ -126,13 +126,32 @@ describe('readPassiveBrowserWalletRestore', () => {
     });
   });
 
-  it('prefers a MetaMask Connect Mobile session on wallet bootstrap even when injected MetaMask exists', async () => {
+  it('prefers injected MetaMask for mobile bootstrap restore when it is already authorized', async () => {
     const walletAddress = '0x0000000000000000000000000000000000000003';
     vi.stubGlobal('navigator', {
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile'
     });
     window.location.pathname = '/wallet-connect';
     const { methods, option } = createWalletOption([walletAddress]);
+
+    const restore = await readPassiveBrowserWalletRestore(option);
+
+    expect(restore).toMatchObject({
+      address: walletAddress,
+      source: 'injected',
+      walletId: 'metamask'
+    });
+    expect(mocks.createEVMClient).not.toHaveBeenCalled();
+    expect(methods).toEqual(['eth_accounts', 'eth_chainId']);
+  });
+
+  it('falls back to a MetaMask Connect Mobile session when injected MetaMask is not authorized', async () => {
+    const walletAddress = '0x0000000000000000000000000000000000000004';
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile'
+    });
+    window.location.pathname = '/wallet-connect';
+    const { methods, option } = createWalletOption([]);
     const connectProvider = {
       on: mocks.providerOn,
       request: mocks.providerRequest.mockImplementation(async ({ method }: { method: string }) => {
@@ -165,6 +184,6 @@ describe('readPassiveBrowserWalletRestore', () => {
     });
     expect(mocks.createEVMClient).toHaveBeenCalledTimes(1);
     expect(mocks.providerRequest).toHaveBeenCalledWith({ method: 'eth_accounts' });
-    expect(methods).toEqual([]);
+    expect(methods).toEqual(['eth_accounts']);
   });
 });
