@@ -1,5 +1,6 @@
 export const WALLET_BOOTSTRAP_PATH = '/wallet-connect';
 export const WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY = 'chainwhisper:wallet-bootstrap-active-route:v1';
+export const WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY = 'chainwhisper:wallet-bootstrap-persisted-route:v1';
 export const WALLET_BOOTSTRAP_HISTORY_STATE_KEY = 'chainwhisperWalletBootstrapRoute';
 
 type WalletBootstrapRouteStorage = Pick<Storage, 'getItem' | 'removeItem' | 'setItem'>;
@@ -17,8 +18,10 @@ type WalletBootstrapHistoryState = Record<string, unknown> & {
 };
 
 const DEFAULT_BOOTSTRAP_TARGET_PATH = '/';
+const DEFAULT_METAMASK_MOBILE_BOOTSTRAP_TARGET_PATH = '/trades';
 const FALLBACK_ORIGIN = 'https://chainwhisper.local';
 const MOBILE_WALLET_DIAGNOSTICS_KEY = 'chainwhisper:mobile-wallet-diagnostics';
+const PERSISTED_BOOTSTRAP_ROUTE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const normalizeBootstrapPathname = (pathname: string): string => {
   const normalized = pathname.trim().replace(/\/+$/, '');
@@ -56,6 +59,17 @@ const getSessionStorage = (): WalletBootstrapRouteStorage | null => {
   }
   try {
     return window.sessionStorage;
+  } catch {
+    return null;
+  }
+};
+
+const getLocalStorage = (): WalletBootstrapRouteStorage | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.localStorage;
   } catch {
     return null;
   }
@@ -146,11 +160,15 @@ export const normalizeWalletBootstrapTargetPath = (
 
 const normalizeRouteRecord = (
   value: Partial<WalletBootstrapRouteRecord> | null | undefined,
-  origin = getOrigin()
+  origin = getOrigin(),
+  options: { maxAgeMs?: number; now?: number } = {}
 ): WalletBootstrapRouteRecord | null => {
   const activePath = normalizeWalletBootstrapTargetPath(value?.activePath, origin);
   const entryPath = normalizeWalletBootstrapTargetPath(value?.entryPath, origin);
   const timestamp = typeof value?.timestamp === 'number' ? value.timestamp : 0;
+  if (options.maxAgeMs && (!timestamp || (options.now ?? Date.now()) - timestamp > options.maxAgeMs)) {
+    return null;
+  }
   return activePath && entryPath && timestamp ? { activePath, entryPath, timestamp } : null;
 };
 
@@ -223,6 +241,55 @@ export const readWalletBootstrapRouteRecord = (
   }
 };
 
+export const readWalletBootstrapPersistedRouteRecord = (
+  storage: WalletBootstrapRouteStorage | null = getLocalStorage(),
+  origin = getOrigin(),
+  now = Date.now()
+): WalletBootstrapRouteRecord | null => {
+  if (!storage) {
+    return null;
+  }
+
+  try {
+    const raw = storage.getItem(WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<WalletBootstrapRouteRecord>;
+    const record = normalizeRouteRecord(parsed, origin, {
+      maxAgeMs: PERSISTED_BOOTSTRAP_ROUTE_TTL_MS,
+      now
+    });
+    if (!record) {
+      storage.removeItem(WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY);
+      return null;
+    }
+
+    return record;
+  } catch {
+    try {
+      storage?.removeItem(WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY);
+    } catch {
+    }
+    return null;
+  }
+};
+
+const writeWalletBootstrapPersistedRouteRecord = (
+  record: WalletBootstrapRouteRecord,
+  storage: WalletBootstrapRouteStorage | null = getLocalStorage()
+): void => {
+  if (!storage) {
+    return;
+  }
+
+  try {
+    storage.setItem(WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY, JSON.stringify(record));
+  } catch {
+  }
+};
+
 const shouldUseStoredRouteRecord = (
   record: WalletBootstrapRouteRecord | null,
   entryParamPresent: boolean,
@@ -265,8 +332,10 @@ export const writeWalletBootstrapActiveRoutePath = (
 
   try {
     storage.setItem(WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY, JSON.stringify(record));
+    writeWalletBootstrapPersistedRouteRecord(record);
     return record;
   } catch {
+    writeWalletBootstrapPersistedRouteRecord(record);
     return null;
   }
 };
@@ -344,6 +413,7 @@ export const resolveWalletBootstrapActiveRoute = (
   const entryPath = getWalletBootstrapEntryPathFromLocation(location);
   const historyRoute = readWalletBootstrapHistoryRouteRecord(options.historyState ?? getHistory()?.state, origin);
   const storedRoute = readWalletBootstrapRouteRecord(options.storage ?? getSessionStorage(), origin);
+  const persistedRoute = readWalletBootstrapPersistedRouteRecord(getLocalStorage(), origin);
 
   if (shouldUseStoredRouteRecord(historyRoute, entryParamPresent, entryPath)) {
     return historyRoute.activePath;
@@ -351,6 +421,10 @@ export const resolveWalletBootstrapActiveRoute = (
 
   if (shouldUseStoredRouteRecord(storedRoute, entryParamPresent, entryPath)) {
     return storedRoute.activePath;
+  }
+
+  if (shouldUseStoredRouteRecord(persistedRoute, entryParamPresent, entryPath)) {
+    return persistedRoute.activePath;
   }
 
   if (entryPath) {
@@ -446,10 +520,21 @@ export const freezeDirectMetaMaskMobileRoute = (
     return freezeWalletBootstrapUrlAfterEntry(options);
   }
 
-  const targetPath = normalizeWalletBootstrapTargetPath(
+  const directTargetPath = normalizeWalletBootstrapTargetPath(
     `${location.pathname}${location.search}${location.hash}`,
     getOrigin(location)
   );
+  const restoredPath =
+    readWalletBootstrapHistoryRouteRecord((options.history ?? getHistory())?.state, getOrigin(location))?.activePath ||
+    readWalletBootstrapRouteRecord(options.storage ?? getSessionStorage(), getOrigin(location))?.activePath ||
+    readWalletBootstrapPersistedRouteRecord(getLocalStorage(), getOrigin(location))?.activePath ||
+    '';
+  const targetPath =
+    directTargetPath === '/'
+      ? restoredPath && restoredPath !== '/'
+        ? restoredPath
+        : DEFAULT_METAMASK_MOBILE_BOOTSTRAP_TARGET_PATH
+      : directTargetPath;
   if (!targetPath) {
     return '';
   }

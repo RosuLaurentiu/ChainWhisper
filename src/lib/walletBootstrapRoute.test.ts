@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY,
   WALLET_BOOTSTRAP_HISTORY_STATE_KEY,
@@ -59,6 +59,10 @@ const createHistory = () => {
 };
 
 describe('wallet bootstrap route helpers', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('builds a stable wallet bootstrap path for app routes', () => {
     expect(buildWalletBootstrapPath('/trades/l/abc?escrow=direct#secret', 'https://chainwhisper.example')).toBe(
       '/wallet-connect?p=%2Ftrades%2Fl%2Fabc%3Fescrow%3Ddirect%23secret'
@@ -180,6 +184,50 @@ describe('wallet bootstrap route helpers', () => {
 
     expect(resolveWalletBootstrapActiveRoute({ location, storage })).toBe('/trades/recurring?order=7');
     expect(isWalletBootstrapStableUrl(location.pathname, location.search)).toBe(true);
+  });
+
+  it('restores a stable wallet bootstrap URL from local storage when session state is gone', () => {
+    const localStorage = createMemoryStorage();
+    vi.stubGlobal('window', {
+      localStorage,
+      location: createLocation('/wallet-connect'),
+      sessionStorage: createMemoryStorage()
+    });
+    writeWalletBootstrapActiveRoutePath('/trades/recurring?order=8', {
+      entryPath: '/trades/recurring?order=8',
+      location: createLocation('/wallet-connect'),
+      storage: createMemoryStorage()
+    });
+
+    expect(resolveWalletBootstrapActiveRoute({
+      location: createLocation('/wallet-connect'),
+      storage: createMemoryStorage()
+    })).toBe('/trades/recurring?order=8');
+  });
+
+  it('uses the persisted route when MetaMask Mobile reloads wallet-connect as the origin', () => {
+    const localStorage = createMemoryStorage();
+    const history = createHistory();
+    vi.stubGlobal('window', {
+      localStorage,
+      location: createLocation('/'),
+      sessionStorage: createMemoryStorage()
+    });
+    writeWalletBootstrapActiveRoutePath('/trades/recurring?order=9', {
+      entryPath: '/trades/recurring?order=9',
+      location: createLocation('/wallet-connect'),
+      storage: createMemoryStorage()
+    });
+
+    expect(
+      freezeDirectMetaMaskMobileRoute({
+        history,
+        location: createLocation('/'),
+        storage: createMemoryStorage(),
+        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
+      })
+    ).toBe('/trades/recurring?order=9');
+    expect(history.entries[history.entries.length - 1]?.url).toBe('/wallet-connect');
   });
 
   it('uses the stored active route when still on the same bootstrap entry', () => {
