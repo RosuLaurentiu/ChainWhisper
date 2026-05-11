@@ -13,17 +13,12 @@ import {
 } from '../lib/appChain';
 import type { TradePageView } from './useP2PTradeRoute';
 import { getWalletTransactionFlowState } from '../lib/walletTransactionFlow';
-import { readPendingTradingWrite } from '../lib/pendingTradingWrite';
 
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
 
 const shouldHoldTradeReadForWalletFlow = (silent: boolean, hasExistingData: boolean): boolean => {
   const flowState = getWalletTransactionFlowState();
-  return (
-    Boolean(readPendingTradingWrite()) ||
-    flowState === 'memory-active' ||
-    (flowState === 'stored-handoff' && (silent || hasExistingData))
-  );
+  return flowState === 'memory-active' || (flowState === 'stored-handoff' && (silent || hasExistingData));
 };
 
 const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContract'>): string =>
@@ -350,7 +345,7 @@ export default function useP2PTradeData({
 
   useEffect(() => {
     if (routeView !== 'trade' || routeTradeId === null) {
-      if ((getWalletTransactionFlowState() !== 'inactive' || readPendingTradingWrite()) && detailTradeRef.current) {
+      if (getWalletTransactionFlowState() !== 'inactive' && detailTradeRef.current) {
         return;
       }
       setDetailTrade(null);

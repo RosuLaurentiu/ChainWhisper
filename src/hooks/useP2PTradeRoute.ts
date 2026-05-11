@@ -7,7 +7,6 @@ import {
   isWalletAddress
 } from '../lib/appShared/core';
 import { isWalletTransactionFlowActive } from '../lib/walletTransactionFlow';
-import { readPendingTradingWrite } from '../lib/pendingTradingWrite';
 import { decodeTradeLink, encodeTradeLink } from '../lib/tradeLinks';
 import {
   buildWalletBootstrapPath,
@@ -95,9 +94,6 @@ const parseTradePathRoute = (path: string): TradeRouteState | null => {
     return null;
   }
 };
-
-const isTradeWalletLifecycleActive = (): boolean =>
-  isWalletTransactionFlowActive() || Boolean(readPendingTradingWrite());
 
 export const clearPendingTradeTerminalRoute = (storage: TradeRouteStorage | null = getSessionRouteStorage()): void => {
   try {
@@ -337,7 +333,7 @@ export const resolveTradeRouteFromLocation = (): TradeRouteState => {
 
 const restorePendingTradeTerminalRouteFromLocation = (): TradeRouteState => {
   const route = resolveTradeRouteFromLocation();
-  if (isTradeWalletLifecycleActive()) {
+  if (isWalletTransactionFlowActive()) {
     return route;
   }
   const pendingPath = resolvePendingTradeTerminalRoutePath(route, getCurrentTradePath());
@@ -525,7 +521,7 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
     const syncRoute = (event?: Event) => {
       if (
         (event?.type === 'focus' || event?.type === 'visibilitychange') &&
-        isTradeWalletLifecycleActive()
+        isWalletTransactionFlowActive()
       ) {
         return;
       }
