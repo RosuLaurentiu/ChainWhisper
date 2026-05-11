@@ -4,7 +4,9 @@ import {
   WALLET_BOOTSTRAP_HISTORY_STATE_KEY,
   buildWalletBootstrapDappTargetUrl,
   buildWalletBootstrapPath,
+  freezeDirectMetaMaskMobileRoute,
   freezeWalletBootstrapUrlAfterEntry,
+  isMetaMaskMobileUserAgent,
   isWalletBootstrapStableUrl,
   normalizeWalletBootstrapTargetPath,
   resolveWalletBootstrapActiveRoute,
@@ -93,6 +95,42 @@ describe('wallet bootstrap route helpers', () => {
       activePath: '/trades/l/abc?escrow=direct',
       entryPath: '/trades/l/abc?escrow=direct'
     });
+  });
+
+  it('freezes direct MetaMask Mobile app routes into the wallet bootstrap URL', () => {
+    const storage = createMemoryStorage();
+    const history = createHistory();
+    const location = createLocation('/trades/l/abc', '?escrow=direct', '#secret');
+
+    expect(
+      freezeDirectMetaMaskMobileRoute({
+        history,
+        location,
+        storage,
+        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
+      })
+    ).toBe('/trades/l/abc?escrow=direct#secret');
+    expect(history.entries[history.entries.length - 1]?.url).toBe('/wallet-connect');
+    expect(resolveWalletBootstrapActiveRoute({
+      historyState: history.state,
+      location: createLocation('/wallet-connect'),
+      storage
+    })).toBe('/trades/l/abc?escrow=direct#secret');
+  });
+
+  it('does not freeze direct routes outside MetaMask Mobile', () => {
+    const storage = createMemoryStorage();
+    const history = createHistory();
+    const location = createLocation('/trades/l/abc');
+
+    expect(freezeDirectMetaMaskMobileRoute({ history, location, storage, userAgent: 'Mozilla Desktop' })).toBe('');
+    expect(history.entries).toEqual([]);
+  });
+
+  it('detects MetaMask Mobile user agents narrowly', () => {
+    expect(isMetaMaskMobileUserAgent('Mozilla/5.0 iPhone Mobile MetaMaskMobile')).toBe(true);
+    expect(isMetaMaskMobileUserAgent('Mozilla/5.0 iPhone Mobile Safari')).toBe(false);
+    expect(isMetaMaskMobileUserAgent('Mozilla/5.0 Desktop MetaMask')).toBe(false);
   });
 
   it('updates bootstrap route state without changing the visible wallet URL', () => {

@@ -104,6 +104,14 @@ const logWalletBootstrapDiagnostic = (event: string, detail: Record<string, unkn
   console.info('[ChainWhisper mobile wallet]', event, detail);
 };
 
+const getNavigatorUserAgent = (): string => {
+  const maybeNavigator = globalThis as { navigator?: { userAgent?: unknown } };
+  return typeof maybeNavigator.navigator?.userAgent === 'string' ? maybeNavigator.navigator.userAgent : '';
+};
+
+export const isMetaMaskMobileUserAgent = (userAgent = getNavigatorUserAgent()): boolean =>
+  /metamaskmobile|metamask/i.test(userAgent) && /android|iphone|ipad|ipod|mobile/i.test(userAgent);
+
 export const isWalletBootstrapRoute = (pathname: string): boolean =>
   normalizeBootstrapPathname(pathname).toLowerCase() === WALLET_BOOTSTRAP_PATH;
 
@@ -418,6 +426,45 @@ export const freezeWalletBootstrapUrlAfterEntry = (
     });
   }
 
+  return targetPath;
+};
+
+export const freezeDirectMetaMaskMobileRoute = (
+  options: {
+    history?: WalletBootstrapHistory | null;
+    location?: WalletBootstrapLocation | null;
+    storage?: WalletBootstrapRouteStorage | null;
+    userAgent?: string;
+  } = {}
+): string => {
+  const location = options.location ?? getWindowLocation();
+  if (!location || !isMetaMaskMobileUserAgent(options.userAgent)) {
+    return '';
+  }
+
+  if (isWalletBootstrapRoute(location.pathname)) {
+    return freezeWalletBootstrapUrlAfterEntry(options);
+  }
+
+  const targetPath = normalizeWalletBootstrapTargetPath(
+    `${location.pathname}${location.search}${location.hash}`,
+    getOrigin(location)
+  );
+  if (!targetPath) {
+    return '';
+  }
+
+  writeWalletBootstrapActiveRouteState(targetPath, {
+    entryPath: targetPath,
+    history: options.history,
+    location,
+    replace: true,
+    storage: options.storage
+  });
+  logWalletBootstrapDiagnostic('bootstrap-url-frozen', {
+    reason: 'direct-metamask-mobile-route',
+    routeKey: sanitizeBootstrapPathForDiagnostics(targetPath)
+  });
   return targetPath;
 };
 

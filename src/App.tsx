@@ -94,6 +94,7 @@ import {
 } from './shell/routing';
 import { isTradeMobileShellRoute } from './lib/tradeMobileShell';
 import {
+  freezeDirectMetaMaskMobileRoute,
   freezeWalletBootstrapUrlAfterEntry,
   isWalletBootstrapRoute,
   writeWalletBootstrapActiveRouteState
@@ -5599,6 +5600,7 @@ export default function App() {
       if (isWalletTransactionFlowActive()) {
         return;
       }
+      freezeDirectMetaMaskMobileRoute();
       const nextRoute = resolveAppRouteFromLocation();
       setActivePage(nextRoute.page);
 

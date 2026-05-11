@@ -63,6 +63,22 @@ test.describe('trading V1 routes', () => {
     }
   });
 
+  test('converts direct MetaMask Mobile trade links into the stable wallet bootstrap URL', async ({ browser, baseURL }) => {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}/trades/recurring?order=1`);
+
+      await expect(page).toHaveURL(/\/wallet-connect$/);
+      await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
+      await expect(page.getByText('Trading Terminal')).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
   test('keeps MetaMask Mobile bootstrap stable across app navigation', async ({ browser, baseURL }) => {
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
