@@ -1,9 +1,11 @@
 import { isMobileBrowserUserAgent } from './walletOptions';
+import {
+  TRADE_MOBILE_SHELL_PATH,
+  TRADE_ROUTE_PREFIX,
+  buildTradeMobileShellPath
+} from './tradeMobileShell';
 
 export const MOBILE_WALLET_PROMPT_ROUTE_SHIM_KEY = 'chainwhisper:p2p:mobile-prompt-route-shim:v1';
-
-const TRADE_ROUTE_PREFIX = '/trades';
-const PROMPT_SAFE_PATH = '/chat';
 
 type PromptRouteShimOptions = {
   enabled: boolean;
@@ -17,9 +19,6 @@ type PromptRouteShimOptions = {
 
 const buildCurrentRoute = (location: Pick<Location, 'pathname' | 'search' | 'hash'>): string =>
   `${location.pathname}${location.search}${location.hash}`;
-
-const buildPromptSafeRoute = (tradeRoute: string): string =>
-  `${PROMPT_SAFE_PATH}?p=${encodeURIComponent(tradeRoute)}`;
 
 const describeRouteForTrace = (pathname: string): string =>
   pathname.toLowerCase().startsWith(`${TRADE_ROUTE_PREFIX}/`) ? `${TRADE_ROUTE_PREFIX}/[route]` : pathname;
@@ -43,7 +42,7 @@ export const beginMobileWalletPromptRouteShim = ({
 
   const originalPathname = location.pathname;
   const originalRoute = buildCurrentRoute(location);
-  const promptSafeRoute = buildPromptSafeRoute(originalRoute);
+  const promptSafeRoute = buildTradeMobileShellPath(originalRoute);
 
   try {
     storage?.setItem(
@@ -60,7 +59,7 @@ export const beginMobileWalletPromptRouteShim = ({
     history.replaceState(history.state, '', promptSafeRoute);
     onTrace?.('mobile-prompt-route-shim-start', {
       fromRoute: describeRouteForTrace(originalPathname),
-      toRoute: `${PROMPT_SAFE_PATH}?p=[route]`
+      toRoute: `${TRADE_MOBILE_SHELL_PATH}?p=[route]`
     });
   } catch {
     return () => {};
@@ -78,11 +77,11 @@ export const beginMobileWalletPromptRouteShim = ({
     } catch {
     }
 
-    const currentPathname = location.pathname;
-    if (currentPathname !== PROMPT_SAFE_PATH) {
+    const currentRoute = buildCurrentRoute(location);
+    if (currentRoute !== promptSafeRoute) {
       onTrace?.('mobile-prompt-route-shim-skip-restore', {
-        currentRoute: describeRouteForTrace(currentPathname),
-        expectedRoute: PROMPT_SAFE_PATH
+        currentRoute: describeRouteForTrace(location.pathname),
+        expectedRoute: `${TRADE_MOBILE_SHELL_PATH}?p=[route]`
       });
       return;
     }

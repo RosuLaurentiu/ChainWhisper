@@ -91,6 +91,7 @@ import {
   resolveNavigationPathFromLocation,
   type AppPage
 } from './shell/routing';
+import { isTradeMobileShellRoute } from './lib/tradeMobileShell';
 import { getAppWalletPolicy } from './shell/walletPolicy';
 import { attachWsDisconnectListeners } from './shell/realtimeConnection';
 import { useAppShellStore } from './state/appShellStore';
@@ -5579,10 +5580,13 @@ export default function App() {
           ? currentPath
           : getPathForAppPage(nextRoute.page);
       const canonicalHash = nextRoute.page === 'trades' ? window.location.hash : '';
+      const preserveTradeShell =
+        nextRoute.page === 'trades' && isTradeMobileShellRoute(window.location.pathname, window.location.search);
       if (
-        currentPath !== canonicalPath ||
-        window.location.hash !== canonicalHash ||
-        new URLSearchParams(window.location.search).has('p')
+        !preserveTradeShell &&
+        (currentPath !== canonicalPath ||
+          window.location.hash !== canonicalHash ||
+          new URLSearchParams(window.location.search).has('p'))
       ) {
         const nextUrl = new URL(window.location.href);
         nextUrl.pathname = canonicalPath;

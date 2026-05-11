@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getPathForAppPage, resolveAppRouteFromLocation } from './routing';
+import { getPathForAppPage, resolveAppRouteFromLocation, resolveNavigationPathFromLocation } from './routing';
 
 const stubLocation = (pathname: string, search = '', hash = '') => {
   vi.stubGlobal('window', {
@@ -38,5 +38,12 @@ describe('app routing', () => {
     expect(getPathForAppPage('swap')).toBe('/shield');
     expect(getPathForAppPage('treasury')).toBe('/treasury');
     expect(getPathForAppPage('trades')).toBe('/trades');
+  });
+
+  it('resolves stable trade shell URLs through the redirected path', () => {
+    stubLocation('/trades', `?p=${encodeURIComponent('/trades/l/abc?escrow=direct')}`);
+
+    expect(resolveNavigationPathFromLocation()).toBe('/trades/l/abc?escrow=direct');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
   });
 });

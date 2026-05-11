@@ -46,6 +46,23 @@ test.describe('trading V1 routes', () => {
     await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
   });
 
+  test('keeps the MetaMask Mobile trade shell URL while rendering the terminal', async ({ browser, baseURL }) => {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile MetaMaskMobile'
+    });
+    const page = await context.newPage();
+    const shellPath = `/trades?p=${encodeURIComponent('/trades/recurring?order=1')}`;
+    try {
+      await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}${shellPath}`);
+
+      await expect(page).toHaveURL(new RegExp(`/trades\\?p=${encodeURIComponent('/trades/recurring?order=1')}`));
+      await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
+      await expect(page.getByText('Trading Terminal')).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
   test('manual Desk navigation clears the pending terminal route', async ({ page }) => {
     await page.goto('/trades/recurring?order=1');
     await page.evaluate((storageKey) => {

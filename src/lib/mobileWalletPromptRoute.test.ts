@@ -37,7 +37,7 @@ const createMutableBrowserState = (route: string) => {
 };
 
 describe('mobile wallet prompt route shim', () => {
-  it('temporarily presents the stable chat redirected route during mobile trade wallet prompts', () => {
+  it('temporarily presents the stable trade shell route during mobile trade wallet prompts', () => {
     const storage = createMemoryStorage();
     const { history, location } = createMutableBrowserState('/trades/77?mode=fill#secret');
     const trace = vi.fn();
@@ -52,12 +52,12 @@ describe('mobile wallet prompt route shim', () => {
       onTrace: trace
     });
 
-    expect(location.pathname).toBe('/chat');
+    expect(location.pathname).toBe('/trades');
     expect(location.search).toBe(`?p=${encodeURIComponent('/trades/77?mode=fill#secret')}`);
     expect(history.replaceState).toHaveBeenCalledWith(
       history.state,
       '',
-      `/chat?p=${encodeURIComponent('/trades/77?mode=fill#secret')}`
+      `/trades?p=${encodeURIComponent('/trades/77?mode=fill#secret')}`
     );
     expect(JSON.parse(storage.getItem(MOBILE_WALLET_PROMPT_ROUTE_SHIM_KEY) ?? '{}')).toEqual({
       path: '/trades/77?mode=fill#secret',
@@ -65,7 +65,7 @@ describe('mobile wallet prompt route shim', () => {
     });
     expect(trace).toHaveBeenCalledWith('mobile-prompt-route-shim-start', {
       fromRoute: '/trades/[route]',
-      toRoute: '/chat?p=[route]'
+      toRoute: '/trades?p=[route]'
     });
 
     restore();
@@ -92,8 +92,31 @@ describe('mobile wallet prompt route shim', () => {
 
     expect(trace).toHaveBeenCalledWith('mobile-prompt-route-shim-start', {
       fromRoute: '/trades/[route]',
-      toRoute: '/chat?p=[route]'
+      toRoute: '/trades?p=[route]'
     });
+  });
+
+  it('does not nest the trade shell when the prompt starts from an existing shell route', () => {
+    const storage = createMemoryStorage();
+    const shellPath = `/trades?p=${encodeURIComponent('/trades/77?mode=fill#secret')}`;
+    const { history, location } = createMutableBrowserState(shellPath);
+
+    const restore = beginMobileWalletPromptRouteShim({
+      enabled: true,
+      isMobileBrowser: true,
+      location,
+      storage,
+      history
+    });
+
+    expect(location.pathname).toBe('/trades');
+    expect(location.search).toBe(`?p=${encodeURIComponent('/trades/77?mode=fill#secret')}`);
+    expect(history.replaceState).toHaveBeenCalledWith(history.state, '', shellPath);
+
+    restore();
+
+    expect(location.pathname).toBe('/trades');
+    expect(location.search).toBe(`?p=${encodeURIComponent('/trades/77?mode=fill#secret')}`);
   });
 
   it('does nothing outside mobile trade routes', () => {

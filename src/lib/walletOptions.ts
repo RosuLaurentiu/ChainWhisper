@@ -1,4 +1,8 @@
 import type { InjectedWalletOption } from './appShared';
+import {
+  TRADE_ROUTE_PREFIX,
+  buildTradeMobileShellPath
+} from './tradeMobileShell';
 
 export type InjectedWalletPriority = 'metamask' | 'selected';
 
@@ -17,16 +21,18 @@ export const isMobileBrowserUserAgent = (userAgent = getNavigatorUserAgent()): b
   /android|iphone|ipad|ipod|mobile/i.test(userAgent);
 
 const encodeMetaMaskDappUrl = (dappUrl: string): string =>
-  encodeURI(dappUrl).replace(/[?#]/g, (value) => encodeURIComponent(value));
+  encodeURI(dappUrl)
+    .replace(/%25([0-9a-fA-F]{2})/g, '%$1')
+    .replace(/#/g, '%23');
 
 const buildMetaMaskDappTargetUrl = (dappUrl: string): string => {
   const trimmed = dappUrl.trim();
   const normalizedUrl = trimmed.replace(/^https?:\/\//i, '');
   try {
     const parsedUrl = new URL(trimmed.match(/^https?:\/\//i) ? trimmed : `https://${trimmed}`);
-    if (parsedUrl.pathname.toLowerCase().startsWith('/trades')) {
+    if (parsedUrl.pathname.toLowerCase().startsWith(TRADE_ROUTE_PREFIX)) {
       const tradeRoute = `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
-      return `${parsedUrl.host}/chat?p=${encodeURIComponent(tradeRoute)}`;
+      return `${parsedUrl.host}${buildTradeMobileShellPath(tradeRoute)}`;
     }
   } catch {
   }
