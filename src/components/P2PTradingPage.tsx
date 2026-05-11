@@ -106,7 +106,8 @@ import {
   METAMASK_CONNECT_MOBILE_WALLET_ID,
   METAMASK_CONNECT_MOBILE_WALLET_LABEL,
   resolveMetaMaskMobileInjectedWalletOption,
-  shouldUseMetaMaskConnectMobile
+  shouldUseMetaMaskConnectMobile,
+  waitForMetaMaskMobileInjectedWalletOption
 } from '../lib/metamaskConnectMobile';
 import { ensureProviderOnCotiNetwork } from '../lib/walletNetwork';
 import {
@@ -1136,9 +1137,10 @@ export default function P2PTradingPage({
       }
       const useMetaMaskConnectMobileContext = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
       const mobileInjectedOption = useMetaMaskConnectMobileContext
-        ? walletOption
-          ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
-          : resolveMetaMaskMobileInjectedWalletOption()
+        ? await waitForMetaMaskMobileInjectedWalletOption({
+            initialOptions: walletOption ? [walletOption] : undefined,
+            timeoutMs: 3000
+          })
         : null;
       const useMetaMaskConnectMobile = useMetaMaskConnectMobileContext && !mobileInjectedOption;
       if (mobileInjectedOption) {

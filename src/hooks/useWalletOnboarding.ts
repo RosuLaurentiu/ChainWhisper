@@ -39,7 +39,8 @@ import {
   METAMASK_CONNECT_MOBILE_WALLET_LABEL,
   readMetaMaskConnectMobileSession,
   resolveMetaMaskMobileInjectedWalletOption,
-  shouldUseMetaMaskConnectMobile
+  shouldUseMetaMaskConnectMobile,
+  waitForMetaMaskMobileInjectedWalletOption
 } from '../lib/metamaskConnectMobile';
 import { ensureProviderOnCotiNetwork } from '../lib/walletNetwork';
 import {
@@ -136,9 +137,10 @@ export const readPassiveBrowserWalletRestore = async (
   walletOption: InjectedWalletOption | null | undefined
 ): Promise<PassiveBrowserWalletRestoreResult | null> => {
   if (shouldUseMetaMaskConnectMobile({ walletOption })) {
-    const injectedOption = walletOption
-      ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
-      : resolveMetaMaskMobileInjectedWalletOption();
+    const injectedOption = await waitForMetaMaskMobileInjectedWalletOption({
+      initialOptions: walletOption ? [walletOption] : undefined,
+      timeoutMs: 3000
+    });
     if (injectedOption) {
       try {
         const injectedRestore = await readInjectedPassiveBrowserWalletRestore(injectedOption);
@@ -155,6 +157,10 @@ export const readPassiveBrowserWalletRestore = async (
           walletId: injectedOption.id
         });
       }
+    }
+
+    if (injectedOption) {
+      return null;
     }
 
     try {
@@ -344,7 +350,9 @@ export function useWalletOnboarding({
         browserWalletSessionRef.current?.source === 'metamask-connect-mobile' ||
         isMetaMaskConnectMobileProvider(provider)
       ) {
-        const injectedOption = resolveMetaMaskMobileInjectedWalletOption();
+        const injectedOption = await waitForMetaMaskMobileInjectedWalletOption({
+          timeoutMs: 1500
+        });
         if (injectedOption?.provider) {
           try {
             logMetaMaskMobileRequestMethod('eth_accounts', 'injected-metamask', {
@@ -375,8 +383,14 @@ export function useWalletOnboarding({
             });
           }
         }
+        if (injectedOption) {
+          throw new Error('MetaMask Mobile is not authorized for this dapp tab. Tap Connect MetaMask again before signing.');
+        }
+        if (isMetaMaskConnectMobileProvider(provider)) {
+          throw new Error('MetaMask Mobile injected provider was not ready. Reopen this page from MetaMask Mobile and try again.');
+        }
         logMetaMaskMobileProviderSelection('connect-evm', {
-          reason: injectedOption ? 'mobile-injected-signing-fallback' : 'mobile-injected-missing',
+          reason: 'mobile-injected-missing',
           walletId: browserWalletSessionRef.current?.walletId ?? METAMASK_CONNECT_MOBILE_WALLET_ID
         });
         return browserWalletSessionRef.current?.provider ?? provider;
@@ -550,9 +564,10 @@ export function useWalletOnboarding({
       }
       const useMetaMaskConnectMobileContext = shouldUseMetaMaskConnectMobile({ walletId, walletOption });
       const mobileInjectedOption = useMetaMaskConnectMobileContext
-        ? walletOption
-          ? resolveMetaMaskMobileInjectedWalletOption([walletOption])
-          : resolveMetaMaskMobileInjectedWalletOption()
+        ? await waitForMetaMaskMobileInjectedWalletOption({
+            initialOptions: walletOption ? [walletOption] : undefined,
+            timeoutMs: 3000
+          })
         : null;
       const useMetaMaskConnectMobile = useMetaMaskConnectMobileContext && !mobileInjectedOption;
       if (mobileInjectedOption) {
@@ -693,7 +708,9 @@ export function useWalletOnboarding({
       try {
         const useMetaMaskConnectMobile = targetSession.source === 'metamask-connect-mobile';
         if (useMetaMaskConnectMobile && options?.forceAccountPicker) {
-          const injectedOption = resolveMetaMaskMobileInjectedWalletOption();
+          const injectedOption = await waitForMetaMaskMobileInjectedWalletOption({
+            timeoutMs: 3000
+          });
           if (injectedOption?.provider) {
             logMetaMaskMobileProviderSelection('injected-metamask', {
               reason: 'mobile-in-app-force-account-picker',
@@ -769,7 +786,9 @@ export function useWalletOnboarding({
         }
         const restoredInjectedSession = useMetaMaskConnectMobile
           ? await (async () => {
-              const injectedOption = resolveMetaMaskMobileInjectedWalletOption();
+              const injectedOption = await waitForMetaMaskMobileInjectedWalletOption({
+                timeoutMs: 3000
+              });
               return injectedOption ? readInjectedPassiveBrowserWalletRestore(injectedOption) : null;
             })()
           : null;
