@@ -4,6 +4,8 @@ import {
   PRIVATE_REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_ADDRESS,
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+  TRADE_ESCROW_CONTRACT_ADDRESS,
   formatTokenAmount,
   type TradeAssetPayload,
   type TradeSnapshot
@@ -86,6 +88,32 @@ const resolveTradeAssetSelection = (
   };
 };
 
+const resolveComposerFeeEscrowContract = ({
+  counterParentTrade,
+  editingTrade,
+  hiddenLiquidity,
+  tradeVisibility
+}: {
+  counterParentTrade: TradeSnapshot | null;
+  editingTrade: TradeSnapshot | null;
+  hiddenLiquidity: boolean;
+  tradeVisibility: TradeVisibility;
+}): string => {
+  if (editingTrade?.escrowContract) {
+    return editingTrade.escrowContract;
+  }
+  if (counterParentTrade) {
+    return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
+  }
+  if (hiddenLiquidity) {
+    return PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
+  }
+  if (tradeVisibility !== 'public') {
+    return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
+  }
+  return TRADE_ESCROW_CONTRACT_ADDRESS;
+};
+
 type UseP2PTradeComposerActionsArgs = {
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   canEditPublicTrade: (trade: TradeSnapshot, walletKey: string) => boolean;
@@ -104,7 +132,7 @@ type UseP2PTradeComposerActionsArgs = {
   rememberPrivateTradeLiquidity: (tradeId: number, escrowContract: string | undefined, offerAmountWei: bigint) => void;
   rememberTradeAccessSecret: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
-  resolveRequiredFeeForTradeCreate: () => Promise<bigint>;
+  resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
   runTradeWalletPromptFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setCounterParentTrade: Dispatch<SetStateAction<TradeSnapshot | null>>;
   setCreatedTradeId: Dispatch<SetStateAction<number | null>>;
@@ -411,7 +439,14 @@ export default function useP2PTradeComposerActions({
       const signer = await getTradeSigner(
         isPrivateTradeAsset(offerToken) || isPrivateTradeAsset(requestToken) || hiddenLiquidity || visiblePrivateTokenDirectTrade
       );
-      const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
+      const nativeFeeWei = await resolveRequiredFeeForTradeCreate(
+        resolveComposerFeeEscrowContract({
+          counterParentTrade,
+          editingTrade,
+          hiddenLiquidity,
+          tradeVisibility
+        })
+      );
       const expiresAt = tradeHasNoExpiry
         ? 0
         : Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;

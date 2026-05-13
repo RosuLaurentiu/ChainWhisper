@@ -560,34 +560,32 @@
 
 .p2p-market-overview {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
   grid-template-areas:
-    "identity stats"
-    "search search"
-    "status status";
-  gap: 12px 18px;
+    "identity search stats"
+    "status status status";
+  gap: 8px 12px;
   align-items: center;
   border: 1px solid rgba(74, 64, 112, 0.6);
   border-radius: 8px;
   background: rgba(8, 8, 15, 0.9);
-  padding: 12px 14px;
+  padding: 9px 12px;
 }
 
 .p2p-market-overview-trade {
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
   grid-template-areas:
-    "identity stats"
-    "search search"
-    "status status";
+    "identity search stats"
+    "status status status";
   justify-content: stretch;
 }
 
 .p2p-market-overview-mine {
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
 }
 
 .p2p-market-overview-public {
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
 }
 
 .p2p-market-overview-summary-only {
@@ -602,9 +600,9 @@
   grid-area: identity;
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 3px;
   border-left: 2px solid rgba(139, 92, 246, 0.6);
-  padding-left: 10px;
+  padding-left: 9px;
 }
 
 .p2p-market-identity strong {
@@ -618,9 +616,9 @@
 
 .p2p-market-identity span {
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.18;
   overflow-wrap: anywhere;
 }
 
@@ -628,20 +626,22 @@
   grid-area: stats;
   justify-self: end;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(86px, auto));
-  gap: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
 }
 
 .p2p-stats-strip div {
   min-width: 0;
-  display: grid;
-  align-content: start;
-  gap: 4px;
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 5px;
   border: 1px solid rgba(74, 64, 112, 0.46);
-  border-radius: 8px;
+  border-radius: 999px;
   background: rgba(12, 11, 20, 0.5);
-  padding: 8px 10px;
+  padding: 5px 8px;
 }
 
 .p2p-stats-strip div:last-child {
@@ -662,7 +662,7 @@
 
 .p2p-stats-strip strong {
   color: var(--text);
-  font-size: clamp(0.95rem, 1.25vw, 1.22rem);
+  font-size: 0.88rem;
   line-height: 1.05;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -702,16 +702,16 @@
   min-width: 0;
   display: grid;
   grid-template-columns:
-    minmax(320px, 2.2fr)
-    minmax(136px, 0.55fr)
-    minmax(136px, 0.55fr)
-    minmax(136px, 0.55fr)
-    minmax(82px, auto);
+    minmax(260px, 2fr)
+    minmax(118px, 0.58fr)
+    minmax(118px, 0.58fr)
+    minmax(118px, 0.58fr)
+    minmax(68px, auto);
   grid-template-areas: "search pair type sort reset";
   align-items: end;
-  gap: 10px;
-  border-top: 1px solid rgba(74, 64, 112, 0.34);
-  padding-top: 10px;
+  gap: 7px;
+  border-top: 0;
+  padding-top: 0;
 }
 
 .p2p-token-search {
@@ -755,7 +755,7 @@
 .p2p-filter-select select {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 34px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(5, 5, 12, 0.82);
@@ -782,14 +782,14 @@
   grid-area: reset;
   align-self: end;
   justify-self: stretch;
-  min-height: 40px;
+  min-height: 34px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(10, 10, 18, 0.7);
+  background: rgba(12, 11, 22, 0.82);
   color: #d9d3ff;
   padding: 0 12px;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 900;
   cursor: pointer;
 }
@@ -815,6 +815,56 @@
 .p2p-filter-clear:disabled {
   cursor: default;
   opacity: 0.52;
+}
+
+.app-shell-trades,
+.standalone-trades-shell,
+.p2p-public-trades-section,
+.standalone-trade-detail-section,
+.p2p-terminal-history-window,
+.p2p-terminal-history-sheet-body {
+  scrollbar-color: rgba(139, 92, 246, 0.74) rgba(8, 7, 15, 0.72);
+  scrollbar-width: thin;
+}
+
+.app-shell-trades ::-webkit-scrollbar,
+.standalone-trades-shell::-webkit-scrollbar,
+.p2p-public-trades-section::-webkit-scrollbar,
+.standalone-trade-detail-section::-webkit-scrollbar,
+.p2p-terminal-history-window::-webkit-scrollbar,
+.p2p-terminal-history-sheet-body::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.app-shell-trades ::-webkit-scrollbar-track,
+.standalone-trades-shell::-webkit-scrollbar-track,
+.p2p-public-trades-section::-webkit-scrollbar-track,
+.standalone-trade-detail-section::-webkit-scrollbar-track,
+.p2p-terminal-history-window::-webkit-scrollbar-track,
+.p2p-terminal-history-sheet-body::-webkit-scrollbar-track {
+  background: rgba(8, 7, 15, 0.76);
+  border-radius: 999px;
+}
+
+.app-shell-trades ::-webkit-scrollbar-thumb,
+.standalone-trades-shell::-webkit-scrollbar-thumb,
+.p2p-public-trades-section::-webkit-scrollbar-thumb,
+.standalone-trade-detail-section::-webkit-scrollbar-thumb,
+.p2p-terminal-history-window::-webkit-scrollbar-thumb,
+.p2p-terminal-history-sheet-body::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(8, 7, 15, 0.76);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(167, 139, 250, 0.82), rgba(91, 54, 168, 0.78));
+}
+
+.app-shell-trades ::-webkit-scrollbar-thumb:hover,
+.standalone-trades-shell::-webkit-scrollbar-thumb:hover,
+.p2p-public-trades-section::-webkit-scrollbar-thumb:hover,
+.standalone-trade-detail-section::-webkit-scrollbar-thumb:hover,
+.p2p-terminal-history-window::-webkit-scrollbar-thumb:hover,
+.p2p-terminal-history-sheet-body::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(196, 181, 253, 0.92), rgba(124, 58, 237, 0.88));
 }
 
 .p2p-token-search-head {
@@ -948,7 +998,7 @@
 }
 
 .p2p-footer-balances span {
-  border: 1px solid rgba(74, 64, 112, 0.52);
+  border: 1px solid rgba(95, 76, 148, 0.6);
   border-radius: 999px;
   background: rgba(10, 10, 18, 0.48);
   color: var(--muted);
@@ -956,6 +1006,26 @@
   font-size: 0.76rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.p2p-footer-contracts-btn {
+  border: 1px solid rgba(95, 76, 148, 0.68);
+  border-radius: 999px;
+  background: rgba(12, 11, 22, 0.74);
+  color: #d9d3ff;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.p2p-footer-contracts-btn:hover {
+  border-color: rgba(167, 139, 250, 0.72);
+  background: rgba(139, 92, 246, 0.16);
+  color: var(--text);
 }
 
 .p2p-footer-links a {
@@ -967,6 +1037,124 @@
 
 .p2p-footer-links a:hover {
   color: var(--text);
+}
+
+.p2p-contracts-modal-card {
+  box-sizing: border-box;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(620px, 94vw);
+  max-height: min(560px, calc(100dvh - 48px));
+  overflow: hidden;
+  padding: 14px;
+  gap: 9px;
+}
+
+.p2p-contracts-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
+.p2p-contracts-modal-head > div {
+  min-width: 0;
+}
+
+.p2p-contracts-modal-head span,
+.p2p-contracts-modal-row-title span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.p2p-contracts-modal-head h3 {
+  margin-top: 2px;
+  font-size: 1.05rem;
+}
+
+.p2p-contracts-modal-head button,
+.p2p-contracts-modal-row-actions button,
+.p2p-contracts-modal-row-actions a {
+  border: 1px solid rgba(95, 76, 148, 0.78);
+  border-radius: 8px;
+  background: rgba(12, 11, 22, 0.86);
+  color: #f0edff;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.p2p-contracts-modal-head button:hover,
+.p2p-contracts-modal-row-actions button:hover,
+.p2p-contracts-modal-row-actions a:hover {
+  border-color: rgba(167, 139, 250, 0.76);
+  background: rgba(139, 92, 246, 0.18);
+}
+
+.p2p-contracts-modal-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1px 4px 2px 0;
+  scrollbar-color: rgba(139, 92, 246, 0.62) rgba(20, 17, 32, 0.6);
+  scrollbar-width: thin;
+}
+
+.p2p-contracts-modal-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(74, 64, 112, 0.52);
+  border-radius: 8px;
+  background: rgba(5, 5, 12, 0.24);
+  padding: 9px 10px;
+}
+
+.p2p-contracts-modal-row-main {
+  min-width: 0;
+  display: block;
+}
+
+.p2p-contracts-modal-row-title strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.p2p-contracts-modal-row-title span {
+  max-width: 210px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #a9a1c6;
+  font-size: 0.66rem;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.p2p-contracts-modal-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .standalone-trades-hero,
@@ -1037,6 +1225,7 @@
   box-sizing: border-box;
   padding: 16px;
   display: grid;
+  align-content: start;
   gap: 14px;
 }
 
@@ -1054,7 +1243,7 @@
   align-items: start;
   gap: 12px;
   padding: 14px;
-  border-color: rgba(121, 95, 184, 0.64);
+  border-color: rgba(137, 109, 207, 0.72);
   border-radius: 8px;
   background: rgba(8, 8, 15, 0.92);
 }
@@ -1140,9 +1329,10 @@
 }
 
 .standalone-trade-visibility button.active {
-  border-color: rgba(139, 92, 246, 0.58);
-  background: rgba(139, 92, 246, 0.2);
-  color: #d9d3ff;
+  border-color: rgba(167, 139, 250, 0.68);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.32), rgba(76, 29, 149, 0.2));
+  color: #f5f3ff;
 }
 
 .standalone-trade-options {
@@ -1475,11 +1665,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  border: 1px dashed rgba(121, 95, 184, 0.56);
+  border: 1px solid rgba(121, 95, 184, 0.38);
   border-radius: 10px;
   background:
-    linear-gradient(180deg, rgba(18, 18, 30, 0.62), rgba(10, 10, 18, 0.46));
-  padding: 14px;
+    linear-gradient(180deg, rgba(18, 18, 30, 0.5), rgba(10, 10, 18, 0.36));
+  padding: 12px;
 }
 
 .p2p-empty-state-error {
@@ -1489,13 +1679,13 @@
 }
 
 .p2p-empty-state-loading {
-  border-color: rgba(125, 211, 252, 0.32);
+  border-color: rgba(125, 211, 252, 0.24);
   background:
     linear-gradient(180deg, rgba(18, 28, 42, 0.46), rgba(10, 10, 18, 0.5));
 }
 
 .p2p-empty-state-locked {
-  border-color: rgba(167, 139, 250, 0.46);
+  border-color: rgba(167, 139, 250, 0.42);
   background:
     linear-gradient(180deg, rgba(31, 22, 52, 0.58), rgba(10, 10, 18, 0.48));
 }
@@ -1557,38 +1747,111 @@
   min-width: 0;
   justify-items: center;
   gap: 10px;
-  padding: 14px;
+  padding: 13px;
 }
 
 .p2p-trading-shell-drawer-open {
-  grid-template-columns: minmax(0, 1fr) minmax(410px, 470px);
-  grid-auto-flow: row dense;
-  align-items: start;
+  box-sizing: border-box;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, min(460px, 31vw));
+  grid-template-rows: auto minmax(76px, auto) minmax(0, 1fr) clamp(180px, 23dvh, 260px);
+  grid-template-areas:
+    "nav terminal"
+    "overview terminal"
+    "desk terminal"
+    "history history";
+  grid-auto-flow: row;
+  align-content: stretch;
+  align-items: stretch;
+  gap: 8px 10px;
+  overflow: hidden;
+  padding: 10px 12px;
 }
 
 .p2p-trading-shell-drawer-open .p2p-secondary-nav,
 .p2p-trading-shell-drawer-open .p2p-market-overview,
-.p2p-trading-shell-drawer-open .p2p-public-trades-section {
+.p2p-trading-shell-drawer-open .p2p-public-trades-section,
+.p2p-trading-shell-drawer-open .p2p-my-trades-section {
   grid-column: 1;
 }
 
-.p2p-trading-shell-drawer-open .standalone-trade-detail-section {
-  position: sticky;
-  top: 0;
-  grid-column: 2;
-  grid-row: 1 / span 3;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  max-height: calc(100dvh - var(--header-height) - 24px);
+.p2p-trading-shell-drawer-open .p2p-secondary-nav {
+  grid-area: nav;
+  margin: 0;
+}
+
+.p2p-trading-shell-drawer-open .p2p-market-overview {
+  grid-area: overview;
+  min-height: 0;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-market-overview-head {
+  gap: 8px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-filter-bar {
+  gap: 8px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-filter-field input,
+.p2p-trading-shell-drawer-open .p2p-filter-field select,
+.p2p-trading-shell-drawer-open .p2p-filter-reset {
+  min-height: 36px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-public-trades-section,
+.p2p-trading-shell-drawer-open .p2p-my-trades-section {
+  grid-area: desk;
+  align-self: stretch;
+  height: auto;
+  max-height: none;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  gap: 10px;
+  padding: 12px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-public-trade-grid,
+.p2p-trading-shell-drawer-open .p2p-wallet-trade-grid {
+  --p2p-desk-card-header-row: 82px;
+  --p2p-desk-card-market-row: 108px;
+  --p2p-desk-card-detail-row: 70px;
+  --p2p-desk-card-verify-row: 32px;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.p2p-trading-shell-drawer-open .standalone-trade-detail-section {
+  position: relative;
+  top: auto;
+  grid-area: terminal;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  align-self: stretch;
+  justify-items: stretch;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border-color: rgba(121, 95, 184, 0.64);
   background:
     linear-gradient(180deg, rgba(12, 11, 20, 0.98), rgba(7, 7, 13, 0.98));
+  gap: 8px;
+  padding: 9px;
 }
 
 .p2p-trading-shell-drawer-open .standalone-trade-detail-section > .standalone-trades-section-head {
   max-width: 100%;
+  gap: 8px;
+  padding-bottom: 6px;
 }
 
 .p2p-trading-shell-drawer-open .standalone-trade-detail-section > * {
@@ -1638,6 +1901,917 @@
 
 .standalone-trade-detail-section > .p2p-counter-panel {
   width: min(100%, 760px);
+}
+
+.standalone-trade-detail-section > .p2p-terminal-shell {
+  width: 100%;
+}
+
+.p2p-terminal-shell {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid rgba(121, 95, 184, 0.7);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(12, 10, 22, 0.98), rgba(6, 6, 12, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 18px 46px rgba(0, 0, 0, 0.2);
+  padding: 11px;
+}
+
+.p2p-terminal-head,
+.p2p-terminal-toolbar,
+.p2p-terminal-token-actions,
+.p2p-terminal-history-head,
+.p2p-terminal-history-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.p2p-terminal-head {
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(74, 64, 112, 0.48);
+  padding-bottom: 10px;
+}
+
+.p2p-terminal-toolbar:empty {
+  display: none;
+}
+
+.p2p-terminal-title {
+  min-width: 0;
+}
+
+.p2p-terminal-eyebrow,
+.p2p-terminal-ticket-head span,
+.p2p-terminal-price-card > span,
+.p2p-terminal-flow-card span,
+.p2p-terminal-stat-grid span,
+.p2p-terminal-liquidity-grid span,
+.p2p-terminal-token-actions > span,
+.p2p-terminal-history-head span,
+.p2p-terminal-history-sheet-head span,
+.p2p-terminal-history-row span,
+.p2p-terminal-reveal span,
+.p2p-terminal-related span,
+.p2p-terminal-input-field span,
+.p2p-terminal-action-state span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.p2p-terminal-title h3 {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: #f8f5ff;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.14rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+}
+
+.p2p-terminal-title .p2p-terminal-tag-row {
+  margin-top: 6px;
+}
+
+.p2p-terminal-tag-row .p2p-order-id,
+.p2p-terminal-tag-row .p2p-offer-status,
+.p2p-terminal-tag-row .p2p-order-chip,
+.p2p-terminal-tag-row .p2p-expiry-chip {
+  font-size: 0.66rem;
+  line-height: 1;
+  text-transform: none;
+}
+
+.p2p-terminal-tag-row .p2p-offer-status {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+}
+
+.p2p-terminal-share {
+  min-height: 34px;
+  border: 1px solid rgba(121, 95, 184, 0.62);
+  border-radius: 8px;
+  background: rgba(12, 11, 20, 0.82);
+  color: #f8f5ff;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 0 13px;
+}
+
+.p2p-terminal-share.copied {
+  border-color: rgba(34, 197, 94, 0.54);
+  background: rgba(34, 197, 94, 0.16);
+}
+
+.p2p-terminal-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
+.p2p-terminal-market,
+.p2p-terminal-ticket,
+.p2p-terminal-history {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 9px;
+  background: rgba(7, 7, 14, 0.7);
+  padding: 11px;
+}
+
+.p2p-terminal-ticket {
+  position: static;
+  background:
+    linear-gradient(180deg, rgba(18, 14, 32, 0.86), rgba(7, 7, 14, 0.84));
+}
+
+.p2p-terminal-price-card {
+  display: grid;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  min-height: 112px;
+  border: 1px solid rgba(121, 95, 184, 0.72);
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(12, 10, 22, 0.88), rgba(4, 4, 10, 0.76));
+  color: inherit;
+  cursor: pointer;
+  padding: 13px;
+  text-align: left;
+}
+
+.p2p-terminal-price-card strong {
+  overflow-wrap: anywhere;
+  color: #f8f5ff;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.28rem;
+  line-height: 1.1;
+}
+
+.p2p-terminal-price-card small,
+.p2p-terminal-flow-card small,
+.p2p-terminal-stat-grid small,
+.p2p-terminal-liquidity-grid small,
+.p2p-terminal-progress small,
+.p2p-terminal-related small,
+.p2p-terminal-history-row small,
+.p2p-terminal-action-stack p,
+.p2p-terminal-action-state p,
+.p2p-terminal-reveal p,
+.p2p-terminal-ticket-warning {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.p2p-terminal-flow {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 9px;
+  background: rgba(9, 8, 16, 0.58);
+}
+
+.p2p-terminal-flow-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.p2p-terminal-flow-send {
+  background: rgba(147, 51, 234, 0.08);
+}
+
+.p2p-terminal-flow-receive {
+  background: rgba(56, 189, 248, 0.07);
+}
+
+.p2p-terminal-flow-card strong,
+.p2p-terminal-stat-grid strong,
+.p2p-terminal-liquidity-grid strong,
+.p2p-terminal-history-row strong,
+.p2p-terminal-token-actions strong,
+.p2p-terminal-action-state strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8f5ff;
+  font-size: 0.92rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-terminal-flow-card strong {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.04rem;
+}
+
+.p2p-terminal-flow-arrow {
+  display: grid;
+  place-items: center;
+  border-inline: 1px solid rgba(74, 64, 112, 0.48);
+  color: #d9d3ff;
+}
+
+.p2p-terminal-stat-grid,
+.p2p-terminal-liquidity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.p2p-terminal-amount-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.p2p-terminal-liquidity-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.p2p-terminal-stat-grid-compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.p2p-terminal-liquidity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2p-terminal-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.p2p-terminal-stat-grid > div,
+.p2p-terminal-liquidity-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid rgba(74, 64, 112, 0.46);
+  border-radius: 8px;
+  background: rgba(5, 5, 12, 0.55);
+  padding: 9px;
+}
+
+.p2p-terminal-stat-grid a,
+.p2p-terminal-token-actions a,
+.p2p-terminal-history-row a {
+  overflow: hidden;
+  color: #f8f5ff;
+  font-size: 0.84rem;
+  font-weight: 900;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-terminal-stat-grid a:hover,
+.p2p-terminal-token-actions a:hover,
+.p2p-terminal-history-row a:hover {
+  color: #d9d3ff;
+}
+
+.p2p-terminal-progress,
+.p2p-terminal-reveal,
+.p2p-terminal-related {
+  display: grid;
+  gap: 7px;
+  border: 1px solid rgba(74, 64, 112, 0.48);
+  border-radius: 8px;
+  background: rgba(10, 10, 18, 0.48);
+  padding: 9px;
+}
+
+.p2p-terminal-progress > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.p2p-terminal-progress-bar {
+  overflow: hidden;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(74, 64, 112, 0.52);
+}
+
+.p2p-terminal-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7c3aed, #22d3ee);
+}
+
+.p2p-terminal-reveal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-color: rgba(125, 211, 252, 0.3);
+  background:
+    linear-gradient(135deg, rgba(67, 56, 202, 0.19), rgba(14, 116, 144, 0.1)),
+    rgba(10, 10, 18, 0.48);
+}
+
+.p2p-terminal-reveal > div {
+  min-width: 0;
+}
+
+.p2p-terminal-reveal button,
+.p2p-terminal-history-empty button,
+.p2p-terminal-history-reveal-btn {
+  min-height: 34px;
+  border: 1px solid rgba(125, 211, 252, 0.42);
+  border-radius: 999px;
+  background: rgba(67, 56, 202, 0.24);
+  color: #f8f5ff;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 0 13px;
+  white-space: nowrap;
+}
+
+.p2p-terminal-reveal button:disabled,
+.p2p-terminal-history-empty button:disabled,
+.p2p-terminal-history-reveal-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.p2p-terminal-token-actions {
+  border-top: 1px solid rgba(74, 64, 112, 0.44);
+  padding-top: 9px;
+}
+
+.p2p-terminal-token-actions > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.p2p-terminal-token-actions a,
+.p2p-terminal-token-actions strong {
+  border: 1px solid rgba(121, 95, 184, 0.48);
+  border-radius: 999px;
+  background: rgba(42, 36, 70, 0.58);
+  color: #d9d3ff;
+  font-size: 0.72rem;
+  padding: 3px 9px;
+}
+
+.p2p-terminal-ticket-head {
+  display: grid;
+  gap: 3px;
+}
+
+.p2p-terminal-ticket-head strong {
+  color: #f8f5ff;
+  font-size: 1rem;
+}
+
+.p2p-terminal-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(74, 64, 112, 0.5);
+  border-radius: 8px;
+  background: rgba(5, 5, 12, 0.74);
+}
+
+.p2p-terminal-tabs button {
+  min-height: 36px;
+  border: 0;
+  border-right: 1px solid rgba(74, 64, 112, 0.42);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-terminal-tabs button:last-child {
+  border-right: 0;
+}
+
+.p2p-terminal-tabs button.active {
+  background: linear-gradient(180deg, rgba(92, 55, 168, 0.66), rgba(46, 28, 90, 0.72));
+  box-shadow: inset 0 -2px 0 rgba(167, 139, 250, 0.92);
+  color: #f8f5ff;
+}
+
+.p2p-terminal-input-field {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2p-terminal-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.p2p-terminal-field-head > span,
+.p2p-terminal-field-head > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-terminal-field-head > small {
+  color: #b8b0d2;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  max-width: 46%;
+  text-align: right;
+  text-transform: none;
+}
+
+.p2p-terminal-input-field input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid rgba(74, 64, 112, 0.74);
+  border-radius: 10px;
+  background: rgba(5, 5, 12, 0.78);
+  color: #f8f5ff;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.05rem;
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.p2p-terminal-input-field.has-inline-action input {
+  padding-right: 48px;
+}
+
+.p2p-terminal-input-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
+.p2p-terminal-output-field input {
+  background: linear-gradient(180deg, rgba(12, 13, 26, 0.9), rgba(7, 8, 18, 0.88));
+  color: #d9d3ff;
+}
+
+.p2p-terminal-inline-max {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  min-height: 32px;
+  border: 1px solid rgba(147, 96, 255, 0.54);
+  border-radius: 8px;
+  background: rgba(64, 31, 116, 0.62);
+  color: #f8f5ff;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0 9px;
+}
+
+.p2p-terminal-primary-action {
+  width: 100%;
+  min-height: 46px;
+}
+
+.p2p-terminal-action-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.p2p-terminal-maker-disclosure {
+  gap: 7px;
+}
+
+.p2p-terminal-manage-toggle {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(121, 95, 184, 0.58);
+  border-radius: 8px;
+  background: rgba(12, 11, 20, 0.84);
+  color: #f8f5ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.p2p-terminal-maker-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 7px;
+}
+
+.p2p-terminal-action-state {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(74, 64, 112, 0.48);
+  border-radius: 8px;
+  background: rgba(5, 5, 12, 0.52);
+  padding: 10px;
+}
+
+.p2p-terminal-ticket-warning {
+  border: 1px solid rgba(245, 158, 11, 0.36);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.09);
+  color: #f8d27a;
+  padding: 8px 9px;
+}
+
+.p2p-terminal-history {
+  align-self: stretch;
+}
+
+.p2p-terminal-history-window {
+  grid-area: history;
+  width: 100%;
+  align-self: stretch;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  align-content: start;
+  gap: 0;
+  border-color: rgba(121, 95, 184, 0.66);
+  background:
+    linear-gradient(180deg, #0c0a16, #05050c);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0;
+  scrollbar-gutter: stable;
+}
+
+.p2p-terminal-history-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(360px, 1.65fr) minmax(88px, auto);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(74, 64, 112, 0.44);
+  border-radius: 8px;
+  background: rgba(4, 4, 10, 0.62);
+  padding: 5px 8px 5px 14px;
+}
+
+.p2p-terminal-history-row::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 10px;
+  width: 4px;
+  height: calc(100% - 20px);
+  min-height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(167, 139, 250, 0.82), rgba(34, 211, 238, 0.38));
+}
+
+.p2p-terminal-history-row-edited::before,
+.p2p-terminal-history-row-replaced::before {
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.82), rgba(167, 139, 250, 0.42));
+}
+
+.p2p-terminal-history-row-cancelled::before {
+  background: linear-gradient(180deg, rgba(248, 113, 113, 0.86), rgba(147, 51, 234, 0.4));
+}
+
+.p2p-terminal-history-row > div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.p2p-terminal-history-row > .p2p-terminal-history-event {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.p2p-terminal-history-row > .p2p-terminal-history-lifecycle-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.p2p-terminal-history-event span,
+.p2p-terminal-history-event strong,
+.p2p-terminal-history-event small,
+.p2p-terminal-history-lifecycle-meta span,
+.p2p-terminal-history-lifecycle-meta strong,
+.p2p-terminal-history-date strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-terminal-history-lifecycle-meta span {
+  flex: 0 0 auto;
+}
+
+.p2p-terminal-history-lifecycle-meta strong {
+  color: #d9f7ff;
+  font-size: 0.76rem;
+}
+
+.p2p-terminal-history-row > .p2p-terminal-history-amounts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(132px, 1fr));
+  align-items: center;
+  gap: 6px;
+  width: min(100%, 420px);
+  min-width: 0;
+}
+
+.p2p-terminal-history-chip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(74, 64, 112, 0.32);
+  border-radius: 999px;
+  background: rgba(17, 14, 30, 0.72);
+  padding: 2px 7px;
+}
+
+.p2p-terminal-history-chip-bought {
+  border-color: rgba(34, 211, 238, 0.44);
+  background:
+    linear-gradient(90deg, rgba(34, 211, 238, 0.14), rgba(46, 213, 115, 0.07));
+}
+
+.p2p-terminal-history-chip-sold {
+  border-color: rgba(248, 113, 113, 0.5);
+  background:
+    linear-gradient(90deg, rgba(127, 29, 29, 0.32), rgba(147, 51, 234, 0.06));
+}
+
+.p2p-terminal-history-chip span {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.p2p-terminal-history-chip strong {
+  flex: 1 1 auto;
+  color: #f8f5ff;
+  font-size: 0.78rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-terminal-history-chip-bought strong {
+  color: #cffafe;
+}
+
+.p2p-terminal-history-chip-bought span {
+  color: #67e8f9;
+}
+
+.p2p-terminal-history-chip-sold strong {
+  color: #fecaca;
+}
+
+.p2p-terminal-history-chip-sold span {
+  color: #f87171;
+}
+
+.p2p-terminal-history-row > .p2p-terminal-history-proof {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 7px;
+  text-align: right;
+}
+
+.p2p-terminal-history-head > div,
+.p2p-terminal-history-sheet-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.p2p-terminal-history-head > div > *,
+.p2p-terminal-history-sheet-head > div > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-terminal-history-reveal-btn {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 0.68rem;
+}
+
+.p2p-terminal-history-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(74, 64, 112, 0.36);
+  border-radius: 8px;
+  background: rgba(4, 4, 10, 0.38);
+  padding: 10px;
+}
+
+.p2p-terminal-history-empty-inline {
+  margin-top: 0;
+}
+
+.p2p-terminal-mobile-history-trigger,
+.p2p-terminal-history-sheet {
+  display: none;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-shell {
+  gap: 8px;
+  border-radius: 9px;
+  padding: 9px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-head {
+  padding-bottom: 7px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-title h3 {
+  margin-top: 3px;
+  font-size: 1.02rem;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-title .p2p-terminal-tag-row {
+  margin-top: 4px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-main,
+.p2p-trading-shell-drawer-open .p2p-terminal-market,
+.p2p-trading-shell-drawer-open .p2p-terminal-ticket,
+.p2p-trading-shell-drawer-open .p2p-terminal-history {
+  gap: 8px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-market,
+.p2p-trading-shell-drawer-open .p2p-terminal-ticket,
+.p2p-trading-shell-drawer-open .p2p-terminal-history {
+  padding: 9px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-history-window {
+  gap: 0;
+  padding: 0;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-price-card {
+  min-height: 86px;
+  gap: 7px;
+  padding: 10px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-price-card strong {
+  font-size: 1.14rem;
+}
+
+.p2p-trading-shell-drawer-open .p2p-recurring-price-card.p2p-terminal-price-desk {
+  min-height: 0;
+  gap: 7px;
+  padding: 9px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-recurring-price-box,
+.p2p-trading-shell-drawer-open .p2p-recurring-window-side {
+  padding: 8px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-flow-card,
+.p2p-trading-shell-drawer-open .p2p-terminal-stat-grid > div,
+.p2p-trading-shell-drawer-open .p2p-terminal-liquidity-grid > div,
+.p2p-trading-shell-drawer-open .p2p-terminal-progress,
+.p2p-trading-shell-drawer-open .p2p-terminal-reveal,
+.p2p-trading-shell-drawer-open .p2p-terminal-related,
+.p2p-trading-shell-drawer-open .p2p-terminal-action-state {
+  padding: 7px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-stat-grid,
+.p2p-trading-shell-drawer-open .p2p-terminal-liquidity-grid,
+.p2p-trading-shell-drawer-open .p2p-terminal-amount-grid {
+  gap: 6px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-input-field input {
+  min-height: 40px;
+  border-radius: 8px;
+  font-size: 0.98rem;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-tabs button {
+  min-height: 32px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-primary-action {
+  min-height: 40px;
+}
+
+.p2p-terminal-history-window > .p2p-terminal-history-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(121, 95, 184, 0.58);
+  background:
+    linear-gradient(180deg, #0c0a16, #08070f);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.34);
+}
+
+.p2p-terminal-history-window > .p2p-terminal-history-row,
+.p2p-terminal-history-window > .p2p-terminal-history-empty {
+  margin: 8px 9px 0;
+}
+
+.p2p-terminal-history-window > :last-child {
+  margin-bottom: 8px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-history-row {
+  grid-template-columns: minmax(210px, 0.85fr) minmax(320px, 1.65fr) minmax(82px, auto);
+  gap: 6px;
+  padding: 6px 7px 6px 13px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-terminal-history-empty {
+  gap: 8px;
+  padding: 8px;
+}
+
+.p2p-terminal-history-sheet-body {
+  min-height: 0;
+}
+
+.p2p-terminal-history-sheet-head button {
+  min-height: 34px;
+  border: 1px solid rgba(121, 95, 184, 0.62);
+  border-radius: 8px;
+  background: rgba(12, 11, 20, 0.82);
+  color: #f8f5ff;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 0 13px;
 }
 
 .standalone-trade-detail-section > .trade-card {
@@ -1994,10 +3168,28 @@
 
 .p2p-public-trades-section {
   padding: 16px;
+  align-content: start;
+  gap: 10px;
 }
 
-.p2p-public-trade-grid {
+.p2p-public-trades-section .standalone-trades-section-head {
+  align-items: center;
+  gap: 10px;
+}
+
+.p2p-public-trades-section .standalone-trades-section-head h2 {
+  margin-top: 2px;
+}
+
+.p2p-public-trade-grid,
+.p2p-wallet-trade-grid {
+  --p2p-desk-card-header-row: 86px;
+  --p2p-desk-card-market-row: 120px;
+  --p2p-desk-card-detail-row: 78px;
+  --p2p-desk-card-verify-row: 36px;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  align-content: start;
+  align-items: start;
   gap: 14px;
 }
 
@@ -2010,6 +3202,220 @@
   gap: 14px;
 }
 
+.p2p-order-card {
+  grid-template-rows:
+    minmax(62px, auto)
+    minmax(112px, auto)
+    minmax(76px, auto)
+    minmax(34px, auto)
+    minmax(34px, auto);
+  grid-auto-rows: auto;
+}
+
+.p2p-public-trade-grid .p2p-order-card,
+.p2p-wallet-trade-grid .p2p-order-card {
+  align-content: start;
+  height: auto;
+}
+
+.p2p-public-trade-grid .p2p-order-card,
+.p2p-wallet-trade-grid .p2p-order-card {
+  grid-template-rows:
+    var(--p2p-desk-card-header-row)
+    var(--p2p-desk-card-market-row)
+    var(--p2p-desk-card-detail-row)
+    var(--p2p-desk-card-verify-row)
+    auto;
+}
+
+.p2p-public-trade-grid .p2p-order-card-head,
+.p2p-wallet-trade-grid .p2p-order-card-head {
+  min-height: var(--p2p-desk-card-header-row);
+}
+
+.p2p-public-trade-grid .p2p-order-market-panel,
+.p2p-wallet-trade-grid .p2p-order-market-panel {
+  height: var(--p2p-desk-card-market-row);
+  min-height: 0;
+}
+
+.p2p-public-trade-grid .p2p-order-detail-band,
+.p2p-wallet-trade-grid .p2p-order-detail-band {
+  height: var(--p2p-desk-card-detail-row);
+  min-height: 0;
+}
+
+.p2p-public-trade-grid .p2p-order-token-actions,
+.p2p-wallet-trade-grid .p2p-order-token-actions {
+  height: var(--p2p-desk-card-verify-row);
+  min-height: 0;
+}
+
+.p2p-order-market-panel {
+  min-height: 112px;
+}
+
+.p2p-order-detail-band {
+  min-height: 76px;
+}
+
+.p2p-order-meta-row {
+  min-height: 0;
+}
+
+.p2p-order-token-actions {
+  min-height: 34px;
+}
+
+.p2p-order-card-footer {
+  align-self: end;
+}
+
+.p2p-trading-shell-drawer-open .p2p-order-card {
+  grid-template-rows:
+    minmax(76px, auto)
+    minmax(96px, auto)
+    minmax(64px, auto)
+    minmax(30px, auto)
+    minmax(34px, auto);
+  grid-auto-rows: auto;
+}
+
+.p2p-trading-shell-drawer-open .p2p-public-trade-grid .p2p-offer-card {
+  gap: 9px;
+  padding: 12px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-order-market-panel,
+.p2p-trading-shell-drawer-open .p2p-recurring-price-card {
+  min-height: 96px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-order-detail-band {
+  min-height: 64px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-order-meta-row {
+  min-height: 0;
+}
+
+.p2p-trading-shell-drawer-open .p2p-order-token-actions {
+  min-height: 30px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-order-card-footer {
+  gap: 6px;
+  padding-top: 7px;
+}
+
+.p2p-order-muted-slot,
+.p2p-token-placeholder {
+  color: var(--muted) !important;
+  font-weight: 800;
+}
+
+.p2p-token-placeholder {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.p2p-order-subline {
+  display: flex !important;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+  line-height: 1.1;
+}
+
+.p2p-order-tag-stack {
+  display: grid;
+  gap: 4px;
+  margin-top: 5px;
+  min-width: 0;
+}
+
+.p2p-order-tag-stack .p2p-order-subline {
+  flex-wrap: nowrap;
+  margin: 0;
+  overflow: hidden;
+}
+
+.p2p-order-id {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  border: 1px solid rgba(74, 64, 112, 0.5);
+  border-radius: 999px;
+  background: rgba(9, 9, 15, 0.56);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.p2p-order-chip,
+.p2p-expiry-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid rgba(121, 95, 184, 0.48);
+  border-radius: 999px;
+  background: rgba(42, 36, 70, 0.48);
+  color: #d9d3ff;
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 3px 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-expiry-chip {
+  max-width: none;
+  border-color: rgba(167, 139, 250, 0.38);
+  background: rgba(42, 36, 70, 0.6);
+}
+
+.p2p-order-chip-muted {
+  border-color: rgba(74, 64, 112, 0.46);
+  background: rgba(10, 10, 18, 0.52);
+  color: var(--muted);
+}
+
+.p2p-order-chip-owner {
+  border-color: rgba(125, 211, 252, 0.28);
+  background: rgba(34, 211, 238, 0.08);
+  color: #c9f6ff;
+}
+
+.p2p-order-tag-row {
+  display: flex;
+  align-items: center;
+  align-content: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.p2p-order-meta-row-tight {
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+
+.p2p-order-meta-row-tight > div {
+  min-height: 0;
+}
+
 .p2p-offer-card {
   position: relative;
   min-width: 0;
@@ -2017,7 +3423,7 @@
   align-content: start;
   gap: 11px;
   overflow: hidden;
-  border: 1px solid rgba(74, 64, 112, 0.62);
+  border: 1px solid rgba(88, 71, 135, 0.72);
   border-radius: 8px;
   background: rgba(8, 8, 15, 0.94);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
@@ -2030,13 +3436,13 @@
 }
 
 .p2p-public-trade-grid .p2p-offer-card {
-  gap: 11px;
-  padding: 15px;
+  gap: 9px;
+  padding: 13px;
 }
 
 .p2p-wallet-trade-grid .p2p-offer-card {
-  gap: 11px;
-  padding: 15px;
+  gap: 9px;
+  padding: 13px;
 }
 
 .p2p-offer-card::before {
@@ -2053,6 +3459,43 @@
 
 .p2p-offer-title {
   min-width: 0;
+}
+
+.p2p-order-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2p-order-title-row h3 {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.p2p-order-subline .p2p-order-id,
+.p2p-order-subline .p2p-offer-status,
+.p2p-order-subline .p2p-order-chip,
+.p2p-order-subline .p2p-expiry-chip {
+  font-size: 0.66rem;
+  line-height: 1;
+  text-transform: none;
+}
+
+.p2p-order-subline .p2p-offer-status {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+}
+
+.p2p-order-subline .p2p-order-chip,
+.p2p-order-subline .p2p-expiry-chip {
+  color: #d9d3ff;
+}
+
+.p2p-order-subline .p2p-order-chip-owner {
+  border-color: rgba(125, 211, 252, 0.28);
+  background: rgba(34, 211, 238, 0.08);
+  color: #c9f6ff;
 }
 
 .p2p-offer-kind {
@@ -2098,7 +3541,7 @@
 
 .p2p-offer-status {
   justify-self: end;
-  border: 1px solid rgba(139, 92, 246, 0.42);
+  border: 1px solid rgba(167, 139, 250, 0.5);
   border-radius: 7px;
   background: var(--accent-soft);
   color: #d9d3ff;
@@ -2184,12 +3627,12 @@
 }
 
 .p2p-offer-terms {
-  display: none;
+  display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: stretch;
   border: 1px solid rgba(74, 64, 112, 0.62);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.72);
+  background: rgba(5, 5, 12, 0.62);
   overflow: hidden;
 }
 
@@ -2197,11 +3640,13 @@
   width: 100%;
   appearance: none;
   display: grid;
+  align-content: center;
   gap: 11px;
-  min-height: 122px;
+  min-height: 108px;
   border: 1px solid rgba(121, 95, 184, 0.7);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.76);
+  background:
+    linear-gradient(180deg, rgba(12, 10, 22, 0.86), rgba(5, 5, 12, 0.76));
   color: inherit;
   font: inherit;
   padding: 14px;
@@ -2235,7 +3680,7 @@
   overflow-wrap: anywhere;
   color: var(--text);
   font-family: "Space Grotesk", sans-serif;
-  font-size: clamp(1.18rem, 2.2vw, 1.55rem);
+  font-size: clamp(1.1rem, 2.05vw, 1.46rem);
   line-height: 1.22;
 }
 
@@ -2246,6 +3691,10 @@
   line-height: 1.35;
 }
 
+.p2p-hidden-price-card.p2p-order-market-panel {
+  min-height: 112px;
+}
+
 .p2p-offer-term {
   min-width: 0;
   display: grid;
@@ -2253,13 +3702,14 @@
   gap: 5px;
   border: 1px solid rgba(74, 64, 112, 0.44);
   background: rgba(9, 9, 15, 0.66);
-  padding: 14px;
+  padding: 10px 11px;
 }
 
 .p2p-public-trade-grid .p2p-offer-term,
 .p2p-wallet-trade-grid .p2p-offer-term {
-  gap: 6px;
-  padding: 14px;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 11px;
 }
 
 .p2p-offer-term span {
@@ -2290,6 +3740,10 @@
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.p2p-offer-term small:empty {
+  display: none;
 }
 
 .p2p-offer-term-offered {
@@ -2370,7 +3824,7 @@
 
 .p2p-offer-token-actions > span {
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   font-weight: 900;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -2417,8 +3871,16 @@
   padding: 0.75rem 0.85rem;
 }
 
+.p2p-order-liquidity-summary {
+  align-content: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 8px 10px;
+}
+
 .p2p-offer-completion-head,
-.p2p-offer-completion-meta {
+.p2p-offer-completion-meta,
+.p2p-offer-completion-flow {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2426,15 +3888,25 @@
 }
 
 .p2p-offer-completion-head span,
-.p2p-offer-completion-meta span {
+.p2p-offer-completion-meta span,
+.p2p-offer-completion-flow span {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.p2p-offer-completion-head strong {
+.p2p-offer-completion-head strong,
+.p2p-offer-completion-flow strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
   font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .p2p-offer-completion-bar {
@@ -2451,10 +3923,31 @@
   background: linear-gradient(90deg, rgba(129, 140, 248, 0.9), rgba(167, 139, 250, 0.95));
 }
 
+.p2p-order-liquidity-summary .p2p-offer-completion-head span {
+  font-size: 0.72rem;
+}
+
+.p2p-order-liquidity-summary .p2p-offer-completion-head strong {
+  font-size: 0.83rem;
+}
+
+.p2p-order-liquidity-summary .p2p-offer-completion-meta span {
+  font-size: 0.7rem;
+}
+
+.p2p-order-liquidity-summary .p2p-offer-completion-flow {
+  padding-top: 1px;
+}
+
+.p2p-order-liquidity-summary .p2p-offer-completion-flow span,
+.p2p-order-liquidity-summary .p2p-offer-completion-flow strong {
+  font-size: 0.69rem;
+}
+
 .p2p-offer-facts {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(94px, 0.78fr) minmax(94px, 0.78fr);
-  gap: 8px;
+  gap: 7px;
   border-top: 1px solid rgba(74, 64, 112, 0.5);
   padding-top: 10px;
 }
@@ -2614,7 +4107,7 @@
 .p2p-offer-footer-link {
   border: 1px solid rgba(74, 64, 112, 0.62);
   border-radius: 8px;
-  background: rgba(16, 16, 26, 0.8);
+  background: rgba(17, 16, 29, 0.88);
   color: var(--text);
   padding: 7px 12px;
   font-size: 0.76rem;
@@ -2631,7 +4124,7 @@
   display: grid;
   grid-template-columns: 1fr;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
 }
 
 .p2p-public-trade-grid .p2p-offer-footer > span:not(.p2p-offer-final-state),
@@ -2645,18 +4138,27 @@
 .p2p-public-trade-grid .p2p-offer-footer > div,
 .p2p-wallet-trade-grid .p2p-offer-footer > div {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  grid-template-columns: minmax(132px, 1.45fr) minmax(88px, 0.85fr);
   width: 100%;
   min-width: 0;
-  gap: 8px;
+  gap: 7px;
   justify-content: stretch;
+}
+
+.p2p-public-trade-grid .p2p-offer-footer > div:has(> :nth-child(3)),
+.p2p-wallet-trade-grid .p2p-offer-footer > div:has(> :nth-child(3)) {
+  grid-template-columns: minmax(126px, 1.35fr) repeat(2, minmax(78px, 0.82fr));
 }
 
 .p2p-public-trade-grid .p2p-offer-footer button,
 .p2p-wallet-trade-grid .p2p-offer-footer button {
   width: 100%;
   min-width: 0;
-  padding: 8px 11px;
+  min-height: 34px;
+  padding: 7px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .p2p-public-trade-grid .p2p-offer-footer .p2p-offer-open-btn,
@@ -2668,6 +4170,28 @@
   border-color: rgba(121, 95, 184, 0.72);
   background: rgba(12, 11, 20, 0.84);
   color: #f8f5ff;
+}
+
+.p2p-offer-manage-btn,
+.p2p-terminal-manage-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.p2p-offer-manage-btn.active,
+.p2p-terminal-manage-toggle.active {
+  border-color: rgba(167, 139, 250, 0.72);
+  background: linear-gradient(180deg, rgba(92, 55, 168, 0.72), rgba(46, 28, 90, 0.76));
+  color: #f8f5ff;
+}
+
+.p2p-maker-inline-actions {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid rgba(74, 64, 112, 0.42);
+  padding-top: 8px;
 }
 
 .p2p-offer-footer button:hover,
@@ -2752,6 +4276,19 @@
   gap: 14px;
 }
 
+.p2p-wallet-inline-workspace {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.p2p-order-card-selected {
+  border-color: rgba(125, 211, 252, 0.6) !important;
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.24),
+    0 0 18px rgba(34, 211, 238, 0.08);
+}
+
 .p2p-wallet-trade-group-head {
   display: flex;
   align-items: flex-start;
@@ -2791,9 +4328,51 @@
 }
 
 .p2p-offer-open-btn {
-  background: rgba(139, 92, 246, 0.22) !important;
-  border-color: rgba(139, 92, 246, 0.52) !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.56), rgba(91, 66, 185, 0.46)) !important;
+  border-color: rgba(167, 139, 250, 0.62) !important;
   color: #ece9ff !important;
+  white-space: nowrap;
+}
+
+.p2p-offer-open-btn > svg {
+  flex: 0 0 auto;
+  color: #d9d3ff;
+}
+
+.p2p-action-flow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.p2p-action-asset {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 10ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-action-flow-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(216, 202, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(216, 202, 255, 0.1);
+  color: #e8ddff;
 }
 
 .p2p-offer-open-btn:hover {
@@ -3246,12 +4825,12 @@
 .p2p-recurring-order-card {
   display: grid;
   align-content: start;
-  gap: 11px;
+  gap: 9px;
   min-width: 0;
   border: 1px solid rgba(74, 64, 112, 0.72);
   border-radius: 8px;
   background: rgba(8, 8, 15, 0.94);
-  padding: 15px;
+  padding: 13px;
 }
 
 .p2p-recurring-order-card-detail {
@@ -3283,8 +4862,9 @@
   min-width: 0;
 }
 
-.p2p-recurring-card-head span,
+.p2p-recurring-card-head > div > span,
 .p2p-recurring-price-card > span,
+.p2p-recurring-price-card-head > span:first-child,
 .p2p-recurring-price-box span,
 .p2p-recurring-inventory-strip span,
 .p2p-recurring-window-side-head span,
@@ -3297,14 +4877,20 @@
 }
 
 .p2p-recurring-card-head h3 {
-  margin: 2px 0 2px;
+  margin: 0;
   overflow: hidden;
   color: #f8f5ff;
   font-family: "Space Grotesk", sans-serif;
   font-size: 1.02rem;
-  line-height: 1.12;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.p2p-recurring-card-head .p2p-offer-kind {
+  display: block;
+  margin-bottom: 4px;
+  line-height: 1.2;
 }
 
 .p2p-recurring-card-head p {
@@ -3324,25 +4910,75 @@
   gap: 8px;
 }
 
+.p2p-recurring-price-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.p2p-recurring-price-card-head > span:first-child {
+  color: #c4b5fd;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
 .p2p-recurring-price-card {
+  width: 100%;
+  appearance: none;
   display: grid;
-  gap: 9px;
-  min-height: 122px;
+  align-content: center;
+  gap: 8px;
+  min-height: 112px;
   border: 1px solid rgba(121, 95, 184, 0.7);
   border-radius: 8px;
   background: rgba(5, 5, 12, 0.76);
-  padding: 13px 12px;
+  color: inherit;
+  font: inherit;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.p2p-trading-shell-drawer-open .p2p-hidden-price-card.p2p-order-market-panel,
+.p2p-trading-shell-drawer-open .p2p-recurring-price-card.p2p-order-market-panel {
+  min-height: 96px;
+}
+
+.p2p-recurring-price-card:hover {
+  border-color: rgba(139, 92, 246, 0.72);
+  background: rgba(21, 21, 34, 0.72);
+}
+
+.p2p-recurring-price-card:focus-visible {
+  outline: 2px solid rgba(196, 181, 253, 0.72);
+  outline-offset: 2px;
 }
 
 .p2p-recurring-price-box,
 .p2p-recurring-window-side {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   border: 1px solid rgba(74, 64, 112, 0.58);
   border-radius: 8px;
   background: rgba(5, 5, 12, 0.66);
-  padding: 10px;
+  padding: 8px;
+}
+
+.p2p-recurring-price-box > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .p2p-recurring-window-side-head {
@@ -3360,13 +4996,26 @@
 
 .p2p-recurring-price-box strong,
 .p2p-recurring-window-side-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: #fff;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 0.98rem;
-  line-height: 1.12;
+  font-size: 0.9rem;
+  line-height: 1.08;
 }
 
-.p2p-recurring-price-box small,
+.p2p-recurring-price-box small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .p2p-recurring-window-side-head small,
 .p2p-recurring-card-footer {
   color: var(--muted);
@@ -3390,6 +5039,9 @@
 
 .p2p-recurring-inventory-strip > div {
   min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 4px;
   border: 1px solid rgba(74, 64, 112, 0.44);
   border-radius: 8px;
   background: rgba(9, 9, 15, 0.58);
@@ -3433,6 +5085,11 @@
   font-size: 0.84rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.p2p-recurring-inventory-strip strong.p2p-order-muted-slot {
+  line-height: 1.15;
+  white-space: normal;
 }
 
 .p2p-recurring-terminal {
@@ -3486,12 +5143,11 @@
 
 .p2p-recurring-terminal-ticket {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 9px;
 }
 
-.p2p-recurring-terminal-ticket .trade-compose-field,
-.p2p-recurring-terminal-ticket .p2p-recurring-terminal-receive {
+.p2p-recurring-terminal-ticket .trade-compose-field {
   min-width: 0;
 }
 
@@ -3509,45 +5165,16 @@
   grid-column: 1 / -1;
 }
 
-.p2p-recurring-terminal-receive {
-  display: grid;
-  gap: 4px;
-  border: 1px solid rgba(74, 64, 112, 0.46);
-  border-radius: 8px;
-  background: rgba(5, 5, 12, 0.62);
-  padding: 9px 10px;
-}
-
-.p2p-recurring-terminal-receive span {
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.p2p-recurring-terminal-receive strong {
-  overflow: hidden;
-  color: #f8f5ff;
-  font-size: 0.92rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.p2p-recurring-terminal-receive small {
-  color: var(--muted);
-  font-size: 0.74rem;
-  line-height: 1.3;
-}
-
 .p2p-recurring-private-reveal {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid rgba(167, 139, 250, 0.34);
+  border: 1px solid rgba(125, 211, 252, 0.28);
   border-radius: 8px;
-  background: rgba(36, 25, 64, 0.42);
+  background:
+    linear-gradient(135deg, rgba(67, 56, 202, 0.2), rgba(14, 116, 144, 0.12)),
+    rgba(18, 16, 32, 0.56);
   padding: 10px 12px;
 }
 
@@ -3574,9 +5201,9 @@
 
 .p2p-recurring-private-reveal button {
   min-height: 34px;
-  border: 1px solid rgba(167, 139, 250, 0.58);
+  border: 1px solid rgba(125, 211, 252, 0.42);
   border-radius: 999px;
-  background: rgba(109, 40, 217, 0.2);
+  background: rgba(67, 56, 202, 0.24);
   color: #f8f5ff;
   font-size: 0.78rem;
   font-weight: 900;
@@ -3682,18 +5309,18 @@
 .p2p-recurring-card-footer {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  min-height: 42px;
+  min-height: 38px;
   align-items: center;
   border-top: 1px solid rgba(74, 64, 112, 0.48);
-  padding-top: 10px;
+  padding-top: 8px;
 }
 
 .p2p-recurring-card-footer > div,
 .p2p-recurring-maker-actions > div {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   justify-content: stretch;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
   min-width: 0;
 }
@@ -3709,6 +5336,9 @@
   font-size: 0.78rem;
   font-weight: 900;
   padding: 0 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .p2p-public-trade-grid .p2p-recurring-card-footer > div,
@@ -3716,9 +5346,14 @@
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
-  gap: 8px;
+  grid-template-columns: minmax(132px, 1.45fr) minmax(88px, 0.85fr);
+  gap: 7px;
   justify-content: stretch;
+}
+
+.p2p-public-trade-grid .p2p-recurring-card-footer > div:has(> :nth-child(3)),
+.p2p-wallet-trade-grid .p2p-recurring-card-footer > div:has(> :nth-child(3)) {
+  grid-template-columns: minmax(126px, 1.35fr) repeat(2, minmax(78px, 0.82fr));
 }
 
 .p2p-public-trade-grid .p2p-recurring-card-footer button,
@@ -3742,6 +5377,10 @@
 }
 
 @media (max-width: 760px) {
+  .p2p-recurring-builder {
+    gap: 8px;
+  }
+
   .p2p-recurring-grid,
   .p2p-recurring-side-grid,
   .p2p-recurring-primary-pair,
@@ -3762,19 +5401,112 @@
     display: grid;
   }
 
+  .p2p-recurring-assets,
+  .p2p-recurring-edit-liquidity,
+  .p2p-recurring-privacy-note,
+  .p2p-recurring-fill-handling {
+    padding: 9px;
+    border-radius: 9px;
+  }
+
+  .p2p-recurring-privacy-note {
+    gap: 7px;
+  }
+
+  .p2p-recurring-privacy-note p,
+  .p2p-recurring-side-panel small,
+  .p2p-recurring-fill-handling p,
+  .p2p-recurring-actions p {
+    font-size: 0.76rem;
+    line-height: 1.32;
+  }
+
   .p2p-recurring-side-panel-buy,
   .p2p-recurring-side-panel-sell {
     grid-column: 1;
   }
 
   .p2p-recurring-cycle-indicator {
-    width: 34px;
-    height: 34px;
+    width: 100%;
+    height: 20px;
+    border: 0;
+    border-radius: 0;
+    background:
+      linear-gradient(90deg, transparent, rgba(167, 139, 250, 0.32), transparent);
+    box-shadow: none;
+  }
+
+  .p2p-recurring-cycle-indicator svg {
+    width: 14px;
+    height: 14px;
+    padding: 3px;
+    border: 1px solid rgba(167, 139, 250, 0.46);
+    border-radius: 999px;
+    background: rgba(18, 17, 30, 0.94);
   }
 
   .p2p-recurring-actions {
+    position: sticky;
+    bottom: calc(var(--mobile-nav-reserve, 52px) + 6px);
+    z-index: 35;
     grid-template-columns: 1fr;
     align-items: stretch;
+    padding: 8px;
+    border: 1px solid rgba(121, 95, 184, 0.7);
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(18, 16, 31, 0.98), rgba(8, 8, 15, 0.98));
+    box-shadow:
+      0 -12px 24px rgba(0, 0, 0, 0.32),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .p2p-recurring-actions button {
+    min-height: 38px;
+    border-radius: 9px;
+  }
+
+  .p2p-recurring-order-card,
+  .p2p-offer-card {
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .p2p-order-card {
+    grid-template-rows: none;
+  }
+
+  .p2p-hidden-price-card.p2p-order-market-panel,
+  .p2p-recurring-price-card.p2p-order-market-panel,
+  .p2p-order-detail-band,
+  .p2p-order-meta-row,
+  .p2p-order-token-actions {
+    height: auto;
+    min-height: 0;
+  }
+
+  .p2p-hidden-price-card {
+    min-height: 0;
+    gap: 8px;
+    padding: 11px;
+  }
+
+  .p2p-offer-terms {
+    grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr);
+  }
+
+  .p2p-offer-term {
+    padding: 9px;
+  }
+
+  .p2p-offer-token-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .p2p-offer-token-actions > div {
+    justify-content: flex-start;
   }
 }
 

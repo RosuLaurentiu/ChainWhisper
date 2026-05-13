@@ -37,6 +37,7 @@ import {
   isDirectTradeEscrowConfigured,
   resolvePrivateTokenAllowanceWritePlan,
   resolvePrivateTokenSpendReadiness,
+  resolveOtcFeeEscrowContractConfig,
   resolveTradingContractAddressesFromRegistryValue,
   resolveTradeEscrowContractConfig
 } from './appChain';
@@ -69,6 +70,25 @@ describe('trade escrow contract resolution', () => {
     expect(() => resolveTradeEscrowContractConfig('0x9dC2166CEB035F542cA8ADf10660d6fe2342471d')).toThrow(
       /retired contract/
     );
+  });
+
+  it('resolves fee reads to the target active OTC escrow', () => {
+    expect(resolveOtcFeeEscrowContractConfig(TRADE_ESCROW_CONTRACT_ADDRESS)).toMatchObject({
+      address: TRADE_ESCROW_CONTRACT_ADDRESS,
+      abi: TRADE_ESCROW_CONTRACT_ABI
+    });
+    expect(resolveOtcFeeEscrowContractConfig(PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS)).toMatchObject({
+      address: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+      abi: PRIVATE_TRADE_ESCROW_CONTRACT_ABI
+    });
+    expect(resolveOtcFeeEscrowContractConfig(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toMatchObject({
+      address: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      abi: DIRECT_TRADE_ESCROW_CONTRACT_ABI
+    });
+    expect(resolveOtcFeeEscrowContractConfig(RECURRING_OTC_CONTRACT_ADDRESS)).toMatchObject({
+      address: RECURRING_OTC_CONTRACT_ADDRESS,
+      abi: RECURRING_OTC_CONTRACT_ABI
+    });
   });
 
   it('builds fresh Direct links with the Direct escrow alias', async () => {

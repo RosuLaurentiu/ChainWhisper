@@ -95,9 +95,10 @@ describe('verified ecosystem tokens', () => {
     const address = '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a';
 
     expect(isVerifiedEcosystemToken(address)).toBe(true);
-    expect(getVerifiedEcosystemToken(address.toUpperCase())).toEqual({
+    expect(getVerifiedEcosystemToken(address.toUpperCase())).toMatchObject({
       address,
-      kind: 'private-erc20'
+      kind: 'private-erc20',
+      symbol: 'pWISP'
     });
   });
 
@@ -109,9 +110,10 @@ describe('verified ecosystem tokens', () => {
     const address = '0x5085Ea0611A9C49316972C57390ca25C9CF236AB';
 
     expect(isVerifiedEcosystemToken(address)).toBe(true);
-    expect(getVerifiedEcosystemToken(address.toUpperCase())).toEqual({
+    expect(getVerifiedEcosystemToken(address.toUpperCase())).toMatchObject({
       address,
-      kind: 'private-erc20'
+      kind: 'private-erc20',
+      symbol: 'HOTDOG'
     });
   });
 });

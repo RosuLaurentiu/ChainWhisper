@@ -8,8 +8,12 @@ test.describe('trading V1 routes', () => {
 
     const drawer = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
     await expect(drawer).toBeVisible();
-    await expect(drawer.getByText('Trading Terminal')).toBeVisible();
+    await expect(drawer.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
     await expect(drawer.getByText(/Recurring OTC|Recurring order could not load/)).toBeVisible({ timeout: 30_000 });
+    await expect(drawer.locator('.p2p-terminal-shell-recurring')).toBeVisible();
+    await expect(drawer.locator('.p2p-terminal-main')).toBeVisible();
+    await expect(drawer.locator('.p2p-terminal-history-desktop')).toHaveCount(0);
+    await expect(page.locator('.p2p-terminal-history-window')).toBeVisible();
     await expect(page.getByText('Trade could not load')).toHaveCount(0);
     await expect(page.getByText('contract.getTradeView is not a function')).toHaveCount(0);
   });
@@ -56,8 +60,9 @@ test.describe('trading V1 routes', () => {
       await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}${shellPath}`);
 
       await expect(page).toHaveURL(/\/wallet-connect$/);
-      await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
-      await expect(page.getByText('Trading Terminal')).toBeVisible();
+      const terminal = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
+      await expect(terminal).toBeVisible();
+      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -72,8 +77,9 @@ test.describe('trading V1 routes', () => {
       await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}/trades/recurring?order=1`);
 
       await expect(page).toHaveURL(/\/wallet-connect$/);
-      await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
-      await expect(page.getByText('Trading Terminal')).toBeVisible();
+      const terminal = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
+      await expect(terminal).toBeVisible();
+      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
     } finally {
       await context.close();
     }

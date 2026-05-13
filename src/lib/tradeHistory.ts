@@ -10,9 +10,17 @@ import { isZeroTradeTakerAddress } from './tradePerspective';
 export type TradeTransactionHistoryRole = 'maker' | 'taker' | 'filler';
 export type TradeTransactionHistorySource = 'standard' | 'private' | 'direct' | 'recurring';
 export type TradeTransactionAmountVisibility = 'public' | 'private-revealed' | 'private-hidden';
+export type TradeLifecycleHistoryAction = 'created' | 'edited' | 'replaced' | 'cancelled';
 
 export type TradeTransactionAsset = TradeAssetPayload & {
   visible: boolean;
+};
+
+export type TradeTransactionFlowAction = 'bought' | 'sold';
+
+export type TradeTransactionTokenFlow = {
+  action: TradeTransactionFlowAction;
+  asset: TradeTransactionAsset;
 };
 
 export type TradeTransactionHistoryRow = {
@@ -24,9 +32,25 @@ export type TradeTransactionHistoryRow = {
   counterparty: string;
   bought: TradeTransactionAsset;
   sold: TradeTransactionAsset;
+  tokenFlows: TradeTransactionTokenFlow[];
   amountVisibility: TradeTransactionAmountVisibility;
+  sequence?: number;
   txHash?: string;
   blockNumber?: number;
+  timestamp?: number;
+};
+
+export type TradeLifecycleHistoryRow = {
+  key: string;
+  contractAddress: string;
+  localId: number;
+  sourceKind: TradeTransactionHistorySource;
+  action: TradeLifecycleHistoryAction;
+  label: string;
+  detail: string;
+  actor: string;
+  relatedTradeId?: number;
+  timestamp?: number;
 };
 
 const normalizeAddress = (value?: string | null): string => value?.trim().toLowerCase() ?? '';
@@ -39,6 +63,42 @@ const withAmount = (asset: TradeAssetPayload, amount: string | undefined, visibl
   visible
 });
 
+const getAssetKey = (asset: TradeAssetPayload): string =>
+  `${asset.kind}:${normalizeAddress(asset.tokenAddress)}:${asset.symbol.trim().toLowerCase()}`;
+
+const buildTokenFlows = (
+  orderedAssets: TradeAssetPayload[],
+  bought: TradeTransactionAsset,
+  sold: TradeTransactionAsset
+): TradeTransactionTokenFlow[] => {
+  const flowByAssetKey = new Map<string, TradeTransactionTokenFlow>([
+    [getAssetKey(bought), { action: 'bought', asset: bought }],
+    [getAssetKey(sold), { action: 'sold', asset: sold }]
+  ]);
+  const seen = new Set<string>();
+  const orderedFlows: TradeTransactionTokenFlow[] = [];
+
+  for (const asset of orderedAssets) {
+    const assetKey = getAssetKey(asset);
+    const flow = flowByAssetKey.get(assetKey);
+    if (!flow || seen.has(assetKey)) continue;
+    orderedFlows.push(flow);
+    seen.add(assetKey);
+  }
+
+  for (const flow of [
+    { action: 'bought', asset: bought } as const,
+    { action: 'sold', asset: sold } as const
+  ]) {
+    const assetKey = getAssetKey(flow.asset);
+    if (seen.has(assetKey)) continue;
+    orderedFlows.push(flow);
+    seen.add(assetKey);
+  }
+
+  return orderedFlows;
+};
+
 const resolveTradeSourceKind = (trade: TradeSnapshot): TradeTransactionHistorySource => {
   if (trade.recurringOrder) return 'recurring';
   if (getTradeTermsVisibility(trade) === 'hidden-liquidity') return 'private';
@@ -46,6 +106,83 @@ const resolveTradeSourceKind = (trade: TradeSnapshot): TradeTransactionHistorySo
     return 'direct';
   }
   return 'standard';
+};
+
+export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifecycleHistoryRow[] => {
+  const contractAddress = trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS;
+  const snapshotKey = buildTradeSnapshotKey(trade.tradeId, contractAddress);
+  const recurring = trade.recurringOrder;
+  const sourceKind = resolveTradeSourceKind(trade);
+  const localId = recurring?.orderId ?? trade.tradeId;
+  const subjectLabel = recurring ? `Order #${recurring.orderId}` : `Offer #${trade.tradeId}`;
+  const rows: TradeLifecycleHistoryRow[] = [
+    {
+      key: `${snapshotKey}:lifecycle:created`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action: 'created',
+      label: 'Created',
+      detail: `${subjectLabel} opened`,
+      actor: trade.maker,
+      ...(trade.createdAt ? { timestamp: trade.createdAt } : {})
+    }
+  ];
+
+  if (!recurring && trade.replacesTradeId) {
+    rows.push({
+      key: `${snapshotKey}:lifecycle:edited-from:${trade.replacesTradeId}`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action: 'edited',
+      label: 'Edited',
+      detail: `Replaces Offer #${trade.replacesTradeId}`,
+      actor: trade.maker,
+      relatedTradeId: trade.replacesTradeId,
+      ...(trade.createdAt ? { timestamp: trade.createdAt } : {})
+    });
+  }
+
+  if (!recurring && trade.replacementTradeId) {
+    rows.push({
+      key: `${snapshotKey}:lifecycle:replaced-by:${trade.replacementTradeId}`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action: 'replaced',
+      label: 'Edited',
+      detail: `Replaced by Offer #${trade.replacementTradeId}`,
+      actor: trade.maker,
+      relatedTradeId: trade.replacementTradeId
+    });
+  }
+
+  if (recurring?.recurringStatus === 'cancelled') {
+    rows.push({
+      key: `${snapshotKey}:lifecycle:cancelled`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action: 'cancelled',
+      label: 'Closed',
+      detail: `${subjectLabel} closed`,
+      actor: trade.maker
+    });
+  } else if (!recurring && trade.status === 'cancelled') {
+    rows.push({
+      key: `${snapshotKey}:lifecycle:cancelled`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action: 'cancelled',
+      label: 'Cancelled',
+      detail: `${subjectLabel} cancelled`,
+      actor: trade.maker
+    });
+  }
+
+  return rows;
 };
 
 const appendRecurringRows = (
@@ -71,7 +208,13 @@ const appendRecurringRows = (
     const baseVisible = isPositiveAmount(execution.baseAmount);
     const quoteVisible = isPositiveAmount(execution.quoteAmount);
     const amountVisibility: TradeTransactionAmountVisibility =
-      baseVisible && quoteVisible ? 'private-revealed' : 'private-hidden';
+      recurring.mode === 'public' ? 'public' : baseVisible && quoteVisible ? 'private-revealed' : 'private-hidden';
+    const bought = walletBuysBase
+      ? withAmount(recurring.baseAsset, execution.baseAmount, baseVisible)
+      : withAmount(recurring.quoteAsset, execution.quoteAmount, quoteVisible);
+    const sold = walletBuysBase
+      ? withAmount(recurring.quoteAsset, execution.quoteAmount, quoteVisible)
+      : withAmount(recurring.baseAsset, execution.baseAmount, baseVisible);
 
     rows.push({
       key: `${buildTradeSnapshotKey(trade.tradeId, contractAddress)}:recurring:${execution.fillIndex}:${isMaker ? 'maker' : 'filler'}`,
@@ -80,13 +223,11 @@ const appendRecurringRows = (
       role: isMaker ? 'maker' : 'filler',
       sourceKind: 'recurring',
       counterparty: isMaker ? execution.filler : trade.maker,
-      bought: walletBuysBase
-        ? withAmount(recurring.baseAsset, execution.baseAmount, baseVisible)
-        : withAmount(recurring.quoteAsset, execution.quoteAmount, quoteVisible),
-      sold: walletBuysBase
-        ? withAmount(recurring.quoteAsset, execution.quoteAmount, quoteVisible)
-        : withAmount(recurring.baseAsset, execution.baseAmount, baseVisible),
+      bought,
+      sold,
+      tokenFlows: buildTokenFlows([recurring.baseAsset, recurring.quoteAsset], bought, sold),
       amountVisibility,
+      sequence: execution.fillIndex,
       ...(execution.txHash ? { txHash: execution.txHash } : {}),
       ...(execution.blockNumber !== undefined ? { blockNumber: execution.blockNumber } : {})
     });
@@ -126,6 +267,12 @@ export const buildTradeTransactionHistoryRows = (
       if (!isMaker && !isFiller) continue;
       const offerVisible = isPositiveAmount(receipt.offerAmount);
       const requestVisible = isPositiveAmount(receipt.requestAmount);
+      const bought = isMaker
+        ? withAmount(trade.request, receipt.requestAmount, requestVisible)
+        : withAmount(trade.offer, receipt.offerAmount, offerVisible);
+      const sold = isMaker
+        ? withAmount(trade.offer, receipt.offerAmount, offerVisible)
+        : withAmount(trade.request, receipt.requestAmount, requestVisible);
       rows.push({
         key: `${buildTradeSnapshotKey(trade.tradeId, contractAddress)}:private:${receipt.fillIndex}:${isMaker ? 'maker' : 'filler'}`,
         contractAddress,
@@ -133,13 +280,11 @@ export const buildTradeTransactionHistoryRows = (
         role: isMaker ? 'maker' : 'filler',
         sourceKind,
         counterparty: isMaker ? receipt.filler : trade.maker,
-        bought: isMaker
-          ? withAmount(trade.request, receipt.requestAmount, requestVisible)
-          : withAmount(trade.offer, receipt.offerAmount, offerVisible),
-        sold: isMaker
-          ? withAmount(trade.offer, receipt.offerAmount, offerVisible)
-          : withAmount(trade.request, receipt.requestAmount, requestVisible),
+        bought,
+        sold,
+        tokenFlows: buildTokenFlows([trade.offer, trade.request], bought, sold),
         amountVisibility: offerVisible && requestVisible ? 'private-revealed' : 'private-hidden',
+        sequence: receipt.fillIndex,
         ...(receipt.txHash ? { txHash: receipt.txHash } : {}),
         ...(receipt.blockNumber !== undefined ? { blockNumber: receipt.blockNumber } : {})
       });
@@ -187,6 +332,7 @@ export const buildTradeTransactionHistoryRows = (
       counterparty,
       bought,
       sold,
+      tokenFlows: buildTokenFlows([trade.offer, trade.request], bought, sold),
       amountVisibility:
         termsVisibility === 'public'
           ? 'public'

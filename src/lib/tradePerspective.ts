@@ -50,6 +50,45 @@ export type TradeOrderSummary = {
   reverseRatioLabel: string | null;
 };
 
+export type TradePriceRatioDisplay = {
+  label: string;
+  basisLabel: string;
+  nextBasisLabel: string;
+  isReversed: boolean;
+  toggleTitle: string;
+  ariaLabel: string;
+};
+
+export type RecurringPriceDeskTerms = {
+  baseAsset: TradeAssetPayload;
+  quoteAsset: TradeAssetPayload;
+  buyTerms: {
+    baseAmount: string;
+    quoteAmount: string;
+  };
+  sellTerms: {
+    baseAmount: string;
+    quoteAmount: string;
+  };
+};
+
+export type RecurringPriceDeskSideDisplay = {
+  label: string;
+  priceLabel: string;
+};
+
+export type RecurringPriceDeskDisplay = {
+  basisLabel: string;
+  nextBasisLabel: string;
+  isReversed: boolean;
+  toggleTitle: string;
+  ariaLabel: string;
+  displayBuySide: RecurringPriceDeskSideDisplay;
+  displaySellSide: RecurringPriceDeskSideDisplay;
+  makerBuySide: RecurringPriceDeskSideDisplay;
+  makerSellSide: RecurringPriceDeskSideDisplay;
+};
+
 type TradePerspectiveInput = Pick<TradeSnapshot, 'maker' | 'taker' | 'offer' | 'request'> & {
   status?: TradeOnChainStatus;
   fillState?: TradeSnapshot['fillState'];
@@ -168,6 +207,114 @@ export const formatTradeRatioLabel = (baseAsset?: TradeAssetPayload, quoteAsset?
   }
 };
 
+export const shouldUseReversePriceRatioByDefault = (
+  baseAsset?: TradeAssetPayload,
+  quoteAsset?: TradeAssetPayload
+): boolean => {
+  if (!baseAsset || !quoteAsset) {
+    return false;
+  }
+
+  try {
+    const baseAmount = BigInt(baseAsset.amount);
+    const quoteAmount = BigInt(quoteAsset.amount);
+    if (baseAmount <= 0n || quoteAmount <= 0n) {
+      return false;
+    }
+    const normalizedBase = baseAmount * 10n ** BigInt(Math.max(0, quoteAsset.decimals));
+    const normalizedQuote = quoteAmount * 10n ** BigInt(Math.max(0, baseAsset.decimals));
+    return normalizedBase < normalizedQuote;
+  } catch {
+    return false;
+  }
+};
+
+export const resolveTradePriceRatioDisplay = ({
+  baseAsset,
+  quoteAsset,
+  toggleInverse = false,
+  forwardFallbackLabel,
+  reverseFallbackLabel,
+  subjectLabel = 'price ratio'
+}: {
+  baseAsset?: TradeAssetPayload;
+  quoteAsset?: TradeAssetPayload;
+  toggleInverse?: boolean;
+  forwardFallbackLabel?: string;
+  reverseFallbackLabel?: string;
+  subjectLabel?: string;
+}): TradePriceRatioDisplay | null => {
+  if (!baseAsset || !quoteAsset) {
+    return null;
+  }
+
+  const defaultReversed = shouldUseReversePriceRatioByDefault(baseAsset, quoteAsset);
+  const isReversed = Boolean(toggleInverse) !== defaultReversed;
+  const forwardBasisLabel = `${quoteAsset.symbol}/${baseAsset.symbol}`;
+  const reverseBasisLabel = `${baseAsset.symbol}/${quoteAsset.symbol}`;
+  const forwardLabel = formatTradeRatioLabel(baseAsset, quoteAsset) ?? forwardFallbackLabel ?? forwardBasisLabel;
+  const reverseLabel = formatTradeRatioLabel(quoteAsset, baseAsset) ?? reverseFallbackLabel ?? reverseBasisLabel;
+  const label = isReversed ? reverseLabel : forwardLabel;
+  const basisLabel = isReversed ? reverseBasisLabel : forwardBasisLabel;
+  const nextBasisLabel = isReversed ? forwardBasisLabel : reverseBasisLabel;
+
+  return {
+    label,
+    basisLabel,
+    nextBasisLabel,
+    isReversed,
+    toggleTitle: `Switch price ratio to ${nextBasisLabel}`,
+    ariaLabel: `Flip ${subjectLabel}. Current ratio: ${label}. Switch to ${nextBasisLabel}.`
+  };
+};
+
+export const resolveRecurringPriceDeskDisplay = ({
+  terms,
+  toggleInverse = false,
+  subjectLabel = 'recurring order'
+}: {
+  terms: RecurringPriceDeskTerms;
+  toggleInverse?: boolean;
+  subjectLabel?: string;
+}): RecurringPriceDeskDisplay => {
+  const buyBaseAsset = { ...terms.baseAsset, amount: terms.buyTerms.baseAmount };
+  const buyQuoteAsset = { ...terms.quoteAsset, amount: terms.buyTerms.quoteAmount };
+  const sellBaseAsset = { ...terms.baseAsset, amount: terms.sellTerms.baseAmount };
+  const sellQuoteAsset = { ...terms.quoteAsset, amount: terms.sellTerms.quoteAmount };
+  const forwardBasisLabel = `${terms.quoteAsset.symbol}/${terms.baseAsset.symbol}`;
+  const reverseBasisLabel = `${terms.baseAsset.symbol}/${terms.quoteAsset.symbol}`;
+  const buyForwardLabel = formatTradeRatioLabel(buyBaseAsset, buyQuoteAsset) ?? forwardBasisLabel;
+  const sellForwardLabel = formatTradeRatioLabel(sellBaseAsset, sellQuoteAsset) ?? forwardBasisLabel;
+  const buyReverseLabel = formatTradeRatioLabel(buyQuoteAsset, buyBaseAsset) ?? reverseBasisLabel;
+  const sellReverseLabel = formatTradeRatioLabel(sellQuoteAsset, sellBaseAsset) ?? reverseBasisLabel;
+  const defaultReversed =
+    shouldUseReversePriceRatioByDefault(buyBaseAsset, buyQuoteAsset) &&
+    shouldUseReversePriceRatioByDefault(sellBaseAsset, sellQuoteAsset);
+  const isReversed = Boolean(toggleInverse) !== defaultReversed;
+  const basisLabel = isReversed ? reverseBasisLabel : forwardBasisLabel;
+  const nextBasisLabel = isReversed ? forwardBasisLabel : reverseBasisLabel;
+  const makerBuySide = isReversed
+    ? { label: `Sell ${terms.quoteAsset.symbol}`, priceLabel: buyReverseLabel }
+    : { label: `Buy ${terms.baseAsset.symbol}`, priceLabel: buyForwardLabel };
+  const makerSellSide = isReversed
+    ? { label: `Buy ${terms.quoteAsset.symbol}`, priceLabel: sellReverseLabel }
+    : { label: `Sell ${terms.baseAsset.symbol}`, priceLabel: sellForwardLabel };
+  const displayBuySide = isReversed ? makerSellSide : makerBuySide;
+  const displaySellSide = isReversed ? makerBuySide : makerSellSide;
+
+  return {
+    basisLabel,
+    nextBasisLabel,
+    isReversed,
+    toggleTitle: `Switch price basis to ${nextBasisLabel}`,
+    ariaLabel: `${subjectLabel} price desk quoted in ${basisLabel}. ${displayBuySide.label}: ${displayBuySide.priceLabel}. ${displaySellSide.label}: ${displaySellSide.priceLabel}. Switch to ${nextBasisLabel}.`,
+    displayBuySide,
+    displaySellSide,
+    makerBuySide,
+    makerSellSide
+  };
+};
+
 export const resolveTradeOrderSummary = (
   trade: TradePerspectiveInput,
   walletAddress?: string | null
@@ -178,14 +325,14 @@ export const resolveTradeOrderSummary = (
 
   const offerSide: TradeOrderSide = {
     asset: trade.offer,
-    label: isBuyerView ? 'You buy' : isMakerView ? 'You sell' : 'Seller sells',
-    tone: isBuyerView ? 'receive' : isMakerView ? 'send' : 'receive',
+    label: isMakerView ? 'You sell' : 'You buy',
+    tone: isMakerView ? 'send' : 'receive',
     role: 'offer'
   };
   const paymentSide: TradeOrderSide = {
     asset: trade.request,
-    label: 'Buyer pays',
-    tone: isBuyerView ? 'send' : isMakerView ? 'receive' : 'send',
+    label: isMakerView ? 'You buy' : 'You sell',
+    tone: isMakerView ? 'receive' : 'send',
     role: 'payment'
   };
 

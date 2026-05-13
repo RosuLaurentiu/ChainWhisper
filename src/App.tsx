@@ -35,6 +35,7 @@ import {
 } from './lib/appHelpers';
 import {
   fetchTradeSnapshotById,
+  readOtcEscrowFeeAmount,
   readCurrentPrivateErc20BalanceWei,
   readLegacyPrivateRewardBalanceWei
 } from './lib/appChain';
@@ -129,6 +130,7 @@ import {
   encodeCompactMemoPlaintext,
   DEFAULT_GROUP_JOIN_CODE_MULTI_USES,
   DEFAULT_NICKNAME_MAX_BYTES,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   encodeMemoPlaintext,
   ERC20_TOKEN_ABI,
   FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL,
@@ -187,7 +189,6 @@ import {
   TIP_NATIVE_TOKEN_DECIMALS,
   TIP_NATIVE_TOKEN_SYMBOL,
   TipTokenSelection,
-  TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   TradeAssetPayload,
   TradeOfferMessagePayload,
@@ -1899,10 +1900,16 @@ export default function App() {
       const walletKey = walletAddress.trim().toLowerCase();
       for (const request of customTokenRequests) {
         const previousEntry = previous[request.key];
+        const fallbackTokenSymbol = getVerifiedEcosystemToken(request.address)?.symbol ?? shortenAddress(request.address);
         next[request.key] = {
           kind: request.kind,
           address: request.address,
-          symbol: previousEntry?.symbol ?? shortenAddress(request.address),
+          symbol: (() => {
+            const previousSymbol = previousEntry?.symbol?.trim();
+            return previousSymbol && previousSymbol !== shortenAddress(request.address)
+              ? previousSymbol
+              : fallbackTokenSymbol;
+          })(),
           decimals: previousEntry?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
           balanceWei: previousEntry?.balanceWei ?? null,
           loading: true,
@@ -1926,6 +1933,7 @@ export default function App() {
           : null;
       const nextEntries = await Promise.all(
         customTokenRequests.map(async (request) => {
+          const fallbackTokenSymbol = getVerifiedEcosystemToken(request.address)?.symbol ?? shortenAddress(request.address);
           try {
             const tokenAbi = request.kind === 'private-erc20' ? PRIVATE_ERC20_TOKEN_VNEXT_ABI : ERC20_TOKEN_ABI;
             const tokenContract = new cotiEthers.Contract(request.address, tokenAbi, readProvider);
@@ -1958,7 +1966,7 @@ export default function App() {
               symbol:
                 typeof symbolRaw === 'string' && symbolRaw.trim().length > 0
                   ? symbolRaw.trim().slice(0, 24)
-                  : shortenAddress(request.address),
+                  : fallbackTokenSymbol,
               decimals: normalizeTokenDecimals(Number(decimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS)),
               balanceWei: typeof balanceWei === 'bigint' ? balanceWei : null,
               loading: false,
@@ -1970,7 +1978,7 @@ export default function App() {
             return {
               kind: request.kind,
               address: request.address,
-              symbol: shortenAddress(request.address),
+              symbol: fallbackTokenSymbol,
               decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
               balanceWei: null,
               loading: false,
@@ -2011,10 +2019,11 @@ export default function App() {
         const next = { ...previous };
         const walletKey = walletAddress.trim().toLowerCase();
         for (const request of customTokenRequests) {
+          const fallbackTokenSymbol = getVerifiedEcosystemToken(request.address)?.symbol ?? shortenAddress(request.address);
           next[request.key] = {
             kind: request.kind,
             address: request.address,
-            symbol: shortenAddress(request.address),
+            symbol: fallbackTokenSymbol,
             decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
             balanceWei: null,
             loading: false,
@@ -2042,7 +2051,7 @@ export default function App() {
     topUpMetricsNonce
   ]);
   useEffect(() => {
-    if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS)) {
+    if (!DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)) {
       tradeRequiredFeeCacheRef.current = null;
       tradeRequiredFeeRequestRef.current = null;
       setTradeRequiredFeeWei(null);
@@ -2052,10 +2061,7 @@ export default function App() {
     let cancelled = false;
 
     const loadTradeFees = async () => {
-      const cotiEthers = await loadCotiEthersModule();
-      const readProvider = await loadCotiReadProvider(true);
-      const contract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
-      const nativeFeeRaw = await contract.feeAmount().catch(() => null);
+      const nativeFeeRaw = await readOtcEscrowFeeAmount(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS).catch(() => null);
 
       if (cancelled) {
         return;
@@ -3268,18 +3274,21 @@ export default function App() {
     }
   };
 
-  const resolveRequiredFeeForTradeCreate = async (): Promise<bigint> => {
-    if (tradeRequiredFeeCacheRef.current !== null) {
+  const resolveRequiredFeeForTradeCreate = async (escrowContract?: string | null): Promise<bigint> => {
+    const resolvedEscrowContract = escrowContract ?? DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
+    const isDefaultDirectFee = resolvedEscrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+    if (isDefaultDirectFee && tradeRequiredFeeCacheRef.current !== null) {
       setTradeRequiredFeeWei(tradeRequiredFeeCacheRef.current);
       return tradeRequiredFeeCacheRef.current;
     }
 
+    if (!isDefaultDirectFee) {
+      return readOtcEscrowFeeAmount(resolvedEscrowContract);
+    }
+
     if (!tradeRequiredFeeRequestRef.current) {
       tradeRequiredFeeRequestRef.current = (async () => {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
-        const resolvedFee = (await readContract.feeAmount()) as bigint;
+        const resolvedFee = await readOtcEscrowFeeAmount(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
         tradeRequiredFeeCacheRef.current = resolvedFee;
         setTradeRequiredFeeWei(resolvedFee);
         return resolvedFee;

@@ -199,6 +199,15 @@ type TradeEscrowConfig = {
   directVisible: boolean;
 };
 
+type OtcFeeEscrowConfig = {
+  address: string;
+  abi:
+    | typeof TRADE_ESCROW_CONTRACT_ABI
+    | typeof PRIVATE_TRADE_ESCROW_CONTRACT_ABI
+    | typeof DIRECT_TRADE_ESCROW_CONTRACT_ABI
+    | typeof RECURRING_OTC_CONTRACT_ABI;
+};
+
 export type TradingContractAddresses = {
   standardEscrow: string;
   privateEscrow: string;
@@ -343,6 +352,31 @@ export const resolveTradeEscrowContractConfig = (
     hiddenOnly: false,
     directVisible: false
   };
+};
+
+export const resolveOtcFeeEscrowContractConfig = (
+  escrowContract?: string | null,
+  addresses: TradingContractAddresses = DEFAULT_TRADING_CONTRACT_ADDRESSES
+): OtcFeeEscrowConfig => {
+  const address = normalizeEscrowAddress(escrowContract, addresses).toLowerCase();
+  if (address === addresses.privateEscrow.toLowerCase()) {
+    return { address: addresses.privateEscrow, abi: PRIVATE_TRADE_ESCROW_CONTRACT_ABI };
+  }
+  if (address === addresses.directEscrow.toLowerCase()) {
+    return { address: addresses.directEscrow, abi: DIRECT_TRADE_ESCROW_CONTRACT_ABI };
+  }
+  if (address === addresses.recurringEscrow.toLowerCase()) {
+    return { address: addresses.recurringEscrow, abi: RECURRING_OTC_CONTRACT_ABI };
+  }
+  return { address: addresses.standardEscrow, abi: TRADE_ESCROW_CONTRACT_ABI };
+};
+
+export const readOtcEscrowFeeAmount = async (escrowContract?: string | null): Promise<bigint> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const config = resolveOtcFeeEscrowContractConfig(escrowContract);
+  const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
+  return (await contract.feeAmount()) as bigint;
 };
 
 const resolveActiveOneOffTradeEscrowConfigs = (
@@ -605,6 +639,34 @@ const parseTradeFillState = (
     filledOfferAmount: toBigintString(fillState?.filledOfferAmount ?? indexedFillState?.[2]),
     filledRequestAmount: toBigintString(fillState?.filledRequestAmount ?? indexedFillState?.[3])
   };
+};
+
+const parseWalletTradeFillState = (raw: unknown): TradeSnapshot['walletFillState'] | undefined => {
+  if (!raw) {
+    return undefined;
+  }
+  const fillState = raw as {
+    offerAmountReceived?: unknown;
+    requestAmountPaid?: unknown;
+    [key: number]: unknown;
+  };
+  const offerAmountReceived = toBigintString(fillState.offerAmountReceived ?? fillState[0]);
+  const requestAmountPaid = toBigintString(fillState.requestAmountPaid ?? fillState[1]);
+  return offerAmountReceived !== '0' || requestAmountPaid !== '0'
+    ? { offerAmountReceived, requestAmountPaid }
+    : undefined;
+};
+
+const readWalletTradeFillState = async (
+  contractInstance: unknown,
+  tradeId: number,
+  walletAddress: string
+): Promise<TradeSnapshot['walletFillState'] | undefined> => {
+  const contractWithFills = contractInstance as {
+    getTradeFillForAccount?: (tradeId: number, account: string) => Promise<unknown>;
+  };
+  const raw = await contractWithFills.getTradeFillForAccount?.(tradeId, walletAddress).catch(() => null);
+  return parseWalletTradeFillState(raw);
 };
 
 const toBigintOrNull = (value: unknown): bigint | null => {
@@ -2172,6 +2234,18 @@ const fetchTradeSnapshotByIdFromContract = async (
       : undefined
   };
 
+  const callerWalletAddress = isWalletAddress(options.callerAddress ?? '') ? options.callerAddress! : '';
+  if (callerWalletAddress && !config.hiddenOnly) {
+    const walletFillState = await readWalletTradeFillState(contract, tradeId, callerWalletAddress);
+    if (walletFillState) {
+      snapshot = {
+        ...snapshot,
+        walletHasFill: true,
+        walletFillState
+      };
+    }
+  }
+
   if (config.directVisible && options.accessSecret) {
     try {
       const encryptedPayload = await readDirectTermPayloadBySecret({
@@ -2476,28 +2550,6 @@ export const fetchWalletTradeSnapshots = async (
       ? idsRaw.map((value: unknown) => toSafeNumber(value)).filter((value: number) => value > 0)
       : [];
   };
-  const readWalletFillState = async (
-    contractInstance: unknown,
-    tradeId: number
-  ): Promise<TradeSnapshot['walletFillState'] | undefined> => {
-    const contractWithFills = contractInstance as {
-      getTradeFillForAccount?: (tradeId: number, account: string) => Promise<unknown>;
-    };
-    const raw = await contractWithFills.getTradeFillForAccount?.(tradeId, walletAddress).catch(() => null);
-    if (!raw) {
-      return undefined;
-    }
-    const fillState = raw as {
-      offerAmountReceived?: unknown;
-      requestAmountPaid?: unknown;
-      [key: number]: unknown;
-    };
-    const offerAmountReceived = toBigintString(fillState.offerAmountReceived ?? fillState[0]);
-    const requestAmountPaid = toBigintString(fillState.requestAmountPaid ?? fillState[1]);
-    return offerAmountReceived !== '0' || requestAmountPaid !== '0'
-      ? { offerAmountReceived, requestAmountPaid }
-      : undefined;
-  };
   const historyRefs = await fetchWalletHistoryRefsFromReader(walletAddress, tradingContracts, safeLimit);
   let historySnapshots: TradeSnapshot[] = [];
   if (historyRefs) {
@@ -2529,7 +2581,7 @@ export const fetchWalletTradeSnapshots = async (
             return {
               ...snapshot,
               walletHasFill: true,
-              walletFillState: await readWalletFillState(contract, ref.localId)
+              walletFillState: await readWalletTradeFillState(contract, ref.localId, walletAddress)
             };
           })
           .catch(() => null)
@@ -2569,7 +2621,7 @@ export const fetchWalletTradeSnapshots = async (
               return {
                 ...snapshot,
                 walletHasFill: true,
-                ...(config.hiddenOnly ? {} : { walletFillState: await readWalletFillState(contract, tradeId) })
+                ...(config.hiddenOnly ? {} : { walletFillState: await readWalletTradeFillState(contract, tradeId, walletAddress) })
               };
             })
             .catch(() => null)

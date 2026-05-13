@@ -143,10 +143,16 @@ const resolveSelectedTradeToken = ({
     return null;
   }
 
+  const verifiedToken = getVerifiedEcosystemToken(customTokenInfo.address);
+  const customTokenSymbol =
+    verifiedToken && customTokenInfo.symbol.trim() === shortenAddress(customTokenInfo.address)
+      ? verifiedToken.symbol
+      : customTokenInfo.symbol;
+
   return {
     kind: customTokenInfo.kind,
     tokenAddress: customTokenInfo.address,
-    symbol: customTokenInfo.symbol,
+    symbol: customTokenSymbol,
     decimals: customTokenInfo.decimals,
     custom: true
   };
@@ -169,6 +175,42 @@ const buildTradeCustomMetaLabel = (address: string, tokenInfo?: TradeCustomToken
     return `${tokenInfo.symbol} \u2022 ${tokenInfo.decimals} decimals`;
   }
   return 'Loading token metadata...';
+};
+
+const isTradeTokenMetadataPending = ({
+  selection,
+  customAddress,
+  tokenInfo
+}: {
+  selection: TradeTokenPresetKey;
+  customAddress: string;
+  tokenInfo?: TradeCustomTokenInfo;
+}): boolean => {
+  const selectedAddress = isCustomTradeTokenSelection(selection) ? customAddress.trim() : selection.trim();
+  if (!selectedAddress || !isWalletAddress(selectedAddress)) {
+    return false;
+  }
+  const verifiedToken = getVerifiedEcosystemToken(selectedAddress);
+  if (!isCustomTradeTokenSelection(selection) && !verifiedToken) {
+    return false;
+  }
+  if (verifiedToken && tokenInfo?.error) {
+    return true;
+  }
+  return !tokenInfo || Boolean(tokenInfo.loading && !tokenInfo.error);
+};
+
+const resolvePendingTradeTokenSymbol = ({
+  selection,
+  customAddress
+}: {
+  selection: TradeTokenPresetKey;
+  customAddress: string;
+}): string | undefined => {
+  const selectedAddress = isCustomTradeTokenSelection(selection) ? customAddress.trim() : selection.trim();
+  return selectedAddress && isWalletAddress(selectedAddress)
+    ? getVerifiedEcosystemToken(selectedAddress)?.symbol
+    : undefined;
 };
 
 export const deriveTradeComposerModel = ({
@@ -215,13 +257,26 @@ export const deriveTradeComposerModel = ({
   ]);
   const verifiedTokenOptions = VERIFIED_ECOSYSTEM_TOKENS.filter(
     ({ address }) => !builtInTokenAddresses.has(address.toLowerCase())
-  ).map(({ address, kind }) => {
+  ).map(({ address, kind, symbol: fallbackSymbol }) => {
     const key = buildTradeCustomTokenInfoKey(kind, address);
     const info = customTradeTokenInfoByAddress[key];
-    const symbol = info?.loading
-      ? `${shortenAddress(address)}…`
-      : (info?.symbol ?? shortenAddress(address));
-    return { value: address.toLowerCase(), label: `✓ ${symbol} (ecosystem)` };
+    if (
+      !info ||
+      info.loading ||
+      info.error ||
+      !info.symbol?.trim() ||
+      info.symbol.trim() === shortenAddress(address)
+    ) {
+      return {
+        value: address.toLowerCase(),
+        label: `✓ ${fallbackSymbol} (ecosystem)`
+      };
+    }
+    const symbol = info.symbol.trim();
+    return {
+      value: address.toLowerCase(),
+      label: `✓ ${symbol} (ecosystem)`
+    };
   });
   const privateVerifiedTokenOptions = verifiedTokenOptions.filter(
     (option) => getVerifiedEcosystemToken(option.value)?.kind === 'private-erc20'
@@ -291,6 +346,28 @@ export const deriveTradeComposerModel = ({
     privateRewardTokenSymbol,
     privateRewardTokenDecimals
   });
+  const tradeOfferTokenMetadataPending = isTradeTokenMetadataPending({
+    selection: tradeOfferTokenSelection,
+    customAddress: normalizedTradeOfferCustomTokenAddress,
+    tokenInfo: tradeCustomOfferTokenInfo
+  });
+  const tradeRequestTokenMetadataPending = isTradeTokenMetadataPending({
+    selection: tradeRequestTokenSelection,
+    customAddress: normalizedTradeRequestCustomTokenAddress,
+    tokenInfo: tradeCustomRequestTokenInfo
+  });
+  const tradeOfferPendingSymbol = tradeOfferTokenMetadataPending
+    ? resolvePendingTradeTokenSymbol({
+        selection: tradeOfferTokenSelection,
+        customAddress: normalizedTradeOfferCustomTokenAddress
+      })
+    : undefined;
+  const tradeRequestPendingSymbol = tradeRequestTokenMetadataPending
+    ? resolvePendingTradeTokenSymbol({
+        selection: tradeRequestTokenSelection,
+        customAddress: normalizedTradeRequestCustomTokenAddress
+      })
+    : undefined;
 
   let selectedTradeOfferBalanceWei: bigint | null = null;
   if (selectedTradeOfferToken) {
@@ -353,21 +430,29 @@ export const deriveTradeComposerModel = ({
   const tradeOfferAmountSummaryLabel =
     parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n && selectedTradeOfferToken
       ? `${formatTokenAmount(parsedTradeOfferAmountWei, selectedTradeOfferToken.decimals, 6)} ${selectedTradeOfferToken.symbol}`
-      : `0 ${selectedTradeOfferToken?.symbol ?? 'TOKEN'}`;
+      : `0 ${selectedTradeOfferToken?.symbol ?? tradeOfferPendingSymbol ?? 'TOKEN'}`;
   const tradeRequestAmountSummaryLabel =
     parsedTradeRequestAmountWei !== null && parsedTradeRequestAmountWei > 0n && selectedTradeRequestToken
       ? `${formatTokenAmount(parsedTradeRequestAmountWei, selectedTradeRequestToken.decimals, 6)} ${selectedTradeRequestToken.symbol}`
-      : `0 ${selectedTradeRequestToken?.symbol ?? 'TOKEN'}`;
+      : `0 ${selectedTradeRequestToken?.symbol ?? tradeRequestPendingSymbol ?? 'TOKEN'}`;
   const tradeOfferBalanceSummaryLabel =
     selectedTradeOfferToken && selectedTradeOfferBalanceWei !== null
       ? `${formatTokenAmount(selectedTradeOfferBalanceWei, selectedTradeOfferToken.decimals, 6)} ${selectedTradeOfferToken.symbol}`
       : '--';
   const tradeOfferVerifyUrl = selectedTradeOfferToken?.tokenAddress
     ? `${COTI_NETWORK.blockExplorerUrl}/address/${selectedTradeOfferToken.tokenAddress}`
-    : undefined;
+    : isCustomTradeTokenSelection(tradeOfferTokenSelection) && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
+      ? `${COTI_NETWORK.blockExplorerUrl}/address/${normalizedTradeOfferCustomTokenAddress}`
+      : isWalletAddress(tradeOfferTokenSelection)
+        ? `${COTI_NETWORK.blockExplorerUrl}/address/${tradeOfferTokenSelection}`
+        : undefined;
   const tradeRequestVerifyUrl = selectedTradeRequestToken?.tokenAddress
     ? `${COTI_NETWORK.blockExplorerUrl}/address/${selectedTradeRequestToken.tokenAddress}`
-    : undefined;
+    : isCustomTradeTokenSelection(tradeRequestTokenSelection) && isWalletAddress(normalizedTradeRequestCustomTokenAddress)
+      ? `${COTI_NETWORK.blockExplorerUrl}/address/${normalizedTradeRequestCustomTokenAddress}`
+      : isWalletAddress(tradeRequestTokenSelection)
+        ? `${COTI_NETWORK.blockExplorerUrl}/address/${tradeRequestTokenSelection}`
+        : undefined;
 
   const normalizedExpiryInput = tradeHasNoExpiry ? '0' : tradeExpiryHoursInput.trim();
   const parsedTradeExpiryHours = /^\d+$/.test(normalizedExpiryInput)
@@ -389,12 +474,12 @@ export const deriveTradeComposerModel = ({
     tradeComposerFieldErrors.general = 'Trade escrow contract is not configured yet.';
   }
 
-  if (!selectedTradeOfferToken) {
+  if (!selectedTradeOfferToken && !tradeOfferTokenMetadataPending) {
     tradeComposerFieldErrors.offerAsset = isCustomTradeTokenSelection(tradeOfferTokenSelection)
       ? 'Load a valid token to send.'
       : 'Select a token to send.';
   }
-  if (!selectedTradeRequestToken) {
+  if (!selectedTradeRequestToken && !tradeRequestTokenMetadataPending) {
     tradeComposerFieldErrors.requestAsset = isCustomTradeTokenSelection(tradeRequestTokenSelection)
       ? 'Load a valid token to receive.'
       : 'Select a token to receive.';
@@ -498,6 +583,12 @@ export const deriveTradeComposerModel = ({
     }
   }
 
+  const tokenMetadataPendingMessage = tradeOfferTokenMetadataPending
+    ? 'Loading token to send.'
+    : tradeRequestTokenMetadataPending
+      ? 'Loading token to receive.'
+      : '';
+
   const tradeComposerValidationMessage =
     tradeComposerFieldErrors.general ??
     tradeComposerFieldErrors.offerAsset ??
@@ -506,6 +597,7 @@ export const deriveTradeComposerModel = ({
     tradeComposerFieldErrors.requestAmount ??
     tradeComposerFieldErrors.fee ??
     tradeComposerFieldErrors.expiry ??
+    tokenMetadataPendingMessage ??
     '';
 
   let tradeOfferMaxAmountWei: bigint | null = null;

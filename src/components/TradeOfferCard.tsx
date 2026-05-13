@@ -17,8 +17,8 @@ import {
 } from '../lib/appShared';
 import { isVerifiedEcosystemToken } from '../lib/appHelpers';
 import {
-  formatTradeRatioLabel,
   isZeroTradeTakerAddress,
+  resolveTradePriceRatioDisplay,
   resolveTradeOrderSummary,
   type TradeOrderSideRole
 } from '../lib/tradePerspective';
@@ -382,24 +382,40 @@ export default function TradeOfferCard({
           };
         })
       : [];
-  const defaultRateLabel =
-    assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[0]?.asset, assetPanels[1]?.asset) : null;
-  const reverseRateLabel =
-    assetPanels.length >= 2 ? formatTradeRatioLabel(assetPanels[1]?.asset, assetPanels[0]?.asset) : null;
+  const ratioDisplay =
+    assetPanels.length >= 2
+      ? resolveTradePriceRatioDisplay({
+          baseAsset: assetPanels[0]?.asset,
+          quoteAsset: assetPanels[1]?.asset,
+          toggleInverse: showReverseRate,
+          subjectLabel: `price ratio for offer ${offer.tradeId}`
+        })
+      : null;
+  const defaultRatioDisplay =
+    assetPanels.length >= 2
+      ? resolveTradePriceRatioDisplay({
+          baseAsset: assetPanels[0]?.asset,
+          quoteAsset: assetPanels[1]?.asset,
+          subjectLabel: `price ratio for offer ${offer.tradeId}`
+        })
+      : null;
   const showRatioCard = Boolean(
     (hiddenLiquidity || tradeWindowLayout || (directPrivateTerms && !directTermsHydrated)) &&
-    (defaultRateLabel || (directPrivateTerms && !directTermsHydrated))
+    (ratioDisplay || (directPrivateTerms && !directTermsHydrated))
   );
   const visibleRatioLabel =
     directPrivateTerms && !directTermsHydrated
       ? 'Private terms'
-      : showRatioCard && showReverseRate && reverseRateLabel
-        ? reverseRateLabel
-        : showRatioCard
-          ? defaultRateLabel
-          : null;
-  const visibleRatioAriaLabel = `Flip price ratio. Current ratio: ${visibleRatioLabel ?? 'unavailable'}.`;
-  const tradeRateLabel = !hiddenLiquidity && !tradeWindowLayout && defaultRateLabel ? `Price ratio: ${defaultRateLabel}` : null;
+      : showRatioCard
+        ? ratioDisplay?.label ?? null
+        : null;
+  const visibleRatioAriaLabel =
+    ratioDisplay?.ariaLabel ?? `Private terms for offer ${offer.tradeId}.`;
+  const visibleRatioTitle = ratioDisplay?.toggleTitle ?? 'Private terms';
+  const tradeRateLabel =
+    !hiddenLiquidity && !tradeWindowLayout && defaultRatioDisplay
+      ? `Price ratio: ${defaultRatioDisplay.label}`
+      : null;
   const visibleOrderValueLabel =
     tradeWindowLayout && !hiddenLiquidity && assetPanels.length >= 2
       ? `${assetPanels[0].displayText} for ${assetPanels[1].displayText}`
@@ -614,7 +630,7 @@ export default function TradeOfferCard({
             type="button"
             className="trade-card-ratio-card"
             onClick={() => setShowReverseRate((value) => !value)}
-            title="Flip price ratio"
+            title={visibleRatioTitle}
             aria-label={visibleRatioAriaLabel}
           >
             <span className="trade-card-ratio-title">Price ratio</span>
@@ -649,7 +665,7 @@ export default function TradeOfferCard({
               type="button"
               className="trade-card-ratio-card"
               onClick={() => setShowReverseRate((value) => !value)}
-              title="Flip price ratio"
+              title={visibleRatioTitle}
               aria-label={visibleRatioAriaLabel}
             >
               <span className="trade-card-ratio-title">Price ratio</span>
@@ -700,7 +716,7 @@ export default function TradeOfferCard({
                     <strong>{showVisibleFillInline ? panel.asset.symbol : panel.displayText}</strong>
                     {isInlineFillPayPanel && baseRequest ? (
                       <label className="trade-card-inline-private-input">
-                        <span>Buyer pays</span>
+                        <span>You sell</span>
                         <input
                           type="text"
                           inputMode="decimal"
@@ -717,7 +733,7 @@ export default function TradeOfferCard({
                           }}
                           placeholder={`0 ${baseRequest.symbol}`}
                           disabled={partialFillDisabled}
-                          aria-label={`Buyer pays in ${baseRequest.symbol}`}
+                          aria-label={`You sell ${baseRequest.symbol}`}
                         />
                       </label>
                     ) : null}

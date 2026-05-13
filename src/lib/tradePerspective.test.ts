@@ -4,6 +4,8 @@ import {
   formatTradeRatioLabel,
   groupWalletTradesByPerspective,
   hasPartialTradeFill,
+  resolveRecurringPriceDeskDisplay,
+  resolveTradePriceRatioDisplay,
   resolveTradeOrderSummary,
   resolveTradePerspective,
   ZERO_TRADE_TAKER_ADDRESS
@@ -190,7 +192,7 @@ describe('resolveTradeOrderSummary', () => {
     expect(summary.actionLabel).toBe('Sell AAA');
     expect(summary.directionLabel).toBe('Sell AAA for BBB');
     expect(summary.primarySide).toMatchObject({ label: 'You sell', role: 'offer', tone: 'send' });
-    expect(summary.secondarySide).toMatchObject({ label: 'Buyer pays', role: 'payment', tone: 'receive' });
+    expect(summary.secondarySide).toMatchObject({ label: 'You buy', role: 'payment', tone: 'receive' });
     expect(summary.ratioLabel).toBe('1 BBB/AAA');
   });
 
@@ -198,7 +200,7 @@ describe('resolveTradeOrderSummary', () => {
     const summary = resolveTradeOrderSummary(trade({ taker: ZERO_TRADE_TAKER_ADDRESS }), other);
     expect(summary.actionLabel).toBe('Buy AAA');
     expect(summary.directionLabel).toBe('Buy AAA with BBB');
-    expect(summary.primarySide).toMatchObject({ label: 'Buyer pays', role: 'payment', tone: 'send' });
+    expect(summary.primarySide).toMatchObject({ label: 'You sell', role: 'payment', tone: 'send' });
     expect(summary.secondarySide).toMatchObject({ label: 'You buy', role: 'offer', tone: 'receive' });
   });
 
@@ -207,5 +209,90 @@ describe('resolveTradeOrderSummary', () => {
     const quote = { ...asset('BBB'), amount: '2500000000000000000' };
     expect(formatTradeRatioLabel(base, quote)).toBe('2.5 BBB/AAA');
     expect(formatTradeRatioLabel(quote, base)).toBe('0.4 AAA/BBB');
+  });
+});
+
+describe('price display helpers', () => {
+  it('defaults one-off ratios to the smaller displayed ratio', () => {
+    const base = asset('AAA');
+    const quote = { ...asset('BBB'), amount: '2500000000000000000' };
+
+    const display = resolveTradePriceRatioDisplay({ baseAsset: base, quoteAsset: quote });
+
+    expect(display).toMatchObject({
+      label: '0.4 AAA/BBB',
+      basisLabel: 'AAA/BBB',
+      nextBasisLabel: 'BBB/AAA',
+      isReversed: true
+    });
+  });
+
+  it('toggles one-off ratios back to the inverse basis', () => {
+    const base = asset('AAA');
+    const quote = { ...asset('BBB'), amount: '2500000000000000000' };
+
+    const display = resolveTradePriceRatioDisplay({ baseAsset: base, quoteAsset: quote, toggleInverse: true });
+
+    expect(display).toMatchObject({
+      label: '2.5 BBB/AAA',
+      basisLabel: 'BBB/AAA',
+      nextBasisLabel: 'AAA/BBB',
+      isReversed: false
+    });
+  });
+
+  it('shows recurring forward prices as buy and sell for the base asset', () => {
+    const display = resolveRecurringPriceDeskDisplay({
+      terms: {
+        baseAsset: { ...asset('AAA'), amount: '10000000000000000000' },
+        quoteAsset: asset('BBB'),
+        buyTerms: {
+          baseAmount: '10000000000000000000',
+          quoteAmount: '1000000000000000000'
+        },
+        sellTerms: {
+          baseAmount: '10000000000000000000',
+          quoteAmount: '2000000000000000000'
+        }
+      }
+    });
+
+    expect(display).toMatchObject({
+      basisLabel: 'BBB/AAA',
+      displayBuySide: { label: 'Buy AAA', priceLabel: '0.1 BBB/AAA' },
+      displaySellSide: { label: 'Sell AAA', priceLabel: '0.2 BBB/AAA' },
+      makerBuySide: { label: 'Buy AAA', priceLabel: '0.1 BBB/AAA' },
+      makerSellSide: { label: 'Sell AAA', priceLabel: '0.2 BBB/AAA' }
+    });
+  });
+
+  it('shows recurring inverse prices as buy and sell for the quote asset with a valid spread', () => {
+    const display = resolveRecurringPriceDeskDisplay({
+      terms: {
+        baseAsset: { ...asset('AAA'), amount: '10000000000000000000' },
+        quoteAsset: asset('BBB'),
+        buyTerms: {
+          baseAmount: '10000000000000000000',
+          quoteAmount: '1000000000000000000'
+        },
+        sellTerms: {
+          baseAmount: '10000000000000000000',
+          quoteAmount: '2000000000000000000'
+        }
+      },
+      toggleInverse: true
+    });
+
+    const buyPrice = Number(display.displayBuySide.priceLabel.match(/\d+(?:\.\d+)?/)?.[0] ?? 'NaN');
+    const sellPrice = Number(display.displaySellSide.priceLabel.match(/\d+(?:\.\d+)?/)?.[0] ?? 'NaN');
+
+    expect(display).toMatchObject({
+      basisLabel: 'AAA/BBB',
+      displayBuySide: { label: 'Buy BBB', priceLabel: '5 AAA/BBB' },
+      displaySellSide: { label: 'Sell BBB', priceLabel: '10 AAA/BBB' },
+      makerBuySide: { label: 'Sell BBB', priceLabel: '10 AAA/BBB' },
+      makerSellSide: { label: 'Buy BBB', priceLabel: '5 AAA/BBB' }
+    });
+    expect(buyPrice).toBeLessThanOrEqual(sellPrice);
   });
 });

@@ -35,6 +35,57 @@ const sortTrades = (trades: TradeSnapshot[]): TradeSnapshot[] =>
     return right.tradeId - left.tradeId;
   });
 
+const hasEntries = <T,>(value?: T[]): boolean => Boolean(value?.length);
+
+const mergeTradeSnapshotEnrichment = (incoming: TradeSnapshot, existing?: TradeSnapshot | null): TradeSnapshot => {
+  if (!existing || getSnapshotKey(existing) !== getSnapshotKey(incoming)) {
+    return incoming;
+  }
+
+  const merged: TradeSnapshot = {
+    ...incoming,
+    walletHasFill: Boolean(incoming.walletHasFill || existing.walletHasFill),
+    walletFillState: incoming.walletFillState ?? existing.walletFillState,
+    makerPrivateProgress: incoming.makerPrivateProgress ?? existing.makerPrivateProgress,
+    privateFillReceipts:
+      hasEntries(incoming.privateFillReceipts) || !hasEntries(existing.privateFillReceipts)
+        ? incoming.privateFillReceipts
+        : existing.privateFillReceipts
+  };
+
+  if (incoming.recurringOrder && existing.recurringOrder) {
+    const incomingPrivateInventory = incoming.recurringOrder.makerPrivateInventory;
+    const existingPrivateInventory = existing.recurringOrder.makerPrivateInventory;
+    merged.recurringOrder = {
+      ...incoming.recurringOrder,
+      makerPrivateInventory:
+        incomingPrivateInventory || existingPrivateInventory
+          ? {
+              ...existingPrivateInventory,
+              ...incomingPrivateInventory
+            }
+          : undefined,
+      privateExecutions:
+        hasEntries(incoming.recurringOrder.privateExecutions) || !hasEntries(existing.recurringOrder.privateExecutions)
+          ? incoming.recurringOrder.privateExecutions
+          : existing.recurringOrder.privateExecutions,
+      publicExecutions:
+        hasEntries(incoming.recurringOrder.publicExecutions) || !hasEntries(existing.recurringOrder.publicExecutions)
+          ? incoming.recurringOrder.publicExecutions
+          : existing.recurringOrder.publicExecutions
+    };
+  }
+
+  return merged;
+};
+
+const mergeTradeSnapshotList = (incoming: TradeSnapshot[], existing: TradeSnapshot[]): TradeSnapshot[] => {
+  const existingByKey = new Map(existing.map((trade) => [getSnapshotKey(trade), trade]));
+  return incoming.map((trade) => mergeTradeSnapshotEnrichment(trade, existingByKey.get(getSnapshotKey(trade))));
+};
+
+export const __mergeTradeSnapshotEnrichmentForTest = mergeTradeSnapshotEnrichment;
+
 type TokenMetadata = {
   privateRewardTokenDecimals: number;
   privateRewardTokenSymbol: string;
@@ -163,7 +214,7 @@ export default function useP2PTradeData({
             limit: 80
           });
           if (latestSyncSessionKeyRef.current === requestSessionKey) {
-            setPublicTrades(sortTrades(snapshots));
+            setPublicTrades((previous) => sortTrades(mergeTradeSnapshotList(snapshots, previous)));
             if (silent) {
               setPublicTradesError('');
             }
@@ -218,7 +269,7 @@ export default function useP2PTradeData({
           });
           const snapshots = await enrichMakerPrivateProgressForList(snapshotsRaw);
           if (latestSyncSessionKeyRef.current === requestSessionKey) {
-            setMyTrades(sortTrades(snapshots));
+            setMyTrades((previous) => sortTrades(mergeTradeSnapshotList(snapshots, previous)));
             if (silent) {
               setMyTradesError('');
             }
@@ -252,18 +303,26 @@ export default function useP2PTradeData({
   const mergeTradeSnapshot = useCallback(
     (snapshot: TradeSnapshot) => {
       const snapshotKey = getSnapshotKey(snapshot);
-      setDetailTrade((current) => (current && getSnapshotKey(current) === snapshotKey ? snapshot : current));
+      const existingDetail = detailTradeRef.current;
+      const mergedSnapshot = mergeTradeSnapshotEnrichment(
+        snapshot,
+        existingDetail && getSnapshotKey(existingDetail) === snapshotKey ? existingDetail : undefined
+      );
+      setDetailTrade((current) => (current && getSnapshotKey(current) === snapshotKey ? mergeTradeSnapshotEnrichment(mergedSnapshot, current) : current));
       setPublicTrades((previous) => {
         const withoutCurrent = previous.filter((trade) => getSnapshotKey(trade) !== snapshotKey);
-        if (snapshot.isPublic && snapshot.status === 'open') {
-          return sortTrades([snapshot, ...withoutCurrent]);
+        const existing = previous.find((trade) => getSnapshotKey(trade) === snapshotKey);
+        const nextSnapshot = mergeTradeSnapshotEnrichment(mergedSnapshot, existing);
+        if (nextSnapshot.isPublic && nextSnapshot.status === 'open') {
+          return sortTrades([nextSnapshot, ...withoutCurrent]);
         }
         return sortTrades(withoutCurrent);
       });
-      if (walletKey && ([snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey) || snapshot.walletHasFill)) {
+      if (walletKey && ([mergedSnapshot.maker.toLowerCase(), mergedSnapshot.taker.toLowerCase()].includes(walletKey) || mergedSnapshot.walletHasFill)) {
         setMyTrades((previous) => {
           const withoutCurrent = previous.filter((trade) => getSnapshotKey(trade) !== snapshotKey);
-          return sortTrades([snapshot, ...withoutCurrent]);
+          const existing = previous.find((trade) => getSnapshotKey(trade) === snapshotKey);
+          return sortTrades([mergeTradeSnapshotEnrichment(mergedSnapshot, existing), ...withoutCurrent]);
         });
       }
     },
@@ -386,21 +445,25 @@ export default function useP2PTradeData({
         if (cancelled) {
           return;
         }
+        if (!snapshot) {
+          setDetailTrade(null);
+          return;
+        }
         const isParticipant =
           Boolean(walletKey) &&
-          [snapshot?.maker.toLowerCase(), snapshot?.taker.toLowerCase()].includes(walletKey);
-        const isUnlisted = metadata?.isPublic === false || snapshot?.isPublic === false;
+          [snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey);
+        const isUnlisted = metadata?.isPublic === false || snapshot.isPublic === false;
         let directVisibleRoute = false;
         try {
           directVisibleRoute = Boolean(
-            resolveTradeEscrowContractConfig(routeEscrowContract || snapshot?.escrowContract).directVisible
+            resolveTradeEscrowContractConfig(routeEscrowContract || snapshot.escrowContract).directVisible
           );
         } catch {
           directVisibleRoute = false;
         }
         const routeSecretCanAuthorize = Boolean(
           resolvedRouteAccessSecret &&
-            (metadata?.hasAccessHash === true || snapshot?.hasAccessHash === true || directVisibleRoute)
+            (metadata?.hasAccessHash === true || snapshot.hasAccessHash === true || directVisibleRoute)
         );
         if (isUnlisted && !routeSecretCanAuthorize && !isParticipant) {
           setTradeAccessBlocked(true);
@@ -408,7 +471,7 @@ export default function useP2PTradeData({
           return;
         }
         if (!cancelled) {
-          setDetailTrade(snapshot);
+          setDetailTrade((current) => mergeTradeSnapshotEnrichment(snapshot, current));
         }
       } catch (loadError) {
         if (!cancelled && !hasCurrentDetail) {

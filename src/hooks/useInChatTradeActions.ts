@@ -22,6 +22,7 @@ import {
   buildTradeOfferMessagePayload,
   buildTradeResponseMessagePayload,
   buildTradeSnapshotKey,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   formatTokenAmount,
   hasInsufficientFundsError,
   isWalletAddress,
@@ -51,7 +52,7 @@ type UseInChatTradeActionsArgs = {
   processingTradeActionId: string;
   replyingToMessage: ChatMessage | null;
   runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
-  resolveRequiredFeeForTradeCreate: () => Promise<bigint>;
+  resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
   resolveTradeSnapshotForOffer: (offerMessage: TradeOfferMessagePayload) => Promise<TradeSnapshot>;
   selectedTradeOfferToken: ResolvedTradeToken | null;
   selectedTradeRequestToken: ResolvedTradeToken | null;
@@ -172,7 +173,7 @@ export default function useInChatTradeActions({
       }
       await runWalletTransactionFlow(async () => {
       const { signer, cacheKey } = await getMemoSigner();
-      const nativeFeeWei = await resolveRequiredFeeForTradeCreate();
+      const nativeFeeWei = await resolveRequiredFeeForTradeCreate(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
       let counteredSnapshot: TradeSnapshot | null = null;
 
       if (pendingCounterContext) {

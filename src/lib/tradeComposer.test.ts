@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { shortenAddress } from './appShared';
+import { HOTDOG_PRIVATE_TOKEN_ADDRESS, buildTradeCustomTokenInfoKey } from './appHelpers';
 import { deriveTradeComposerModel } from './tradeComposer';
 
 const baseParams = {
@@ -64,6 +66,83 @@ describe('trade composer private token visibility', () => {
     expect(model.canHidePrivateLiquidity).toBe(false);
     expect(model.tradeComposerFieldErrors.general).toBeUndefined();
     expect(model.canSendTradeOffer).toBe(true);
+  });
+
+  it('keeps a verified token address pending instead of flashing an invalid receive field', () => {
+    const model = deriveTradeComposerModel({
+      ...baseParams,
+      tradeOfferTokenSelection: 'wisp',
+      tradeRequestTokenSelection: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
+      rewardTokenBalanceWei: 100_000_000n
+    });
+
+    expect(model.tradeComposerFieldErrors.requestAsset).toBeUndefined();
+    expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
+    expect(model.tradeRequestVerifyUrl).toBe(`https://mainnet.cotiscan.io/address/${HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase()}`);
+    expect(model.tradeTokenOptions).toContainEqual({
+      value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
+      label: '✓ HOTDOG (private)'
+    });
+    expect(model.tradeRequestAmountSummaryLabel).toBe('0 HOTDOG');
+    expect(model.canSendTradeOffer).toBe(false);
+  });
+
+  it('keeps verified token labels stable when metadata retries after an error', () => {
+    const tokenKey = buildTradeCustomTokenInfoKey('private-erc20', HOTDOG_PRIVATE_TOKEN_ADDRESS);
+    const model = deriveTradeComposerModel({
+      ...baseParams,
+      tradeOfferTokenSelection: 'wisp',
+      tradeRequestTokenSelection: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
+      customTradeTokenInfoByAddress: {
+        [tokenKey]: {
+          kind: 'private-erc20',
+          address: HOTDOG_PRIVATE_TOKEN_ADDRESS,
+          symbol: shortenAddress(HOTDOG_PRIVATE_TOKEN_ADDRESS),
+          decimals: 6,
+          balanceWei: null,
+          loading: false,
+          error: 'Unable to load token.'
+        }
+      },
+      rewardTokenBalanceWei: 100_000_000n
+    });
+
+    expect(model.tradeComposerFieldErrors.requestAsset).toBeUndefined();
+    expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
+    expect(model.tradeTokenOptions).toContainEqual({
+      value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
+      label: '✓ HOTDOG (private)'
+    });
+    expect(model.tradeRequestAmountSummaryLabel).toBe('0 HOTDOG');
+    expect(model.canSendTradeOffer).toBe(false);
+  });
+
+  it('keeps loading custom token metadata pending without marking the token field invalid', () => {
+    const tokenKey = buildTradeCustomTokenInfoKey('private-erc20', HOTDOG_PRIVATE_TOKEN_ADDRESS);
+    const model = deriveTradeComposerModel({
+      ...baseParams,
+      tradeOfferTokenSelection: 'wisp',
+      tradeRequestTokenSelection: 'custom-private',
+      tradeRequestCustomTokenAddress: HOTDOG_PRIVATE_TOKEN_ADDRESS,
+      tradeCustomRequestTokenKind: 'private-erc20',
+      customTradeTokenInfoByAddress: {
+        [tokenKey]: {
+          kind: 'private-erc20',
+          address: HOTDOG_PRIVATE_TOKEN_ADDRESS,
+          symbol: 'HOTDOG',
+          decimals: 6,
+          balanceWei: null,
+          loading: true
+        }
+      },
+      rewardTokenBalanceWei: 100_000_000n
+    });
+
+    expect(model.tradeComposerFieldErrors.requestAsset).toBeUndefined();
+    expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
+    expect(model.tradeRequestVerifyUrl).toBe(`https://mainnet.cotiscan.io/address/${HOTDOG_PRIVATE_TOKEN_ADDRESS}`);
+    expect(model.tradeRequestAmountSummaryLabel).toBe('0 HOTDOG');
+    expect(model.canSendTradeOffer).toBe(false);
   });
 
   it('still supports explicit hidden amount mode when the offered token is private', () => {

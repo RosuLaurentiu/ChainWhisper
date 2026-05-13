@@ -8,8 +8,6 @@ import {
   PRIVATE_ERC20_TOKEN_VNEXT_ABI,
   PRIVATE_REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_ADDRESS,
-  TRADE_ESCROW_CONTRACT_ABI,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   isWalletAddress,
   loadCotiEthersModule,
   loadCotiReadProvider,
@@ -18,12 +16,15 @@ import {
   type TradeAssetPayload
 } from '../lib/appShared';
 import {
+  readOtcEscrowFeeAmount,
+  resolveOtcFeeEscrowContractConfig,
   readCurrentPrivateErc20BalanceWei,
   readPrivateTokenAccountEncryptionAddress
 } from '../lib/appChain';
 import {
   VERIFIED_ECOSYSTEM_TOKENS,
   buildTradeCustomTokenInfoKey,
+  getVerifiedEcosystemToken,
   resolveTradePresetKind,
   type PrivateTokenBalanceState,
   type TradeCustomTokenInfo,
@@ -69,6 +70,7 @@ type UseP2PTradeTokenDataArgs = {
   tradeOfferTokenSelection: TradeTokenPresetKey;
   tradeRequestCustomTokenAddress: string;
   tradeRequestTokenSelection: TradeTokenPresetKey;
+  tradeFeeEscrowContract: string;
   walletAddress: string;
   walletHasAes: boolean;
   walletKey: string;
@@ -119,7 +121,7 @@ type UseP2PTradeTokenDataResult = {
   reloadPrivateBalancesWithUnlockedSigner: (signer: TradeSigner) => Promise<ReloadPrivateBalancesResult>;
   refreshWalletBalances: (options?: WalletBalanceRefreshOptions) => Promise<void>;
   refreshCurrentPrivateTokenInfos: () => Promise<void>;
-  resolveRequiredFeeForTradeCreate: () => Promise<bigint>;
+  resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
   rewardTokenBalanceWei: bigint | null;
   rewardTokenDecimals: number;
   rewardTokenSymbol: string;
@@ -133,6 +135,7 @@ export default function useP2PTradeTokenData({
   tradeOfferTokenSelection,
   tradeRequestCustomTokenAddress,
   tradeRequestTokenSelection,
+  tradeFeeEscrowContract,
   walletAddress,
   walletHasAes,
   walletKey
@@ -147,8 +150,8 @@ export default function useP2PTradeTokenData({
   const [privateRewardTokenSymbol, setPrivateRewardTokenSymbol] = useState(FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL);
   const [rewardTokenDecimals, setRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
   const [privateRewardTokenDecimals, setPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
-  const [tradeRequiredFeeWei, setTradeRequiredFeeWei] = useState<bigint | null>(null);
-  const feeRequestRef = useRef<Promise<bigint> | null>(null);
+  const [tradeRequiredFeeWeiByEscrow, setTradeRequiredFeeWeiByEscrow] = useState<Record<string, bigint>>({});
+  const feeRequestRef = useRef<Record<string, Promise<bigint>>>({});
   const balanceRefreshRef = useRef<Promise<void> | null>(null);
   const balanceRefreshQueuedRef = useRef<WalletBalanceRefreshOptions | null>(null);
   const latestWalletKeyRef = useRef(walletKey);
@@ -168,28 +171,33 @@ export default function useP2PTradeTokenData({
     setCustomTradeTokenInfoByAddress({});
   }, []);
 
-  const resolveRequiredFeeForTradeCreate = useCallback(async (): Promise<bigint> => {
-    if (tradeRequiredFeeWei !== null) {
-      return tradeRequiredFeeWei;
-    }
+  const activeFeeEscrowConfig = resolveOtcFeeEscrowContractConfig(tradeFeeEscrowContract);
+  const activeFeeEscrowKey = activeFeeEscrowConfig.address.toLowerCase();
+  const tradeRequiredFeeWei = tradeRequiredFeeWeiByEscrow[activeFeeEscrowKey] ?? null;
 
-    if (!feeRequestRef.current) {
-      feeRequestRef.current = (async () => {
-        const cotiEthers = await loadCotiEthersModule();
-        const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(TRADE_ESCROW_CONTRACT_ADDRESS, TRADE_ESCROW_CONTRACT_ABI, readProvider);
-        return (await readContract.feeAmount()) as bigint;
-      })();
-    }
+  const resolveRequiredFeeForTradeCreate = useCallback(
+    async (escrowContract?: string | null): Promise<bigint> => {
+      const config = resolveOtcFeeEscrowContractConfig(escrowContract ?? tradeFeeEscrowContract);
+      const feeKey = config.address.toLowerCase();
+      const cachedFee = tradeRequiredFeeWeiByEscrow[feeKey];
+      if (cachedFee !== undefined) {
+        return cachedFee;
+      }
 
-    try {
-      const fee = await feeRequestRef.current;
-      setTradeRequiredFeeWei(fee);
-      return fee;
-    } finally {
-      feeRequestRef.current = null;
-    }
-  }, [tradeRequiredFeeWei]);
+      if (!feeRequestRef.current[feeKey]) {
+        feeRequestRef.current[feeKey] = readOtcEscrowFeeAmount(config.address);
+      }
+
+      try {
+        const fee = await feeRequestRef.current[feeKey];
+        setTradeRequiredFeeWeiByEscrow((previous) => ({ ...previous, [feeKey]: fee }));
+        return fee;
+      } finally {
+        delete feeRequestRef.current[feeKey];
+      }
+    },
+    [tradeFeeEscrowContract, tradeRequiredFeeWeiByEscrow]
+  );
 
   const resolveCurrentPrivateTokenRequests = useCallback((): TradeTokenInfoRequest[] => {
     const tokensByKey = new Map<string, TradeTokenInfoRequest>();
@@ -365,13 +373,20 @@ export default function useP2PTradeTokenData({
       const silent = Boolean(options?.silent);
 
       const tokenKey = buildTradeCustomTokenInfoKey(token.kind, normalizedAddress);
+      const verifiedTokenSymbol = getVerifiedEcosystemToken(normalizedAddress)?.symbol;
+      const fallbackTokenSymbol = verifiedTokenSymbol ?? shortenAddress(normalizedAddress);
       if (!silent) {
         setCustomTradeTokenInfoByAddress((previous) => ({
           ...previous,
           [tokenKey]: {
             kind: token.kind,
             address: normalizedAddress,
-            symbol: previous[tokenKey]?.symbol ?? shortenAddress(normalizedAddress),
+            symbol: (() => {
+              const previousSymbol = previous[tokenKey]?.symbol?.trim();
+              return previousSymbol && previousSymbol !== shortenAddress(normalizedAddress)
+                ? previousSymbol
+                : fallbackTokenSymbol;
+            })(),
             decimals: previous[tokenKey]?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
             balanceWei: previous[tokenKey]?.balanceWei ?? null,
             loading: true,
@@ -402,7 +417,7 @@ export default function useP2PTradeTokenData({
           tokenContract.decimals().catch(() => null)
         ]);
         const symbol =
-          typeof symbolRaw === 'string' && symbolRaw.trim() ? symbolRaw.trim().slice(0, 16) : shortenAddress(normalizedAddress);
+          typeof symbolRaw === 'string' && symbolRaw.trim() ? symbolRaw.trim().slice(0, 16) : fallbackTokenSymbol;
         const decimals =
           typeof decimalsRaw === 'number' || typeof decimalsRaw === 'bigint'
             ? normalizeTokenDecimals(Number(decimalsRaw))
@@ -489,7 +504,7 @@ export default function useP2PTradeTokenData({
             [tokenKey]: {
               kind: token.kind,
               address: normalizedAddress,
-              symbol: shortenAddress(normalizedAddress),
+              symbol: fallbackTokenSymbol,
               decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
               balanceWei: null,
               loading: false,
@@ -518,6 +533,7 @@ export default function useP2PTradeTokenData({
       const tokenResults = await Promise.all(
         tokens.map(async (token) => {
           const normalizedAddress = token.address.trim();
+          const fallbackTokenSymbol = getVerifiedEcosystemToken(normalizedAddress)?.symbol ?? shortenAddress(normalizedAddress);
           const tokenContract = new cotiEthers.Contract(normalizedAddress, PRIVATE_ERC20_TOKEN_VNEXT_ABI, readProvider);
           const [symbolRaw, decimalsRaw] = await Promise.all([
             tokenContract.symbol().catch(() => null),
@@ -526,7 +542,7 @@ export default function useP2PTradeTokenData({
           const symbol =
             typeof symbolRaw === 'string' && symbolRaw.trim()
               ? symbolRaw.trim().slice(0, 16)
-              : shortenAddress(normalizedAddress);
+              : fallbackTokenSymbol;
           const decimals =
             typeof decimalsRaw === 'number' || typeof decimalsRaw === 'bigint'
               ? normalizeTokenDecimals(Number(decimalsRaw))

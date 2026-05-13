@@ -30,19 +30,20 @@ export const HOTDOG_PRIVATE_TOKEN_ADDRESS = '0x5085Ea0611A9C49316972C57390ca25C9
 export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   address: string;
   kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
+  symbol: string;
 }> = [
-  { address: '0x7637C7838EC4Ec6b85080F28A678F8E234bB83D1', kind: 'erc20' },
-  { address: '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8', kind: 'erc20' },
-  { address: '0x256353f5B4b515f488876dD1CAc2300c6C6f98B7', kind: 'erc20' },
-  { address: '0x8C39B1fD0e6260fdf20652Fc436d25026832bfEA', kind: 'erc20' },
-  { address: '0xf1Feebc4376c68B7003450ae66343Ae59AB37D3C', kind: 'erc20' },
-  { address: '0xfA6f73446b17A97a56e464256DA54AD43c2Cbc3E', kind: 'erc20' },
-  { address: '0xe757Ca19d2c237AA52eBb1d2E8E4368eeA3eb331', kind: 'erc20' },
-  { address: '0xFc075Bd3e22d337C19b7Ca25635282ad8e24941a', kind: 'erc20' },
-  { address: '0x639aCc80569c5FC83c6FBf2319A6Cc38bBfe26d1', kind: 'erc20' },
-  { address: '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a', kind: 'private-erc20' },
-  { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20' },
-  { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20' },
+  { address: '0x7637C7838EC4Ec6b85080F28A678F8E234bB83D1', kind: 'erc20', symbol: 'gCOTI' },
+  { address: '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8', kind: 'erc20', symbol: 'Pengo' },
+  { address: '0x256353f5B4b515f488876dD1CAc2300c6C6f98B7', kind: 'erc20', symbol: 'WBBT' },
+  { address: '0x8C39B1fD0e6260fdf20652Fc436d25026832bfEA', kind: 'erc20', symbol: 'WBTC' },
+  { address: '0xf1Feebc4376c68B7003450ae66343Ae59AB37D3C', kind: 'erc20', symbol: 'USDC.e' },
+  { address: '0xfA6f73446b17A97a56e464256DA54AD43c2Cbc3E', kind: 'erc20', symbol: 'USDT' },
+  { address: '0xe757Ca19d2c237AA52eBb1d2E8E4368eeA3eb331', kind: 'erc20', symbol: 'wADA' },
+  { address: '0xFc075Bd3e22d337C19b7Ca25635282ad8e24941a', kind: 'erc20', symbol: 'NIGHT' },
+  { address: '0x639aCc80569c5FC83c6FBf2319A6Cc38bBfe26d1', kind: 'erc20', symbol: 'WETH' },
+  { address: '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a', kind: 'private-erc20', symbol: 'pWISP' },
+  { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20', symbol: 'pPENGO' },
+  { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'HOTDOG' },
 ];
 
 const VERIFIED_ECOSYSTEM_TOKEN_ADDRESS_SET = new Set(
