@@ -237,12 +237,18 @@ describe('p2pTradeView helpers', () => {
       isPublic: false
     });
     const privateLink = baseTrade({ tradeId: 11, isPublic: false, hasAccessHash: true, hiddenLiquidity: true });
-    const trades = [baseTrade(), recurring, direct, privateLink];
+    const privateLinkVisibleTerms = baseTrade({ tradeId: 13, isPublic: false, hasAccessHash: true });
+    const trades = [baseTrade(), recurring, direct, privateLink, privateLinkVisibleTerms];
 
     expect(getTradePairFilterOptions(trades).map((option) => option.label)).toEqual(['All pairs', 'pWISP/COTI', 'WISP/COTI']);
     expect(filterAndSortTradeDesk(trades, { type: 'recurring' })).toEqual([recurring]);
     expect(filterAndSortTradeDesk(trades, { type: 'private' }).map((trade) => trade.tradeId)).toEqual([11, 9]);
+    expect(filterAndSortTradeDesk(trades, { type: 'private-liquidity' }).map((trade) => trade.tradeId)).toEqual([11, 9]);
+    expect(filterAndSortTradeDesk(trades, { type: 'private-link' }).map((trade) => trade.tradeId)).toEqual([13, 11]);
+    expect(filterAndSortTradeDesk(trades, { type: 'direct' })).toEqual([direct]);
+    expect(filterAndSortTradeDesk([baseTrade({ tradeId: 12, counterParentTradeId: 4 }), ...trades], { type: 'counter' }).map((trade) => trade.tradeId)).toEqual([12]);
     expect(filterAndSortTradeDesk(trades, { access: 'direct' })).toEqual([direct]);
+    expect(filterAndSortTradeDesk(trades, { access: 'private-link' }).map((trade) => trade.tradeId)).toEqual([13, 11]);
     expect(filterAndSortTradeDesk(trades, { pair: 'COTI/PWISP' })).toEqual([recurring]);
   });
 

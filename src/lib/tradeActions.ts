@@ -342,7 +342,7 @@ export const createTradeOnChain = async ({
   makerRecoveryPayload?: string;
   directAccessSecret?: string;
   parentEscrowContract?: string;
-}): Promise<{ tradeId: number; escrowContract: string }> => {
+}): Promise<{ tradeId: number; escrowContract: string; txHash?: string }> => {
   if (hidePrivateLiquidity && !parentTradeId) {
     if (offerAsset.kind !== 'private-erc20') {
       throw new Error('Hide amount requires the token you sell to be private.');
@@ -414,7 +414,11 @@ export const createTradeOnChain = async ({
       PRIVATE_TRADE_ESCROW_CONTRACT_ABI
     );
 
-    return { tradeId, escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS };
+    return {
+      tradeId,
+      escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+      txHash: resolveAcceptedTxHash(createTx as { hash?: unknown }, createReceipt as { hash?: unknown; transactionHash?: unknown })
+    };
   }
 
   if (parentTradeId && isLegacyPrivateOrderEscrowContractAddress(parentEscrowContract)) {
@@ -524,7 +528,11 @@ export const createTradeOnChain = async ({
       DIRECT_TRADE_ESCROW_CONTRACT_ABI
     );
 
-    return { tradeId, escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS };
+    return {
+      tradeId,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      txHash: resolveAcceptedTxHash(createTx as { hash?: unknown }, createReceipt as { hash?: unknown; transactionHash?: unknown })
+    };
   }
 
   const tradeContract = await createTradeContract(signer);
@@ -564,7 +572,11 @@ export const createTradeOnChain = async ({
     'Trade was created, but the trade id could not be resolved.'
   );
 
-  return { tradeId, escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS };
+  return {
+    tradeId,
+    escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+    txHash: resolveAcceptedTxHash(createTx as { hash?: unknown }, createReceipt as { hash?: unknown; transactionHash?: unknown })
+  };
 };
 
 export const createRecurringOrderOnChain = async ({
@@ -601,7 +613,7 @@ export const createRecurringOrderOnChain = async ({
   accessSecret?: string;
   makerRecoveryPayload?: string;
   hidePrivateAmounts?: boolean;
-}): Promise<{ orderId: number; escrowContract: string }> => {
+}): Promise<{ orderId: number; escrowContract: string; txHash?: string }> => {
   if (baseAsset.kind === quoteAsset.kind && (baseAsset.tokenAddress ?? ZERO_ADDRESS).toLowerCase() === (quoteAsset.tokenAddress ?? ZERO_ADDRESS).toLowerCase()) {
     throw new Error('Recurring orders need two different assets.');
   }
@@ -751,7 +763,11 @@ export const createRecurringOrderOnChain = async ({
     RECURRING_OTC_CONTRACT_ABI
   );
 
-  return { orderId, escrowContract: RECURRING_OTC_CONTRACT_ADDRESS };
+  return {
+    orderId,
+    escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+    txHash: resolveAcceptedTxHash(createTx as { hash?: unknown }, createReceipt as { hash?: unknown; transactionHash?: unknown })
+  };
 };
 
 export const editRecurringOrderOnChain = async ({
@@ -784,7 +800,7 @@ export const editRecurringOrderOnChain = async ({
   removeBaseInventoryWei?: bigint;
   removeQuoteInventoryWei?: bigint;
   hidePrivateAmounts?: boolean;
-}): Promise<void> => {
+}): Promise<{ txHash?: string }> => {
   if (orderId <= 0) {
     throw new Error('Select a recurring order to edit.');
   }
@@ -866,7 +882,11 @@ export const editRecurringOrderOnChain = async ({
       ? { value: nativeInventoryWei, gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT }
       : { value: nativeInventoryWei }
   );
-  requireSuccessfulReceipt(await editTx.wait(), 'Recurring order edit failed on-chain.');
+  const editReceipt = requireSuccessfulReceipt(
+    (await editTx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown },
+    'Recurring order edit failed on-chain.'
+  );
+  return { txHash: resolveAcceptedTxHash(editTx as { hash?: unknown }, editReceipt) };
 };
 
 export const fillRecurringOrderSideOnChain = async ({
@@ -947,7 +967,7 @@ export const updateRecurringOrderStatusOnChain = async ({
   signer: TradeSigner;
   orderId: number;
   action: 'pause' | 'resume' | 'cancel';
-}): Promise<void> => {
+}): Promise<{ txHash?: string }> => {
   const recurringContract = await createRecurringOrderContract(signer);
   logTradeContractWrite(`${action}RecurringOrder`);
   const tx =
@@ -956,7 +976,11 @@ export const updateRecurringOrderStatusOnChain = async ({
       : action === 'resume'
         ? await recurringContract.resumeOrder(orderId)
         : await recurringContract.cancelOrder(orderId, { gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT });
-  requireSuccessfulReceipt(await tx.wait(), 'Recurring order update failed on-chain.');
+  const receipt = requireSuccessfulReceipt(
+    (await tx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown },
+    'Recurring order update failed on-chain.'
+  );
+  return { txHash: resolveAcceptedTxHash(tx as { hash?: unknown }, receipt) };
 };
 
 export const acceptTradeOnChain = async ({
@@ -1280,7 +1304,7 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
   publicOfferAmountWei?: bigint;
   termsHash?: string;
   makerRecoveryPayload?: string;
-}): Promise<{ tradeId: number; escrowContract: string }> => {
+}): Promise<{ tradeId: number; escrowContract: string; txHash?: string }> => {
   if (offerAsset.kind !== 'private-erc20') {
     throw new Error('Hide amount requires the token you sell to be private.');
   }
@@ -1354,7 +1378,11 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
     PRIVATE_TRADE_ESCROW_CONTRACT_ABI
   );
 
-  return { tradeId, escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS };
+  return {
+    tradeId,
+    escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+    txHash: resolveAcceptedTxHash(editTx as { hash?: unknown }, editReceipt as { hash?: unknown; transactionHash?: unknown })
+  };
 };
 
 export const editTradeOnChain = async ({
@@ -1383,7 +1411,7 @@ export const editTradeOnChain = async ({
   nativeFeeWei: bigint;
   isPublic: boolean;
   accessHash?: string;
-}): Promise<{ tradeId: number; escrowContract: string }> => {
+}): Promise<{ tradeId: number; escrowContract: string; txHash?: string }> => {
   const tradeContract = await createTradeContract(signer);
   await ensureOfferEscrowReady(signer, makerAddress, offerAsset, offerAmountWei);
 
@@ -1410,7 +1438,11 @@ export const editTradeOnChain = async ({
     'Trade was edited, but the replacement trade id could not be resolved.'
   );
 
-  return { tradeId, escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS };
+  return {
+    tradeId,
+    escrowContract: TRADE_ESCROW_CONTRACT_ADDRESS,
+    txHash: resolveAcceptedTxHash(editTx as { hash?: unknown }, editReceipt as { hash?: unknown; transactionHash?: unknown })
+  };
 };
 
 export const editDirectTradeOnChain = async ({
@@ -1441,7 +1473,7 @@ export const editDirectTradeOnChain = async ({
   directAccessSecret?: string;
   parentEscrowContract?: string;
   parentTradeId?: number;
-}): Promise<{ tradeId: number; escrowContract: string }> => {
+}): Promise<{ tradeId: number; escrowContract: string; txHash?: string }> => {
   if (!isDirectTradeEscrowConfigured()) {
     throw new Error('Direct OTC edits need the V1 Direct OTC escrow.');
   }
@@ -1502,7 +1534,11 @@ export const editDirectTradeOnChain = async ({
     DIRECT_TRADE_ESCROW_CONTRACT_ABI
   );
 
-  return { tradeId, escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS };
+  return {
+    tradeId,
+    escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+    txHash: resolveAcceptedTxHash(editTx as { hash?: unknown }, editReceipt as { hash?: unknown; transactionHash?: unknown })
+  };
 };
 
 export const counterTradeAndCloseCounteredTradeOnChain = async ({
@@ -1535,7 +1571,7 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
   counteredEscrowContract?: string;
   parentEscrowContract?: string;
   parentTradeId?: number;
-}): Promise<{ tradeId: number; escrowContract: string }> => {
+}): Promise<{ tradeId: number; escrowContract: string; txHash?: string }> => {
   if (!isDirectTradeEscrowConfigured()) {
     throw new Error(
       'Counter replacement needs the V1 Direct OTC escrow before it can be created with private on-chain recovery.'
@@ -1624,7 +1660,11 @@ export const counterTradeAndCloseCounteredTradeOnChain = async ({
     DIRECT_TRADE_ESCROW_CONTRACT_ABI
   );
 
-  return { tradeId, escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS };
+  return {
+    tradeId,
+    escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+    txHash: resolveAcceptedTxHash(counterTx as { hash?: unknown }, counterReceipt as { hash?: unknown; transactionHash?: unknown })
+  };
 };
 
 const runTradeActionOnChain = async ({
@@ -1637,7 +1677,7 @@ const runTradeActionOnChain = async ({
   tradeId: number;
   escrowContract?: string;
   action: 'decline' | 'cancel';
-}) => {
+}): Promise<{ txHash?: string }> => {
   const config = resolveTradeEscrowContractConfig(escrowContract);
   const tradeContract = await createTradeContract(signer, config.address);
   const overrides = config.hiddenOnly ? { gasLimit: PRIVATE_TRADE_WRITE_GAS_LIMIT } : undefined;
@@ -1646,10 +1686,11 @@ const runTradeActionOnChain = async ({
     action === 'decline'
       ? await tradeContract.declineTrade(tradeId, overrides ?? {})
       : await tradeContract.cancelTrade(tradeId, overrides ?? {});
-  requireSuccessfulReceipt(
-    await tx.wait(),
+  const receipt = requireSuccessfulReceipt(
+    (await tx.wait()) as { status?: number | bigint; hash?: unknown; transactionHash?: unknown },
     action === 'decline' ? 'Trade refusal failed on-chain.' : 'Trade cancellation failed on-chain.'
   );
+  return { txHash: resolveAcceptedTxHash(tx as { hash?: unknown }, receipt) };
 };
 
 export const declineTradeOnChain = async ({
@@ -1660,8 +1701,8 @@ export const declineTradeOnChain = async ({
   signer: TradeSigner;
   tradeId: number;
   escrowContract?: string;
-}) => {
-  await runTradeActionOnChain({
+}): Promise<{ txHash?: string }> => {
+  return await runTradeActionOnChain({
     signer,
     tradeId,
     escrowContract,
@@ -1677,8 +1718,8 @@ export const cancelTradeOnChain = async ({
   signer: TradeSigner;
   tradeId: number;
   escrowContract?: string;
-}) => {
-  await runTradeActionOnChain({
+}): Promise<{ txHash?: string }> => {
+  return await runTradeActionOnChain({
     signer,
     tradeId,
     escrowContract,

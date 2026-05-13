@@ -27,6 +27,7 @@ import {
 import { getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
 import { createTradeAccessSecret } from '../lib/directTradeTerms';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
+import type { P2PActionNoticeAction, P2PActionNoticeInput } from '../lib/p2pActionNotice';
 
 type TradeSigner = JsonRpcSigner | Wallet;
 type TradeVisibility = 'public' | 'unlisted' | 'direct';
@@ -158,6 +159,7 @@ type UseP2PTradeComposerActionsArgs = {
   tradeVisibility: TradeVisibility;
   walletAddress: string;
   walletKey: string;
+  onActionNotice?: (notice: P2PActionNoticeInput) => void;
 };
 
 type UseP2PTradeComposerActionsResult = {
@@ -212,8 +214,16 @@ export default function useP2PTradeComposerActions({
   tradeHidePrivateLiquidity,
   tradeVisibility,
   walletAddress,
-  walletKey
+  walletKey,
+  onActionNotice
 }: UseP2PTradeComposerActionsArgs): UseP2PTradeComposerActionsResult {
+  const notifyComposerAction = useCallback(
+    (input: Omit<P2PActionNoticeInput, 'surface'>) => {
+      onActionNotice?.({ ...input, surface: 'composer' });
+    },
+    [onActionNotice]
+  );
+
   const beginCounterTrade = useCallback(
     (snapshot: TradeSnapshot) => {
       const counterUnavailableReason = getCounterOfferUnavailableReason(snapshot, walletAddress ? walletKey : '');
@@ -361,12 +371,18 @@ export default function useP2PTradeComposerActions({
   }, [clearCounterTrade, clearEditTrade, navigateToTradePath, setTradeHasNoExpiry, setTradeHidePrivateLiquidity]);
 
   const createTrade = useCallback(async () => {
+    const composerAction: P2PActionNoticeAction = counterParentTrade ? 'counter' : 'create-offer';
+    const setComposerActionError = (message: string) => {
+      setTradeActionError(message);
+      notifyComposerAction({ action: composerAction, message, status: 'error' });
+    };
+
     setTradeActionError('');
     setCreatedTradeId(null);
     setCreatedTradeLink('');
 
     if (tradeComposerModel.tradeComposerValidationMessage) {
-      setTradeActionError(tradeComposerModel.tradeComposerValidationMessage);
+      setComposerActionError(tradeComposerModel.tradeComposerValidationMessage);
       return;
     }
 
@@ -375,27 +391,28 @@ export default function useP2PTradeComposerActions({
     const offerAmount = tradeComposerModel.parsedTradeOfferAmountWei;
     const requestAmount = tradeComposerModel.parsedTradeRequestAmountWei;
     if (!offerToken || !requestToken || !offerAmount || !requestAmount) {
-      setTradeActionError('Complete the trade terms first.');
+      setComposerActionError('Complete the trade terms first.');
       return;
     }
     if (editingTrade && !canEditPublicTrade(editingTrade, walletKey)) {
-      setTradeActionError('Only your open, unfilled public trades can be edited.');
+      setComposerActionError('Only your open, unfilled public trades can be edited.');
       return;
     }
     if (!editingTrade && tradeVisibility === 'direct') {
       if (!directTradeRecipientIsValid) {
-        setTradeActionError('Enter a valid wallet address for the direct trade.');
+        setComposerActionError('Enter a valid wallet address for the direct trade.');
         return;
       }
       if (directTradeRecipientNormalized.toLowerCase() === walletAddress.toLowerCase()) {
-        setTradeActionError('Choose a different wallet for the direct trade.');
+        setComposerActionError('Choose a different wallet for the direct trade.');
         return;
       }
     }
 
     try {
       setCreatingTrade(true);
-      await runTradeWalletPromptFlow(async () => {
+      notifyComposerAction({ action: composerAction, status: 'pending' });
+      const createdResult = await runTradeWalletPromptFlow(async () => {
       const isCounterTrade = counterParentTrade !== null;
       const isCounterReplacement = Boolean(counterParentTrade?.counterParentTradeId);
       const editSourceTrade = editingTrade;
@@ -403,8 +420,8 @@ export default function useP2PTradeComposerActions({
       if (counterParentTrade) {
         const counterUnavailableReason = getCounterOfferUnavailableReason(counterParentTrade, walletKey);
         if (counterUnavailableReason) {
-          setTradeActionError(counterUnavailableReason);
-          return;
+          setComposerActionError(counterUnavailableReason);
+          return null;
         }
       }
       const hiddenLiquidity = Boolean(
@@ -416,8 +433,8 @@ export default function useP2PTradeComposerActions({
           (!isEditTrade || editSourceTrade?.hiddenLiquidity)
       );
       if (isEditTrade && editSourceTrade.hiddenLiquidity && !hiddenLiquidity) {
-        setTradeActionError('Hidden amount orders must stay hidden when edited. Cancel the edit to create a visible order.');
-        return;
+        setComposerActionError('Hidden amount orders must stay hidden when edited. Cancel the edit to create a visible order.');
+        return null;
       }
       const visiblePrivateTokenDirectTrade = Boolean(
         !hiddenLiquidity &&
@@ -622,10 +639,17 @@ export default function useP2PTradeComposerActions({
         snapshot.isPublic ? refreshPublicTrades() : Promise.resolve()
       ]);
       openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
+      return createResult;
       });
+      if (!createdResult) {
+        return;
+      }
+      notifyComposerAction({ action: composerAction, status: 'success', txHash: createdResult.txHash });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create trade.';
-      setTradeActionError(getOnChainFailureMessage(error, message));
+      const actionError = getOnChainFailureMessage(error, message);
+      setTradeActionError(actionError);
+      notifyComposerAction({ action: composerAction, message: actionError, status: 'error' });
     } finally {
       setCreatingTrade(false);
     }
@@ -641,6 +665,7 @@ export default function useP2PTradeComposerActions({
     loadWalletBalances,
     mergeTradeSnapshot,
     openTrade,
+    notifyComposerAction,
     refreshMyTrades,
     refreshPublicTrades,
     rememberPrivateTradeLiquidity,

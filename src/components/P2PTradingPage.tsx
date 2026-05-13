@@ -167,6 +167,13 @@ import {
   type TradeTransactionHistoryRow
 } from '../lib/tradeHistory';
 import {
+  buildP2PActionNotice,
+  type P2PActionNotice,
+  type P2PActionNoticeAction,
+  type P2PActionNoticeInput,
+  type P2PActionNoticeSurface
+} from '../lib/p2pActionNotice';
+import {
   PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE,
   canUseWalletAuthorityForDirectAccess,
   canCreateCounterOffer,
@@ -234,6 +241,7 @@ type P2PEmptyStateTone = 'default' | 'error' | 'loading' | 'locked';
 type TradeCreateMode = 'one-off' | 'recurring';
 type TerminalFillInputSide = 'pay' | 'buy';
 type MakerControlsSurface = 'desk' | 'terminal';
+type TradeFilterRouteScope = 'desk' | 'mine' | null;
 type TradeOpenActionCta =
   | { kind: 'direction'; fromSymbol: string; toSymbol: string; label: string }
   | { kind: 'cycle'; fromSymbol: string; toSymbol: string; label: string }
@@ -583,11 +591,18 @@ export default function P2PTradingPage({
   const [createdTradeId, setCreatedTradeId] = useState<number | null>(null);
   const [createdTradeLink, setCreatedTradeLink] = useState('');
   const [lastCopiedKey, setLastCopiedKey] = useState('');
+  const [actionNotice, setActionNotice] = useState<P2PActionNotice | null>(null);
   const [tradeLinkInput, setTradeLinkInput] = useState('');
   const [tradeSearchInput, setTradeSearchInput] = useState('');
   const [tradePairFilter, setTradePairFilter] = useState('all');
   const [tradeTypeFilter, setTradeTypeFilter] = useState<TradeDeskTypeFilter>('all');
   const [tradeSortMode, setTradeSortMode] = useState<TradeDeskSortMode>('newest');
+  const resetTradeDeskFilters = useCallback(() => {
+    setTradeSearchInput('');
+    setTradePairFilter('all');
+    setTradeTypeFilter('all');
+    setTradeSortMode('newest');
+  }, []);
   const [recurringTerminalSide, setRecurringTerminalSide] = useState<RecurringTerminalActionSide>('buy');
   const [terminalFillInputSide, setTerminalFillInputSide] = useState<TerminalFillInputSide>('pay');
   const [terminalPayInput, setTerminalPayInput] = useState('');
@@ -597,6 +612,7 @@ export default function P2PTradingPage({
   const [myTradeGroupView, setMyTradeGroupView] = useState<MyTradeGroupView>('received');
   const [selectedMyTradeDetailKey, setSelectedMyTradeDetailKey] = useState('');
   const [historyTransactionTimestamps, setHistoryTransactionTimestamps] = useState<Record<string, number>>({});
+  const [historyLifecycleTxHashes, setHistoryLifecycleTxHashes] = useState<Record<string, string>>({});
   const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
     () => loadStoredTradeAccessSecrets()
@@ -722,6 +738,19 @@ export default function P2PTradingPage({
     [cotiSnapAesStatus, stalePrivateTokenAddressSet]
   );
   const routeView = route.view;
+  const tradeFilterRouteScope: TradeFilterRouteScope =
+    routeView === 'mine' ? 'mine' : routeView === 'public' || routeView === 'trade' ? 'desk' : null;
+  const previousTradeFilterRouteScopeRef = useRef<TradeFilterRouteScope>(tradeFilterRouteScope);
+  useEffect(() => {
+    if (!tradeFilterRouteScope) {
+      return;
+    }
+    const previousScope = previousTradeFilterRouteScopeRef.current;
+    if (previousScope && previousScope !== tradeFilterRouteScope) {
+      resetTradeDeskFilters();
+    }
+    previousTradeFilterRouteScopeRef.current = tradeFilterRouteScope;
+  }, [resetTradeDeskFilters, tradeFilterRouteScope]);
   const routeTradeId = route.tradeId;
   const routeEscrowContract = route.escrowContract;
   const routeIsRecurringOrder = routeEscrowContract?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase();
@@ -1316,6 +1345,51 @@ export default function P2PTradingPage({
       setLastCopiedKey((current) => (current === key ? '' : current));
     }, 1400);
   }, []);
+
+  const pushActionNotice = useCallback((notice: P2PActionNoticeInput) => {
+    setActionNotice(buildP2PActionNotice(notice));
+  }, []);
+
+  useEffect(() => {
+    if (!actionNotice || actionNotice.status === 'pending') {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setActionNotice((current) => (current?.id === actionNotice.id ? null : current));
+    }, 6500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [actionNotice]);
+
+  const renderP2PActionNotice = useCallback(
+    (surface: P2PActionNoticeSurface, tradeKey?: string) => {
+      if (!actionNotice || actionNotice.surface !== surface) {
+        return null;
+      }
+      if (tradeKey && actionNotice.tradeKey && actionNotice.tradeKey !== tradeKey) {
+        return null;
+      }
+
+      const txUrl = buildTransactionExplorerUrl(actionNotice.txHash);
+      return (
+        <div
+          className={`p2p-action-notice p2p-action-notice-${actionNotice.status}`}
+          role={actionNotice.status === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          <span className="p2p-action-notice-dot" aria-hidden="true" />
+          <strong>{actionNotice.message}</strong>
+          {txUrl ? (
+            <a href={txUrl} target="_blank" rel="noreferrer">
+              View Tx
+            </a>
+          ) : null}
+        </div>
+      );
+    },
+    [actionNotice]
+  );
 
   const syncVisibleBurnerWallets = useCallback(() => {
     const storageState = parseBurnerWalletStorageState();
@@ -2103,9 +2177,9 @@ export default function P2PTradingPage({
   );
 
   const resolveTerminalAssetBalanceLabel = useCallback(
-    (asset: TradeAssetPayload): string => {
+    (asset: TradeAssetPayload, maxDecimals = 2): string => {
       const formatBalanceLabel = (balanceWei: bigint): string =>
-        `Bal ${asset.kind === 'native' ? formatCotiAmount(balanceWei, 2) : formatTokenAmount(balanceWei, asset.decimals, 2)}`;
+        `Bal ${asset.kind === 'native' ? formatCotiAmount(balanceWei, maxDecimals) : formatTokenAmount(balanceWei, asset.decimals, maxDecimals)}`;
 
       if (!walletAddress) {
         return 'Connect';
@@ -2485,18 +2559,22 @@ export default function P2PTradingPage({
   const revealMakerPrivateProgress = useCallback(
     async (snapshot: TradeSnapshot) => {
       const tradeKey = getSnapshotKey(snapshot);
+      const noticeSurface: P2PActionNoticeSurface =
+        getTradeTermsVisibility(snapshot) === 'direct-private-terms' ? 'terminal' : 'history';
       setTradeActionError('');
       try {
         if (!walletKey) {
           throw new Error('Connect the wallet that made or filled this private order.');
         }
         setRevealingPrivateTradeKey(tradeKey);
+        pushActionNotice({ action: 'reveal', status: 'pending', surface: noticeSurface, tradeKey });
         const revealedSnapshot = await enrichMakerPrivateProgress(snapshot, true);
         if (getTradeTermsVisibility(snapshot) === 'direct-private-terms') {
           if (!hasHydratedDirectTradeTerms(revealedSnapshot)) {
             throw new Error('Direct amount snapshot could not be read for this wallet. Make sure this is your counter or received offer.');
           }
           mergeTradeSnapshot(revealedSnapshot);
+          pushActionNotice({ action: 'reveal', status: 'success', surface: noticeSurface, tradeKey });
           return;
         }
         if (revealedSnapshot.recurringOrder) {
@@ -2512,15 +2590,18 @@ export default function P2PTradingPage({
           setEditingRecurringOrder((current) =>
             current && getSnapshotKey(current) === tradeKey ? revealedSnapshot : current
           );
+          pushActionNotice({ action: 'reveal', status: 'success', surface: noticeSurface, tradeKey });
           return;
         }
         if (!revealedSnapshot.makerPrivateProgress && !revealedSnapshot.privateFillReceipts?.length) {
           throw new Error('Unable to reveal private history for this wallet. Make sure this is your trade and your wallet AES key is available.');
         }
         mergeTradeSnapshot(revealedSnapshot);
+        pushActionNotice({ action: 'reveal', status: 'success', surface: noticeSurface, tradeKey });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to reveal this private order.';
         setTradeActionError(message);
+        pushActionNotice({ action: 'reveal', message, status: 'error', surface: noticeSurface, tradeKey });
       } finally {
         setRevealingPrivateTradeKey('');
       }
@@ -2528,6 +2609,7 @@ export default function P2PTradingPage({
     [
       enrichMakerPrivateProgress,
       mergeTradeSnapshot,
+      pushActionNotice,
       walletAddress,
       walletKey
     ]
@@ -3233,7 +3315,8 @@ export default function P2PTradingPage({
     tradeHidePrivateLiquidity,
     tradeVisibility,
     walletAddress,
-    walletKey
+    walletKey,
+    onActionNotice: pushActionNotice
   });
 
   const startFreshOneOffTrade = useCallback(() => {
@@ -3518,25 +3601,32 @@ export default function P2PTradingPage({
 
   const createRecurringOrder = useCallback(async () => {
     const recurringOrderBeingEdited = editingRecurringOrder?.recurringOrder ?? null;
+    const baseRecurringNoticeAction: P2PActionNoticeAction = recurringOrderBeingEdited
+      ? 'recurring-update'
+      : 'create-recurring-order';
+    const setComposerNoticeError = (message: string, action: P2PActionNoticeAction = baseRecurringNoticeAction) => {
+      setTradeActionError(message);
+      pushActionNotice({ action, message, status: 'error', surface: 'composer' });
+    };
     const baseToken = tradeComposerModel.selectedTradeOfferToken;
     const quoteToken = tradeComposerModel.selectedTradeRequestToken;
     if (!walletAddress) {
-      setTradeActionError('Connect a wallet first.');
+      setComposerNoticeError('Connect a wallet first.');
       return;
     }
     if (!onCotiNetwork) {
-      setTradeActionError('Switch to COTI network first.');
+      setComposerNoticeError('Switch to COTI network first.');
       return;
     }
     if (!baseToken || !quoteToken) {
-      setTradeActionError('Select base and quote assets first.');
+      setComposerNoticeError('Select base and quote assets first.');
       return;
     }
     if (
       baseToken.kind === quoteToken.kind &&
       (baseToken.tokenAddress ?? '').toLowerCase() === (quoteToken.tokenAddress ?? '').toLowerCase()
     ) {
-      setTradeActionError('Recurring orders need two different assets.');
+      setComposerNoticeError('Recurring orders need two different assets.');
       return;
     }
 
@@ -3548,6 +3638,16 @@ export default function P2PTradingPage({
     const removeQuoteInventoryWei = recurringOrderBeingEdited
       ? parseTokenAmountInput(recurringRemoveBuyBudgetInput, quoteToken.decimals) ?? 0n
       : 0n;
+    const liquidityChanged =
+      addBaseInventoryWei > 0n ||
+      addQuoteInventoryWei > 0n ||
+      removeBaseInventoryWei > 0n ||
+      removeQuoteInventoryWei > 0n;
+    const recurringNoticeAction: P2PActionNoticeAction = recurringOrderBeingEdited
+      ? liquidityChanged
+        ? 'recurring-liquidity'
+        : 'recurring-update'
+      : 'create-recurring-order';
     const hidePrivateRecurringAmounts =
       recurringHidePrivateAmounts && (baseToken.kind === 'private-erc20' || quoteToken.kind === 'private-erc20');
     const buyTerms = resolveRecurringSideTerms({
@@ -3567,11 +3667,14 @@ export default function P2PTradingPage({
       forcePriceOnly: true
     });
     if (!buyTerms || !sellTerms) {
-      setTradeActionError('Enter a buy price and a sell price. Liquidity can stay empty until that side is funded.');
+      setComposerNoticeError(
+        'Enter a buy price and a sell price. Liquidity can stay empty until that side is funded.',
+        recurringNoticeAction
+      );
       return;
     }
     if (!recurringOrderBeingEdited && addBaseInventoryWei <= 0n && addQuoteInventoryWei <= 0n) {
-      setTradeActionError('Add buy liquidity, sell liquidity, or both to start the order.');
+      setComposerNoticeError('Add buy liquidity, sell liquidity, or both to start the order.', recurringNoticeAction);
       return;
     }
     const fundingValidationMessage = validateRecurringFundingBalances({
@@ -3582,14 +3685,15 @@ export default function P2PTradingPage({
       quoteToken
     });
     if (fundingValidationMessage) {
-      setTradeActionError(fundingValidationMessage);
+      setComposerNoticeError(fundingValidationMessage, recurringNoticeAction);
       return;
     }
 
     setTradeActionError('');
     setCreatingRecurringOrder(true);
     try {
-      await runTradeWalletPromptFlow(async () => {
+      pushActionNotice({ action: recurringNoticeAction, status: 'pending', surface: 'composer' });
+      const actionResult = await runTradeWalletPromptFlow(async () => {
       const needsAes = baseToken.kind === 'private-erc20' || quoteToken.kind === 'private-erc20';
       const signer = await getTradeSigner(needsAes);
       const nativeFeeWei = recurringOrderBeingEdited
@@ -3607,7 +3711,7 @@ export default function P2PTradingPage({
       };
       const result = recurringOrderBeingEdited
         ? await (async () => {
-            await editRecurringOrderOnChain({
+            const editResult = await editRecurringOrderOnChain({
               signer,
               makerAddress: walletAddress,
               orderId: recurringOrderBeingEdited.orderId,
@@ -3624,7 +3728,8 @@ export default function P2PTradingPage({
             });
             return {
               orderId: recurringOrderBeingEdited.orderId,
-              escrowContract: editingRecurringOrder?.escrowContract ?? RECURRING_OTC_CONTRACT_ADDRESS
+              escrowContract: editingRecurringOrder?.escrowContract ?? RECURRING_OTC_CONTRACT_ADDRESS,
+              txHash: editResult.txHash
             };
           })()
         : await createRecurringOrderOnChain({
@@ -3658,6 +3763,13 @@ export default function P2PTradingPage({
       }
       refreshTradeDataInBackground(result.orderId, result.escrowContract, signer);
       openTrade(result.orderId, undefined, result.escrowContract);
+      return result;
+      });
+      pushActionNotice({
+        action: recurringNoticeAction,
+        status: 'success',
+        surface: 'composer',
+        txHash: actionResult.txHash
       });
     } catch (error) {
       const message = error instanceof Error
@@ -3665,7 +3777,9 @@ export default function P2PTradingPage({
         : recurringOrderBeingEdited
           ? 'Failed to update recurring order.'
           : 'Failed to create recurring order.';
-      setTradeActionError(getProviderErrorMessage(error, message));
+      const actionError = getProviderErrorMessage(error, message);
+      setTradeActionError(actionError);
+      pushActionNotice({ action: recurringNoticeAction, message: actionError, status: 'error', surface: 'composer' });
     } finally {
       setCreatingRecurringOrder(false);
     }
@@ -3677,6 +3791,7 @@ export default function P2PTradingPage({
     recurringSellPriceInput,
     buildTradeShareUrl,
     editingRecurringOrder,
+    pushActionNotice,
     refreshTradeDataInBackground,
     runTradeWalletPromptFlow,
     openTrade,
@@ -3713,7 +3828,8 @@ export default function P2PTradingPage({
     routeTradeId,
     runTradeWalletPromptFlow,
     setTradeActionError,
-    walletAddress
+    walletAddress,
+    onActionNotice: pushActionNotice
   });
 
   const fillRecurringOrderSide = useCallback(
@@ -3722,27 +3838,35 @@ export default function P2PTradingPage({
       if (!recurring) {
         return;
       }
+      const tradeKey = getSnapshotKey(snapshot);
       if (!walletAddress) {
-        setTradeActionError('Connect a wallet first.');
+        const message = 'Connect a wallet first.';
+        setTradeActionError(message);
+        pushActionNotice({ action: 'fill', message, status: 'error', surface: 'terminal', tradeKey });
         return;
       }
       if (!onCotiNetwork) {
-        setTradeActionError('Switch to COTI network first.');
+        const message = 'Switch to COTI network first.';
+        setTradeActionError(message);
+        pushActionNotice({ action: 'fill', message, status: 'error', surface: 'terminal', tradeKey });
         return;
       }
       const inputAsset = side === 'buy' ? recurring.baseAsset : recurring.quoteAsset;
       const inputValue = amountInputOverride ?? (side === 'buy' ? recurringBuyFillInput : recurringSellFillInput);
       const inputAmountWei = parseTokenAmountInput(inputValue, inputAsset.decimals);
       if (inputAmountWei === null || inputAmountWei <= 0n) {
-        setTradeActionError(side === 'buy' ? `Enter ${inputAsset.symbol} to sell.` : `Enter ${inputAsset.symbol} budget.`);
+        const message = side === 'buy' ? `Enter ${inputAsset.symbol} to sell.` : `Enter ${inputAsset.symbol} budget.`;
+        setTradeActionError(message);
+        pushActionNotice({ action: 'fill', message, status: 'error', surface: 'terminal', tradeKey });
         return;
       }
 
-      const actionKey = `${getSnapshotKey(snapshot)}:${side}`;
+      const actionKey = `${tradeKey}:${side}`;
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
-        await runTradeWalletPromptFlow(async () => {
+        pushActionNotice({ action: 'fill', status: 'pending', surface: 'terminal', tradeKey });
+        const actionResult = await runTradeWalletPromptFlow(async () => {
         rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         const needsAes = recurring.mode !== 'public' || inputAsset.kind === 'private-erc20';
         const signer = await getTradeSigner(needsAes);
@@ -3753,17 +3877,15 @@ export default function P2PTradingPage({
             signer
           ).catch(() => null);
           if (privateInputBalance === null) {
-            setTradeActionError(`Unlock privacy and refresh your ${inputAsset.symbol} balance before selling.`);
-            return;
+            throw new Error(`Unlock privacy and refresh your ${inputAsset.symbol} balance before selling.`);
           }
           if (privateInputBalance < inputAmountWei) {
-            setTradeActionError(
+            throw new Error(
               `Not enough ${inputAsset.symbol}. Available: ${formatTokenAmount(privateInputBalance, inputAsset.decimals, 6)} ${inputAsset.symbol}.`
             );
-            return;
           }
         }
-        await fillRecurringOrderSideOnChain({
+        const fillResult = await fillRecurringOrderSideOnChain({
           signer,
           ownerAddress: walletAddress,
           orderId: recurring.orderId,
@@ -3780,6 +3902,14 @@ export default function P2PTradingPage({
         }
         openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
+        return fillResult;
+        });
+        pushActionNotice({
+          action: 'fill',
+          status: 'success',
+          surface: 'terminal',
+          tradeKey,
+          txHash: actionResult.filledTxHash
         });
       } catch (error) {
         const outputAsset = side === 'buy' ? recurring.quoteAsset : recurring.baseAsset;
@@ -3789,7 +3919,9 @@ export default function P2PTradingPage({
             : outputAsset.kind === 'private-erc20'
               ? `Private ${outputAsset.symbol} payout failed. Unlock privacy for this wallet and try again.`
             : 'Recurring order fill failed.';
-        setTradeActionError(getOnChainFailureMessage(error, fallbackMessage));
+        const actionError = getOnChainFailureMessage(error, fallbackMessage);
+        setTradeActionError(actionError);
+        pushActionNotice({ action: 'fill', message: actionError, status: 'error', surface: 'terminal', tradeKey });
       } finally {
         setProcessingRecurringAction('');
       }
@@ -3798,6 +3930,7 @@ export default function P2PTradingPage({
       getTradeSigner,
       onCotiNetwork,
       openTrade,
+      pushActionNotice,
       recurringBuyFillInput,
       recurringSellFillInput,
       rememberTradeTerminalReturn,
@@ -3814,33 +3947,50 @@ export default function P2PTradingPage({
       if (!recurring) {
         return;
       }
+      const tradeKey = getSnapshotKey(snapshot);
+      const noticeAction: P2PActionNoticeAction = action === 'cancel' ? 'recurring-close' : 'recurring-update';
       if (!walletAddress) {
-        setTradeActionError('Connect a wallet first.');
+        const message = 'Connect a wallet first.';
+        setTradeActionError(message);
+        pushActionNotice({ action: noticeAction, message, status: 'error', surface: 'terminal', tradeKey });
         return;
       }
       if (!onCotiNetwork) {
-        setTradeActionError('Switch to COTI network first.');
+        const message = 'Switch to COTI network first.';
+        setTradeActionError(message);
+        pushActionNotice({ action: noticeAction, message, status: 'error', surface: 'terminal', tradeKey });
         return;
       }
 
-      const actionKey = `${getSnapshotKey(snapshot)}:${action}`;
+      const actionKey = `${tradeKey}:${action}`;
       setTradeActionError('');
       setProcessingRecurringAction(actionKey);
       try {
-        await runTradeWalletPromptFlow(async () => {
+        pushActionNotice({ action: noticeAction, status: 'pending', surface: 'terminal', tradeKey });
+        const actionResult = await runTradeWalletPromptFlow(async () => {
         rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         const signer = await getTradeSigner(false);
-        await updateRecurringOrderStatusOnChain({
+        const statusResult = await updateRecurringOrderStatusOnChain({
           signer,
           orderId: recurring.orderId,
           action
         });
         openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
+        return statusResult;
+        });
+        pushActionNotice({
+          action: noticeAction,
+          status: 'success',
+          surface: 'terminal',
+          tradeKey,
+          txHash: actionResult.txHash
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Recurring order update failed.';
-        setTradeActionError(getProviderErrorMessage(error, message));
+        const actionError = getProviderErrorMessage(error, message);
+        setTradeActionError(actionError);
+        pushActionNotice({ action: noticeAction, message: actionError, status: 'error', surface: 'terminal', tradeKey });
       } finally {
         setProcessingRecurringAction('');
       }
@@ -3849,6 +3999,7 @@ export default function P2PTradingPage({
       getTradeSigner,
       onCotiNetwork,
       openTrade,
+      pushActionNotice,
       refreshTradeDataInBackground,
       rememberTradeTerminalReturn,
       resolvedRouteAccessSecret,
@@ -4011,7 +4162,7 @@ export default function P2PTradingPage({
     const revealedQuoteInventory = recurring.makerPrivateInventory?.quoteInventory;
     const recurringExecutionRows = recurring.privateExecutions ?? recurring.publicExecutions ?? [];
     const hasRecurringExecutionRows = recurringExecutionRows.length > 0;
-    const recurringRelationTags = [isMaker ? 'Maker' : snapshot.walletHasFill ? 'Filled' : null].filter(
+    const recurringRelationTags = [isMaker ? 'Maker' : null].filter(
       (label): label is string => Boolean(label)
     );
     const recurringModeTags = [modeLabel].filter((label): label is string => Boolean(label));
@@ -4132,16 +4283,13 @@ export default function P2PTradingPage({
       >
         <div className="p2p-recurring-card-head p2p-order-card-head">
           <div className="p2p-offer-title">
-            <span className="p2p-offer-kind">Recurring OTC</span>
-            <div className="p2p-order-title-row">
-              <h3>
-                {recurring.baseAsset.symbol}/{recurring.quoteAsset.symbol}
-              </h3>
+            <div className="p2p-order-eyebrow-row">
+              <span className="p2p-offer-kind">Recurring OTC</span>
+              <span className="p2p-order-id">Order #{recurring.orderId}</span>
+              <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
             </div>
             <div className="p2p-order-tag-stack">
               <p className="p2p-order-subline p2p-order-subline-primary">
-                <span className="p2p-order-id">Order #{recurring.orderId}</span>
-                <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
                 {recurringRelationTags.map((label) => (
                   <span
                     className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
@@ -4151,14 +4299,17 @@ export default function P2PTradingPage({
                     {label}
                   </span>
                 ))}
-              </p>
-              <p className="p2p-order-subline p2p-order-subline-secondary">
                 {recurringModeTags.map((label) => (
                   <span className="p2p-order-chip" key={`${tradeKey}:tag:${label}`}>
                     {label}
                   </span>
                 ))}
               </p>
+            </div>
+            <div className="p2p-order-title-row">
+              <h3>
+                {recurring.baseAsset.symbol}/{recurring.quoteAsset.symbol}
+              </h3>
             </div>
           </div>
         </div>
@@ -4399,6 +4550,7 @@ export default function P2PTradingPage({
   };
 
   const renderTerminalHistoryContent = ({
+    tradeKey,
     title,
     count,
     emptyCopy,
@@ -4428,6 +4580,7 @@ export default function P2PTradingPage({
           {revealButton}
           <span>{count}</span>
         </div>
+        {renderP2PActionNotice('history', tradeKey)}
         {children ? (
           children
         ) : (
@@ -4490,8 +4643,20 @@ export default function P2PTradingPage({
     }
 
     return lifecycleRows.map((row) => {
-      const dateLabel = formatHistoryDate(row.timestamp);
-      const dateTitle = row.timestamp ? formatMessageTimestamp(row.timestamp) : undefined;
+      const txHash = row.txHash ?? historyLifecycleTxHashes[row.key];
+      const txUrl = buildTransactionExplorerUrl(txHash);
+      const timestamp = row.timestamp ?? historyTransactionTimestamps[row.key];
+      const dateLabel = formatHistoryDate(timestamp);
+      const dateTitle = timestamp ? formatMessageTimestamp(timestamp) : undefined;
+      const sourceLabel = row.sourceKind === 'recurring' ? 'Order' : 'Offer';
+      const actionLabel =
+        row.action === 'created'
+          ? 'Opened'
+          : row.action === 'cancelled'
+            ? 'Closed'
+            : row.action === 'replaced'
+              ? 'Replaced'
+              : 'Edited';
       return (
         <div
           className={`p2p-terminal-history-row p2p-terminal-history-row-lifecycle p2p-terminal-history-row-${row.action}`}
@@ -4500,13 +4665,21 @@ export default function P2PTradingPage({
           <div className="p2p-terminal-history-event">
             <span>{row.label}</span>
             <strong>{row.detail}</strong>
+            {dateLabel ? <small title={dateTitle}>{dateLabel}</small> : null}
           </div>
-          <div className="p2p-terminal-history-lifecycle-meta">
-            <span>{row.sourceKind === 'recurring' ? 'Order' : 'Offer'}</span>
+          <div className="p2p-terminal-history-amounts p2p-terminal-history-lifecycle-summary">
+            <div className="p2p-terminal-history-chip p2p-terminal-history-chip-lifecycle">
+              <strong>{sourceLabel}</strong>
+              <span>{actionLabel}</span>
+            </div>
           </div>
-          <div className="p2p-terminal-history-proof p2p-terminal-history-date">
-            <strong title={dateTitle}>{dateLabel || 'Visible status'}</strong>
-          </div>
+          {txUrl ? (
+            <div className="p2p-terminal-history-proof">
+              <a href={txUrl} target="_blank" rel="noreferrer">
+                View Tx
+              </a>
+            </div>
+          ) : null}
         </div>
       );
     });
@@ -4812,7 +4985,7 @@ export default function P2PTradingPage({
           ? walletAddress
           : '';
     const peerExplorerUrl = peerAddress ? `${COTI_NETWORK.blockExplorerUrl}/address/${peerAddress}` : '';
-    const peerLabel = peerAddress ? shortenAddress(peerAddress) : isHiddenLiquidityTerms ? 'Private link' : 'Open offer';
+    const peerLabel = peerAddress ? shortenAddress(peerAddress) : visibilityLabel === 'Public offer' ? 'Open offer' : visibilityLabel;
     const remainingOfferAmount = getRemainingOfferAmount(snapshot);
     const remainingRequestAmount = getRemainingRequestAmount(snapshot);
     const fillOfferUnitAmount = isHiddenLiquidityTerms ? parseTokenAmountString(snapshot.offer.amount) : remainingOfferAmount;
@@ -5004,16 +5177,19 @@ export default function P2PTradingPage({
 
           <section className="p2p-terminal-ticket" aria-label="Trade action ticket">
             <div className="p2p-terminal-ticket-head">
-              <span>Action ticket</span>
-              <strong>
-                {perspective.isMaker
-                  ? 'Maker controls'
-                  : canShowFillTicket
-                    ? `Buy ${displayTrade.offer.symbol}`
-                    : snapshot.status === 'open'
-                      ? 'Review actions'
-                      : 'Closed offer'}
-              </strong>
+              <div>
+                <span>Action ticket</span>
+                <strong>
+                  {perspective.isMaker
+                    ? 'Maker controls'
+                    : canShowFillTicket
+                      ? `Buy ${displayTrade.offer.symbol}`
+                      : snapshot.status === 'open'
+                        ? 'Review actions'
+                        : 'Closed offer'}
+                </strong>
+              </div>
+              {renderP2PActionNotice('terminal', tradeKey)}
             </div>
 
             {canShowFillTicket ? (
@@ -5022,7 +5198,9 @@ export default function P2PTradingPage({
                   <label className="p2p-terminal-input-field has-inline-action">
                     <div className="p2p-terminal-field-head">
                       <span>You sell {displayTrade.request.symbol}</span>
-                      <small>{resolveTerminalAssetBalanceLabel(displayTrade.request)}</small>
+                      <small title={resolveTerminalAssetBalanceLabel(displayTrade.request, 6)}>
+                        {resolveTerminalAssetBalanceLabel(displayTrade.request)}
+                      </small>
                     </div>
                     <input
                       type="text"
@@ -5054,7 +5232,9 @@ export default function P2PTradingPage({
                   <label className="p2p-terminal-input-field">
                     <div className="p2p-terminal-field-head">
                       <span>You buy {displayTrade.offer.symbol}</span>
-                      <small>{resolveTerminalAssetBalanceLabel(displayTrade.offer)}</small>
+                      <small title={resolveTerminalAssetBalanceLabel(displayTrade.offer, 6)}>
+                        {resolveTerminalAssetBalanceLabel(displayTrade.offer)}
+                      </small>
                     </div>
                     <input
                       type="text"
@@ -5073,9 +5253,24 @@ export default function P2PTradingPage({
                 {fillTooHigh ? <p className="p2p-terminal-ticket-warning">Amount is above current visible liquidity.</p> : null}
                 <button
                   type="button"
-                  className="trade-card-action trade-card-action-accept p2p-terminal-primary-action"
+                  className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
+                    processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
+                  }`}
                   onClick={() => partialFillTrade(snapshot, fillSubmitInput).catch(() => {})}
                   disabled={processingTradeActionId === tradeKey || !fillCanSubmit}
+                  title={
+                    processingTradeActionId === tradeKey
+                      ? 'Confirming on-chain...'
+                      : !walletKey
+                        ? 'Connect wallet first.'
+                        : !onCotiNetwork
+                          ? 'Switch to COTI Mainnet first.'
+                          : !terminalInputValue.trim()
+                            ? 'Enter an amount to continue.'
+                            : fillTooHigh
+                              ? 'Amount is above current visible liquidity.'
+                              : undefined
+                  }
                 >
                   {processingTradeActionId === tradeKey
                     ? 'Processing...'
@@ -5158,9 +5353,20 @@ export default function P2PTradingPage({
                 ) : (
                   <button
                     type="button"
-                    className="trade-card-action trade-card-action-accept p2p-terminal-primary-action"
+                    className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
+                      processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
+                    }`}
                     onClick={() => acceptTrade(snapshot).catch(() => {})}
                     disabled={processingTradeActionId === tradeKey || !walletKey || !onCotiNetwork}
+                    title={
+                      processingTradeActionId === tradeKey
+                        ? 'Confirming on-chain...'
+                        : !walletKey
+                          ? 'Connect wallet first.'
+                          : !onCotiNetwork
+                            ? 'Switch to COTI Mainnet first.'
+                            : undefined
+                    }
                   >
                     {processingTradeActionId === tradeKey
                       ? 'Processing...'
@@ -5466,8 +5672,11 @@ export default function P2PTradingPage({
 
           <section className="p2p-terminal-ticket" aria-label="Recurring order action ticket">
             <div className="p2p-terminal-ticket-head">
-              <span>Action ticket</span>
-              <strong>{isMaker ? 'Maker controls' : activeRecurringTerminalState.actionLabel}</strong>
+              <div>
+                <span>Action ticket</span>
+                <strong>{isMaker ? 'Maker controls' : activeRecurringTerminalState.actionLabel}</strong>
+              </div>
+              {renderP2PActionNotice('terminal', tradeKey)}
             </div>
 
             {isMaker ? (
@@ -5552,7 +5761,9 @@ export default function P2PTradingPage({
                   <label className="p2p-terminal-input-field">
                     <div className="p2p-terminal-field-head">
                       <span>You sell {recurringTerminalInputAsset.symbol}</span>
-                      <small>{resolveTerminalAssetBalanceLabel(recurringTerminalInputAsset)}</small>
+                      <small title={resolveTerminalAssetBalanceLabel(recurringTerminalInputAsset, 6)}>
+                        {resolveTerminalAssetBalanceLabel(recurringTerminalInputAsset)}
+                      </small>
                     </div>
                     <input
                       type="text"
@@ -5573,7 +5784,9 @@ export default function P2PTradingPage({
                   <label className="p2p-terminal-input-field p2p-terminal-output-field">
                     <div className="p2p-terminal-field-head">
                       <span>You buy {recurringTerminalOutputAsset.symbol}</span>
-                      <small>{resolveTerminalAssetBalanceLabel(recurringTerminalOutputAsset)}</small>
+                      <small title={resolveTerminalAssetBalanceLabel(recurringTerminalOutputAsset, 6)}>
+                        {resolveTerminalAssetBalanceLabel(recurringTerminalOutputAsset)}
+                      </small>
                     </div>
                     <input
                       type="text"
@@ -5586,12 +5799,27 @@ export default function P2PTradingPage({
                 <button
                   type="button"
                   className={
-                    recurringTerminalSide === 'buy'
+                    `${recurringTerminalSide === 'buy'
                       ? 'trade-card-action trade-card-action-accept p2p-terminal-primary-action'
-                      : 'trade-card-action trade-card-action-counter p2p-terminal-primary-action'
+                      : 'trade-card-action trade-card-action-counter p2p-terminal-primary-action'}${
+                      recurringTerminalProcessing ? ' p2p-action-pending' : ''
+                    }`
                   }
                   onClick={() => fillRecurringOrderSide(snapshot, recurringTerminalSide === 'buy' ? 'sell' : 'buy').catch(() => {})}
                   disabled={!recurringTerminalReady}
+                  title={
+                    recurringTerminalProcessing
+                      ? 'Confirming on-chain...'
+                      : !walletKey
+                        ? 'Connect wallet first.'
+                        : !onCotiNetwork
+                          ? 'Switch to COTI Mainnet first.'
+                          : !recurringTerminalInputValue.trim()
+                            ? 'Enter an amount to continue.'
+                            : !recurringTerminalCanSubmit
+                              ? activeRecurringTerminalState.disabledLabel
+                              : undefined
+                  }
                 >
                   {recurringTerminalProcessing
                     ? 'Processing...'
@@ -6246,13 +6474,12 @@ export default function P2PTradingPage({
       ? 'Maker'
       : perspective.isTaker
         ? 'Reserved'
-        : trade.walletHasFill
-          ? 'Filled'
-          : null;
+        : null;
     const tradeRelationTags = [walletRelationTag].filter((label): label is string => Boolean(label));
     const tradeSecondaryTags = [
       isHiddenLiquidityTerms ? 'Private liquidity' : null,
       isDirectPrivateTerms ? 'Private terms' : null,
+      !isHiddenLiquidityTerms && !isDirectPrivateTerms ? 'Visible liquidity' : null,
       showPublicAccessCopy && !isHiddenLiquidityTerms && !isDirectPrivateTerms ? visibilityLabel : null,
       trade.counterParentTradeId ? `Counter #${trade.counterParentTradeId}` : null,
       trade.replacesTradeId ? `Edited #${trade.replacesTradeId}` : null,
@@ -6318,7 +6545,18 @@ export default function P2PTradingPage({
       ? priceRatioDisplay?.label ?? ''
       : priceRatioDisplay?.label ?? '';
     const showPriceSummary = Boolean(tradeRateText);
+    const formatCompactVisibleTermText = (asset: TradeAssetPayload): string => {
+      try {
+        return `${formatTokenAmount(BigInt(asset.amount), asset.decimals, 2)} ${asset.symbol}`;
+      } catch {
+        return `0 ${asset.symbol}`;
+      }
+    };
     const formatVisibleTermText = (asset: TradeAssetPayload): string =>
+      isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated)
+        ? asset.symbol
+        : formatCompactVisibleTermText(asset);
+    const formatVisibleTermTitle = (asset: TradeAssetPayload): string =>
       isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated)
         ? asset.symbol
         : formatTradeAssetDisplayText(asset);
@@ -6392,14 +6630,13 @@ export default function P2PTradingPage({
       >
         <div className="p2p-offer-card-head p2p-order-card-head">
           <div className="p2p-offer-title">
-            <span className="p2p-offer-kind">P2P OTC</span>
-            <div className="p2p-order-title-row">
-              <h3 title={formatTradeListTerms(trade)}>{pairLabel}</h3>
+            <div className="p2p-order-eyebrow-row">
+              <span className="p2p-offer-kind">P2P OTC</span>
+              <span className="p2p-order-id">Offer #{trade.tradeId}</span>
+              <strong className={`p2p-offer-status ${statusClassName}`}>{statusLabel}</strong>
             </div>
             <div className="p2p-order-tag-stack">
               <p className="p2p-order-subline p2p-order-subline-primary">
-                <span className="p2p-order-id">Offer #{trade.tradeId}</span>
-                <strong className={`p2p-offer-status ${statusClassName}`}>{statusLabel}</strong>
                 {tradeRelationTags.map((label) => (
                   <span
                     className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
@@ -6409,8 +6646,6 @@ export default function P2PTradingPage({
                     {label}
                   </span>
                 ))}
-              </p>
-              <p className="p2p-order-subline p2p-order-subline-secondary">
                 {tradeSecondaryTags.map((label) => (
                   <span className="p2p-order-chip" key={`${tradeKey}:tag:${label}`}>
                     {label}
@@ -6425,6 +6660,9 @@ export default function P2PTradingPage({
                   {expiryChipLabel}
                 </span>
               </p>
+            </div>
+            <div className="p2p-order-title-row">
+              <h3 title={formatTradeListTerms(trade)}>{pairLabel}</h3>
             </div>
           </div>
         </div>
@@ -6474,7 +6712,7 @@ export default function P2PTradingPage({
         <div className="p2p-offer-terms p2p-order-detail-band" aria-label={formatTradeListTerms(trade)}>
           <div className={`p2p-offer-term p2p-offer-term-offered ${leftToneClass}`}>
             <span>{leftSideLabel}</span>
-            <strong>{formatVisibleTermText(leftSide.asset)}</strong>
+            <strong title={formatVisibleTermTitle(leftSide.asset)}>{formatVisibleTermText(leftSide.asset)}</strong>
             <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
               {leftMetaLabel}
             </small>
@@ -6484,7 +6722,7 @@ export default function P2PTradingPage({
           </div>
           <div className={`p2p-offer-term p2p-offer-term-requested ${rightToneClass}`}>
             <span>{rightSideLabel}</span>
-            <strong>{formatVisibleTermText(rightSide.asset)}</strong>
+            <strong title={formatVisibleTermTitle(rightSide.asset)}>{formatVisibleTermText(rightSide.asset)}</strong>
             <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
               {rightMetaLabel}
             </small>
@@ -6723,6 +6961,13 @@ export default function P2PTradingPage({
         <strong>{title}</strong>
         <p>{description}</p>
       </div>
+      {tone === 'loading' ? (
+        <div className="p2p-loading-skeleton" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      ) : null}
       {actions ? <div className="p2p-empty-actions">{actions}</div> : null}
     </div>
   );
@@ -6730,7 +6975,11 @@ export default function P2PTradingPage({
   const renderTradeList = (trades: TradeSnapshot[], emptyLabel: string, gridClassName = '', emptyState?: ReactNode) =>
     trades.length > 0 ? (
       <div className={`p2p-offer-grid${gridClassName ? ` ${gridClassName}` : ''}`}>
-        {trades.map((trade) => renderTradeOverviewCard(trade))}
+        {trades.map((trade) =>
+          renderTradeOverviewCard(trade, {
+            selected: detailTrade ? getSnapshotKey(trade) === getSnapshotKey(detailTrade) : false
+          })
+        )}
       </div>
     ) : (
       emptyState ?? <p className="standalone-trade-state">{emptyLabel}</p>
@@ -6961,6 +7210,7 @@ export default function P2PTradingPage({
   const myTradeGroupOptions: Array<{
     id: MyTradeGroupView;
     label: string;
+    mobileLabel: string;
     count: number;
     trades: TradeSnapshot[];
     emptyMessage: string;
@@ -6969,6 +7219,7 @@ export default function P2PTradingPage({
     {
       id: 'received',
       label: 'Received Offers',
+      mobileLabel: 'Received',
       count: receivedOpenTradeOffers.length,
       trades: receivedOpenTradeOffers,
       emptyMessage: 'No trade offers waiting for you.',
@@ -6977,6 +7228,7 @@ export default function P2PTradingPage({
     {
       id: 'active',
       label: 'My Active Trades',
+      mobileLabel: 'Active',
       count: myOpenTrades.length,
       trades: myOpenTrades,
       emptyMessage: 'No active trades created by you.',
@@ -6985,6 +7237,7 @@ export default function P2PTradingPage({
     {
       id: 'history',
       label: 'Trade History',
+      mobileLabel: 'History',
       count: walletTradeHistory.length,
       trades: walletTradeHistory,
       emptyMessage: 'No completed, cancelled, or declined trades yet.',
@@ -7045,12 +7298,7 @@ export default function P2PTradingPage({
     tradePairFilter !== 'all' ||
     tradeTypeFilter !== 'all' ||
     tradeSortMode !== 'newest';
-  const clearTradeDeskFilters = () => {
-    setTradeSearchInput('');
-    setTradePairFilter('all');
-    setTradeTypeFilter('all');
-    setTradeSortMode('newest');
-  };
+  const clearTradeDeskFilters = resetTradeDeskFilters;
   const showTradeSearch =
     route.view === 'public' || route.view === 'trade' || (route.view === 'mine' && Boolean(walletAddress));
   const tradeSearchPlaceholder =
@@ -7061,15 +7309,34 @@ export default function P2PTradingPage({
     route.view === 'mine'
       ? `${selectedMyTradeGroup.trades.length} ${selectedMyTradeGroup.label.toLowerCase()}`
       : `${filteredPublicTrades.length} of ${openPublicTradeCount} offers`;
+  const tradeTypeFilterOptions: Array<{ value: TradeDeskTypeFilter; label: string }> =
+    route.view === 'mine'
+      ? [
+          { value: 'all', label: 'All types' },
+          { value: 'one-off', label: 'One-off' },
+          { value: 'recurring', label: 'Recurring' },
+          { value: 'private-liquidity', label: 'Private liquidity' },
+          { value: 'private-link', label: 'Private links' },
+          { value: 'direct', label: 'Direct links' },
+          { value: 'counter', label: 'Counters' },
+          { value: 'visible', label: 'Visible' }
+        ]
+      : [
+          { value: 'all', label: 'All types' },
+          { value: 'one-off', label: 'One-off' },
+          { value: 'recurring', label: 'Recurring' },
+          { value: 'private', label: 'Private' },
+          { value: 'visible', label: 'Visible' }
+        ];
   const tradeDeskIdentity =
     route.view === 'mine'
       ? {
         title: 'My Desk',
-        copy: 'Received, active, countered, and settled offers.'
+        copy: 'Offers and history.'
       }
       : {
           title: 'P2P OTC Desk',
-          copy: 'Peer-priced escrow offers between wallets.'
+          copy: 'Wallet-to-wallet escrow offers.'
         };
   const myTradeTerminalOpen = route.view === 'mine' && Boolean(selectedMyTradeDetail);
   const terminalPanelOpen = route.view === 'trade' || myTradeTerminalOpen;
@@ -7115,6 +7382,149 @@ export default function P2PTradingPage({
     mergeTradeSnapshot,
     terminalPanelTrade,
     walletKey
+  ]);
+  useEffect(() => {
+    const targetTrade =
+      route.view === 'mine'
+        ? terminalPanelTrade
+        : route.view === 'trade' && !tradeAccessBlocked
+          ? detailTrade
+          : null;
+    if (!targetTrade) {
+      return;
+    }
+
+    const lifecycleRowsNeedingTx = buildTradeLifecycleHistoryRows(targetTrade).filter(
+      (row) => !row.txHash && !historyLifecycleTxHashes[row.key]
+    );
+    if (!lifecycleRowsNeedingTx.length) {
+      return;
+    }
+
+    let cancelled = false;
+    loadCotiEthersModule()
+      .then(async (cotiEthers) => {
+        const readProvider = await loadCotiReadProvider(true);
+        const txByRowKey = new Map<string, string>();
+        const blockNumberByRowKey = new Map<string, number>();
+
+        await Promise.all(
+          lifecycleRowsNeedingTx.map(async (row) => {
+            try {
+              const eventId =
+                row.action === 'replaced' && typeof row.relatedTradeId === 'number'
+                  ? row.relatedTradeId
+                  : row.localId;
+              const eventName =
+                row.action === 'cancelled'
+                  ? row.sourceKind === 'recurring'
+                    ? 'RecurringOrderCancelled'
+                    : row.sourceKind === 'direct'
+                      ? 'DirectTradeCancelled'
+                      : 'TradeCancelled'
+                  : row.sourceKind === 'recurring'
+                    ? 'RecurringOrderOpened'
+                    : row.sourceKind === 'direct'
+                      ? 'DirectTradeOpened'
+                      : row.sourceKind === 'private'
+                        ? 'PrivateOrderOpened'
+                        : 'TradeOpened';
+              const abi =
+                row.sourceKind === 'recurring'
+                  ? RECURRING_OTC_CONTRACT_ABI
+                  : row.sourceKind === 'direct'
+                    ? DIRECT_TRADE_ESCROW_CONTRACT_ABI
+                    : row.sourceKind === 'private'
+                      ? PRIVATE_TRADE_ESCROW_CONTRACT_ABI
+                      : TRADE_ESCROW_CONTRACT_ABI;
+              const contract = new cotiEthers.Contract(row.contractAddress, abi, readProvider) as {
+                filters: Record<string, ((...args: unknown[]) => unknown) | undefined>;
+                queryFilter: (filter: unknown, fromBlock: number, toBlock: string) => Promise<unknown[]>;
+              };
+              const filterFactory = contract.filters[eventName];
+              if (!filterFactory) {
+                return;
+              }
+              const filterArgs =
+                row.action === 'cancelled'
+                  ? row.sourceKind === 'recurring'
+                    ? [BigInt(eventId)]
+                    : [BigInt(eventId), null]
+                  : [BigInt(eventId), null, null];
+              const logs = await contract.queryFilter(filterFactory(...filterArgs), 0, 'latest');
+              const latestLog = logs[logs.length - 1] as
+                | {
+                    transactionHash?: unknown;
+                    blockNumber?: unknown;
+                  }
+                | undefined;
+              if (typeof latestLog?.transactionHash === 'string' && latestLog.transactionHash) {
+                txByRowKey.set(row.key, latestLog.transactionHash);
+              }
+              if (typeof latestLog?.blockNumber === 'number') {
+                blockNumberByRowKey.set(row.key, latestLog.blockNumber);
+              }
+            } catch {
+              // Lifecycle transaction links are opportunistic; history stays readable without them.
+            }
+          })
+        );
+
+        const timestampByBlockNumber = blockNumberByRowKey.size
+          ? await resolveBlockTimestampMap(readProvider, blockNumberByRowKey.values())
+          : new Map<number, number>();
+        return {
+          txByRowKey,
+          timestampByRowKey: new Map(
+            Array.from(blockNumberByRowKey.entries())
+              .map(([rowKey, blockNumber]) => [rowKey, timestampByBlockNumber.get(blockNumber)] as const)
+              .filter((entry): entry is readonly [string, number] => typeof entry[1] === 'number')
+          )
+        };
+      })
+      .then((result) => {
+        if (cancelled || !result) {
+          return;
+        }
+        if (result.txByRowKey.size > 0) {
+          setHistoryLifecycleTxHashes((current) => {
+            let changed = false;
+            const next = { ...current };
+            for (const [rowKey, txHash] of result.txByRowKey.entries()) {
+              if (next[rowKey] !== txHash) {
+                next[rowKey] = txHash;
+                changed = true;
+              }
+            }
+            return changed ? next : current;
+          });
+        }
+        if (result.timestampByRowKey.size > 0) {
+          setHistoryTransactionTimestamps((current) => {
+            let changed = false;
+            const next = { ...current };
+            for (const [rowKey, timestamp] of result.timestampByRowKey.entries()) {
+              if (next[rowKey] !== timestamp) {
+                next[rowKey] = timestamp;
+                changed = true;
+              }
+            }
+            return changed ? next : current;
+          });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    detailTrade,
+    historyLifecycleTxHashes,
+    resolveBlockTimestampMap,
+    route.view,
+    terminalPanelTrade,
+    tradeAccessBlocked
   ]);
   useEffect(() => {
     const targetTrade =
@@ -7384,14 +7794,20 @@ export default function P2PTradingPage({
   const isCounterRouteWithoutParent = route.view === 'counter' && !counterParentTrade;
 
   return (
-    <main className={`standalone-trades-shell p2p-trading-shell${terminalPanelOpen ? ' p2p-trading-shell-drawer-open' : ''}`}>
-      <div className="p2p-secondary-nav">{tradeViewTabs}</div>
+    <main
+      className={`standalone-trades-shell p2p-trading-shell${terminalPanelOpen ? ' p2p-trading-shell-drawer-open' : ''}${
+        !isComposerRoute ? ' p2p-trading-shell-has-overview' : ''
+      }`}
+    >
+      <div className={`p2p-secondary-nav${!isComposerRoute ? ' p2p-secondary-nav-mobile' : ''}`}>{tradeViewTabs}</div>
       {!isComposerRoute ? (
         <section
           className={`p2p-market-overview p2p-market-overview-${route.view}${
             route.view === 'mine' && !showTradeSearch ? ' p2p-market-overview-summary-only' : ''
           }`}
         >
+          <div className="p2p-market-tabs">{tradeViewTabs}</div>
+
           <div className="p2p-market-identity">
             <strong>{tradeDeskIdentity.title}</strong>
             <span>{tradeDeskIdentity.copy}</span>
@@ -7461,11 +7877,11 @@ export default function P2PTradingPage({
                   value={tradeTypeFilter}
                   onChange={(event) => setTradeTypeFilter(event.target.value as TradeDeskTypeFilter)}
                 >
-                  <option value="all">All types</option>
-                  <option value="one-off">One-off</option>
-                  <option value="recurring">Recurring</option>
-                  <option value="private">Private</option>
-                  <option value="visible">Visible</option>
+                  {tradeTypeFilterOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="p2p-filter-select p2p-filter-sort">
@@ -7496,7 +7912,6 @@ export default function P2PTradingPage({
         <section className="standalone-trades-section p2p-public-trades-section">
           <div className="standalone-trades-section-head">
             <div>
-              <p className="landing-eyebrow">P2P OTC</p>
               <h2>Active offers</h2>
             </div>
             <div className="standalone-trades-toolbar">
@@ -8016,6 +8431,7 @@ export default function P2PTradingPage({
                         : 'Create Recurring Order'}
                   </button>
                 </div>
+                {renderP2PActionNotice('composer')}
                 <div className="trade-compose-warning">
                   <p>
                     <strong>P2P OTC check:</strong> Buy and sell prices are independent. Same-price orders only happen when you enter the same price.
@@ -8109,6 +8525,7 @@ export default function P2PTradingPage({
             </label>
           ) : null}
           {tradeComposer}
+          {renderP2PActionNotice('composer')}
           {createdTradeLink ? (
             <div className="standalone-trade-created">
               <div>
@@ -8162,8 +8579,7 @@ export default function P2PTradingPage({
           ) : null}
           <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
             <p>
-              <strong>P2P OTC check:</strong> Verify maker, token contracts, amounts, and price ratio before accepting.
-              Escrow enforces settlement, not counterparty reputation.
+              <strong>P2P OTC check:</strong> Verify maker, tokens, amounts, and price. Escrow settles, not reputation.
             </p>
           </div>
           {route.view === 'trade' && createdTradeLink && createdTradeId === route.tradeId ? (
@@ -8313,8 +8729,10 @@ export default function P2PTradingPage({
                     onClick={() => setMyTradeGroupView(group.id)}
                     role="tab"
                     aria-selected={group.id === selectedMyTradeGroup.id}
+                    aria-label={`${group.label}: ${group.count}`}
                   >
-                    <span>{group.label}</span>
+                    <span className="p2p-wallet-trade-label-full">{group.label}</span>
+                    <span className="p2p-wallet-trade-label-mobile">{group.mobileLabel}</span>
                     <strong>{group.count}</strong>
                   </button>
                 ))}

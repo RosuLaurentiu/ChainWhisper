@@ -50,6 +50,7 @@ export type TradeLifecycleHistoryRow = {
   detail: string;
   actor: string;
   relatedTradeId?: number;
+  txHash?: string;
   timestamp?: number;
 };
 

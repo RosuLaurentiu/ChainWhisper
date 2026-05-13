@@ -416,7 +416,16 @@ export const matchesTradeSearch = (trade: TradeSnapshot, query: string): boolean
     .some((value) => String(value).toLowerCase().includes(normalizedQuery));
 };
 
-export type TradeDeskTypeFilter = 'all' | 'one-off' | 'recurring' | 'private' | 'visible';
+export type TradeDeskTypeFilter =
+  | 'all'
+  | 'one-off'
+  | 'recurring'
+  | 'private'
+  | 'private-liquidity'
+  | 'private-link'
+  | 'direct'
+  | 'counter'
+  | 'visible';
 export type TradeDeskAccessFilter = 'all' | 'public' | 'private-link' | 'direct';
 export type TradeDeskSortMode = 'newest' | 'oldest' | 'expiring' | 'most-active';
 export type RecurringTerminalActionSide = 'buy' | 'sell';
@@ -483,6 +492,8 @@ export const getTradeAccessFilter = (trade: TradeSnapshot): Exclude<TradeDeskAcc
 };
 
 const tradeIsPrivate = (trade: TradeSnapshot): boolean => getTradeTermsVisibility(trade) !== 'public';
+const tradeUsesPrivateLiquidity = (trade: TradeSnapshot): boolean =>
+  getTradeTermsVisibility(trade) === 'hidden-liquidity';
 
 const tradeMatchesDeskType = (trade: TradeSnapshot, filter: TradeDeskTypeFilter): boolean => {
   switch (filter) {
@@ -492,6 +503,14 @@ const tradeMatchesDeskType = (trade: TradeSnapshot, filter: TradeDeskTypeFilter)
       return Boolean(trade.recurringOrder);
     case 'private':
       return tradeIsPrivate(trade);
+    case 'private-liquidity':
+      return tradeUsesPrivateLiquidity(trade);
+    case 'private-link':
+      return getTradeAccessFilter(trade) === 'private-link';
+    case 'direct':
+      return getTradeAccessFilter(trade) === 'direct';
+    case 'counter':
+      return Boolean(trade.counterParentTradeId || trade.parentTradeId);
     case 'visible':
       return !tradeIsPrivate(trade);
     default:

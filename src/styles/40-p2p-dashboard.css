@@ -523,6 +523,10 @@
   justify-content: flex-start;
 }
 
+.p2p-trading-shell-has-overview > .p2p-secondary-nav-mobile {
+  display: none;
+}
+
 .p2p-secondary-nav .p2p-trade-tabs {
   padding-bottom: 2px;
 }
@@ -560,47 +564,70 @@
 
 .p2p-market-overview {
   display: grid;
-  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "identity search stats"
+    "tabs identity stats"
+    "search search search"
     "status status status";
-  gap: 8px 12px;
+  gap: 5px 10px;
   align-items: center;
   border: 1px solid rgba(74, 64, 112, 0.6);
   border-radius: 8px;
   background: rgba(8, 8, 15, 0.9);
-  padding: 9px 12px;
+  padding: 7px 10px;
 }
 
 .p2p-market-overview-trade {
-  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "identity search stats"
+    "tabs identity stats"
+    "search search search"
     "status status status";
   justify-content: stretch;
 }
 
 .p2p-market-overview-mine {
-  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .p2p-market-overview-public {
-  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2.4fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .p2p-market-overview-summary-only {
-  grid-template-columns: minmax(220px, 360px) minmax(280px, 460px);
+  grid-template-columns: auto minmax(220px, 360px) minmax(280px, 460px);
   grid-template-areas:
-    "identity stats"
-    "status status";
+    "tabs identity stats"
+    "status status status";
   justify-content: start;
+}
+
+.p2p-market-tabs {
+  grid-area: tabs;
+  min-width: 0;
+  align-self: center;
+}
+
+.p2p-market-tabs .p2p-trade-tabs {
+  gap: 5px;
+}
+
+.p2p-market-tabs .p2p-trade-tabs button {
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.p2p-market-tabs .p2p-trade-tabs button span {
+  font-size: 0.78rem;
 }
 
 .p2p-market-identity {
   grid-area: identity;
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 1px;
+  align-self: center;
   border-left: 2px solid rgba(139, 92, 246, 0.6);
   padding-left: 9px;
 }
@@ -608,7 +635,7 @@
 .p2p-market-identity strong {
   color: #f4f0ff;
   font-size: clamp(0.98rem, 1.3vw, 1.18rem);
-  line-height: 1.1;
+  line-height: 1.05;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -618,12 +645,13 @@
   color: var(--muted);
   font-size: 0.7rem;
   font-weight: 700;
-  line-height: 1.18;
+  line-height: 1.05;
   overflow-wrap: anywhere;
 }
 
 .p2p-stats-strip {
   grid-area: stats;
+  align-self: center;
   justify-self: end;
   min-width: 0;
   display: flex;
@@ -702,14 +730,14 @@
   min-width: 0;
   display: grid;
   grid-template-columns:
-    minmax(260px, 2fr)
+    minmax(280px, 2.35fr)
     minmax(118px, 0.58fr)
     minmax(118px, 0.58fr)
     minmax(118px, 0.58fr)
     minmax(68px, auto);
   grid-template-areas: "search pair type sort reset";
   align-items: end;
-  gap: 7px;
+  gap: 5px;
   border-top: 0;
   padding-top: 0;
 }
@@ -719,7 +747,7 @@
   width: 100%;
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 2px;
 }
 
 .p2p-filter-bar .p2p-token-search {
@@ -741,29 +769,30 @@
 .p2p-filter-select {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 2px;
 }
 
 .p2p-filter-select span {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.08em;
+  line-height: 1;
   text-transform: uppercase;
 }
 
 .p2p-filter-select select {
   width: 100%;
   min-width: 0;
-  min-height: 34px;
+  min-height: 30px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(5, 5, 12, 0.82);
   color: var(--text);
   color-scheme: dark;
-  padding: 0 10px;
+  padding: 0 9px;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
@@ -782,14 +811,14 @@
   grid-area: reset;
   align-self: end;
   justify-self: stretch;
-  min-height: 34px;
+  min-height: 30px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(12, 11, 22, 0.82);
   color: #d9d3ff;
-  padding: 0 12px;
+  padding: 0 10px;
   font: inherit;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 900;
   cursor: pointer;
 }
@@ -798,8 +827,8 @@
   content: "";
   display: inline-block;
   width: 10px;
-  height: 9px;
-  margin-left: 8px;
+  height: 8px;
+  margin-left: 7px;
   border-top: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   box-shadow: inset 0 3px 0 transparent;
@@ -877,9 +906,10 @@
 
 .p2p-token-search-label {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.08em;
+  line-height: 1;
   text-transform: uppercase;
 }
 
@@ -887,9 +917,9 @@
   min-width: 0;
   overflow: hidden;
   color: rgba(196, 181, 253, 0.78);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 800;
-  line-height: 1.2;
+  line-height: 1;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -915,8 +945,8 @@
   border-radius: 8px;
   background: rgba(5, 5, 12, 0.82);
   color: var(--text);
-  padding: 11px 14px;
-  font-size: 0.88rem;
+  padding: 7px 12px;
+  font-size: 0.82rem;
 }
 
 .p2p-token-search-input-wrap input {
@@ -932,8 +962,8 @@
   border-radius: 999px;
   background: rgba(24, 24, 40, 0.92);
   color: #d9d3ff;
-  padding: 6px 11px;
-  font-size: 0.72rem;
+  padding: 4px 9px;
+  font-size: 0.68rem;
   font-weight: 800;
   line-height: 1;
   cursor: pointer;
@@ -1756,9 +1786,8 @@
   max-height: 100%;
   min-height: 0;
   grid-template-columns: minmax(0, 1fr) minmax(360px, min(460px, 31vw));
-  grid-template-rows: auto minmax(76px, auto) minmax(0, 1fr) clamp(180px, 23dvh, 260px);
+  grid-template-rows: minmax(76px, auto) minmax(0, 1fr) clamp(180px, 23dvh, 260px);
   grid-template-areas:
-    "nav terminal"
     "overview terminal"
     "desk terminal"
     "history history";
@@ -1770,7 +1799,6 @@
   padding: 10px 12px;
 }
 
-.p2p-trading-shell-drawer-open .p2p-secondary-nav,
 .p2p-trading-shell-drawer-open .p2p-market-overview,
 .p2p-trading-shell-drawer-open .p2p-public-trades-section,
 .p2p-trading-shell-drawer-open .p2p-my-trades-section {
@@ -1778,7 +1806,7 @@
 }
 
 .p2p-trading-shell-drawer-open .p2p-secondary-nav {
-  grid-area: nav;
+  display: none;
   margin: 0;
 }
 
@@ -2570,6 +2598,11 @@
   min-width: 0;
 }
 
+.p2p-terminal-history-row > .p2p-terminal-history-lifecycle-summary {
+  grid-template-columns: minmax(132px, 220px);
+  width: min(100%, 240px);
+}
+
 .p2p-terminal-history-chip {
   display: flex;
   align-items: baseline;
@@ -2593,6 +2626,12 @@
   border-color: rgba(248, 113, 113, 0.5);
   background:
     linear-gradient(90deg, rgba(127, 29, 29, 0.32), rgba(147, 51, 234, 0.06));
+}
+
+.p2p-terminal-history-chip-lifecycle {
+  border-color: rgba(111, 90, 167, 0.42);
+  background:
+    linear-gradient(90deg, rgba(139, 92, 246, 0.14), rgba(86, 214, 231, 0.06));
 }
 
 .p2p-terminal-history-chip span {
@@ -3167,18 +3206,19 @@
 }
 
 .p2p-public-trades-section {
-  padding: 16px;
+  padding: 12px 14px 14px;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .p2p-public-trades-section .standalone-trades-section-head {
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .p2p-public-trades-section .standalone-trades-section-head h2 {
-  margin-top: 2px;
+  margin: 0;
+  line-height: 1.08;
 }
 
 .p2p-public-trade-grid,
@@ -3333,15 +3373,16 @@
 
 .p2p-order-tag-stack {
   display: grid;
-  gap: 4px;
-  margin-top: 5px;
+  gap: 0;
+  margin-top: 1px;
   min-width: 0;
 }
 
 .p2p-order-tag-stack .p2p-order-subline {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   margin: 0;
-  overflow: hidden;
+  overflow: visible;
+  row-gap: 3px;
 }
 
 .p2p-order-id {
@@ -3372,10 +3413,10 @@
   border-radius: 999px;
   background: rgba(42, 36, 70, 0.48);
   color: #d9d3ff;
-  font-size: 0.66rem;
+  font-size: 0.63rem;
   font-weight: 900;
   line-height: 1;
-  padding: 3px 7px;
+  padding: 2px 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3406,6 +3447,33 @@
   gap: 6px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.p2p-order-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-bottom: 2px;
+  overflow: hidden;
+}
+
+.p2p-order-eyebrow-row .p2p-offer-kind {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 18px;
+  margin-bottom: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-order-eyebrow-row .p2p-order-id,
+.p2p-order-eyebrow-row .p2p-offer-status {
+  flex: 0 0 auto;
 }
 
 .p2p-order-meta-row-tight {
@@ -3465,6 +3533,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-top: 3px;
   min-width: 0;
 }
 
@@ -3473,6 +3542,10 @@
   min-width: 0;
 }
 
+.p2p-order-title-row .p2p-order-id,
+.p2p-order-eyebrow-row .p2p-order-id,
+.p2p-order-eyebrow-row .p2p-offer-status,
+.p2p-order-title-row .p2p-offer-status,
 .p2p-order-subline .p2p-order-id,
 .p2p-order-subline .p2p-offer-status,
 .p2p-order-subline .p2p-order-chip,
@@ -3482,11 +3555,15 @@
   text-transform: none;
 }
 
+.p2p-order-eyebrow-row .p2p-offer-status,
+.p2p-order-title-row .p2p-offer-status,
 .p2p-order-subline .p2p-offer-status {
   flex: 0 0 auto;
   padding: 3px 7px;
 }
 
+.p2p-order-title-row .p2p-order-chip,
+.p2p-order-title-row .p2p-expiry-chip,
 .p2p-order-subline .p2p-order-chip,
 .p2p-order-subline .p2p-expiry-chip {
   color: #d9d3ff;
@@ -4888,9 +4965,11 @@
 }
 
 .p2p-recurring-card-head .p2p-offer-kind {
-  display: block;
-  margin-bottom: 4px;
-  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  margin-bottom: 0;
+  line-height: 1;
 }
 
 .p2p-recurring-card-head p {
@@ -4901,6 +4980,12 @@
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.p2p-recurring-card-head .p2p-order-tag-stack .p2p-order-subline {
+  display: flex !important;
+  overflow: visible;
+  white-space: normal;
 }
 
 .p2p-recurring-price-grid,

@@ -385,10 +385,14 @@ export default function TradeComposerPanel({
   const showRequestAmountError = shouldShowError('requestAmount', requestAmountError);
   const showExpiryError = shouldShowError('expiry', expiryError);
   const sendButtonDisabled = validationAfterInteraction ? sending : !canSend;
-  const sendButtonClassName =
+  const sendButtonClassName = [
     validationAfterInteraction && !canSend && !sending
       ? 'trade-compose-send trade-compose-send-disabled'
-      : 'trade-compose-send';
+      : 'trade-compose-send',
+    sending ? 'p2p-action-pending' : ''
+  ]
+    .filter(Boolean)
+    .join(' ');
   const handleSendClick = () => {
     if (!canSend) {
       setSubmitAttempted(true);
