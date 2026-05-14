@@ -340,7 +340,7 @@ export default function TradeOfferCard({
       : resolvedPeerAddress
         ? shortenAddress(resolvedPeerAddress)
         : hiddenLiquidity
-          ? 'Private link'
+          ? 'Private order'
           : 'Any wallet';
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
   const requestScopeLabel = resolvedRequest ? resolveAssetScopeLabel(resolvedRequest.kind) : null;

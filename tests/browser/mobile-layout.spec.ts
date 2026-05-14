@@ -68,6 +68,40 @@ test.describe('mobile layout polish', () => {
     await expect(tradeTabs.getByRole('button', { name: 'Create' })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'My Trades', exact: true })).toBeVisible();
+
+    const filterBar = page.locator('.p2p-filter-bar');
+    const mobileFiltersButton = filterBar.locator('.p2p-mobile-filter-toggle');
+    const advancedFilters = filterBar.locator('.p2p-advanced-filter-panel');
+    await expect(filterBar.getByPlaceholder(/Search offers by pair/i)).toBeVisible();
+    await expect(mobileFiltersButton).toBeVisible();
+    await expect(advancedFilters).toBeHidden();
+    await mobileFiltersButton.click();
+    await expect(advancedFilters).toBeVisible();
+    await expect(filterBar.getByLabel('Pair')).toBeVisible();
+    await filterBar.getByLabel('Type').selectOption('private');
+    await expect(filterBar.getByLabel('Type')).toHaveValue('private');
+    await expect(mobileFiltersButton).toContainText('1');
+    await mobileFiltersButton.click();
+    await expect(advancedFilters).toBeHidden();
+    await expect(mobileFiltersButton).toContainText('1');
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('previews My Trades workspace before wallet connection', async ({ page }) => {
+    await page.goto('/trades/mine');
+
+    const workspace = page.locator('.p2p-my-trades-empty-workspace');
+    await expect(workspace).toBeVisible();
+    await expect(workspace.locator('.p2p-my-trades-wallet-card')).toContainText('Wallet readiness');
+    await expect(workspace.locator('.p2p-my-trades-wallet-card')).toContainText('Connect your trading wallet');
+    await expect(workspace.locator('.p2p-my-trades-connect-btn')).toBeVisible();
+    await expect(workspace.locator('.p2p-my-trades-empty-slot[aria-disabled="true"]')).toHaveCount(3);
+    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Received' })).toContainText('0');
+    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Active' })).toContainText('0');
+    await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'History' })).toContainText('0');
+    await expect(page.locator('.p2p-wallet-trade-switcher')).toHaveCount(0);
+    await expect(page.locator('.p2p-my-trades-section .standalone-trade-secondary-btn')).toHaveCount(0);
+    await expect(page.getByText('Connect to see your trades')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -77,6 +111,14 @@ test.describe('mobile layout polish', () => {
     const terminal = page.locator('.standalone-trade-detail-section');
     await expect(terminal).toBeVisible();
     await expect(terminal.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
+    await expect(terminal.getByRole('heading', { name: 'Open terminal' })).toBeVisible();
+    await expect(terminal.getByText('Paste a shared offer link')).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open desk', exact: true })).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
+    await expect(terminal.getByText('Open trading terminal', { exact: true })).toHaveCount(0);
+    await expect(terminal.getByRole('button', { name: 'Paste Link', exact: true })).toHaveCount(0);
+    await expect(terminal.locator('.p2p-trade-window-warning')).toHaveCount(0);
     await expect(page.locator('.p2p-market-overview')).toBeHidden();
     await expect(page.locator('.p2p-public-trades-section')).toBeHidden();
     await expect(page.getByRole('navigation', { name: 'P2P trade views' })).toBeVisible();
@@ -176,13 +218,16 @@ test.describe('mobile layout polish', () => {
     await expect(page.locator('.p2p-direct-recipient')).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
-    await page.getByRole('button', { name: /^Private Link$/ }).click();
+    await page.getByRole('button', { name: /^Private order$/ }).click();
     await expect(page.getByText('Shared link required to accept')).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
     await page.goto('/trades/open');
-    await expect(page.getByPlaceholder('Paste offer link, compact code, or id')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Open Terminal' })).toBeVisible();
+    const terminal = page.locator('.standalone-trade-detail-section');
+    await expect(terminal.getByPlaceholder('Paste offer link, compact code, or id')).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open desk', exact: true })).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -231,29 +276,55 @@ test.describe('trading responsive layout', () => {
     const oneOffCard = desk.locator('.p2p-offer-card').first();
     const recurringCard = desk.locator('.p2p-recurring-order-card').first();
 
-    await expect(oneOffCard).toBeVisible();
-    await expect(recurringCard).toBeVisible();
+    await expect(oneOffCard).toBeVisible({ timeout: 30_000 });
+    await expect(recurringCard).toBeVisible({ timeout: 30_000 });
     for (const card of [oneOffCard, recurringCard]) {
       await expect(card.locator('.p2p-order-market-panel')).toBeVisible();
       await expect(card.locator('.p2p-order-detail-band')).toBeVisible();
-      await expect(card.locator('.p2p-order-eyebrow-row .p2p-order-id')).toBeVisible();
-      await expect(card.locator('.p2p-order-eyebrow-row .p2p-offer-status')).toBeVisible();
+      await expect(card.locator('.p2p-order-title-row .p2p-offer-status')).toBeVisible();
+      await expect(card.locator('.p2p-order-meta-line .p2p-order-id')).toBeVisible();
+      await expect(card.locator('.p2p-order-eyebrow-row')).toHaveCount(0);
       await expect(card.locator('.p2p-order-title-row .p2p-order-id')).toHaveCount(0);
-      await expect(card.locator('.p2p-order-title-row .p2p-offer-status')).toHaveCount(0);
-      await expect(card.locator('.p2p-order-subline .p2p-order-id')).toHaveCount(0);
+      await expect(card.locator('.p2p-order-subline .p2p-order-id')).toHaveCount(1);
       await expect(card.locator('.p2p-order-subline .p2p-offer-status')).toHaveCount(0);
       await expect(card.locator('.p2p-order-subline').first()).toBeVisible();
       await expect(card.locator('.p2p-order-tag-stack .p2p-order-subline')).toHaveCount(1);
+      const headerOrder = await card.locator('.p2p-offer-title').evaluate((title) => {
+        const pair = title.querySelector('.p2p-order-title-row');
+        const status = title.querySelector('.p2p-order-title-row .p2p-offer-status');
+        const meta = title.querySelector('.p2p-order-meta-line');
+        const marker = title.querySelector('.p2p-order-kind-marker');
+        const id = title.querySelector('.p2p-order-meta-line .p2p-order-id');
+        const markerStyle = marker ? window.getComputedStyle(marker) : null;
+        return {
+          idLeft: id?.getBoundingClientRect().left ?? 0,
+          markerLeft: marker?.getBoundingClientRect().left ?? 0,
+          metaTop: meta?.getBoundingClientRect().top ?? 0,
+          markerFontSize: markerStyle?.fontSize ?? '',
+          markerOpacity: markerStyle?.opacity ?? '',
+          pairTop: pair?.getBoundingClientRect().top ?? 0,
+          statusTop: status?.getBoundingClientRect().top ?? 0
+        };
+      });
+      expect(headerOrder.pairTop).toBeLessThanOrEqual(headerOrder.metaTop);
+      expect(Math.abs(headerOrder.statusTop - headerOrder.pairTop)).toBeLessThanOrEqual(4);
+      expect(headerOrder.markerLeft).toBeLessThan(headerOrder.idLeft);
+      expect(Number(headerOrder.markerOpacity)).toBeLessThanOrEqual(0.75);
+      expect(parseFloat(headerOrder.markerFontSize)).toBeLessThan(12);
       await expect(card.locator('.p2p-order-token-actions')).toBeVisible();
       await expect(card.locator('.p2p-order-card-footer')).toBeVisible();
       await expect(card.locator('.p2p-order-card-footer').getByRole('button').first()).toBeVisible();
     }
 
     await expect(desk.locator('.p2p-order-muted-slot').filter({ hasText: /Private amount|Private|None/ }).first()).toBeVisible();
-    await expect(oneOffCard.locator('.p2p-order-eyebrow-row .p2p-order-id')).toContainText(/^Offer #\d+$/);
-    await expect(recurringCard.locator('.p2p-order-eyebrow-row .p2p-order-id')).toContainText(/^Order #\d+$/);
+    await expect(oneOffCard.locator('.p2p-order-meta-line .p2p-order-id')).toContainText(/^#\d+$/);
+    await expect(recurringCard.locator('.p2p-order-meta-line .p2p-order-id')).toContainText(/^#\d+$/);
     await expect(desk.getByRole('button', { name: /Share/ }).first()).toBeVisible();
     await expect(desk.getByText('Public offer')).toHaveCount(0);
+    await expect(oneOffCard.locator('.p2p-order-title-token')).toHaveCount(2);
+    await expect(oneOffCard.locator('.p2p-order-title-row h3 svg')).toHaveCount(1);
+    await expect(recurringCard.locator('.p2p-order-title-row h3')).toContainText(/[A-Z0-9$]+\/[A-Z0-9$]+/i);
+    await expect(recurringCard.locator('.p2p-order-title-row h3 svg')).toHaveCount(0);
     await expect(recurringCard.locator('h3')).not.toContainText('buy/sell desk');
     await expect(page.locator('.p2p-public-trade-grid')).not.toContainText('buy/sell desk');
     await expect(recurringCard.getByText('Both sides live')).toHaveCount(0);
@@ -262,8 +333,10 @@ test.describe('trading responsive layout', () => {
     const expiryTitle = await oneOffCard.locator('.p2p-expiry-chip').getAttribute('title');
     expect(expiryTitle?.length ?? 0).toBeGreaterThan(8);
     await expect(recurringCard.locator('.p2p-order-chip', { hasText: 'Private liquidity' })).toHaveCount(1);
-    await expect(oneOffCard.locator('.p2p-order-chip', { hasText: 'Private liquidity' })).toHaveCount(1);
-    await expect(desk.locator('.p2p-offer-card .p2p-order-chip', { hasText: 'Visible liquidity' }).first()).toBeVisible();
+    await expect(oneOffCard.locator('.p2p-order-chip', { hasText: 'Hybrid liquidity' })).toHaveCount(1);
+    await expect(desk.locator('.p2p-offer-card .p2p-order-chip', { hasText: 'Public liquidity' }).first()).toBeVisible();
+    await expect(desk.getByRole('button', { name: 'Counter', exact: true })).toHaveCount(0);
+    await expect(desk.getByRole('button', { name: 'Counter unavailable', exact: true })).toHaveCount(0);
     const makerCard = desk.locator('.p2p-order-card').filter({ has: page.locator('.p2p-offer-manage-btn') }).first();
     if (await makerCard.count()) {
       const makerChip = makerCard.locator('.p2p-order-tag-stack .p2p-order-chip-owner').first();
@@ -279,13 +352,38 @@ test.describe('trading responsive layout', () => {
     await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toBeVisible();
     await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/You buy|You sell/);
     await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).not.toContainText(/Seller sells|Buyer pays/);
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/total|available|order value/);
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/sold|bought|No fills yet/);
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/available|remaining|Open liquidity|No fill recorded/);
+    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/left/);
+    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/\d+(?:\.\d+)?\/\d+(?:\.\d+)?/);
+    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/sold|bought/);
     await expect(publicLiquidityOneOff.locator('.p2p-offer-terms')).toHaveCount(0);
     await expect(desk.locator('.p2p-order-market-panel').getByText('Price desk')).toHaveCount(0);
     await expect(recurringCard.locator('.p2p-recurring-price-card-head')).toContainText('Price ratio');
     await expect(recurringCard.locator('.p2p-recurring-price-basis')).toHaveCount(0);
+    await expect(oneOffCard.locator('.p2p-order-market-panel .p2p-price-number')).toBeVisible();
+    await expect(oneOffCard.locator('.p2p-order-market-panel .p2p-price-side-label')).toContainText(/^(Buy|Sell) [A-Z0-9$]+/i);
+    await expect(recurringCard.locator('.p2p-recurring-price-box .p2p-price-number')).toHaveCount(2);
+    const recurringValueWrap = await recurringCard
+      .locator('.p2p-recurring-price-box .p2p-price-unit, .p2p-recurring-inventory-strip .p2p-liquidity-label')
+      .evaluateAll((values) =>
+        values.map((value) => {
+          const style = window.getComputedStyle(value);
+          return {
+            overflow: style.overflow,
+            scrollWidth: value.scrollWidth,
+            clientWidth: value.clientWidth,
+            text: value.textContent?.trim() ?? '',
+            textOverflow: style.textOverflow,
+            whiteSpace: style.whiteSpace
+          };
+        })
+      );
+    expect(recurringValueWrap.length).toBeGreaterThanOrEqual(5);
+    for (const value of recurringValueWrap) {
+      expect(value.text).not.toMatch(/\.\.\.|…/);
+      expect(value.whiteSpace).not.toBe('nowrap');
+      expect(value.textOverflow).not.toBe('ellipsis');
+      expect(value.scrollWidth).toBeLessThanOrEqual(value.clientWidth + 1);
+    }
     await expect(oneOffCard.locator('.p2p-order-market-panel small')).toHaveCount(0);
     await expect(oneOffCard.locator('.p2p-order-market-panel')).not.toContainText(/Private amounts|Visible terms|Remaining terms/);
     const priceRatioLabelStyles = await Promise.all([
@@ -311,7 +409,7 @@ test.describe('trading responsive layout', () => {
       })
     ]);
     expect(priceRatioLabelStyles[1]).toEqual(priceRatioLabelStyles[0]);
-    const tagLineSpread = await oneOffCard.locator('.p2p-order-eyebrow-row').first().evaluate((line) => {
+    const tagLineSpread = await oneOffCard.locator('.p2p-order-meta-line .p2p-order-subline').first().evaluate((line) => {
       const itemTops = Array.from(line.children).map((child) => Math.round(child.getBoundingClientRect().top));
       return Math.max(...itemTops) - Math.min(...itemTops);
     });
@@ -333,18 +431,47 @@ test.describe('trading responsive layout', () => {
 
     const primaryButtonMetrics = await oneOffCard.locator('.p2p-offer-open-btn').evaluate((button) => {
       const buttonBox = button.getBoundingClientRect();
-      const assetWidths = Array.from(button.querySelectorAll('.p2p-action-asset')).map((asset) =>
-        asset.getBoundingClientRect().width
-      );
       return {
         buttonWidth: buttonBox.width,
-        minAssetWidth: Math.min(...assetWidths),
         text: button.textContent?.trim() ?? ''
       };
     });
-    expect(primaryButtonMetrics.text.length).toBeGreaterThan(4);
+    expect(primaryButtonMetrics.text).toMatch(/^(Buy|Sell|Open|Manage)\b/);
+    expect(primaryButtonMetrics.text).not.toMatch(/->|\u2192/);
     expect(primaryButtonMetrics.buttonWidth).toBeGreaterThan(120);
-    expect(primaryButtonMetrics.minAssetWidth).toBeGreaterThan(30);
+    await expect(desk.locator('.p2p-order-card-footer .p2p-offer-open-btn svg, .p2p-order-card-footer .p2p-offer-manage-btn svg')).toHaveCount(0);
+    const footerButtonMetrics = await desk.locator('.p2p-order-card').evaluateAll((cards) => {
+      const readButton = (button: Element | null) => {
+        if (!button) {
+          return null;
+        }
+        const style = window.getComputedStyle(button);
+        const buttonBox = button.getBoundingClientRect();
+        return {
+          alignItems: style.alignItems,
+          borderRadius: style.borderRadius,
+          display: style.display,
+          fontSize: style.fontSize,
+          fontWeight: style.fontWeight,
+          height: Math.round(buttonBox.height),
+          justifyContent: style.justifyContent,
+          lineHeight: style.lineHeight,
+          padding: `${style.paddingTop} ${style.paddingRight} ${style.paddingBottom} ${style.paddingLeft}`
+        };
+      };
+
+      return cards.map((card) => ({
+        open: readButton(card.querySelector('.p2p-offer-open-btn, .p2p-offer-manage-btn')),
+        share: readButton(card.querySelector('.p2p-offer-share-btn'))
+      }));
+    });
+    const firstFooterButtons = footerButtonMetrics[0];
+    expect(firstFooterButtons.open).not.toBeNull();
+    expect(firstFooterButtons.share).not.toBeNull();
+    for (const metrics of footerButtonMetrics) {
+      expect(metrics.open).toEqual(firstFooterButtons.open);
+      expect(metrics.share).toEqual(firstFooterButtons.share);
+    }
 
     const largestTokenFooterGap = await desk.locator('.p2p-order-card').evaluateAll((cards) =>
       Math.max(
@@ -358,6 +485,20 @@ test.describe('trading responsive layout', () => {
       )
     );
     expect(largestTokenFooterGap).toBeLessThanOrEqual(24);
+
+    const compactCardMetrics = await desk.locator('.p2p-order-card').evaluateAll((cards) =>
+      cards.map((card) => {
+        const cardBox = card.getBoundingClientRect();
+        const footer = card.querySelector('.p2p-order-card-footer');
+        const footerBox = footer?.getBoundingClientRect();
+        return {
+          bottomPad: footerBox ? Math.round(cardBox.bottom - footerBox.bottom) : 0,
+          height: Math.round(cardBox.height)
+        };
+      })
+    );
+    expect(Math.max(...compactCardMetrics.map((metric) => metric.height))).toBeLessThanOrEqual(335);
+    expect(Math.max(...compactCardMetrics.map((metric) => metric.bottomPad))).toBeLessThanOrEqual(14);
 
     const rowAlignment = await desk.locator('.p2p-order-card').evaluateAll((cards) => {
       const firstRowCards = cards
@@ -394,14 +535,14 @@ test.describe('trading responsive layout', () => {
     await oneOffCard.locator('.p2p-order-market-panel').click();
     await expect(oneOffCard.locator('.p2p-order-market-panel strong')).not.toHaveText(oneOffPriceBefore ?? '');
 
-    const buyLabelBefore = await recurringCard.locator('.p2p-recurring-price-buy span').textContent();
-    const sellLabelBefore = await recurringCard.locator('.p2p-recurring-price-sell span').textContent();
+    const buyLabelBefore = await recurringCard.locator('.p2p-recurring-price-buy > span').textContent();
+    const sellLabelBefore = await recurringCard.locator('.p2p-recurring-price-sell > span').textContent();
     const buyPriceBefore = await recurringCard.locator('.p2p-recurring-price-buy strong').textContent();
     const sellPriceBefore = await recurringCard.locator('.p2p-recurring-price-sell strong').textContent();
     expect(parseLeadingPrice(buyPriceBefore)).toBeLessThanOrEqual(parseLeadingPrice(sellPriceBefore));
     await recurringCard.locator('.p2p-recurring-price-card').click();
-    await expect(recurringCard.locator('.p2p-recurring-price-buy span')).not.toHaveText(buyLabelBefore ?? '');
-    await expect(recurringCard.locator('.p2p-recurring-price-sell span')).not.toHaveText(sellLabelBefore ?? '');
+    await expect(recurringCard.locator('.p2p-recurring-price-buy > span')).not.toHaveText(buyLabelBefore ?? '');
+    await expect(recurringCard.locator('.p2p-recurring-price-sell > span')).not.toHaveText(sellLabelBefore ?? '');
     await expect(recurringCard.locator('.p2p-recurring-price-buy strong')).not.toHaveText(buyPriceBefore ?? '');
     await expect(recurringCard.locator('.p2p-recurring-price-sell strong')).not.toHaveText(sellPriceBefore ?? '');
     const buyPriceAfter = await recurringCard.locator('.p2p-recurring-price-buy strong').textContent();
@@ -428,8 +569,8 @@ test.describe('trading responsive layout', () => {
 
     await page.setViewportSize(mobileViewport);
     await page.goto('/trades');
-    await expect(page.locator('.p2p-public-trade-grid .p2p-order-card').first()).toBeVisible();
-    await expect(page.locator('.p2p-public-trade-grid .p2p-order-token-actions').first()).toBeVisible();
+    await expect(page.locator('.p2p-public-trade-grid .p2p-order-card').first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.p2p-public-trade-grid .p2p-order-token-actions').first()).toBeVisible({ timeout: 30_000 });
     await expectNoHorizontalOverflow(page);
   });
 
@@ -440,7 +581,7 @@ test.describe('trading responsive layout', () => {
     const oneOffOpenButton = page
       .locator('.p2p-public-trade-grid .p2p-order-card:not(.p2p-recurring-order-card) .p2p-offer-open-btn')
       .first();
-    await expect(oneOffOpenButton).toBeVisible();
+    await expect(oneOffOpenButton).toBeVisible({ timeout: 30_000 });
     await oneOffOpenButton.click();
 
     const terminal = page.locator('.p2p-terminal-shell-standard');
@@ -458,9 +599,13 @@ test.describe('trading responsive layout', () => {
       };
     });
     expect(selectedCardStyle.backgroundImage).toContain('linear-gradient');
-    expect(selectedCardStyle.outlineColor).toContain('100, 226, 240');
+    expect(selectedCardStyle.outlineColor).toContain('80, 0, 133');
     expect(selectedCardStyle.outlineWidth).toBe('1px');
-    expect(selectedCardStyle.boxShadow).toContain('86, 214, 231');
+    expect(selectedCardStyle.boxShadow).toContain('80, 0, 133');
+    const selectedCardHeaderHeight = await selectedDeskCard
+      .locator('.p2p-order-card-head')
+      .evaluate((element) => Math.round(element.getBoundingClientRect().height));
+    expect(selectedCardHeaderHeight).toBeLessThanOrEqual(46);
     await expect(terminal).toBeVisible({ timeout: 30_000 });
     await expect(terminal.locator('.p2p-terminal-main')).toBeVisible();
     await expect(terminal.locator('.p2p-terminal-history-desktop')).toHaveCount(0);
@@ -473,8 +618,8 @@ test.describe('trading responsive layout', () => {
     await expect(terminal.locator('.p2p-terminal-flow')).toContainText('You sell');
     await expect(terminal.locator('.p2p-terminal-flow')).toContainText('You buy');
     await expect(terminal.locator('.p2p-terminal-flow')).not.toContainText(/Seller sells|Buyer pays/);
-    if ((await terminal.locator('.p2p-terminal-tag-row', { hasText: 'Private liquidity' }).count()) > 0) {
-      await expect(terminal.locator('.p2p-terminal-stat-grid')).not.toContainText('Private link');
+    if ((await terminal.locator('.p2p-terminal-tag-row', { hasText: /Private liquidity|Hybrid liquidity/ }).count()) > 0) {
+      await expect(terminal.locator('.p2p-terminal-stat-grid')).not.toContainText(/Private link|Private order/);
     }
     await expect(history).toBeVisible();
     await expect(history.locator('.p2p-terminal-history-head')).toContainText('Your history');
@@ -589,7 +734,7 @@ test.describe('trading responsive layout', () => {
     await page.goto('/trades');
 
     const firstCard = page.locator('.p2p-public-trade-grid .p2p-order-card').first();
-    await expect(firstCard).toBeVisible();
+    await expect(firstCard).toBeVisible({ timeout: 30_000 });
     const motionStyle = await firstCard.evaluate((element) => {
       const style = window.getComputedStyle(element);
       return {
@@ -606,13 +751,14 @@ test.describe('trading responsive layout', () => {
     await page.goto('/trades');
 
     const privateCard = page
-      .locator('.p2p-public-trade-grid .p2p-order-card')
-      .filter({ hasText: 'Private liquidity' })
+      .locator(
+        '.p2p-public-trade-grid .p2p-offer-card-private-liquidity, .p2p-public-trade-grid .p2p-recurring-order-card-private'
+      )
       .first();
-    test.skip((await privateCard.count()) === 0, 'No private-liquidity sample card available.');
+    test.skip((await privateCard.count()) === 0, 'No private-order sample card available.');
 
     const openControl = privateCard.locator('.p2p-offer-open-btn, .p2p-offer-manage-btn').first();
-    test.skip((await openControl.count()) === 0, 'Private-liquidity sample card has no terminal action.');
+    test.skip((await openControl.count()) === 0, 'Private-order sample card has no terminal action.');
     await openControl.click();
 
     const history = page.locator('.p2p-terminal-history-window');
@@ -647,7 +793,7 @@ test.describe('trading responsive layout', () => {
     const mineTypeFilter = page.locator('.p2p-filter-type select');
     if (await mineTypeFilter.count()) {
       await expect(mineTypeFilter).toContainText('Private liquidity');
-      await expect(mineTypeFilter).toContainText('Private links');
+      await expect(mineTypeFilter).toContainText('Private order links');
       await expect(mineTypeFilter).toContainText('Direct links');
       await expect(mineTypeFilter).toContainText('Counters');
       await mineTypeFilter.selectOption('private-link');

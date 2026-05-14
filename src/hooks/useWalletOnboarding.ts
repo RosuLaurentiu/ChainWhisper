@@ -20,6 +20,7 @@ import {
 import {
   buildWalletAesHealthState,
   clearCotiAesUnlockRequest,
+  clearFallbackAesSessionOnboardInfo,
   getOrRecoverAesForWallet,
   readFallbackAesSessionOnboardInfo
 } from '../lib/cotiAesUnlock';
@@ -314,9 +315,13 @@ export function useWalletOnboarding({
 
     if (previousWalletKey) {
       clearCotiAesUnlockRequest(previousWalletKey, activeProviderRef.current);
+      clearFallbackAesSessionOnboardInfo(previousWalletKey);
     }
     if (nextWalletKey) {
       clearCotiAesUnlockRequest(nextWalletKey, activeProviderRef.current);
+      if (previousWalletKey) {
+        clearFallbackAesSessionOnboardInfo(nextWalletKey);
+      }
     }
     signerCacheRef.current = {};
     signerProviderCacheRef.current = {};

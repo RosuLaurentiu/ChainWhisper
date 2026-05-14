@@ -16,6 +16,20 @@ import { formatTradeRatioLabel, isZeroTradeTakerAddress } from './tradePerspecti
 export const WALLET_STATUS_STORAGE_KEY = 'coti-trade-last-wallet-id';
 const TRADE_ACCESS_SECRET_STORAGE_KEY = 'coti-trade-access-secrets-v1';
 const PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY = 'coti-private-trade-liquidity-v1';
+const PRIVATE_LIQUIDITY_LABEL = 'Private liquidity';
+const PUBLIC_LIQUIDITY_LABEL = 'Public liquidity';
+const HYBRID_LIQUIDITY_LABEL = 'Hybrid liquidity';
+
+const getTradeLiquidityLabel = (offer: TradeAssetPayload, request: TradeAssetPayload): string => {
+  const privateSideCount = [offer, request].filter((asset) => asset.kind === 'private-erc20').length;
+  if (privateSideCount === 2) {
+    return PRIVATE_LIQUIDITY_LABEL;
+  }
+  if (privateSideCount === 1) {
+    return HYBRID_LIQUIDITY_LABEL;
+  }
+  return PUBLIC_LIQUIDITY_LABEL;
+};
 
 const normalizeStoredAccessSecret = (value?: string | null): string => {
   const secret = value?.trim() ?? '';
@@ -336,7 +350,7 @@ export const formatTradeListTerms = (trade: TradeSnapshot): string => {
   const displayTerms = getTradeDisplayTerms(trade);
   const termsVisibility = getTradeTermsVisibility(trade);
   if (termsVisibility === 'hidden-liquidity') {
-    return `Private order; price ratio ${formatTradeRatioLabel(displayTerms.offer, displayTerms.request) ?? 'unavailable'}`;
+    return `${getTradeLiquidityLabel(displayTerms.offer, displayTerms.request)}; price ratio ${formatTradeRatioLabel(displayTerms.offer, displayTerms.request) ?? 'unavailable'}`;
   }
   if (termsVisibility === 'direct-private-terms' && !hasHydratedDirectTradeTerms(trade)) {
     return 'Direct offer with private terms';
@@ -365,7 +379,7 @@ export const getTradeHistoryKindLabel = (trade: TradeSnapshot): string => {
     return 'Recurring OTC order';
   }
   if (getTradeTermsVisibility(trade) === 'hidden-liquidity') {
-    return 'Private order';
+    return getTradeLiquidityLabel(trade.offer, trade.request);
   }
   if (trade.counterParentTradeId) {
     return `Counter to #${trade.counterParentTradeId}`;
@@ -376,7 +390,7 @@ export const getTradeHistoryKindLabel = (trade: TradeSnapshot): string => {
   if (trade.replacementTradeId) {
     return `Replaced by #${trade.replacementTradeId}`;
   }
-  return trade.isPublic === false ? 'Private offer' : 'Public offer';
+  return getTradeLiquidityLabel(trade.offer, trade.request);
 };
 
 export const getTradeHistoryOutcomeLabel = (trade: TradeSnapshot, statusLabel: string): string => {

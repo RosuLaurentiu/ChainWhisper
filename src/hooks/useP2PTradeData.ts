@@ -37,6 +37,27 @@ const sortTrades = (trades: TradeSnapshot[]): TradeSnapshot[] =>
 
 const hasEntries = <T,>(value?: T[]): boolean => Boolean(value?.length);
 
+const stripWalletScopedTradeSnapshot = (snapshot: TradeSnapshot): TradeSnapshot => {
+  const stripped: TradeSnapshot = {
+    ...snapshot,
+    makerPrivateProgress: undefined,
+    privateFillReceipts: undefined,
+    walletFillState: undefined,
+    walletHasFill: undefined
+  };
+
+  if (snapshot.recurringOrder) {
+    stripped.recurringOrder = {
+      ...snapshot.recurringOrder,
+      makerPrivateInventory: undefined,
+      privateExecutions: undefined,
+      publicExecutions: undefined
+    };
+  }
+
+  return stripped;
+};
+
 const mergeTradeSnapshotEnrichment = (incoming: TradeSnapshot, existing?: TradeSnapshot | null): TradeSnapshot => {
   if (!existing || getSnapshotKey(existing) !== getSnapshotKey(incoming)) {
     return incoming;
@@ -85,6 +106,7 @@ const mergeTradeSnapshotList = (incoming: TradeSnapshot[], existing: TradeSnapsh
 };
 
 export const __mergeTradeSnapshotEnrichmentForTest = mergeTradeSnapshotEnrichment;
+export const __stripWalletScopedTradeSnapshotForTest = stripWalletScopedTradeSnapshot;
 
 type TokenMetadata = {
   privateRewardTokenDecimals: number;
@@ -164,6 +186,7 @@ export default function useP2PTradeData({
   const publicTradesRef = useRef<TradeSnapshot[]>([]);
   const myTradesRef = useRef<TradeSnapshot[]>([]);
   const latestSyncSessionKeyRef = useRef(syncSessionKey);
+  const previousWalletKeyRef = useRef(walletKey);
 
   useEffect(() => {
     detailTradeRef.current = detailTrade;
@@ -180,6 +203,17 @@ export default function useP2PTradeData({
   useEffect(() => {
     latestSyncSessionKeyRef.current = syncSessionKey;
   }, [syncSessionKey]);
+
+  useEffect(() => {
+    const previousWalletKey = previousWalletKeyRef.current;
+    if (previousWalletKey === walletKey) {
+      return;
+    }
+    previousWalletKeyRef.current = walletKey;
+    setPublicTrades((current) => current.map(stripWalletScopedTradeSnapshot));
+    setDetailTrade((current) => (current ? stripWalletScopedTradeSnapshot(current) : current));
+    setMyTrades([]);
+  }, [walletKey]);
 
   const enrichMakerPrivateProgressForList = useCallback(
     async (snapshots: TradeSnapshot[]): Promise<TradeSnapshot[]> =>

@@ -6,7 +6,7 @@ import {
   type TradeSnapshot
 } from '../lib/appShared';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
-import { __mergeTradeSnapshotEnrichmentForTest } from './useP2PTradeData';
+import { __mergeTradeSnapshotEnrichmentForTest, __stripWalletScopedTradeSnapshotForTest } from './useP2PTradeData';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const filler = '0x2222222222222222222222222222222222222222';
@@ -119,5 +119,61 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     expect(merged.walletHasFill).toBe(true);
     expect(merged.recurringOrder?.privateExecutions).toHaveLength(1);
     expect(merged.recurringOrder?.makerPrivateInventory?.baseInventory).toBe('9000000');
+  });
+
+  it('strips wallet-scoped private reveal data before a wallet switch can reuse it', () => {
+    const stripped = __stripWalletScopedTradeSnapshotForTest(
+      recurringTrade({
+        walletFillState: {
+          offerAmountReceived: '1000000',
+          requestAmountPaid: '2500000'
+        },
+        walletHasFill: true,
+        makerPrivateProgress: {
+          initialOfferAmount: '10000000',
+          remainingOfferAmount: '9000000'
+        },
+        privateFillReceipts: [
+          {
+            fillIndex: 1,
+            filler,
+            offerAmount: '1000000',
+            requestAmount: '2500000'
+          }
+        ],
+        recurringOrder: {
+          ...recurringTrade().recurringOrder!,
+          makerPrivateInventory: {
+            baseInventory: '9000000'
+          },
+          privateExecutions: [
+            {
+              fillIndex: 1,
+              side: 'sell',
+              filler,
+              baseAmount: '1000000',
+              quoteAmount: '2500000'
+            }
+          ],
+          publicExecutions: [
+            {
+              fillIndex: 2,
+              side: 'buy',
+              filler,
+              baseAmount: '1000000',
+              quoteAmount: '2000000'
+            }
+          ]
+        }
+      })
+    );
+
+    expect(stripped.walletHasFill).toBeUndefined();
+    expect(stripped.walletFillState).toBeUndefined();
+    expect(stripped.makerPrivateProgress).toBeUndefined();
+    expect(stripped.privateFillReceipts).toBeUndefined();
+    expect(stripped.recurringOrder?.makerPrivateInventory).toBeUndefined();
+    expect(stripped.recurringOrder?.privateExecutions).toBeUndefined();
+    expect(stripped.recurringOrder?.publicExecutions).toBeUndefined();
   });
 });

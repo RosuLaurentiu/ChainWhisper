@@ -13,7 +13,8 @@ import {
   isWalletScopedPrivateTokenSnapStale,
   repairCotiAesForWallet,
   resetSignerOnboardInfoForFreshAes,
-  resolveWalletScopedSnapAesState
+  resolveWalletScopedSnapAesState,
+  storeFallbackAesSessionOnboardInfo
 } from './cotiAesUnlock';
 import { deleteCotiSnapAesKeyResult, getCotiSnapAesKeyResult, storeCotiSnapAesKeyResult } from './cotiSnap';
 
@@ -295,6 +296,24 @@ describe('getOrRecoverAesForWallet', () => {
     });
     clearFallbackAesSessionOnboardInfo(walletAddress, activeProvider);
     expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+  });
+
+  it('clears every fallback AES provider session for one wallet when no provider is supplied', () => {
+    const activeProvider = metaMaskProvider();
+    const otherProvider = provider();
+    const otherWallet = '0x2222222222222222222222222222222222222222';
+
+    storeFallbackAesSessionOnboardInfo(walletAddress, activeProvider, { aesKey: 'wallet-aes-one' } as OnboardInfo);
+    storeFallbackAesSessionOnboardInfo(walletAddress, otherProvider, { aesKey: 'wallet-aes-two' } as OnboardInfo);
+    storeFallbackAesSessionOnboardInfo(otherWallet, activeProvider, { aesKey: 'other-wallet-aes' } as OnboardInfo);
+
+    clearFallbackAesSessionOnboardInfo(walletAddress);
+
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, otherProvider)).toBeNull();
+    expect(readFallbackAesSessionOnboardInfo(otherWallet, activeProvider)).toMatchObject({
+      aesKey: 'other-wallet-aes'
+    });
   });
 
   it('does not fall back to legacy AES when a MetaMask Snap AES key is required but missing', async () => {
