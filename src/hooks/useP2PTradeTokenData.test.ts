@@ -3,7 +3,8 @@ import {
   resolveBalanceWeiAfterRefresh,
   resolvePrivateBalanceAesReady,
   resolvePrivateBalanceWeiAfterRefresh,
-  resolvePrivateBalanceStateAfterRefresh
+  resolvePrivateBalanceStateAfterRefresh,
+  shouldRefreshPrivateTokenInfoForWallet
 } from './useP2PTradeTokenData';
 
 describe('wallet balance refresh helpers', () => {
@@ -34,5 +35,29 @@ describe('wallet balance refresh helpers', () => {
     expect(resolvePrivateBalanceAesReady({ walletHasAes: false })).toBe(false);
     expect(resolvePrivateBalanceAesReady({ walletHasAes: true })).toBe(true);
     expect(resolvePrivateBalanceAesReady({ signer: {} as never, walletHasAes: false })).toBe(true);
+  });
+
+  it('does not refresh private token metadata just because AES readiness is unset and locked', () => {
+    expect(
+      shouldRefreshPrivateTokenInfoForWallet({
+        tokenKind: 'private-erc20',
+        existing: { aesReady: undefined, loading: false },
+        walletHasAes: false
+      })
+    ).toBe(false);
+    expect(
+      shouldRefreshPrivateTokenInfoForWallet({
+        tokenKind: 'private-erc20',
+        existing: { aesReady: false, loading: false },
+        walletHasAes: true
+      })
+    ).toBe(true);
+    expect(
+      shouldRefreshPrivateTokenInfoForWallet({
+        tokenKind: 'erc20',
+        existing: { aesReady: undefined, loading: false },
+        walletHasAes: true
+      })
+    ).toBe(false);
   });
 });

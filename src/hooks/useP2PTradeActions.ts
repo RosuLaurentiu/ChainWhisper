@@ -33,6 +33,14 @@ const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContrac
 
 const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
 
+const normalizeAddress = (address?: string | null): string => address?.trim().toLowerCase() ?? '';
+
+const assetsUseSameToken = (left: TradeAssetPayload, right: TradeAssetPayload): boolean =>
+  left.kind === right.kind &&
+  left.kind !== 'native' &&
+  Boolean(left.tokenAddress && right.tokenAddress) &&
+  normalizeAddress(left.tokenAddress) === normalizeAddress(right.tokenAddress);
+
 const assertAccessSecretMatchesSnapshot = async (
   snapshot: TradeSnapshot,
   accessSecret: string,
@@ -256,6 +264,22 @@ export default function useP2PTradeActions({
           counterAcceptMode === 'accept-only' &&
           latestEscrowConfig.directVisible
         );
+        let canUseCloseFirstParentBalance = false;
+        if (
+          latestSnapshot.counterParentTradeId &&
+          counterAcceptMode === 'close-related' &&
+          acceptRequestAsset.kind === 'private-erc20'
+        ) {
+          const parentSnapshot = await readTradeDetail(
+            latestSnapshot.counterParentTradeId,
+            latestSnapshot.counterParentEscrow || latestSnapshot.escrowContract
+          ).catch(() => null);
+          canUseCloseFirstParentBalance = Boolean(
+            parentSnapshot &&
+            normalizeAddress(parentSnapshot.maker) === normalizeAddress(walletAddress) &&
+            assetsUseSameToken(parentSnapshot.offer, acceptRequestAsset)
+          );
+        }
         if (latestSnapshot.counterParentTradeId && counterAcceptMode === 'accept-only' && !latestEscrowConfig.directVisible) {
           throw new Error('Accept only is available for Direct OTC counter offers.');
         }
@@ -297,7 +321,8 @@ export default function useP2PTradeActions({
                   requestAsset: acceptRequestAsset,
                   requestAmountWei: remainingRequestAmount,
                   escrowContract: latestSnapshot.escrowContract,
-                  accessSecret: accessSecret || undefined
+                  accessSecret: accessSecret || undefined,
+                  skipPrivateTokenBalanceCheck: canUseCloseFirstParentBalance
                 })
               : await acceptTradeOnChain({
                   signer,

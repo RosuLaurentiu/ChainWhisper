@@ -62,6 +62,7 @@ type PrivateTokenSpendReadinessInput = {
   allowanceWei: bigint | null;
   tokenSymbol?: string;
   afterApproval?: boolean;
+  skipBalanceCheck?: boolean;
 };
 
 export type PrivateTokenSpendReadiness =
@@ -92,7 +93,8 @@ export const resolvePrivateTokenSpendReadiness = ({
   balanceWei,
   allowanceWei,
   tokenSymbol = 'private token',
-  afterApproval = false
+  afterApproval = false,
+  skipBalanceCheck = false
 }: PrivateTokenSpendReadinessInput): PrivateTokenSpendReadiness => {
   if (requiredAmountWei <= 0n) {
     return {
@@ -102,22 +104,27 @@ export const resolvePrivateTokenSpendReadiness = ({
     };
   }
 
-  if (balanceWei === null) {
+  const effectiveBalanceWei =
+    skipBalanceCheck && (balanceWei === null || balanceWei < requiredAmountWei)
+      ? requiredAmountWei
+      : balanceWei;
+
+  if (effectiveBalanceWei === null) {
     return {
       status: 'blocked',
       reason: 'balance-unavailable',
       message: `The app could not decrypt this wallet's private ${tokenSymbol} balance. Unlock privacy for the connected wallet and refresh the balance before filling.`,
-      balanceWei,
+      balanceWei: effectiveBalanceWei,
       allowanceWei
     };
   }
 
-  if (balanceWei < requiredAmountWei) {
+  if (effectiveBalanceWei < requiredAmountWei) {
     return {
       status: 'blocked',
       reason: 'insufficient-balance',
       message: `Your private ${tokenSymbol} balance is below this fill amount.`,
-      balanceWei,
+      balanceWei: effectiveBalanceWei,
       allowanceWei
     };
   }
@@ -125,7 +132,7 @@ export const resolvePrivateTokenSpendReadiness = ({
   if (allowanceWei !== null && allowanceWei >= requiredAmountWei) {
     return {
       status: 'ready',
-      balanceWei,
+      balanceWei: effectiveBalanceWei,
       allowanceWei
     };
   }
@@ -135,7 +142,7 @@ export const resolvePrivateTokenSpendReadiness = ({
       status: 'blocked',
       reason: 'allowance-unavailable-after-approval',
       message: `Private ${tokenSymbol} approval could not be confirmed after the approval transaction. Unlock privacy and try again.`,
-      balanceWei,
+      balanceWei: effectiveBalanceWei,
       allowanceWei
     };
   }
@@ -145,14 +152,14 @@ export const resolvePrivateTokenSpendReadiness = ({
       status: 'blocked',
       reason: 'insufficient-allowance-after-approval',
       message: `Private ${tokenSymbol} allowance is still below this fill amount after approval.`,
-      balanceWei,
+      balanceWei: effectiveBalanceWei,
       allowanceWei
     };
   }
 
   return {
     status: 'needs-approval',
-    balanceWei,
+    balanceWei: effectiveBalanceWei,
     allowanceWei
   };
 };
@@ -2857,7 +2864,8 @@ export const ensurePrivateTokenSpendReady = async ({
   tokenAddress,
   spenderAddress,
   requiredAmount,
-  tokenSymbol = 'private token'
+  tokenSymbol = 'private token',
+  skipBalanceCheck = false
 }: {
   signer: Wallet | JsonRpcSigner;
   ownerAddress: string;
@@ -2865,6 +2873,7 @@ export const ensurePrivateTokenSpendReady = async ({
   spenderAddress: string;
   requiredAmount: bigint;
   tokenSymbol?: string;
+  skipBalanceCheck?: boolean;
 }): Promise<void> => {
   if (requiredAmount <= 0n || !isWalletAddress(tokenAddress) || !isWalletAddress(spenderAddress)) {
     return;
@@ -2881,8 +2890,10 @@ export const ensurePrivateTokenSpendReady = async ({
     tokenSymbol
   });
 
-  let balanceWei = await readCurrentPrivateErc20BalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
-  if (balanceWei === null) {
+  let balanceWei = skipBalanceCheck
+    ? requiredAmount
+    : await readCurrentPrivateErc20BalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
+  if (!skipBalanceCheck && balanceWei === null) {
     balanceWei = await readCurrentPrivateErc20BalanceWei(tokenAddress, ownerAddress, signer, true).catch(() => null);
   }
   const allowanceWei = await readPrivateTokenAllowanceWei(
@@ -2896,7 +2907,8 @@ export const ensurePrivateTokenSpendReady = async ({
     requiredAmountWei: requiredAmount,
     balanceWei,
     allowanceWei,
-    tokenSymbol
+    tokenSymbol,
+    skipBalanceCheck
   });
 
   if (initialReadiness.status === 'blocked') {
@@ -2919,7 +2931,8 @@ export const ensurePrivateTokenSpendReady = async ({
     balanceWei,
     allowanceWei: refreshedAllowanceWei,
     tokenSymbol,
-    afterApproval: true
+    afterApproval: true,
+    skipBalanceCheck
   });
   if (refreshedReadiness.status !== 'ready') {
     throw new Error(refreshedReadiness.status === 'blocked' ? refreshedReadiness.message : 'Private token payment is not ready after approval.');

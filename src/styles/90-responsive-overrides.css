@@ -3514,6 +3514,11 @@
     font-size: 0.62rem;
   }
 
+  .app-shell-trades .p2p-order-title-row .p2p-order-chip-owner {
+    padding: 4px 7px;
+    font-size: 0.62rem;
+  }
+
   .app-shell-trades .p2p-hidden-price-card {
     gap: 6px;
     min-height: 86px;
@@ -3542,20 +3547,25 @@
     padding: 9px;
   }
 
-  .app-shell-trades .p2p-recurring-price-grid,
-  .app-shell-trades .p2p-recurring-inventory-strip {
+  .app-shell-trades .p2p-recurring-price-grid {
     gap: 5px;
   }
 
   .app-shell-trades .p2p-recurring-inventory-strip {
+    gap: 0;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .app-shell-trades .p2p-recurring-price-box,
-  .app-shell-trades .p2p-recurring-inventory-strip > div {
+  .app-shell-trades .p2p-recurring-price-box {
     gap: 2px;
     padding: 6px;
     border-radius: 7px;
+  }
+
+  .app-shell-trades .p2p-recurring-inventory-strip > div {
+    gap: 2px;
+    padding: 6px;
+    border-radius: 0;
   }
 
   .app-shell-trades .p2p-recurring-price-box strong,
@@ -3908,10 +3918,14 @@
     font-size: 0.66rem;
   }
 
-  .app-shell-trades .p2p-wallet-trade-switcher button strong {
+  .app-shell-trades .p2p-wallet-trade-count {
     min-width: 22px;
     padding: 1px 6px;
     font-size: 0.64rem;
+  }
+
+  .app-shell-trades .p2p-wallet-trade-tab-text small {
+    display: none;
   }
 
   .app-shell-trades .p2p-empty-state {
@@ -4122,7 +4136,9 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-direct-recipient,
 .app-shell-trades .p2p-private-link-state,
 .app-shell-trades .p2p-empty-state,
-.app-shell-trades .p2p-wallet-trade-switcher {
+.app-shell-trades .p2p-wallet-trade-switcher,
+.app-shell-trades .p2p-wallet-trade-group-head,
+.app-shell-trades .p2p-wallet-trade-empty {
   border-color: rgba(118, 96, 178, 0.56);
   background: rgba(7, 6, 14, 0.82);
 }
@@ -4195,17 +4211,17 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-recurring-price-card,
 .app-shell-trades .p2p-terminal-price-card,
 .app-shell-trades .trade-card-ratio-card {
-  border-color: rgba(111, 90, 167, 0.82);
+  border-color: rgba(111, 90, 167, 0.44);
   background:
-    linear-gradient(180deg, rgba(18, 15, 31, 0.88), rgba(4, 4, 10, 0.88));
+    linear-gradient(180deg, rgba(16, 13, 27, 0.74), rgba(4, 4, 10, 0.76));
 }
 
 .app-shell-trades .p2p-hidden-price-card:hover,
 .app-shell-trades .p2p-recurring-price-card:hover,
 .app-shell-trades .p2p-terminal-price-card:hover {
-  border-color: rgba(139, 92, 246, 0.92);
+  border-color: rgba(167, 139, 250, 0.62);
   background:
-    linear-gradient(180deg, rgba(20, 16, 35, 0.88), rgba(7, 6, 14, 0.9));
+    linear-gradient(180deg, rgba(19, 16, 32, 0.76), rgba(7, 6, 14, 0.82));
 }
 
 .app-shell-trades .p2p-hidden-price-card > strong,
@@ -4231,6 +4247,14 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-hidden-price-card .p2p-price-number,
 .app-shell-trades .p2p-recurring-price-box .p2p-price-number {
   color: #fff;
+}
+
+.app-shell-trades .p2p-price-number,
+.app-shell-trades .p2p-liquidity-number,
+.app-shell-trades .p2p-order-liquidity-summary strong,
+.app-shell-trades .p2p-order-liquidity-summary .p2p-offer-completion-meta span {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
 }
 
 .app-shell-trades .p2p-recurring-price-box .p2p-price-label,
@@ -4269,7 +4293,7 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-recurring-inventory-strip {
-    gap: 7px;
+    gap: 0;
   }
 
   .app-shell-trades .p2p-recurring-inventory-strip > div {
@@ -4302,8 +4326,16 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-terminal-action-state,
 .app-shell-trades .p2p-terminal-history-row,
 .app-shell-trades .trade-compose-section {
-  border-color: rgba(111, 90, 167, 0.5);
-  background: rgba(9, 8, 17, 0.72);
+  border-color: rgba(111, 90, 167, 0.3);
+  background: rgba(7, 7, 14, 0.56);
+}
+
+.app-shell-trades .p2p-recurring-inventory-strip > div {
+  background: transparent;
+}
+
+.app-shell-trades .p2p-recurring-inventory-strip > div + div {
+  border-left-color: rgba(111, 90, 167, 0.22);
 }
 
 .app-shell-trades .p2p-terminal-shell,
@@ -5446,7 +5478,11 @@ summary:focus:not(:focus-visible),
 
   .app-shell-trades .p2p-action-pending::after,
   .app-shell-trades .p2p-action-notice-pending .p2p-action-notice-dot,
-  .app-shell-trades .p2p-loading-skeleton span {
+  .app-shell-trades .p2p-loading-skeleton span,
+  .app-shell-trades .p2p-skeleton-line,
+  .app-shell-trades .p2p-skeleton-pill,
+  .app-shell-trades .p2p-skeleton-cell,
+  .app-shell-trades .p2p-skeleton-button {
     animation: none !important;
   }
 }

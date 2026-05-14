@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const mobileViewport = { width: 390, height: 844 };
+const mockTradingWalletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+const cotiChainIdHex = '0x282b34';
 
 const expectNoHorizontalOverflow = async (page: Page) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -21,9 +23,62 @@ const expectAboveTradeTabs = async (page: Page, selector: string) => {
   expect(targetBox!.y + targetBox!.height).toBeLessThanOrEqual(tabsBox!.y - 4);
 };
 
+const installMockTradingWallet = async (page: Page) => {
+  await page.addInitScript(({ address, chainIdHex }) => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const provider = {
+      isMetaMask: true,
+      selectedAddress: address,
+      request: async ({ method }: { method: string; params?: unknown[] }) => {
+        switch (method) {
+          case 'eth_requestAccounts':
+          case 'eth_accounts':
+            return [address];
+          case 'eth_chainId':
+            return chainIdHex;
+          case 'wallet_requestPermissions':
+            return [{ parentCapability: 'eth_accounts', caveats: [] }];
+          case 'wallet_switchEthereumChain':
+          case 'wallet_addEthereumChain':
+            return null;
+          default:
+            return null;
+        }
+      },
+      on: (eventName: string, handler: (...args: unknown[]) => void) => {
+        const handlers = listeners.get(eventName) ?? new Set<(...args: unknown[]) => void>();
+        handlers.add(handler);
+        listeners.set(eventName, handlers);
+      },
+      removeListener: (eventName: string, handler: (...args: unknown[]) => void) => {
+        listeners.get(eventName)?.delete(handler);
+      }
+    };
+
+    Object.defineProperty(window, 'ethereum', {
+      configurable: true,
+      value: provider
+    });
+  }, { address: mockTradingWalletAddress, chainIdHex: cotiChainIdHex });
+};
+
 const parseLeadingPrice = (value: string | null) => {
   const match = value?.match(/\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : Number.NaN;
+};
+
+const parseColorAlpha = (value: string) => {
+  const match = value.match(/rgba?\(([^)]+)\)/);
+  if (!match) {
+    return 1;
+  }
+  if (match[1].includes('/')) {
+    const alpha = Number(match[1].split('/').pop()?.trim());
+    return Number.isFinite(alpha) ? alpha : 1;
+  }
+  const parts = match[1].includes(',') ? match[1].split(',') : match[1].trim().split(/\s+/);
+  const values = parts.map((part) => Number(part.trim()));
+  return Number.isFinite(values[3]) ? values[3] : 1;
 };
 
 test.describe('mobile layout polish', () => {
@@ -102,6 +157,39 @@ test.describe('mobile layout polish', () => {
     await expect(page.locator('.p2p-wallet-trade-switcher')).toHaveCount(0);
     await expect(page.locator('.p2p-my-trades-section .standalone-trade-secondary-btn')).toHaveCount(0);
     await expect(page.getByText('Connect to see your trades')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('loads My Trades after connecting from the desk and keeps one refresh action', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await installMockTradingWallet(page);
+    await page.goto('/trades');
+
+    await page.locator('.top-header').getByRole('button', { name: /^Connect MetaMask$/i }).click();
+    await page.getByRole('navigation', { name: 'P2P trade views' }).getByRole('button', { name: 'My Trades' }).click();
+
+    const myTradesSection = page.locator('.p2p-my-trades-section');
+    await expect(myTradesSection).toBeVisible();
+    const switcher = myTradesSection.locator('.p2p-wallet-trade-switcher');
+    await expect(switcher).toBeVisible({ timeout: 45_000 });
+    await expect(myTradesSection.locator('.p2p-my-trades-empty-workspace')).toHaveCount(0);
+    await expect(myTradesSection.locator('.p2p-my-trades-refresh-btn')).toHaveCount(1);
+    await expect(myTradesSection.getByRole('button', { name: /^(Refresh|Refreshing\.\.\.)$/ })).toHaveCount(1);
+
+    for (const group of ['Received', 'Active', 'History']) {
+      await expect(switcher.getByRole('tab', { name: new RegExp(`${group}: \\d+`) })).toBeVisible();
+    }
+
+    await switcher.getByRole('tab', { name: /Received: \d+/ }).click();
+    await expect(myTradesSection.locator('.p2p-wallet-trade-group-head')).toContainText('Received');
+    await expect(myTradesSection.locator('.p2p-wallet-trade-empty')).toContainText('No received offers');
+    await switcher.getByRole('tab', { name: /History: \d+/ }).click();
+    await expect(myTradesSection.locator('.p2p-wallet-trade-group-head')).toContainText('History');
+    await expect(myTradesSection.locator('.p2p-wallet-trade-empty')).toContainText('No history yet');
+
+    await myTradesSection.locator('.p2p-my-trades-refresh-btn').click();
+    await expect(myTradesSection.locator('.p2p-wallet-trade-switcher')).toBeVisible();
+    await expect(myTradesSection.getByRole('button', { name: /^(Refresh|Refreshing\.\.\.)$/ })).toHaveCount(1);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -268,6 +356,19 @@ test.describe('trading responsive layout', () => {
     });
   }
 
+  test('shows card-shaped skeletons while active desk offers are loading', async ({ page }) => {
+    await page.setViewportSize({ width: 2016, height: 980 });
+    await page.goto('/trades', { waitUntil: 'domcontentloaded' });
+
+    const skeletonGrid = page.locator('.p2p-desk-skeleton-grid');
+    await expect(skeletonGrid).toBeVisible({ timeout: 5_000 });
+    await expect(skeletonGrid.locator('.p2p-desk-skeleton-card')).toHaveCount(5);
+    await expect(skeletonGrid.locator('.p2p-desk-skeleton-card-recurring')).toHaveCount(3);
+    await expect(skeletonGrid.locator('.p2p-desk-skeleton-market')).toHaveCount(5);
+    await expect(skeletonGrid.locator('.p2p-desk-skeleton-actions')).toHaveCount(5);
+    await expect(page.locator('.p2p-empty-state-loading')).toHaveCount(0);
+  });
+
   test('keeps desk order cards symmetrical and action-ready across order types', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
     await page.goto('/trades');
@@ -360,8 +461,11 @@ test.describe('trading responsive layout', () => {
     await expect(recurringCard.locator('.p2p-recurring-price-card-head')).toContainText('Price ratio');
     await expect(recurringCard.locator('.p2p-recurring-price-basis')).toHaveCount(0);
     await expect(oneOffCard.locator('.p2p-order-market-panel .p2p-price-number')).toBeVisible();
-    await expect(oneOffCard.locator('.p2p-order-market-panel .p2p-price-side-label')).toContainText(/^(Buy|Sell) [A-Z0-9$]+/i);
+    await expect(oneOffCard.locator('.p2p-order-market-panel .p2p-price-side-label')).toContainText(
+      /^(Buy|Sell) [A-Z0-9$]+ (with|for) [A-Z0-9$]+/i
+    );
     await expect(recurringCard.locator('.p2p-recurring-price-box .p2p-price-number')).toHaveCount(2);
+    await expect(desk.locator('.p2p-recurring-inventory-strip strong').first()).toBeVisible();
     const recurringValueWrap = await recurringCard
       .locator('.p2p-recurring-price-box .p2p-price-unit, .p2p-recurring-inventory-strip .p2p-liquidity-label')
       .evaluateAll((values) =>
@@ -384,6 +488,92 @@ test.describe('trading responsive layout', () => {
       expect(value.textOverflow).not.toBe('ellipsis');
       expect(value.scrollWidth).toBeLessThanOrEqual(value.clientWidth + 1);
     }
+    const numericStyles = await Promise.all([
+      oneOffCard.locator('.p2p-order-market-panel .p2p-price-number').first().evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        const unit = element.parentElement?.querySelector('.p2p-price-unit');
+        const unitStyle = unit ? window.getComputedStyle(unit) : null;
+        return {
+          fontFeatureSettings: style.fontFeatureSettings,
+          fontSize: parseFloat(style.fontSize),
+          fontVariantNumeric: style.fontVariantNumeric,
+          unitFontSize: unitStyle ? parseFloat(unitStyle.fontSize) : 0
+        };
+      }),
+      recurringCard.locator('.p2p-recurring-price-box .p2p-price-number').first().evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        const unit = element.parentElement?.querySelector('.p2p-price-unit');
+        const unitStyle = unit ? window.getComputedStyle(unit) : null;
+        return {
+          fontFeatureSettings: style.fontFeatureSettings,
+          fontSize: parseFloat(style.fontSize),
+          fontVariantNumeric: style.fontVariantNumeric,
+          unitFontSize: unitStyle ? parseFloat(unitStyle.fontSize) : 0
+        };
+      }),
+      publicLiquidityOneOff.locator('.p2p-order-liquidity-summary strong').first().evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        return {
+          fontFeatureSettings: style.fontFeatureSettings,
+          fontSize: parseFloat(style.fontSize),
+          fontVariantNumeric: style.fontVariantNumeric,
+          unitFontSize: 0
+        };
+      }),
+      desk.locator('.p2p-recurring-inventory-strip strong').first().evaluate((element) => {
+        const style = window.getComputedStyle(element);
+        return {
+          fontFeatureSettings: style.fontFeatureSettings,
+          fontSize: parseFloat(style.fontSize),
+          fontVariantNumeric: style.fontVariantNumeric,
+          unitFontSize: 0
+        };
+      })
+    ]);
+    for (const style of numericStyles) {
+      expect(`${style.fontVariantNumeric} ${style.fontFeatureSettings}`).toMatch(/tabular-nums|tnum/);
+      if (style.unitFontSize > 0) {
+        expect(style.fontSize).toBeGreaterThan(style.unitFontSize);
+      }
+    }
+    const oneOffChrome = await oneOffCard.evaluate((card) => {
+      const readBorder = (selector: string) => {
+        const element = card.querySelector(selector);
+        return element ? window.getComputedStyle(element).borderTopColor : '';
+      };
+      return {
+        detail: readBorder('.p2p-order-detail-band'),
+        market: readBorder('.p2p-order-market-panel'),
+        outer: window.getComputedStyle(card).borderTopColor,
+        term: readBorder('.p2p-order-liquidity-summary, .p2p-offer-term')
+      };
+    });
+    expect(parseColorAlpha(oneOffChrome.market)).toBeLessThan(parseColorAlpha(oneOffChrome.outer));
+    expect(parseColorAlpha(oneOffChrome.term)).toBeLessThan(parseColorAlpha(oneOffChrome.outer));
+    expect(parseColorAlpha(oneOffChrome.detail)).toBeLessThanOrEqual(parseColorAlpha(oneOffChrome.outer));
+    const recurringChrome = await recurringCard.evaluate((card) => {
+      const readStyle = (selector: string) => {
+        const element = card.querySelector(selector);
+        return element ? window.getComputedStyle(element) : null;
+      };
+      const price = readStyle('.p2p-recurring-price-card');
+      const priceBox = readStyle('.p2p-recurring-price-box');
+      const strip = readStyle('.p2p-recurring-inventory-strip');
+      const stripCell = readStyle('.p2p-recurring-inventory-strip > div');
+      return {
+        outer: window.getComputedStyle(card).borderTopColor,
+        price: price?.borderTopColor ?? '',
+        priceBox: priceBox?.borderTopColor ?? '',
+        strip: strip?.borderTopColor ?? '',
+        stripCellBackground: stripCell?.backgroundColor ?? '',
+        stripColumnGap: strip?.columnGap ?? ''
+      };
+    });
+    expect(parseColorAlpha(recurringChrome.price)).toBeLessThan(parseColorAlpha(recurringChrome.outer));
+    expect(parseColorAlpha(recurringChrome.priceBox)).toBeLessThan(parseColorAlpha(recurringChrome.outer));
+    expect(parseColorAlpha(recurringChrome.strip)).toBeLessThan(parseColorAlpha(recurringChrome.outer));
+    expect(parseColorAlpha(recurringChrome.stripCellBackground)).toBeLessThanOrEqual(0.05);
+    expect(parseFloat(recurringChrome.stripColumnGap)).toBe(0);
     await expect(oneOffCard.locator('.p2p-order-market-panel small')).toHaveCount(0);
     await expect(oneOffCard.locator('.p2p-order-market-panel')).not.toContainText(/Private amounts|Visible terms|Remaining terms/);
     const priceRatioLabelStyles = await Promise.all([

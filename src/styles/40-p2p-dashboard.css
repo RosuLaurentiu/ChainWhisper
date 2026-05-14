@@ -1873,6 +1873,16 @@
   opacity: 0.54;
 }
 
+.p2p-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 .standalone-trade-detail-section {
   min-width: 0;
   justify-items: center;
@@ -3391,6 +3401,164 @@
   gap: 14px;
 }
 
+.p2p-desk-skeleton-grid {
+  pointer-events: none;
+}
+
+.p2p-desk-skeleton-card {
+  min-width: 0;
+  display: grid;
+  grid-template-rows:
+    minmax(var(--p2p-desk-card-header-row), auto)
+    var(--p2p-desk-card-market-row)
+    var(--p2p-desk-card-detail-row)
+    var(--p2p-desk-card-verify-row)
+    auto;
+  gap: 7px;
+  overflow: hidden;
+  border: 1px solid rgba(88, 71, 135, 0.62);
+  border-radius: 8px;
+  background: rgba(5, 5, 11, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  padding: 11px;
+}
+
+.p2p-desk-skeleton-card-recurring {
+  border-color: rgba(121, 95, 184, 0.62);
+}
+
+.p2p-skeleton-line,
+.p2p-skeleton-pill,
+.p2p-skeleton-cell,
+.p2p-skeleton-button {
+  display: block;
+  min-width: 0;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(74, 64, 112, 0.18), rgba(139, 92, 246, 0.34), rgba(74, 64, 112, 0.18));
+  background-size: 220% 100%;
+  animation: p2p-skeleton-slide 1.25s ease-in-out infinite;
+}
+
+.p2p-desk-skeleton-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: start;
+  align-items: center;
+  gap: 5px 8px;
+  min-height: var(--p2p-desk-card-header-row);
+}
+
+.p2p-skeleton-title {
+  width: min(72%, 160px);
+  height: 18px;
+}
+
+.p2p-skeleton-meta {
+  grid-column: 1 / -1;
+  width: min(64%, 190px);
+  height: 11px;
+  opacity: 0.78;
+}
+
+.p2p-skeleton-pill {
+  width: 48px;
+  height: 18px;
+  border-radius: 999px;
+  opacity: 0.82;
+}
+
+.p2p-desk-skeleton-market {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  height: var(--p2p-desk-card-market-row);
+  min-height: 0;
+  border: 1px solid rgba(121, 95, 184, 0.34);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(12, 10, 22, 0.64), rgba(5, 5, 12, 0.54));
+  padding: 12px 14px;
+}
+
+.p2p-skeleton-label {
+  width: 82px;
+  height: 10px;
+  opacity: 0.7;
+}
+
+.p2p-skeleton-price {
+  width: min(70%, 180px);
+  height: 24px;
+}
+
+.p2p-skeleton-unit {
+  width: min(44%, 118px);
+  height: 10px;
+  opacity: 0.58;
+}
+
+.p2p-desk-skeleton-price-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.p2p-desk-skeleton-price-grid .p2p-skeleton-cell {
+  height: 43px;
+  border-radius: 8px;
+}
+
+.p2p-desk-skeleton-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  height: var(--p2p-desk-card-detail-row);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(74, 64, 112, 0.28);
+  border-radius: 8px;
+  background: rgba(7, 7, 14, 0.46);
+}
+
+.p2p-desk-skeleton-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.p2p-desk-skeleton-detail .p2p-skeleton-cell {
+  height: 100%;
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, rgba(74, 64, 112, 0.14), rgba(139, 92, 246, 0.28), rgba(74, 64, 112, 0.14));
+  box-shadow: inset -1px 0 rgba(74, 64, 112, 0.2);
+}
+
+.p2p-desk-skeleton-verify {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: var(--p2p-desk-card-verify-row);
+  border-bottom: 1px solid rgba(74, 64, 112, 0.28);
+}
+
+.p2p-desk-skeleton-verify .p2p-skeleton-line {
+  width: 96px;
+  height: 10px;
+  opacity: 0.7;
+}
+
+.p2p-desk-skeleton-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.p2p-skeleton-button {
+  height: 34px;
+  border-radius: 8px;
+}
+
 .p2p-order-card {
   grid-template-rows:
     minmax(62px, auto)
@@ -3761,6 +3929,12 @@
   margin-top: 1px;
 }
 
+.p2p-order-title-row .p2p-order-chip-owner {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  font-size: 0.66rem;
+}
+
 .p2p-order-title-row .p2p-order-chip,
 .p2p-order-title-row .p2p-expiry-chip,
 .p2p-order-subline .p2p-order-chip,
@@ -3927,10 +4101,10 @@
   align-content: center;
   gap: 7px;
   min-height: 100px;
-  border: 1px solid rgba(121, 95, 184, 0.7);
+  border: 1px solid rgba(121, 95, 184, 0.42);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(12, 10, 22, 0.86), rgba(5, 5, 12, 0.76));
+    linear-gradient(180deg, rgba(12, 10, 22, 0.74), rgba(5, 5, 12, 0.62));
   color: inherit;
   font: inherit;
   padding: 12px 14px;
@@ -3942,8 +4116,8 @@
 }
 
 .p2p-hidden-price-card:hover {
-  border-color: rgba(139, 92, 246, 0.72);
-  background: rgba(21, 21, 34, 0.72);
+  border-color: rgba(167, 139, 250, 0.58);
+  background: rgba(19, 18, 31, 0.66);
 }
 
 .p2p-hidden-price-card:focus-visible {
@@ -3965,13 +4139,14 @@
   color: var(--muted);
   letter-spacing: 0.06em;
   line-height: 1.05;
+  overflow-wrap: anywhere;
 }
 
 .p2p-hidden-price-card > strong {
   overflow-wrap: anywhere;
   color: var(--text);
   font-family: "Space Grotesk", sans-serif;
-  font-size: clamp(1.08rem, 1.55vw, 1.28rem);
+  font-size: clamp(1.16rem, 1.7vw, 1.4rem);
   line-height: 1.08;
 }
 
@@ -3989,6 +4164,8 @@
   flex: 0 0 auto;
   min-width: 0;
   color: #fff;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
   letter-spacing: 0;
   line-height: 1;
 }
@@ -3996,12 +4173,12 @@
 .p2p-price-unit {
   min-width: 0;
   overflow: hidden;
-  color: rgba(218, 211, 255, 0.82);
+  color: rgba(218, 211, 255, 0.74);
   font-family: Inter, system-ui, sans-serif;
-  font-size: 0.72em;
+  font-size: 0.68em;
   font-weight: 900;
   letter-spacing: 0;
-  line-height: 1.08;
+  line-height: 1.02;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4022,8 +4199,8 @@
   display: grid;
   align-content: start;
   gap: 5px;
-  border: 1px solid rgba(74, 64, 112, 0.44);
-  background: rgba(9, 9, 15, 0.66);
+  border: 1px solid rgba(74, 64, 112, 0.28);
+  background: rgba(7, 7, 14, 0.48);
   padding: 10px 11px;
 }
 
@@ -4070,14 +4247,14 @@
 
 .p2p-offer-term-offered {
   border-left: 0;
-  border-color: rgba(121, 95, 184, 0.46);
-  background: rgba(9, 9, 15, 0.66);
+  border-color: rgba(121, 95, 184, 0.3);
+  background: rgba(7, 7, 14, 0.48);
 }
 
 .p2p-offer-term-requested {
   border-left: 0;
-  border-color: rgba(167, 139, 250, 0.36);
-  background: rgba(9, 9, 15, 0.66);
+  border-color: rgba(167, 139, 250, 0.24);
+  background: rgba(7, 7, 14, 0.48);
 }
 
 .p2p-offer-term-offered span {
@@ -4089,18 +4266,18 @@
 }
 
 .p2p-offer-term-send {
-  border-left-color: rgba(121, 95, 184, 0.46);
-  background: rgba(9, 9, 15, 0.66);
+  border-left-color: rgba(121, 95, 184, 0.3);
+  background: rgba(7, 7, 14, 0.48);
 }
 
 .p2p-offer-term-receive {
-  border-left-color: rgba(167, 139, 250, 0.36);
-  background: rgba(9, 9, 15, 0.66);
+  border-left-color: rgba(167, 139, 250, 0.24);
+  background: rgba(7, 7, 14, 0.48);
 }
 
 .p2p-offer-term-neutral {
-  border-left-color: rgba(139, 92, 246, 0.58);
-  background: rgba(24, 22, 36, 0.72);
+  border-left-color: rgba(139, 92, 246, 0.36);
+  background: rgba(16, 14, 26, 0.54);
 }
 
 .p2p-offer-term-send span {
@@ -4193,9 +4370,9 @@
 .p2p-offer-completion {
   display: grid;
   gap: 0.45rem;
-  border: 1px solid rgba(167, 139, 250, 0.22);
+  border: 1px solid rgba(167, 139, 250, 0.16);
   border-radius: 8px;
-  background: rgba(13, 10, 28, 0.48);
+  background: rgba(8, 8, 16, 0.42);
   padding: 0.75rem 0.85rem;
 }
 
@@ -4319,6 +4496,13 @@
 
 .p2p-order-liquidity-summary .p2p-offer-completion-meta span {
   font-size: 0.7rem;
+}
+
+.p2p-order-liquidity-summary .p2p-offer-completion-head strong,
+.p2p-order-liquidity-summary .p2p-offer-completion-flow strong,
+.p2p-order-liquidity-summary .p2p-offer-completion-meta span {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
 }
 
 .p2p-order-liquidity-summary .p2p-offer-completion-flow {
@@ -4758,9 +4942,11 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  border: 1px solid rgba(74, 64, 112, 0.58);
+  border: 1px solid rgba(92, 75, 138, 0.64);
   border-radius: 10px;
-  background: rgba(10, 10, 18, 0.42);
+  background:
+    linear-gradient(180deg, rgba(33, 24, 54, 0.56), rgba(10, 10, 18, 0.48)),
+    rgba(10, 10, 18, 0.52);
   padding: 6px;
 }
 
@@ -4787,14 +4973,35 @@
   color: #f5f3ff;
 }
 
-.p2p-wallet-trade-switcher button span {
+.p2p-wallet-trade-tab-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.p2p-wallet-trade-label-full,
+.p2p-wallet-trade-label-mobile {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.p2p-wallet-trade-switcher button strong {
+.p2p-wallet-trade-tab-text small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(183, 174, 212, 0.74);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.p2p-wallet-trade-count {
   flex: 0 0 auto;
   min-width: 28px;
   border: 1px solid rgba(139, 92, 246, 0.34);
@@ -4835,16 +5042,52 @@
   padding: 10px 12px;
 }
 
+.p2p-wallet-trade-group-head > div {
+  min-width: 0;
+}
+
+.p2p-wallet-trade-group-kicker {
+  display: block;
+  color: rgba(183, 174, 212, 0.74);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
 .p2p-wallet-trade-group-head h3 {
   margin: 3px 0 0;
   font-family: "Space Grotesk", sans-serif;
   font-size: 1rem;
 }
 
+.p2p-wallet-trade-group-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .p2p-wallet-trade-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.p2p-wallet-trade-summary span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.p2p-wallet-trade-summary strong {
+  color: #f5f3ff;
+  font-variant-numeric: tabular-nums;
 }
 
 .p2p-wallet-trade-group-head > span {
@@ -4855,6 +5098,58 @@
   padding: 3px 9px;
   font-size: 0.74rem;
   font-weight: 800;
+}
+
+.p2p-wallet-trade-empty {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid rgba(74, 64, 112, 0.44);
+  border-radius: 10px;
+  background: rgba(8, 8, 16, 0.42);
+  padding: 14px;
+}
+
+.p2p-wallet-trade-empty > span {
+  color: rgba(183, 174, 212, 0.7);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.p2p-wallet-trade-empty strong {
+  color: var(--text);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1rem;
+  line-height: 1.15;
+}
+
+.p2p-wallet-trade-empty p {
+  max-width: 46rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.p2p-wallet-trade-empty button {
+  width: fit-content;
+  min-height: 34px;
+  margin-top: 3px;
+  border: 1px solid rgba(139, 92, 246, 0.48);
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #f2edff;
+  cursor: pointer;
+  font-weight: 900;
+  padding: 7px 12px;
+}
+
+.p2p-wallet-trade-empty button:hover {
+  border-color: rgba(167, 139, 250, 0.64);
+  background: rgba(139, 92, 246, 0.18);
 }
 
 .p2p-offer-counter-btn:hover {
@@ -5446,9 +5741,9 @@
   align-content: center;
   gap: 6px;
   min-height: var(--p2p-desk-card-market-row, 104px);
-  border: 1px solid rgba(121, 95, 184, 0.7);
+  border: 1px solid rgba(121, 95, 184, 0.42);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.76);
+  background: rgba(5, 5, 12, 0.62);
   color: inherit;
   font: inherit;
   padding: 10px;
@@ -5465,8 +5760,8 @@
 }
 
 .p2p-recurring-price-card:hover {
-  border-color: rgba(139, 92, 246, 0.72);
-  background: rgba(21, 21, 34, 0.72);
+  border-color: rgba(167, 139, 250, 0.58);
+  background: rgba(19, 18, 31, 0.66);
 }
 
 .p2p-recurring-price-card:focus-visible {
@@ -5480,9 +5775,9 @@
   align-content: center;
   gap: 4px;
   min-width: 0;
-  border: 1px solid rgba(74, 64, 112, 0.58);
+  border: 1px solid rgba(74, 64, 112, 0.32);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.66);
+  background: rgba(5, 5, 12, 0.48);
   padding: 7px 8px;
 }
 
@@ -5528,7 +5823,7 @@
 
 .p2p-recurring-price-box .p2p-price-number {
   color: #fff;
-  font-size: clamp(1.08rem, 1.42vw, 1.24rem);
+  font-size: clamp(1.16rem, 1.55vw, 1.36rem);
   font-weight: 950;
   text-transform: none;
   line-height: 0.98;
@@ -5536,11 +5831,11 @@
 
 .p2p-recurring-price-box .p2p-price-unit {
   display: block;
-  color: rgba(218, 211, 255, 0.78);
-  font-size: clamp(0.58rem, 0.85vw, 0.68rem);
+  color: rgba(218, 211, 255, 0.7);
+  font-size: clamp(0.56rem, 0.78vw, 0.64rem);
   font-weight: 900;
   letter-spacing: 0;
-  line-height: 1.05;
+  line-height: 1.02;
   overflow: visible;
   overflow-wrap: anywhere;
   text-overflow: clip;
@@ -5568,17 +5863,21 @@
 }
 
 .p2p-recurring-price-buy {
-  border-color: rgba(121, 95, 184, 0.5);
+  border-color: rgba(121, 95, 184, 0.32);
 }
 
 .p2p-recurring-price-sell {
-  border-color: rgba(167, 139, 250, 0.42);
+  border-color: rgba(167, 139, 250, 0.28);
 }
 
 .p2p-recurring-inventory-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 0;
+  border: 1px solid rgba(74, 64, 112, 0.3);
+  border-radius: 8px;
+  background: rgba(7, 7, 14, 0.44);
+  overflow: hidden;
 }
 
 .p2p-recurring-inventory-strip > div {
@@ -5586,10 +5885,14 @@
   display: grid;
   align-content: center;
   gap: 3px;
-  border: 1px solid rgba(74, 64, 112, 0.44);
-  border-radius: 8px;
-  background: rgba(9, 9, 15, 0.58);
-  padding: 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 7px 8px;
+}
+
+.p2p-recurring-inventory-strip > div + div {
+  border-left: 1px solid rgba(74, 64, 112, 0.24);
 }
 
 .p2p-recurring-liquidity-head {
@@ -5629,6 +5932,8 @@
   overflow: visible;
   color: #f8f5ff;
   font-size: 0.88rem;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
   line-height: 1.08;
   text-overflow: clip;
   white-space: normal;
@@ -5653,6 +5958,8 @@
 
 .p2p-liquidity-number {
   color: inherit;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
   font-weight: 950;
   text-transform: none;
   line-height: 1.02;
@@ -6102,6 +6409,13 @@
 
   .p2p-order-card {
     grid-template-rows: none;
+  }
+
+  .p2p-desk-skeleton-card {
+    grid-template-rows: none;
+    gap: 9px;
+    min-height: 0;
+    padding: 10px;
   }
 
   .p2p-hidden-price-card.p2p-order-market-panel,

@@ -829,6 +829,7 @@ export default function TradeOfferCard({
                   type="button"
                   className="trade-card-action trade-card-action-accept"
                   onClick={showVisibleFillInline ? () => onPartialFill?.(fillSubmitInput) : onAccept}
+                  title={isCounterTrade && isTaker ? 'Close the parent first, accept this counter, then close sibling counters.' : undefined}
                   disabled={
                     showVisibleFillInline
                       ? partialFillDisabled || !fillCanSubmit
@@ -839,7 +840,7 @@ export default function TradeOfferCard({
                     ? 'Processing...'
                     : hasWalletForOpenAccept
                       ? isCounterTrade && isTaker
-                        ? 'Accept & close related'
+                        ? 'Close parent & accept'
                         : 'Buy'
                     : 'Connect wallet to buy'}
                 </button>

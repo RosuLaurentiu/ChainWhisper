@@ -57,6 +57,19 @@ describe('tradePricing helpers', () => {
     expect(fields).toEqual(['quoteAmount', 'price']);
   });
 
+  it('falls back to the two filled fields when a recent priority field is cleared', () => {
+    expect(
+      deriveTradePricingUpdate({
+        baseAmountInput: '10',
+        quoteAmountInput: '30',
+        priceInput: '',
+        baseDecimals: 6,
+        quoteDecimals: 18,
+        editedFields: ['price', 'quoteAmount']
+      })
+    ).toEqual({ field: 'price', value: '3', sourceFields: ['baseAmount', 'quoteAmount'] });
+  });
+
   it('formats decimal values without grouping separators', () => {
     expect(formatDecimalInput(123450000n, 6)).toBe('123.45');
     expect(formatDecimalInput(1000000n, 6)).toBe('1');

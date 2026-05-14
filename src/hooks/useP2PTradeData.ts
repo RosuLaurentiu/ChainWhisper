@@ -15,6 +15,9 @@ import type { TradePageView } from './useP2PTradeRoute';
 import { getWalletTransactionFlowState } from '../lib/walletTransactionFlow';
 
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
+const PUBLIC_TRADE_EMPTY_RETRY_DELAY_MS = 1_200;
+const PUBLIC_TRADE_EMPTY_RETRY_LIMIT = 2;
+const WALLET_FLOW_LIST_REFRESH_RETRY_MS = 450;
 
 const shouldHoldTradeReadForWalletFlow = (silent: boolean, hasExistingData: boolean): boolean => {
   const flowState = getWalletTransactionFlowState();
@@ -36,6 +39,11 @@ const sortTrades = (trades: TradeSnapshot[]): TradeSnapshot[] =>
   });
 
 const hasEntries = <T,>(value?: T[]): boolean => Boolean(value?.length);
+
+const waitForPublicTradeRetry = (): Promise<void> =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, PUBLIC_TRADE_EMPTY_RETRY_DELAY_MS);
+  });
 
 const stripWalletScopedTradeSnapshot = (snapshot: TradeSnapshot): TradeSnapshot => {
   const stripped: TradeSnapshot = {
@@ -105,7 +113,20 @@ const mergeTradeSnapshotList = (incoming: TradeSnapshot[], existing: TradeSnapsh
   return incoming.map((trade) => mergeTradeSnapshotEnrichment(trade, existingByKey.get(getSnapshotKey(trade))));
 };
 
+const mergePublicTradeRefresh = (
+  incoming: TradeSnapshot[],
+  existing: TradeSnapshot[],
+  silent: boolean
+): TradeSnapshot[] => {
+  if (silent && existing.length > 0 && incoming.length === 0) {
+    return existing;
+  }
+
+  return sortTrades(mergeTradeSnapshotList(incoming, existing));
+};
+
 export const __mergeTradeSnapshotEnrichmentForTest = mergeTradeSnapshotEnrichment;
+export const __mergePublicTradeRefreshForTest = mergePublicTradeRefresh;
 export const __stripWalletScopedTradeSnapshotForTest = stripWalletScopedTradeSnapshot;
 
 type TokenMetadata = {
@@ -182,6 +203,7 @@ export default function useP2PTradeData({
   const myTradesRefreshRef = useRef<Promise<void> | null>(null);
   const publicTradesRefreshQueuedRef = useRef(false);
   const myTradesRefreshQueuedRef = useRef(false);
+  const myTradesRefreshQueuedSilentRef = useRef(true);
   const detailTradeRef = useRef<TradeSnapshot | null>(null);
   const publicTradesRef = useRef<TradeSnapshot[]>([]);
   const myTradesRef = useRef<TradeSnapshot[]>([]);
@@ -220,10 +242,46 @@ export default function useP2PTradeData({
       Promise.all(snapshots.map((snapshot) => enrichMakerPrivateProgress(snapshot))),
     [enrichMakerPrivateProgress]
   );
+  const latestMyTradesRefreshArgsRef = useRef({
+    enrichMakerPrivateProgressForList,
+    privateRewardTokenDecimals,
+    privateRewardTokenSymbol,
+    rewardTokenDecimals,
+    rewardTokenSymbol,
+    walletAddress
+  });
+  useEffect(() => {
+    latestMyTradesRefreshArgsRef.current = {
+      enrichMakerPrivateProgressForList,
+      privateRewardTokenDecimals,
+      privateRewardTokenSymbol,
+      rewardTokenDecimals,
+      rewardTokenSymbol,
+      walletAddress
+    };
+  }, [
+    enrichMakerPrivateProgressForList,
+    privateRewardTokenDecimals,
+    privateRewardTokenSymbol,
+    rewardTokenDecimals,
+    rewardTokenSymbol,
+    walletAddress
+  ]);
+
+  const fetchPublicTradeSnapshotBatch = useCallback(
+    () =>
+      fetchRecentTradeSnapshots({
+        rewardTokenSymbol,
+        rewardTokenDecimals,
+        privateRewardTokenSymbol,
+        privateRewardTokenDecimals,
+        limit: 80
+      }),
+    [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]
+  );
 
   const refreshPublicTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
-    const requestSessionKey = syncSessionKey;
     if (shouldHoldTradeReadForWalletFlow(silent, publicTradesRef.current.length > 0)) {
       return;
     }
@@ -234,31 +292,38 @@ export default function useP2PTradeData({
 
     const refreshRequest = (async () => {
       do {
+        const requestSessionKey = latestSyncSessionKeyRef.current || syncSessionKey;
         publicTradesRefreshQueuedRef.current = false;
         if (!silent) {
           setLoadingPublicTrades(true);
           setPublicTradesError('');
         }
         try {
-          const snapshots = await fetchRecentTradeSnapshots({
-            rewardTokenSymbol,
-            rewardTokenDecimals,
-            privateRewardTokenSymbol,
-            privateRewardTokenDecimals,
-            limit: 80
-          });
+          let snapshots = await fetchPublicTradeSnapshotBatch();
+          for (
+            let retryIndex = 0;
+            !silent && snapshots.length === 0 && retryIndex < PUBLIC_TRADE_EMPTY_RETRY_LIMIT;
+            retryIndex += 1
+          ) {
+            await waitForPublicTradeRetry();
+            snapshots = await fetchPublicTradeSnapshotBatch();
+          }
           if (latestSyncSessionKeyRef.current === requestSessionKey) {
-            setPublicTrades((previous) => sortTrades(mergeTradeSnapshotList(snapshots, previous)));
+            setPublicTrades((previous) => mergePublicTradeRefresh(snapshots, previous, silent));
             if (silent) {
               setPublicTradesError('');
             }
+          } else {
+            publicTradesRefreshQueuedRef.current = true;
           }
         } catch {
-          if (!silent) {
+          if (latestSyncSessionKeyRef.current !== requestSessionKey) {
+            publicTradesRefreshQueuedRef.current = true;
+          } else if (!silent) {
             setPublicTradesError('Failed to load public trades.');
           }
         } finally {
-          if (!silent) {
+          if (!silent && !publicTradesRefreshQueuedRef.current) {
             setLoadingPublicTrades(false);
           }
         }
@@ -269,11 +334,10 @@ export default function useP2PTradeData({
 
     publicTradesRefreshRef.current = refreshRequest;
     return refreshRequest;
-  }, [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol, syncSessionKey]);
+  }, [fetchPublicTradeSnapshotBatch, syncSessionKey]);
 
   const refreshMyTrades = useCallback(async (options?: TradeRefreshOptions) => {
     const silent = Boolean(options?.silent);
-    const requestSessionKey = syncSessionKey;
     if (shouldHoldTradeReadForWalletFlow(silent, myTradesRef.current.length > 0)) {
       return;
     }
@@ -283,40 +347,64 @@ export default function useP2PTradeData({
     }
     if (myTradesRefreshRef.current) {
       myTradesRefreshQueuedRef.current = true;
+      myTradesRefreshQueuedSilentRef.current = myTradesRefreshQueuedSilentRef.current && silent;
+      if (!silent) {
+        setLoadingMyTrades(true);
+        setMyTradesError('');
+      }
       return myTradesRefreshRef.current;
     }
 
     const refreshRequest = (async () => {
+      let nextSilent = silent;
       do {
+        const currentSilent = nextSilent;
         myTradesRefreshQueuedRef.current = false;
-        if (!silent) {
+        myTradesRefreshQueuedSilentRef.current = true;
+        const requestSessionKey = latestSyncSessionKeyRef.current || syncSessionKey;
+        const {
+          enrichMakerPrivateProgressForList: enrichLatestMakerPrivateProgressForList,
+          privateRewardTokenDecimals: latestPrivateRewardTokenDecimals,
+          privateRewardTokenSymbol: latestPrivateRewardTokenSymbol,
+          rewardTokenDecimals: latestRewardTokenDecimals,
+          rewardTokenSymbol: latestRewardTokenSymbol,
+          walletAddress: latestWalletAddress
+        } = latestMyTradesRefreshArgsRef.current;
+        if (!latestWalletAddress) {
+          setMyTrades([]);
+          setMyTradesError('');
+          setLoadingMyTrades(false);
+          break;
+        }
+        if (!currentSilent) {
           setLoadingMyTrades(true);
           setMyTradesError('');
         }
         try {
-          const snapshotsRaw = await fetchWalletTradeSnapshots(walletAddress, {
-            rewardTokenSymbol,
-            rewardTokenDecimals,
-            privateRewardTokenSymbol,
-            privateRewardTokenDecimals,
+          const snapshotsRaw = await fetchWalletTradeSnapshots(latestWalletAddress, {
+            rewardTokenSymbol: latestRewardTokenSymbol,
+            rewardTokenDecimals: latestRewardTokenDecimals,
+            privateRewardTokenSymbol: latestPrivateRewardTokenSymbol,
+            privateRewardTokenDecimals: latestPrivateRewardTokenDecimals,
             limit: 80
           });
-          const snapshots = await enrichMakerPrivateProgressForList(snapshotsRaw);
+          const snapshots = await enrichLatestMakerPrivateProgressForList(snapshotsRaw);
           if (latestSyncSessionKeyRef.current === requestSessionKey) {
             setMyTrades((previous) => sortTrades(mergeTradeSnapshotList(snapshots, previous)));
-            if (silent) {
+            if (currentSilent) {
               setMyTradesError('');
             }
           }
         } catch {
-          if (!silent) {
+          if (!currentSilent) {
             setMyTradesError('Failed to load your trades.');
           }
         } finally {
-          if (!silent) {
+          if (!currentSilent) {
             setLoadingMyTrades(false);
           }
         }
+        nextSilent = myTradesRefreshQueuedSilentRef.current;
       } while (myTradesRefreshQueuedRef.current);
 
       myTradesRefreshRef.current = null;
@@ -423,17 +511,51 @@ export default function useP2PTradeData({
   );
 
   useEffect(() => {
-    if (shouldHoldTradeReadForWalletFlow(publicTradesRef.current.length > 0, publicTradesRef.current.length > 0)) {
-      return;
-    }
-    refreshPublicTrades({ silent: publicTradesRef.current.length > 0 }).catch(() => {});
+    let cancelled = false;
+    let retryTimer: number | null = null;
+    const refreshWhenWalletFlowSettles = () => {
+      if (cancelled) {
+        return;
+      }
+      const hasExistingPublicTrades = publicTradesRef.current.length > 0;
+      if (shouldHoldTradeReadForWalletFlow(hasExistingPublicTrades, hasExistingPublicTrades)) {
+        retryTimer = window.setTimeout(refreshWhenWalletFlowSettles, WALLET_FLOW_LIST_REFRESH_RETRY_MS);
+        return;
+      }
+      refreshPublicTrades({ silent: hasExistingPublicTrades }).catch(() => {});
+    };
+
+    refreshWhenWalletFlowSettles();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+    };
   }, [refreshPublicTrades]);
 
   useEffect(() => {
-    if (shouldHoldTradeReadForWalletFlow(myTradesRef.current.length > 0, myTradesRef.current.length > 0)) {
-      return;
-    }
-    refreshMyTrades({ silent: myTradesRef.current.length > 0 }).catch(() => {});
+    let cancelled = false;
+    let retryTimer: number | null = null;
+    const refreshWhenWalletFlowSettles = () => {
+      if (cancelled) {
+        return;
+      }
+      const hasExistingMyTrades = myTradesRef.current.length > 0;
+      if (shouldHoldTradeReadForWalletFlow(hasExistingMyTrades, hasExistingMyTrades)) {
+        retryTimer = window.setTimeout(refreshWhenWalletFlowSettles, WALLET_FLOW_LIST_REFRESH_RETRY_MS);
+        return;
+      }
+      refreshMyTrades({ silent: hasExistingMyTrades }).catch(() => {});
+    };
+
+    refreshWhenWalletFlowSettles();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+    };
   }, [refreshMyTrades]);
 
   useEffect(() => {

@@ -20,6 +20,44 @@ const PRICE_SCALE = 10n ** BigInt(PRICE_DECIMALS);
 const PRICING_FIELDS: TradePricingField[] = ['baseAmount', 'quoteAmount', 'price'];
 export type RecurringCalculatorSide = 'buy' | 'sell';
 
+const hasPricingFieldValue = (
+  field: TradePricingField,
+  { baseAmountInput, quoteAmountInput, priceInput }: Pick<
+    TradePricingInputs,
+    'baseAmountInput' | 'quoteAmountInput' | 'priceInput'
+  >
+): boolean => {
+  if (field === 'baseAmount') return Boolean(baseAmountInput.trim());
+  if (field === 'quoteAmount') return Boolean(quoteAmountInput.trim());
+  return Boolean(priceInput.trim());
+};
+
+const resolveTradePricingSourceFields = ({
+  baseAmountInput,
+  quoteAmountInput,
+  priceInput,
+  editedFields
+}: Pick<
+  TradePricingInputs,
+  'baseAmountInput' | 'quoteAmountInput' | 'priceInput' | 'editedFields'
+>): [TradePricingField, TradePricingField] | null => {
+  const inputValues = { baseAmountInput, quoteAmountInput, priceInput };
+  const recentEditedFields = editedFields.slice(-2);
+  if (
+    recentEditedFields.length === 2 &&
+    recentEditedFields.every((field) => hasPricingFieldValue(field, inputValues))
+  ) {
+    return recentEditedFields as [TradePricingField, TradePricingField];
+  }
+
+  const filledFields = PRICING_FIELDS.filter((field) => hasPricingFieldValue(field, inputValues));
+  if (filledFields.length === 2) {
+    return filledFields as [TradePricingField, TradePricingField];
+  }
+
+  return null;
+};
+
 const normalizeDecimals = (decimals: number): number => {
   if (!Number.isFinite(decimals)) return 18;
   return Math.max(0, Math.min(36, Math.trunc(decimals)));
@@ -80,17 +118,17 @@ export const deriveTradePricingUpdate = ({
   quoteDecimals,
   editedFields
 }: TradePricingInputs): TradePricingUpdate | null => {
-  const filledFields = PRICING_FIELDS.filter((field) => {
-    if (field === 'baseAmount') return baseAmountInput.trim();
-    if (field === 'quoteAmount') return quoteAmountInput.trim();
-    return priceInput.trim();
+  const sourceFields = resolveTradePricingSourceFields({
+    baseAmountInput,
+    quoteAmountInput,
+    priceInput,
+    editedFields
   });
-  const targetField =
-    editedFields.length >= 2
-      ? PRICING_FIELDS.find((field) => !editedFields.slice(-2).includes(field))
-      : editedFields.length === 0 && filledFields.length === 2
-        ? PRICING_FIELDS.find((field) => !filledFields.includes(field))
-        : undefined;
+  if (!sourceFields) {
+    return null;
+  }
+
+  const targetField = PRICING_FIELDS.find((field) => !sourceFields.includes(field));
   if (!targetField) {
     return null;
   }
@@ -110,7 +148,7 @@ export const deriveTradePricingUpdate = ({
       return null;
     }
     const value = formatDecimalInput(nextPrice, PRICE_DECIMALS, 12);
-    return value === priceInput ? null : { field: 'price', value, sourceFields: ['baseAmount', 'quoteAmount'] };
+    return value === priceInput ? null : { field: 'price', value, sourceFields };
   }
 
   if (targetField === 'quoteAmount') {
@@ -122,9 +160,7 @@ export const deriveTradePricingUpdate = ({
       return null;
     }
     const value = formatDecimalInput(nextQuoteAmount, quoteDecimals);
-    return value === quoteAmountInput
-      ? null
-      : { field: 'quoteAmount', value, sourceFields: ['baseAmount', 'price'] };
+    return value === quoteAmountInput ? null : { field: 'quoteAmount', value, sourceFields };
   }
 
   if (!quoteAmountWei || !priceScaled || quoteAmountWei <= 0n || priceScaled <= 0n) {
@@ -135,7 +171,7 @@ export const deriveTradePricingUpdate = ({
     return null;
   }
   const value = formatDecimalInput(nextBaseAmount, baseDecimals);
-  return value === baseAmountInput ? null : { field: 'baseAmount', value, sourceFields: ['quoteAmount', 'price'] };
+  return value === baseAmountInput ? null : { field: 'baseAmount', value, sourceFields };
 };
 
 export const deriveRecurringReceiveAmountInput = ({

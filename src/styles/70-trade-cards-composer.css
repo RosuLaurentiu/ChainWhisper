@@ -1978,6 +1978,7 @@
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+  min-height: 1.15rem;
 }
 
 .trade-compose-field-tools {
@@ -1988,12 +1989,38 @@
 }
 
 .trade-compose-field-value {
+  min-width: 7ch;
   font-size: 0.76rem;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text);
   text-align: right;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-compose-amount-field .trade-compose-field-value,
+.trade-compose-price-field .trade-compose-field-value {
+  overflow-wrap: anywhere;
+}
+
+.trade-compose-pricing-field .trade-compose-input {
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.trade-compose-pricing-source .trade-compose-input {
+  border-color: rgba(167, 139, 250, 0.62);
+  background:
+    linear-gradient(180deg, rgba(15, 12, 28, 0.88), rgba(10, 10, 18, 0.82));
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.1);
+}
+
+.trade-compose-pricing-derived .trade-compose-input {
+  border-color: rgba(74, 64, 112, 0.58);
+  background: rgba(9, 9, 16, 0.7);
 }
 
 .trade-compose-section-sell .trade-compose-field-value {

@@ -1027,7 +1027,8 @@ export const acceptCounterTradeAndCloseParentOnChain = async ({
   requestAsset,
   requestAmountWei,
   escrowContract,
-  accessSecret
+  accessSecret,
+  skipPrivateTokenBalanceCheck
 }: {
   signer: TradeSigner;
   ownerAddress: string;
@@ -1036,6 +1037,7 @@ export const acceptCounterTradeAndCloseParentOnChain = async ({
   requestAmountWei?: bigint;
   escrowContract?: string;
   accessSecret?: string;
+  skipPrivateTokenBalanceCheck?: boolean;
 }): Promise<{ acceptedTxHash?: string }> => {
   const resolvedEscrowContract = escrowContract ?? TRADE_ESCROW_CONTRACT_ADDRESS;
   const config = resolveTradeEscrowContractConfig(resolvedEscrowContract);
@@ -1048,7 +1050,8 @@ export const acceptCounterTradeAndCloseParentOnChain = async ({
       tokenAddress: requestAsset.tokenAddress,
       spenderAddress: resolvedEscrowContract,
       requiredAmount: resolvedRequestAmountWei,
-      tokenSymbol: requestAsset.symbol
+      tokenSymbol: requestAsset.symbol,
+      skipBalanceCheck: skipPrivateTokenBalanceCheck
     });
   } else {
     await ensureRequestPaymentReady(signer, ownerAddress, requestAsset, resolvedRequestAmountWei, resolvedEscrowContract);

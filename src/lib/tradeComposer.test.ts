@@ -78,12 +78,14 @@ describe('trade composer private token visibility', () => {
 
     expect(model.tradeComposerFieldErrors.requestAsset).toBeUndefined();
     expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
-    expect(model.tradeRequestVerifyUrl).toBe(`https://mainnet.cotiscan.io/address/${HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase()}`);
+    expect(model.tradeRequestVerifyUrl).toBe(`https://mainnet.cotiscan.io/address/${HOTDOG_PRIVATE_TOKEN_ADDRESS}`);
+    expect(model.selectedTradeRequestToken?.symbol).toBe('HOTDOG');
     expect(model.tradeTokenOptions).toContainEqual({
       value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
       label: '✓ HOTDOG (private)'
     });
-    expect(model.tradeRequestAmountSummaryLabel).toBe('0 HOTDOG');
+    expect(model.tradeRequestAmountSummaryLabel).toBe('2 HOTDOG');
+    expect(model.tradeRateLabel).toBe('1 WISP = 0.2 HOTDOG');
     expect(model.canSendTradeOffer).toBe(false);
   });
 
@@ -109,11 +111,13 @@ describe('trade composer private token visibility', () => {
 
     expect(model.tradeComposerFieldErrors.requestAsset).toBeUndefined();
     expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
+    expect(model.selectedTradeRequestToken?.symbol).toBe('HOTDOG');
     expect(model.tradeTokenOptions).toContainEqual({
       value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
       label: '✓ HOTDOG (private)'
     });
-    expect(model.tradeRequestAmountSummaryLabel).toBe('0 HOTDOG');
+    expect(model.tradeRequestAmountSummaryLabel).toBe('2 HOTDOG');
+    expect(model.tradeRateLabel).toBe('1 WISP = 0.2 HOTDOG');
     expect(model.canSendTradeOffer).toBe(false);
   });
 
@@ -141,8 +145,23 @@ describe('trade composer private token visibility', () => {
     expect(model.tradeComposerFieldErrors.requestAsset).toBeUndefined();
     expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
     expect(model.tradeRequestVerifyUrl).toBe(`https://mainnet.cotiscan.io/address/${HOTDOG_PRIVATE_TOKEN_ADDRESS}`);
-    expect(model.tradeRequestAmountSummaryLabel).toBe('0 HOTDOG');
+    expect(model.selectedTradeRequestToken?.symbol).toBe('HOTDOG');
+    expect(model.tradeRequestAmountSummaryLabel).toBe('2 HOTDOG');
+    expect(model.tradeRateLabel).toBe('1 WISP = 0.2 HOTDOG');
     expect(model.canSendTradeOffer).toBe(false);
+  });
+
+  it('reports balances for both selected trade sides', () => {
+    const model = deriveTradeComposerModel({
+      ...baseParams,
+      tradeOfferTokenSelection: 'wisp',
+      tradeRequestTokenSelection: 'coti',
+      rewardTokenBalanceWei: 123_456_000n,
+      tipNativeBalanceWei: 2n * 10n ** 18n
+    });
+
+    expect(model.tradeOfferBalanceSummaryLabel).toBe('123.456 WISP');
+    expect(model.tradeRequestBalanceSummaryLabel).toBe('2 COTI');
   });
 
   it('still supports explicit hidden amount mode when the offered token is private', () => {

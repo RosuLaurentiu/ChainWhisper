@@ -324,6 +324,21 @@ describe('trade escrow contract resolution', () => {
     });
   });
 
+  it('allows counter close-first flows to skip the pre-release private balance block', () => {
+    expect(
+      resolvePrivateTokenSpendReadiness({
+        requiredAmountWei: 5_000_000n,
+        balanceWei: 0n,
+        allowanceWei: 10_000_000n,
+        tokenSymbol: 'Hotdog',
+        skipBalanceCheck: true
+      })
+    ).toMatchObject({
+      status: 'ready',
+      balanceWei: 5_000_000n
+    });
+  });
+
   it('rejects obvious AES garbage without relying on latest PrivateERC20 totalSupply()', () => {
     expect(__normalizeCurrentPrivateTokenBalanceWeiForTest(5_000_000n)).toBe(5_000_000n);
     expect(__normalizeCurrentPrivateTokenBalanceWeiForTest(null)).toBeNull();

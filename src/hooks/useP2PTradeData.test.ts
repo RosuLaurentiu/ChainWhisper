@@ -6,7 +6,11 @@ import {
   type TradeSnapshot
 } from '../lib/appShared';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
-import { __mergeTradeSnapshotEnrichmentForTest, __stripWalletScopedTradeSnapshotForTest } from './useP2PTradeData';
+import {
+  __mergePublicTradeRefreshForTest,
+  __mergeTradeSnapshotEnrichmentForTest,
+  __stripWalletScopedTradeSnapshotForTest
+} from './useP2PTradeData';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const filler = '0x2222222222222222222222222222222222222222';
@@ -84,6 +88,25 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
 
     expect(merged.privateFillReceipts).toHaveLength(1);
     expect(merged.walletHasFill).toBe(true);
+  });
+
+  it('keeps the current public desk when a silent refresh returns a transient empty result', () => {
+    const existing = [
+      standardTrade({ tradeId: 4, createdAt: 4 }),
+      recurringTrade({ tradeId: 2, createdAt: 2 })
+    ];
+
+    const merged = __mergePublicTradeRefreshForTest([], existing, true);
+
+    expect(merged).toBe(existing);
+  });
+
+  it('allows an explicit public desk refresh to accept an empty result after retry attempts', () => {
+    const existing = [standardTrade({ tradeId: 4, createdAt: 4 })];
+
+    const merged = __mergePublicTradeRefreshForTest([], existing, false);
+
+    expect(merged).toEqual([]);
   });
 
   it('keeps recurring execution history when a lighter refresh arrives', () => {

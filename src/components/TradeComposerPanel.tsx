@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { COTI_NETWORK, TRADE_ESCROW_CONTRACT_ADDRESS, type TradeFeeModeSelection } from '../lib/appShared';
+import type { TradePricingField } from '../lib/tradePricing';
 
 export type TradeComposerTokenOption = {
   value: string;
@@ -51,6 +52,8 @@ type TradeComposerPanelProps = {
   offerAmountSummaryLabel: string;
   requestAmountSummaryLabel: string;
   offerBalanceSummaryLabel: string;
+  requestBalanceSummaryLabel?: string;
+  pricingSourceFields?: TradePricingField[];
   onSwapSides?: () => void;
   swapDisabled?: boolean;
   tradePreviewLabel?: string;
@@ -331,6 +334,8 @@ export default function TradeComposerPanel({
   offerAmountSummaryLabel,
   requestAmountSummaryLabel,
   offerBalanceSummaryLabel,
+  requestBalanceSummaryLabel = '--',
+  pricingSourceFields = [],
   onSwapSides,
   swapDisabled,
   tradePreviewLabel,
@@ -385,10 +390,11 @@ export default function TradeComposerPanel({
   const showRequestAmountError = shouldShowError('requestAmount', requestAmountError);
   const showExpiryError = shouldShowError('expiry', expiryError);
   const sendButtonDisabled = validationAfterInteraction ? sending : !canSend;
+  const showSendDisabledStyle = validationAfterInteraction
+    ? submitAttempted && !canSend && !sending
+    : !canSend && !sending;
   const sendButtonClassName = [
-    validationAfterInteraction && !canSend && !sending
-      ? 'trade-compose-send trade-compose-send-disabled'
-      : 'trade-compose-send',
+    showSendDisabledStyle ? 'trade-compose-send trade-compose-send-disabled' : 'trade-compose-send',
     sending ? 'p2p-action-pending' : ''
   ]
     .filter(Boolean)
@@ -400,8 +406,20 @@ export default function TradeComposerPanel({
     }
     onSendTradeOffer();
   };
+  const resolvePricingFieldClassName = (baseClassName: string, field: TradePricingField): string => {
+    const fieldIsSource = pricingSourceFields.includes(field);
+    const fieldIsDerived = pricingSourceFields.length >= 2 && !fieldIsSource;
+    return [
+      baseClassName,
+      'trade-compose-pricing-field',
+      fieldIsSource ? 'trade-compose-pricing-source' : '',
+      fieldIsDerived ? 'trade-compose-pricing-derived' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+  };
   const priceField = showPriceInput ? (
-    <label className="trade-compose-field trade-compose-price-field">
+    <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-price-field', 'price')}>
       <span className="trade-compose-field-head">
         <span className="trade-compose-field-label">{priceLabel}</span>
         {priceSummaryLabel ? <strong className="trade-compose-field-value">{priceSummaryLabel}</strong> : null}
@@ -509,7 +527,7 @@ export default function TradeComposerPanel({
             </>
           ) : null}
           {showOfferAssetError ? <p className="trade-compose-field-error">{offerAssetError}</p> : null}
-          <label className="trade-compose-field trade-compose-amount-field">
+          <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-amount-field', 'baseAmount')}>
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">{offerAmountLabel}</span>
               <span className="trade-compose-field-tools">
@@ -562,7 +580,7 @@ export default function TradeComposerPanel({
         <section className="trade-compose-section trade-compose-section-buy" aria-label="Asset you receive">
           <div className="trade-compose-section-header">
             <strong>You receive</strong>
-            <span>Counterparty sends this</span>
+            <span>Balance: {requestBalanceSummaryLabel}</span>
           </div>
           <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
@@ -627,7 +645,7 @@ export default function TradeComposerPanel({
             </>
           ) : null}
           {showRequestAssetError ? <p className="trade-compose-field-error">{requestAssetError}</p> : null}
-          <label className="trade-compose-field trade-compose-amount-field">
+          <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-amount-field', 'quoteAmount')}>
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">{requestAmountLabel}</span>
               <strong className="trade-compose-field-value">{requestAmountSummaryLabel}</strong>

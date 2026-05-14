@@ -3,6 +3,7 @@ import {
   PRIVATE_REWARD_TOKEN_ADDRESS,
   PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
   REWARD_TOKEN_ADDRESS,
+  FALLBACK_REWARD_TOKEN_DECIMALS,
   TIP_NATIVE_TOKEN_DECIMALS,
   TIP_NATIVE_TOKEN_SYMBOL,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -72,6 +73,7 @@ export type TradeComposerModel = {
   tradeOfferAmountSummaryLabel: string;
   tradeRequestAmountSummaryLabel: string;
   tradeOfferBalanceSummaryLabel: string;
+  tradeRequestBalanceSummaryLabel: string;
   tradeOfferAmountLabel: string;
   tradeRequestAmountLabel: string;
   tradeOfferAmountPlaceholder: string;
@@ -101,6 +103,7 @@ export type TradeComposerModel = {
 const resolveSelectedTradeToken = ({
   selection,
   customTokenInfo,
+  customAddress,
   rewardTokenSymbol,
   rewardTokenDecimals,
   privateRewardTokenSymbol,
@@ -108,6 +111,7 @@ const resolveSelectedTradeToken = ({
 }: {
   selection: TradeTokenPresetKey;
   customTokenInfo?: TradeCustomTokenInfo;
+  customAddress?: string;
   rewardTokenSymbol: string;
   rewardTokenDecimals: number;
   privateRewardTokenSymbol: string;
@@ -136,6 +140,17 @@ const resolveSelectedTradeToken = ({
       tokenAddress: PRIVATE_REWARD_TOKEN_ADDRESS,
       symbol: privateRewardTokenSymbol,
       decimals: privateRewardTokenDecimals
+    };
+  }
+
+  const verifiedFallbackToken = getVerifiedEcosystemToken(customTokenInfo?.address || customAddress || selection);
+  if ((!customTokenInfo || customTokenInfo.error || customTokenInfo.loading) && verifiedFallbackToken) {
+    return {
+      kind: verifiedFallbackToken.kind,
+      tokenAddress: verifiedFallbackToken.address,
+      symbol: verifiedFallbackToken.symbol,
+      decimals: customTokenInfo?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
+      custom: true
     };
   }
 
@@ -333,6 +348,7 @@ export const deriveTradeComposerModel = ({
   const selectedTradeOfferToken = resolveSelectedTradeToken({
     selection: tradeOfferTokenSelection,
     customTokenInfo: tradeCustomOfferTokenInfo,
+    customAddress: normalizedTradeOfferCustomTokenAddress,
     rewardTokenSymbol,
     rewardTokenDecimals,
     privateRewardTokenSymbol,
@@ -341,6 +357,7 @@ export const deriveTradeComposerModel = ({
   const selectedTradeRequestToken = resolveSelectedTradeToken({
     selection: tradeRequestTokenSelection,
     customTokenInfo: tradeCustomRequestTokenInfo,
+    customAddress: normalizedTradeRequestCustomTokenAddress,
     rewardTokenSymbol,
     rewardTokenDecimals,
     privateRewardTokenSymbol,
@@ -369,29 +386,31 @@ export const deriveTradeComposerModel = ({
       })
     : undefined;
 
-  let selectedTradeOfferBalanceWei: bigint | null = null;
-  if (selectedTradeOfferToken) {
-    if (selectedTradeOfferToken.kind === 'native') {
-      selectedTradeOfferBalanceWei = tipNativeBalanceWei;
-    } else {
-      const tokenKey = selectedTradeOfferToken.tokenAddress?.toLowerCase();
-      if (tokenKey) {
-        if (tokenKey === REWARD_TOKEN_ADDRESS.toLowerCase()) {
-          selectedTradeOfferBalanceWei = rewardTokenBalanceWei;
-        } else if (tokenKey === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
-          selectedTradeOfferBalanceWei = privateRewardTokenBalanceWei;
-        } else {
-          selectedTradeOfferBalanceWei =
-            customTradeTokenInfoByAddress[
-              buildTradeCustomTokenInfoKey(
-                selectedTradeOfferToken.kind === 'private-erc20' ? 'private-erc20' : 'erc20',
-                tokenKey
-              )
-            ]?.balanceWei ?? null;
-        }
-      }
+  const resolveSelectedTradeBalanceWei = (selectedToken: ResolvedTradeToken | null): bigint | null => {
+    if (!selectedToken) {
+      return null;
     }
-  }
+    if (selectedToken.kind === 'native') {
+      return tipNativeBalanceWei;
+    }
+    const tokenKey = selectedToken.tokenAddress?.toLowerCase();
+    if (!tokenKey) {
+      return null;
+    }
+    if (tokenKey === REWARD_TOKEN_ADDRESS.toLowerCase()) {
+      return rewardTokenBalanceWei;
+    }
+    if (tokenKey === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
+      return privateRewardTokenBalanceWei;
+    }
+    return (
+      customTradeTokenInfoByAddress[
+        buildTradeCustomTokenInfoKey(selectedToken.kind === 'private-erc20' ? 'private-erc20' : 'erc20', tokenKey)
+      ]?.balanceWei ?? null
+    );
+  };
+  const selectedTradeOfferBalanceWei = resolveSelectedTradeBalanceWei(selectedTradeOfferToken);
+  const selectedTradeRequestBalanceWei = resolveSelectedTradeBalanceWei(selectedTradeRequestToken);
 
   const parsedTradeOfferAmountWei = selectedTradeOfferToken
     ? parseTokenAmountInput(tradeOfferAmountInput, selectedTradeOfferToken.decimals)
@@ -427,18 +446,53 @@ export const deriveTradeComposerModel = ({
         parsedTradeOfferAmountWei
       : null;
 
-  const tradeOfferAmountSummaryLabel =
-    parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n && selectedTradeOfferToken
-      ? `${formatTokenAmount(parsedTradeOfferAmountWei, selectedTradeOfferToken.decimals, 6)} ${selectedTradeOfferToken.symbol}`
-      : `0 ${selectedTradeOfferToken?.symbol ?? tradeOfferPendingSymbol ?? 'TOKEN'}`;
-  const tradeRequestAmountSummaryLabel =
-    parsedTradeRequestAmountWei !== null && parsedTradeRequestAmountWei > 0n && selectedTradeRequestToken
-      ? `${formatTokenAmount(parsedTradeRequestAmountWei, selectedTradeRequestToken.decimals, 6)} ${selectedTradeRequestToken.symbol}`
-      : `0 ${selectedTradeRequestToken?.symbol ?? tradeRequestPendingSymbol ?? 'TOKEN'}`;
-  const tradeOfferBalanceSummaryLabel =
-    selectedTradeOfferToken && selectedTradeOfferBalanceWei !== null
-      ? `${formatTokenAmount(selectedTradeOfferBalanceWei, selectedTradeOfferToken.decimals, 6)} ${selectedTradeOfferToken.symbol}`
-      : '--';
+  const formatAmountSummaryLabel = ({
+    input,
+    parsedAmountWei,
+    selectedToken,
+    pendingSymbol
+  }: {
+    input: string;
+    parsedAmountWei: bigint | null;
+    selectedToken: ResolvedTradeToken | null;
+    pendingSymbol?: string;
+  }): string => {
+    const symbol = selectedToken?.symbol ?? pendingSymbol ?? 'TOKEN';
+    if (parsedAmountWei !== null && parsedAmountWei > 0n && selectedToken) {
+      return `${formatTokenAmount(parsedAmountWei, selectedToken.decimals, 6)} ${symbol}`;
+    }
+    const pendingAmount = input.trim();
+    if (pendingAmount) {
+      return `${pendingAmount} ${symbol}`;
+    }
+    return `0 ${symbol}`;
+  };
+  const formatBalanceSummaryLabel = (selectedToken: ResolvedTradeToken | null, balanceWei: bigint | null): string =>
+    selectedToken && balanceWei !== null
+      ? `${formatTokenAmount(balanceWei, selectedToken.decimals, 6)} ${selectedToken.symbol}`
+      : selectedToken
+        ? `-- ${selectedToken.symbol}`
+        : '--';
+  const tradeOfferAmountSummaryLabel = formatAmountSummaryLabel({
+    input: tradeOfferAmountInput,
+    parsedAmountWei: parsedTradeOfferAmountWei,
+    selectedToken: selectedTradeOfferToken,
+    pendingSymbol: tradeOfferPendingSymbol
+  });
+  const tradeRequestAmountSummaryLabel = formatAmountSummaryLabel({
+    input: tradeRequestAmountInput,
+    parsedAmountWei: parsedTradeRequestAmountWei,
+    selectedToken: selectedTradeRequestToken,
+    pendingSymbol: tradeRequestPendingSymbol
+  });
+  const tradeOfferBalanceSummaryLabel = formatBalanceSummaryLabel(
+    selectedTradeOfferToken,
+    selectedTradeOfferBalanceWei
+  );
+  const tradeRequestBalanceSummaryLabel = formatBalanceSummaryLabel(
+    selectedTradeRequestToken,
+    selectedTradeRequestBalanceWei
+  );
   const tradeOfferVerifyUrl = selectedTradeOfferToken?.tokenAddress
     ? `${COTI_NETWORK.blockExplorerUrl}/address/${selectedTradeOfferToken.tokenAddress}`
     : isCustomTradeTokenSelection(tradeOfferTokenSelection) && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
@@ -694,6 +748,7 @@ export const deriveTradeComposerModel = ({
     tradeOfferAmountSummaryLabel,
     tradeRequestAmountSummaryLabel,
     tradeOfferBalanceSummaryLabel,
+    tradeRequestBalanceSummaryLabel,
     tradeOfferAmountLabel: 'You sell',
     tradeRequestAmountLabel: 'You receive',
     tradeOfferAmountPlaceholder: 'Amount you sell',

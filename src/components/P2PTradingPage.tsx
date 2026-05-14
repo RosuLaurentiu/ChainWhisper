@@ -296,6 +296,8 @@ const MY_TRADES_EMPTY_PREVIEW_GROUPS = [
   }
 ] as const;
 
+const formatMyTradeCountLabel = (count: number): string => `${count} ${count === 1 ? 'trade' : 'trades'}`;
+
 const getTradeLiquidityLabel = (offer: TradeAssetPayload, request: TradeAssetPayload): string => {
   const privateSideCount = [offer, request].filter((asset) => asset.kind === 'private-erc20').length;
   if (privateSideCount === 2) {
@@ -4222,11 +4224,18 @@ export default function P2PTradingPage({
     );
   };
 
-  const formatDeskPriceSideLabel = (side: { asset: TradeAssetPayload; label: string }): string => {
+  const formatDeskPriceSideLabel = (
+    side: { asset: TradeAssetPayload; label: string },
+    counterSide?: { asset: TradeAssetPayload }
+  ): string => {
     const tokenSymbol = side.asset.symbol.trim() || 'Token';
+    const counterTokenSymbol = counterSide?.asset.symbol.trim() || '';
     const normalizedAction = side.label.replace(/^you\s+/i, '').trim().split(/\s+/)[0]?.toLowerCase();
-    if (normalizedAction === 'buy' || normalizedAction === 'sell') {
-      return `${normalizedAction.charAt(0).toUpperCase()}${normalizedAction.slice(1)} ${tokenSymbol}`;
+    if (normalizedAction === 'buy') {
+      return counterTokenSymbol ? `Buy ${tokenSymbol} with ${counterTokenSymbol}` : `Buy ${tokenSymbol}`;
+    }
+    if (normalizedAction === 'sell') {
+      return counterTokenSymbol ? `Sell ${tokenSymbol} for ${counterTokenSymbol}` : `Sell ${tokenSymbol}`;
     }
     return tokenSymbol;
   };
@@ -4290,6 +4299,8 @@ export default function P2PTradingPage({
     const recurringRelationTags = [isMaker ? 'Maker' : null].filter(
       (label): label is string => Boolean(label)
     );
+    const recurringTitleRelationTags = recurringRelationTags.filter((label) => label === 'Maker');
+    const recurringMetaRelationTags = recurringRelationTags.filter((label) => label !== 'Maker');
     const recurringModeTags = [modeLabel].filter((label): label is string => Boolean(label));
     const baseInventoryLabel =
       baseHidden && revealedBaseInventory !== undefined
@@ -4416,12 +4427,21 @@ export default function P2PTradingPage({
                 <span className="p2p-order-title-main">{recurringCardTitle}</span>
               </h3>
               <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
+              {recurringTitleRelationTags.map((label) => (
+                <span
+                  className="p2p-order-chip p2p-order-chip-owner"
+                  key={`${tradeKey}:title-relation:${label}`}
+                  title="Created by you"
+                >
+                  {label}
+                </span>
+              ))}
             </div>
             <div className="p2p-order-meta-line p2p-order-tag-stack">
               <p className="p2p-order-subline p2p-order-subline-primary">
                 <span className="p2p-offer-kind p2p-order-kind-marker">Recurring OTC</span>
                 <span className="p2p-order-id">#{recurring.orderId}</span>
-                {recurringRelationTags.map((label) => (
+                {recurringMetaRelationTags.map((label) => (
                   <span
                     className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
                     key={`${tradeKey}:relation:${label}`}
@@ -5159,7 +5179,10 @@ export default function P2PTradingPage({
         : priceRatioDisplay?.label ?? formatTradeListTerms(displayTrade);
     const terminalPriceSideLabel =
       priceRatioDisplay && tradeRateText !== 'Private terms'
-        ? formatDeskPriceSideLabel(priceRatioDisplay.isReversed ? rightSide : leftSide)
+        ? formatDeskPriceSideLabel(
+            priceRatioDisplay.isReversed ? rightSide : leftSide,
+            priceRatioDisplay.isReversed ? leftSide : rightSide
+          )
         : '';
     const formatTerminalTerm = (asset: TradeAssetPayload): string =>
       isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated)
@@ -5585,6 +5608,8 @@ export default function P2PTradingPage({
                           ? 'Connect wallet first.'
                           : !onCotiNetwork
                             ? 'Switch to COTI Mainnet first.'
+                            : snapshot.counterParentTradeId
+                              ? 'Close the parent first, accept this counter, then close sibling counters.'
                             : undefined
                     }
                   >
@@ -5595,7 +5620,7 @@ export default function P2PTradingPage({
                         : !onCotiNetwork
                           ? 'Switch network'
                           : snapshot.counterParentTradeId
-                            ? 'Accept & close related'
+                            ? 'Close parent & accept'
                             : `Buy ${displayTrade.offer.symbol}`}
                   </button>
                 )}
@@ -6462,6 +6487,8 @@ export default function P2PTradingPage({
       offerAmountSummaryLabel={tradeComposerModel.tradeOfferAmountSummaryLabel}
       requestAmountSummaryLabel={tradeComposerModel.tradeRequestAmountSummaryLabel}
       offerBalanceSummaryLabel={tradeComposerModel.tradeOfferBalanceSummaryLabel}
+      requestBalanceSummaryLabel={tradeComposerModel.tradeRequestBalanceSummaryLabel}
+      pricingSourceFields={tradePricingEditedFields}
       onSwapSides={() => {
         const nextOfferToken = tradeRequestTokenSelection;
         const nextRequestToken = tradeOfferTokenSelection;
@@ -6704,6 +6731,8 @@ export default function P2PTradingPage({
         ? 'Reserved'
         : null;
     const tradeRelationTags = [walletRelationTag].filter((label): label is string => Boolean(label));
+    const tradeTitleRelationTags = tradeRelationTags.filter((label) => label === 'Maker');
+    const tradeMetaRelationTags = tradeRelationTags.filter((label) => label !== 'Maker');
     const tradeLiquidityLabel = getTradeLiquidityLabel(trade.offer, trade.request);
     const tradeSecondaryTags = [
       tradeLiquidityLabel,
@@ -6780,7 +6809,10 @@ export default function P2PTradingPage({
       : priceRatioDisplay?.label ?? '';
     const priceSideLabel =
       priceRatioDisplay && tradeRateText !== 'Private terms'
-        ? formatDeskPriceSideLabel(priceRatioDisplay.isReversed ? rightSide : leftSide)
+        ? formatDeskPriceSideLabel(
+            priceRatioDisplay.isReversed ? rightSide : leftSide,
+            priceRatioDisplay.isReversed ? leftSide : rightSide
+          )
         : '';
     const showPriceSummary = Boolean(tradeRateText);
     const formatCompactVisibleTermText = (asset: TradeAssetPayload): string => {
@@ -6854,12 +6886,21 @@ export default function P2PTradingPage({
                 <span className="p2p-order-title-token">{pairTitleToSymbol}</span>
               </h3>
               <strong className={`p2p-offer-status ${statusClassName}`}>{statusLabel}</strong>
+              {tradeTitleRelationTags.map((label) => (
+                <span
+                  className="p2p-order-chip p2p-order-chip-owner"
+                  key={`${tradeKey}:title-relation:${label}`}
+                  title="Created by you"
+                >
+                  {label}
+                </span>
+              ))}
             </div>
             <div className="p2p-order-meta-line p2p-order-tag-stack">
               <p className="p2p-order-subline p2p-order-subline-primary">
                 <span className="p2p-offer-kind p2p-order-kind-marker">P2P OTC</span>
                 <span className="p2p-order-id">#{trade.tradeId}</span>
-                {tradeRelationTags.map((label) => (
+                {tradeMetaRelationTags.map((label) => (
                   <span
                     className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
                     key={`${tradeKey}:relation:${label}`}
@@ -7124,6 +7165,60 @@ export default function P2PTradingPage({
     </div>
   );
 
+  const renderDeskLoadingSkeletons = () => (
+    <div
+      className="p2p-offer-grid p2p-public-trade-grid p2p-desk-skeleton-grid"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading active offers"
+    >
+      <span className="p2p-sr-only">Loading active offers from escrow events.</span>
+      {Array.from({ length: 5 }, (_, index) => {
+        const recurringSkeleton = index >= 2;
+        return (
+          <article
+            key={`desk-skeleton-${index}`}
+            className={`p2p-desk-skeleton-card${recurringSkeleton ? ' p2p-desk-skeleton-card-recurring' : ''}`}
+            aria-hidden="true"
+          >
+            <div className="p2p-desk-skeleton-head">
+              <span className="p2p-skeleton-line p2p-skeleton-title" />
+              <span className="p2p-skeleton-pill" />
+              <span className="p2p-skeleton-line p2p-skeleton-meta" />
+            </div>
+            <div className="p2p-desk-skeleton-market">
+              <span className="p2p-skeleton-line p2p-skeleton-label" />
+              {recurringSkeleton ? (
+                <div className="p2p-desk-skeleton-price-grid">
+                  <span className="p2p-skeleton-cell" />
+                  <span className="p2p-skeleton-cell" />
+                </div>
+              ) : (
+                <>
+                  <span className="p2p-skeleton-line p2p-skeleton-price" />
+                  <span className="p2p-skeleton-line p2p-skeleton-unit" />
+                </>
+              )}
+            </div>
+            <div className={`p2p-desk-skeleton-detail${recurringSkeleton ? ' p2p-desk-skeleton-detail-grid' : ''}`}>
+              <span className="p2p-skeleton-cell" />
+              <span className="p2p-skeleton-cell" />
+              {recurringSkeleton ? <span className="p2p-skeleton-cell" /> : null}
+            </div>
+            <div className="p2p-desk-skeleton-verify">
+              <span className="p2p-skeleton-line" />
+              <span className="p2p-skeleton-pill" />
+            </div>
+            <div className="p2p-desk-skeleton-actions">
+              <span className="p2p-skeleton-button" />
+              <span className="p2p-skeleton-button" />
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+
   const renderTradeList = (trades: TradeSnapshot[], emptyLabel: string, gridClassName = '', emptyState?: ReactNode) =>
     trades.length > 0 ? (
       <div className={`p2p-offer-grid${gridClassName ? ` ${gridClassName}` : ''}`}>
@@ -7363,36 +7458,52 @@ export default function P2PTradingPage({
     id: MyTradeGroupView;
     label: string;
     mobileLabel: string;
+    subLabel: string;
+    description: string;
     count: number;
     trades: TradeSnapshot[];
-    emptyMessage: string;
+    emptyTitle: string;
+    emptyDescription: string;
+    emptySearchTitle: string;
     emptySearchMessage: string;
   }> = [
     {
       id: 'received',
-      label: 'Received Offers',
+      label: 'Received',
       mobileLabel: 'Received',
+      subLabel: 'Needs action',
+      description: 'Offers and counters sent to this wallet for review.',
       count: receivedOpenTradeOffers.length,
       trades: receivedOpenTradeOffers,
-      emptyMessage: 'No trade offers waiting for you.',
+      emptyTitle: 'No received offers',
+      emptyDescription: 'Direct and counter offers sent to this wallet will appear here for review.',
+      emptySearchTitle: 'No received offers match',
       emptySearchMessage: 'No received offers match that search.'
     },
     {
       id: 'active',
-      label: 'My Active Trades',
+      label: 'Active',
       mobileLabel: 'Active',
+      subLabel: 'Created by you',
+      description: 'Open offers and reusable liquidity created by this wallet.',
       count: myOpenTrades.length,
       trades: myOpenTrades,
-      emptyMessage: 'No active trades created by you.',
+      emptyTitle: 'No active trades',
+      emptyDescription: 'Create a public, private-link, or direct offer to start tracking it here.',
+      emptySearchTitle: 'No active trades match',
       emptySearchMessage: 'No trades you created match that search.'
     },
     {
       id: 'history',
-      label: 'Trade History',
+      label: 'History',
       mobileLabel: 'History',
+      subLabel: 'Settled records',
+      description: 'Completed, cancelled, declined, and expired trades.',
       count: walletTradeHistory.length,
       trades: walletTradeHistory,
-      emptyMessage: 'No completed, cancelled, or declined trades yet.',
+      emptyTitle: 'No history yet',
+      emptyDescription: 'Settled, cancelled, declined, and expired trades will collect here.',
+      emptySearchTitle: 'No history matches',
       emptySearchMessage: 'No history matches that search.'
     }
   ];
@@ -7431,6 +7542,22 @@ export default function P2PTradingPage({
   );
   const selectedMyTradeGroup =
     myTradeGroupOptions.find((group) => group.id === myTradeGroupView) ?? myTradeGroupOptions[0];
+  const renderMyTradeGroupEmptyState = (group: typeof selectedMyTradeGroup) => (
+    <div className="p2p-wallet-trade-empty">
+      <span>{group.label}</span>
+      <strong>{hasActiveDeskFilters ? group.emptySearchTitle : group.emptyTitle}</strong>
+      <p>{hasActiveDeskFilters ? 'Clear filters or try another token, wallet, status, or id.' : group.emptyDescription}</p>
+      {hasActiveDeskFilters ? (
+        <button type="button" onClick={clearTradeDeskFilters}>
+          Clear filters
+        </button>
+      ) : group.id === 'active' ? (
+        <button type="button" onClick={startFreshOneOffTrade}>
+          Create Offer
+        </button>
+      ) : null}
+    </div>
+  );
   const canOpenMyTradeTerminal = useCallback((trade: TradeSnapshot, groupId: MyTradeGroupView): boolean => {
     if (!walletKey) {
       return false;
@@ -8312,12 +8439,7 @@ export default function P2PTradingPage({
             )
             : null}
           {loadingPublicTrades && publicTrades.length === 0
-            ? renderP2PEmptyState(
-              'Loading offers',
-              'Reading open offers from escrow events.',
-              undefined,
-              'loading'
-            )
+            ? renderDeskLoadingSkeletons()
             : null}
           {(!publicTradesError || publicTrades.length > 0) && (!loadingPublicTrades || publicTrades.length > 0)
             ? renderTradeList(
@@ -9060,12 +9182,19 @@ export default function P2PTradingPage({
               <h2>My trades</h2>
               {walletAddress ? (
                 <p className="p2p-wallet-trade-summary">
-                  {receivedOpenTradeOffers.length} received offers | {myOpenTrades.length} active trades | {walletTradeHistory.length} history
+                  <span><strong>{receivedOpenTradeOffers.length}</strong> Received</span>
+                  <span><strong>{myOpenTrades.length}</strong> Active</span>
+                  <span><strong>{walletTradeHistory.length}</strong> History</span>
                 </p>
               ) : null}
             </div>
             {walletAddress ? (
-              <button type="button" className="standalone-trade-secondary-btn" onClick={() => refreshMyTrades().catch(() => {})}>
+              <button
+                type="button"
+                className="standalone-trade-secondary-btn p2p-my-trades-refresh-btn"
+                onClick={() => refreshMyTrades().catch(() => {})}
+                aria-busy={loadingMyTrades}
+              >
                 {loadingMyTrades ? 'Refreshing...' : 'Refresh'}
               </button>
             ) : null}
@@ -9076,12 +9205,8 @@ export default function P2PTradingPage({
           {myTradesError
             ? renderP2PEmptyState(
               'My trades could not load',
-              myTradesError,
-              walletAddress ? (
-                <button type="button" onClick={() => refreshMyTrades().catch(() => {})} disabled={loadingMyTrades}>
-                  {loadingMyTrades ? 'Refreshing...' : 'Retry'}
-                </button>
-              ) : undefined,
+              walletAddress ? `${myTradesError} Use Refresh in the workspace header to try again.` : myTradesError,
+              undefined,
               'error'
             )
             : null}
@@ -9106,45 +9231,29 @@ export default function P2PTradingPage({
                     aria-selected={group.id === selectedMyTradeGroup.id}
                     aria-label={`${group.label}: ${group.count}`}
                   >
-                    <span className="p2p-wallet-trade-label-full">{group.label}</span>
-                    <span className="p2p-wallet-trade-label-mobile">{group.mobileLabel}</span>
-                    <strong>{group.count}</strong>
+                    <span className="p2p-wallet-trade-tab-text">
+                      <span className="p2p-wallet-trade-label-full">{group.label}</span>
+                      <span className="p2p-wallet-trade-label-mobile">{group.mobileLabel}</span>
+                      <small>{group.subLabel}</small>
+                    </span>
+                    <strong className="p2p-wallet-trade-count">{group.count}</strong>
                   </button>
                 ))}
               </div>
               <section className="p2p-wallet-trade-group" role="tabpanel">
+                <div className="p2p-wallet-trade-group-head">
+                  <div>
+                    <span className="p2p-wallet-trade-group-kicker">{selectedMyTradeGroup.subLabel}</span>
+                    <h3>{selectedMyTradeGroup.label}</h3>
+                    <p>{selectedMyTradeGroup.description}</p>
+                  </div>
+                  <span>{formatMyTradeCountLabel(selectedMyTradeGroup.count)}</span>
+                </div>
                 {(() => {
-                  const emptyState = renderP2PEmptyState(
-                    hasActiveDeskFilters ? `No ${selectedMyTradeGroup.label.toLowerCase()} match` : selectedMyTradeGroup.emptyMessage,
-                    hasActiveDeskFilters
-                      ? 'Clear filters or try another token, wallet, status, or id.'
-                      : selectedMyTradeGroup.id === 'received'
-                        ? 'Direct and counter offers sent to this wallet will appear here for review.'
-                        : selectedMyTradeGroup.id === 'active'
-                          ? 'Create a public, private-link, or direct offer to start tracking it here.'
-                          : 'Settled, cancelled, declined, and expired trades will collect here.',
-                    hasActiveDeskFilters ? (
-                      <>
-                        <button type="button" onClick={clearTradeDeskFilters}>
-                          Clear filters
-                        </button>
-                        <button type="button" onClick={() => refreshMyTrades().catch(() => {})} disabled={loadingMyTrades}>
-                          {loadingMyTrades ? 'Refreshing...' : 'Refresh'}
-                        </button>
-                      </>
-                    ) : selectedMyTradeGroup.id === 'active' ? (
-                      <button type="button" onClick={startFreshOneOffTrade}>
-                        Create Offer
-                      </button>
-                    ) : (
-                      <button type="button" onClick={() => refreshMyTrades().catch(() => {})} disabled={loadingMyTrades}>
-                        {loadingMyTrades ? 'Refreshing...' : 'Refresh'}
-                      </button>
-                    )
-                  );
+                  const emptyState = renderMyTradeGroupEmptyState(selectedMyTradeGroup);
                   const emptyLabel = hasActiveDeskFilters
                     ? selectedMyTradeGroup.emptySearchMessage
-                    : selectedMyTradeGroup.emptyMessage;
+                    : selectedMyTradeGroup.emptyTitle;
 
                   return renderMyTradeList(selectedMyTradeGroup.trades, selectedMyTradeGroup.id, emptyLabel, emptyState);
                 })()}

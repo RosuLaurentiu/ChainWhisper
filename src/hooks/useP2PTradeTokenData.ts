@@ -109,6 +109,19 @@ export const resolvePrivateBalanceAesReady = ({
   walletHasAes: boolean;
 }): boolean => walletHasAes || Boolean(signer);
 
+export const shouldRefreshPrivateTokenInfoForWallet = ({
+  tokenKind,
+  existing,
+  walletHasAes
+}: {
+  tokenKind: TradeTokenKind;
+  existing?: Pick<TradeCustomTokenInfo, 'aesReady' | 'loading'>;
+  walletHasAes: boolean;
+}): boolean =>
+  tokenKind === 'private-erc20' &&
+  !existing?.loading &&
+  Boolean(existing?.aesReady) !== walletHasAes;
+
 type UseP2PTradeTokenDataResult = {
   clearWalletBalances: () => void;
   customTradeTokenInfoByAddress: Record<string, TradeCustomTokenInfo>;
@@ -698,8 +711,11 @@ export default function useP2PTradeTokenData({
     for (const token of requestedTokens) {
       const key = buildTradeCustomTokenInfoKey(token.kind, token.address);
       const existing = customTradeTokenInfoByAddress[key];
-      const shouldRefreshPrivateBalance =
-        token.kind === 'private-erc20' && existing?.aesReady !== walletHasAes && !existing?.loading;
+      const shouldRefreshPrivateBalance = shouldRefreshPrivateTokenInfoForWallet({
+        tokenKind: token.kind,
+        existing,
+        walletHasAes
+      });
       if (!existing || existing.walletKey !== walletKey || shouldRefreshPrivateBalance) {
         loadCustomTokenInfo(token, { silent: false }).catch(() => {});
       }
@@ -722,8 +738,11 @@ export default function useP2PTradeTokenData({
     for (const token of VERIFIED_ECOSYSTEM_TOKENS) {
       const key = buildTradeCustomTokenInfoKey(token.kind, token.address);
       const existing = customTradeTokenInfoByAddress[key];
-      const shouldRefreshPrivateBalance =
-        token.kind === 'private-erc20' && existing?.aesReady !== walletHasAes && !existing?.loading;
+      const shouldRefreshPrivateBalance = shouldRefreshPrivateTokenInfoForWallet({
+        tokenKind: token.kind,
+        existing,
+        walletHasAes
+      });
       if (!existing || existing.walletKey !== walletKey || shouldRefreshPrivateBalance) {
         loadCustomTokenInfo(token, { silent: false }).catch(() => {});
       }
