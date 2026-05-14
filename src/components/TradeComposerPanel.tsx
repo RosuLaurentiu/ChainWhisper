@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { COTI_NETWORK, TRADE_ESCROW_CONTRACT_ADDRESS, type TradeFeeModeSelection } from '../lib/appShared';
+import {
+  COTI_NETWORK,
+  TRADE_ESCROW_CONTRACT_ADDRESS,
+  isWalletAddress,
+  shortenAddress,
+  type TradeFeeModeSelection
+} from '../lib/appShared';
 import type { TradePricingField } from '../lib/tradePricing';
 
 export type TradeComposerTokenOption = {
   value: string;
   label: string;
+  symbol?: string;
+  kindLabel?: 'Native' | 'Public' | 'Private';
+  addressLabel?: string;
+  verificationLabel?: string;
 };
 
 type TradeComposerPanelProps = {
@@ -85,6 +95,54 @@ type TradeComposerPanelProps = {
 
 type TradeComposerValidationField = 'offerAsset' | 'requestAsset' | 'offerAmount' | 'requestAmount' | 'expiry';
 
+const normalizeActionPhrase = (label: string): string => label.trim().toLowerCase() || 'continue';
+
+const resolveSendReadinessLabel = ({
+  canSend,
+  sending,
+  sendLabel,
+  sendingLabel,
+  validationMessage
+}: {
+  canSend: boolean;
+  sending: boolean;
+  sendLabel: string;
+  sendingLabel: string;
+  validationMessage?: string;
+}): string => {
+  if (sending) {
+    return sendingLabel;
+  }
+  if (canSend) {
+    return `Ready to ${normalizeActionPhrase(sendLabel)}`;
+  }
+
+  const message = validationMessage?.trim();
+  if (!message) {
+    return 'Complete required fields';
+  }
+
+  const normalizedMessage = message.toLowerCase();
+  if (normalizedMessage.includes('connect your wallet')) {
+    return 'Connect wallet to continue';
+  }
+  if (normalizedMessage.includes('switch to coti')) {
+    return 'Switch to COTI network';
+  }
+  if (
+    normalizedMessage.includes('loading token') ||
+    normalizedMessage.includes('loading trade fee') ||
+    normalizedMessage.includes('unable to read')
+  ) {
+    return 'Loading token balance';
+  }
+  if (normalizedMessage.includes('unlock privacy') || normalizedMessage.includes('refresh privacy')) {
+    return 'Unlock privacy to continue';
+  }
+
+  return message;
+};
+
 function ChevronIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" width="14" height="14">
@@ -96,16 +154,61 @@ function ChevronIcon() {
 type TradeTokenScope = 'public' | 'private';
 
 const FEE_VARIANCE_NOTE = 'Fee may vary before submit.';
+const explorerLabel = 'View token on explorer';
 
-const stripTokenCheckmark = (value: string): string => value.replace(/^[\s✓]+/, '').trim();
+const stripTokenCheckmark = (value: string): string => value.replace(/^[\s\u2713]+/, '').trim();
+
+const parseTokenLabel = (option?: TradeComposerTokenOption): { symbol: string; kindLabel: string } => {
+  if (!option) {
+    return { symbol: 'Select token', kindLabel: 'Whitelisted' };
+  }
+  const cleanLabel = stripTokenCheckmark(option.label);
+  const kindMatch = cleanLabel.match(/\(([^)]+)\)/);
+  const parsedSymbol = cleanLabel.replace(/\s*\([^)]+\)\s*$/, '').trim();
+  const symbol = (option.symbol ?? parsedSymbol) || option.value;
+  const rawKindLabel = option.kindLabel ?? (kindMatch?.[1] ? kindMatch[1].replace(/^ecosystem$/i, 'Public') : 'Whitelisted');
+  return {
+    symbol,
+    kindLabel: rawKindLabel.charAt(0).toUpperCase() + rawKindLabel.slice(1)
+  };
+};
 
 const resolveTokenOptionScope = (option?: TradeComposerTokenOption): TradeTokenScope => {
   if (!option) return 'public';
   const label = option.label.toLowerCase();
-  if (option.value === 'pwisp' || option.value === 'custom-private' || label.includes('(private)')) {
+  if (option.kindLabel === 'Private' || option.value === 'pwisp' || label.includes('(private)')) {
     return 'private';
   }
   return 'public';
+};
+
+const resolveTokenAddressLabel = (option?: TradeComposerTokenOption): string => {
+  if (!option) {
+    return 'Choose from the approved token list.';
+  }
+  if (option.addressLabel) {
+    return option.addressLabel;
+  }
+  if (isWalletAddress(option.value)) {
+    return `CA ${shortenAddress(option.value)}`;
+  }
+  if (option.value === 'coti') {
+    return 'COTI Mainnet native asset';
+  }
+  return 'Whitelisted token';
+};
+
+const resolveTokenVerificationLabel = (option?: TradeComposerTokenOption, balanceLabel?: string): string => {
+  if (!option) {
+    return 'Select whitelisted token';
+  }
+  if (balanceLabel?.trim().startsWith('--')) {
+    return 'Balance pending';
+  }
+  if (option.value === 'coti') {
+    return 'Native asset';
+  }
+  return 'Whitelisted';
 };
 
 export function TradeTokenSelect({
@@ -113,20 +216,26 @@ export function TradeTokenSelect({
   value,
   onChange,
   disabled,
-  invalid
+  invalid,
+  balanceLabel,
+  verifyUrl
 }: {
   options: TradeComposerTokenOption[];
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   invalid?: boolean;
+  balanceLabel?: string;
+  verifyUrl?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [activeScope, setActiveScope] = useState<TradeTokenScope>('public');
   const containerRef = useRef<HTMLDivElement>(null);
   const selectedOption = options.find((o) => o.value === value);
-  const selectedLabel = selectedOption?.label ?? value;
+  const selectedDisplay = parseTokenLabel(selectedOption);
+  const selectedVerificationLabel = resolveTokenVerificationLabel(selectedOption, balanceLabel);
+  const selectedAddressLabel = resolveTokenAddressLabel(selectedOption);
   const normalizedSearch = searchInput.trim().toLowerCase();
   const publicCount = options.filter((option) => resolveTokenOptionScope(option) === 'public').length;
   const privateCount = options.filter((option) => resolveTokenOptionScope(option) === 'private').length;
@@ -178,9 +287,26 @@ export function TradeTokenSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span>{selectedLabel}</span>
+        <span className="trade-token-select-trigger-copy">
+          <strong>{selectedDisplay.symbol}</strong>
+          <small>{selectedDisplay.kindLabel}</small>
+        </span>
         <ChevronIcon />
       </button>
+      <div
+        className={`trade-token-select-state ${
+          selectedVerificationLabel === 'Balance pending' ? 'is-pending' : 'is-ready'
+        }`}
+      >
+        <span>{selectedVerificationLabel}</span>
+        {verifyUrl ? (
+          <a href={verifyUrl} target="_blank" rel="noreferrer" title={explorerLabel}>
+            {selectedAddressLabel}
+          </a>
+        ) : (
+          <small>{selectedAddressLabel}</small>
+        )}
+      </div>
       {open ? (
         <div className="trade-token-select-dropdown">
           <div className="trade-token-select-search">
@@ -216,7 +342,8 @@ export function TradeTokenSelect({
           <ul className="trade-token-select-list" role="listbox">
             {filteredOptions.length > 0 ? (
               filteredOptions.map((option) => {
-                const isVerified = option.label.trim().startsWith('✓');
+                const display = parseTokenLabel(option);
+                const isVerified = option.label.trim().startsWith('\u2713') || Boolean(option.verificationLabel);
                 return (
                   <li
                     key={option.value}
@@ -241,16 +368,11 @@ export function TradeTokenSelect({
                       }
                     }}
                   >
-                    {isVerified ? (
-                      <>
-                        <span className="trade-token-select-check" aria-hidden="true">
-                          ✓
-                        </span>
-                        <span>{stripTokenCheckmark(option.label)}</span>
-                      </>
-                    ) : (
-                      <span>{option.label}</span>
-                    )}
+                    <span className="trade-token-select-option-main">
+                      <strong>{display.symbol}</strong>
+                      <small>{resolveTokenAddressLabel(option)}</small>
+                    </span>
+                    <span className="trade-token-select-option-kind">{display.kindLabel}</span>
                   </li>
                 );
               })
@@ -286,8 +408,6 @@ function TradeSwapIcon() {
     </svg>
   );
 }
-
-const explorerLabel = 'View token on explorer';
 
 export default function TradeComposerPanel({
   validationDisplayMode = 'immediate',
@@ -399,6 +519,17 @@ export default function TradeComposerPanel({
   ]
     .filter(Boolean)
     .join(' ');
+  const sendReadinessLabel = resolveSendReadinessLabel({
+    canSend,
+    sending,
+    sendLabel,
+    sendingLabel,
+    validationMessage
+  });
+  const sendReadinessClassName = [
+    'trade-compose-readiness',
+    sending ? 'trade-compose-readiness-busy' : canSend ? 'trade-compose-readiness-ready' : 'trade-compose-readiness-blocked'
+  ].join(' ');
   const handleSendClick = () => {
     if (!canSend) {
       setSubmitAttempted(true);
@@ -418,11 +549,21 @@ export default function TradeComposerPanel({
       .filter(Boolean)
       .join(' ');
   };
+  const renderPricingFieldState = (field: TradePricingField) => {
+    const fieldIsSource = pricingSourceFields.includes(field);
+    const fieldIsDerived = pricingSourceFields.length >= 2 && !fieldIsSource;
+    return fieldIsDerived ? <span className="trade-compose-pricing-state">Derived</span> : null;
+  };
   const priceField = showPriceInput ? (
     <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-price-field', 'price')}>
       <span className="trade-compose-field-head">
         <span className="trade-compose-field-label">{priceLabel}</span>
-        {priceSummaryLabel ? <strong className="trade-compose-field-value">{priceSummaryLabel}</strong> : null}
+        {priceSummaryLabel || renderPricingFieldState('price') ? (
+          <span className="trade-compose-field-tools">
+            {renderPricingFieldState('price')}
+            {priceSummaryLabel ? <strong className="trade-compose-field-value">{priceSummaryLabel}</strong> : null}
+          </span>
+        ) : null}
       </span>
       <input
         className="trade-compose-input"
@@ -467,18 +608,6 @@ export default function TradeComposerPanel({
           <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
-              {!showOfferCustomToken && offerVerifyUrl ? (
-                <a
-                  className="trade-compose-icon-link"
-                  href={offerVerifyUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={explorerLabel}
-                  title={explorerLabel}
-                >
-                  Explorer
-                </a>
-              ) : null}
             </span>
             <TradeTokenSelect
               options={offerTokenOptions}
@@ -489,6 +618,8 @@ export default function TradeComposerPanel({
               }}
               disabled={sending}
               invalid={showOfferAssetError}
+              balanceLabel={offerBalanceSummaryLabel}
+              verifyUrl={!showOfferCustomToken ? offerVerifyUrl : undefined}
             />
           </label>
           {showOfferCustomToken ? (
@@ -528,12 +659,13 @@ export default function TradeComposerPanel({
           ) : null}
           {showOfferAssetError ? <p className="trade-compose-field-error">{offerAssetError}</p> : null}
           <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-amount-field', 'baseAmount')}>
-            <span className="trade-compose-field-head">
-              <span className="trade-compose-field-label">{offerAmountLabel}</span>
-              <span className="trade-compose-field-tools">
-                <strong className="trade-compose-field-value">{offerAmountSummaryLabel}</strong>
-                <button
-                  type="button"
+              <span className="trade-compose-field-head">
+                <span className="trade-compose-field-label">{offerAmountLabel}</span>
+                <span className="trade-compose-field-tools">
+                  {renderPricingFieldState('baseAmount')}
+                  <strong className="trade-compose-field-value">{offerAmountSummaryLabel}</strong>
+                  <button
+                    type="button"
                   className="trade-compose-max"
                   onClick={() => onUseMaxOfferAmount?.()}
                   disabled={!canUseMaxOfferAmount || sending}
@@ -585,18 +717,6 @@ export default function TradeComposerPanel({
           <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
-              {!showRequestCustomToken && requestVerifyUrl ? (
-                <a
-                  className="trade-compose-icon-link"
-                  href={requestVerifyUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={explorerLabel}
-                  title={explorerLabel}
-                >
-                  Explorer
-                </a>
-              ) : null}
             </span>
             <TradeTokenSelect
               options={requestTokenOptions}
@@ -607,6 +727,8 @@ export default function TradeComposerPanel({
               }}
               disabled={sending}
               invalid={showRequestAssetError}
+              balanceLabel={requestBalanceSummaryLabel}
+              verifyUrl={!showRequestCustomToken ? requestVerifyUrl : undefined}
             />
           </label>
           {showRequestCustomToken ? (
@@ -648,7 +770,10 @@ export default function TradeComposerPanel({
           <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-amount-field', 'quoteAmount')}>
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">{requestAmountLabel}</span>
-              <strong className="trade-compose-field-value">{requestAmountSummaryLabel}</strong>
+              <span className="trade-compose-field-tools">
+                {renderPricingFieldState('quoteAmount')}
+                <strong className="trade-compose-field-value">{requestAmountSummaryLabel}</strong>
+              </span>
             </span>
             <input
               className="trade-compose-input"
@@ -791,16 +916,21 @@ export default function TradeComposerPanel({
               ) : null}
             </div>
           </div>
-          <button
-            type="button"
-            className={sendButtonClassName}
-            onClick={handleSendClick}
-            disabled={sendButtonDisabled}
-            aria-disabled={!canSend}
-            title={validationMessage || sendTitle}
-          >
-            {sending ? sendingLabel : sendLabel}
-          </button>
+          <div className="trade-compose-action-stack">
+            <p className={sendReadinessClassName} role="status">
+              {sendReadinessLabel}
+            </p>
+            <button
+              type="button"
+              className={sendButtonClassName}
+              onClick={handleSendClick}
+              disabled={sendButtonDisabled}
+              aria-disabled={!canSend}
+              title={validationMessage || sendTitle}
+            >
+              {sending ? sendingLabel : sendLabel}
+            </button>
+          </div>
         </div>
       </div>
       <div className="trade-compose-warning" role="alert">

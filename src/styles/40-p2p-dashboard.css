@@ -528,20 +528,30 @@
 }
 
 .p2p-secondary-nav .p2p-trade-tabs {
-  padding-bottom: 2px;
+  padding-bottom: 0;
+}
+
+@media (min-width: 861px) {
+  .p2p-trading-shell > .p2p-secondary-nav:not(.p2p-secondary-nav-mobile) {
+    margin: 8px 0 0 11px;
+  }
 }
 
 .p2p-trade-tabs button {
-  border: 1px solid var(--border);
+  position: relative;
+  border: 1px solid rgba(167, 139, 250, 0.62);
   border-radius: 9px;
-  background: rgba(10, 10, 18, 0.52);
-  color: var(--muted);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.56), rgba(91, 66, 185, 0.46));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  color: #ece9ff;
+  height: 36px;
   padding: 9px 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 0;
   font-weight: 700;
+  line-height: 1;
   text-align: center;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
@@ -556,10 +566,15 @@
 }
 
 .p2p-trade-tabs button.active {
-  border-color: rgba(139, 92, 246, 0.56);
-  background: rgba(139, 92, 246, 0.18);
-  box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.04);
-  color: #f0ecff;
+  border-color: rgba(196, 181, 253, 0.84);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.78), rgba(80, 0, 133, 0.58)),
+    linear-gradient(135deg, rgba(124, 58, 237, 0.72), rgba(91, 66, 185, 0.6));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px rgba(245, 243, 255, 0.06),
+    0 0 0 1px rgba(139, 92, 246, 0.24);
+  color: #fff;
 }
 
 .p2p-market-overview {
@@ -594,13 +609,13 @@
 }
 
 .p2p-market-tabs .p2p-trade-tabs button {
-  min-height: 30px;
-  border-radius: 8px;
-  padding: 6px 10px;
+  min-height: 36px;
+  border-radius: 9px;
+  padding: 9px 14px;
 }
 
 .p2p-market-tabs .p2p-trade-tabs button span {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
 }
 
 .p2p-market-identity {
@@ -1006,6 +1021,12 @@
 .p2p-trade-tabs button:not(.active):hover {
   border-color: var(--border-strong);
   background: rgba(139, 92, 246, 0.14);
+}
+
+.p2p-trade-tabs button:not(.active):hover {
+  border-color: rgba(196, 181, 253, 0.72);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.64), rgba(91, 66, 185, 0.52));
+  color: #fff;
 }
 
 .p2p-terminal-open-panel {
@@ -1906,7 +1927,7 @@
   align-items: stretch;
   gap: 8px 10px;
   overflow: hidden;
-  padding: 10px 12px;
+  padding: 16px 16px 10px;
 }
 
 .p2p-trading-shell-drawer-open .p2p-market-overview,
@@ -1924,7 +1945,7 @@
   grid-area: overview;
   min-height: 0;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 7px 10px 8px;
 }
 
 .p2p-trading-shell-drawer-open .p2p-market-overview-head {
@@ -2164,16 +2185,27 @@
   display: grid;
   gap: 10px;
   min-width: 0;
-  border: 1px solid rgba(74, 64, 112, 0.58);
   border-radius: 9px;
-  background: rgba(7, 7, 14, 0.7);
   padding: 11px;
+}
+
+.p2p-terminal-market,
+.p2p-terminal-ticket {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(180deg, rgba(12, 12, 22, 0.58), rgba(5, 5, 12, 0.66));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.p2p-terminal-history {
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  background: rgba(7, 7, 14, 0.7);
 }
 
 .p2p-terminal-ticket {
   position: static;
   background:
-    linear-gradient(180deg, rgba(18, 14, 32, 0.86), rgba(7, 7, 14, 0.84));
+    linear-gradient(180deg, rgba(15, 13, 26, 0.62), rgba(7, 7, 14, 0.68));
 }
 
 .p2p-terminal-price-card {
@@ -2183,10 +2215,12 @@
   width: 100%;
   min-width: 0;
   min-height: 112px;
-  border: 1px solid rgba(121, 95, 184, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 9px;
   background:
-    linear-gradient(180deg, rgba(12, 10, 22, 0.88), rgba(4, 4, 10, 0.76));
+    radial-gradient(260px 100px at 18% 0%, rgba(139, 92, 246, 0.08), transparent 62%),
+    linear-gradient(180deg, rgba(10, 11, 19, 0.7), rgba(4, 5, 10, 0.74));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   color: inherit;
   cursor: pointer;
   padding: 13px;
@@ -2224,9 +2258,9 @@
   grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
-  border: 1px solid rgba(74, 64, 112, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 9px;
-  background: rgba(9, 8, 16, 0.58);
+  background: rgba(5, 6, 12, 0.44);
 }
 
 .p2p-terminal-flow-card {
@@ -2267,7 +2301,7 @@
 .p2p-terminal-flow-arrow {
   display: grid;
   place-items: center;
-  border-inline: 1px solid rgba(74, 64, 112, 0.48);
+  border-inline: 1px solid rgba(148, 163, 184, 0.16);
   color: #d9d3ff;
 }
 
@@ -2313,9 +2347,10 @@
   display: grid;
   gap: 4px;
   min-width: 0;
-  border: 1px solid rgba(74, 64, 112, 0.46);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.55);
+  background: rgba(5, 6, 12, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
   padding: 9px;
 }
 
@@ -2342,9 +2377,10 @@
 .p2p-terminal-related {
   display: grid;
   gap: 7px;
-  border: 1px solid rgba(74, 64, 112, 0.48);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
-  background: rgba(10, 10, 18, 0.48);
+  background: rgba(5, 6, 12, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
   padding: 9px;
 }
 
@@ -2394,7 +2430,7 @@
 }
 
 .p2p-terminal-progress-flow {
-  border-top: 1px solid rgba(74, 64, 112, 0.38);
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
   padding-top: 2px;
 }
 
@@ -2455,7 +2491,7 @@
 }
 
 .p2p-terminal-token-actions {
-  border-top: 1px solid rgba(74, 64, 112, 0.44);
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
   padding-top: 9px;
 }
 
@@ -4088,9 +4124,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: stretch;
-  border: 1px solid rgba(74, 64, 112, 0.62);
+  border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.62);
+  background: rgba(5, 6, 12, 0.58);
   overflow: hidden;
 }
 
@@ -4099,12 +4135,14 @@
   appearance: none;
   display: grid;
   align-content: center;
-  gap: 7px;
+  gap: 6px;
   min-height: 100px;
-  border: 1px solid rgba(121, 95, 184, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(12, 10, 22, 0.74), rgba(5, 5, 12, 0.62));
+    radial-gradient(260px 100px at 18% 0%, rgba(139, 92, 246, 0.08), transparent 62%),
+    linear-gradient(180deg, rgba(10, 11, 19, 0.7), rgba(4, 5, 10, 0.68));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   color: inherit;
   font: inherit;
   padding: 12px 14px;
@@ -4116,8 +4154,10 @@
 }
 
 .p2p-hidden-price-card:hover {
-  border-color: rgba(167, 139, 250, 0.58);
-  background: rgba(19, 18, 31, 0.66);
+  border-color: rgba(203, 213, 225, 0.26);
+  background:
+    radial-gradient(260px 100px at 18% 0%, rgba(139, 92, 246, 0.1), transparent 62%),
+    linear-gradient(180deg, rgba(15, 16, 27, 0.76), rgba(6, 7, 14, 0.78));
 }
 
 .p2p-hidden-price-card:focus-visible {
@@ -4126,18 +4166,20 @@
 }
 
 .p2p-hidden-price-card > span {
-  color: #c4b5fd;
-  font-size: 0.72rem;
+  color: rgba(198, 192, 224, 0.78);
+  font-size: 0.66rem;
   font-weight: 900;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.045em;
   line-height: 1.2;
   text-transform: uppercase;
 }
 
 .p2p-hidden-price-card > .p2p-price-side-label,
 .p2p-terminal-price-card > .p2p-price-side-label {
-  color: var(--muted);
-  letter-spacing: 0.06em;
+  color: rgba(190, 184, 218, 0.72);
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.045em;
   line-height: 1.05;
   overflow-wrap: anywhere;
 }
@@ -4146,8 +4188,8 @@
   overflow-wrap: anywhere;
   color: var(--text);
   font-family: "Space Grotesk", sans-serif;
-  font-size: clamp(1.16rem, 1.7vw, 1.4rem);
-  line-height: 1.08;
+  font-size: clamp(1.32rem, 2vw, 1.68rem);
+  line-height: 1;
 }
 
 .p2p-price-label {
@@ -4173,9 +4215,9 @@
 .p2p-price-unit {
   min-width: 0;
   overflow: hidden;
-  color: rgba(218, 211, 255, 0.74);
+  color: rgba(218, 211, 255, 0.62);
   font-family: Inter, system-ui, sans-serif;
-  font-size: 0.68em;
+  font-size: 0.52em;
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1.02;
@@ -4199,8 +4241,8 @@
   display: grid;
   align-content: start;
   gap: 5px;
-  border: 1px solid rgba(74, 64, 112, 0.28);
-  background: rgba(7, 7, 14, 0.48);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(7, 8, 15, 0.46);
   padding: 10px 11px;
 }
 
@@ -4247,14 +4289,14 @@
 
 .p2p-offer-term-offered {
   border-left: 0;
-  border-color: rgba(121, 95, 184, 0.3);
-  background: rgba(7, 7, 14, 0.48);
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(7, 8, 15, 0.46);
 }
 
 .p2p-offer-term-requested {
   border-left: 0;
-  border-color: rgba(167, 139, 250, 0.24);
-  background: rgba(7, 7, 14, 0.48);
+  border-color: rgba(148, 163, 184, 0.14);
+  background: rgba(7, 8, 15, 0.46);
 }
 
 .p2p-offer-term-offered span {
@@ -4266,18 +4308,18 @@
 }
 
 .p2p-offer-term-send {
-  border-left-color: rgba(121, 95, 184, 0.3);
-  background: rgba(7, 7, 14, 0.48);
+  border-left-color: rgba(148, 163, 184, 0.16);
+  background: rgba(7, 8, 15, 0.46);
 }
 
 .p2p-offer-term-receive {
-  border-left-color: rgba(167, 139, 250, 0.24);
-  background: rgba(7, 7, 14, 0.48);
+  border-left-color: rgba(148, 163, 184, 0.14);
+  background: rgba(7, 8, 15, 0.46);
 }
 
 .p2p-offer-term-neutral {
-  border-left-color: rgba(139, 92, 246, 0.36);
-  background: rgba(16, 14, 26, 0.54);
+  border-left-color: rgba(148, 163, 184, 0.18);
+  background: rgba(14, 15, 24, 0.5);
 }
 
 .p2p-offer-term-send span {
@@ -5025,10 +5067,10 @@
 }
 
 .p2p-order-card-selected {
-  border-color: rgba(80, 0, 133, 0.76) !important;
+  border-color: rgba(196, 181, 253, 0.86) !important;
   box-shadow:
-    0 0 0 1px rgba(139, 92, 246, 0.24),
-    0 0 18px rgba(80, 0, 133, 0.14);
+    0 0 0 2px rgba(139, 92, 246, 0.24),
+    0 0 28px rgba(139, 92, 246, 0.2);
 }
 
 .p2p-wallet-trade-group-head {
@@ -5157,7 +5199,8 @@
   background: var(--accent-soft);
 }
 
-.p2p-offer-open-btn {
+.p2p-offer-open-btn,
+.p2p-order-card-footer .p2p-offer-manage-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5169,7 +5212,8 @@
   white-space: nowrap;
 }
 
-.p2p-offer-open-btn:hover {
+.p2p-offer-open-btn:hover,
+.p2p-order-card-footer .p2p-offer-manage-btn:hover {
   background: rgba(139, 92, 246, 0.36) !important;
   border-color: rgba(167, 139, 250, 0.7) !important;
 }
@@ -5726,10 +5770,10 @@
 }
 
 .p2p-recurring-price-card-head > span:first-child {
-  color: #c4b5fd;
-  font-size: 0.72rem;
+  color: rgba(198, 192, 224, 0.78);
+  font-size: 0.66rem;
   font-weight: 900;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.045em;
   line-height: 1.2;
   text-transform: uppercase;
 }
@@ -5739,11 +5783,14 @@
   appearance: none;
   display: grid;
   align-content: center;
-  gap: 6px;
+  gap: 7px;
   min-height: var(--p2p-desk-card-market-row, 104px);
-  border: 1px solid rgba(121, 95, 184, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.62);
+  background:
+    radial-gradient(260px 100px at 18% 0%, rgba(139, 92, 246, 0.07), transparent 62%),
+    linear-gradient(180deg, rgba(10, 11, 19, 0.68), rgba(4, 5, 10, 0.7));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   color: inherit;
   font: inherit;
   padding: 10px;
@@ -5760,8 +5807,10 @@
 }
 
 .p2p-recurring-price-card:hover {
-  border-color: rgba(167, 139, 250, 0.58);
-  background: rgba(19, 18, 31, 0.66);
+  border-color: rgba(203, 213, 225, 0.26);
+  background:
+    radial-gradient(260px 100px at 18% 0%, rgba(139, 92, 246, 0.09), transparent 62%),
+    linear-gradient(180deg, rgba(15, 16, 27, 0.74), rgba(6, 7, 14, 0.78));
 }
 
 .p2p-recurring-price-card:focus-visible {
@@ -5775,10 +5824,11 @@
   align-content: center;
   gap: 4px;
   min-width: 0;
-  border: 1px solid rgba(74, 64, 112, 0.32);
+  border: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 8px;
-  background: rgba(5, 5, 12, 0.48);
-  padding: 7px 8px;
+  background: rgba(3, 4, 9, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+  padding: 6px 8px;
 }
 
 .p2p-recurring-price-box > span {
@@ -5823,7 +5873,7 @@
 
 .p2p-recurring-price-box .p2p-price-number {
   color: #fff;
-  font-size: clamp(1.16rem, 1.55vw, 1.36rem);
+  font-size: clamp(1.28rem, 1.7vw, 1.52rem);
   font-weight: 950;
   text-transform: none;
   line-height: 0.98;
@@ -5831,8 +5881,8 @@
 
 .p2p-recurring-price-box .p2p-price-unit {
   display: block;
-  color: rgba(218, 211, 255, 0.7);
-  font-size: clamp(0.56rem, 0.78vw, 0.64rem);
+  color: rgba(218, 211, 255, 0.58);
+  font-size: clamp(0.5rem, 0.62vw, 0.56rem);
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1.02;
@@ -5863,18 +5913,18 @@
 }
 
 .p2p-recurring-price-buy {
-  border-color: rgba(121, 95, 184, 0.32);
+  border-color: rgba(148, 163, 184, 0.18);
 }
 
 .p2p-recurring-price-sell {
-  border-color: rgba(167, 139, 250, 0.28);
+  border-color: rgba(148, 163, 184, 0.16);
 }
 
 .p2p-recurring-inventory-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
-  border: 1px solid rgba(74, 64, 112, 0.3);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
   background: rgba(7, 7, 14, 0.44);
   overflow: hidden;
@@ -5892,7 +5942,7 @@
 }
 
 .p2p-recurring-inventory-strip > div + div {
-  border-left: 1px solid rgba(74, 64, 112, 0.24);
+  border-left: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .p2p-recurring-liquidity-head {

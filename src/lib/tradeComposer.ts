@@ -284,13 +284,21 @@ export const deriveTradeComposerModel = ({
     ) {
       return {
         value: address.toLowerCase(),
-        label: `✓ ${fallbackSymbol} (ecosystem)`
+        label: `✓ ${fallbackSymbol} (ecosystem)`,
+        symbol: fallbackSymbol,
+        kindLabel: kind === 'private-erc20' ? 'Private' : 'Public',
+        addressLabel: `CA ${shortenAddress(address)}`,
+        verificationLabel: kind === 'private-erc20' ? 'Verified private token' : 'CA loaded'
       };
     }
     const symbol = info.symbol.trim();
     return {
       value: address.toLowerCase(),
-      label: `✓ ${symbol} (ecosystem)`
+      label: `✓ ${symbol} (ecosystem)`,
+      symbol,
+      kindLabel: kind === 'private-erc20' ? 'Private' : 'Public',
+      addressLabel: `CA ${shortenAddress(address)}`,
+      verificationLabel: kind === 'private-erc20' ? 'Verified private token' : 'CA loaded'
     };
   });
   const privateVerifiedTokenOptions = verifiedTokenOptions.filter(
@@ -300,13 +308,32 @@ export const deriveTradeComposerModel = ({
     (option) => getVerifiedEcosystemToken(option.value)?.kind !== 'private-erc20'
   );
   const tradeTokenOptions = [
-    { value: 'coti', label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)` },
-    { value: 'wisp', label: `✓ ${rewardTokenSymbol} (public)` },
-    { value: 'pwisp', label: `✓ ${privateRewardTokenSymbol} (private)` },
+    {
+      value: 'coti',
+      label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)`,
+      symbol: TIP_NATIVE_TOKEN_SYMBOL,
+      kindLabel: 'Native',
+      addressLabel: 'COTI Mainnet native asset',
+      verificationLabel: 'Native asset'
+    },
+    {
+      value: 'wisp',
+      label: `✓ ${rewardTokenSymbol} (public)`,
+      symbol: rewardTokenSymbol,
+      kindLabel: 'Public',
+      addressLabel: `CA ${shortenAddress(REWARD_TOKEN_ADDRESS)}`,
+      verificationLabel: 'CA loaded'
+    },
+    {
+      value: 'pwisp',
+      label: `✓ ${privateRewardTokenSymbol} (private)`,
+      symbol: privateRewardTokenSymbol,
+      kindLabel: 'Private',
+      addressLabel: `CA ${shortenAddress(PRIVATE_REWARD_TOKEN_ADDRESS)}`,
+      verificationLabel: 'Verified private token'
+    },
     ...privateVerifiedTokenOptions,
-    ...publicVerifiedTokenOptions,
-    { value: 'custom-public', label: 'Custom public token / CA' },
-    { value: 'custom-private', label: 'Custom private token / CA' }
+    ...publicVerifiedTokenOptions
   ];
 
   const tradeCustomOfferTokenKey = (() => {

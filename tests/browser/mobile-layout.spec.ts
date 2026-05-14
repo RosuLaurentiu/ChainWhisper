@@ -81,6 +81,20 @@ const parseColorAlpha = (value: string) => {
   return Number.isFinite(values[3]) ? values[3] : 1;
 };
 
+const parseColorChroma = (value: string) => {
+  const match = value.match(/rgba?\(([^)]+)\)/);
+  if (!match) {
+    return 255;
+  }
+  const channelParts = match[1].includes('/') ? match[1].split('/')[0] : match[1];
+  const parts = channelParts.includes(',') ? channelParts.split(',') : channelParts.trim().split(/\s+/);
+  const values = parts.slice(0, 3).map((part) => Number(part.trim()));
+  if (values.some((channel) => !Number.isFinite(channel))) {
+    return 255;
+  }
+  return Math.max(...values) - Math.min(...values);
+};
+
 test.describe('mobile layout polish', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize(mobileViewport);
@@ -216,10 +230,19 @@ test.describe('mobile layout polish', () => {
   test('keeps mobile trade creation actions reachable without eager field errors', async ({ page }) => {
     await page.goto('/trades/create');
 
+    const readiness = page.locator('.trade-compose-readiness');
+    await expect(readiness).toContainText(/Connect wallet|Complete required fields|Loading token balance|Ready to create offer/);
+
     const sendAmountError = page.getByText(/Enter a valid .+ amount to send\./);
     await expect(sendAmountError).toHaveCount(0);
     await page.getByRole('button', { name: 'Create Offer' }).click({ force: true });
     await expect(sendAmountError).toBeVisible();
+
+    await page.locator('.trade-compose-section-sell .trade-compose-amount-field .trade-compose-input').fill('10');
+    await page.locator('.trade-compose-price-field .trade-compose-input').fill('1');
+    await expect(page.locator('.trade-compose-pricing-source')).toHaveCount(2);
+    await expect(page.locator('.trade-compose-pricing-derived')).toHaveCount(1);
+    await expect(page.locator('.trade-compose-pricing-derived .trade-compose-pricing-state')).toContainText('Derived');
 
     await scrollTradeShellToBottom(page);
     await expect(page.getByRole('button', { name: 'Create Offer' })).toBeVisible();
@@ -298,7 +321,18 @@ test.describe('mobile layout polish', () => {
     await page.goto('/trades/create');
 
     await page.locator('.trade-token-select-trigger').first().click();
-    await expect(page.locator('.trade-token-select-dropdown')).toBeVisible();
+    const tokenDropdown = page.locator('.trade-token-select-dropdown');
+    const tokenState = page.locator('.trade-token-select-state').first();
+    await expect(tokenDropdown).toBeVisible();
+    await expect(tokenState).toContainText(/Whitelisted|Native asset|Balance pending/);
+    await expect(tokenState).not.toContainText(/Balance\s+(?:--|\d)/);
+    await expect(tokenState.locator('a[title="View token on explorer"]')).toBeVisible();
+    await expect(page.locator('.trade-compose-asset-field > .trade-compose-field-head .trade-compose-icon-link')).toHaveCount(0);
+    await expect(tokenDropdown).not.toContainText(/Custom public|Custom private|Custom token|Custom .*CA/);
+    await expect(tokenDropdown.locator('.trade-token-select-option-main strong').first()).toBeVisible();
+    await expect(tokenDropdown.locator('.trade-token-select-option-main small').first()).toBeVisible();
+    await expect(tokenDropdown.locator('.trade-token-select-option-kind').first()).toBeVisible();
+    await expect(tokenDropdown.locator('.trade-token-select-check')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
 
     await page.mouse.click(5, 5);
@@ -367,6 +401,103 @@ test.describe('trading responsive layout', () => {
     await expect(skeletonGrid.locator('.p2p-desk-skeleton-market')).toHaveCount(5);
     await expect(skeletonGrid.locator('.p2p-desk-skeleton-actions')).toHaveCount(5);
     await expect(page.locator('.p2p-empty-state-loading')).toHaveCount(0);
+  });
+
+  test('keeps trading view tabs color-consistent across routes', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+
+    const routes = ['/trades', '/trades/create', '/trades/open', '/trades/mine'];
+    const routeStyles: Array<{
+      active: Record<string, string | boolean>;
+      bounds: { height: number; left: number; top: number };
+      inactive: Record<string, string | boolean>;
+    }> = [];
+
+    for (const route of routes) {
+      await page.goto(route);
+      const tabs = page.getByRole('navigation', { name: 'P2P trade views' });
+      await expect(tabs).toBeVisible();
+      const tabBounds = await tabs.boundingBox();
+      expect(tabBounds).not.toBeNull();
+      const styles = await tabs.locator('button').evaluateAll((buttons) =>
+        buttons.map((button) => {
+          const style = window.getComputedStyle(button);
+          return {
+            active: button.classList.contains('active'),
+            backgroundColor: style.backgroundColor,
+            backgroundImage: style.backgroundImage,
+            borderColor: style.borderTopColor,
+            borderRadius: style.borderRadius,
+            boxShadow: style.boxShadow,
+            color: style.color,
+            fontSize: style.fontSize,
+            height: `${Math.round(button.getBoundingClientRect().height)}px`,
+            padding: `${style.paddingTop} ${style.paddingRight} ${style.paddingBottom} ${style.paddingLeft}`
+          };
+        })
+      );
+      expect(styles).toHaveLength(4);
+      const activeStyles = styles.filter((style) => style.active);
+      const inactiveStyles = styles.filter((style) => !style.active);
+      expect(activeStyles).toHaveLength(1);
+      expect(new Set(inactiveStyles.map((style) => JSON.stringify(style))).size).toBe(1);
+      expect(activeStyles[0].backgroundImage).toContain('linear-gradient');
+      expect(inactiveStyles[0].backgroundImage).toContain('linear-gradient');
+      expect(activeStyles[0].backgroundImage).not.toEqual(inactiveStyles[0].backgroundImage);
+      expect(activeStyles[0].boxShadow).not.toEqual(inactiveStyles[0].boxShadow);
+      routeStyles.push({
+        active: activeStyles[0],
+        bounds: {
+          height: Math.round(tabBounds!.height),
+          left: Math.round(tabBounds!.x),
+          top: Math.round(tabBounds!.y)
+        },
+        inactive: inactiveStyles[0]
+      });
+    }
+
+    const [referenceStyles, ...comparisonStyles] = routeStyles;
+    for (const styles of comparisonStyles) {
+      expect(styles.active).toEqual(referenceStyles.active);
+      expect(styles.inactive).toEqual(referenceStyles.inactive);
+      expect(Math.abs(styles.bounds.left - referenceStyles.bounds.left)).toBeLessThanOrEqual(4);
+      expect(Math.abs(styles.bounds.top - referenceStyles.bounds.top)).toBeLessThanOrEqual(4);
+      expect(styles.bounds.height).toEqual(referenceStyles.bounds.height);
+    }
+  });
+
+  test('keeps desk filter panel edge stable when Terminal is active', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+
+    const readDeskFrame = async (route: string) => {
+      await page.goto(route);
+      const overview = page.locator('.p2p-market-overview');
+      const overviewHead = page.locator('.p2p-market-overview-head');
+      const filterBar = page.locator('.p2p-filter-bar');
+      await expect(overview).toBeVisible();
+      await expect(overviewHead).toBeVisible();
+      await expect(filterBar).toBeVisible();
+      const [overviewBox, headBox, filterBox] = await Promise.all([
+        overview.boundingBox(),
+        overviewHead.boundingBox(),
+        filterBar.boundingBox()
+      ]);
+      expect(overviewBox).not.toBeNull();
+      expect(headBox).not.toBeNull();
+      expect(filterBox).not.toBeNull();
+      return {
+        filterLeft: Math.round(filterBox!.x),
+        filterTop: Math.round(filterBox!.y),
+        headLeft: Math.round(headBox!.x),
+        headTop: Math.round(headBox!.y),
+        overviewLeft: Math.round(overviewBox!.x),
+        overviewTop: Math.round(overviewBox!.y)
+      };
+    };
+
+    const deskFrame = await readDeskFrame('/trades');
+    const terminalFrame = await readDeskFrame('/trades/open');
+    expect(terminalFrame).toEqual(deskFrame);
   });
 
   test('keeps desk order cards symmetrical and action-ready across order types', async ({ page }) => {
@@ -444,6 +575,29 @@ test.describe('trading responsive layout', () => {
       await expect(makerChip).toHaveText('Maker');
       await expect(makerChip).toHaveAttribute('title', 'Created by you');
       await expect(makerCard.locator('.p2p-order-card-footer > span', { hasText: /Created by you|Maker/ })).toHaveCount(0);
+      const makerOpenStyle = await makerCard.locator('.p2p-offer-manage-btn').first().evaluate((button) => {
+        const style = window.getComputedStyle(button);
+        return {
+          backgroundColor: style.backgroundColor,
+          backgroundImage: style.backgroundImage,
+          borderColor: style.borderColor,
+          color: style.color
+        };
+      });
+      expect(makerOpenStyle.backgroundImage).toContain('linear-gradient');
+      const referenceOpen = desk.locator('.p2p-offer-open-btn').first();
+      if ((await referenceOpen.count()) > 0) {
+        const referenceOpenStyle = await referenceOpen.evaluate((button) => {
+          const style = window.getComputedStyle(button);
+          return {
+            backgroundColor: style.backgroundColor,
+            backgroundImage: style.backgroundImage,
+            borderColor: style.borderColor,
+            color: style.color
+          };
+        });
+        expect(makerOpenStyle).toEqual(referenceOpenStyle);
+      }
     }
     await expect(desk.locator('.p2p-offer-term span', { hasText: 'Buyer pays' })).toHaveCount(0);
     const publicLiquidityOneOff = desk
@@ -536,6 +690,10 @@ test.describe('trading responsive layout', () => {
         expect(style.fontSize).toBeGreaterThan(style.unitFontSize);
       }
     }
+    expect(numericStyles[0].fontSize).toBeGreaterThan(20);
+    expect(numericStyles[1].fontSize).toBeGreaterThan(18);
+    expect(numericStyles[0].unitFontSize).toBeLessThanOrEqual(numericStyles[0].fontSize * 0.56);
+    expect(numericStyles[1].unitFontSize).toBeLessThanOrEqual(numericStyles[1].fontSize * 0.56);
     const oneOffChrome = await oneOffCard.evaluate((card) => {
       const readBorder = (selector: string) => {
         const element = card.querySelector(selector);
@@ -549,8 +707,11 @@ test.describe('trading responsive layout', () => {
       };
     });
     expect(parseColorAlpha(oneOffChrome.market)).toBeLessThan(parseColorAlpha(oneOffChrome.outer));
+    expect(parseColorAlpha(oneOffChrome.market)).toBeLessThanOrEqual(0.16);
     expect(parseColorAlpha(oneOffChrome.term)).toBeLessThan(parseColorAlpha(oneOffChrome.outer));
     expect(parseColorAlpha(oneOffChrome.detail)).toBeLessThanOrEqual(parseColorAlpha(oneOffChrome.outer));
+    expect(parseColorChroma(oneOffChrome.market)).toBeLessThan(parseColorChroma(oneOffChrome.outer));
+    expect(parseColorChroma(oneOffChrome.term)).toBeLessThan(parseColorChroma(oneOffChrome.outer));
     const recurringChrome = await recurringCard.evaluate((card) => {
       const readStyle = (selector: string) => {
         const element = card.querySelector(selector);
@@ -572,6 +733,11 @@ test.describe('trading responsive layout', () => {
     expect(parseColorAlpha(recurringChrome.price)).toBeLessThan(parseColorAlpha(recurringChrome.outer));
     expect(parseColorAlpha(recurringChrome.priceBox)).toBeLessThan(parseColorAlpha(recurringChrome.outer));
     expect(parseColorAlpha(recurringChrome.strip)).toBeLessThan(parseColorAlpha(recurringChrome.outer));
+    expect(parseColorAlpha(recurringChrome.price)).toBeLessThanOrEqual(0.16);
+    expect(parseColorAlpha(recurringChrome.priceBox)).toBeLessThanOrEqual(0.14);
+    expect(parseColorChroma(recurringChrome.price)).toBeLessThan(parseColorChroma(recurringChrome.outer));
+    expect(parseColorChroma(recurringChrome.priceBox)).toBeLessThan(parseColorChroma(recurringChrome.outer));
+    expect(parseColorChroma(recurringChrome.strip)).toBeLessThan(parseColorChroma(recurringChrome.outer));
     expect(parseColorAlpha(recurringChrome.stripCellBackground)).toBeLessThanOrEqual(0.05);
     expect(parseFloat(recurringChrome.stripColumnGap)).toBe(0);
     await expect(oneOffCard.locator('.p2p-order-market-panel small')).toHaveCount(0);
@@ -599,6 +765,8 @@ test.describe('trading responsive layout', () => {
       })
     ]);
     expect(priceRatioLabelStyles[1]).toEqual(priceRatioLabelStyles[0]);
+    expect(parseFloat(priceRatioLabelStyles[0].fontSize)).toBeLessThanOrEqual(11);
+    expect(parseColorAlpha(priceRatioLabelStyles[0].color)).toBeLessThanOrEqual(0.8);
     const tagLineSpread = await oneOffCard.locator('.p2p-order-meta-line .p2p-order-subline').first().evaluate((line) => {
       const itemTops = Array.from(line.children).map((child) => Math.round(child.getBoundingClientRect().top));
       return Math.max(...itemTops) - Math.min(...itemTops);
@@ -780,24 +948,55 @@ test.describe('trading responsive layout', () => {
     await expect(selectedDeskCard).toHaveCount(1);
     const selectedCardStyle = await selectedDeskCard.first().evaluate((element) => {
       const style = window.getComputedStyle(element);
+      const ringStyle = window.getComputedStyle(element, '::before');
       return {
         backgroundImage: style.backgroundImage,
         borderColor: style.borderColor,
         outlineColor: style.outlineColor,
         outlineWidth: style.outlineWidth,
-        boxShadow: style.boxShadow
+        boxShadow: style.boxShadow,
+        ringBackgroundImage: ringStyle.backgroundImage,
+        ringDisplay: ringStyle.display
       };
     });
     expect(selectedCardStyle.backgroundImage).toContain('linear-gradient');
-    expect(selectedCardStyle.outlineColor).toContain('80, 0, 133');
-    expect(selectedCardStyle.outlineWidth).toBe('1px');
-    expect(selectedCardStyle.boxShadow).toContain('80, 0, 133');
+    expect(selectedCardStyle.backgroundImage).toContain('139, 92, 246');
+    expect(selectedCardStyle.outlineWidth).toBe('0px');
+    expect(selectedCardStyle.boxShadow).toContain('139, 92, 246');
+    expect(selectedCardStyle.ringDisplay).toBe('block');
+    expect(selectedCardStyle.ringBackgroundImage).toContain('linear-gradient');
+    expect(selectedCardStyle.ringBackgroundImage).toContain('139, 92, 246');
     const selectedCardHeaderHeight = await selectedDeskCard
       .locator('.p2p-order-card-head')
       .evaluate((element) => Math.round(element.getBoundingClientRect().height));
     expect(selectedCardHeaderHeight).toBeLessThanOrEqual(46);
     await expect(terminal).toBeVisible({ timeout: 30_000 });
     await expect(terminal.locator('.p2p-terminal-main')).toBeVisible();
+    const terminalChrome = await terminal.evaluate((shell) => {
+      const readBorder = (selector: string) => {
+        const element = shell.querySelector(selector);
+        return element ? window.getComputedStyle(element).borderTopColor : '';
+      };
+      return {
+        outer: window.getComputedStyle(shell).borderTopColor,
+        market: readBorder('.p2p-terminal-market'),
+        price: readBorder('.p2p-terminal-price-card'),
+        detail: readBorder('.p2p-terminal-progress, .p2p-terminal-flow'),
+        ticket: readBorder('.p2p-terminal-ticket')
+      };
+    });
+    expect(parseColorAlpha(terminalChrome.market)).toBeLessThan(parseColorAlpha(terminalChrome.outer));
+    expect(parseColorAlpha(terminalChrome.ticket)).toBeLessThan(parseColorAlpha(terminalChrome.outer));
+    expect(parseColorAlpha(terminalChrome.price)).toBeLessThan(parseColorAlpha(terminalChrome.outer));
+    expect(parseColorAlpha(terminalChrome.market)).toBeLessThanOrEqual(0.18);
+    expect(parseColorAlpha(terminalChrome.ticket)).toBeLessThanOrEqual(0.18);
+    expect(parseColorAlpha(terminalChrome.price)).toBeLessThanOrEqual(0.16);
+    expect(parseColorChroma(terminalChrome.market)).toBeLessThan(parseColorChroma(terminalChrome.outer));
+    expect(parseColorChroma(terminalChrome.ticket)).toBeLessThan(parseColorChroma(terminalChrome.outer));
+    if (terminalChrome.detail) {
+      expect(parseColorAlpha(terminalChrome.detail)).toBeLessThanOrEqual(0.16);
+      expect(parseColorChroma(terminalChrome.detail)).toBeLessThan(parseColorChroma(terminalChrome.outer));
+    }
     await expect(terminal.locator('.p2p-terminal-history-desktop')).toHaveCount(0);
     const standardHeaderTags = terminal.locator('.p2p-terminal-head .p2p-terminal-tag-row');
     await expect(standardHeaderTags).toContainText(/Offer #\d+/);

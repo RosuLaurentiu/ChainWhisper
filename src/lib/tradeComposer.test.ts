@@ -50,7 +50,15 @@ describe('trade composer private token visibility', () => {
       (option) => option.label.includes('pWISP') && option.label.includes('(private)')
     );
 
-    expect(privatePwispOptions).toEqual([{ value: 'pwisp', label: '✓ pWISP (private)' }]);
+    expect(privatePwispOptions).toEqual([
+      expect.objectContaining({
+        value: 'pwisp',
+        label: '✓ pWISP (private)',
+        kindLabel: 'Private',
+        verificationLabel: 'Verified private token'
+      })
+    ]);
+    expect(model.tradeTokenOptions.some((option) => option.value.startsWith('custom'))).toBe(false);
   });
 
   it('allows visible private-token request orders through the normal visible path', () => {
@@ -80,10 +88,14 @@ describe('trade composer private token visibility', () => {
     expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
     expect(model.tradeRequestVerifyUrl).toBe(`https://mainnet.cotiscan.io/address/${HOTDOG_PRIVATE_TOKEN_ADDRESS}`);
     expect(model.selectedTradeRequestToken?.symbol).toBe('HOTDOG');
-    expect(model.tradeTokenOptions).toContainEqual({
-      value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
-      label: '✓ HOTDOG (private)'
-    });
+    expect(model.tradeTokenOptions).toContainEqual(
+      expect.objectContaining({
+        value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
+        label: '✓ HOTDOG (private)',
+        kindLabel: 'Private',
+        verificationLabel: 'Verified private token'
+      })
+    );
     expect(model.tradeRequestAmountSummaryLabel).toBe('2 HOTDOG');
     expect(model.tradeRateLabel).toBe('1 WISP = 0.2 HOTDOG');
     expect(model.canSendTradeOffer).toBe(false);
@@ -112,10 +124,14 @@ describe('trade composer private token visibility', () => {
     expect(model.tradeComposerFieldErrors.requestAsset).toBeUndefined();
     expect(model.tradeComposerValidationMessage).toBe('Loading token to receive.');
     expect(model.selectedTradeRequestToken?.symbol).toBe('HOTDOG');
-    expect(model.tradeTokenOptions).toContainEqual({
-      value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
-      label: '✓ HOTDOG (private)'
-    });
+    expect(model.tradeTokenOptions).toContainEqual(
+      expect.objectContaining({
+        value: HOTDOG_PRIVATE_TOKEN_ADDRESS.toLowerCase(),
+        label: '✓ HOTDOG (private)',
+        kindLabel: 'Private',
+        verificationLabel: 'Verified private token'
+      })
+    );
     expect(model.tradeRequestAmountSummaryLabel).toBe('2 HOTDOG');
     expect(model.tradeRateLabel).toBe('1 WISP = 0.2 HOTDOG');
     expect(model.canSendTradeOffer).toBe(false);

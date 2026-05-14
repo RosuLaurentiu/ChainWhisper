@@ -1233,9 +1233,12 @@
     white-space: nowrap;
   }
 
-  .trade-compose-send {
+  .trade-compose-action-stack {
     grid-area: send;
-    min-height: 100%;
+  }
+
+  .trade-compose-send {
+    min-height: 38px;
     padding: 6px 12px;
   }
 
@@ -2636,7 +2639,7 @@
 
   .p2p-terminal-flow-arrow {
     min-height: 28px;
-    border-block: 1px solid rgba(74, 64, 112, 0.48);
+    border-block: 1px solid rgba(148, 163, 184, 0.16);
     border-inline: 0;
   }
 
@@ -3998,6 +4001,8 @@ summary:focus:not(:focus-visible),
   --p2p-input: #020205;
   --p2p-border: rgba(118, 96, 178, 0.62);
   --p2p-border-strong: rgba(135, 110, 196, 0.86);
+  --p2p-border-muted: rgba(148, 163, 184, 0.2);
+  --p2p-border-muted-strong: rgba(203, 213, 225, 0.34);
   --p2p-text: #f6f3ff;
   --p2p-muted: #aaa3c7;
   --p2p-violet: #8b5cf6;
@@ -4129,6 +4134,22 @@ summary:focus:not(:focus-visible),
   color: rgba(170, 163, 199, 0.86);
 }
 
+.app-shell-trades .p2p-hidden-price-card > span,
+.app-shell-trades .p2p-recurring-price-card-head > span:first-child {
+  color: rgba(198, 192, 224, 0.78);
+  font-size: 0.66rem;
+  letter-spacing: 0.045em;
+}
+
+.app-shell-trades .p2p-hidden-price-card > .p2p-price-side-label,
+.app-shell-trades .p2p-terminal-price-card > .p2p-price-side-label {
+  color: rgba(190, 184, 218, 0.72);
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.045em;
+}
+
+
 .app-shell-trades .p2p-stats-strip div,
 .app-shell-trades .standalone-trades-stat,
 .app-shell-trades .standalone-trade-options,
@@ -4200,28 +4221,46 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-order-card-selected,
 .app-shell-trades .p2p-order-card-selected.p2p-offer-card-private-liquidity,
 .app-shell-trades .p2p-order-card-selected.p2p-recurring-order-card-private {
-  border-color: rgba(80, 0, 133, 0.92) !important;
+  border: 1px solid transparent !important;
+  border-color: transparent !important;
+  border-top-color: transparent !important;
+  border-right-color: transparent !important;
+  border-bottom-color: transparent !important;
+  border-left-color: transparent !important;
+  background:
+    linear-gradient(180deg, rgba(24, 19, 39, 0.99), rgba(10, 8, 18, 0.99)) padding-box,
+    linear-gradient(
+        135deg,
+        rgba(245, 243, 255, 0.9),
+        rgba(196, 181, 253, 0.78) 24%,
+        rgba(139, 92, 246, 0.74) 50%,
+        rgba(80, 0, 133, 0.66) 74%,
+        rgba(196, 181, 253, 0.62) 100%
+      )
+      border-box !important;
   box-shadow:
-    0 0 0 2px rgba(80, 0, 133, 0.3),
+    0 0 0 2px rgba(139, 92, 246, 0.28),
     0 17px 36px rgba(0, 0, 0, 0.36),
-    0 0 28px rgba(80, 0, 133, 0.22) !important;
+    0 0 34px rgba(139, 92, 246, 0.24) !important;
 }
 
 .app-shell-trades .p2p-hidden-price-card,
 .app-shell-trades .p2p-recurring-price-card,
 .app-shell-trades .p2p-terminal-price-card,
 .app-shell-trades .trade-card-ratio-card {
-  border-color: rgba(111, 90, 167, 0.44);
+  border-color: rgba(148, 163, 184, 0.14);
   background:
-    linear-gradient(180deg, rgba(16, 13, 27, 0.74), rgba(4, 4, 10, 0.76));
+    radial-gradient(260px 100px at 18% 0%, rgba(139, 92, 246, 0.08), transparent 62%),
+    linear-gradient(180deg, rgba(10, 11, 19, 0.7), rgba(4, 5, 10, 0.74));
 }
 
 .app-shell-trades .p2p-hidden-price-card:hover,
 .app-shell-trades .p2p-recurring-price-card:hover,
 .app-shell-trades .p2p-terminal-price-card:hover {
-  border-color: rgba(167, 139, 250, 0.62);
+  border-color: rgba(203, 213, 225, 0.26);
   background:
-    linear-gradient(180deg, rgba(19, 16, 32, 0.76), rgba(7, 6, 14, 0.82));
+    radial-gradient(260px 100px at 18% 0%, rgba(139, 92, 246, 0.1), transparent 62%),
+    linear-gradient(180deg, rgba(15, 16, 27, 0.76), rgba(6, 7, 14, 0.8));
 }
 
 .app-shell-trades .p2p-hidden-price-card > strong,
@@ -4249,6 +4288,17 @@ summary:focus:not(:focus-visible),
   color: #fff;
 }
 
+.app-shell-trades .p2p-hidden-price-card .p2p-price-number {
+  font-size: clamp(1.32rem, 2vw, 1.68rem);
+  font-weight: 950;
+  line-height: 1;
+}
+
+.app-shell-trades .p2p-hidden-price-card .p2p-price-unit {
+  color: rgba(218, 211, 255, 0.62);
+  font-size: 0.52em;
+}
+
 .app-shell-trades .p2p-price-number,
 .app-shell-trades .p2p-liquidity-number,
 .app-shell-trades .p2p-order-liquidity-summary strong,
@@ -4264,6 +4314,21 @@ summary:focus:not(:focus-visible),
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
+}
+
+.app-shell-trades .p2p-recurring-price-box {
+  border-color: rgba(148, 163, 184, 0.12);
+  background: rgba(3, 4, 9, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+}
+
+.app-shell-trades .p2p-recurring-price-box .p2p-price-number {
+  font-size: clamp(1.28rem, 1.7vw, 1.52rem);
+}
+
+.app-shell-trades .p2p-recurring-price-box .p2p-price-unit {
+  color: rgba(218, 211, 255, 0.58);
+  font-size: clamp(0.5rem, 0.62vw, 0.56rem);
 }
 
 @container (max-width: 370px) {
@@ -4285,11 +4350,11 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-recurring-price-box .p2p-price-number {
-    font-size: 1.02rem;
+    font-size: 1.14rem;
   }
 
   .app-shell-trades .p2p-recurring-price-box .p2p-price-unit {
-    font-size: 0.58rem;
+    font-size: 0.5rem;
   }
 
   .app-shell-trades .p2p-recurring-inventory-strip {
@@ -4326,8 +4391,8 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-terminal-action-state,
 .app-shell-trades .p2p-terminal-history-row,
 .app-shell-trades .trade-compose-section {
-  border-color: rgba(111, 90, 167, 0.3);
-  background: rgba(7, 7, 14, 0.56);
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(7, 8, 15, 0.52);
 }
 
 .app-shell-trades .p2p-recurring-inventory-strip > div {
@@ -4335,7 +4400,13 @@ summary:focus:not(:focus-visible),
 }
 
 .app-shell-trades .p2p-recurring-inventory-strip > div + div {
-  border-left-color: rgba(111, 90, 167, 0.22);
+  border-left-color: rgba(148, 163, 184, 0.14);
+}
+
+.app-shell-trades .p2p-recurring-price-box {
+  border-color: rgba(148, 163, 184, 0.12);
+  background: rgba(3, 4, 9, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
 }
 
 .app-shell-trades .p2p-terminal-shell,
@@ -4349,6 +4420,34 @@ summary:focus:not(:focus-visible),
     linear-gradient(180deg, rgba(17, 14, 31, 0.9), rgba(5, 4, 10, 0.92));
 }
 
+.app-shell-trades .p2p-terminal-market,
+.app-shell-trades .p2p-terminal-ticket {
+  border-color: rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(180deg, rgba(12, 12, 22, 0.58), rgba(5, 5, 12, 0.66));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.app-shell-trades .p2p-terminal-ticket {
+  background:
+    linear-gradient(180deg, rgba(15, 13, 26, 0.62), rgba(7, 7, 14, 0.68));
+}
+
+.app-shell-trades .p2p-terminal-flow,
+.app-shell-trades .p2p-terminal-stat-grid > div,
+.app-shell-trades .p2p-terminal-liquidity-grid > div,
+.app-shell-trades .p2p-terminal-progress,
+.app-shell-trades .p2p-terminal-related,
+.app-shell-trades .p2p-terminal-action-state {
+  border-color: rgba(148, 163, 184, 0.14);
+  background: rgba(5, 6, 12, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+}
+
+.app-shell-trades .p2p-terminal-flow-arrow {
+  border-inline-color: rgba(148, 163, 184, 0.16);
+}
+
 .app-shell-trades .p2p-terminal-head,
 .app-shell-trades .p2p-terminal-token-actions,
 .app-shell-trades .p2p-offer-footer,
@@ -4356,6 +4455,10 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .trade-compose-inline-price,
 .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .standalone-trades-section-head {
   border-color: rgba(111, 90, 167, 0.38);
+}
+
+.app-shell-trades .p2p-terminal-token-actions {
+  border-top-color: rgba(148, 163, 184, 0.18);
 }
 
 .app-shell-trades .p2p-terminal-ticket-head {
@@ -4614,16 +4717,53 @@ summary:focus:not(:focus-visible),
 }
 
 .app-shell-trades .p2p-order-card-selected {
-  border-color: rgba(80, 0, 133, 0.92) !important;
-  outline: 1px solid rgba(80, 0, 133, 0.72);
-  outline-offset: 1px;
+  border: 1px solid transparent !important;
+  border-color: transparent !important;
+  border-top-color: transparent !important;
+  border-right-color: transparent !important;
+  border-bottom-color: transparent !important;
+  border-left-color: transparent !important;
+  outline: 0;
   background:
-    linear-gradient(90deg, rgba(139, 92, 246, 0.9), rgba(80, 0, 133, 0.7) 52%, rgba(139, 92, 246, 0.22)) top / 100% 3px no-repeat,
-    linear-gradient(180deg, rgba(26, 21, 45, 0.99), rgba(12, 10, 22, 0.99)) !important;
+    linear-gradient(180deg, rgba(24, 19, 39, 0.99), rgba(10, 8, 18, 0.99)) padding-box,
+    linear-gradient(
+        135deg,
+        rgba(245, 243, 255, 0.9),
+        rgba(196, 181, 253, 0.78) 24%,
+        rgba(139, 92, 246, 0.74) 50%,
+        rgba(80, 0, 133, 0.66) 74%,
+        rgba(196, 181, 253, 0.62) 100%
+      )
+      border-box !important;
   box-shadow:
-    0 0 0 2px rgba(80, 0, 133, 0.3),
+    0 0 0 2px rgba(139, 92, 246, 0.28),
     0 17px 36px rgba(0, 0, 0, 0.36),
-    0 0 28px rgba(80, 0, 133, 0.22) !important;
+    0 0 34px rgba(139, 92, 246, 0.24) !important;
+}
+
+.app-shell-trades .p2p-order-card-selected::before {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  padding: 1px;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(245, 243, 255, 0.86),
+      rgba(196, 181, 253, 0.74) 24%,
+      rgba(139, 92, 246, 0.8) 50%,
+      rgba(80, 0, 133, 0.72) 72%,
+      rgba(196, 181, 253, 0.58) 100%
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
 }
 
 .app-shell-trades .p2p-order-card-selected::after {
@@ -4633,8 +4773,9 @@ summary:focus:not(:focus-visible),
   pointer-events: none;
   border-radius: inherit;
   box-shadow:
-    inset 0 0 0 1px rgba(80, 0, 133, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    inset 0 0 0 1px rgba(245, 243, 255, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 24px rgba(139, 92, 246, 0.18);
 }
 
 .app-shell-trades .p2p-terminal-tabs button.active,
@@ -4647,6 +4788,34 @@ summary:focus:not(:focus-visible),
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 0 0 1px rgba(139, 92, 246, 0.2),
     0 0 16px rgba(80, 0, 133, 0.16);
+}
+
+.app-shell-trades .p2p-trade-tabs button {
+  position: relative;
+  border-color: rgba(167, 139, 250, 0.62);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.56), rgba(91, 66, 185, 0.46));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  color: #ece9ff;
+  height: 36px;
+  line-height: 1;
+}
+
+.app-shell-trades .p2p-trade-tabs button:not(.active):hover {
+  border-color: rgba(196, 181, 253, 0.72);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.64), rgba(91, 66, 185, 0.52));
+  color: #fff;
+}
+
+.app-shell-trades .p2p-trade-tabs button.active {
+  border-color: rgba(196, 181, 253, 0.84);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.78), rgba(80, 0, 133, 0.58)),
+    linear-gradient(135deg, rgba(124, 58, 237, 0.72), rgba(91, 66, 185, 0.6));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px rgba(245, 243, 255, 0.06),
+    0 0 0 1px rgba(139, 92, 246, 0.24);
+  color: #fff;
 }
 
 .app-shell-trades .p2p-terminal-tabs button:first-child.active,
@@ -4829,6 +4998,12 @@ summary:focus:not(:focus-visible),
   opacity: 0.72;
 }
 
+.app-shell-trades .standalone-trade-create-panel .trade-compose-send:disabled,
+.app-shell-trades .p2p-counter-panel .trade-compose-send:disabled {
+  filter: none;
+  opacity: 1;
+}
+
 .app-shell-trades .p2p-loading-skeleton {
   display: grid;
   gap: 7px;
@@ -4857,6 +5032,16 @@ summary:focus:not(:focus-visible),
   grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 7px 10px 8px;
+}
+
+@media (min-width: 861px) {
+  .app-shell-trades .p2p-trading-shell > .p2p-secondary-nav:not(.p2p-secondary-nav-mobile) {
+    margin: 8px 0 0 11px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open .p2p-market-overview {
+    padding: 7px 10px 8px;
+  }
 }
 
 .app-shell-trades .p2p-market-overview-head {
@@ -5085,7 +5270,7 @@ summary:focus:not(:focus-visible),
   .app-shell-trades .p2p-terminal-flow-arrow {
     min-height: auto;
     border-block: 0;
-    border-inline: 1px solid rgba(74, 64, 112, 0.48);
+    border-inline: 1px solid rgba(148, 163, 184, 0.16);
   }
 
   .app-shell-trades .p2p-terminal-flow-arrow svg {
