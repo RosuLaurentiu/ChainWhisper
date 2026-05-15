@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyDirectTradeTermsToSnapshot,
+  applyPrivateLinkTradeTermsToSnapshot,
   buildDirectTradeTerms,
   createTradeAccessSecret,
   decryptDirectTradeTerms,
@@ -60,5 +61,32 @@ describe('directTradeTerms', () => {
     expect(hydrated.fillState?.remainingOfferAmount).toBe('123');
     expect(hydrated.fillState?.remainingRequestAmount).toBe('456');
     expect(hydrated.hiddenLiquidity).toBe(false);
+  });
+
+  it('hydrates private-link hidden order terms without changing the hidden-liquidity settlement path', () => {
+    const snapshot = {
+      tradeId: 7,
+      maker: '0x1111111111111111111111111111111111111111',
+      taker: '0x0000000000000000000000000000000000000000',
+      offer: { kind: 'private-erc20', tokenAddress: '0x3333333333333333333333333333333333333333', symbol: 'pTOK', decimals: 6, amount: '0' },
+      request: { kind: 'private-erc20', tokenAddress: '0x4444444444444444444444444444444444444444', symbol: 'pUSD', decimals: 6, amount: '0' },
+      createdAt: 1,
+      expiresAt: 2,
+      status: 'open',
+      hiddenLiquidity: true
+    } satisfies TradeSnapshot;
+    const terms = buildDirectTradeTerms({
+      maker: snapshot.maker,
+      taker: snapshot.taker,
+      offer: { kind: 'private-erc20', tokenAddress: snapshot.offer.tokenAddress, amount: '1000000' },
+      request: { kind: 'private-erc20', tokenAddress: snapshot.request.tokenAddress, amount: '2500000' },
+      expiresAt: snapshot.expiresAt
+    });
+
+    const hydrated = applyPrivateLinkTradeTermsToSnapshot(snapshot, terms);
+
+    expect(hydrated.offer.amount).toBe('1000000');
+    expect(hydrated.request.amount).toBe('2500000');
+    expect(hydrated.hiddenLiquidity).toBe(true);
   });
 });

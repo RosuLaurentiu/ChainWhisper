@@ -43,7 +43,7 @@ import {
   type TradeSnapshot
 } from './appShared';
 import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHelpers';
-import { applyDirectTradeTermsToSnapshot, decryptDirectTradeTerms } from './directTradeTerms';
+import { applyDirectTradeTermsToSnapshot, applyPrivateLinkTradeTermsToSnapshot, decryptDirectTradeTerms } from './directTradeTerms';
 import { logMobileWalletDiagnostic } from './mobileWalletDiagnostics';
 import { encryptPrivateUint256Input } from './privateUint256';
 import {
@@ -930,7 +930,7 @@ export const readDirectTermPayloadBySecret = async ({
     .call({
       from: resolveDirectTermPayloadSecretCaller(makerAddress, takerAddress),
       to: config.address,
-      data: directInterface.encodeFunctionData('getDirectTermPayload', [tradeId, accessSecret])
+      data: directInterface.encodeFunctionData('getDirectTermPayload', [tradeId])
     })
     .catch(() => '');
   if (!rawResult || rawResult === '0x') {
@@ -965,11 +965,11 @@ export const readDirectTermPayloadForAccount = async ({
   if (signer) {
     const signerContract = new cotiEthers.Contract(config.address, config.abi, signer) as {
       getDirectTermPayload?: {
-        staticCall?: (tradeId: number | bigint, accessSecret: string) => Promise<unknown>;
+        staticCall?: (tradeId: number | bigint) => Promise<unknown>;
       };
     };
     const signerPayload = await signerContract.getDirectTermPayload
-      ?.staticCall?.(BigInt(tradeId), ZERO_BYTES32)
+      ?.staticCall?.(BigInt(tradeId))
       .catch(() => null);
     const normalizedSignerPayload = String(signerPayload ?? '');
     if (normalizedSignerPayload && normalizedSignerPayload !== '0x') {
@@ -983,7 +983,7 @@ export const readDirectTermPayloadForAccount = async ({
     .call({
       from: walletAddress,
       to: config.address,
-      data: directInterface.encodeFunctionData('getDirectTermPayload', [tradeId, ZERO_BYTES32])
+      data: directInterface.encodeFunctionData('getDirectTermPayload', [tradeId])
     })
     .catch(() => '');
   if (!rawResult || rawResult === '0x') {
@@ -2009,7 +2009,7 @@ export const recoverTradeAccessPayloadForMaker = async ({
   let encryptedPayload: unknown = '0x';
   if (config.directVisible || config.hiddenOnly) {
     const functionName = config.directVisible ? 'getDirectTermPayload' : 'getMakerRecoveryNote';
-    const functionArgs = config.directVisible ? [tradeId, ZERO_BYTES32] : [tradeId];
+    const functionArgs = [tradeId];
     const callerOverride = isWalletAddress(callerAddress ?? '') ? callerAddress : '';
     if (callerOverride) {
       try {
@@ -2028,7 +2028,7 @@ export const recoverTradeAccessPayloadForMaker = async ({
     }
     if (String(encryptedPayload) === '0x') {
       encryptedPayload = config.directVisible
-        ? await contract.getDirectTermPayload(tradeId, ZERO_BYTES32)
+        ? await contract.getDirectTermPayload(tradeId)
         : await contract.getMakerRecoveryNote(tradeId);
     }
   }
@@ -2190,8 +2190,11 @@ const fetchTradeSnapshotByIdFromContract = async (
         typeof latestBlock === 'number' && Number.isSafeInteger(latestBlock)
           ? Math.max(0, latestBlock - ACCEPTED_TX_LOOKBACK_BLOCKS)
           : 0;
+      const acceptedEventFilter = config.directVisible
+        ? contract.filters.DirectTradeAccepted(BigInt(tradeId), null)
+        : contract.filters.TradeAccepted(BigInt(tradeId), null);
       const acceptedLogs = await contract.queryFilter(
-        contract.filters.TradeAccepted(BigInt(tradeId), null),
+        acceptedEventFilter,
         fromBlock,
         'latest'
       );
@@ -2265,6 +2268,20 @@ const fetchTradeSnapshotByIdFromContract = async (
       if (encryptedPayload) {
         const terms = await decryptDirectTradeTerms(String(encryptedPayload), options.accessSecret);
         snapshot = applyDirectTradeTermsToSnapshot(snapshot, terms);
+      }
+    } catch {
+    }
+  }
+
+  if (config.hiddenOnly && options.accessSecret && hasAccessHash) {
+    try {
+      const encryptedPayload =
+        typeof contract.getPrivateLinkTermsPayload === 'function'
+          ? await contract.getPrivateLinkTermsPayload(tradeId)
+          : '0x';
+      if (String(encryptedPayload) !== '0x') {
+        const terms = await decryptDirectTradeTerms(String(encryptedPayload), options.accessSecret);
+        snapshot = applyPrivateLinkTradeTermsToSnapshot(snapshot, terms);
       }
     } catch {
     }

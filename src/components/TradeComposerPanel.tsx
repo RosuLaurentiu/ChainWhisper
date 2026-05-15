@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   COTI_NETWORK,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -88,6 +88,7 @@ type TradeComposerPanelProps = {
   sendLabel?: string;
   sendingLabel?: string;
   sendTitle?: string;
+  actionNotice?: ReactNode;
   onSendTradeOffer: () => void;
   generalError?: string;
   validationMessage?: string;
@@ -141,6 +142,20 @@ const resolveSendReadinessLabel = ({
   }
 
   return message;
+};
+
+const isDeferredSendValidationMessage = (validationMessage?: string): boolean => {
+  const normalizedMessage = validationMessage?.trim().toLowerCase() ?? '';
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return (
+    normalizedMessage.includes('loading token') ||
+    normalizedMessage.includes('loading trade fee') ||
+    normalizedMessage.includes('unable to read') ||
+    normalizedMessage.includes('balance yet')
+  );
 };
 
 function ChevronIcon() {
@@ -479,6 +494,7 @@ export default function TradeComposerPanel({
   sendLabel = 'Send Trade',
   sendingLabel = 'Creating...',
   sendTitle = 'Create the escrow trade and send the encrypted offer to this chat.',
+  actionNotice,
   onSendTradeOffer,
   generalError,
   validationMessage
@@ -494,6 +510,7 @@ export default function TradeComposerPanel({
   const [showReverseRate, setShowReverseRate] = useState(false);
   const [touchedFields, setTouchedFields] = useState<Partial<Record<TradeComposerValidationField, boolean>>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [sendWhenReady, setSendWhenReady] = useState(false);
   const visibleTradeRateLabel = showReverseRate && tradeReverseRateLabel ? tradeReverseRateLabel : tradeRateLabel;
   const showHiddenLiquidityToggle = Boolean(onHidePrivateLiquidityChange);
   const privateLiquidityStateLabel = hidePrivateLiquidity
@@ -545,13 +562,34 @@ export default function TradeComposerPanel({
   });
   const sendReadinessClassName = [
     'trade-compose-readiness',
-    sending ? 'trade-compose-readiness-busy' : canSend ? 'trade-compose-readiness-ready' : 'trade-compose-readiness-blocked'
+    sending || sendWhenReady
+      ? 'trade-compose-readiness-busy'
+      : canSend
+        ? 'trade-compose-readiness-ready'
+        : 'trade-compose-readiness-blocked'
   ].join(' ');
+  useEffect(() => {
+    if (!sendWhenReady || sending) {
+      return;
+    }
+    if (canSend) {
+      setSendWhenReady(false);
+      onSendTradeOffer();
+      return;
+    }
+    if (!isDeferredSendValidationMessage(validationMessage)) {
+      setSendWhenReady(false);
+    }
+  }, [canSend, onSendTradeOffer, sendWhenReady, sending, validationMessage]);
   const handleSendClick = () => {
     if (!canSend) {
       setSubmitAttempted(true);
+      if (validationAfterInteraction && isDeferredSendValidationMessage(validationMessage)) {
+        setSendWhenReady(true);
+      }
       return;
     }
+    setSendWhenReady(false);
     onSendTradeOffer();
   };
   const resolvePricingFieldClassName = (baseClassName: string, field: TradePricingField): string => {
@@ -945,9 +983,13 @@ export default function TradeComposerPanel({
               </div>
             </div>
             <div className="trade-compose-action-stack">
-              <p className={sendReadinessClassName} role="status">
-                {sendReadinessLabel}
-              </p>
+              {actionNotice ? (
+                <div className="trade-compose-action-notice-slot">{actionNotice}</div>
+              ) : (
+                <p className={sendReadinessClassName} role="status">
+                  {sendWhenReady && !canSend && !sending ? 'Will create when ready' : sendReadinessLabel}
+                </p>
+              )}
               <button
                 type="button"
                 className={sendButtonClassName}

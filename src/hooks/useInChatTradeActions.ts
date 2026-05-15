@@ -16,7 +16,7 @@ import {
   declineTradeOnChain,
   fillPrivateFixedPriceTradeOnChain
 } from '../lib/tradeActions';
-import { getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
+import { canUseWalletAuthorityForDirectAccess, getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
 import { createTradeAccessSecret } from '../lib/directTradeTerms';
 import {
   buildTradeOfferMessagePayload,
@@ -360,6 +360,7 @@ export default function useInChatTradeActions({
         amount: remainingRequestAmount.toString()
       };
       const { signer, cacheKey } = await getMemoSigner();
+      const directWalletAuthority = canUseWalletAuthorityForDirectAccess(snapshot, walletAddress);
       const acceptResult = snapshot.counterParentTradeId
         ? await acceptCounterTradeAndCloseParentOnChain({
             signer,
@@ -368,7 +369,8 @@ export default function useInChatTradeActions({
             requestAsset,
             requestAmountWei: remainingRequestAmount,
             escrowContract: snapshot.escrowContract,
-            accessSecret: offer.accessSecret
+            accessSecret: offer.accessSecret,
+            useDirectWalletAuthority: directWalletAuthority
           })
         : offer.accessSecret
           ? await fillPrivateFixedPriceTradeOnChain({
@@ -378,7 +380,8 @@ export default function useInChatTradeActions({
               requestAsset,
               requestAmountWei: remainingRequestAmount,
               escrowContract: snapshot.escrowContract,
-              accessSecret: offer.accessSecret
+              accessSecret: offer.accessSecret,
+              useDirectWalletAuthority: directWalletAuthority
             })
           : await acceptTradeOnChain({
               signer,

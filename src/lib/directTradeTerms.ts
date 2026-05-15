@@ -180,3 +180,20 @@ export const applyDirectTradeTermsToSnapshot = <
     hiddenLiquidity: false
   };
 };
+
+export const applyPrivateLinkTradeTermsToSnapshot = <
+  T extends {
+    offer: TradeAssetPayload;
+    request: TradeAssetPayload;
+    hiddenLiquidity?: boolean;
+    status?: string;
+  }
+>(
+  snapshot: T,
+  terms: DirectTradeTerms
+): T => ({
+  ...snapshot,
+  offer: { ...snapshot.offer, amount: terms.offer.amount },
+  request: { ...snapshot.request, amount: terms.request.amount },
+  hiddenLiquidity: snapshot.hiddenLiquidity
+});

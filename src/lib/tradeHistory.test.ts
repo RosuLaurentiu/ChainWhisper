@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
   type TradeSnapshot
@@ -234,6 +235,95 @@ describe('buildTradeTransactionHistoryRows', () => {
     expect(row.bought).toMatchObject({ symbol: 'AAA', amount: '250000', visible: true });
     expect(row.sold).toMatchObject({ symbol: 'BBB', amount: '500000', visible: true });
   });
+
+  it('does not render zero-amount parent closure rows as fills', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 1,
+          status: 'cancelled',
+          counterParentTradeId: 5,
+          fillState: {
+            remainingOfferAmount: '0',
+            remainingRequestAmount: '0',
+            filledOfferAmount: '0',
+            filledRequestAmount: '0'
+          }
+        })
+      ],
+      maker
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it('still uses original offer terms for accepted fills when no fill-state detail is indexed', () => {
+    const [row] = buildTradeTransactionHistoryRows([trade({ fillState: undefined })], maker);
+
+    expect(row.bought).toMatchObject({ symbol: 'BBB', amount: '1000000', visible: true });
+    expect(row.sold).toMatchObject({ symbol: 'AAA', amount: '1000000', visible: true });
+  });
+
+  it('keeps accepted Direct counters in history even before private terms are revealed', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 2,
+          escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+          counterParentTradeId: 1,
+          offer: asset('pAAA', '0'),
+          request: asset('pBBB', '0'),
+          fillState: {
+            remainingOfferAmount: '0',
+            remainingRequestAmount: '0',
+            filledOfferAmount: '0',
+            filledRequestAmount: '0'
+          }
+        })
+      ],
+      maker
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      role: 'maker',
+      sourceKind: 'direct',
+      amountVisibility: 'private-hidden'
+    });
+    expect(rows[0].bought).toMatchObject({ symbol: 'pBBB', visible: false });
+    expect(rows[0].sold).toMatchObject({ symbol: 'pAAA', visible: false });
+  });
+
+  it('keeps accepted Direct transactions after private terms are revealed even with zero fill state', () => {
+    const [row] = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 4,
+          escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+          counterParentTradeId: 3,
+          offer: asset('HOTDOG', '200000000'),
+          request: asset('pWISP', '1000000'),
+          fillState: {
+            remainingOfferAmount: '0',
+            remainingRequestAmount: '0',
+            filledOfferAmount: '0',
+            filledRequestAmount: '0'
+          },
+          acceptedTxHash: '0xaccepted'
+        })
+      ],
+      maker
+    );
+
+    expect(row).toMatchObject({
+      role: 'maker',
+      sourceKind: 'direct',
+      amountVisibility: 'private-revealed',
+      txHash: '0xaccepted'
+    });
+    expect(row.bought).toMatchObject({ symbol: 'pWISP', amount: '1000000', visible: true });
+    expect(row.sold).toMatchObject({ symbol: 'HOTDOG', amount: '200000000', visible: true });
+  });
 });
 
 describe('buildTradeLifecycleHistoryRows', () => {
@@ -255,6 +345,7 @@ describe('buildTradeLifecycleHistoryRows', () => {
     const rows = buildTradeLifecycleHistoryRows(
       trade({
         tradeId: 5,
+        status: 'open',
         replacesTradeId: 2,
         replacementTradeId: 8
       })
@@ -301,6 +392,48 @@ describe('buildTradeLifecycleHistoryRows', () => {
       action: 'cancelled',
       label: 'Closed',
       detail: 'Order #7 closed'
+    });
+  });
+
+  it('adds precise parent-counter lifecycle rows without implying a zero fill', () => {
+    const rows = buildTradeLifecycleHistoryRows(
+      trade({
+        tradeId: 1,
+        status: 'accepted',
+        counterParentTradeId: 5,
+        acceptedTxHash: '0xabc'
+      })
+    );
+
+    expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
+      'created:Offer #1 opened',
+      'accepted:Counter #5 settled this parent offer'
+    ]);
+    expect(rows[1]).toMatchObject({
+      label: 'Counter accepted',
+      relatedTradeId: 5,
+      txHash: '0xabc'
+    });
+  });
+
+  it('adds an accepted lifecycle tx row for the accepted counter itself', () => {
+    const rows = buildTradeLifecycleHistoryRows(
+      trade({
+        tradeId: 4,
+        status: 'accepted',
+        counterParentTradeId: 1,
+        acceptedTxHash: '0xdef'
+      })
+    );
+
+    expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
+      'created:Offer #4 opened',
+      'accepted:Offer #4 accepted as counter to #1'
+    ]);
+    expect(rows[1]).toMatchObject({
+      label: 'Counter accepted',
+      relatedTradeId: 1,
+      txHash: '0xdef'
     });
   });
 });

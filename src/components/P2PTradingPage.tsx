@@ -221,6 +221,7 @@ import {
   loadStoredPrivateTradeLiquidity,
   loadStoredTradeAccessSecrets,
   readInitialTradeBrowserWalletId,
+  shouldBlockFillAboveVisibleLiquidity,
   shouldRecoverMakerTradePayload,
   storePrivateTradeLiquidity,
   storeTradeAccessSecrets,
@@ -252,6 +253,7 @@ type TradeOverviewCardOptions = {
 type TradeProgressSummary = {
   percent: number;
   percentLabel: string;
+  headerValueLabel?: string;
   filledLabel: string;
   remainingLabel: string;
   totalLabel: string;
@@ -260,10 +262,124 @@ type TradeProgressSummary = {
   remainingAmountLabel?: string;
   paymentAmountLabel?: string;
   paymentTotalLabel?: string;
+  paymentHeaderValueLabel?: string;
   paymentFilledAmountLabel?: string;
   paymentRemainingAmountLabel?: string;
   hasFills?: boolean;
 };
+
+type TradeTermSideForHistory = {
+  asset: TradeAssetPayload;
+  tone: 'send' | 'receive' | 'neutral';
+};
+
+const getTradeAssetIdentity = (asset: TradeAssetPayload): string =>
+  `${asset.kind}:${asset.tokenAddress?.trim().toLowerCase() ?? ''}:${asset.symbol.trim().toLowerCase()}`;
+
+const resolveRevealedHistoryAssetForSide = (
+  row: TradeTransactionHistoryRow | undefined,
+  side: TradeTermSideForHistory
+): (TradeAssetPayload & { visible: boolean }) | null => {
+  if (!row || row.amountVisibility === 'private-hidden') {
+    return null;
+  }
+
+  const sideIdentity = getTradeAssetIdentity(side.asset);
+  const preferredAsset = side.tone === 'receive' ? row.bought : side.tone === 'send' ? row.sold : null;
+  if (preferredAsset?.visible && getTradeAssetIdentity(preferredAsset) === sideIdentity) {
+    return preferredAsset;
+  }
+
+  const matchingFlow = row.tokenFlows.find(
+    (flow) => flow.asset.visible && getTradeAssetIdentity(flow.asset) === sideIdentity
+  );
+  return matchingFlow?.asset ?? null;
+};
+
+const getRevealedHistoryProgressSummary = (
+  row: TradeTransactionHistoryRow | undefined,
+  primarySide: TradeTermSideForHistory,
+  secondarySide: TradeTermSideForHistory
+): TradeProgressSummary | null => {
+  const primaryAsset = resolveRevealedHistoryAssetForSide(row, primarySide);
+  const secondaryAsset = resolveRevealedHistoryAssetForSide(row, secondarySide);
+  if (!primaryAsset || !secondaryAsset) {
+    return null;
+  }
+
+  const primaryAmountLabel = formatTradeAssetDisplayText(primaryAsset);
+  const secondaryAmountLabel = formatTradeAssetDisplayText(secondaryAsset);
+  return {
+    percent: 100,
+    percentLabel: 'Trade values revealed',
+    headerValueLabel: primaryAmountLabel,
+    filledLabel: `${primaryAmountLabel} filled`,
+    remainingLabel: primaryAmountLabel,
+    totalLabel: primaryAmountLabel,
+    totalAmountLabel: primaryAmountLabel,
+    filledAmountLabel: primaryAmountLabel,
+    remainingAmountLabel: primaryAmountLabel,
+    paymentAmountLabel: secondaryAmountLabel,
+    paymentTotalLabel: secondaryAmountLabel,
+    paymentHeaderValueLabel: secondaryAmountLabel,
+    paymentFilledAmountLabel: secondaryAmountLabel,
+    paymentRemainingAmountLabel: secondaryAmountLabel,
+    hasFills: true
+  };
+};
+
+const getKnownTermProgressSummary = (
+  primaryAsset: TradeAssetPayload,
+  secondaryAsset: TradeAssetPayload,
+  status: TradeSnapshot['status']
+): TradeProgressSummary | null => {
+  const primaryAmount = parseTokenAmountString(primaryAsset.amount);
+  const secondaryAmount = parseTokenAmountString(secondaryAsset.amount);
+  if (primaryAmount <= 0n || secondaryAmount <= 0n) {
+    return null;
+  }
+
+  const isAccepted = status === 'accepted';
+  const isClosedWithoutFill = status !== 'open' && !isAccepted;
+  const filledPrimaryAmount = isAccepted ? primaryAmount : 0n;
+  const filledSecondaryAmount = isAccepted ? secondaryAmount : 0n;
+  const remainingPrimaryAmount = isAccepted || isClosedWithoutFill ? 0n : primaryAmount;
+  const remainingSecondaryAmount = isAccepted || isClosedWithoutFill ? 0n : secondaryAmount;
+  const totalPrimaryLabel = `${formatTokenAmount(primaryAmount, primaryAsset.decimals, 6)} ${primaryAsset.symbol}`;
+  const totalSecondaryLabel = `${formatTokenAmount(secondaryAmount, secondaryAsset.decimals, 6)} ${secondaryAsset.symbol}`;
+  const filledPrimaryLabel = `${formatTokenAmount(filledPrimaryAmount, primaryAsset.decimals, 6)} ${primaryAsset.symbol}`;
+  const filledSecondaryLabel = `${formatTokenAmount(filledSecondaryAmount, secondaryAsset.decimals, 6)} ${secondaryAsset.symbol}`;
+  const remainingPrimaryLabel = `${formatTokenAmount(remainingPrimaryAmount, primaryAsset.decimals, 6)} ${primaryAsset.symbol}`;
+  const remainingSecondaryLabel = `${formatTokenAmount(remainingSecondaryAmount, secondaryAsset.decimals, 6)} ${secondaryAsset.symbol}`;
+  const percent = isAccepted ? 100 : 0;
+
+  return {
+    percent,
+    percentLabel: isAccepted ? '100% filled' : '0% filled',
+    totalLabel: `${totalPrimaryLabel} total`,
+    totalAmountLabel: totalPrimaryLabel,
+    filledAmountLabel: filledPrimaryLabel,
+    remainingAmountLabel: remainingPrimaryLabel,
+    filledLabel: `${filledPrimaryLabel} filled`,
+    remainingLabel: `${remainingPrimaryLabel} remaining`,
+    paymentAmountLabel: totalSecondaryLabel,
+    paymentTotalLabel: `${totalSecondaryLabel} order value`,
+    paymentFilledAmountLabel: filledSecondaryLabel,
+    paymentRemainingAmountLabel: remainingSecondaryLabel,
+    hasFills: isAccepted
+  };
+};
+
+const getTradeSideProgressVerb = (side: { label: string; tone: TradeTermSideForHistory['tone'] }): 'bought' | 'sold' => {
+  if (/^You sell\b/i.test(side.label)) {
+    return 'sold';
+  }
+  if (/^You buy\b/i.test(side.label)) {
+    return 'bought';
+  }
+  return side.tone === 'send' ? 'sold' : 'bought';
+};
+
 type TerminalHistoryPanelConfig = {
   tradeKey: string;
   title: string;
@@ -320,9 +436,6 @@ const getRecurringLiquidityLabel = (mode: string): string => {
   return PUBLIC_LIQUIDITY_LABEL;
 };
 
-const formatOrderAmountLeftLabel = (remainingLabel?: string): string =>
-  remainingLabel ? remainingLabel.replace(/\s+remaining$/i, ' left') : '';
-
 const formatOrderProgressFractionLabel = (filledLabel?: string, totalLabel?: string, verb?: string): string => {
   if (!filledLabel || !totalLabel || !verb) {
     return '';
@@ -335,6 +448,42 @@ const formatOrderProgressFractionLabel = (filledLabel?: string, totalLabel?: str
     return `${filledParts.slice(0, -1).join(' ')}/${totalParts.slice(0, -1).join(' ')} ${totalSymbol} ${verb}`;
   }
   return `${filledLabel} / ${totalLabel} ${verb}`;
+};
+
+type CounterRelationTone = 'counter' | 'parent';
+
+const getTradeCounterRelation = (
+  trade: TradeSnapshot
+): { tone: CounterRelationTone; chipLabel: string; title: string; detail: string } | null => {
+  const parentId =
+    trade.parentTradeId ||
+    (trade.counterParentTradeId && trade.counterParentTradeId < trade.tradeId ? trade.counterParentTradeId : undefined);
+  const linkedCounterId =
+    trade.counterParentTradeId && trade.counterParentTradeId > trade.tradeId ? trade.counterParentTradeId : undefined;
+
+  if (parentId) {
+    return {
+      tone: 'counter',
+      chipLabel: `Counter to #${parentId}`,
+      title: `Counter to offer #${parentId}`,
+      detail: 'A direct reply to the parent offer; accepting it can close the parent and sibling counters.'
+    };
+  }
+
+  if (linkedCounterId) {
+    const actionLabel = trade.status === 'accepted' ? 'accepted counter' : 'linked counter';
+    return {
+      tone: 'parent',
+      chipLabel: `Counter #${linkedCounterId}`,
+      title: `Parent offer with ${actionLabel} #${linkedCounterId}`,
+      detail:
+        trade.status === 'accepted'
+          ? 'This parent was settled through the linked counter offer.'
+          : 'This offer has a linked counter reply for review.'
+    };
+  }
+
+  return null;
 };
 
 type P2PTradingPageProps = {
@@ -413,26 +562,37 @@ const getVisibleOfferLiquiditySummary = (trade: TradeSnapshot): TradeProgressSum
     const remainingOfferAmount = getRemainingOfferAmount(trade);
     const filledRequestAmount = BigInt(trade.fillState?.filledRequestAmount ?? '0');
     const remainingRequestAmount = getRemainingRequestAmount(trade);
+    const returnedCancelledLiquidity =
+      trade.status === 'cancelled' && !trade.acceptedTxHash && remainingOfferAmount === 0n && filledOfferAmount > 0n;
     const totalOfferAmount = filledOfferAmount + remainingOfferAmount;
     if (totalOfferAmount <= 0n) {
       return null;
     }
 
-    const rawPercent = Number((filledOfferAmount * 10_000n) / totalOfferAmount) / 100;
+    const displayFilledOfferAmount = returnedCancelledLiquidity ? 0n : filledOfferAmount;
+    const displayRemainingOfferAmount = returnedCancelledLiquidity ? 0n : remainingOfferAmount;
+    const displayFilledRequestAmount = returnedCancelledLiquidity ? 0n : filledRequestAmount;
+    const displayRemainingRequestAmount = returnedCancelledLiquidity ? 0n : remainingRequestAmount;
+    const rawPercent = Number((displayFilledOfferAmount * 10_000n) / totalOfferAmount) / 100;
     const percent =
-      filledOfferAmount <= 0n
+      displayFilledOfferAmount <= 0n
         ? 0
-        : remainingOfferAmount <= 0n
+        : displayRemainingOfferAmount <= 0n
           ? 100
           : Math.max(1, Math.min(99, rawPercent));
     const percentLabel = `${percent.toFixed(percent % 1 === 0 ? 0 : 1)}% filled`;
-    const totalRequestAmount = filledRequestAmount + remainingRequestAmount;
+    const unitOfferAmount = parseTokenAmountString(trade.offer.amount);
+    const unitRequestAmount = parseTokenAmountString(trade.request.amount);
+    const totalRequestAmount =
+      filledRequestAmount + remainingRequestAmount > 0n
+        ? filledRequestAmount + remainingRequestAmount
+        : quoteRequestAmountForOfferAmount(totalOfferAmount, unitOfferAmount, unitRequestAmount);
     const totalOfferAmountLabel = `${formatTokenAmount(totalOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
-    const filledOfferAmountLabel = `${formatTokenAmount(filledOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
-    const remainingOfferAmountLabel = `${formatTokenAmount(remainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
+    const filledOfferAmountLabel = `${formatTokenAmount(displayFilledOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
+    const remainingOfferAmountLabel = `${formatTokenAmount(displayRemainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
     const paymentAmountLabel = `${formatTokenAmount(totalRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`;
-    const paymentFilledAmountLabel = `${formatTokenAmount(filledRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`;
-    const paymentRemainingAmountLabel = `${formatTokenAmount(remainingRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`;
+    const paymentFilledAmountLabel = `${formatTokenAmount(displayFilledRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`;
+    const paymentRemainingAmountLabel = `${formatTokenAmount(displayRemainingRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`;
 
     return {
       percent,
@@ -447,7 +607,7 @@ const getVisibleOfferLiquiditySummary = (trade: TradeSnapshot): TradeProgressSum
       remainingAmountLabel: remainingOfferAmountLabel,
       filledLabel: `${filledOfferAmountLabel} filled`,
       remainingLabel: `${remainingOfferAmountLabel} remaining`,
-      hasFills: filledOfferAmount > 0n
+      hasFills: displayFilledOfferAmount > 0n
     };
   } catch {
     return null;
@@ -691,9 +851,7 @@ export default function P2PTradingPage({
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
     () => loadStoredTradeAccessSecrets()
   );
-  const [knownPrivateLiquidityByTrade, setKnownPrivateLiquidityByTrade] = useState<Record<string, string>>(
-    () => loadStoredPrivateTradeLiquidity()
-  );
+  const [knownPrivateLiquidityByTrade, setKnownPrivateLiquidityByTrade] = useState<Record<string, string>>({});
   const [walletScopedSnapAesState, setWalletScopedSnapAesState] = useState<WalletScopedSnapAesState | null>(null);
   const [counterParentTrade, setCounterParentTrade] = useState<TradeSnapshot | null>(null);
   const [editingTrade, setEditingTrade] = useState<TradeSnapshot | null>(null);
@@ -748,6 +906,11 @@ export default function P2PTradingPage({
   const onCotiNetwork = chainId === COTI_NETWORK.chainIdDecimal;
   const walletKey = walletAddress.trim().toLowerCase();
   const previousWalletKeyRef = useRef(walletKey);
+  const activeWalletKeyRef = useRef(walletKey);
+  activeWalletKeyRef.current = walletKey;
+  useEffect(() => {
+    setKnownPrivateLiquidityByTrade(loadStoredPrivateTradeLiquidity(walletKey));
+  }, [walletKey]);
   const appWalletAesOnboardingKeyRef = useRef('');
   const sharedWalletKey = sharedWalletSession?.walletAddress.trim().toLowerCase() ?? '';
   const localBurnerMatchesWallet = Boolean(
@@ -1396,7 +1559,7 @@ export default function P2PTradingPage({
   }, []);
 
   const rememberPrivateTradeLiquidity = useCallback((tradeId: number, escrowContract: string | undefined, amountWei: bigint) => {
-    if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || amountWei <= 0n) {
+    if (!walletKey || !Number.isSafeInteger(tradeId) || tradeId <= 0 || amountWei <= 0n) {
       return;
     }
 
@@ -1411,10 +1574,10 @@ export default function P2PTradingPage({
         ...previous,
         [key]: amount
       };
-      storePrivateTradeLiquidity(next);
+      storePrivateTradeLiquidity(next, walletKey);
       return next;
     });
-  }, []);
+  }, [walletKey]);
 
   const resolveKnownTradeAccessSecret = useCallback(
     (tradeId: number, escrowContract?: string): string =>
@@ -2253,6 +2416,21 @@ export default function P2PTradingPage({
     signerCacheRef.current = {};
     setWalletScopedSnapAesState(null);
     clearWalletBalances();
+    setCounterParentTrade(null);
+    setEditingTrade(null);
+    setEditingRecurringOrder(null);
+    setRevealingPrivateTradeKey('');
+    setSelectedMyTradeDetailKey('');
+    setTerminalHistorySheetKey('');
+    setExpandedMakerControls({});
+    setActionNotice(null);
+    setTerminalFillInputSide('pay');
+    setTerminalPayInput('');
+    setTerminalBuyInput('');
+    setHistoryLifecycleTxHashes({});
+    setHistoryTransactionTxHashes({});
+    setHistoryTransactionTimestamps({});
+    terminalPublicRecurringHistoryHydrationRef.current = {};
     const sharedWalletKey = sharedWalletSession?.walletAddress.trim().toLowerCase() ?? '';
     const sharedHasNextWalletAes = Boolean(
       walletKey &&
@@ -2529,15 +2707,34 @@ export default function P2PTradingPage({
         return enrichDirectVisibleTermsForWallet(recoveredSnapshot, forceReveal);
       }
       if (!isHiddenLiquidityTrade(recoveredSnapshot) || !walletKey) {
-        return recoveredSnapshot;
+        return walletKey
+          ? recoveredSnapshot
+          : {
+              ...recoveredSnapshot,
+              makerPrivateProgress: undefined,
+              privateFillReceipts: undefined,
+              walletFillState: undefined,
+              walletHasFill: undefined
+            };
       }
       if (!forceReveal && !walletHasAes) {
-        return recoveredSnapshot;
+        return {
+          ...recoveredSnapshot,
+          makerPrivateProgress: undefined,
+          privateFillReceipts: undefined
+        };
       }
 
       const isMaker = recoveredSnapshot.maker.toLowerCase() === walletKey;
+      const stripOtherWalletPrivateReveal = (trade: TradeSnapshot): TradeSnapshot => ({
+        ...trade,
+        makerPrivateProgress: isMaker ? trade.makerPrivateProgress : undefined,
+        privateFillReceipts: isMaker
+          ? trade.privateFillReceipts
+          : (trade.privateFillReceipts ?? []).filter((receipt) => receipt.filler?.toLowerCase() === walletKey)
+      });
       if (!forceReveal && !isMaker && !recoveredSnapshot.walletHasFill) {
-        return recoveredSnapshot;
+        return stripOtherWalletPrivateReveal(recoveredSnapshot);
       }
       const tradeKey = getSnapshotKey(recoveredSnapshot);
       const knownInitialAmount = knownPrivateLiquidityByTrade[tradeKey];
@@ -2592,16 +2789,17 @@ export default function P2PTradingPage({
               ? privateFillReceiptsResult.reason
               : new Error('Private order history reveal failed. AES may need to be refreshed.');
           }
-          return snapshot;
+          return stripOtherWalletPrivateReveal(snapshot);
         }
         if (privateFillReceipts.length === 0) {
           if (forceReveal) {
             throw new Error('No private fill receipts were found for this wallet.');
           }
-          return recoveredSnapshot;
+          return stripOtherWalletPrivateReveal(recoveredSnapshot);
         }
         return {
           ...recoveredSnapshot,
+          makerPrivateProgress: undefined,
           privateFillReceipts
         };
       }
@@ -2612,12 +2810,12 @@ export default function P2PTradingPage({
               ? remainingOfferAmountResult.reason
               : new Error('Private order reveal failed. AES may need to be refreshed.');
           }
-          return recoveredSnapshot;
+          return stripOtherWalletPrivateReveal(recoveredSnapshot);
         }
         if (forceReveal) {
           throw new Error('This private order could not expose maker liquidity or private fill receipts on the active contract.');
         }
-        return recoveredSnapshot;
+        return stripOtherWalletPrivateReveal(recoveredSnapshot);
       }
 
       let filledOfferAmount: string | undefined;
@@ -2707,9 +2905,13 @@ export default function P2PTradingPage({
         if (!walletKey) {
           throw new Error('Connect the wallet that made or filled this private order.');
         }
+        const revealWalletKey = walletKey;
         setRevealingPrivateTradeKey(tradeKey);
         pushActionNotice({ action: 'reveal', status: 'pending', surface: noticeSurface, tradeKey });
         const revealedSnapshot = await enrichMakerPrivateProgress(snapshot, true);
+        if (activeWalletKeyRef.current !== revealWalletKey) {
+          return;
+        }
         if (getTradeTermsVisibility(snapshot) === 'direct-private-terms') {
           if (!hasHydratedDirectTradeTerms(revealedSnapshot)) {
             throw new Error('Direct amount snapshot could not be read for this wallet. Make sure this is your counter or received offer.');
@@ -4323,6 +4525,7 @@ export default function P2PTradingPage({
 
     const tradeKey = getSnapshotKey(snapshot);
     const canOpenTerminal = options.canOpenTerminal ?? true;
+    const hideShareAction = options.groupId === 'history';
     const openCardTerminal = () => {
       if (!canOpenTerminal) {
         return;
@@ -4715,7 +4918,7 @@ export default function P2PTradingPage({
         ) : null}
 
         <div className="p2p-recurring-card-footer p2p-order-card-footer">
-          <div>
+          <div className="p2p-card-footer-actions">
             {isMaker && canOpenTerminal ? (
               <button
                 type="button"
@@ -4737,7 +4940,7 @@ export default function P2PTradingPage({
                 {renderOpenActionCtaContent(recurringOpenActionCta)}
               </button>
             ) : null}
-            {shareUrl ? (
+            {!hideShareAction && shareUrl ? (
               <button
                 type="button"
                 className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
@@ -5128,15 +5331,50 @@ export default function P2PTradingPage({
     };
     const orderSummary = resolveTradeOrderSummary(displayTrade, walletAddress);
     const perspective = orderSummary.perspective;
+    const leftSide = orderSummary.primarySide;
+    const rightSide = orderSummary.secondarySide;
     const termsVisibility = getTradeTermsVisibility(snapshot);
     const isHiddenLiquidityTerms = termsVisibility === 'hidden-liquidity';
     const isDirectPrivateTerms = termsVisibility === 'direct-private-terms';
     const directTermsHydrated = hasHydratedDirectTradeTerms(snapshot);
+    const walletHistoryRows = walletKey ? buildTradeTransactionHistoryRows([snapshot], walletAddress) : [];
+    const revealedWalletHistoryRow = walletHistoryRows.find(
+      (row) => row.bought.visible && row.sold.visible && row.amountVisibility !== 'private-hidden'
+    );
+    const hasRevealedWalletHiddenTerms = isHiddenLiquidityTerms && Boolean(revealedWalletHistoryRow);
+    const canShowParticipantHiddenTerms =
+      isHiddenLiquidityTerms &&
+      route.view !== 'public' &&
+      (perspective.isParticipant || hasRevealedWalletHiddenTerms);
+    const hiddenInitialOfferAmount = parseTokenAmountString(snapshot.makerPrivateProgress?.initialOfferAmount);
+    const hiddenOfferUnitAmount = parseTokenAmountString(snapshot.offer.amount);
+    const hiddenRequestUnitAmount = parseTokenAmountString(snapshot.request.amount);
+    const hiddenInitialRequestAmount = quoteRequestAmountForOfferAmount(
+      hiddenInitialOfferAmount,
+      hiddenOfferUnitAmount,
+      hiddenRequestUnitAmount
+    );
+    const canShowParticipantHiddenSize = canShowParticipantHiddenTerms && hiddenInitialOfferAmount > 0n;
+    const getHiddenParticipantTermAsset = (
+      asset: TradeAssetPayload,
+      role: 'offer' | 'payment'
+    ): TradeAssetPayload => {
+      if (!canShowParticipantHiddenSize) {
+        return asset;
+      }
+      const amount = role === 'offer' ? hiddenInitialOfferAmount : hiddenInitialRequestAmount;
+      return amount > 0n ? { ...asset, amount: amount.toString() } : asset;
+    };
+    const hasWalletScopedHistory = Boolean(
+      walletKey && (snapshot.walletHasFill || walletHistoryRows.length > 0)
+    );
     const canRevealDirectTerms = Boolean(
       isDirectPrivateTerms &&
       !directTermsHydrated &&
       walletKey &&
-      [snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey)
+      ([snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey) ||
+        hasWalletScopedHistory ||
+        canUseWalletAuthorityForDirectAccess(snapshot, walletKey))
     );
     const counterUnavailableReason = getCounterOfferUnavailableReason(snapshot, walletKey);
     const canCounter = canCreateCounterOffer(snapshot, walletKey);
@@ -5153,47 +5391,68 @@ export default function P2PTradingPage({
       !isHiddenLiquidityTerms && !(isDirectPrivateTerms && !directTermsHydrated)
         ? getVisibleOfferLiquiditySummary(snapshot)
         : null;
-    const terminalOrderProgressSummary = makerPrivateProgressSummary ?? publicLiquidityProgressSummary;
-    const publicLiquidityFilledVerb = perspective.isMaker ? 'sold' : 'bought';
-    const publicLiquidityPaymentFilledVerb = perspective.isMaker ? 'bought' : 'sold';
-    const publicLiquidityRemainingAmount =
-      publicLiquidityProgressSummary?.remainingAmountLabel ?? publicLiquidityProgressSummary?.remainingLabel ?? '';
-    const publicLiquidityTotalAmount =
-      publicLiquidityProgressSummary?.totalAmountLabel ?? publicLiquidityProgressSummary?.totalLabel ?? '';
-    const publicLiquidityPaymentRemainingAmount =
-      publicLiquidityProgressSummary?.paymentRemainingAmountLabel ?? publicLiquidityProgressSummary?.paymentAmountLabel ?? '';
-    const publicLiquidityPaymentTotalAmount = publicLiquidityProgressSummary?.paymentAmountLabel ?? '';
+    const revealedWalletProgressSummary = getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
+    const knownTermProgressSummary =
+      publicLiquidityProgressSummary || makerPrivateProgressSummary || revealedWalletProgressSummary
+        ? null
+        : (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
+          ? getKnownTermProgressSummary(
+              isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(leftSide.asset, leftSide.role) : leftSide.asset,
+              isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(rightSide.asset, rightSide.role) : rightSide.asset,
+              snapshot.status
+            )
+          : null;
+    const terminalOrderProgressSummary =
+      makerPrivateProgressSummary ?? publicLiquidityProgressSummary ?? revealedWalletProgressSummary ?? knownTermProgressSummary;
+    const twoSidedProgressSummary = terminalOrderProgressSummary;
+    const twoSidedFilledVerb = getTradeSideProgressVerb(leftSide);
+    const twoSidedPaymentFilledVerb = getTradeSideProgressVerb(rightSide);
+    const twoSidedRemainingAmount =
+      twoSidedProgressSummary?.remainingAmountLabel ?? twoSidedProgressSummary?.remainingLabel ?? '';
+    const twoSidedTotalAmount =
+      twoSidedProgressSummary?.totalAmountLabel ?? twoSidedProgressSummary?.totalLabel ?? '';
+    const twoSidedPaymentRemainingAmount =
+      twoSidedProgressSummary?.paymentRemainingAmountLabel ?? twoSidedProgressSummary?.paymentAmountLabel ?? '';
+    const twoSidedPaymentTotalAmount = twoSidedProgressSummary?.paymentAmountLabel ?? '';
+    const isAcceptedTrade = snapshot.status === 'accepted';
+    const getAcceptedSideLabel = (label: string): string =>
+      label.replace(/^You sell\b/, 'You sold').replace(/^You buy\b/, 'You bought');
+    const getTerminalSideLabel = (label: string): string =>
+      isAcceptedTrade ? getAcceptedSideLabel(label) : label;
     const terminalOrderProgressLabel = makerPrivateProgressSummary
-      ? 'Your private order'
+      ? isAcceptedTrade ? 'You sold' : 'You sell'
       : publicLiquidityProgressSummary
         ? perspective.isMaker
-          ? 'You sell'
-          : 'You buy'
-        : '';
-    const terminalOrderProgressHeaderValue = publicLiquidityProgressSummary
-      ? `${publicLiquidityRemainingAmount} left`
-      : formatOrderAmountLeftLabel(terminalOrderProgressSummary?.remainingLabel) ||
-        (terminalOrderProgressSummary?.totalLabel ?? '');
-    const terminalOrderProgressFilledLabel = publicLiquidityProgressSummary
+          ? isAcceptedTrade ? 'You sold' : 'You sell'
+          : isAcceptedTrade ? 'You bought' : 'You buy'
+        : getTerminalSideLabel(leftSide.label);
+    const terminalOrderProgressHeaderValue = twoSidedProgressSummary
+      ? twoSidedProgressSummary.headerValueLabel ?? `${twoSidedRemainingAmount} left`
+      : '';
+    const terminalOrderProgressFilledLabel = twoSidedProgressSummary
       ? formatOrderProgressFractionLabel(
-          publicLiquidityProgressSummary.filledAmountLabel,
-          publicLiquidityTotalAmount,
-          publicLiquidityFilledVerb
+          twoSidedProgressSummary.filledAmountLabel,
+          twoSidedTotalAmount,
+          twoSidedFilledVerb
         )
-      : terminalOrderProgressSummary?.filledLabel ?? '';
-    const terminalOrderProgressPaymentLabel = publicLiquidityProgressSummary
+      : '';
+    const terminalOrderProgressPaymentLabel = twoSidedProgressSummary?.paymentAmountLabel
       ? perspective.isMaker
-        ? 'You buy'
-        : 'You sell'
+        ? publicLiquidityProgressSummary || makerPrivateProgressSummary
+          ? isAcceptedTrade ? 'You bought' : 'You buy'
+          : getTerminalSideLabel(rightSide.label)
+        : publicLiquidityProgressSummary || makerPrivateProgressSummary
+          ? isAcceptedTrade ? 'You sold' : 'You sell'
+          : getTerminalSideLabel(rightSide.label)
       : '';
-    const terminalOrderProgressPaymentHeaderValue = publicLiquidityProgressSummary
-      ? `${publicLiquidityPaymentRemainingAmount} left`
+    const terminalOrderProgressPaymentHeaderValue = twoSidedProgressSummary?.paymentAmountLabel
+      ? twoSidedProgressSummary.paymentHeaderValueLabel ?? `${twoSidedPaymentRemainingAmount} left`
       : '';
-    const terminalOrderProgressPaymentFilledLabel = publicLiquidityProgressSummary
+    const terminalOrderProgressPaymentFilledLabel = twoSidedProgressSummary?.paymentAmountLabel
       ? formatOrderProgressFractionLabel(
-          publicLiquidityProgressSummary.paymentFilledAmountLabel,
-          publicLiquidityPaymentTotalAmount,
-          publicLiquidityPaymentFilledVerb
+          twoSidedProgressSummary.paymentFilledAmountLabel,
+          twoSidedPaymentTotalAmount,
+          twoSidedPaymentFilledVerb
         )
       : '';
     const fallbackCompletionSummary = terminalOrderProgressSummary ? null : completionSummary;
@@ -5219,18 +5478,20 @@ export default function P2PTradingPage({
           : snapshot.status.charAt(0).toUpperCase() + snapshot.status.slice(1);
     const expiryParts = formatTradeExpiryParts(snapshot.expiresAt);
     const expiryCountdown = snapshot.status === 'open' ? formatExpiryCountdown(snapshot.expiresAt) : null;
-    const leftSide = orderSummary.primarySide;
-    const rightSide = orderSummary.secondarySide;
+    const terminalPriceLeftAsset =
+      isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, leftSide) ?? leftSide.asset : leftSide.asset;
+    const terminalPriceRightAsset =
+      isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, rightSide) ?? rightSide.asset : rightSide.asset;
     const priceRatioDisplay = resolveTradePriceRatioDisplay({
-      baseAsset: leftSide.asset,
-      quoteAsset: rightSide.asset,
+      baseAsset: terminalPriceLeftAsset,
+      quoteAsset: terminalPriceRightAsset,
       toggleInverse: Boolean(reversedRateTradeIds[tradeKey]),
       forwardFallbackLabel: isHiddenLiquidityTerms
-        ? formatHiddenFixedPriceTerms(leftSide.asset, rightSide.asset)
-        : formatTradeRateText(leftSide.asset, rightSide.asset),
+        ? formatHiddenFixedPriceTerms(terminalPriceLeftAsset, terminalPriceRightAsset)
+        : formatTradeRateText(terminalPriceLeftAsset, terminalPriceRightAsset),
       reverseFallbackLabel: isHiddenLiquidityTerms
-        ? formatHiddenFixedPriceTerms(rightSide.asset, leftSide.asset)
-        : formatTradeRateText(rightSide.asset, leftSide.asset),
+        ? formatHiddenFixedPriceTerms(terminalPriceRightAsset, terminalPriceLeftAsset)
+        : formatTradeRateText(terminalPriceRightAsset, terminalPriceLeftAsset),
       subjectLabel: `price ratio for trade ${snapshot.tradeId}`
     });
     const tradeRateText =
@@ -5244,21 +5505,37 @@ export default function P2PTradingPage({
             priceRatioDisplay.isReversed ? leftSide : rightSide
           )
         : '';
-    const formatTerminalTerm = (asset: TradeAssetPayload): string =>
-      isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated)
-        ? asset.symbol
-        : formatTradeAssetDisplayText(asset);
-    const formatTermMeta = (asset: TradeAssetPayload, role: 'offer' | 'payment'): string => {
+    const resolveHistoryTermAsset = (side: typeof leftSide | typeof rightSide) =>
+      isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side) : null;
+    const formatTerminalTerm = (side: typeof leftSide | typeof rightSide): string => {
+      const historyAsset = resolveHistoryTermAsset(side);
+      if (historyAsset) {
+        return formatTradeAssetDisplayText(historyAsset);
+      }
+      return (isHiddenLiquidityTerms && !canShowParticipantHiddenSize) || (isDirectPrivateTerms && !directTermsHydrated)
+        ? side.asset.symbol
+        : formatTradeAssetDisplayText(
+            isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(side.asset, side.role) : side.asset
+          );
+    };
+    const formatTermMeta = (side: typeof leftSide | typeof rightSide): string => {
+      const { role } = side;
       if (isHiddenLiquidityTerms) {
-        return asset.kind === 'private-erc20' ? 'Private amount' : 'Public asset';
+        if (resolveHistoryTermAsset(side)) {
+          return '';
+        }
+        if (canShowParticipantHiddenTerms) {
+          return '';
+        }
+        return '';
       }
       if (isDirectPrivateTerms && !directTermsHydrated) {
         return 'Private terms';
       }
       if (role === 'offer') {
-        return displayTerms.usingRemaining ? 'Remaining now' : snapshot.status === 'open' ? 'Available now' : statusLabel;
+        return displayTerms.usingRemaining || snapshot.status === 'open' ? 'Available now' : '';
       }
-      return isZeroTradeTakerAddress(snapshot.taker) ? 'Open offer' : shortenAddress(snapshot.taker);
+      return snapshot.status === 'open' && isZeroTradeTakerAddress(snapshot.taker) ? 'Open offer' : '';
     };
     const tokenExplorerLinks = [leftSide.asset, rightSide.asset]
       .map((asset) => {
@@ -5313,7 +5590,7 @@ export default function P2PTradingPage({
       terminalFillInputSide === 'pay' && terminalInputValue.trim() && terminalReceiveAmount > 0n
         ? formatExactTokenAmountInput(terminalReceiveAmount, displayTrade.offer.decimals)
         : terminalBuyInput;
-    const fillTooHigh = Boolean(canShowFillTicket && terminalRequestAmount !== null && terminalRequestAmount > remainingRequestAmount);
+    const fillTooHigh = Boolean(canShowFillTicket && shouldBlockFillAboveVisibleLiquidity(snapshot, terminalRequestAmount));
     const fillSubmitInput =
       terminalRequestAmount !== null && terminalRequestAmount > 0n
         ? formatExactTokenAmountInput(terminalRequestAmount, displayTrade.request.decimals)
@@ -5331,6 +5608,7 @@ export default function P2PTradingPage({
     const terminalAccessChip = liquidityLabel;
     const terminalExpiryChip =
       snapshot.status === 'open' && expiryCountdown ? expiryCountdown.label.replace(/^Expires /, '') : '';
+    const counterRelation = getTradeCounterRelation(snapshot);
 
     return (
       <article className="p2p-terminal-shell p2p-terminal-shell-standard" key={tradeKey}>
@@ -5342,7 +5620,11 @@ export default function P2PTradingPage({
               <span className="p2p-order-id">Offer #{snapshot.tradeId}</span>
               <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
               {terminalAccessChip ? <span className="p2p-order-chip">{terminalAccessChip}</span> : null}
-              {snapshot.counterParentTradeId ? <span className="p2p-order-chip">Counter #{snapshot.counterParentTradeId}</span> : null}
+              {counterRelation ? (
+                <span className="p2p-order-chip" title={counterRelation.detail}>
+                  {counterRelation.chipLabel}
+                </span>
+              ) : null}
               {terminalExpiryChip && expiryCountdown ? (
                 <span className={`p2p-expiry-chip trade-card-expiry-${expiryCountdown.urgency}`} title={expiryParts.title}>
                   {terminalExpiryChip}
@@ -5384,7 +5666,7 @@ export default function P2PTradingPage({
               <div className="p2p-terminal-progress p2p-terminal-order-progress" aria-label={terminalOrderProgressSummary.percentLabel}>
                 <div
                   className={
-                    publicLiquidityProgressSummary
+                    twoSidedProgressSummary?.paymentAmountLabel
                       ? 'p2p-order-summary-lines p2p-order-summary-lines-public'
                       : 'p2p-order-summary-lines'
                   }
@@ -5393,7 +5675,7 @@ export default function P2PTradingPage({
                     <span>{terminalOrderProgressLabel}</span>
                     <strong>{terminalOrderProgressHeaderValue}</strong>
                   </div>
-                  {publicLiquidityProgressSummary ? (
+                  {twoSidedProgressSummary?.paymentAmountLabel ? (
                     <div className="p2p-terminal-progress-flow">
                       <span>{terminalOrderProgressPaymentLabel}</span>
                       <strong>{terminalOrderProgressPaymentHeaderValue}</strong>
@@ -5411,17 +5693,17 @@ export default function P2PTradingPage({
             ) : (
               <div className="p2p-terminal-flow" aria-label={formatTradeListTerms(displayTrade)}>
                 <div className={`p2p-terminal-flow-card p2p-terminal-flow-${leftSide.tone}`}>
-                  <span>{leftSide.label}</span>
-                  <strong>{formatTerminalTerm(leftSide.asset)}</strong>
-                  <small>{formatTermMeta(leftSide.asset, leftSide.role)}</small>
+                  <span>{getTerminalSideLabel(leftSide.label)}</span>
+                  <strong>{formatTerminalTerm(leftSide)}</strong>
+                  <small>{formatTermMeta(leftSide)}</small>
                 </div>
                 <div className="p2p-terminal-flow-arrow" aria-hidden="true">
                   <ArrowRight size={17} strokeWidth={2.3} />
                 </div>
                 <div className={`p2p-terminal-flow-card p2p-terminal-flow-${rightSide.tone}`}>
-                  <span>{rightSide.label}</span>
-                  <strong>{formatTerminalTerm(rightSide.asset)}</strong>
-                  <small>{formatTermMeta(rightSide.asset, rightSide.role)}</small>
+                  <span>{getTerminalSideLabel(rightSide.label)}</span>
+                  <strong>{formatTerminalTerm(rightSide)}</strong>
+                  <small>{formatTermMeta(rightSide)}</small>
                 </div>
               </div>
             )}
@@ -5688,11 +5970,11 @@ export default function P2PTradingPage({
                   <button
                     type="button"
                     className="trade-card-action trade-card-action-counter"
-                    onClick={() => acceptTrade(snapshot, 'accept-only').catch(() => {})}
+                    onClick={() => acceptTrade(snapshot, 'fill').catch(() => {})}
                     disabled={processingTradeActionId === tradeKey}
-                    title="Accept only this counter offer and keep the parent and sibling counters open."
+                    title="Fill this counter offer without closing the parent or sibling counters."
                   >
-                    Accept only
+                    Fill
                   </button>
                 )}
                 {canCounter ? (
@@ -6461,6 +6743,8 @@ export default function P2PTradingPage({
       ? `${tradeComposerModel.selectedTradeRequestToken.symbol}/${tradeComposerModel.selectedTradeOfferToken.symbol}`
       : 'quote/base';
 
+  const composerActionNotice = renderP2PActionNotice('composer');
+
   const tradeComposer = (
     <TradeComposerPanel
       validationDisplayMode="after-interaction"
@@ -6502,6 +6786,7 @@ export default function P2PTradingPage({
             ? 'Create a linked counter trade on chain.'
             : 'Create the escrow offer on chain.'
       }
+      actionNotice={composerActionNotice}
       feeMode={tradeFeeModeSelection}
       onFeeModeChange={setTradeFeeModeSelection}
       feeSummaryLabel={tradeComposerModel.tradeFeeSummaryLabel}
@@ -6624,7 +6909,7 @@ export default function P2PTradingPage({
     const privacyChips = [
       getTradeLiquidityLabel(trade.offer, trade.request),
       trade.offer.kind !== 'private-erc20' || trade.request.kind !== 'private-erc20' ? 'Public settlement side' : null,
-      trade.counterParentTradeId ? `Counter chain #${trade.counterParentTradeId}` : null
+      getTradeCounterRelation(trade)?.chipLabel ?? null
     ].filter((chip): chip is string => Boolean(chip));
 
     return (
@@ -6686,7 +6971,10 @@ export default function P2PTradingPage({
           </div>
           <div>
             <span>Counter behavior</span>
-            <strong>{trade.counterParentTradeId ? 'Replaces counter chain' : 'Linked Direct offer'}</strong>
+            <strong>
+              {getTradeCounterRelation(trade)?.title ??
+                'Counter will create a direct reply linked to this offer'}
+            </strong>
           </div>
         </div>
       </section>
@@ -6700,6 +6988,7 @@ export default function P2PTradingPage({
 
     const tradeKey = getSnapshotKey(trade);
     const canOpenTerminal = options.canOpenTerminal ?? true;
+    const hideShareAction = options.groupId === 'history';
     const openCardTerminal = () => {
       if (!canOpenTerminal) {
         return;
@@ -6718,63 +7007,125 @@ export default function P2PTradingPage({
     };
     const orderSummary = resolveTradeOrderSummary(displayTrade, walletAddress);
     const perspective = orderSummary.perspective;
+    const leftSide = orderSummary.primarySide;
+    const rightSide = orderSummary.secondarySide;
     const termsVisibility = getTradeTermsVisibility(trade);
     const isHiddenLiquidityTerms = termsVisibility === 'hidden-liquidity';
     const isDirectPrivateTerms = termsVisibility === 'direct-private-terms';
     const directTermsHydrated = hasHydratedDirectTradeTerms(trade);
     const completionSummary = getTradeCompletionSummary(trade);
+    const walletHistoryRows = walletKey ? buildTradeTransactionHistoryRows([trade], walletAddress) : [];
+    const revealedWalletHistoryRow = walletHistoryRows.find(
+      (row) => row.bought.visible && row.sold.visible && row.amountVisibility !== 'private-hidden'
+    );
+    const hasRevealedWalletHiddenTerms = isHiddenLiquidityTerms && Boolean(revealedWalletHistoryRow);
+    const canShowParticipantHiddenTerms =
+      isHiddenLiquidityTerms &&
+      route.view !== 'public' &&
+      (perspective.isParticipant || hasRevealedWalletHiddenTerms);
+    const hiddenInitialOfferAmount = parseTokenAmountString(trade.makerPrivateProgress?.initialOfferAmount);
+    const hiddenOfferUnitAmount = parseTokenAmountString(trade.offer.amount);
+    const hiddenRequestUnitAmount = parseTokenAmountString(trade.request.amount);
+    const hiddenInitialRequestAmount = quoteRequestAmountForOfferAmount(
+      hiddenInitialOfferAmount,
+      hiddenOfferUnitAmount,
+      hiddenRequestUnitAmount
+    );
+    const canShowParticipantHiddenSize = canShowParticipantHiddenTerms && hiddenInitialOfferAmount > 0n;
+    const getHiddenParticipantTermAsset = (
+      asset: TradeAssetPayload,
+      role: 'offer' | 'payment'
+    ): TradeAssetPayload => {
+      if (!canShowParticipantHiddenSize) {
+        return asset;
+      }
+      const amount = role === 'offer' ? hiddenInitialOfferAmount : hiddenInitialRequestAmount;
+      return amount > 0n ? { ...asset, amount: amount.toString() } : asset;
+    };
     const makerPrivateProgressSummary =
       route.view === 'public' || !perspective.isMaker ? null : getMakerPrivateProgressSummary(trade);
     const publicLiquidityProgressSummary =
       !isHiddenLiquidityTerms && !(isDirectPrivateTerms && !directTermsHydrated)
         ? getVisibleOfferLiquiditySummary(trade)
         : null;
-    const orderLiquiditySummary = makerPrivateProgressSummary ?? publicLiquidityProgressSummary;
-    const publicLiquidityFilledVerb = perspective.isMaker ? 'sold' : 'bought';
-    const publicLiquidityPaymentFilledVerb = perspective.isMaker ? 'bought' : 'sold';
-    const publicLiquidityRemainingAmount =
-      publicLiquidityProgressSummary?.remainingAmountLabel ?? publicLiquidityProgressSummary?.remainingLabel ?? '';
-    const publicLiquidityTotalAmount =
-      publicLiquidityProgressSummary?.totalAmountLabel ?? publicLiquidityProgressSummary?.totalLabel ?? '';
-    const publicLiquidityPaymentRemainingAmount =
-      publicLiquidityProgressSummary?.paymentRemainingAmountLabel ?? publicLiquidityProgressSummary?.paymentAmountLabel ?? '';
-    const publicLiquidityPaymentTotalAmount = publicLiquidityProgressSummary?.paymentAmountLabel ?? '';
+    const revealedWalletProgressSummary = getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
+    const knownTermProgressSummary =
+      publicLiquidityProgressSummary || makerPrivateProgressSummary || revealedWalletProgressSummary
+        ? null
+        : (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
+          ? getKnownTermProgressSummary(
+              isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(leftSide.asset, leftSide.role) : leftSide.asset,
+              isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(rightSide.asset, rightSide.role) : rightSide.asset,
+              trade.status
+            )
+          : null;
+    const orderLiquiditySummary =
+      makerPrivateProgressSummary ?? publicLiquidityProgressSummary ?? revealedWalletProgressSummary ?? knownTermProgressSummary;
+    const twoSidedProgressSummary = orderLiquiditySummary;
+    const twoSidedFilledVerb = getTradeSideProgressVerb(leftSide);
+    const twoSidedPaymentFilledVerb = getTradeSideProgressVerb(rightSide);
+    const twoSidedRemainingAmount =
+      twoSidedProgressSummary?.remainingAmountLabel ?? twoSidedProgressSummary?.remainingLabel ?? '';
+    const twoSidedTotalAmount =
+      twoSidedProgressSummary?.totalAmountLabel ?? twoSidedProgressSummary?.totalLabel ?? '';
+    const twoSidedPaymentRemainingAmount =
+      twoSidedProgressSummary?.paymentRemainingAmountLabel ?? twoSidedProgressSummary?.paymentAmountLabel ?? '';
+    const twoSidedPaymentTotalAmount = twoSidedProgressSummary?.paymentAmountLabel ?? '';
+    const isAcceptedTrade = trade.status === 'accepted';
+    const getAcceptedSideLabel = (label: string): string =>
+      label.replace(/^You sell\b/, 'You sold').replace(/^You buy\b/, 'You bought');
+    const getDeskSideLabel = (side: typeof leftSide): string =>
+      isAcceptedTrade ? getAcceptedSideLabel(side.label) : side.label;
     const orderLiquidityLabel = makerPrivateProgressSummary
-      ? `You sell ${trade.offer.symbol}`
+      ? isAcceptedTrade ? 'You sold' : 'You sell'
       : perspective.isMaker
-        ? 'You sell'
-        : 'You buy';
-    const orderLiquidityHeaderValue = publicLiquidityProgressSummary
-      ? `${publicLiquidityRemainingAmount} left`
-      : formatOrderAmountLeftLabel(orderLiquiditySummary?.remainingLabel) || (orderLiquiditySummary?.totalLabel ?? '');
-    const orderLiquidityFilledLabel = publicLiquidityProgressSummary
+        ? publicLiquidityProgressSummary || makerPrivateProgressSummary
+          ? isAcceptedTrade ? 'You sold' : 'You sell'
+          : getDeskSideLabel(leftSide)
+        : publicLiquidityProgressSummary || makerPrivateProgressSummary
+          ? isAcceptedTrade ? 'You bought' : 'You buy'
+          : getDeskSideLabel(leftSide);
+    const orderLiquidityHeaderValue = twoSidedProgressSummary
+      ? twoSidedProgressSummary.headerValueLabel ?? `${twoSidedRemainingAmount} left`
+      : '';
+    const orderLiquidityFilledLabel = twoSidedProgressSummary
       ? formatOrderProgressFractionLabel(
-          publicLiquidityProgressSummary.filledAmountLabel,
-          publicLiquidityTotalAmount,
-          publicLiquidityFilledVerb
+          twoSidedProgressSummary.filledAmountLabel,
+          twoSidedTotalAmount,
+          twoSidedFilledVerb
         )
-      : orderLiquiditySummary?.filledLabel;
-    const orderLiquidityPaymentLabel = publicLiquidityProgressSummary
+      : '';
+    const orderLiquidityPaymentLabel = twoSidedProgressSummary?.paymentAmountLabel
       ? perspective.isMaker
-        ? 'You buy'
-        : 'You sell'
+        ? publicLiquidityProgressSummary || makerPrivateProgressSummary
+          ? isAcceptedTrade ? 'You bought' : 'You buy'
+          : getDeskSideLabel(rightSide)
+        : publicLiquidityProgressSummary || makerPrivateProgressSummary
+          ? isAcceptedTrade ? 'You sold' : 'You sell'
+          : getDeskSideLabel(rightSide)
       : '';
-    const orderLiquidityPaymentHeaderValue = publicLiquidityProgressSummary
-      ? `${publicLiquidityPaymentRemainingAmount} left`
+    const orderLiquidityPaymentHeaderValue = twoSidedProgressSummary?.paymentAmountLabel
+      ? twoSidedProgressSummary.paymentHeaderValueLabel ?? `${twoSidedPaymentRemainingAmount} left`
       : '';
-    const orderLiquidityPaymentFilledLabel = publicLiquidityProgressSummary
+    const orderLiquidityPaymentFilledLabel = twoSidedProgressSummary?.paymentAmountLabel
       ? formatOrderProgressFractionLabel(
-          publicLiquidityProgressSummary.paymentFilledAmountLabel,
-          publicLiquidityPaymentTotalAmount,
-          publicLiquidityPaymentFilledVerb
+          twoSidedProgressSummary.paymentFilledAmountLabel,
+          twoSidedPaymentTotalAmount,
+          twoSidedPaymentFilledVerb
         )
       : '';
     const fallbackCompletionSummary = orderLiquiditySummary ? null : completionSummary;
+    const hasWalletScopedHistory = Boolean(
+      walletKey && (trade.walletHasFill || walletHistoryRows.length > 0)
+    );
     const canRevealDirectTerms = Boolean(
       route.view !== 'public' &&
       isDirectPrivateTerms &&
       !directTermsHydrated &&
-      perspective.isParticipant
+      walletKey &&
+      (perspective.isParticipant ||
+        hasWalletScopedHistory ||
+        canUseWalletAuthorityForDirectAccess(trade, walletKey))
     );
     const accessSecret = resolveKnownTradeAccessSecret(trade.tradeId, trade.escrowContract);
     const shareUrl =
@@ -6794,9 +7145,10 @@ export default function P2PTradingPage({
     const tradeTitleRelationTags = tradeRelationTags.filter((label) => label === 'Maker');
     const tradeMetaRelationTags = tradeRelationTags.filter((label) => label !== 'Maker');
     const tradeLiquidityLabel = getTradeLiquidityLabel(trade.offer, trade.request);
+    const counterRelation = getTradeCounterRelation(trade);
     const tradeSecondaryTags = [
       tradeLiquidityLabel,
-      trade.counterParentTradeId ? `Counter #${trade.counterParentTradeId}` : null,
+      counterRelation?.chipLabel ?? null,
       trade.replacesTradeId ? `Edited #${trade.replacesTradeId}` : null,
       trade.replacementTradeId ? `Replaced #${trade.replacementTradeId}` : null
     ].filter((label): label is string => Boolean(label));
@@ -6808,19 +7160,9 @@ export default function P2PTradingPage({
           ? 'Unknown'
           : trade.status.charAt(0).toUpperCase() + trade.status.slice(1);
     const statusClassName = `p2p-offer-status-${trade.status}`;
-    const acceptedTxExplorerUrl = buildTransactionExplorerUrl(trade.acceptedTxHash);
-    const acceptedTxFeedback = acceptedTxExplorerUrl && trade.acceptedTxHash
-      ? getTransactionLinkFeedbackProps(`offer-card:${tradeKey}:${trade.acceptedTxHash}`, {
-          className: 'p2p-offer-footer-link',
-          title: 'Open settlement transaction on explorer'
-        })
-      : null;
     const isFinishedTrade = trade.status !== 'open';
     const showOpenTradeAction = !isFinishedTrade && !perspective.isMaker;
     const openTradeActionCta = getStandardTradeOpenActionCta();
-    const leftSide = orderSummary.primarySide;
-    const rightSide = orderSummary.secondarySide;
-    const getDeskSideLabel = (side: typeof leftSide): string => side.label;
     const leftSideLabel = getDeskSideLabel(leftSide);
     const rightSideLabel = getDeskSideLabel(rightSide);
     const leftExplorerUrl = buildTradeAssetExplorerUrl(leftSide.asset);
@@ -6850,16 +7192,20 @@ export default function P2PTradingPage({
     const pairTitleFull = `${pairTitleFromSymbol} to ${pairTitleToSymbol}`;
     const leftToneClass = `p2p-offer-term-${leftSide.tone}`;
     const rightToneClass = `p2p-offer-term-${rightSide.tone}`;
+    const cardPriceLeftAsset =
+      isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, leftSide) ?? leftSide.asset : leftSide.asset;
+    const cardPriceRightAsset =
+      isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, rightSide) ?? rightSide.asset : rightSide.asset;
     const priceRatioDisplay = resolveTradePriceRatioDisplay({
-      baseAsset: leftSide.asset,
-      quoteAsset: rightSide.asset,
+      baseAsset: cardPriceLeftAsset,
+      quoteAsset: cardPriceRightAsset,
       toggleInverse: Boolean(reversedRateTradeIds[tradeKey]),
       forwardFallbackLabel: isHiddenLiquidityTerms
-        ? formatHiddenFixedPriceTerms(leftSide.asset, rightSide.asset)
-        : formatTradeRateText(leftSide.asset, rightSide.asset),
+        ? formatHiddenFixedPriceTerms(cardPriceLeftAsset, cardPriceRightAsset)
+        : formatTradeRateText(cardPriceLeftAsset, cardPriceRightAsset),
       reverseFallbackLabel: isHiddenLiquidityTerms
-        ? formatHiddenFixedPriceTerms(rightSide.asset, leftSide.asset)
-        : formatTradeRateText(rightSide.asset, leftSide.asset),
+        ? formatHiddenFixedPriceTerms(cardPriceRightAsset, cardPriceLeftAsset)
+        : formatTradeRateText(cardPriceRightAsset, cardPriceLeftAsset),
       subjectLabel: `price ratio for trade ${trade.tradeId}`
     });
     const tradeRateText = isDirectPrivateTerms && !directTermsHydrated
@@ -6882,19 +7228,39 @@ export default function P2PTradingPage({
         return `0 ${asset.symbol}`;
       }
     };
-    const formatVisibleTermText = (asset: TradeAssetPayload): string =>
-      isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated)
-        ? asset.symbol
-        : formatCompactVisibleTermText(asset);
-    const formatVisibleTermTitle = (asset: TradeAssetPayload): string =>
-      isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated)
-        ? asset.symbol
-        : formatTradeAssetDisplayText(asset);
-    const formatHiddenTermMetaLabel = (asset: TradeAssetPayload): string =>
-      asset.kind === 'private-erc20' ? 'Private amount' : 'Public asset';
+    const resolveHistoryTermAsset = (side: typeof leftSide | typeof rightSide) =>
+      isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side) : null;
+    const formatVisibleTermText = (side: typeof leftSide | typeof rightSide): string => {
+      const historyAsset = resolveHistoryTermAsset(side);
+      if (historyAsset) {
+        return formatCompactVisibleTermText(historyAsset);
+      }
+      return (isHiddenLiquidityTerms && !canShowParticipantHiddenSize) || (isDirectPrivateTerms && !directTermsHydrated)
+        ? side.asset.symbol
+        : formatCompactVisibleTermText(
+            isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(side.asset, side.role) : side.asset
+          );
+    };
+    const formatVisibleTermTitle = (side: typeof leftSide | typeof rightSide): string => {
+      const historyAsset = resolveHistoryTermAsset(side);
+      if (historyAsset) {
+        return formatTradeAssetDisplayText(historyAsset);
+      }
+      return (isHiddenLiquidityTerms && !canShowParticipantHiddenSize) || (isDirectPrivateTerms && !directTermsHydrated)
+        ? side.asset.symbol
+        : formatTradeAssetDisplayText(
+            isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(side.asset, side.role) : side.asset
+          );
+    };
+    const formatHiddenTermMetaLabel = (side: typeof leftSide | typeof rightSide): string => {
+      if (resolveHistoryTermAsset(side)) {
+        return '';
+      }
+      return canShowParticipantHiddenTerms ? '' : side.asset.kind === 'private-erc20' ? 'Private amount' : 'Public asset';
+    };
     const leftMetaLabel =
       isHiddenLiquidityTerms
-        ? formatHiddenTermMetaLabel(leftSide.asset)
+        ? formatHiddenTermMetaLabel(leftSide)
         : isDirectPrivateTerms && !directTermsHydrated
         ? 'Private terms'
         : leftSide.role === 'offer'
@@ -6902,11 +7268,13 @@ export default function P2PTradingPage({
           ? 'Remaining now'
           : trade.status === 'open'
             ? 'Available now'
-            : statusLabel
-        : takerLabel;
+            : ''
+        : trade.status === 'open'
+          ? takerLabel
+          : '';
     const rightMetaLabel =
       isHiddenLiquidityTerms
-        ? formatHiddenTermMetaLabel(rightSide.asset)
+        ? formatHiddenTermMetaLabel(rightSide)
         : isDirectPrivateTerms && !directTermsHydrated
         ? 'Private terms'
         : rightSide.role === 'offer'
@@ -6914,8 +7282,10 @@ export default function P2PTradingPage({
           ? 'Remaining now'
           : trade.status === 'open'
             ? 'Available now'
-            : statusLabel
-        : takerLabel;
+            : ''
+        : trade.status === 'open'
+          ? takerLabel
+          : '';
     const expiryParts = formatTradeExpiryParts(trade.expiresAt);
     const expiryCountdown = trade.status === 'open' ? formatExpiryCountdown(trade.expiresAt) : null;
     const expiryChipLabel = expiryCountdown
@@ -6970,7 +7340,11 @@ export default function P2PTradingPage({
                   </span>
                 ))}
                 {tradeSecondaryTags.map((label) => (
-                  <span className="p2p-order-chip" key={`${tradeKey}:tag:${label}`}>
+                  <span
+                    className="p2p-order-chip"
+                    key={`${tradeKey}:tag:${label}`}
+                    title={counterRelation?.chipLabel === label ? counterRelation.detail : undefined}
+                  >
                     {label}
                   </span>
                 ))}
@@ -7011,7 +7385,7 @@ export default function P2PTradingPage({
           <div className="p2p-offer-completion p2p-order-detail-band p2p-order-liquidity-summary" aria-label={orderLiquiditySummary.percentLabel}>
             <div
               className={
-                publicLiquidityProgressSummary
+                twoSidedProgressSummary?.paymentAmountLabel
                   ? 'p2p-order-summary-lines p2p-order-summary-lines-public'
                   : 'p2p-order-summary-lines'
               }
@@ -7020,7 +7394,7 @@ export default function P2PTradingPage({
                 <span>{orderLiquidityLabel}</span>
                 <strong>{orderLiquidityHeaderValue}</strong>
               </div>
-              {publicLiquidityProgressSummary ? (
+              {twoSidedProgressSummary?.paymentAmountLabel ? (
                 <div className="p2p-offer-completion-flow">
                   <span>{orderLiquidityPaymentLabel}</span>
                   <strong>{orderLiquidityPaymentHeaderValue}</strong>
@@ -7038,10 +7412,12 @@ export default function P2PTradingPage({
         ) : null}
 
         {!orderLiquiditySummary ? (
-        <div className="p2p-offer-terms p2p-order-detail-band" aria-label={formatTradeListTerms(trade)}>
+        <div className="p2p-offer-terms p2p-offer-terms-clear p2p-order-detail-band" aria-label={formatTradeListTerms(trade)}>
           <div className={`p2p-offer-term p2p-offer-term-offered ${leftToneClass}`}>
             <span>{leftSideLabel}</span>
-            <strong title={formatVisibleTermTitle(leftSide.asset)}>{formatVisibleTermText(leftSide.asset)}</strong>
+            <strong title={formatVisibleTermTitle(leftSide)}>
+              {formatVisibleTermText(leftSide)}
+            </strong>
             <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
               {leftMetaLabel}
             </small>
@@ -7051,7 +7427,9 @@ export default function P2PTradingPage({
           </div>
           <div className={`p2p-offer-term p2p-offer-term-requested ${rightToneClass}`}>
             <span>{rightSideLabel}</span>
-            <strong title={formatVisibleTermTitle(rightSide.asset)}>{formatVisibleTermText(rightSide.asset)}</strong>
+            <strong title={formatVisibleTermTitle(rightSide)}>
+              {formatVisibleTermText(rightSide)}
+            </strong>
             <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
               {rightMetaLabel}
             </small>
@@ -7093,7 +7471,7 @@ export default function P2PTradingPage({
         <div className="p2p-offer-footer p2p-order-card-footer">
           {isFinishedTrade ? (
             <>
-              <div>
+              <div className="p2p-card-footer-actions">
                 {canOpenTerminal ? (
                   <button
                     type="button"
@@ -7107,22 +7485,20 @@ export default function P2PTradingPage({
                 ) : (
                   <span className="p2p-offer-final-state">
                     {statusLabel} offer #{trade.tradeId}
-                    {acceptedTxExplorerUrl ? ' with on-chain settlement' : ''}
                   </span>
                 )}
-                {acceptedTxExplorerUrl && acceptedTxFeedback ? (
-                  <a
-                    className={acceptedTxFeedback.className}
-                    href={acceptedTxExplorerUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={acceptedTxFeedback.onClick}
-                    title={acceptedTxFeedback.title}
+                {canRevealDirectTerms ? (
+                  <button
+                    type="button"
+                    className="p2p-offer-counter-btn"
+                    onClick={() => revealMakerPrivateProgress(trade).catch(() => {})}
+                    disabled={revealingPrivateTradeKey === tradeKey}
+                    title="Reveal this Direct OTC offer with your wallet AES key"
                   >
-                    {acceptedTxFeedback.label}
-                  </a>
+                    {revealingPrivateTradeKey === tradeKey ? 'Revealing...' : 'Reveal terms'}
+                  </button>
                 ) : null}
-                {shareUrl ? (
+                {!hideShareAction && shareUrl ? (
                   <button
                     type="button"
                     className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
@@ -7144,7 +7520,7 @@ export default function P2PTradingPage({
             </>
           ) : (
             <>
-              <div>
+              <div className="p2p-card-footer-actions">
                 {perspective.isMaker && canOpenTerminal ? (
                   <button
                     type="button"
@@ -7177,7 +7553,7 @@ export default function P2PTradingPage({
                     {revealingPrivateTradeKey === tradeKey ? 'Revealing...' : 'Reveal terms'}
                   </button>
                 ) : null}
-                {shareUrl ? (
+                {!hideShareAction && shareUrl ? (
                   <button
                     type="button"
                     className={lastCopiedKey === shareKey ? 'p2p-offer-share-btn copied' : 'p2p-offer-share-btn'}
@@ -7654,7 +8030,7 @@ export default function P2PTradingPage({
       return true;
     }
     if (groupId === 'history') {
-      return trade.walletHasFill || buildTradeTransactionHistoryRows([trade], walletAddress).length > 0;
+      return true;
     }
     return false;
   }, [walletAddress, walletKey]);
@@ -7662,18 +8038,22 @@ export default function P2PTradingPage({
     if (!selectedMyTradeDetailKey) {
       return null;
     }
-    const selectedTrade = selectedMyTradeGroup.trades.find((trade) => getSnapshotKey(trade) === selectedMyTradeDetailKey) ?? null;
-    return selectedTrade && canOpenMyTradeTerminal(selectedTrade, selectedMyTradeGroup.id) ? selectedTrade : null;
-  }, [canOpenMyTradeTerminal, selectedMyTradeDetailKey, selectedMyTradeGroup.id, selectedMyTradeGroup.trades]);
+    for (const group of myTradeGroupOptions) {
+      const selectedTrade = group.trades.find((trade) => getSnapshotKey(trade) === selectedMyTradeDetailKey) ?? null;
+      if (selectedTrade && canOpenMyTradeTerminal(selectedTrade, group.id)) {
+        return selectedTrade;
+      }
+    }
+    return null;
+  }, [canOpenMyTradeTerminal, myTradeGroupOptions, selectedMyTradeDetailKey]);
   useEffect(() => {
     if (!selectedMyTradeDetailKey) {
       return;
     }
-    const selectedTrade = selectedMyTradeGroup.trades.find((trade) => getSnapshotKey(trade) === selectedMyTradeDetailKey);
-    if (!selectedTrade || !canOpenMyTradeTerminal(selectedTrade, selectedMyTradeGroup.id)) {
+    if (!selectedMyTradeDetail) {
       setSelectedMyTradeDetailKey('');
     }
-  }, [canOpenMyTradeTerminal, selectedMyTradeDetailKey, selectedMyTradeGroup.id, selectedMyTradeGroup.trades]);
+  }, [selectedMyTradeDetail, selectedMyTradeDetailKey]);
   const openMyTradeTerminal = useCallback((trade: TradeSnapshot) => {
     const groupId = selectedMyTradeGroup.id;
     if (!canOpenMyTradeTerminal(trade, groupId)) {
@@ -7741,6 +8121,25 @@ export default function P2PTradingPage({
           title: 'P2P OTC Desk',
           copy: 'Wallet-to-wallet escrow offers.'
         };
+  const createDeskIdentity = counterParentTrade
+    ? {
+        title: 'Counter Offer',
+        copy: 'Reply with a direct OTC quote.'
+      }
+    : editingTrade || editingRecurringOrder
+      ? {
+          title: 'Edit Order',
+          copy: 'Adjust terms while preserving desk context.'
+        }
+      : tradeCreateMode === 'recurring'
+        ? {
+            title: 'Create Recurring',
+            copy: 'Reusable two-sided OTC liquidity.'
+          }
+        : {
+            title: 'Create Offer',
+            copy: 'Compose a limit buy/sell OTC trade.'
+          };
   const emptyTerminalOpen =
     (route.view === 'trade' && !route.tradeId) ||
     (emptyTerminalDrawerOpen && (route.view === 'public' || route.view === 'mine'));
@@ -8401,7 +8800,19 @@ export default function P2PTradingPage({
         !isComposerRoute ? ' p2p-trading-shell-has-overview' : ''
       }${isComposerRoute ? ' p2p-trading-shell-create' : ''}${route.view === 'mine' ? ' p2p-trading-shell-mine' : ''}`}
     >
-      <div className={`p2p-secondary-nav${!isComposerRoute ? ' p2p-secondary-nav-mobile' : ''}`}>{tradeViewTabs}</div>
+      {isComposerRoute ? (
+        <section className="p2p-create-overview" aria-label="Create trade workspace">
+          <div className="p2p-create-overview-head">
+            <div className="p2p-create-tabs">{tradeViewTabs}</div>
+            <div className="p2p-market-identity">
+              <strong>{createDeskIdentity.title}</strong>
+              <span>{createDeskIdentity.copy}</span>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <div className="p2p-secondary-nav p2p-secondary-nav-mobile">{tradeViewTabs}</div>
+      )}
       {!isComposerRoute ? (
         <section
           className={`p2p-market-overview p2p-market-overview-${route.view}${
@@ -9078,9 +9489,13 @@ export default function P2PTradingPage({
                     </div>
                   </div>
                   <div className="trade-compose-action-stack p2p-recurring-action-stack">
-                    <p className={recurringActionReadinessClassName} role="status">
-                      {recurringActionReadinessLabel}
-                    </p>
+                    {composerActionNotice ? (
+                      <div className="trade-compose-action-notice-slot">{composerActionNotice}</div>
+                    ) : (
+                      <p className={recurringActionReadinessClassName} role="status">
+                        {recurringActionReadinessLabel}
+                      </p>
+                    )}
                     <button
                       type="button"
                       className="trade-compose-send"
@@ -9097,7 +9512,6 @@ export default function P2PTradingPage({
                     </button>
                   </div>
                 </div>
-                {renderP2PActionNotice('composer')}
                 <div className="trade-compose-warning">
                   <p>
                     <strong>P2P OTC check:</strong> Buy and sell prices are independent. Same-price orders only happen when you enter the same price.
@@ -9198,7 +9612,6 @@ export default function P2PTradingPage({
             </label>
           ) : null}
           {tradeComposer}
-          {renderP2PActionNotice('composer')}
           {createdTradeLink ? (
             <div className="standalone-trade-created">
               <div>

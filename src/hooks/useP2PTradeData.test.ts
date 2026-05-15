@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   RECURRING_OTC_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
@@ -14,6 +15,7 @@ import {
 
 const maker = '0x1111111111111111111111111111111111111111';
 const filler = '0x2222222222222222222222222222222222222222';
+const otherFiller = '0x3333333333333333333333333333333333333333';
 
 const asset = (symbol: string, amount = '1000000'): TradeAssetPayload => ({
   kind: symbol.startsWith('p') ? 'private-erc20' : 'erc20',
@@ -84,9 +86,104 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     });
     const incoming = standardTrade({ privateFillReceipts: undefined, walletHasFill: false });
 
-    const merged = __mergeTradeSnapshotEnrichmentForTest(incoming, existing);
+    const merged = __mergeTradeSnapshotEnrichmentForTest(incoming, existing, filler);
 
     expect(merged.privateFillReceipts).toHaveLength(1);
+    expect(merged.walletHasFill).toBe(true);
+  });
+
+  it('does not preserve one-off private reveal data after wallet-switch stripping', () => {
+    const existing = standardTrade({
+      makerPrivateProgress: {
+        initialOfferAmount: '10000000',
+        remainingOfferAmount: '9000000'
+      },
+      privateFillReceipts: [
+        {
+          fillIndex: 1,
+          filler,
+          offerAmount: '1000000',
+          requestAmount: '2500000',
+          txHash: '0xaaa'
+        }
+      ],
+      walletFillState: {
+        offerAmountReceived: '1000000',
+        requestAmountPaid: '2500000'
+      },
+      walletHasFill: true
+    });
+    const incoming = standardTrade({
+      makerPrivateProgress: undefined,
+      privateFillReceipts: undefined,
+      walletFillState: undefined,
+      walletHasFill: false
+    });
+
+    const merged = __mergeTradeSnapshotEnrichmentForTest(
+      incoming,
+      __stripWalletScopedTradeSnapshotForTest(existing),
+      otherFiller
+    );
+
+    expect(merged.makerPrivateProgress).toBeUndefined();
+    expect(merged.privateFillReceipts).toBeUndefined();
+    expect(merged.walletFillState).toBeUndefined();
+    expect(merged.walletHasFill).toBeUndefined();
+  });
+
+  it('preserves current-wallet indexed fill details when a lighter refresh arrives', () => {
+    const existing = standardTrade({
+      walletFillState: {
+        offerAmountReceived: '1000000',
+        requestAmountPaid: '2500000'
+      },
+      walletHasFill: true
+    });
+    const incoming = standardTrade({
+      walletFillState: undefined,
+      walletHasFill: false
+    });
+
+    const merged = __mergeTradeSnapshotEnrichmentForTest(incoming, existing, filler);
+
+    expect(merged.walletFillState).toEqual({
+      offerAmountReceived: '1000000',
+      requestAmountPaid: '2500000'
+    });
+    expect(merged.walletHasFill).toBe(true);
+  });
+
+  it('preserves only the current filler receipts when a lighter one-off refresh arrives', () => {
+    const existing = standardTrade({
+      privateFillReceipts: [
+        {
+          fillIndex: 1,
+          filler,
+          offerAmount: '1000000',
+          requestAmount: '2500000',
+          txHash: '0xaaa'
+        },
+        {
+          fillIndex: 2,
+          filler: otherFiller,
+          offerAmount: '2000000',
+          requestAmount: '5000000',
+          txHash: '0xbbb'
+        }
+      ],
+      walletHasFill: true
+    });
+    const incoming = standardTrade({ privateFillReceipts: undefined, walletHasFill: false });
+
+    const merged = __mergeTradeSnapshotEnrichmentForTest(incoming, existing, otherFiller);
+
+    expect(merged.privateFillReceipts).toEqual([
+      expect.objectContaining({
+        fillIndex: 2,
+        filler: otherFiller
+      })
+    ]);
     expect(merged.walletHasFill).toBe(true);
   });
 
@@ -137,11 +234,85 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
       }
     });
 
-    const merged = __mergeTradeSnapshotEnrichmentForTest(incoming, existing);
+    const merged = __mergeTradeSnapshotEnrichmentForTest(incoming, existing, maker);
 
     expect(merged.walletHasFill).toBe(true);
     expect(merged.recurringOrder?.privateExecutions).toHaveLength(1);
     expect(merged.recurringOrder?.makerPrivateInventory?.baseInventory).toBe('9000000');
+  });
+
+  it('preserves only current-wallet recurring history when a lighter refresh arrives', () => {
+    const existing = recurringTrade({
+      walletHasFill: true,
+      recurringOrder: {
+        ...recurringTrade().recurringOrder!,
+        privateExecutions: [
+          {
+            fillIndex: 1,
+            side: 'sell',
+            filler,
+            baseAmount: '1000000',
+            quoteAmount: '2500000',
+            txHash: '0xaaa'
+          },
+          {
+            fillIndex: 2,
+            side: 'buy',
+            filler: otherFiller,
+            baseAmount: '2000000',
+            quoteAmount: '4000000',
+            txHash: '0xbbb'
+          }
+        ],
+        publicExecutions: [
+          {
+            fillIndex: 3,
+            side: 'sell',
+            filler,
+            baseAmount: '3000000',
+            quoteAmount: '7500000',
+            txHash: '0xccc'
+          },
+          {
+            fillIndex: 4,
+            side: 'buy',
+            filler: otherFiller,
+            baseAmount: '4000000',
+            quoteAmount: '8000000',
+            txHash: '0xddd'
+          }
+        ],
+        makerPrivateInventory: {
+          baseInventory: '9000000',
+          quoteInventory: '5000000'
+        }
+      }
+    });
+    const incoming = recurringTrade({
+      walletHasFill: false,
+      recurringOrder: {
+        ...recurringTrade().recurringOrder!,
+        privateExecutions: [],
+        publicExecutions: []
+      }
+    });
+
+    const merged = __mergeTradeSnapshotEnrichmentForTest(incoming, existing, otherFiller);
+
+    expect(merged.walletHasFill).toBe(true);
+    expect(merged.recurringOrder?.makerPrivateInventory).toBeUndefined();
+    expect(merged.recurringOrder?.privateExecutions).toEqual([
+      expect.objectContaining({
+        fillIndex: 2,
+        filler: otherFiller
+      })
+    ]);
+    expect(merged.recurringOrder?.publicExecutions).toEqual([
+      expect.objectContaining({
+        fillIndex: 4,
+        filler: otherFiller
+      })
+    ]);
   });
 
   it('strips wallet-scoped private reveal data before a wallet switch can reuse it', () => {
@@ -198,5 +369,27 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     expect(stripped.recurringOrder?.makerPrivateInventory).toBeUndefined();
     expect(stripped.recurringOrder?.privateExecutions).toBeUndefined();
     expect(stripped.recurringOrder?.publicExecutions).toBeUndefined();
+  });
+
+  it('strips hydrated Direct trade amounts when switching wallets', () => {
+    const stripped = __stripWalletScopedTradeSnapshotForTest(
+      standardTrade({
+        escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+        offer: asset('pWISP', '1200000'),
+        request: asset('HOTDOG', '2400000'),
+        fillState: {
+          filledOfferAmount: '0',
+          filledRequestAmount: '0',
+          remainingOfferAmount: '1200000',
+          remainingRequestAmount: '2400000'
+        },
+        hiddenLiquidity: false
+      })
+    );
+
+    expect(stripped.offer.amount).toBe('0');
+    expect(stripped.request.amount).toBe('0');
+    expect(stripped.fillState).toBeUndefined();
+    expect(stripped.hiddenLiquidity).toBe(true);
   });
 });

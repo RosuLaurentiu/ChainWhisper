@@ -141,6 +141,14 @@ export const getRemainingOfferAmount = (trade: TradeSnapshot): bigint => {
   }
 };
 
+export const shouldBlockFillAboveVisibleLiquidity = (trade: TradeSnapshot, requestAmount: bigint | null): boolean => {
+  if (requestAmount === null || requestAmount <= 0n || isHiddenLiquidityTrade(trade)) {
+    return false;
+  }
+
+  return requestAmount > getRemainingRequestAmount(trade);
+};
+
 export const hasAnyTradeFill = (trade: TradeSnapshot): boolean => {
   if (isHiddenLiquidityTrade(trade)) {
     return false;
@@ -237,26 +245,85 @@ export const loadStoredTradeAccessSecrets = (): Record<string, string> => {
 const isStoredTokenAmount = (value: unknown): value is string =>
   typeof value === 'string' && /^\d+$/.test(value) && BigInt(value) > 0n;
 
-export const loadStoredPrivateTradeLiquidity = (): Record<string, string> => {
+const buildPrivateTradeLiquidityStorageKey = (walletKey?: string | null): string => {
+  const normalizedWalletKey = walletKey?.trim().toLowerCase() ?? '';
+  return normalizedWalletKey
+    ? `${PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY}:${normalizedWalletKey}`
+    : PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY;
+};
+
+const normalizeStoredPrivateTradeLiquidity = (parsed: Record<string, unknown>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(parsed).filter(
+      ([tradeKey, amount]) => /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeKey) && isStoredTokenAmount(amount)
+    )
+  ) as Record<string, string>;
+
+export const loadStoredPrivateTradeLiquidity = (walletKey?: string | null): Record<string, string> => {
   if (typeof window === 'undefined') {
     return {};
   }
 
+  const normalizedWalletKey = walletKey?.trim().toLowerCase() ?? '';
+  if (!normalizedWalletKey) {
+    return {};
+  }
+
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        ([tradeKey, amount]) => /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeKey) && isStoredTokenAmount(amount)
-      )
-    ) as Record<string, string>;
+    // Older builds stored maker reveal context globally by trade. Drop that cache so a new wallet
+    // never inherits a previous account's private-liquidity reveal.
+    window.localStorage.removeItem(PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY);
+    const parsed = JSON.parse(
+      window.localStorage.getItem(buildPrivateTradeLiquidityStorageKey(normalizedWalletKey)) ?? '{}'
+    ) as Record<string, unknown>;
+    return normalizeStoredPrivateTradeLiquidity(parsed);
   } catch {
     return {};
   }
 };
 
-export const getMakerPrivateProgressSummary = (
-  trade: TradeSnapshot
-): { percent: number; percentLabel: string; filledLabel: string; remainingLabel: string; totalLabel?: string } | null => {
+type MakerPrivateProgressSummary = {
+  percent: number;
+  percentLabel: string;
+  headerValueLabel?: string;
+  filledLabel: string;
+  remainingLabel: string;
+  totalLabel: string;
+  totalAmountLabel?: string;
+  filledAmountLabel?: string;
+  remainingAmountLabel?: string;
+  paymentAmountLabel?: string;
+  paymentTotalLabel?: string;
+  paymentHeaderValueLabel?: string;
+  paymentFilledAmountLabel?: string;
+  paymentRemainingAmountLabel?: string;
+  hasFills?: boolean;
+};
+
+const quoteRequestAmountForOfferAmount = (
+  offerAmountOut: bigint,
+  offerUnitAmount: bigint,
+  requestUnitAmount: bigint
+): bigint => {
+  if (offerAmountOut <= 0n || offerUnitAmount <= 0n || requestUnitAmount <= 0n) {
+    return 0n;
+  }
+
+  return (offerAmountOut * requestUnitAmount + offerUnitAmount - 1n) / offerUnitAmount;
+};
+
+const parsePositiveTokenAmount = (value?: string): bigint => {
+  if (!/^\d+$/.test(value ?? '')) {
+    return 0n;
+  }
+  try {
+    return BigInt(value ?? '0');
+  } catch {
+    return 0n;
+  }
+};
+
+export const getMakerPrivateProgressSummary = (trade: TradeSnapshot): MakerPrivateProgressSummary | null => {
   if (!isHiddenLiquidityTrade(trade) || !trade.makerPrivateProgress) {
     return null;
   }
@@ -273,39 +340,103 @@ export const getMakerPrivateProgressSummary = (
         : trade.makerPrivateProgress.filledOfferAmount && /^\d+$/.test(trade.makerPrivateProgress.filledOfferAmount)
           ? BigInt(trade.makerPrivateProgress.filledOfferAmount)
           : null;
+    const inferredInitialOfferAmount =
+      initialOfferAmount !== null
+        ? initialOfferAmount
+        : filledOfferAmount !== null
+          ? filledOfferAmount + remainingOfferAmount
+          : null;
+    const returnedCancelledLiquidity =
+      trade.status === 'cancelled' &&
+      !trade.acceptedTxHash &&
+      inferredInitialOfferAmount !== null &&
+      inferredInitialOfferAmount > 0n &&
+      remainingOfferAmount === 0n &&
+      filledOfferAmount === inferredInitialOfferAmount;
+    const displayFilledOfferAmount = returnedCancelledLiquidity ? 0n : filledOfferAmount;
+    const displayRemainingOfferAmount = returnedCancelledLiquidity ? 0n : remainingOfferAmount;
     const percent =
-      initialOfferAmount !== null && initialOfferAmount > 0n && filledOfferAmount !== null
-        ? Number((filledOfferAmount * 10_000n) / initialOfferAmount) / 100
+      inferredInitialOfferAmount !== null && inferredInitialOfferAmount > 0n && displayFilledOfferAmount !== null
+        ? Number((displayFilledOfferAmount * 10_000n) / inferredInitialOfferAmount) / 100
         : 0;
     const safePercent = Math.max(0, Math.min(100, percent));
+    const offerUnitAmount = parsePositiveTokenAmount(trade.offer.amount);
+    const requestUnitAmount = parsePositiveTokenAmount(trade.request.amount);
+    const filledRequestAmount =
+      displayFilledOfferAmount !== null
+        ? quoteRequestAmountForOfferAmount(displayFilledOfferAmount, offerUnitAmount, requestUnitAmount)
+        : 0n;
+    const remainingRequestAmount = quoteRequestAmountForOfferAmount(
+      displayRemainingOfferAmount,
+      offerUnitAmount,
+      requestUnitAmount
+    );
+    const totalRequestAmount =
+      inferredInitialOfferAmount !== null
+        ? quoteRequestAmountForOfferAmount(inferredInitialOfferAmount, offerUnitAmount, requestUnitAmount)
+        : filledRequestAmount + remainingRequestAmount;
+    const totalOfferAmountLabel =
+      inferredInitialOfferAmount !== null
+        ? `${formatTokenAmount(inferredInitialOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`
+        : `${formatTokenAmount(remainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
+    const filledOfferAmountLabel =
+      displayFilledOfferAmount !== null
+        ? `${formatTokenAmount(displayFilledOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`
+        : '';
+    const remainingOfferAmountLabel = `${formatTokenAmount(displayRemainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`;
+    const totalRequestAmountLabel =
+      totalRequestAmount > 0n
+        ? `${formatTokenAmount(totalRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`
+        : '';
+    const filledRequestAmountLabel =
+      filledRequestAmount > 0n || totalRequestAmount > 0n
+        ? `${formatTokenAmount(filledRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`
+        : '';
+    const remainingRequestAmountLabel =
+      remainingRequestAmount > 0n || totalRequestAmount > 0n
+        ? `${formatTokenAmount(remainingRequestAmount, trade.request.decimals, 6)} ${trade.request.symbol}`
+        : '';
 
     return {
       percent: safePercent,
       percentLabel:
-        initialOfferAmount !== null && filledOfferAmount !== null
+        inferredInitialOfferAmount !== null && filledOfferAmount !== null
           ? `${safePercent.toFixed(safePercent % 1 === 0 ? 0 : 1)}% filled`
           : 'Live remaining',
       filledLabel:
-        filledOfferAmount !== null
-          ? `${formatTokenAmount(filledOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} filled`
+        filledOfferAmountLabel
+          ? `${filledOfferAmountLabel} filled`
           : 'Filled amount private',
-      remainingLabel: `${formatTokenAmount(remainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} remaining`,
-      totalLabel:
-        initialOfferAmount !== null
-          ? `${formatTokenAmount(initialOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} total`
-          : `${formatTokenAmount(remainingOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol} current order`
+      remainingLabel: `${remainingOfferAmountLabel} remaining`,
+      totalLabel: `${totalOfferAmountLabel}${inferredInitialOfferAmount !== null ? ' total' : ' current order'}`,
+      totalAmountLabel: totalOfferAmountLabel,
+      filledAmountLabel: filledOfferAmountLabel || undefined,
+      remainingAmountLabel: remainingOfferAmountLabel,
+      paymentAmountLabel: totalRequestAmountLabel || undefined,
+      paymentTotalLabel: totalRequestAmountLabel ? `${totalRequestAmountLabel} order value` : undefined,
+      paymentFilledAmountLabel: filledRequestAmountLabel || undefined,
+      paymentRemainingAmountLabel: remainingRequestAmountLabel || undefined,
+      hasFills: displayFilledOfferAmount !== null && displayFilledOfferAmount > 0n
     };
   } catch {
     return null;
   }
 };
 
-export const storePrivateTradeLiquidity = (amountsByTrade: Record<string, string>): void => {
+export const storePrivateTradeLiquidity = (amountsByTrade: Record<string, string>, walletKey?: string | null): void => {
   if (typeof window === 'undefined') {
     return;
   }
 
-  window.localStorage.setItem(PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY, JSON.stringify(amountsByTrade));
+  const normalizedWalletKey = walletKey?.trim().toLowerCase() ?? '';
+  if (!normalizedWalletKey) {
+    return;
+  }
+
+  window.localStorage.setItem(
+    buildPrivateTradeLiquidityStorageKey(normalizedWalletKey),
+    JSON.stringify(normalizeStoredPrivateTradeLiquidity(amountsByTrade))
+  );
 };
 
 export const storeTradeAccessSecrets = (secrets: Record<string, string>): void => {

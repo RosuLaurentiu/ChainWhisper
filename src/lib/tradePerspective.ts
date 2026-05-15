@@ -94,6 +94,7 @@ type TradePerspectiveInput = Pick<TradeSnapshot, 'maker' | 'taker' | 'offer' | '
   fillState?: TradeSnapshot['fillState'];
   makerPrivateProgress?: TradeSnapshot['makerPrivateProgress'];
   walletHasFill?: TradeSnapshot['walletHasFill'];
+  recurringOrder?: TradeSnapshot['recurringOrder'];
 };
 
 const normalizeAddress = (value?: string | null): string => value?.trim().toLowerCase() ?? '';
@@ -140,7 +141,8 @@ export const resolveTradePerspective = (
   const isMaker = Boolean(walletKey && makerKey === walletKey);
   const isTaker = Boolean(walletKey && takerKey === walletKey);
   const isOpenTakerTrade = isZeroTradeTakerAddress(trade.taker);
-  const isOpen = trade.status === undefined || trade.status === 'open';
+  const isRecurringActive = !trade.recurringOrder || trade.recurringOrder.recurringStatus === 'active';
+  const isOpen = (trade.status === undefined || trade.status === 'open') && isRecurringActive;
   const showTakerPerspective = Boolean(walletKey && !isMaker && (isTaker || isOpenTakerTrade));
   const role: TradePerspectiveRole = isMaker
     ? 'maker'
@@ -184,7 +186,7 @@ export const resolveTradePerspective = (
     canAccept,
     needsAction,
     isMyActiveOffer,
-    isHistory: isParticipant && (!isOpen || isPartiallyFilled)
+    isHistory: isParticipant && (!isOpen || (!isMaker && isPartiallyFilled))
   };
 };
 
@@ -378,11 +380,7 @@ export const groupWalletTradesByPerspective = (trades: TradeSnapshot[], walletAd
       perspective.walletKey.length > 0 &&
       !perspective.isParticipant &&
       Boolean(trade.walletHasFill);
-    const isMakerRecurringWithExecutions =
-      perspective.isMaker &&
-      Boolean(trade.recurringOrder && trade.recurringOrder.executionCount > 0);
-
-    if (perspective.isHistory || isWalletScopedPartialFill || isWalletScopedIndexedFill || isMakerRecurringWithExecutions) {
+    if (perspective.isHistory || isWalletScopedPartialFill || isWalletScopedIndexedFill) {
       history.push(trade);
     }
   }

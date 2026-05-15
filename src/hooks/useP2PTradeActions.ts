@@ -26,7 +26,7 @@ import { isHiddenLiquidityTrade } from '../lib/p2pTradeView';
 import type { P2PActionNoticeInput } from '../lib/p2pActionNotice';
 
 type TradeSigner = JsonRpcSigner | Wallet;
-export type CounterAcceptMode = 'close-related' | 'accept-only';
+export type CounterAcceptMode = 'close-related' | 'fill';
 
 const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContract'>): string =>
   buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
@@ -254,14 +254,16 @@ export default function useP2PTradeActions({
           }
         }
         await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, walletAddress);
+        const directWalletAuthority =
+          latestEscrowConfig.directVisible && canUseWalletAuthorityForDirectAccess(latestSnapshot, walletAddress);
         const remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
         if (remainingRequestAmount <= 0n) {
           throw new Error('This trade has no remaining amount to accept.');
         }
         const acceptRequestAsset = withTradeAssetAmount(latestSnapshot.request, remainingRequestAmount);
-        const acceptDirectCounterOnly = Boolean(
+        const fillDirectCounterOnly = Boolean(
           latestSnapshot.counterParentTradeId &&
-          counterAcceptMode === 'accept-only' &&
+          counterAcceptMode === 'fill' &&
           latestEscrowConfig.directVisible
         );
         let canUseCloseFirstParentBalance = false;
@@ -280,14 +282,14 @@ export default function useP2PTradeActions({
             assetsUseSameToken(parentSnapshot.offer, acceptRequestAsset)
           );
         }
-        if (latestSnapshot.counterParentTradeId && counterAcceptMode === 'accept-only' && !latestEscrowConfig.directVisible) {
-          throw new Error('Accept only is available for Direct OTC counter offers.');
+        if (latestSnapshot.counterParentTradeId && counterAcceptMode === 'fill' && !latestEscrowConfig.directVisible) {
+          throw new Error('Normal counter fill is available for Direct OTC counter offers.');
         }
         const shouldUsePrivateFillPath =
-          acceptDirectCounterOnly ||
+          fillDirectCounterOnly ||
           ((isHiddenLiquidityTrade(latestSnapshot) || latestEscrowConfig.directVisible) && !latestSnapshot.counterParentTradeId);
         const hiddenFillResult = shouldUsePrivateFillPath
-          ? acceptDirectCounterOnly
+          ? fillDirectCounterOnly
             ? await acceptDirectVisibleTradeOnChain({
                 signer,
                 ownerAddress: walletAddress,
@@ -295,7 +297,8 @@ export default function useP2PTradeActions({
                 requestAsset: acceptRequestAsset,
                 requestAmountWei: remainingRequestAmount,
                 escrowContract: latestSnapshot.escrowContract,
-                accessSecret: accessSecret || undefined
+                accessSecret: accessSecret || undefined,
+                useDirectWalletAuthority: directWalletAuthority
               }).then((result) => ({
                 filledTxHash: result.acceptedTxHash,
                 fullyFilled: true
@@ -307,7 +310,8 @@ export default function useP2PTradeActions({
                 requestAsset: acceptRequestAsset,
                 requestAmountWei: remainingRequestAmount,
                 escrowContract: latestSnapshot.escrowContract,
-                accessSecret: accessSecret || undefined
+                accessSecret: accessSecret || undefined,
+                useDirectWalletAuthority: directWalletAuthority
               })
           : null;
         const { acceptedTxHash } =
@@ -322,6 +326,7 @@ export default function useP2PTradeActions({
                   requestAmountWei: remainingRequestAmount,
                   escrowContract: latestSnapshot.escrowContract,
                   accessSecret: accessSecret || undefined,
+                  useDirectWalletAuthority: directWalletAuthority,
                   skipPrivateTokenBalanceCheck: canUseCloseFirstParentBalance
                 })
               : await acceptTradeOnChain({
@@ -403,7 +408,7 @@ export default function useP2PTradeActions({
         return;
       }
       if (snapshot.counterParentTradeId) {
-        const message = 'Counter offers must be accepted in full so the original trade can close atomically.';
+        const message = 'Counter offers use full-size fill, or close the parent first and accept.';
         setTradeActionError(message);
         notifyTerminalAction({ action: 'fill', message, status: 'error', tradeKey });
         return;
@@ -418,7 +423,7 @@ export default function useP2PTradeActions({
         rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
         const latestSnapshot = (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
         if (latestSnapshot.counterParentTradeId) {
-          throw new Error('Counter offers must be accepted in full so the original trade can close atomically.');
+          throw new Error('Counter offers use full-size fill, or close the parent first and accept.');
         }
 
         let requestedAmount: bigint;
@@ -448,6 +453,9 @@ export default function useP2PTradeActions({
         }
 
         await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, walletAddress);
+        const directWalletAuthority =
+          resolveTradeEscrowContractConfig(latestSnapshot.escrowContract).directVisible &&
+          canUseWalletAuthorityForDirectAccess(latestSnapshot, walletAddress);
 
         const signer = await getTradeSigner(isPrivateTradeAsset(latestSnapshot.request));
         const fillResult = latestSnapshotHiddenLiquidity
@@ -458,7 +466,8 @@ export default function useP2PTradeActions({
               requestAsset: withTradeAssetAmount(latestSnapshot.request, requestedAmount),
               requestAmountWei: requestedAmount,
               escrowContract: latestSnapshot.escrowContract,
-              accessSecret: accessSecret || undefined
+              accessSecret: accessSecret || undefined,
+              useDirectWalletAuthority: directWalletAuthority
             })
           : await fillTradeOnChain({
               signer,

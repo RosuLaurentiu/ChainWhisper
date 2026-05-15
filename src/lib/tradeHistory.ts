@@ -10,7 +10,7 @@ import { isZeroTradeTakerAddress } from './tradePerspective';
 export type TradeTransactionHistoryRole = 'maker' | 'taker' | 'filler';
 export type TradeTransactionHistorySource = 'standard' | 'private' | 'direct' | 'recurring';
 export type TradeTransactionAmountVisibility = 'public' | 'private-revealed' | 'private-hidden';
-export type TradeLifecycleHistoryAction = 'created' | 'edited' | 'replaced' | 'cancelled';
+export type TradeLifecycleHistoryAction = 'created' | 'edited' | 'replaced' | 'accepted' | 'cancelled';
 
 export type TradeTransactionAsset = TradeAssetPayload & {
   visible: boolean;
@@ -159,6 +159,42 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
     });
   }
 
+  const linkedCounterId =
+    !recurring && trade.counterParentTradeId && trade.counterParentTradeId > trade.tradeId
+      ? trade.counterParentTradeId
+      : undefined;
+  if (!recurring && trade.status === 'accepted' && linkedCounterId) {
+    rows.push({
+      key: `${snapshotKey}:lifecycle:counter-accepted:${linkedCounterId}`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action: 'accepted',
+      label: 'Counter accepted',
+      detail: `Counter #${linkedCounterId} settled this parent offer`,
+      actor: trade.taker,
+      relatedTradeId: linkedCounterId,
+      ...(trade.acceptedTxHash ? { txHash: trade.acceptedTxHash } : {})
+    });
+  }
+
+  if (!recurring && trade.status === 'accepted' && !linkedCounterId) {
+    rows.push({
+      key: `${snapshotKey}:lifecycle:accepted`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action: 'accepted',
+      label: trade.counterParentTradeId ? 'Counter accepted' : 'Accepted',
+      detail: trade.counterParentTradeId
+        ? `${subjectLabel} accepted as counter to #${trade.counterParentTradeId}`
+        : `${subjectLabel} accepted`,
+      actor: trade.taker,
+      ...(trade.counterParentTradeId ? { relatedTradeId: trade.counterParentTradeId } : {}),
+      ...(trade.acceptedTxHash ? { txHash: trade.acceptedTxHash } : {})
+    });
+  }
+
   if (recurring?.recurringStatus === 'cancelled') {
     rows.push({
       key: `${snapshotKey}:lifecycle:cancelled`,
@@ -261,6 +297,13 @@ export const buildTradeTransactionHistoryRows = (
     const amountsVisible =
       termsVisibility === 'public' ||
       (termsVisibility === 'direct-private-terms' && hasHydratedDirectTradeTerms(trade));
+    const acceptedDirectPrivateTerms =
+      termsVisibility === 'direct-private-terms' &&
+      trade.status === 'accepted' &&
+      !amountsVisible;
+    const acceptedDirectTrade =
+      sourceKind === 'direct' &&
+      trade.status === 'accepted';
 
     for (const receipt of trade.privateFillReceipts ?? []) {
       const fillerKey = normalizeAddress(receipt.filler);
@@ -301,10 +344,21 @@ export const buildTradeTransactionHistoryRows = (
     );
     const filledOfferAmount = walletFill?.offerAmountReceived ?? trade.fillState?.filledOfferAmount;
     const filledRequestAmount = walletFill?.requestAmountPaid ?? trade.fillState?.filledRequestAmount;
-    const hasVisibleFill = isPositiveAmount(filledOfferAmount) || isPositiveAmount(filledRequestAmount);
+    const positiveFilledOfferAmount = isPositiveAmount(filledOfferAmount) ? filledOfferAmount : undefined;
+    const positiveFilledRequestAmount = isPositiveAmount(filledRequestAmount) ? filledRequestAmount : undefined;
+    const hasVisibleFill = Boolean(positiveFilledOfferAmount || positiveFilledRequestAmount);
     const walletIsIndexedFiller = Boolean(trade.walletHasFill && !isMaker && !isTaker && isOpenTakerTrade);
 
     if (!isMaker && !isTaker && !walletIsIndexedFiller && !hasWalletFill) {
+      continue;
+    }
+    if (
+      !acceptedDirectPrivateTerms &&
+      !acceptedDirectTrade &&
+      !hasVisibleFill &&
+      !hasWalletFill &&
+      (trade.status !== 'accepted' || trade.fillState)
+    ) {
       continue;
     }
     if (trade.status === 'open' && !hasVisibleFill && !walletIsIndexedFiller) {
@@ -318,11 +372,11 @@ export const buildTradeTransactionHistoryRows = (
         : trade.taker
       : trade.maker;
     const bought = isMaker
-      ? withAmount(trade.request, filledRequestAmount ?? trade.request.amount, amountsVisible)
-      : withAmount(trade.offer, filledOfferAmount ?? trade.offer.amount, amountsVisible);
+      ? withAmount(trade.request, positiveFilledRequestAmount ?? trade.request.amount, amountsVisible)
+      : withAmount(trade.offer, positiveFilledOfferAmount ?? trade.offer.amount, amountsVisible);
     const sold = isMaker
-      ? withAmount(trade.offer, filledOfferAmount ?? trade.offer.amount, amountsVisible)
-      : withAmount(trade.request, filledRequestAmount ?? trade.request.amount, amountsVisible);
+      ? withAmount(trade.offer, positiveFilledOfferAmount ?? trade.offer.amount, amountsVisible)
+      : withAmount(trade.request, positiveFilledRequestAmount ?? trade.request.amount, amountsVisible);
 
     rows.push({
       key: `${buildTradeSnapshotKey(trade.tradeId, contractAddress)}:visible:${role}`,

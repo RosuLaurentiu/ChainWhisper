@@ -14,6 +14,7 @@ import {
   loadStoredPrivateTradeLiquidity,
   loadStoredTradeAccessSecrets,
   matchesTradeSearch,
+  shouldBlockFillAboveVisibleLiquidity,
   shouldRecoverMakerTradePayload,
   storePrivateTradeLiquidity,
   storeTradeAccessSecrets
@@ -79,7 +80,79 @@ describe('p2pTradeView helpers', () => {
     expect(getMakerPrivateProgressSummary(privateTrade)).toMatchObject({
       percent: 25,
       filledLabel: '0.25 WISP filled',
-      remainingLabel: '0.75 WISP remaining'
+      remainingLabel: '0.75 WISP remaining',
+      paymentAmountLabel: '2 COTI',
+      paymentFilledAmountLabel: '0.5 COTI',
+      paymentRemainingAmountLabel: '1.5 COTI'
+    });
+  });
+
+  it('does not block hidden-liquidity fills by the public remaining amount', () => {
+    const privateTrade = baseTrade({
+      hiddenLiquidity: true,
+      offer: token('HOTDOG', '1000000000'),
+      request: token('pWISP', '20000000'),
+      fillState: {
+        filledOfferAmount: '0',
+        filledRequestAmount: '0',
+        remainingOfferAmount: '0',
+        remainingRequestAmount: '0'
+      }
+    });
+    const visibleTrade = baseTrade({
+      fillState: {
+        filledOfferAmount: '0',
+        filledRequestAmount: '0',
+        remainingOfferAmount: '1000000',
+        remainingRequestAmount: '2000000'
+      }
+    });
+
+    expect(shouldBlockFillAboveVisibleLiquidity(privateTrade, 21_000_000n)).toBe(false);
+    expect(shouldBlockFillAboveVisibleLiquidity(visibleTrade, 2_000_001n)).toBe(true);
+  });
+
+  it('infers private maker fill progress from filled and remaining amounts', () => {
+    const privateTrade = baseTrade({
+      hiddenLiquidity: true,
+      makerPrivateProgress: {
+        filledOfferAmount: '7000',
+        remainingOfferAmount: '993000'
+      }
+    });
+
+    expect(getMakerPrivateProgressSummary(privateTrade)).toMatchObject({
+      percent: 0.7,
+      percentLabel: '0.7% filled',
+      filledLabel: '0.007 WISP filled',
+      remainingLabel: '0.993 WISP remaining',
+      totalLabel: '1 WISP total',
+      paymentAmountLabel: '2 COTI',
+      paymentFilledAmountLabel: '0.014 COTI',
+      paymentRemainingAmountLabel: '1.986 COTI'
+    });
+  });
+
+  it('presents returned private liquidity as an unfilled cancelled order', () => {
+    const cancelledPrivateTrade = baseTrade({
+      hiddenLiquidity: true,
+      status: 'cancelled',
+      makerPrivateProgress: {
+        filledOfferAmount: '1000000',
+        initialOfferAmount: '1000000',
+        remainingOfferAmount: '0'
+      }
+    });
+
+    expect(getMakerPrivateProgressSummary(cancelledPrivateTrade)).toMatchObject({
+      percent: 0,
+      filledLabel: '0 WISP filled',
+      remainingLabel: '0 WISP remaining',
+      totalLabel: '1 WISP total',
+      paymentAmountLabel: '2 COTI',
+      paymentFilledAmountLabel: '0 COTI',
+      paymentRemainingAmountLabel: '0 COTI',
+      hasFills: false
     });
   });
 
@@ -185,11 +258,17 @@ describe('p2pTradeView helpers', () => {
       '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`,
       '0x1111111111111111111111111111111111111111:8': 'nope'
     }));
-    storePrivateTradeLiquidity({
-      '0x1111111111111111111111111111111111111111:7': '123',
-      '0x1111111111111111111111111111111111111111:8': '0',
-      bad: '456'
-    });
+    storage.set('coti-private-trade-liquidity-v1', JSON.stringify({
+      '0x1111111111111111111111111111111111111111:9': '999'
+    }));
+    storePrivateTradeLiquidity(
+      {
+        '0x1111111111111111111111111111111111111111:7': '123',
+        '0x1111111111111111111111111111111111111111:8': '0',
+        bad: '456'
+      },
+      '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    );
 
     expect(loadStoredTradeAccessSecrets()).toEqual({
       '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`
@@ -199,9 +278,11 @@ describe('p2pTradeView helpers', () => {
       '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`
     });
     expect(storage.has('coti-trade-access-secrets-v1')).toBe(false);
-    expect(loadStoredPrivateTradeLiquidity()).toEqual({
+    expect(loadStoredPrivateTradeLiquidity('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toEqual({
       '0x1111111111111111111111111111111111111111:7': '123'
     });
+    expect(storage.has('coti-private-trade-liquidity-v1')).toBe(false);
+    expect(loadStoredPrivateTradeLiquidity('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')).toEqual({});
 
     vi.unstubAllGlobals();
   });

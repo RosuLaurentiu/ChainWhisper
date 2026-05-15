@@ -5117,7 +5117,8 @@ summary:focus:not(:focus-visible),
   width: 54%;
 }
 
-.app-shell-trades .p2p-market-overview {
+.app-shell-trades .p2p-market-overview,
+.app-shell-trades .p2p-create-overview {
   grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 7px 10px 8px;
@@ -5135,6 +5136,11 @@ summary:focus:not(:focus-visible),
 
 .app-shell-trades .p2p-market-overview-head {
   grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.app-shell-trades .p2p-create-overview-head {
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -5585,7 +5591,8 @@ summary:focus:not(:focus-visible),
   .app-shell-trades .p2p-market-overview-public,
   .app-shell-trades .p2p-market-overview-mine,
   .app-shell-trades .p2p-market-overview-trade,
-  .app-shell-trades .p2p-market-overview-summary-only {
+  .app-shell-trades .p2p-market-overview-summary-only,
+  .app-shell-trades .p2p-create-overview {
     grid-template-columns: minmax(0, 1fr);
     gap: 5px 7px;
     padding: 7px;
@@ -5595,6 +5602,21 @@ summary:focus:not(:focus-visible),
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "identity stats";
     gap: 7px;
+  }
+
+  .app-shell-trades .p2p-create-overview-head {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .app-shell-trades .p2p-create-tabs .p2p-trade-tabs {
+    width: 100%;
+  }
+
+  .app-shell-trades .p2p-create-tabs .p2p-trade-tabs button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 9px;
   }
 
   .app-shell-trades .p2p-market-identity strong {
@@ -5751,6 +5773,7 @@ summary:focus:not(:focus-visible),
 
 @media (min-width: 861px) {
   .app-shell-trades .p2p-trading-shell-create {
+    --p2p-create-controls-width: min(100%, 1180px);
     grid-template-rows: auto minmax(0, 1fr) auto;
     align-content: stretch;
     gap: 10px;
@@ -5768,10 +5791,25 @@ summary:focus:not(:focus-visible),
     grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
     gap: 10px;
     overflow: hidden;
-    border-color: rgba(111, 90, 167, 0.62);
+    border-color: rgba(142, 116, 214, 0.72);
     background:
       radial-gradient(760px 260px at 18% -100px, rgba(139, 92, 246, 0.16), transparent 62%),
       linear-gradient(180deg, rgba(13, 11, 24, 0.94), rgba(4, 4, 10, 0.98));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.03),
+      inset 0 0 0 1px rgba(196, 181, 253, 0.045);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .standalone-trades-section-head,
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .p2p-create-mode-switch,
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .standalone-trade-options,
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel,
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .p2p-recurring-builder,
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .p2p-direct-recipient,
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .p2p-counter-parent-context,
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .standalone-trade-access-summary {
+    width: var(--p2p-create-controls-width);
+    justify-self: center;
   }
 
   .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head {
@@ -5796,8 +5834,8 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-trading-shell-create .p2p-create-mode-switch {
-    width: min(100%, 420px);
-    justify-self: start;
+    width: var(--p2p-create-controls-width);
+    justify-self: center;
   }
 
   .app-shell-trades .p2p-trading-shell-create .p2p-create-mode-switch button {
@@ -5873,20 +5911,20 @@ summary:focus:not(:focus-visible),
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-grid {
     min-height: 0;
-    grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr);
+    gap: 10px;
     align-items: stretch;
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-panel:not(.p2p-recurring-builder) .trade-compose-grid {
-    min-height: 304px;
+    min-height: 286px;
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-section {
     min-height: 0;
     height: 100%;
     gap: 8px;
-    padding: 12px;
+    padding: 10px;
     border-color: rgba(148, 163, 184, 0.16);
     background:
       linear-gradient(180deg, rgba(7, 8, 15, 0.68), rgba(5, 5, 12, 0.72));
@@ -5910,7 +5948,7 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-asset-field {
-    min-height: 74px;
+    min-height: 68px;
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-amount-field {
@@ -5938,10 +5976,10 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-swap-indicator {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
     align-self: center;
     border-color: rgba(196, 181, 253, 0.36);
     background:
@@ -5985,7 +6023,7 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-bottom {
-    grid-template-columns: minmax(0, 1fr) minmax(520px, 1.36fr);
+    grid-template-columns: minmax(0, 0.86fr) minmax(430px, 1.14fr);
     align-items: stretch;
     gap: 8px;
     border: 0;
@@ -6006,7 +6044,7 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-privacy-panel {
-    grid-template-columns: minmax(170px, 0.5fr) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(170px, 0.46fr) minmax(0, 1fr) auto;
     border-color: rgba(148, 163, 184, 0.14);
     background: rgba(5, 6, 12, 0.46);
     padding: 9px 10px;
@@ -6014,7 +6052,7 @@ summary:focus:not(:focus-visible),
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-footer {
     grid-column: auto;
-    grid-template-columns: minmax(0, 0.82fr) minmax(0, 0.98fr) minmax(190px, 0.86fr);
+    grid-template-columns: minmax(0, 0.75fr) minmax(230px, 0.95fr) minmax(240px, 0.82fr);
     gap: 8px;
   }
 

@@ -808,8 +808,8 @@ export const GROUP_CHAT_CONTRACT_ABI = [
 
 export const OTC_ESCROW_CONTRACT_ADDRESS = '0x7a232810f250a2C6e90895215aFf826116DFDb06';
 export const OTC_READER_CONTRACT_ADDRESS = '0x77889B2f9F9fD812ad65AfF41048426fA1382660';
-export const PRIVATE_ORDERS_CONTRACT_ADDRESS = '0xB5dEdC6f30B471D75e2fB0Bc22197Cc9EE2b8E31';
-export const DIRECT_OTC_CONTRACT_ADDRESS = '0x33598De9eCE6d1793e2f6dde5D8A4064AA37aF3A';
+export const PRIVATE_ORDERS_CONTRACT_ADDRESS = '0xe211c032E4432FdeB9e48f06b69EB98583B2A231';
+export const DIRECT_OTC_CONTRACT_ADDRESS = '0x634c6dddda784c29d0435Cc54ca072Af0551914a';
 export const RECURRING_OTC_CONTRACT_ADDRESS = '0x7235B18b9CD59fB9853BC3BF3a0A65bc32162cd5';
 export const OTC_REGISTRY_CONTRACT_ADDRESS = '0x91e32EdFAb1e74DA07ea3012491a44D983aeBA46';
 export const OTC_HISTORY_READER_CONTRACT_ADDRESS = '0x650666328A771d70881c189F3B2BB1F3fBfe0514';
@@ -838,11 +838,8 @@ export const TRADE_ESCROW_CONTRACT_ABI = [
   'function createTradeAdvanced((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, uint256 parentTradeId) payable returns (uint256 tradeId)',
   'function createTradeWithPolicy((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, uint256 parentTradeId, (bool partialFillsAllowed, uint16 minPartialFillBps, uint256 minRequestAmount, uint256 maxRequestAmountPerWallet, bool oneFillPerWallet) policy) payable returns (uint256 tradeId)',
   'function acceptTrade(uint256 tradeId) payable',
-  'function acceptTradeWithSecret(uint256 tradeId, bytes32 accessSecret) payable',
   'function fillTrade(uint256 tradeId, uint256 requestAmountIn, uint256 minOfferAmountOut) payable returns (uint256 offerAmountOut)',
-  'function fillTradeAdvanced(uint256 tradeId, uint256 requestAmountIn, uint256 minOfferAmountOut, bytes32 accessSecret) payable returns (uint256 offerAmountOut)',
   'function acceptCounterTradeAndCloseParent(uint256 counterTradeId) payable',
-  'function acceptCounterTradeAdvancedAndCloseParent(uint256 counterTradeId, bytes32 accessSecret) payable',
   'function counterTradeAndCloseCounteredTrade(uint256 counteredTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 expiresAt) payable returns (uint256 newCounterTradeId)',
   'function cancelTrade(uint256 tradeId)',
   'function declineTrade(uint256 tradeId)',
@@ -893,14 +890,12 @@ export const PRIVATE_TRADE_ESCROW_CONTRACT_ABI = [
   'function trustedDirectCounterEscrow(address escrow) view returns (bool)',
   'function setTrustedDirectCounterEscrow(address escrow, bool trusted)',
   'function closeParentTradeByDirectCounter(uint256 parentTradeId, address counterMaker, address counterTaker, address acceptedBy, address directEscrow, uint256 directCounterTradeId)',
-  `function createPrivateOrder((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} hiddenOfferAmount) payable returns (uint256 tradeId)`,
-  `function createPrivateOrderWithRecoveryNote((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} hiddenOfferAmount, bytes encryptedMakerRecoveryNote) payable returns (uint256 tradeId)`,
-  `function cancelAndReplacePrivateOrder(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} hiddenOfferAmount) payable returns (uint256 tradeId)`,
-  `function cancelAndReplacePrivateOrderWithRecoveryNote(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} hiddenOfferAmount, bytes encryptedMakerRecoveryNote) payable returns (uint256 tradeId)`,
+  `function createPrivateOrderWithRecoveryNote((uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} hiddenOfferAmount, ${IT_UINT256_ABI} encryptedOfferAmount, ${IT_UINT256_ABI} encryptedRequestAmount, bytes encryptedMakerRecoveryNote, ${IT_UINT256_ABI} encryptedAccessSecret, bytes termsPayload) payable returns (uint256 tradeId)`,
+  `function cancelAndReplacePrivateOrderWithRecoveryNote(uint256 originalTradeId, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, address taker, uint64 expiresAt, bool isPublic, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} hiddenOfferAmount, ${IT_UINT256_ABI} encryptedOfferAmount, ${IT_UINT256_ABI} encryptedRequestAmount, bytes encryptedMakerRecoveryNote, ${IT_UINT256_ABI} encryptedAccessSecret, bytes termsPayload) payable returns (uint256 tradeId)`,
   `function fillPrivateOrder(uint256 tradeId, ${IT_UINT256_ABI} maxRequestAmountIn) returns (bool fullyFilled)`,
-  `function fillPrivateOrderWithSecret(uint256 tradeId, ${IT_UINT256_ABI} maxRequestAmountIn, bytes32 accessSecret) returns (bool fullyFilled)`,
+  `function fillPrivateOrderWithEncryptedAccess(uint256 tradeId, ${IT_UINT256_ABI} maxRequestAmountIn, ${IT_UINT256_ABI} encryptedAccessSecret) returns (bool fullyFilled)`,
   'function fillHybridPrivateOrder(uint256 tradeId, uint256 requestAmountIn) payable returns (bool fullyFilled)',
-  'function fillHybridPrivateOrderWithSecret(uint256 tradeId, uint256 requestAmountIn, bytes32 accessSecret) payable returns (bool fullyFilled)',
+  `function fillHybridPrivateOrderWithEncryptedAccess(uint256 tradeId, uint256 requestAmountIn, ${IT_UINT256_ABI} encryptedAccessSecret) payable returns (bool fullyFilled)`,
   'function cancelTrade(uint256 tradeId)',
   'function declineTrade(uint256 tradeId)',
   'function reclaimExpiredTrade(uint256 tradeId)',
@@ -913,6 +908,7 @@ export const PRIVATE_TRADE_ESCROW_CONTRACT_ABI = [
   'function getTradeViews(uint256[] tradeIds) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token, uint256 amount) offerAsset, (uint8 assetType, address token, uint256 amount) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bool isPublic, bytes32 accessHash, uint256 feePaid, bytes32 termsHash, uint8 mode, bool hasMakerRecoveryNote) metadata, (uint256 remainingOfferAmount, uint256 remainingRequestAmount, uint256 filledOfferAmount, uint256 filledRequestAmount) fillState, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId)[] views)',
   `function offboardRemainingPrivateOrderForMaker(uint256 tradeId) returns (${UT_UINT256_ABI} remainingOfferAmount)`,
   'function getMakerRecoveryNote(uint256 tradeId) view returns (bytes encryptedPayload)',
+  'function getPrivateLinkTermsPayload(uint256 tradeId) view returns (bytes encryptedPayload)',
   'function replacementTradeId(uint256 tradeId) view returns (uint256)',
   'function replacesTradeId(uint256 tradeId) view returns (uint256)',
   'function openPublicTradeCount() view returns (uint256)',
@@ -953,9 +949,8 @@ export const DIRECT_TRADE_ESCROW_CONTRACT_ABI = [
   `function counterTradeAndCloseCounteredTrade(uint256 counteredTradeId, (uint8 assetType, address token) offerAsset, (uint8 assetType, address token) requestAsset, (uint256 offerAmount, uint256 requestAmount) publicAmounts, ${IT_UINT256_ABI} encryptedOfferAmount, ${IT_UINT256_ABI} encryptedRequestAmount, uint64 expiresAt, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} encryptedAccessSecret, bytes termsPayload) payable returns (uint256 tradeId)`,
   `function editDirectTrade(uint256 originalTradeId, (uint8 assetType, address token) offerAsset, (uint8 assetType, address token) requestAsset, (uint256 offerAmount, uint256 requestAmount) publicAmounts, ${IT_UINT256_ABI} encryptedOfferAmount, ${IT_UINT256_ABI} encryptedRequestAmount, address taker, uint64 expiresAt, bytes32 accessHash, bytes32 termsHash, ${IT_UINT256_ABI} encryptedAccessSecret, bytes termsPayload) payable returns (uint256 tradeId)`,
   `function acceptDirectTrade(uint256 tradeId, ${IT_UINT256_ABI} encryptedRequestAmount) payable`,
-  `function acceptDirectTradeWithSecret(uint256 tradeId, ${IT_UINT256_ABI} encryptedRequestAmount, bytes32 accessSecret) payable`,
+  `function acceptDirectTradeWithEncryptedAccess(uint256 tradeId, ${IT_UINT256_ABI} encryptedRequestAmount, ${IT_UINT256_ABI} encryptedAccessSecret) payable`,
   `function acceptCounterTradeAndCloseParent(uint256 counterTradeId, ${IT_UINT256_ABI} encryptedRequestAmount) payable`,
-  `function acceptCounterTradeAdvancedAndCloseParent(uint256 counterTradeId, ${IT_UINT256_ABI} encryptedRequestAmount, bytes32 accessSecret) payable`,
   'function cancelTrade(uint256 tradeId)',
   'function declineTrade(uint256 tradeId)',
   'function reclaimExpiredTrade(uint256 tradeId)',
@@ -966,7 +961,7 @@ export const DIRECT_TRADE_ESCROW_CONTRACT_ABI = [
   'function replacesTradeId(uint256 tradeId) view returns (uint256)',
   'function rootTradeId(uint256 tradeId) view returns (uint256)',
   'function getTradeView(uint256 tradeId) view returns (((address maker, address taker, uint8 status, (uint8 assetType, address token) offerAsset, (uint8 assetType, address token) requestAsset, uint64 createdAt, uint64 expiresAt) trade, (bytes32 accessHash, uint256 parentTradeId, uint256 feePaid, bytes32 termsHash, bool hasTermsPayload, bool hasMakerAccessSecret, bool hasTakerAccessSecret, bool publicAmountCaveat) metadata, uint8 effectiveStatus, uint256 replacementTradeId, uint256 replacesTradeId, uint256 rootTradeId, bool offerAmountPrivate, bool requestAmountPrivate))',
-  'function getDirectTermPayload(uint256 tradeId, bytes32 accessSecret) view returns (bytes encryptedPayload)',
+  'function getDirectTermPayload(uint256 tradeId) view returns (bytes encryptedPayload)',
   `function getDirectAccessSecretForAccount(uint256 tradeId) view returns (${UT_UINT256_ABI} accessSecret)`,
   'function getTradeIdsForMaker(address maker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',
   'function getTradeIdsForTaker(address taker, uint256 offset, uint256 limit) view returns (uint256[] tradeIds, uint256 nextOffset)',

@@ -2913,6 +2913,23 @@
   min-width: 0;
 }
 
+.trade-compose-action-notice-slot {
+  display: block;
+  min-width: 0;
+}
+
+.trade-compose-action-notice-slot .p2p-action-notice {
+  width: 100%;
+  min-height: 28px;
+  padding: 5px 8px;
+  border-radius: 9px;
+}
+
+.trade-compose-action-notice-slot .p2p-action-notice a {
+  padding: 1px 7px;
+  font-size: 0.66rem;
+}
+
 .trade-compose-readiness {
   min-height: 0.9rem;
   margin: 0;

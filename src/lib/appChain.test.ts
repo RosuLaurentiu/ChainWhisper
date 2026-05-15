@@ -91,6 +91,38 @@ describe('trade escrow contract resolution', () => {
     });
   });
 
+  it('uses the default Private OTC create ABI with encrypted private-link terms', async () => {
+    const cotiEthers = await loadCotiEthersModule();
+    const interfaceInstance = new cotiEthers.Interface(PRIVATE_TRADE_ESCROW_CONTRACT_ABI);
+    const create = interfaceInstance.getFunction('createPrivateOrderWithRecoveryNote');
+    const replace = interfaceInstance.getFunction('cancelAndReplacePrivateOrderWithRecoveryNote');
+
+    expect(create?.inputs.map((input) => input.name)).toEqual([
+      'offerAsset',
+      'requestAsset',
+      'taker',
+      'expiresAt',
+      'isPublic',
+      'accessHash',
+      'termsHash',
+      'hiddenOfferAmount',
+      'encryptedOfferAmount',
+      'encryptedRequestAmount',
+      'encryptedMakerRecoveryNote',
+      'encryptedAccessSecret',
+      'termsPayload'
+    ]);
+    expect(replace?.inputs.map((input) => input.name).slice(-6)).toEqual([
+      'hiddenOfferAmount',
+      'encryptedOfferAmount',
+      'encryptedRequestAmount',
+      'encryptedMakerRecoveryNote',
+      'encryptedAccessSecret',
+      'termsPayload'
+    ]);
+    expect(interfaceInstance.getFunction('getPrivateLinkTermsPayload')?.selector).toBeTruthy();
+  });
+
   it('builds fresh Direct links with the Direct escrow alias', async () => {
     const { buildTradeLinkPath, resolveTradeRouteFromParts } = await import('../hooks/useP2PTradeRoute');
     const { encodeTradeLink } = await import('./tradeLinks');
@@ -199,6 +231,9 @@ describe('trade escrow contract resolution', () => {
         .map((fragment) => ('name' in fragment ? String(fragment.name) : ''))
     );
     expect(recurringFunctionNames.has('fillBuySide')).toBe(false);
+    expect(recurringFunctionNames.has('fillSellSide')).toBe(false);
+    expect(recurringFunctionNames.has('fillPrivateBuySide')).toBe(false);
+    expect(recurringFunctionNames.has('fillPrivateSellSide')).toBe(false);
     expect(recurringFunctionNames.has('getOrderViews')).toBe(false);
     expect(recurringFunctionNames.has('refreshOrder')).toBe(false);
     expect(interfaceInstance.getEvent('PrivateRecurringFillReceipt')?.topicHash).toBe(

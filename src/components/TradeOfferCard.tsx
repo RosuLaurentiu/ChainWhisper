@@ -47,7 +47,7 @@ type TradeOfferCardProps = {
   showEditAction?: boolean;
   onToggleCollapsed?: () => void;
   onAccept: () => void;
-  onAcceptOnly?: () => void;
+  onFillCounter?: () => void;
   onPartialFill?: (amountInput: string) => void;
   onDecline: () => void;
   onCounter: () => void;
@@ -80,9 +80,6 @@ const isVerifiedAsset = (asset: TradeAssetPayload): boolean => {
     isVerifiedEcosystemToken(addr)
   );
 };
-
-const buildTransactionExplorerUrl = (txHash?: string): string | undefined =>
-  txHash ? `${COTI_NETWORK.blockExplorerUrl}/tx/${txHash}` : undefined;
 
 const buildAddressExplorerUrl = (address?: string): string | undefined =>
   address ? `${COTI_NETWORK.blockExplorerUrl}/address/${address}` : undefined;
@@ -274,7 +271,7 @@ export default function TradeOfferCard({
   showEditAction = false,
   onToggleCollapsed,
   onAccept,
-  onAcceptOnly,
+  onFillCounter,
   onPartialFill,
   onDecline,
   onCounter,
@@ -325,7 +322,6 @@ export default function TradeOfferCard({
   const statusDisplayLabel = buildTradeStatusDisplayLabel(statusLabel, offer, currentWalletAddress, latestResponse);
   const offerVerifyUrl = buildTokenExplorerUrl(resolvedOffer?.tokenAddress);
   const requestVerifyUrl = buildTokenExplorerUrl(resolvedRequest?.tokenAddress);
-  const acceptedTransactionUrl = buildTransactionExplorerUrl(snapshot?.acceptedTxHash);
   const makerExplorerUrl = buildAddressExplorerUrl(offer.maker);
   const resolvedPeerAddress =
     !isZeroTradeTakerAddress(offer.taker) && offer.taker.toLowerCase() !== offer.maker.toLowerCase()
@@ -361,9 +357,13 @@ export default function TradeOfferCard({
     resolvedOffer && resolvedRequest && tradeOrderSummary
       ? [tradeOrderSummary.primarySide, tradeOrderSummary.secondarySide].map((side) => {
           const isOfferSide = side.role === 'offer';
+          const label =
+            statusLabel === 'Accepted'
+              ? side.label.replace(/^You sell\b/, 'You sold').replace(/^You buy\b/, 'You bought')
+              : side.label;
           return {
             asset: side.asset,
-            label: side.label,
+            label,
             displayText:
               hiddenLiquidity || (directPrivateTerms && !directTermsHydrated)
                 ? side.asset.symbol
@@ -593,11 +593,6 @@ export default function TradeOfferCard({
                 >
                   {shareCopied ? 'Shared' : shareLabel}
                 </button>
-              ) : null}
-              {acceptedTransactionUrl ? (
-                <a className="trade-card-link-button" href={acceptedTransactionUrl} target="_blank" rel="noreferrer">
-                  Settlement Tx
-                </a>
               ) : null}
               {canToggleCollapsed ? (
                 <button
@@ -845,15 +840,15 @@ export default function TradeOfferCard({
                     : 'Connect wallet to buy'}
                 </button>
               ) : null}
-              {!hiddenLiquidity && isCounterTrade && isTaker && onAcceptOnly ? (
+              {!hiddenLiquidity && isCounterTrade && isTaker && onFillCounter ? (
                 <button
                   type="button"
                   className="trade-card-action trade-card-action-counter"
-                  onClick={onAcceptOnly}
+                  onClick={onFillCounter}
                   disabled={actionPending}
-                  title="Accept only this counter offer and keep the parent and sibling counters open."
+                  title="Fill this counter offer without closing the parent or sibling counters."
                 >
-                  Accept only
+                  Fill
                 </button>
               ) : null}
               {(isTaker || canAcceptOpenTakerTrade) &&

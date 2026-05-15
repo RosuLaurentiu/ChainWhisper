@@ -26,11 +26,11 @@ import {
 } from '../lib/tradeActions';
 import { getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
 import { createTradeAccessSecret } from '../lib/directTradeTerms';
+import { resolveOneOffTradeAccessPlan, type TradeVisibility } from '../lib/tradeCreationAccess';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 import type { P2PActionNoticeAction, P2PActionNoticeInput } from '../lib/p2pActionNotice';
 
 type TradeSigner = JsonRpcSigner | Wallet;
-type TradeVisibility = 'public' | 'unlisted' | 'direct';
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 
@@ -444,11 +444,18 @@ export default function useP2PTradeComposerActions({
       const isEditingDirectTrade = Boolean(
         editSourceTrade?.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
       );
+      const accessPlan = resolveOneOffTradeAccessPlan({
+        hiddenLiquidity,
+        tradeVisibility,
+        isEditTrade,
+        isCounterTrade,
+        isEditingDirectTrade
+      });
       const existingEditAccessSecret = isEditingDirectTrade
         ? resolveKnownTradeAccessSecret(editSourceTrade!.tradeId, editSourceTrade!.escrowContract)
         : '';
       const accessSecret =
-        (isEditingDirectTrade || (!isEditTrade && (tradeVisibility !== 'public' || isCounterTrade)))
+        accessPlan.shouldCreateAccessSecret
           ? createTradeAccessSecret()
           : '';
       const directEditAccessSecret = isEditingDirectTrade ? existingEditAccessSecret || accessSecret : accessSecret;
@@ -494,6 +501,7 @@ export default function useP2PTradeComposerActions({
               isPublic: true,
               accessSecret: accessSecret || undefined,
               hiddenOfferAmountWei: offerAmount,
+              hiddenRequestAmountWei: requestAmount,
               publicOfferAmountWei: publicOfferAmount
             })
           : isEditingDirectTrade
@@ -558,6 +566,7 @@ export default function useP2PTradeComposerActions({
               parentTradeId: counterParentTrade?.tradeId,
               hidePrivateLiquidity: hiddenLiquidity,
               hiddenOfferAmountWei: hiddenLiquidity ? offerAmount : undefined,
+              hiddenRequestAmountWei: hiddenLiquidity ? requestAmount : undefined,
               publicOfferAmountWei: hiddenLiquidity ? publicOfferAmount : undefined,
               directAccessSecret: accessSecret || undefined,
               parentEscrowContract: counterParentTrade?.escrowContract
@@ -576,8 +585,8 @@ export default function useP2PTradeComposerActions({
         escrowContract: createResult.escrowContract,
         maker: walletAddress,
         taker: takerAddress,
-        offer: { ...offerToken, amount: publicOfferAmount.toString() },
-        request: { ...requestToken, amount: publicRequestAmount.toString() },
+        offer: { ...offerToken, amount: hiddenLiquidity && accessSecret ? offerAmount.toString() : publicOfferAmount.toString() },
+        request: { ...requestToken, amount: hiddenLiquidity && accessSecret ? requestAmount.toString() : publicRequestAmount.toString() },
         createdAt,
         expiresAt,
         status: 'open',

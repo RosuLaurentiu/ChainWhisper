@@ -79,7 +79,7 @@ describe('groupWalletTradesByPerspective', () => {
     });
   });
 
-  it('keeps partially filled maker trades active while also showing them in history', () => {
+  it('keeps partially filled maker trades active without duplicating them in history', () => {
     const partialMakerTrade = trade({
       tradeId: 4,
       maker: taker,
@@ -96,7 +96,7 @@ describe('groupWalletTradesByPerspective', () => {
     expect(groupWalletTradesByPerspective([partialMakerTrade], taker)).toEqual({
       needsAction: [],
       myActiveOffers: [partialMakerTrade],
-      history: [partialMakerTrade]
+      history: []
     });
   });
 
@@ -154,7 +154,7 @@ describe('groupWalletTradesByPerspective', () => {
     });
   });
 
-  it('shows active maker recurring orders in history once they have executions', () => {
+  it('keeps active maker recurring orders out of history even once they have executions', () => {
     const makerRecurringTrade = trade({
       tradeId: 7,
       maker: taker,
@@ -181,7 +181,38 @@ describe('groupWalletTradesByPerspective', () => {
     expect(groupWalletTradesByPerspective([makerRecurringTrade], taker)).toEqual({
       needsAction: [],
       myActiveOffers: [makerRecurringTrade],
-      history: [makerRecurringTrade]
+      history: []
+    });
+  });
+
+  it('moves inactive maker recurring orders into history', () => {
+    const inactiveRecurringTrade = trade({
+      tradeId: 9,
+      maker: taker,
+      taker: ZERO_TRADE_TAKER_ADDRESS,
+      recurringOrder: {
+        orderId: 9,
+        selectedSide: 'sell',
+        mode: 'hybrid-private',
+        recurringStatus: 'cancelled',
+        baseAsset: asset('AAA'),
+        quoteAsset: asset('BBB'),
+        buyTerms: { baseAmount: '1000000000000000000', quoteAmount: '1000000000000000000' },
+        sellTerms: { baseAmount: '1000000000000000000', quoteAmount: '1000000000000000000' },
+        publicBaseInventory: '0',
+        publicQuoteInventory: '0',
+        buySideOpen: false,
+        sellSideOpen: false,
+        hasPrivateBaseInventory: false,
+        hasPrivateQuoteInventory: false,
+        executionCount: 2
+      }
+    });
+
+    expect(groupWalletTradesByPerspective([inactiveRecurringTrade], taker)).toEqual({
+      needsAction: [],
+      myActiveOffers: [],
+      history: [inactiveRecurringTrade]
     });
   });
 });
