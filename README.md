@@ -1,6 +1,6 @@
 # ChainWhisper
 
-ChainWhisper is a browser-based COTI Mainnet app suite for private coordination. It combines a home launcher, encrypted chat, a P2P OTC escrow desk, Whisper Shield token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
+ChainWhisper is a browser-based COTI Mainnet app hub for private coordination. It combines a Home launcher, encrypted wallet chat, a P2P OTC escrow trading desk, Whisper Shield private-token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
 
 The app uses `@coti-io/coti-ethers`, `viem`, Recharts, Zustand, TanStack Virtual, and Supabase Storage for temporary encrypted chat image blobs.
 
@@ -39,17 +39,17 @@ The chat app is a wallet-native encrypted messenger for COTI.
 
 The standalone P2P app is an OTC-style escrow desk backed by COTI contracts.
 
-- Desk view for active public offers with search and refresh.
-- Create public, private-link, direct-recipient, counter, hidden-amount private orders, hybrid private orders, and two-sided recurring OTC orders from the Create window.
+- Desk view for active public offers with search, filters, refresh, trade terminal, and wallet balance context.
+- Create `Limit buy/sell` orders and `Recurring` reusable OTC orders from the Create window, with Public, Private order, Direct, counter, private-liquidity, visible-amount, and hybrid private-token flows.
 - Normal trades use the Trading V1 OTC escrow and reader contracts and support public, private-link, direct, counter, partial fill, cancel, decline, permanent/no-expiry, edit-by-replace, and visible private-token amount flows.
-- Private tokens are not automatically hidden. When Hide amount is off, private-token order size, fills, and remaining amounts are public and route through the normal OTC contract.
+- Private tokens are not automatically hidden. When `Visible amounts` is selected, private-token order size, fills, and remaining amounts are public and route through the normal OTC contract.
 - Hidden-amount private orders use the Trading V1 private-orders contract. Fully private orders use private tokens on both sides; hybrid private orders offer a private token while the taker pays with public/native assets.
 - Hidden-amount private orders and private recurring orders use a user-scoped private ledger for maker live liquidity snapshots and participant fill receipts.
 - Trades privacy flows try the COTI MetaMask Snap first for AES key access, then fall back to the existing COTI wallet onboarding path. Chat and Whisper Shield do not use the Snap.
 - Hidden-amount public/detail views hide private amounts and fill amounts while showing price ratio, direction, expiry, and access type.
-- Makers can reveal their own private-order progress and recurring live liquidity from My Trades after AES is available. Fillers can reveal their own private fill history, including partial fills on open orders.
+- Makers can reveal their own private-order progress and recurring live liquidity from My Trades after AES is available. Fillers can reveal their own private fill history, including partial fills on open orders. Standard private-liquidity cards and terminal views show two-sided progress when private fill receipts reveal both values.
 - Private orders are not auto-posted into chat, but copied share links can be pasted into conversations.
-- Recurring orders are reusable two-sided OTC orders, not timed/cadence orders: buy fills add base inventory to the sell side, and sell fills add quote inventory to the buy side. Makers can edit prices, per-side amounts, and add/remove live liquidity without changing the order link; closing the order returns remaining inventory.
+- Recurring orders are reusable two-sided OTC liquidity, not timed/cadence orders: buy fills add base inventory to the sell side, and sell fills add quote inventory to the buy side. Makers can edit prices, per-side amounts, and add/remove live liquidity without changing the order link; closing the order returns remaining inventory.
 - Open compact trade links, full URLs, legacy trade IDs, or redirected GitHub Pages links.
 - A completed counter trade cancels the parent/initial trade automatically.
 - My Trades groups received offers, active offers, and history.
@@ -94,6 +94,7 @@ App pages should remain visually distinct where workflow density requires it, bu
 - `src/lib/tradeLinks.ts` encodes and decodes compact trade links.
 - `src/lib/tradePerspective.ts` resolves maker/taker/open-trade perspective, buy/sell order semantics, ratio labels, and My Trades grouping.
 - `src/lib/p2pTradeView.ts` contains P2P display helpers, search/filter helpers, snapshot keys, explorer links, local trade access-secret cache helpers, and maker private-progress labels.
+- `src/lib/tradeHistory.ts` builds wallet-scoped trade history rows, including private fill receipt rows used by My Trades and terminal history.
 - `src/lib/cotiSnap.ts` wraps the COTI MetaMask Snap RPC methods used by Trades privacy flows.
 - `src/lib/appHelpers.ts` contains verified ecosystem token presets, message helpers, and shared user-facing error helpers.
 - `src/lib/appChain.ts` reads active Trading V1 trade snapshots, blocks unsupported retired contract links, and normalizes private-token metadata.
@@ -151,6 +152,12 @@ npm run build
 ```
 
 Run `npm run test:browser` as well for route, wallet-header, layout, or other visible UI changes.
+
+For focused P2P display/progress checks, use:
+
+```bash
+npm run test -- src/lib/p2pTradeView.test.ts
+```
 
 ## Environment
 

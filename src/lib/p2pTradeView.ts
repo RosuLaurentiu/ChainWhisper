@@ -329,6 +329,14 @@ export const getMakerPrivateProgressSummary = (trade: TradeSnapshot): MakerPriva
   }
 
   try {
+    const receiptFilledOfferAmount = (trade.privateFillReceipts ?? []).reduce((total, receipt) => {
+      const amount = parsePositiveTokenAmount(receipt.offerAmount);
+      return amount > 0n ? total + amount : total;
+    }, 0n);
+    const receiptFilledRequestAmount = (trade.privateFillReceipts ?? []).reduce((total, receipt) => {
+      const amount = parsePositiveTokenAmount(receipt.requestAmount);
+      return amount > 0n ? total + amount : total;
+    }, 0n);
     const remainingOfferAmount = BigInt(trade.makerPrivateProgress.remainingOfferAmount);
     const initialOfferAmountRaw = trade.makerPrivateProgress.initialOfferAmount;
     const initialOfferAmount = initialOfferAmountRaw && /^\d+$/.test(initialOfferAmountRaw)
@@ -339,7 +347,9 @@ export const getMakerPrivateProgressSummary = (trade: TradeSnapshot): MakerPriva
         ? initialOfferAmount - remainingOfferAmount
         : trade.makerPrivateProgress.filledOfferAmount && /^\d+$/.test(trade.makerPrivateProgress.filledOfferAmount)
           ? BigInt(trade.makerPrivateProgress.filledOfferAmount)
-          : null;
+          : receiptFilledOfferAmount > 0n
+            ? receiptFilledOfferAmount
+            : null;
     const inferredInitialOfferAmount =
       initialOfferAmount !== null
         ? initialOfferAmount
@@ -362,19 +372,32 @@ export const getMakerPrivateProgressSummary = (trade: TradeSnapshot): MakerPriva
     const safePercent = Math.max(0, Math.min(100, percent));
     const offerUnitAmount = parsePositiveTokenAmount(trade.offer.amount);
     const requestUnitAmount = parsePositiveTokenAmount(trade.request.amount);
-    const filledRequestAmount =
+    const quotedFilledRequestAmount =
       displayFilledOfferAmount !== null
         ? quoteRequestAmountForOfferAmount(displayFilledOfferAmount, offerUnitAmount, requestUnitAmount)
         : 0n;
-    const remainingRequestAmount = quoteRequestAmountForOfferAmount(
+    const quotedRemainingRequestAmount = quoteRequestAmountForOfferAmount(
       displayRemainingOfferAmount,
       offerUnitAmount,
       requestUnitAmount
     );
-    const totalRequestAmount =
+    const quotedTotalRequestAmount =
       inferredInitialOfferAmount !== null
         ? quoteRequestAmountForOfferAmount(inferredInitialOfferAmount, offerUnitAmount, requestUnitAmount)
-        : filledRequestAmount + remainingRequestAmount;
+        : quotedFilledRequestAmount + quotedRemainingRequestAmount;
+    const filledRequestAmount = quotedFilledRequestAmount > 0n ? quotedFilledRequestAmount : receiptFilledRequestAmount;
+    const totalRequestAmount =
+      quotedTotalRequestAmount > 0n
+        ? quotedTotalRequestAmount
+        : receiptFilledRequestAmount > 0n && trade.status === 'accepted'
+          ? receiptFilledRequestAmount
+          : 0n;
+    const remainingRequestAmount =
+      quotedTotalRequestAmount > 0n
+        ? quotedRemainingRequestAmount
+        : totalRequestAmount > filledRequestAmount
+          ? totalRequestAmount - filledRequestAmount
+          : 0n;
     const totalOfferAmountLabel =
       inferredInitialOfferAmount !== null
         ? `${formatTokenAmount(inferredInitialOfferAmount, trade.offer.decimals, 6)} ${trade.offer.symbol}`

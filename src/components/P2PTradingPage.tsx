@@ -370,6 +370,24 @@ const getKnownTermProgressSummary = (
   };
 };
 
+const withProgressPaymentFallback = (
+  summary: TradeProgressSummary | null,
+  fallback: TradeProgressSummary | null
+): TradeProgressSummary | null => {
+  if (!summary || summary.paymentAmountLabel || !fallback?.paymentAmountLabel) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    paymentAmountLabel: fallback.paymentAmountLabel,
+    paymentTotalLabel: fallback.paymentTotalLabel,
+    paymentHeaderValueLabel: fallback.paymentHeaderValueLabel,
+    paymentFilledAmountLabel: fallback.paymentFilledAmountLabel,
+    paymentRemainingAmountLabel: fallback.paymentRemainingAmountLabel
+  };
+};
+
 const getTradeSideProgressVerb = (side: { label: string; tone: TradeTermSideForHistory['tone'] }): 'bought' | 'sold' => {
   if (/^You sell\b/i.test(side.label)) {
     return 'sold';
@@ -5393,9 +5411,7 @@ export default function P2PTradingPage({
         : null;
     const revealedWalletProgressSummary = getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
     const knownTermProgressSummary =
-      publicLiquidityProgressSummary || makerPrivateProgressSummary || revealedWalletProgressSummary
-        ? null
-        : (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
+      (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
           ? getKnownTermProgressSummary(
               isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(leftSide.asset, leftSide.role) : leftSide.asset,
               isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(rightSide.asset, rightSide.role) : rightSide.asset,
@@ -5403,7 +5419,10 @@ export default function P2PTradingPage({
             )
           : null;
     const terminalOrderProgressSummary =
-      makerPrivateProgressSummary ?? publicLiquidityProgressSummary ?? revealedWalletProgressSummary ?? knownTermProgressSummary;
+      withProgressPaymentFallback(
+        makerPrivateProgressSummary ?? publicLiquidityProgressSummary ?? revealedWalletProgressSummary ?? knownTermProgressSummary,
+        knownTermProgressSummary
+      );
     const twoSidedProgressSummary = terminalOrderProgressSummary;
     const twoSidedFilledVerb = getTradeSideProgressVerb(leftSide);
     const twoSidedPaymentFilledVerb = getTradeSideProgressVerb(rightSide);
@@ -7050,9 +7069,7 @@ export default function P2PTradingPage({
         : null;
     const revealedWalletProgressSummary = getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
     const knownTermProgressSummary =
-      publicLiquidityProgressSummary || makerPrivateProgressSummary || revealedWalletProgressSummary
-        ? null
-        : (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
+      (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
           ? getKnownTermProgressSummary(
               isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(leftSide.asset, leftSide.role) : leftSide.asset,
               isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(rightSide.asset, rightSide.role) : rightSide.asset,
@@ -7060,7 +7077,10 @@ export default function P2PTradingPage({
             )
           : null;
     const orderLiquiditySummary =
-      makerPrivateProgressSummary ?? publicLiquidityProgressSummary ?? revealedWalletProgressSummary ?? knownTermProgressSummary;
+      withProgressPaymentFallback(
+        makerPrivateProgressSummary ?? publicLiquidityProgressSummary ?? revealedWalletProgressSummary ?? knownTermProgressSummary,
+        knownTermProgressSummary
+      );
     const twoSidedProgressSummary = orderLiquiditySummary;
     const twoSidedFilledVerb = getTradeSideProgressVerb(leftSide);
     const twoSidedPaymentFilledVerb = getTradeSideProgressVerb(rightSide);

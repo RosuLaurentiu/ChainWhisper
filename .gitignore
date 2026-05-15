@@ -10,6 +10,7 @@ test-results/
 AGENTS.md
 APP_IMPROVEMENTS.md
 SMART_CONTRACT_IMPROVEMENTS.md
+OTC_SECURITY_PRIVACY_REVIEW.md
 supabase/.temp/
 npm-debug.log*
 yarn-debug.log*

@@ -156,6 +156,38 @@ describe('p2pTradeView helpers', () => {
     });
   });
 
+  it('uses revealed private fill receipts for hidden payment progress when request terms are not public', () => {
+    const acceptedPrivateTrade = baseTrade({
+      hiddenLiquidity: true,
+      status: 'accepted',
+      offer: token('HOTDOG', '100000000'),
+      request: token('pWISP', '0'),
+      makerPrivateProgress: {
+        filledOfferAmount: '100000000',
+        initialOfferAmount: '100000000',
+        remainingOfferAmount: '0'
+      },
+      privateFillReceipts: [
+        {
+          fillIndex: 1,
+          filler: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          offerAmount: '100000000',
+          requestAmount: '2000000'
+        }
+      ]
+    });
+
+    expect(getMakerPrivateProgressSummary(acceptedPrivateTrade)).toMatchObject({
+      percent: 100,
+      filledLabel: '100 HOTDOG filled',
+      remainingLabel: '0 HOTDOG remaining',
+      paymentAmountLabel: '2 pWISP',
+      paymentFilledAmountLabel: '2 pWISP',
+      paymentRemainingAmountLabel: '0 pWISP',
+      hasFills: true
+    });
+  });
+
   it('treats Direct OTC counters as private terms instead of hidden liquidity', () => {
     const directCounter = baseTrade({
       escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
