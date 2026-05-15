@@ -201,7 +201,7 @@ describe('trade composer private token visibility', () => {
     });
 
     expect(model.hiddenLiquidityActive).toBe(false);
-    expect(model.tradeComposerFieldErrors.general).toBe('Hide amount requires the token you sell to be private.');
+    expect(model.tradeComposerFieldErrors.general).toBe('Private liquidity requires the token you sell to be private.');
     expect(model.canSendTradeOffer).toBe(false);
   });
 });

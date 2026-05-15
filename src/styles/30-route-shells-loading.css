@@ -16,8 +16,11 @@
 }
 
 .p2p-trading-shell {
+  --p2p-shell-gap: 10px;
+  --p2p-shell-border: rgba(92, 75, 138, 0.58);
+  --p2p-shell-border-soft: rgba(148, 163, 184, 0.16);
   height: 100%;
-  gap: 14px;
+  gap: var(--p2p-shell-gap);
   background:
     radial-gradient(940px 520px at 0% 0%, rgba(139, 92, 246, 0.13), transparent 58%),
     radial-gradient(800px 460px at 100% 8%, rgba(74, 64, 112, 0.18), transparent 60%),

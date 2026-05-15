@@ -137,8 +137,19 @@ test.describe('trading V1 routes', () => {
     await expect(page.getByText('Sell price', { exact: true })).toBeVisible();
     await expect(page.getByText('Buy liquidity', { exact: true })).toBeVisible();
     await expect(page.getByText('Sell liquidity', { exact: true })).toBeVisible();
+    await expect(page.locator('.p2p-recurring-side-panel-buy .p2p-recurring-asset-field')).toContainText('Base asset');
+    await expect(page.locator('.p2p-recurring-side-panel-sell .p2p-recurring-asset-field')).toContainText('Quote asset');
+    await expect(page.locator('.p2p-recurring-side-panel-buy .p2p-recurring-asset-field')).toContainText('Balance:');
+    await expect(page.locator('.p2p-recurring-side-panel-sell .p2p-recurring-asset-field')).toContainText('Balance:');
+    await expect(page.locator('.p2p-recurring-side-panel-buy .trade-token-select-state a')).toHaveAttribute(
+      'href',
+      /\/address\//
+    );
+    await expect(page.locator('.p2p-recurring-side-grid + .trade-compose-privacy-panel')).toContainText('Order privacy');
+    await expect(page.locator('.p2p-recurring-action-fee')).toContainText('Fee');
     await expect(page.getByText('You receive').first()).toBeVisible();
     await expect(page.getByText('Liquidity stays in this order and cycles between sides.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Swap recurring token sides' })).toHaveCount(1);
   });
 
   test('calculates recurring receive amounts from price and liquidity', async ({ page }) => {
@@ -158,5 +169,33 @@ test.describe('trading V1 routes', () => {
     await sellSide.getByLabel('Sell price').fill('0.00012');
     await sellSide.getByLabel('Sell liquidity').fill('12.5');
     await expect(sellSide.locator('.p2p-recurring-derived-field input')).toHaveValue('0.0015');
+  });
+
+  test('swaps recurring token sides while preserving price meaning', async ({ page }) => {
+    await page.goto('/trades/create');
+    await page.getByRole('button', { name: /Recurring/ }).click();
+
+    const builder = page.locator('.p2p-recurring-builder');
+    const buySide = builder.locator('.p2p-recurring-side-panel-buy');
+    const sellSide = builder.locator('.p2p-recurring-side-panel-sell');
+
+    await buySide.getByLabel('Buy price').fill('0.0001');
+    await buySide.getByLabel('Buy liquidity').fill('0.22');
+    await sellSide.getByLabel('Sell price').fill('0.0002');
+    await sellSide.getByLabel('Sell liquidity').fill('12.5');
+    await expect(buySide.locator('.p2p-recurring-derived-field input')).toHaveValue('2200');
+    await expect(sellSide.locator('.p2p-recurring-derived-field input')).toHaveValue('0.0025');
+
+    await builder.getByRole('button', { name: 'Swap recurring token sides' }).click();
+
+    const selectedSymbols = builder.locator('.p2p-recurring-side-grid .trade-token-select-trigger strong');
+    await expect(selectedSymbols.nth(0)).toHaveText('COTI');
+    await expect(selectedSymbols.nth(1)).toHaveText('WISP');
+    await expect(buySide.getByLabel('Buy price')).toHaveValue('5000');
+    await expect(buySide.getByLabel('Buy liquidity')).toHaveValue('12.5');
+    await expect(buySide.locator('.p2p-recurring-derived-field input')).toHaveValue('0.0025');
+    await expect(sellSide.getByLabel('Sell price')).toHaveValue('10000');
+    await expect(sellSide.getByLabel('Sell liquidity')).toHaveValue('0.22');
+    await expect(sellSide.locator('.p2p-recurring-derived-field input')).toHaveValue('2200');
   });
 });

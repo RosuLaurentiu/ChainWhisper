@@ -533,7 +533,7 @@
 
 @media (min-width: 861px) {
   .p2p-trading-shell > .p2p-secondary-nav:not(.p2p-secondary-nav-mobile) {
-    margin: 8px 0 0 11px;
+    margin: 6px 0 -1px 10px;
   }
 }
 
@@ -577,13 +577,21 @@
   color: #fff;
 }
 
+.p2p-trading-shell .p2p-market-overview,
+.p2p-trading-shell .standalone-trades-section,
+.p2p-trading-shell .standalone-trade-create-panel,
+.p2p-trading-shell .standalone-trade-detail-section {
+  border-color: var(--p2p-shell-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.022);
+}
+
 .p2p-market-overview {
   --p2p-filter-control-height: 34px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   align-items: stretch;
-  border: 1px solid rgba(74, 64, 112, 0.6);
+  border: 1px solid var(--p2p-shell-border, rgba(74, 64, 112, 0.6));
   border-radius: 8px;
   background: rgba(5, 5, 11, 0.92);
   padding: 7px 10px 8px;
@@ -723,7 +731,7 @@
   grid-template-areas: "search pair type sort reset";
   align-items: end;
   gap: 6px;
-  border-top: 1px solid rgba(74, 64, 112, 0.28);
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
   padding-top: 6px;
 }
 
@@ -879,9 +887,12 @@
 .app-shell-trades,
 .standalone-trades-shell,
 .p2p-public-trades-section,
+.p2p-my-trades-section,
+.p2p-wallet-inline-workspace,
 .standalone-trade-detail-section,
 .p2p-terminal-history-window,
-.p2p-terminal-history-sheet-body {
+.p2p-terminal-history-sheet-body,
+.p2p-balance-groups {
   scrollbar-color: rgba(139, 92, 246, 0.74) rgba(8, 7, 15, 0.72);
   scrollbar-width: thin;
 }
@@ -889,9 +900,12 @@
 .app-shell-trades ::-webkit-scrollbar,
 .standalone-trades-shell::-webkit-scrollbar,
 .p2p-public-trades-section::-webkit-scrollbar,
+.p2p-my-trades-section::-webkit-scrollbar,
+.p2p-wallet-inline-workspace::-webkit-scrollbar,
 .standalone-trade-detail-section::-webkit-scrollbar,
 .p2p-terminal-history-window::-webkit-scrollbar,
-.p2p-terminal-history-sheet-body::-webkit-scrollbar {
+.p2p-terminal-history-sheet-body::-webkit-scrollbar,
+.p2p-balance-groups::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
@@ -899,9 +913,12 @@
 .app-shell-trades ::-webkit-scrollbar-track,
 .standalone-trades-shell::-webkit-scrollbar-track,
 .p2p-public-trades-section::-webkit-scrollbar-track,
+.p2p-my-trades-section::-webkit-scrollbar-track,
+.p2p-wallet-inline-workspace::-webkit-scrollbar-track,
 .standalone-trade-detail-section::-webkit-scrollbar-track,
 .p2p-terminal-history-window::-webkit-scrollbar-track,
-.p2p-terminal-history-sheet-body::-webkit-scrollbar-track {
+.p2p-terminal-history-sheet-body::-webkit-scrollbar-track,
+.p2p-balance-groups::-webkit-scrollbar-track {
   background: rgba(8, 7, 15, 0.76);
   border-radius: 999px;
 }
@@ -909,9 +926,12 @@
 .app-shell-trades ::-webkit-scrollbar-thumb,
 .standalone-trades-shell::-webkit-scrollbar-thumb,
 .p2p-public-trades-section::-webkit-scrollbar-thumb,
+.p2p-my-trades-section::-webkit-scrollbar-thumb,
+.p2p-wallet-inline-workspace::-webkit-scrollbar-thumb,
 .standalone-trade-detail-section::-webkit-scrollbar-thumb,
 .p2p-terminal-history-window::-webkit-scrollbar-thumb,
-.p2p-terminal-history-sheet-body::-webkit-scrollbar-thumb {
+.p2p-terminal-history-sheet-body::-webkit-scrollbar-thumb,
+.p2p-balance-groups::-webkit-scrollbar-thumb {
   border: 2px solid rgba(8, 7, 15, 0.76);
   border-radius: 999px;
   background: linear-gradient(180deg, rgba(167, 139, 250, 0.82), rgba(91, 54, 168, 0.78));
@@ -920,9 +940,12 @@
 .app-shell-trades ::-webkit-scrollbar-thumb:hover,
 .standalone-trades-shell::-webkit-scrollbar-thumb:hover,
 .p2p-public-trades-section::-webkit-scrollbar-thumb:hover,
+.p2p-my-trades-section::-webkit-scrollbar-thumb:hover,
+.p2p-wallet-inline-workspace::-webkit-scrollbar-thumb:hover,
 .standalone-trade-detail-section::-webkit-scrollbar-thumb:hover,
 .p2p-terminal-history-window::-webkit-scrollbar-thumb:hover,
-.p2p-terminal-history-sheet-body::-webkit-scrollbar-thumb:hover {
+.p2p-terminal-history-sheet-body::-webkit-scrollbar-thumb:hover,
+.p2p-balance-groups::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, rgba(196, 181, 253, 0.92), rgba(124, 58, 237, 0.88));
 }
 
@@ -1133,30 +1156,109 @@
 }
 
 .p2p-footer-links {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  align-self: stretch;
+  justify-self: stretch;
   color: var(--muted);
   font-size: 0.8rem;
 }
 
-.p2p-footer-balances {
+.p2p-balance-dock {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  border: 1px solid rgba(74, 64, 112, 0.46);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(10, 9, 18, 0.82), rgba(4, 4, 9, 0.86));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  padding: 4px 7px;
+}
+
+.p2p-balance-dock-title {
+  color: #8f88aa;
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.p2p-balance-groups {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 1px;
+  scrollbar-width: thin;
+}
+
+.p2p-balance-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: max-content;
+}
+
+.p2p-balance-list-private {
+  border-left: 1px solid rgba(139, 92, 246, 0.34);
+  padding-left: 6px;
+}
+
+.p2p-balance-item {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: max-content;
+  border: 1px solid rgba(74, 64, 112, 0.42);
+  border-radius: 999px;
+  background: rgba(5, 5, 12, 0.58);
+  color: #d9d3ff;
+  padding: 3px 7px;
+}
+
+.p2p-balance-item[data-balance-kind="Native"],
+.p2p-balance-item[data-balance-kind="Public"] {
+  border-color: rgba(45, 212, 191, 0.26);
+}
+
+.p2p-balance-item[data-balance-kind="Private"] {
+  border-color: rgba(167, 139, 250, 0.48);
+  background: rgba(34, 21, 58, 0.52);
+}
+
+.p2p-balance-item-main {
+  display: inline-flex;
+  align-items: baseline;
   gap: 6px;
 }
 
-.p2p-footer-balances span {
-  border: 1px solid rgba(95, 76, 148, 0.6);
-  border-radius: 999px;
-  background: rgba(10, 10, 18, 0.48);
-  color: var(--muted);
-  padding: 3px 10px;
-  font-size: 0.76rem;
-  font-weight: 700;
-  white-space: nowrap;
+.p2p-balance-symbol {
+  color: #f6f3ff;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.p2p-balance-amount {
+  color: #f6f3ff;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
+
+.p2p-balance-empty {
+  min-width: 0;
+  margin: 0;
+  color: #8f88aa;
+  font-size: 0.68rem;
+  font-weight: 800;
 }
 
 .p2p-footer-contracts-btn {
@@ -1164,13 +1266,14 @@
   border-radius: 999px;
   background: rgba(12, 11, 22, 0.74);
   color: #d9d3ff;
-  padding: 5px 12px;
+  padding: 4px 10px;
   font: inherit;
   font-size: 0.76rem;
   font-weight: 900;
   line-height: 1;
   cursor: pointer;
   white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .p2p-footer-contracts-btn:hover {
@@ -1178,6 +1281,83 @@
   background: rgba(139, 92, 246, 0.16);
   color: var(--text);
 }
+
+.p2p-mobile-balance-fab,
+.p2p-mobile-contracts-btn {
+  display: none;
+}
+
+.p2p-balances-sheet-backdrop {
+  z-index: 80;
+  place-items: end center;
+}
+
+.p2p-balances-sheet-card {
+  width: min(460px, 100vw);
+  max-height: min(520px, calc(100dvh - 72px));
+  border-color: rgba(118, 96, 178, 0.66);
+  border-radius: 16px 16px 0 0;
+  background:
+    linear-gradient(180deg, rgba(16, 13, 28, 0.98), rgba(5, 5, 11, 0.98));
+  box-shadow: 0 -20px 54px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+
+.p2p-balances-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(74, 64, 112, 0.36);
+  padding-bottom: 4px;
+}
+
+.p2p-balances-sheet-head h3 {
+  margin: 0;
+  color: #f6f3ff;
+  font-size: 1rem;
+}
+
+.p2p-balances-sheet-head button {
+  border: 1px solid rgba(95, 76, 148, 0.68);
+  border-radius: 999px;
+  background: rgba(12, 11, 22, 0.74);
+  color: #d9d3ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 8px 12px;
+}
+
+.p2p-balances-sheet-card .p2p-balance-groups {
+  display: grid;
+  gap: 8px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.p2p-balances-sheet-card .p2p-balance-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2p-balances-sheet-card .p2p-balance-list-private {
+  border-left: 0;
+  border-top: 1px solid rgba(139, 92, 246, 0.34);
+  padding: 8px 0 0;
+}
+
+.p2p-balances-sheet-card .p2p-balance-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+  border-radius: 10px;
+  padding: 8px 9px;
+}
+
 
 .p2p-footer-links a {
   color: var(--muted);
@@ -1392,9 +1572,9 @@
   max-width: 1120px;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 12px;
+  gap: 10px;
   padding: 14px;
-  border-color: rgba(137, 109, 207, 0.72);
+  border-color: var(--p2p-shell-border, rgba(137, 109, 207, 0.72));
   border-radius: 8px;
   background: rgba(5, 5, 11, 0.94);
 }
@@ -1422,8 +1602,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  border-bottom: 1px solid rgba(74, 64, 112, 0.36);
-  padding: 2px 2px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 2px 2px 8px;
 }
 
 .p2p-trading-shell .standalone-trade-create-panel .standalone-trade-visibility {
@@ -1976,6 +2156,29 @@
   padding: 12px;
 }
 
+.p2p-trading-shell-drawer-open .p2p-my-trades-section {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: start;
+  overflow-y: auto;
+}
+
+.p2p-trading-shell-drawer-open .p2p-wallet-trade-groups,
+.p2p-trading-shell-drawer-open .p2p-wallet-trade-group,
+.p2p-trading-shell-drawer-open .p2p-wallet-inline-workspace {
+  min-height: 0;
+  overflow: visible;
+}
+
+.p2p-trading-shell-drawer-open .p2p-wallet-trade-groups {
+  height: auto;
+}
+
+.p2p-trading-shell-drawer-open .p2p-wallet-inline-workspace {
+  padding: 0;
+  scrollbar-gutter: auto;
+}
+
 .p2p-trading-shell-drawer-open .p2p-public-trade-grid,
 .p2p-trading-shell-drawer-open .p2p-wallet-trade-grid {
   --p2p-desk-card-header-row: 40px;
@@ -2025,6 +2228,24 @@
 
 .p2p-trading-shell-drawer-open .p2p-recurring-order-card-detail {
   width: 100%;
+}
+
+.p2p-trading-shell-drawer-open .p2p-footer-links {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.p2p-trading-shell-drawer-open.p2p-trading-shell-empty-terminal {
+  grid-template-rows: minmax(76px, auto) minmax(0, 1fr) auto;
+  grid-template-areas:
+    "overview terminal"
+    "desk terminal"
+    "footer footer";
+}
+
+.p2p-trading-shell-drawer-open.p2p-trading-shell-empty-terminal .p2p-footer-links {
+  grid-area: footer;
+  align-self: end;
 }
 
 .standalone-trade-detail-section > *,
@@ -3315,6 +3536,19 @@
   flex-wrap: wrap;
 }
 
+.p2p-trading-shell .standalone-trades-toolbar .standalone-trade-secondary-btn,
+.p2p-trading-shell .p2p-my-trades-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-color: rgba(95, 76, 148, 0.58);
+  border-radius: 8px;
+  background: rgba(12, 11, 22, 0.62);
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .standalone-trade-lookup {
   display: grid;
   grid-template-columns: 112px auto;
@@ -3433,8 +3667,10 @@
 }
 
 .p2p-wallet-trade-grid {
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 14px;
+  --p2p-desk-card-header-row: 78px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-items: stretch;
+  gap: 12px;
 }
 
 .p2p-desk-skeleton-grid {
@@ -3619,6 +3855,17 @@
     var(--p2p-desk-card-detail-row)
     var(--p2p-desk-card-verify-row)
     auto;
+}
+
+.p2p-wallet-trade-grid .p2p-order-card {
+  align-content: stretch;
+  height: 100%;
+  grid-template-rows:
+    var(--p2p-desk-card-header-row)
+    var(--p2p-desk-card-market-row)
+    var(--p2p-desk-card-detail-row)
+    var(--p2p-desk-card-verify-row)
+    minmax(38px, auto);
 }
 
 .p2p-public-trade-grid .p2p-order-card-head,
@@ -4359,7 +4606,7 @@
   align-items: center;
   justify-content: space-between;
   min-width: 0;
-  border-top: 1px solid rgba(74, 64, 112, 0.38);
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
   padding-top: 8px;
 }
 
@@ -4370,7 +4617,7 @@
 }
 
 .p2p-offer-token-actions > span {
-  color: var(--muted);
+  color: rgba(217, 211, 255, 0.66);
   font-size: 0.66rem;
   font-weight: 900;
   letter-spacing: 0.07em;
@@ -4387,7 +4634,7 @@
 
 .p2p-offer-token-actions .p2p-offer-token-link {
   border-radius: 999px;
-  padding: 5px 9px;
+  padding: 4px 8px;
 }
 
 .p2p-offer-term-link {
@@ -4838,26 +5085,37 @@
 
 .p2p-wallet-trade-groups {
   display: grid;
-  gap: 14px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.p2p-my-trades-section {
+  min-height: 0;
+}
+
+.p2p-my-trades-section-head {
+  align-items: center;
+  gap: 10px;
 }
 
 .p2p-my-trades-empty-workspace {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
 .p2p-my-trades-wallet-card {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  border: 1px solid rgba(139, 92, 246, 0.48);
+  gap: 8px;
+  border: 1px solid rgba(119, 94, 173, 0.48);
   border-radius: 10px;
   background:
-    linear-gradient(90deg, rgba(139, 92, 246, 0.24), rgba(80, 0, 133, 0.1) 42%, rgba(10, 10, 18, 0.72)),
-    rgba(10, 10, 18, 0.64);
-  padding: 13px 14px;
+    radial-gradient(circle at 0% 0%, rgba(139, 92, 246, 0.2), transparent 42%),
+    linear-gradient(135deg, rgba(26, 18, 45, 0.82), rgba(8, 8, 16, 0.72));
+  padding: 12px 13px;
 }
 
 .p2p-my-trades-wallet-card > div {
@@ -4876,18 +5134,18 @@
 
 .p2p-my-trades-wallet-card strong {
   display: block;
-  margin-top: 5px;
+  margin-top: 4px;
   color: var(--text);
-  font-size: 1.02rem;
+  font-size: 0.98rem;
   line-height: 1.15;
 }
 
 .p2p-my-trades-wallet-card p {
-  max-width: 46rem;
+  max-width: 36rem;
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.42;
+  font-size: 0.78rem;
+  line-height: 1.38;
 }
 
 .p2p-my-trades-connect-btn {
@@ -4924,11 +5182,13 @@
 
 .p2p-my-trades-empty-slot {
   min-width: 0;
-  border: 1px dashed rgba(121, 95, 184, 0.42);
+  border: 1px solid rgba(78, 66, 113, 0.58);
   border-radius: 9px;
-  background: rgba(8, 8, 16, 0.46);
+  background:
+    linear-gradient(180deg, rgba(24, 19, 38, 0.42), rgba(8, 8, 16, 0.58)),
+    rgba(8, 8, 16, 0.46);
   color: var(--muted);
-  padding: 11px 12px;
+  padding: 10px 11px;
 }
 
 .p2p-my-trades-empty-slot > div {
@@ -4963,15 +5223,15 @@
 }
 
 .p2p-my-trades-empty-slot p {
-  margin: 9px 0 0;
+  margin: 7px 0 0;
   color: #a9a0c5;
-  font-size: 0.77rem;
+  font-size: 0.74rem;
   line-height: 1.35;
 }
 
 .p2p-my-trades-empty-slot small {
   display: block;
-  margin-top: 10px;
+  margin-top: 8px;
   color: rgba(183, 174, 212, 0.64);
   font-size: 0.66rem;
   font-weight: 900;
@@ -5057,13 +5317,15 @@
 
 .p2p-wallet-trade-group {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+  min-height: 0;
 }
 
 .p2p-wallet-inline-workspace {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
+  min-height: 0;
 }
 
 .p2p-order-card-selected {
@@ -5192,6 +5454,91 @@
 .p2p-wallet-trade-empty button:hover {
   border-color: rgba(167, 139, 250, 0.64);
   background: rgba(139, 92, 246, 0.18);
+}
+
+@media (min-width: 921px) {
+  .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine) {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    overflow: hidden;
+  }
+
+  .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine) .p2p-public-trades-section {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine) .p2p-public-trade-grid {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 4px 2px 0;
+    scrollbar-gutter: stable;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    overflow: hidden;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-section {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+    gap: 10px;
+    min-height: 0;
+    overflow: hidden;
+    padding: 10px 12px 12px;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-empty-workspace {
+    grid-template-columns: minmax(280px, 0.34fr) minmax(0, 1fr);
+    align-content: start;
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-wallet-card {
+    min-height: 118px;
+    align-content: center;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-empty-preview {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-empty-slot {
+    min-height: 118px;
+    display: grid;
+    align-content: center;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-wallet-trade-groups {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-wallet-trade-group,
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-wallet-inline-workspace {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-wallet-inline-workspace {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 4px 2px 0;
+    scrollbar-gutter: stable;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-wallet-trade-grid {
+    grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
+    gap: 10px;
+  }
 }
 
 .p2p-offer-counter-btn:hover {
@@ -5429,6 +5776,11 @@
   min-height: 0;
 }
 
+.p2p-recurring-asset-field {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
 .p2p-recurring-side-panel-buy {
   grid-column: 1;
 }
@@ -5453,6 +5805,22 @@
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 8px 22px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  padding: 0;
+}
+
+.p2p-recurring-cycle-indicator:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.p2p-recurring-cycle-indicator:hover:not(:disabled),
+.p2p-recurring-cycle-indicator:focus-visible {
+  border-color: rgba(216, 180, 254, 0.78);
+  background:
+    radial-gradient(circle at 35% 25%, rgba(216, 180, 254, 0.28), transparent 48%),
+    rgba(31, 25, 51, 0.96);
+  color: #fff;
 }
 
 .p2p-recurring-cycle-indicator svg {
@@ -5638,22 +6006,30 @@
 
 .p2p-recurring-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.34fr) minmax(220px, 0.44fr);
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
-.p2p-recurring-actions p {
+.p2p-recurring-action-copy {
   margin: 0;
   color: var(--muted);
   font-size: 0.84rem;
   line-height: 1.45;
 }
 
+.p2p-recurring-action-fee {
+  min-width: 0;
+}
+
+.p2p-recurring-action-stack {
+  min-width: 0;
+}
+
 .p2p-recurring-actions button {
-  min-height: 40px;
+  min-height: 42px;
   border: 1px solid rgba(167, 139, 250, 0.54);
-  border-radius: 999px;
+  border-radius: 12px;
   background: linear-gradient(135deg, rgba(139, 92, 246, 0.92), rgba(99, 102, 241, 0.78));
   color: #fff;
   font-weight: 900;
@@ -6401,7 +6777,7 @@
   .p2p-recurring-privacy-note p,
   .p2p-recurring-side-panel small,
   .p2p-recurring-fill-handling p,
-  .p2p-recurring-actions p {
+  .p2p-recurring-action-copy {
     font-size: 0.76rem;
     line-height: 1.32;
   }

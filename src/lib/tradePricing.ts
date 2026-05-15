@@ -105,6 +105,16 @@ export const formatDecimalInput = (value: bigint, decimals: number, maxFractionD
   return fractionText ? `${whole}.${fractionText}` : whole.toString();
 };
 
+export const invertPriceInput = (priceInput: string): string => {
+  const priceScaled = parseDecimalInput(priceInput, PRICE_DECIMALS);
+  if (!priceScaled || priceScaled <= 0n) {
+    return '';
+  }
+
+  const invertedPrice = (PRICE_SCALE * PRICE_SCALE) / priceScaled;
+  return invertedPrice > 0n ? formatDecimalInput(invertedPrice, PRICE_DECIMALS, 12) : '';
+};
+
 export const nextTradePricingEditedFields = (
   previous: TradePricingField[],
   field: TradePricingField

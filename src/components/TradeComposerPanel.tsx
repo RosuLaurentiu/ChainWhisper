@@ -496,6 +496,23 @@ export default function TradeComposerPanel({
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const visibleTradeRateLabel = showReverseRate && tradeReverseRateLabel ? tradeReverseRateLabel : tradeRateLabel;
   const showHiddenLiquidityToggle = Boolean(onHidePrivateLiquidityChange);
+  const privateLiquidityStateLabel = hidePrivateLiquidity
+    ? 'Private-token amounts hidden'
+    : canHidePrivateLiquidity
+      ? 'Private-token amounts visible'
+      : 'Amounts visible';
+  const privateLiquidityHelpText = hidePrivateLiquidity
+    ? 'Public views show the price ratio; private-token order size and fill amounts stay hidden.'
+    : canHidePrivateLiquidity
+      ? 'Public views can show the entered order size; private-token transfers and receipts still use COTI privacy.'
+      : hiddenLiquidityUnavailableMessage || 'Private liquidity requires the token you sell to be private.';
+  const privateLiquidityPanelClassName = [
+    'trade-compose-privacy-panel',
+    hidePrivateLiquidity ? 'is-private trade-compose-privacy-panel-active' : '',
+    !canHidePrivateLiquidity && !hidePrivateLiquidity ? 'trade-compose-privacy-panel-disabled' : ''
+  ]
+    .filter(Boolean)
+    .join(' ');
   const showPriceInput = Boolean(onPriceInputChange);
   const validationAfterInteraction = validationDisplayMode === 'after-interaction';
   const markTouched = (field: TradeComposerValidationField) => {
@@ -580,6 +597,31 @@ export default function TradeComposerPanel({
   useEffect(() => {
     setShowReverseRate(false);
   }, [tradeRateLabel, tradeReverseRateLabel]);
+
+  const previewInReceivePanel = pricePlacement === 'sell-side' && hasTradePreview;
+  const showDockPreview = hasTradePreview && !previewInReceivePanel;
+  const renderTradePreview = (className = 'trade-compose-preview') => (
+    <div className={className} aria-live="polite">
+      {tradePreviewLabel && !visibleTradeRateLabel ? <strong>{tradePreviewLabel}</strong> : null}
+      {visibleTradeRateLabel ? (
+        <button
+          type="button"
+          className="trade-compose-rate-toggle"
+          onClick={() => setShowReverseRate((value) => !value)}
+          title="Flip rate"
+          aria-label="Flip displayed trade rate"
+        >
+          <span>Price ratio</span>
+          <strong>{visibleTradeRateLabel}</strong>
+        </button>
+      ) : showPriceRatioPreview ? (
+        <div className="trade-compose-rate-toggle trade-compose-rate-toggle-static">
+          <span>Price ratio</span>
+          <strong>Reverse price appears after two fields.</strong>
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <div className="trade-compose-panel" role="group" aria-label="P2P trade offer">
@@ -791,145 +833,132 @@ export default function TradeComposerPanel({
             />
           </label>
           {showRequestAmountError ? <p className="trade-compose-field-error">{requestAmountError}</p> : null}
+          {previewInReceivePanel ? renderTradePreview('trade-compose-preview trade-compose-inline-preview') : null}
         </section>
       </div>
 
-      {showPriceInput && pricePlacement === 'bottom' ? (
-        <div className="trade-compose-pricing-row">
-          {priceField}
-          <p>{priceHelpText}</p>
+      {showHiddenLiquidityToggle ? (
+        <div className={privateLiquidityPanelClassName}>
+          <div className="trade-compose-privacy-copy">
+            <span>Order privacy</span>
+            <strong>{privateLiquidityStateLabel}</strong>
+          </div>
+          <p className="trade-compose-privacy-help">{privateLiquidityHelpText}</p>
+          <div className="trade-compose-privacy-toggle" role="group" aria-label="Private liquidity">
+            <button
+              type="button"
+              className={hidePrivateLiquidity ? 'active' : undefined}
+              onClick={() => onHidePrivateLiquidityChange?.(true)}
+              aria-pressed={hidePrivateLiquidity}
+              disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
+              title={canHidePrivateLiquidity ? 'Publish only the ratio; keep amounts and fills private' : hiddenLiquidityUnavailableMessage}
+            >
+              Private liquidity
+            </button>
+            <button
+              type="button"
+              className={!hidePrivateLiquidity ? 'active' : undefined}
+              onClick={() => onHidePrivateLiquidityChange?.(false)}
+              aria-pressed={!hidePrivateLiquidity}
+              disabled={sending}
+            >
+              Visible amounts
+            </button>
+          </div>
         </div>
       ) : null}
 
-      <div className={hasTradePreview ? 'trade-compose-bottom' : 'trade-compose-bottom trade-compose-bottom-compact'}>
-        {hasTradePreview ? (
-          <div className="trade-compose-preview" aria-live="polite">
-            {tradePreviewLabel && !visibleTradeRateLabel ? <strong>{tradePreviewLabel}</strong> : null}
-            {visibleTradeRateLabel ? (
-              <button
-                type="button"
-                className="trade-compose-rate-toggle"
-                onClick={() => setShowReverseRate((value) => !value)}
-                title="Flip rate"
-                aria-label="Flip displayed trade rate"
-              >
-                <span>Price ratio</span>
-                <strong>{visibleTradeRateLabel}</strong>
-              </button>
-            ) : showPriceRatioPreview ? (
-              <div className="trade-compose-rate-toggle trade-compose-rate-toggle-static">
-                <span>Price ratio</span>
-                <strong>Reverse price appears after two fields.</strong>
+      <div className="trade-compose-quote-dock">
+        {showPriceInput && pricePlacement === 'bottom' ? (
+          <div className="trade-compose-pricing-row">
+            {priceField}
+            <p>{priceHelpText}</p>
+          </div>
+        ) : null}
+
+        <div className={showDockPreview ? 'trade-compose-bottom' : 'trade-compose-bottom trade-compose-bottom-compact'}>
+          {showDockPreview ? renderTradePreview() : null}
+
+          <div className="trade-compose-footer">
+            <div className="trade-compose-fee-row trade-compose-fee-row-inline">
+              <div className="trade-compose-fee-copy">
+                <span className="trade-compose-field-label">Fee</span>
+                <strong className="trade-compose-fee-value">{compactFeeSummaryLabel || feeSummaryLabel}</strong>
+                <span className="trade-compose-fee-note">{FEE_VARIANCE_NOTE}</span>
               </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {showHiddenLiquidityToggle ? (
-          <label
-            className={
-              hidePrivateLiquidity
-                ? 'trade-compose-privacy-row trade-compose-privacy-row-active'
-                : 'trade-compose-privacy-row'
-            }
-            title={canHidePrivateLiquidity ? 'Publish only the ratio; keep amounts and fills private' : hiddenLiquidityUnavailableMessage}
-          >
-            <input
-              type="checkbox"
-              checked={hidePrivateLiquidity}
-              onChange={(event) => onHidePrivateLiquidityChange?.(event.target.checked)}
-              disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
-            />
-            <span>Hide amount</span>
-            <strong>
-              {hidePrivateLiquidity
-                ? 'Price public, amounts private'
-                : canHidePrivateLiquidity
-                  ? 'Amounts visible'
-                  : hiddenLiquidityUnavailableMessage}
-            </strong>
-          </label>
-        ) : null}
-
-        <div className="trade-compose-footer">
-          <div className="trade-compose-fee-row trade-compose-fee-row-inline">
-            <div className="trade-compose-fee-copy">
-              <span className="trade-compose-field-label">Fee</span>
-              <strong className="trade-compose-fee-value">{compactFeeSummaryLabel || feeSummaryLabel}</strong>
-              <span className="trade-compose-fee-note">{FEE_VARIANCE_NOTE}</span>
-            </div>
-            <div className="trade-compose-fee-segmented" role="group" aria-label="Trade fee">
-              <button
-                type="button"
-                className={feeMode === 'coti' ? 'trade-compose-fee-toggle active' : 'trade-compose-fee-toggle'}
-                onClick={() => onFeeModeChange('coti')}
-                disabled={sending}
-                aria-pressed={feeMode === 'coti'}
-              >
-                COTI
-              </button>
-            </div>
-            {feeError ? <p className="trade-compose-field-error trade-compose-fee-error">{feeError}</p> : null}
-          </div>
-          <div className="trade-compose-expiry" role="group" aria-label="Trade expiration">
-            <label htmlFor="trade-compose-expiry-hours">Duration</label>
-            <div
-              className={
-                onExpiresNeverChange
-                  ? 'trade-compose-expiry-controls'
-                  : 'trade-compose-expiry-controls trade-compose-expiry-controls-single'
-              }
-            >
-              <input
-                id="trade-compose-expiry-hours"
-                className="trade-compose-input"
-                type="text"
-                inputMode="numeric"
-                value={expiresNever ? '' : expiresHoursInput}
-                onChange={(event) => {
-                  markTouched('expiry');
-                  onExpiresHoursInputChange(event.target.value);
-                }}
-                onBlur={() => markTouched('expiry')}
-                placeholder={expiresNever ? 'Open' : 'Hours'}
-                disabled={sending || expiresNever}
-                aria-invalid={showExpiryError ? 'true' : 'false'}
-                aria-label="Expiry in hours"
-              />
-              {onExpiresNeverChange ? (
+              <div className="trade-compose-fee-segmented" role="group" aria-label="Trade fee">
                 <button
                   type="button"
-                  className={
-                    expiresNever
-                      ? 'trade-compose-expiry-toggle trade-compose-expiry-never active'
-                      : 'trade-compose-expiry-toggle trade-compose-expiry-never'
-                  }
-                  onClick={() => {
-                    markTouched('expiry');
-                    onExpiresNeverChange(!expiresNever);
-                  }}
+                  className={feeMode === 'coti' ? 'trade-compose-fee-toggle active' : 'trade-compose-fee-toggle'}
+                  onClick={() => onFeeModeChange('coti')}
                   disabled={sending}
-                  aria-pressed={expiresNever}
+                  aria-pressed={feeMode === 'coti'}
                 >
-                  Permanent
+                  COTI
                 </button>
-              ) : null}
+              </div>
+              {feeError ? <p className="trade-compose-field-error trade-compose-fee-error">{feeError}</p> : null}
             </div>
-          </div>
-          <div className="trade-compose-action-stack">
-            <p className={sendReadinessClassName} role="status">
-              {sendReadinessLabel}
-            </p>
-            <button
-              type="button"
-              className={sendButtonClassName}
-              onClick={handleSendClick}
-              disabled={sendButtonDisabled}
-              aria-disabled={!canSend}
-              title={validationMessage || sendTitle}
-            >
-              {sending ? sendingLabel : sendLabel}
-            </button>
+            <div className="trade-compose-expiry" role="group" aria-label="Trade expiration">
+              <label htmlFor="trade-compose-expiry-hours">Duration</label>
+              <div
+                className={
+                  onExpiresNeverChange
+                    ? 'trade-compose-expiry-controls'
+                    : 'trade-compose-expiry-controls trade-compose-expiry-controls-single'
+                }
+              >
+                <input
+                  id="trade-compose-expiry-hours"
+                  className="trade-compose-input"
+                  type="text"
+                  inputMode="numeric"
+                  value={expiresNever ? '' : expiresHoursInput}
+                  onChange={(event) => {
+                    markTouched('expiry');
+                    onExpiresHoursInputChange(event.target.value);
+                  }}
+                  onBlur={() => markTouched('expiry')}
+                  placeholder={expiresNever ? 'Open' : 'Hours'}
+                  disabled={sending || expiresNever}
+                  aria-invalid={showExpiryError ? 'true' : 'false'}
+                  aria-label="Expiry in hours"
+                />
+                {onExpiresNeverChange ? (
+                  <button
+                    type="button"
+                    className={
+                      expiresNever
+                        ? 'trade-compose-expiry-toggle trade-compose-expiry-never active'
+                        : 'trade-compose-expiry-toggle trade-compose-expiry-never'
+                    }
+                    onClick={() => {
+                      markTouched('expiry');
+                      onExpiresNeverChange(!expiresNever);
+                    }}
+                    disabled={sending}
+                    aria-pressed={expiresNever}
+                  >
+                    Permanent
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className="trade-compose-action-stack">
+              <p className={sendReadinessClassName} role="status">
+                {sendReadinessLabel}
+              </p>
+              <button
+                type="button"
+                className={sendButtonClassName}
+                onClick={handleSendClick}
+                disabled={sendButtonDisabled}
+                aria-disabled={!canSend}
+                title={validationMessage || sendTitle}
+              >
+                {sending ? sendingLabel : sendLabel}
+              </button>
+            </div>
           </div>
         </div>
       </div>

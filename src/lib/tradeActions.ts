@@ -345,7 +345,7 @@ export const createTradeOnChain = async ({
 }): Promise<{ tradeId: number; escrowContract: string; txHash?: string }> => {
   if (hidePrivateLiquidity && !parentTradeId) {
     if (offerAsset.kind !== 'private-erc20') {
-      throw new Error('Hide amount requires the token you sell to be private.');
+      throw new Error('Private liquidity requires the token you sell to be private.');
     }
     if (requestAsset.kind === 'private-erc20' && requestAsset.tokenAddress === offerAsset.tokenAddress) {
       throw new Error('Hidden amount orders need two different token sides.');
@@ -1309,7 +1309,7 @@ export const replacePrivateFixedPriceTradeOnChain = async ({
   makerRecoveryPayload?: string;
 }): Promise<{ tradeId: number; escrowContract: string; txHash?: string }> => {
   if (offerAsset.kind !== 'private-erc20') {
-    throw new Error('Hide amount requires the token you sell to be private.');
+    throw new Error('Private liquidity requires the token you sell to be private.');
   }
   if (requestAsset.kind === 'private-erc20' && requestAsset.tokenAddress === offerAsset.tokenAddress) {
     throw new Error('Hidden amount orders need two different token sides.');

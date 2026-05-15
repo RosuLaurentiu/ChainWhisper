@@ -9,7 +9,7 @@
   }
 
   .p2p-trading-shell .standalone-trade-create-panel .trade-compose-preview,
-  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-row,
+  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-panel,
   .p2p-trading-shell .standalone-trade-create-panel .trade-compose-footer {
     grid-column: 1;
   }
@@ -599,6 +599,8 @@
   }
 
   .p2p-trading-shell-drawer-open {
+    display: flex;
+    flex-direction: column;
     height: 100%;
     max-height: none;
     grid-template-columns: minmax(0, 1fr);
@@ -622,10 +624,12 @@
 
   .p2p-trading-shell-drawer-open .standalone-trade-detail-section {
     position: static;
+    flex: 0 0 auto;
     grid-column: 1;
     grid-row: 2;
     height: auto;
     max-height: none;
+    min-height: auto;
     overflow: visible;
   }
 
@@ -1429,19 +1433,26 @@
     padding: 10px;
   }
 
-  .p2p-footer-links,
-  .p2p-link-open-form {
-    grid-template-columns: minmax(0, 1fr);
-    flex-direction: column;
-  }
-
-  .p2p-footer-balances,
-  .p2p-footer-contracts-btn {
+  .p2p-footer-links {
+    display: block;
     width: 100%;
   }
 
-  .p2p-footer-contracts-btn {
-    min-height: 34px;
+  .p2p-footer-links .p2p-balance-dock {
+    display: none;
+  }
+
+  .p2p-trading-shell-drawer-open .p2p-footer-links {
+    position: relative;
+    z-index: 2;
+    flex: 0 0 auto;
+    margin-top: auto;
+    grid-column: 1 / -1;
+  }
+
+  .p2p-link-open-form {
+    grid-template-columns: minmax(0, 1fr);
+    flex-direction: column;
   }
 
   .p2p-contracts-modal-card {
@@ -1472,6 +1483,79 @@
   .p2p-contracts-modal-row-actions a {
     min-width: 0;
     text-align: center;
+  }
+
+  .p2p-mobile-balance-fab {
+    position: fixed;
+    right: 12px;
+    bottom: calc(var(--mobile-nav-reserve) + 10px + env(safe-area-inset-bottom, 0px));
+    z-index: 61;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid rgba(139, 92, 246, 0.72);
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, rgba(33, 27, 58, 0.96), rgba(10, 9, 18, 0.96));
+    box-shadow:
+      0 12px 28px rgba(0, 0, 0, 0.32),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    color: #f6f3ff;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .p2p-mobile-balance-fab strong {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    border: 1px solid rgba(196, 181, 253, 0.72);
+    border-radius: 999px;
+    background: rgba(85, 47, 154, 0.98);
+    color: #fff;
+    font-size: 0.62rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    padding: 0 4px;
+  }
+
+  .p2p-mobile-contracts-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+    margin: 0 0 2px;
+    min-height: 36px;
+    border: 1px solid rgba(95, 76, 148, 0.68);
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, rgba(18, 15, 30, 0.82), rgba(7, 7, 14, 0.86));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    color: #d9d3ff;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.74rem;
+    font-weight: 900;
+    line-height: 1;
+    padding: 0 12px;
+  }
+
+  .p2p-balances-sheet-card {
+    width: 100vw;
+    max-height: calc(100dvh - 54px);
+    padding: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   }
 
   .p2p-trade-tabs {
@@ -2432,7 +2516,7 @@
   }
 
   .p2p-trading-shell .standalone-trade-create-panel .trade-compose-preview,
-  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-row {
+  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-panel {
     min-height: 0;
     padding: 8px 10px;
     border-radius: 9px;
@@ -2451,17 +2535,23 @@
     line-height: 1.15;
   }
 
-  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-row {
-    grid-template-columns: auto minmax(0, 1fr);
+  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-panel {
+    grid-template-columns: minmax(0, 1fr);
     gap: 7px;
-    font-size: 0.72rem;
   }
 
-  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-row strong {
-    grid-column: 2;
-    text-align: left;
-    font-size: 0.66rem;
-    line-height: 1.2;
+  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-help {
+    font-size: 0.72rem;
+    line-height: 1.25;
+  }
+
+  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-toggle {
+    justify-self: stretch;
+  }
+
+  .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-toggle button {
+    width: 100%;
+    padding: 0 8px;
   }
 
   .p2p-trading-shell .standalone-trade-create-panel .trade-compose-footer {
@@ -3216,8 +3306,8 @@
   }
 
   .app-shell-trades .p2p-trading-shell {
-    gap: 7px;
-    padding: 7px 7px calc(50px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+    padding: 8px 7px calc(52px + env(safe-area-inset-bottom, 0px));
   }
 
   .app-shell-trades .p2p-trade-tabs button {
@@ -3232,7 +3322,7 @@
   .app-shell-trades .p2p-market-overview,
   .app-shell-trades .standalone-trades-section {
     gap: 7px;
-    padding: 8px;
+    padding: 8px 9px;
     border-radius: 9px;
   }
 
@@ -3367,7 +3457,6 @@
 
   .app-shell-trades .p2p-my-trades-wallet-card {
     align-items: stretch;
-    flex-direction: column;
     gap: 10px;
     padding: 10px;
   }
@@ -3851,7 +3940,7 @@
 
   .app-shell-trades .p2p-recurring-privacy-note p,
   .app-shell-trades .p2p-recurring-fill-handling p,
-  .app-shell-trades .p2p-recurring-actions p {
+  .app-shell-trades .p2p-recurring-action-copy {
     font-size: 0.7rem;
     line-height: 1.25;
   }
@@ -3885,7 +3974,7 @@
 
   .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .trade-compose-bottom,
   .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .trade-compose-preview,
-  .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-row {
+  .app-shell-trades .p2p-trading-shell .standalone-trade-create-panel .trade-compose-privacy-panel {
     padding: 7px;
   }
 
@@ -5036,7 +5125,7 @@ summary:focus:not(:focus-visible),
 
 @media (min-width: 861px) {
   .app-shell-trades .p2p-trading-shell > .p2p-secondary-nav:not(.p2p-secondary-nav-mobile) {
-    margin: 8px 0 0 11px;
+    margin: 6px 0 -1px 10px;
   }
 
   .app-shell-trades .p2p-trading-shell-drawer-open .p2p-market-overview {
@@ -5081,12 +5170,53 @@ summary:focus:not(:focus-visible),
 }
 
 .app-shell-trades .p2p-public-trades-section > .standalone-trades-section-head {
-  padding: 2px 2px 4px;
+  padding: 0 2px 2px;
+  min-height: 30px;
+  align-items: center;
 }
 
 .app-shell-trades .p2p-public-trades-section > .standalone-trades-section-head h2 {
   margin: 0;
   line-height: 1.05;
+}
+
+.app-shell-trades .p2p-public-trades-section > .standalone-trades-section-head .standalone-trade-secondary-btn,
+.app-shell-trades .p2p-my-trades-section-head .p2p-my-trades-refresh-btn {
+  min-height: 30px;
+  padding: 7px 11px;
+}
+
+.app-shell-trades .p2p-my-trades-section-head {
+  min-height: 30px;
+  padding: 0 2px 2px;
+  align-items: center;
+}
+
+.app-shell-trades .p2p-my-trades-section-head > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.app-shell-trades .p2p-my-trades-section-head .landing-eyebrow,
+.app-shell-trades .p2p-my-trades-section-head h2 {
+  margin: 0;
+  line-height: 1.05;
+}
+
+.app-shell-trades .p2p-my-trades-section-head .landing-eyebrow {
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+}
+
+.app-shell-trades .p2p-wallet-trade-switcher {
+  gap: 6px;
+  padding: 4px;
+}
+
+.app-shell-trades .p2p-wallet-trade-switcher button {
+  padding: 7px 9px;
 }
 
 .app-shell-trades .p2p-wallet-trade-label-mobile {
@@ -5446,7 +5576,8 @@ summary:focus:not(:focus-visible),
     padding: 6px;
   }
 
-  .app-shell-trades .p2p-recurring-actions p {
+  .app-shell-trades .p2p-recurring-action-copy,
+  .app-shell-trades .p2p-recurring-actions .trade-compose-readiness {
     font-size: 0.66rem;
   }
 
@@ -5615,6 +5746,416 @@ summary:focus:not(:focus-visible),
       "fee"
       "expiry"
       "send";
+  }
+}
+
+@media (min-width: 861px) {
+  .app-shell-trades .p2p-trading-shell-create {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    gap: 10px;
+    overflow: hidden;
+    padding: 14px 16px 12px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create > .standalone-trade-create-panel {
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    align-self: stretch;
+    justify-self: stretch;
+    align-content: stretch;
+    grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+    gap: 10px;
+    overflow: hidden;
+    border-color: rgba(111, 90, 167, 0.62);
+    background:
+      radial-gradient(760px 260px at 18% -100px, rgba(139, 92, 246, 0.16), transparent 62%),
+      linear-gradient(180deg, rgba(13, 11, 24, 0.94), rgba(4, 4, 10, 0.98));
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head {
+    min-height: 46px;
+    align-items: center;
+    padding: 0 2px 8px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trades-section-head h2 {
+    margin-top: 2px;
+    font-size: 1.12rem;
+    line-height: 1.1;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create > .standalone-trade-create-panel > .p2p-recurring-builder {
+    grid-row: 3 / -1;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .landing-eyebrow {
+    margin-bottom: 2px;
+    font-size: 0.68rem;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-create-mode-switch {
+    width: min(100%, 420px);
+    justify-self: start;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-create-mode-switch button {
+    min-height: 40px;
+    padding: 6px 10px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-options {
+    grid-template-columns: minmax(280px, 400px) minmax(0, 1fr);
+    gap: 8px;
+    padding: 5px;
+    border-color: rgba(148, 163, 184, 0.16);
+    background: rgba(5, 5, 12, 0.44);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-options .standalone-trade-visibility {
+    gap: 4px;
+    padding: 3px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-options .standalone-trade-visibility button {
+    min-height: 34px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-access-summary,
+  .app-shell-trades .p2p-trading-shell-create .p2p-direct-recipient,
+  .app-shell-trades .p2p-trading-shell-create .p2p-counter-parent-context {
+    border-color: rgba(148, 163, 184, 0.15);
+    background: rgba(6, 7, 13, 0.46);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-access-summary {
+    padding: 7px 9px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-access-summary p {
+    font-size: 0.72rem;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel {
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    border-color: rgba(148, 163, 184, 0.16);
+    background:
+      linear-gradient(180deg, rgba(11, 10, 20, 0.68), rgba(4, 4, 10, 0.8));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.025),
+      0 10px 28px rgba(0, 0, 0, 0.18);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-panel:not(.p2p-recurring-builder) {
+    grid-template-rows: auto auto auto auto auto;
+    align-content: start;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-header {
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-header strong {
+    font-size: 0.98rem;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-header-meta {
+    justify-content: flex-end;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-grid {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-panel:not(.p2p-recurring-builder) .trade-compose-grid {
+    min-height: 304px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-section {
+    min-height: 0;
+    height: 100%;
+    gap: 8px;
+    padding: 12px;
+    border-color: rgba(148, 163, 184, 0.16);
+    background:
+      linear-gradient(180deg, rgba(7, 8, 15, 0.68), rgba(5, 5, 12, 0.72));
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-inline-price {
+    gap: 4px;
+    padding-top: 8px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-section-sell {
+    border-left-color: rgba(239, 102, 102, 0.34);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-section-buy {
+    border-left-color: rgba(45, 212, 191, 0.3);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-section-header strong {
+    font-size: 1.05rem;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-asset-field {
+    min-height: 74px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-amount-field {
+    margin-top: 0;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-section-sell .trade-compose-amount-field {
+    margin-top: auto;
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell-create
+    .trade-compose-section-buy:not(.p2p-recurring-side-panel)
+    .trade-compose-amount-field {
+    margin-top: 8px;
+    border-top-color: rgba(148, 163, 184, 0.13);
+    background: rgba(255, 255, 255, 0.018);
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell-create
+    .trade-compose-section-buy:not(.p2p-recurring-side-panel)
+    .trade-compose-inline-preview {
+    margin-top: auto;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-swap-indicator {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    align-self: center;
+    border-color: rgba(196, 181, 253, 0.36);
+    background:
+      radial-gradient(circle at 35% 20%, rgba(196, 181, 253, 0.22), transparent 52%),
+      rgba(20, 18, 34, 0.88);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-quote-dock {
+    position: relative;
+    bottom: auto;
+    z-index: 3;
+    margin-top: auto;
+    gap: 0;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(17, 14, 31, 0.98), rgba(7, 6, 13, 0.98));
+    box-shadow:
+      0 -18px 32px rgba(4, 4, 10, 0.58),
+      inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-pricing-row {
+    grid-template-columns: minmax(220px, 0.44fr) minmax(0, 1fr);
+    gap: 12px;
+    border: 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 0;
+    background: transparent;
+    padding: 8px 10px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-pricing-row p {
+    max-width: 48rem;
+    font-size: 0.74rem;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-price-field .trade-compose-input {
+    min-height: 40px;
+    font-size: 0.96rem;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-bottom {
+    grid-template-columns: minmax(0, 1fr) minmax(520px, 1.36fr);
+    align-items: stretch;
+    gap: 8px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 8px 10px 10px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-bottom-compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-preview {
+    min-height: 44px;
+    border-color: rgba(148, 163, 184, 0.14);
+    background: rgba(3, 4, 9, 0.42);
+    padding: 8px 9px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-privacy-panel {
+    grid-template-columns: minmax(170px, 0.5fr) minmax(0, 1fr) auto;
+    border-color: rgba(148, 163, 184, 0.14);
+    background: rgba(5, 6, 12, 0.46);
+    padding: 9px 10px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-footer {
+    grid-column: auto;
+    grid-template-columns: minmax(0, 0.82fr) minmax(0, 0.98fr) minmax(190px, 0.86fr);
+    gap: 8px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-fee-row-inline,
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-expiry {
+    min-height: 42px;
+    border-color: rgba(148, 163, 184, 0.14);
+    background: rgba(3, 4, 9, 0.42);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-send {
+    min-height: 42px;
+    box-shadow: 0 10px 24px rgba(80, 0, 133, 0.32);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-warning {
+    border-color: rgba(234, 191, 90, 0.32);
+    background: rgba(96, 67, 20, 0.14);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-builder {
+    grid-template-rows: auto auto auto auto auto auto auto;
+    align-content: start;
+    gap: 8px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-header {
+    margin-bottom: 0;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-assets,
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-privacy-note,
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-edit-liquidity,
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-fill-handling {
+    border-color: rgba(148, 163, 184, 0.14);
+    background: rgba(5, 6, 12, 0.46);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-fill-handling {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-fill-handling p {
+    font-size: 0.76rem;
+    line-height: 1.25;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-assets {
+    padding: 10px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-privacy-note {
+    grid-template-columns: minmax(170px, 0.5fr) minmax(0, 1fr) auto;
+    padding: 9px 10px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-grid {
+    grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+    grid-template-rows: minmax(340px, auto);
+    gap: 10px;
+    align-items: stretch;
+    min-height: 340px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    align-items: start;
+    gap: 7px;
+    height: auto;
+    min-height: max-content;
+    padding: 10px;
+    justify-content: start;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-head,
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-asset-field,
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-derived-field {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-head {
+    grid-row: 1;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-asset-field {
+    grid-row: 2;
+    min-height: 96px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-price-field,
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-primary-field {
+    grid-row: 3;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-derived-field {
+    grid-row: 4;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-side-head small {
+    max-width: 36rem;
+    font-size: 0.72rem;
+    line-height: 1.25;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-liquidity-edit-card {
+    grid-template-columns: minmax(120px, 0.62fr) repeat(3, minmax(0, 1fr));
+    border-color: rgba(148, 163, 184, 0.13);
+    background: rgba(3, 4, 9, 0.42);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-actions {
+    position: relative;
+    bottom: auto;
+    z-index: 3;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.38fr) minmax(240px, 0.48fr);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(17, 14, 31, 0.98), rgba(7, 6, 13, 0.98));
+    padding: 8px 10px;
+    box-shadow:
+      0 10px 26px rgba(4, 4, 10, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  }
+}
+
+@media (max-width: 860px) {
+  .app-shell-trades .p2p-trading-shell-create {
+    overflow-y: auto;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-quote-dock,
+  .app-shell-trades .p2p-trading-shell-create .p2p-recurring-actions {
+    position: relative;
+    bottom: auto;
+    z-index: auto;
   }
 }
 

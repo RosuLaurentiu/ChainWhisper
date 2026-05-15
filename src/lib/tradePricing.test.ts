@@ -4,6 +4,7 @@ import {
   deriveRecurringReceiveAmountInput,
   deriveTradePricingUpdate,
   formatDecimalInput,
+  invertPriceInput,
   nextTradePricingEditedFields,
   type TradePricingField
 } from './tradePricing';
@@ -73,6 +74,13 @@ describe('tradePricing helpers', () => {
   it('formats decimal values without grouping separators', () => {
     expect(formatDecimalInput(123450000n, 6)).toBe('123.45');
     expect(formatDecimalInput(1000000n, 6)).toBe('1');
+  });
+
+  it('inverts price inputs for swapped token pairs', () => {
+    expect(invertPriceInput('0.0001')).toBe('10000');
+    expect(invertPriceInput('2.5')).toBe('0.4');
+    expect(invertPriceInput('')).toBe('');
+    expect(invertPriceInput('0')).toBe('');
   });
 
   it('derives recurring buy receive amount from quote liquidity and price', () => {

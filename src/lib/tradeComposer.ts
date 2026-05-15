@@ -454,7 +454,7 @@ export const deriveTradeComposerModel = ({
     ? privateOrderPairInvalid
       ? 'Hidden amount orders need two different token sides.'
       : ''
-    : 'Hide amount requires the token you sell to be private.';
+    : 'Private liquidity requires the token you sell to be private.';
   const canHidePrivateLiquidity = privateOrderSelected && !privateOrderPairInvalid && !hiddenLiquidityUnavailableMessage;
   const hiddenLiquidityActive = Boolean(tradeHidePrivateLiquidity && canHidePrivateLiquidity);
   const resolvedHiddenLiquidityUnavailableMessage =

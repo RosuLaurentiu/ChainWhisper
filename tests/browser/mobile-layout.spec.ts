@@ -156,14 +156,50 @@ test.describe('mobile layout polish', () => {
     await expectNoHorizontalOverflow(page);
   });
 
+  test('opens mobile trading balances while contracts stay in the page footer', async ({ page }) => {
+    await page.goto('/trades');
+
+    const footerLinks = page.locator('.p2p-footer-links');
+    await expect(footerLinks).toBeVisible();
+    await expect(footerLinks.locator('.p2p-balance-dock')).toBeHidden();
+
+    await expect(page.getByRole('button', { name: 'Contracts' })).toBeVisible();
+
+    const balancesButton = page.getByRole('button', { name: 'Balances' });
+    await expect(balancesButton).toBeVisible();
+    await balancesButton.click();
+
+    const balancesDialog = page.getByRole('dialog', { name: 'Balances' });
+    await expect(balancesDialog).toBeVisible();
+    await expect(balancesDialog).toContainText('Connect a trading wallet');
+    await expect(balancesDialog.getByRole('button', { name: 'Contracts' })).toHaveCount(0);
+    await expect(page.locator('.p2p-footer-balances')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('shows the desktop trading balance dock without placeholder chips', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.goto('/trades');
+
+    const balanceDock = page.locator('.p2p-balance-dock');
+    await expect(balanceDock).toBeVisible();
+    await expect(balanceDock).toContainText('Balances');
+    await expect(balanceDock).toContainText('Connect a trading wallet');
+    await expect(page.locator('.p2p-footer-balances')).toHaveCount(0);
+    await expect(page.getByText('-- COTI')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Balances/ })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+  });
+
   test('previews My Trades workspace before wallet connection', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 950 });
     await page.goto('/trades/mine');
 
     const workspace = page.locator('.p2p-my-trades-empty-workspace');
     await expect(workspace).toBeVisible();
     await expect(workspace.locator('.p2p-my-trades-wallet-card')).toContainText('Wallet readiness');
     await expect(workspace.locator('.p2p-my-trades-wallet-card')).toContainText('Connect your trading wallet');
-    await expect(workspace.locator('.p2p-my-trades-connect-btn')).toBeVisible();
+    await expect(workspace.locator('.p2p-my-trades-connect-btn')).toHaveCount(0);
     await expect(workspace.locator('.p2p-my-trades-empty-slot[aria-disabled="true"]')).toHaveCount(3);
     await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Received' })).toContainText('0');
     await expect(workspace.locator('.p2p-my-trades-empty-slot', { hasText: 'Active' })).toContainText('0');
@@ -171,6 +207,28 @@ test.describe('mobile layout polish', () => {
     await expect(page.locator('.p2p-wallet-trade-switcher')).toHaveCount(0);
     await expect(page.locator('.p2p-my-trades-section .standalone-trade-secondary-btn')).toHaveCount(0);
     await expect(page.getByText('Connect to see your trades')).toHaveCount(0);
+
+    const layout = await page.evaluate(() => {
+      const wallet = document.querySelector<HTMLElement>('.p2p-my-trades-wallet-card')?.getBoundingClientRect();
+      const preview = document.querySelector<HTMLElement>('.p2p-my-trades-empty-preview')?.getBoundingClientRect();
+      const slots = Array.from(document.querySelectorAll<HTMLElement>('.p2p-my-trades-empty-slot')).map((slot) =>
+        slot.getBoundingClientRect(),
+      );
+      return {
+        wallet: wallet ? { x: wallet.x, y: wallet.y, width: wallet.width, height: wallet.height } : null,
+        preview: preview ? { x: preview.x, y: preview.y, width: preview.width, height: preview.height } : null,
+        slots: slots.map((slot) => ({ y: slot.y, height: slot.height })),
+      };
+    });
+
+    expect(layout.wallet).not.toBeNull();
+    expect(layout.preview).not.toBeNull();
+    expect(layout.preview!.x).toBeGreaterThan(layout.wallet!.x + layout.wallet!.width - 1);
+    expect(Math.abs(layout.wallet!.y - layout.preview!.y)).toBeLessThanOrEqual(2);
+    for (const slot of layout.slots) {
+      expect(Math.abs(slot.height - layout.wallet!.height)).toBeLessThanOrEqual(8);
+    }
+
     await expectNoHorizontalOverflow(page);
   });
 
@@ -195,15 +253,31 @@ test.describe('mobile layout polish', () => {
     }
 
     await switcher.getByRole('tab', { name: /Received: \d+/ }).click();
-    await expect(myTradesSection.locator('.p2p-wallet-trade-group-head')).toContainText('Received');
+    await expect(switcher.getByRole('tab', { name: /Received: \d+/ })).toHaveAttribute('aria-selected', 'true');
     await expect(myTradesSection.locator('.p2p-wallet-trade-empty')).toContainText('No received offers');
     await switcher.getByRole('tab', { name: /History: \d+/ }).click();
-    await expect(myTradesSection.locator('.p2p-wallet-trade-group-head')).toContainText('History');
+    await expect(switcher.getByRole('tab', { name: /History: \d+/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(myTradesSection.locator('.p2p-wallet-trade-group-head')).toHaveCount(0);
     await expect(myTradesSection.locator('.p2p-wallet-trade-empty')).toContainText('No history yet');
 
     await myTradesSection.locator('.p2p-my-trades-refresh-btn').click();
     await expect(myTradesSection.locator('.p2p-wallet-trade-switcher')).toBeVisible();
     await expect(myTradesSection.getByRole('button', { name: /^(Refresh|Refreshing\.\.\.)$/ })).toHaveCount(1);
+    const scrollState = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const element = document.querySelector<HTMLElement>(selector);
+        if (!element) {
+          return null;
+        }
+        return window.getComputedStyle(element).overflowY;
+      };
+      return {
+        section: read('.p2p-my-trades-section'),
+        shell: read('.p2p-trading-shell-mine')
+      };
+    });
+    expect(scrollState.shell).toBe('hidden');
+    expect(scrollState.section).toBe('hidden');
     await expectNoHorizontalOverflow(page);
   });
 
@@ -314,6 +388,24 @@ test.describe('mobile layout polish', () => {
       expect(amountMetrics[1].width).toBeGreaterThan(120);
     }
 
+    await scrollTradeShellToBottom(page);
+    await expect(page.locator('.p2p-mobile-contracts-btn')).toBeVisible();
+    await expectAboveTradeTabs(page, '.p2p-mobile-contracts-btn');
+    const terminalFooterFlow = await page.evaluate(() => {
+      const terminal = document.querySelector('.p2p-terminal-shell-recurring');
+      const footer = document.querySelector('.p2p-footer-links');
+      if (!terminal || !footer) {
+        return null;
+      }
+      const terminalRect = terminal.getBoundingClientRect();
+      const footerRect = footer.getBoundingClientRect();
+      return {
+        terminalBottom: terminalRect.bottom,
+        footerTop: footerRect.top
+      };
+    });
+    expect(terminalFooterFlow).not.toBeNull();
+    expect(terminalFooterFlow!.footerTop).toBeGreaterThanOrEqual(terminalFooterFlow!.terminalBottom - 1);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -390,6 +482,163 @@ test.describe('trading responsive layout', () => {
     });
   }
 
+  test('keeps desktop trading gutters and balance dock aligned across routes', async ({ page }) => {
+    await page.setViewportSize({ width: 2016, height: 980 });
+
+    for (const route of ['/trades', '/trades/create', '/trades/open', '/trades/mine']) {
+      await page.goto(route);
+      await expect(page.locator('.p2p-trading-shell')).toBeVisible();
+      await expect(page.locator('.p2p-balance-dock')).toBeVisible();
+
+      const layout = await page.evaluate(() => {
+        const shell = document.querySelector<HTMLElement>('.p2p-trading-shell');
+        const dock = document.querySelector<HTMLElement>('.p2p-balance-dock');
+        if (!shell || !dock) {
+          return null;
+        }
+
+        const shellBox = shell.getBoundingClientRect();
+        const dockBox = dock.getBoundingClientRect();
+        const shellStyle = window.getComputedStyle(shell);
+        const innerLeft = shellBox.left + Number.parseFloat(shellStyle.paddingLeft || '0');
+        const innerRight = shellBox.right - Number.parseFloat(shellStyle.paddingRight || '0');
+        const isDrawer = shell.classList.contains('p2p-trading-shell-drawer-open');
+        const fullPanel = !isDrawer
+          ? document.querySelector<HTMLElement>('.standalone-trade-create-panel, .p2p-market-overview')
+          : null;
+        const panelBox = fullPanel?.getBoundingClientRect();
+
+        return {
+          dockBottom: dockBox.bottom,
+          dockLeft: dockBox.left,
+          dockRight: dockBox.right,
+          innerBottom: shellBox.bottom - Number.parseFloat(shellStyle.paddingBottom || '0'),
+          innerLeft,
+          innerRight,
+          panelLeft: panelBox?.left ?? null,
+          panelRight: panelBox?.right ?? null
+        };
+      });
+
+      expect(layout).not.toBeNull();
+      expect(Math.abs(layout!.dockLeft - layout!.innerLeft)).toBeLessThanOrEqual(2);
+      expect(Math.abs(layout!.dockRight - layout!.innerRight)).toBeLessThanOrEqual(2);
+      expect(layout!.innerBottom - layout!.dockBottom).toBeGreaterThanOrEqual(-1);
+      expect(layout!.innerBottom - layout!.dockBottom).toBeLessThanOrEqual(4);
+
+      if (layout!.panelLeft !== null && layout!.panelRight !== null) {
+        expect(Math.abs(layout!.panelLeft - layout!.innerLeft)).toBeLessThanOrEqual(2);
+        expect(Math.abs(layout!.panelRight - layout!.innerRight)).toBeLessThanOrEqual(2);
+      }
+
+      await expectNoHorizontalOverflow(page);
+    }
+  });
+
+  test('uses a full-width create workspace with a stable quote dock on desktop', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.goto('/trades/create');
+
+    const shell = page.locator('.p2p-trading-shell-create');
+    const createPanel = page.locator('.standalone-trade-create-panel');
+    const composer = createPanel.locator('.trade-compose-panel').first();
+    const quoteDock = composer.locator('.trade-compose-quote-dock');
+
+    await expect(shell).toBeVisible();
+    await expect(createPanel).toBeVisible();
+    await expect(composer).toBeVisible();
+    await expect(quoteDock).toBeVisible();
+    await expect(createPanel.getByRole('button', { name: /Limit buy\/sell/ })).toBeVisible();
+    await expect(composer.getByRole('button', { name: 'Create Offer' })).toBeVisible();
+    await expect(composer.locator('.trade-compose-privacy-panel')).toContainText('Private liquidity');
+    await expect(composer.locator('.trade-compose-privacy-panel input[type="checkbox"]')).toHaveCount(0);
+    await expect(composer.locator('.trade-compose-inline-price .trade-compose-price-field')).toBeVisible();
+    await expect(composer.locator('.trade-compose-section-buy .trade-compose-inline-preview')).toBeVisible();
+    await expect(quoteDock.locator('.trade-compose-preview')).toHaveCount(0);
+
+    const workspaceMetrics = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>('.p2p-trading-shell-create');
+      const panel = document.querySelector<HTMLElement>('.standalone-trade-create-panel');
+      const composer = document.querySelector<HTMLElement>('.standalone-trade-create-panel .trade-compose-panel');
+      const grid = document.querySelector<HTMLElement>('.standalone-trade-create-panel .trade-compose-grid');
+      const sell = document.querySelector<HTMLElement>('.standalone-trade-create-panel .trade-compose-section-sell');
+      const buy = document.querySelector<HTMLElement>('.standalone-trade-create-panel .trade-compose-section-buy');
+      const dock = document.querySelector<HTMLElement>('.standalone-trade-create-panel .trade-compose-quote-dock');
+      const shellBox = shell?.getBoundingClientRect();
+      const panelBox = panel?.getBoundingClientRect();
+      const sellBox = sell?.getBoundingClientRect();
+      const buyBox = buy?.getBoundingClientRect();
+      return {
+        buyTop: buyBox?.top ?? 0,
+        composerOverflowY: composer ? window.getComputedStyle(composer).overflowY : '',
+        dockPosition: dock ? window.getComputedStyle(dock).position : '',
+        gridColumns: grid ? window.getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length : 0,
+        panelWidth: panelBox?.width ?? 0,
+        sellTop: sellBox?.top ?? 0,
+        shellOverflowY: shell ? window.getComputedStyle(shell).overflowY : '',
+        shellWidth: shellBox?.width ?? 0
+      };
+    });
+    expect(workspaceMetrics.panelWidth).toBeGreaterThan(1100);
+    expect(workspaceMetrics.panelWidth).toBeGreaterThan(workspaceMetrics.shellWidth - 44);
+    expect(workspaceMetrics.shellOverflowY).toBe('hidden');
+    expect(['auto', 'scroll']).toContain(workspaceMetrics.composerOverflowY);
+    expect(workspaceMetrics.dockPosition).toBe('relative');
+    expect(workspaceMetrics.gridColumns).toBe(3);
+    expect(Math.abs(workspaceMetrics.sellTop - workspaceMetrics.buyTop)).toBeLessThanOrEqual(2);
+
+    const dockTopBefore = await quoteDock.evaluate((dock) => Math.round(dock.getBoundingClientRect().top));
+    await composer.locator('.trade-compose-section-sell .trade-compose-amount-field .trade-compose-input').fill('10');
+    await composer.locator('.trade-compose-inline-price .trade-compose-price-field .trade-compose-input').fill('1');
+    const dockTopAfter = await quoteDock.evaluate((dock) => Math.round(dock.getBoundingClientRect().top));
+    expect(Math.abs(dockTopAfter - dockTopBefore)).toBeLessThanOrEqual(3);
+    await expect(quoteDock.locator('.trade-compose-readiness')).toContainText(
+      /Connect wallet|Complete required fields|Loading token balance|Ready to create offer/
+    );
+
+    await page.getByRole('button', { name: /^Direct$/ }).click();
+    await expect(page.locator('.p2p-direct-recipient')).toBeVisible();
+    await expect(composer.getByRole('button', { name: 'Create Offer' })).toBeVisible();
+
+    await page.goto('/trades/open/counter');
+    await expect(page.locator('.p2p-trading-shell-create')).toBeVisible();
+    await expect(page.getByText('Choose an offer to counter')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Trading Terminal' })).toBeVisible();
+
+    await page.goto('/trades/create');
+    await page.getByRole('button', { name: /Recurring/ }).click();
+    const recurringBuilder = page.locator('.p2p-recurring-builder');
+    await expect(recurringBuilder).toBeVisible();
+    await expect(recurringBuilder.locator('.p2p-recurring-action-fee')).toContainText('Fee');
+    await expect(recurringBuilder.locator('.p2p-recurring-side-panel-buy .trade-compose-field-value').first()).toContainText(
+      'Balance:'
+    );
+    await expect(recurringBuilder.locator('.p2p-recurring-side-panel-buy .trade-token-select-state a')).toHaveAttribute(
+      'href',
+      /\/address\//
+    );
+    await expect(recurringBuilder.getByRole('button', { name: 'Swap recurring token sides' })).toHaveCount(1);
+    await recurringBuilder.evaluate((builder) => {
+      builder.scrollTop = builder.scrollHeight;
+    });
+    await expect(recurringBuilder.getByRole('button', { name: 'Create Recurring Order' })).toBeVisible();
+    const recurringMetrics = await recurringBuilder.evaluate((builder) => {
+      const buy = builder.querySelector<HTMLElement>('.p2p-recurring-side-panel-buy');
+      const sell = builder.querySelector<HTMLElement>('.p2p-recurring-side-panel-sell');
+      const actions = builder.querySelector<HTMLElement>('.p2p-recurring-actions');
+      return {
+        actionsPosition: actions ? window.getComputedStyle(actions).position : '',
+        buyTop: buy?.getBoundingClientRect().top ?? 0,
+        overflowY: window.getComputedStyle(builder).overflowY,
+        sellTop: sell?.getBoundingClientRect().top ?? 0
+      };
+    });
+    expect(['auto', 'scroll']).toContain(recurringMetrics.overflowY);
+    expect(recurringMetrics.actionsPosition).toBe('relative');
+    expect(Math.abs(recurringMetrics.buyTop - recurringMetrics.sellTop)).toBeLessThanOrEqual(2);
+    await expectNoHorizontalOverflow(page);
+  });
+
   test('shows card-shaped skeletons while active desk offers are loading', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
     await page.goto('/trades', { waitUntil: 'domcontentloaded' });
@@ -401,6 +650,169 @@ test.describe('trading responsive layout', () => {
     await expect(skeletonGrid.locator('.p2p-desk-skeleton-market')).toHaveCount(5);
     await expect(skeletonGrid.locator('.p2p-desk-skeleton-actions')).toHaveCount(5);
     await expect(page.locator('.p2p-empty-state-loading')).toHaveCount(0);
+  });
+
+  test('stretches the desktop desk section down to the balance dock', async ({ page }) => {
+    await page.setViewportSize({ width: 2016, height: 980 });
+    await page.goto('/trades');
+
+    const desk = page.locator('.p2p-public-trades-section');
+    await expect(desk.locator('.p2p-order-card').first()).toBeVisible({ timeout: 30_000 });
+
+    const layout = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const element = document.querySelector<HTMLElement>(selector);
+        if (!element) {
+          return null;
+        }
+        const box = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return {
+          bottom: box.bottom,
+          clientHeight: element.clientHeight,
+          overflowY: style.overflowY,
+          scrollHeight: element.scrollHeight,
+          top: box.top
+        };
+      };
+
+      return {
+        balanceDock: read('.p2p-balance-dock'),
+        desk: read('.p2p-public-trades-section'),
+        grid: read('.p2p-public-trade-grid'),
+        shell: read('.p2p-trading-shell-has-overview')
+      };
+    });
+
+    expect(layout.shell?.overflowY).toBe('hidden');
+    expect(layout.desk).not.toBeNull();
+    expect(layout.grid).not.toBeNull();
+    expect(layout.balanceDock).not.toBeNull();
+    expect(layout.balanceDock!.top - layout.desk!.bottom).toBeLessThanOrEqual(18);
+    expect(layout.shell!.bottom - layout.balanceDock!.bottom).toBeLessThanOrEqual(18);
+    expect(['auto', 'scroll']).toContain(layout.grid!.overflowY);
+    expect(layout.grid!.clientHeight).toBeLessThanOrEqual(layout.grid!.scrollHeight);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('stretches the empty terminal desk layout to the balance dock', async ({ page }) => {
+    await page.setViewportSize({ width: 2016, height: 980 });
+    await page.goto('/trades/open');
+
+    await expect(page.locator('.p2p-public-trades-section .p2p-order-card').first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.standalone-trade-detail-section')).toContainText('Open terminal');
+
+    const layout = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const element = document.querySelector<HTMLElement>(selector);
+        if (!element) {
+          return null;
+        }
+        const box = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return {
+          bottom: box.bottom,
+          clientHeight: element.clientHeight,
+          overflowY: style.overflowY,
+          scrollHeight: element.scrollHeight,
+          top: box.top
+        };
+      };
+
+      return {
+        balanceDock: read('.p2p-balance-dock'),
+        desk: read('.p2p-public-trades-section'),
+        grid: read('.p2p-public-trade-grid'),
+        shell: read('.p2p-trading-shell-drawer-open'),
+        terminal: read('.standalone-trade-detail-section')
+      };
+    });
+
+    expect(layout.shell?.overflowY).toBe('hidden');
+    expect(layout.desk).not.toBeNull();
+    expect(layout.terminal).not.toBeNull();
+    expect(layout.balanceDock).not.toBeNull();
+    expect(Math.abs(layout.desk!.bottom - layout.terminal!.bottom)).toBeLessThanOrEqual(2);
+    expect(layout.balanceDock!.top - layout.desk!.bottom).toBeLessThanOrEqual(18);
+    expect(layout.shell!.bottom - layout.balanceDock!.bottom).toBeLessThanOrEqual(18);
+    expect(['auto', 'scroll']).toContain(layout.desk!.overflowY);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('keeps the empty terminal drawer open between Desk and My Trades', async ({ page }) => {
+    await page.setViewportSize({ width: 2016, height: 980 });
+    await page.goto('/trades/open');
+
+    const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
+    const terminal = page.locator('.standalone-trade-detail-section');
+    await expect(terminal).toContainText('Open terminal');
+    await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
+    await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
+
+    await marketTabs.filter({ hasText: /^My Trades$/ }).click();
+    await expect(page).toHaveURL(/\/trades\/mine$/);
+    await expect(page.locator('.p2p-my-trades-section')).toBeVisible();
+    await expect(terminal).toContainText('Open terminal');
+    await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
+    await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
+
+    await marketTabs.filter({ hasText: /^My Trades$/ }).click();
+    await expect(page).toHaveURL(/\/trades\/mine$/);
+    await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('closes an open terminal when clicking the current desk tab', async ({ page }) => {
+    await page.setViewportSize({ width: 2016, height: 980 });
+    await page.goto('/trades');
+
+    const cards = page.locator('.p2p-public-trade-grid .p2p-order-card');
+    await expect(cards.first()).toBeVisible({ timeout: 30_000 });
+    await cards.first().locator('.p2p-offer-open-btn').click();
+
+    const terminal = page.locator('.standalone-trade-detail-section');
+    const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
+    await expect(terminal.locator('.p2p-terminal-shell')).toBeVisible();
+    await expect(terminal).toContainText('Review offer');
+
+    await marketTabs.filter({ hasText: /^Desk$/ }).click();
+    await expect(page).toHaveURL(/\/trades$/);
+    await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
+    await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('keeps any open terminal as an empty terminal when switching Desk and My Trades', async ({ page }) => {
+    await page.setViewportSize({ width: 2016, height: 980 });
+    await page.goto('/trades');
+
+    const cards = page.locator('.p2p-public-trade-grid .p2p-order-card');
+    await expect(cards.first()).toBeVisible({ timeout: 30_000 });
+    await cards.first().locator('.p2p-offer-open-btn').click();
+
+    const terminal = page.locator('.standalone-trade-detail-section');
+    const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
+    await expect(terminal.locator('.p2p-terminal-shell')).toBeVisible();
+    await expect(terminal).toContainText('Review offer');
+
+    await marketTabs.filter({ hasText: /^My Trades$/ }).click();
+    await expect(page).toHaveURL(/\/trades\/mine$/);
+    await expect(page.locator('.p2p-my-trades-section')).toBeVisible();
+    await expect(terminal).toContainText('Open terminal');
+    await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
+    await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
+
+    await marketTabs.filter({ hasText: /^Desk$/ }).click();
+    await expect(page).toHaveURL(/\/trades$/);
+    await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
+    await expect(terminal).toContainText('Open terminal');
+    await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
+    await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
+
+    await marketTabs.filter({ hasText: /^Desk$/ }).click();
+    await expect(page).toHaveURL(/\/trades$/);
+    await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
   });
 
   test('keeps trading view tabs color-consistent across routes', async ({ page }) => {
@@ -1071,6 +1483,7 @@ test.describe('trading responsive layout', () => {
     const deskBox = await page.locator('.p2p-public-trades-section').boundingBox();
     const shellBox = await page.locator('.p2p-trading-shell-drawer-open').boundingBox();
     const historyBox = await history.boundingBox();
+    const balanceDockBox = await page.locator('.p2p-balance-dock').boundingBox();
     const viewport = page.viewportSize();
     expect(marketBox).not.toBeNull();
     expect(ticketBox).not.toBeNull();
@@ -1078,11 +1491,15 @@ test.describe('trading responsive layout', () => {
     expect(deskBox).not.toBeNull();
     expect(shellBox).not.toBeNull();
     expect(historyBox).not.toBeNull();
+    expect(balanceDockBox).not.toBeNull();
     expect(ticketBox!.y).toBeGreaterThan(marketBox!.y + marketBox!.height - 2);
     expect(historyBox!.y).toBeGreaterThanOrEqual(deskBox!.y + deskBox!.height - 2);
     expect(historyBox!.y).toBeGreaterThanOrEqual(terminalPaneBox!.y + terminalPaneBox!.height - 2);
     expect(historyBox!.x).toBeLessThanOrEqual(shellBox!.x + 20);
     expect(historyBox!.width).toBeGreaterThan(shellBox!.width - 40);
+    expect(balanceDockBox!.x).toBeLessThanOrEqual(shellBox!.x + 20);
+    expect(balanceDockBox!.width).toBeGreaterThan(shellBox!.width - 40);
+    expect(balanceDockBox!.y).toBeGreaterThanOrEqual(historyBox!.y + historyBox!.height - 2);
     expect(deskBox!.y + deskBox!.height).toBeLessThanOrEqual(historyBox!.y + 2);
     expect(terminalPaneBox!.y + terminalPaneBox!.height).toBeLessThanOrEqual(historyBox!.y + 2);
     expect(historyBox!.y + historyBox!.height).toBeLessThanOrEqual((viewport?.height ?? 950) + 1);
@@ -1252,6 +1669,33 @@ test.describe('trading responsive layout', () => {
       }
 
       await expect(cards.first()).toBeVisible();
+      if ((await cards.count()) > 1) {
+        const firstRowAlignment = await cards.evaluateAll((cardElements) => {
+          const metrics = cardElements.map((card) => {
+            const cardBox = card.getBoundingClientRect();
+            const priceBox = card.querySelector<HTMLElement>('.p2p-order-market-panel')?.getBoundingClientRect();
+            const footerBox = card.querySelector<HTMLElement>('.p2p-order-card-footer')?.getBoundingClientRect();
+            return {
+              cardTop: Math.round(cardBox.top),
+              footerTop: footerBox ? Math.round(footerBox.top) : null,
+              priceTop: priceBox ? Math.round(priceBox.top) : null
+            };
+          });
+          const firstTop = Math.min(...metrics.map((metric) => metric.cardTop));
+          const firstRow = metrics.filter((metric) => Math.abs(metric.cardTop - firstTop) <= 3);
+          const priceTops = firstRow.flatMap((metric) => (metric.priceTop === null ? [] : [metric.priceTop]));
+          const footerTops = firstRow.flatMap((metric) => (metric.footerTop === null ? [] : [metric.footerTop]));
+          return {
+            cards: firstRow.length,
+            footerSpread: footerTops.length ? Math.max(...footerTops) - Math.min(...footerTops) : 0,
+            priceSpread: priceTops.length ? Math.max(...priceTops) - Math.min(...priceTops) : 0
+          };
+        });
+        if (firstRowAlignment.cards > 1) {
+          expect(firstRowAlignment.priceSpread).toBeLessThanOrEqual(2);
+          expect(firstRowAlignment.footerSpread).toBeLessThanOrEqual(2);
+        }
+      }
       const openControl = cards.first().locator('.p2p-offer-open-btn, .p2p-offer-manage-btn').first();
       if ((await openControl.count()) === 0) {
         continue;
@@ -1265,6 +1709,37 @@ test.describe('trading responsive layout', () => {
       await expect(page.locator('.standalone-trade-detail-section .p2p-terminal-shell')).toBeVisible();
       await expect(page.locator('.p2p-terminal-history-window')).toBeVisible();
       await expect(page.locator('.p2p-my-trades-section')).toBeVisible();
+      const myTradesScroll = await page.evaluate(() => {
+        const section = document.querySelector<HTMLElement>('.p2p-my-trades-section');
+        const groups = document.querySelector<HTMLElement>('.p2p-wallet-trade-groups');
+        const workspace = document.querySelector<HTMLElement>('.p2p-wallet-inline-workspace');
+        const terminal = document.querySelector<HTMLElement>('.standalone-trade-detail-section');
+        if (!section || !groups || !workspace || !terminal) {
+          return null;
+        }
+        const before = section.scrollTop;
+        section.scrollTop = 80;
+        const after = section.scrollTop;
+        const sectionBox = section.getBoundingClientRect();
+        const terminalBox = terminal.getBoundingClientRect();
+        return {
+          canScroll: section.scrollHeight > section.clientHeight,
+          groupsOverflowY: window.getComputedStyle(groups).overflowY,
+          scrolled: after > before,
+          sectionRight: sectionBox.right,
+          sectionOverflowY: window.getComputedStyle(section).overflowY,
+          terminalLeft: terminalBox.left,
+          workspaceOverflowY: window.getComputedStyle(workspace).overflowY
+        };
+      });
+      expect(myTradesScroll).not.toBeNull();
+      expect(['auto', 'scroll']).toContain(myTradesScroll!.sectionOverflowY);
+      expect(myTradesScroll!.groupsOverflowY).toBe('visible');
+      expect(myTradesScroll!.workspaceOverflowY).toBe('visible');
+      expect(myTradesScroll!.terminalLeft - myTradesScroll!.sectionRight).toBeLessThanOrEqual(16);
+      if (myTradesScroll!.canScroll) {
+        expect(myTradesScroll!.scrolled).toBe(true);
+      }
 
       const terminalManage = page.locator('.standalone-trade-detail-section .p2p-terminal-manage-toggle').first();
       if ((await terminalManage.count()) > 0) {
