@@ -8,7 +8,9 @@ type TradingBalanceListProps = {
 };
 
 type TradingBalanceDockProps = TradingBalanceListProps & {
+  balancesHidden: boolean;
   onOpenContracts: () => void;
+  onToggleBalancesHidden: () => void;
 };
 
 type TradingBalancesSheetProps = TradingBalanceListProps & {
@@ -63,11 +65,25 @@ export function TradingBalanceList({ balances, walletConnected }: TradingBalance
   );
 }
 
-export function TradingBalanceDock({ balances, walletConnected, onOpenContracts }: TradingBalanceDockProps) {
+export function TradingBalanceDock({
+  balances,
+  balancesHidden,
+  walletConnected,
+  onOpenContracts,
+  onToggleBalancesHidden
+}: TradingBalanceDockProps) {
   return (
-    <section className="p2p-balance-dock" aria-label="Trading balances">
-      <strong className="p2p-balance-dock-title">Balances</strong>
-      <TradingBalanceList balances={balances} walletConnected={walletConnected} />
+    <section className={balancesHidden ? 'p2p-balance-dock p2p-balance-dock-hidden' : 'p2p-balance-dock'} aria-label="Trading balances">
+      <button
+        type="button"
+        className="p2p-balance-dock-title"
+        onClick={onToggleBalancesHidden}
+        aria-pressed={balancesHidden}
+        title={balancesHidden ? 'Show wallet balances and address' : 'Hide wallet balances and address'}
+      >
+        Balances
+      </button>
+      {balancesHidden ? <p className="p2p-balance-empty">Hidden</p> : <TradingBalanceList balances={balances} walletConnected={walletConnected} />}
       <button type="button" className="p2p-footer-contracts-btn" onClick={onOpenContracts}>
         Contracts
       </button>

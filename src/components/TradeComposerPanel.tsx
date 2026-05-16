@@ -1006,8 +1006,8 @@ export default function TradeComposerPanel({
       </div>
       <div className="trade-compose-warning" role="alert">
         <p>
-          <strong>P2P OTC check:</strong> Verify token contracts, amounts, and price before confirming. Escrow enforces
-          settlement, not counterparty reputation.
+          <strong>P2P safety check:</strong> Verify token contracts, amounts, price, and expiry before signing. Escrow
+          settles approved terms; it does not verify counterparty reputation.
         </p>
       </div>
       {showExpiryError ? <p className="trade-compose-field-error">{expiryError}</p> : null}

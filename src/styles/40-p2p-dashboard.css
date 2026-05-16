@@ -1218,11 +1218,23 @@
 }
 
 .p2p-balance-dock-title {
+  border: 0;
+  background: transparent;
   color: #8f88aa;
+  cursor: pointer;
   font-size: 0.6rem;
   font-weight: 900;
   letter-spacing: 0.08em;
+  padding: 0;
   text-transform: uppercase;
+}
+
+.p2p-balance-dock-title:hover {
+  color: #d9d3ff;
+}
+
+.p2p-balance-dock-hidden {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .p2p-balance-groups {

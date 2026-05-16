@@ -44,6 +44,7 @@ type UseP2PWalletHeaderControlArgs = {
   getConnectedProvider: () => Eip1193Provider | null;
   hasConnectedAppWallet: boolean;
   hasConnectedBrowserWallet: boolean;
+  hideWalletIdentity?: boolean;
   lastCopiedKey: string | null;
   onOpenContracts?: () => void;
   onCotiNetwork: boolean;
@@ -89,6 +90,7 @@ export default function useP2PWalletHeaderControl({
   getConnectedProvider,
   hasConnectedAppWallet,
   hasConnectedBrowserWallet,
+  hideWalletIdentity = false,
   lastCopiedKey,
   onOpenContracts,
   onCotiNetwork,
@@ -167,7 +169,7 @@ export default function useP2PWalletHeaderControl({
     preferredBrowserWalletLabel: preferredWalletOption?.label,
     walletAddress
   });
-  const walletPrimaryButtonLabel = walletPrimaryAction.label;
+  const walletPrimaryButtonLabel = hideWalletIdentity && walletAddress ? 'Wallet hidden' : walletPrimaryAction.label;
   const tradePrimaryConnectsAppWallet = walletPrimaryAction.kind === 'connect-app-wallet';
   const showMobileBrowserWalletOpenAction = walletPrimaryAction.kind === 'open-browser-wallet-app';
   const showTradeDisconnectedAppAction = Boolean(!walletAddress && tradeHasSavedAppWallet);
@@ -430,7 +432,7 @@ export default function useP2PWalletHeaderControl({
         primaryButtonLabel={walletPrimaryButtonLabel}
         primaryAddon={tradeAppWalletSwitchButton}
         primaryMetaLabel={walletPrimaryButtonIsAddress && walletPrimaryButtonCopied ? 'Copied' : undefined}
-        primaryButtonTitle={walletAddress ? `Copy wallet address (${walletAddress})` : undefined}
+        primaryButtonTitle={walletAddress && !hideWalletIdentity ? `Copy wallet address (${walletAddress})` : undefined}
         primaryDisabled={walletPrimaryAction.disabled}
         onPrimaryAction={handleWalletPrimaryAction}
         modeLabel={walletModeLabel}
@@ -591,6 +593,7 @@ export default function useP2PWalletHeaderControl({
       disconnectWallet,
       handleSwitchTradeAppWallet,
       handleWalletPrimaryAction,
+      hideWalletIdentity,
       mobileAppWalletSwitchOptions,
       onOpenContracts,
       preferredWalletOption,

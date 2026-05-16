@@ -261,7 +261,26 @@ test.describe('mobile layout polish', () => {
     await expect(balanceDock).toContainText('Connect a trading wallet');
     await expect(page.locator('.p2p-footer-balances')).toHaveCount(0);
     await expect(page.getByText('-- COTI')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /Balances/ })).toHaveCount(0);
+    await expect(balanceDock.getByRole('button', { name: 'Balances' })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('lets the desktop balances title hide balances and wallet identity', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await installMockTradingWallet(page);
+    await page.goto('/trades');
+
+    await page.locator('.top-header').getByRole('button', { name: /^Connect MetaMask$/i }).click();
+    await expect(page.locator('.top-header').getByRole('button', { name: new RegExp(mockTradingWalletAddress, 'i') })).toBeVisible();
+
+    const balanceDock = page.locator('.p2p-balance-dock');
+    await balanceDock.getByRole('button', { name: 'Balances' }).click();
+    await expect(balanceDock).toContainText('Hidden');
+    await expect(page.locator('.top-header').getByRole('button', { name: new RegExp(mockTradingWalletAddress, 'i') })).toHaveCount(0);
+    await expect(page.locator('.top-header').getByRole('button', { name: 'Wallet hidden' })).toBeVisible();
+
+    await balanceDock.getByRole('button', { name: 'Balances' }).click();
+    await expect(page.locator('.top-header').getByRole('button', { name: new RegExp(mockTradingWalletAddress, 'i') })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 

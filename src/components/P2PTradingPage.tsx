@@ -892,6 +892,7 @@ export default function P2PTradingPage({
   const [editingTrade, setEditingTrade] = useState<TradeSnapshot | null>(null);
   const [showTradingContractsModal, setShowTradingContractsModal] = useState(false);
   const [showMobileBalancesSheet, setShowMobileBalancesSheet] = useState(false);
+  const [tradingBalancesHidden, setTradingBalancesHidden] = useState(false);
   const injectedWalletOptions = useInjectedWalletOptions();
 
   const providerRef = useRef<Eip1193Provider | null>(initialSharedBrowserWallet?.browserProvider ?? null);
@@ -7863,6 +7864,7 @@ export default function P2PTradingPage({
     getConnectedProvider,
     hasConnectedAppWallet: Boolean(burnerWalletRef.current),
     hasConnectedBrowserWallet: Boolean(providerRef.current),
+    hideWalletIdentity: tradingBalancesHidden,
     lastCopiedKey,
     onOpenContracts: openTradingContractsModal,
     onCotiNetwork,
@@ -7904,7 +7906,8 @@ export default function P2PTradingPage({
         appWalletMenuOpen ? 'app-menu-open' : 'app-menu-closed',
         lastCopiedKey,
         browserWalletOptions.map((option) => option.id).join(','),
-        burnerWallets.map((wallet) => `${wallet.id}:${wallet.address}`).join(',')
+        burnerWallets.map((wallet) => `${wallet.id}:${wallet.address}`).join(','),
+        tradingBalancesHidden ? 'balances-hidden' : 'balances-visible'
       ].join('|'),
     [
       appWalletMenuOpen,
@@ -7920,6 +7923,7 @@ export default function P2PTradingPage({
       onCotiNetwork,
       preferredWalletOption?.id,
       selectedWalletId,
+      tradingBalancesHidden,
       sharedWalletAesHealth?.message,
       sharedWalletAesHealth?.status,
       walletAddress,
@@ -9694,7 +9698,8 @@ export default function P2PTradingPage({
                 </div>
                 <div className="trade-compose-warning">
                   <p>
-                    <strong>P2P OTC check:</strong> Buy and sell prices are independent. Same-price orders only happen when you enter the same price.
+                    <strong>P2P safety check:</strong> Verify token contracts, buy/sell prices, and funded liquidity
+                    before signing. Buy and sell prices are independent.
                   </p>
                 </div>
               </div>
@@ -9860,7 +9865,8 @@ export default function P2PTradingPage({
           {!emptyTerminalOpen ? (
             <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
               <p>
-                <strong>P2P OTC check:</strong> Verify maker, tokens, amounts, and price. Escrow settles, not reputation.
+                <strong>P2P safety check:</strong> Verify maker, token contracts, amounts, and price before signing.
+                Escrow settles approved terms; it does not verify counterparty reputation.
               </p>
             </div>
           ) : null}
@@ -10018,8 +10024,10 @@ export default function P2PTradingPage({
       <div className="p2p-footer-links">
         <TradingBalanceDock
           balances={visibleTradingBalances}
+          balancesHidden={tradingBalancesHidden}
           walletConnected={Boolean(walletAddress)}
           onOpenContracts={openTradingContractsModal}
+          onToggleBalancesHidden={() => setTradingBalancesHidden((hidden) => !hidden)}
         />
       </div>
       <button
