@@ -6,6 +6,8 @@ import {
   formatTokenAmount,
   formatTradeAssetDisplayText,
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+  RECURRING_OTC_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeAssetPayload,
   type TradeOfferMessagePayload,
@@ -29,6 +31,34 @@ const getTradeLiquidityLabel = (offer: TradeAssetPayload, request: TradeAssetPay
     return HYBRID_LIQUIDITY_LABEL;
   }
   return PUBLIC_LIQUIDITY_LABEL;
+};
+
+type TradeContractNamespaceInput = {
+  escrowContract?: string | null;
+  recurringOrder?: { orderId: number } | null;
+};
+
+type TradeContractIdInput = TradeContractNamespaceInput & {
+  tradeId: number;
+};
+
+export const getTradeContractNamespaceLabel = (trade: TradeContractNamespaceInput): string => {
+  const normalizedContract = trade.escrowContract?.toLowerCase() ?? '';
+  if (trade.recurringOrder || normalizedContract === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
+    return 'Recurring OTC';
+  }
+  if (normalizedContract === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    return 'Private OTC';
+  }
+  if (normalizedContract === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    return 'Direct OTC';
+  }
+  return 'P2P OTC';
+};
+
+export const formatTradeContractIdLabel = (trade: TradeContractIdInput): string => {
+  const id = trade.recurringOrder?.orderId ?? trade.tradeId;
+  return `${getTradeContractNamespaceLabel(trade)} #${id}`;
 };
 
 const normalizeStoredAccessSecret = (value?: string | null): string => {

@@ -9,7 +9,9 @@ test.describe('trading V1 routes', () => {
     const drawer = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
     await expect(drawer).toBeVisible();
     await expect(drawer.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
-    await expect(drawer.getByText(/Recurring OTC|Recurring order could not load/)).toBeVisible({ timeout: 30_000 });
+    await expect(drawer.locator('.p2p-terminal-eyebrow', { hasText: /^Recurring OTC Terminal$/ })).toBeVisible({
+      timeout: 30_000
+    });
     await expect(drawer.locator('.p2p-terminal-shell-recurring')).toBeVisible();
     await expect(drawer.locator('.p2p-terminal-main')).toBeVisible();
     await expect(drawer.locator('.p2p-terminal-history-desktop')).toHaveCount(0);

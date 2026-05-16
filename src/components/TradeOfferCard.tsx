@@ -23,6 +23,7 @@ import {
   type TradeOrderSideRole
 } from '../lib/tradePerspective';
 import {
+  formatTradeContractIdLabel,
   getTradeTermsVisibility,
   hasHydratedDirectTradeTerms
 } from '../lib/p2pTradeView';
@@ -300,7 +301,7 @@ export default function TradeOfferCard({
   const canAcceptOpenTakerTrade = isOpen && isOpenTakerTrade && !isMaker;
   const hasWalletForOpenAccept = walletKey.length > 0;
   const showCounterUnavailable = Boolean(counterUnavailableReason && !showCounterAction && (isTaker || canAcceptOpenTakerTrade));
-  const showExpiryAt = isOpen;
+  const showExpiryAt = isOpen && expiresAt > 0;
   const baseOffer = snapshot?.offer ?? offer.offer;
   const baseRequest = snapshot?.request ?? offer.request;
   const useRemainingTerms = Boolean(
@@ -336,7 +337,7 @@ export default function TradeOfferCard({
       : resolvedPeerAddress
         ? shortenAddress(resolvedPeerAddress)
         : hiddenLiquidity
-          ? 'Private order'
+          ? 'Private liquidity'
           : 'Any wallet';
   const offerScopeLabel = resolvedOffer ? resolveAssetScopeLabel(resolvedOffer.kind) : null;
   const requestScopeLabel = resolvedRequest ? resolveAssetScopeLabel(resolvedRequest.kind) : null;
@@ -510,7 +511,7 @@ export default function TradeOfferCard({
     : {
         heading: 'Owner budget',
         body: 'Reveal remaining hidden liquidity and private fills for this order.',
-        title: 'Reveal this one-off private order with your wallet AES key',
+        title: 'Reveal this private liquidity order with your wallet AES key',
         button: 'Reveal budget'
       };
   const canShowPartialFill = Boolean(
@@ -581,7 +582,7 @@ export default function TradeOfferCard({
           <div className="trade-card-title-row">
             <div className="trade-card-title">
               <strong>{tradeOrderSummary?.directionLabel ?? `Escrow offer #${offer.tradeId}`}</strong>
-              <span className="trade-card-id">Offer #{offer.tradeId}</span>
+              <span className="trade-card-id">{formatTradeContractIdLabel(offer)}</span>
             </div>
             <div className="trade-card-header-actions">
               <span className={`trade-card-status ${statusClassName}`}>{statusDisplayLabel}</span>
@@ -611,7 +612,7 @@ export default function TradeOfferCard({
           {isMaker ? <span className="trade-card-parent">Your offer</span> : null}
           {isTaker ? <span className="trade-card-parent incoming">Incoming offer</span> : null}
           {canAcceptOpenTakerTrade ? <span className="trade-card-parent incoming">Open offer</span> : null}
-          {hiddenLiquidity ? <span className="trade-card-parent">Private order</span> : null}
+          {hiddenLiquidity ? <span className="trade-card-parent">Private liquidity</span> : null}
           {directPrivateTerms ? <span className="trade-card-parent">Private terms</span> : null}
           {counterParentTradeId ? <span className="trade-card-parent">Counter to #{counterParentTradeId}</span> : null}
           {snapshot?.replacesTradeId ? <span className="trade-card-parent">Edited from #{snapshot.replacesTradeId}</span> : null}
@@ -779,7 +780,7 @@ export default function TradeOfferCard({
           {makerPrivateProgressSummary ? (
             <div className="trade-card-fill-progress" aria-label={makerPrivateProgressSummary.percentLabel}>
               <div>
-                <span>Your private order</span>
+                <span>Your private liquidity</span>
                 <strong>{makerPrivateProgressSummary.totalLabel}</strong>
               </div>
               <div className="trade-card-fill-bar">
@@ -916,7 +917,7 @@ export default function TradeOfferCard({
                     ) : null}
                   </div>
                   <p className="trade-card-private-fill-note">
-                    Private orders may fill partially. The contract settles what is available at this ratio and returns any unspent payment.
+                    Private liquidity may fill partially. The contract settles what is available at this ratio and returns any unspent payment.
                   </p>
                 </div>
               ) : null}

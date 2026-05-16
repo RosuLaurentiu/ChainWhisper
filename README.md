@@ -40,7 +40,7 @@ The chat app is a wallet-native encrypted messenger for COTI.
 The standalone P2P app is an OTC-style escrow desk backed by COTI contracts.
 
 - Desk view for active public offers with search, filters, refresh, trade terminal, and wallet balance context.
-- Create `Limit buy/sell` orders and `Recurring` reusable OTC orders from the Create window, with Public, Private order, Direct, counter, private-liquidity, visible-amount, and hybrid private-token flows.
+- Create `Limit buy/sell` orders and `Recurring` reusable OTC orders from the Create window, with Public, Unlisted, Direct, counter, `Private liquidity`, `Visible amounts`, and hybrid private-token flows.
 - Normal trades use the Trading V1 OTC escrow and reader contracts and support public, private-link, direct, counter, partial fill, cancel, decline, permanent/no-expiry, edit-by-replace, and visible private-token amount flows.
 - Private tokens are not automatically hidden. When `Visible amounts` is selected, private-token order size, fills, and remaining amounts are public and route through the normal OTC contract.
 - Hidden-amount private orders use the Trading V1 private-orders contract. Fully private orders use private tokens on both sides; hybrid private orders offer a private token while the taker pays with public/native assets.
@@ -48,7 +48,7 @@ The standalone P2P app is an OTC-style escrow desk backed by COTI contracts.
 - Trades privacy flows try the COTI MetaMask Snap first for AES key access, then fall back to the existing COTI wallet onboarding path. Chat and Whisper Shield do not use the Snap.
 - Hidden-amount public/detail views hide private amounts and fill amounts while showing price ratio, direction, expiry, and access type.
 - Makers can reveal their own private-order progress and recurring live liquidity from My Trades after AES is available. Fillers can reveal their own private fill history, including partial fills on open orders. Standard private-liquidity cards and terminal views show two-sided progress when private fill receipts reveal both values.
-- Private orders are not auto-posted into chat, but copied share links can be pasted into conversations.
+- Unlisted orders are not auto-posted into chat, but copied share links can be pasted into conversations.
 - Recurring orders are reusable two-sided OTC liquidity, not timed/cadence orders: buy fills add base inventory to the sell side, and sell fills add quote inventory to the buy side. Makers can edit prices, per-side amounts, and add/remove live liquidity without changing the order link; closing the order returns remaining inventory.
 - Open compact trade links, full URLs, legacy trade IDs, or redirected GitHub Pages links.
 - A completed counter trade cancels the parent/initial trade automatically.

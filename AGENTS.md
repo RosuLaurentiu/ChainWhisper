@@ -38,7 +38,7 @@ Current route behavior is intentional:
 - Replies with a message reference.
 - Tips sent inline in chat.
 - In-chat trading: a trade offer created inside a DM is a direct trade between the two participants.
-- Private orders should not be auto-posted into chat, but a copied trade link may be pasted and rendered as a link.
+- Unlisted orders should not be auto-posted into chat, but a copied trade link may be pasted and rendered as a link.
 - Mute/hide per conversation; state is persisted on-chain as an encrypted hidden message.
 - Read/unread state is a single global timestamp (`lastReadAllTs`). Saved on-chain when all messages are read. Do not introduce per-conversation on-chain read state because it does not scale.
 
@@ -101,7 +101,7 @@ Current route behavior is intentional:
 - No major layout restructuring, theme toggles, or new color palettes without a specific request.
 - P2P should feel like a P2P OTC trading desk: clear buy/sell direction, concise ratio display, direct action buttons, peer/settlement language, and low visual noise.
 - Hidden-amount private-order cards should lead with price ratio and direction. Do not show one side's amount if the other side is hidden.
-- Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", "Private liquidity", "Visible amounts", and "Private order" consistently across explorer cards, detail cards, and in-chat cards.
+- Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", "Private liquidity", "Visible amounts", and "Unlisted" consistently across explorer cards, detail cards, and in-chat cards.
 - Wallet/AES readiness states should be clear enough that users know whether they need to connect, switch network, sign AES, top up, or unlock an app wallet.
 
 ## Important Source Map

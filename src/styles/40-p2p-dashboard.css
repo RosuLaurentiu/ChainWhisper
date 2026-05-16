@@ -547,7 +547,7 @@
   height: 36px;
   padding: 9px 14px;
   display: inline-flex;
-  align-items: center;
+  align-items: start;
   justify-content: center;
   min-width: 0;
   font-weight: 700;
@@ -610,7 +610,7 @@
   min-width: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
   gap: 10px;
 }
 
@@ -638,7 +638,7 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas: "tabs identity stats";
-  align-items: center;
+  align-items: start;
   gap: 10px;
 }
 
@@ -1204,7 +1204,7 @@
 .p2p-balance-dock {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 7px;
   width: 100%;
   max-width: none;
@@ -1393,7 +1393,6 @@
   border-radius: 10px;
   padding: 8px 9px;
 }
-
 
 .p2p-footer-links a {
   color: var(--muted);
@@ -4013,32 +4012,73 @@
 
 .p2p-order-tag-stack {
   display: grid;
-  gap: 0;
-  margin-top: 1px;
+  gap: 2px;
+  margin-top: 2px;
   min-width: 0;
+  min-height: 19px;
 }
 
 .p2p-order-tag-stack .p2p-order-subline {
-  flex-wrap: wrap;
+  display: grid !important;
+  grid-template-columns: max-content max-content minmax(0, max-content);
+  justify-content: start;
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 3px;
+  flex-wrap: nowrap;
   margin: 0;
   overflow: visible;
+}
+
+.p2p-order-date-row {
+  display: grid !important;
+  grid-template-columns: max-content max-content minmax(0, max-content);
+  align-items: center;
+  column-gap: 7px;
   row-gap: 3px;
+  min-height: 17px;
+  margin: 2px 0 0;
+  overflow: visible;
+}
+
+.p2p-order-grid-cell {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: start;
+  min-height: 18px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.p2p-order-grid-cell-id {
+  justify-content: flex-start;
+}
+
+.p2p-order-grid-cell-relations,
+.p2p-order-grid-cell-tags {
+  flex-wrap: wrap;
+}
+
+.p2p-order-date-row .p2p-expiry-chip,
+.p2p-order-date-row .p2p-order-chip {
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .p2p-order-id {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   flex: 0 0 auto;
+  min-height: 18px;
   min-width: 0;
-  border: 1px solid rgba(74, 64, 112, 0.5);
-  border-radius: 999px;
-  background: rgba(9, 9, 15, 0.56);
-  color: var(--muted);
+  color: rgba(170, 163, 199, 0.82);
   font-size: 0.66rem;
   font-weight: 900;
-  line-height: 1;
-  padding: 3px 7px;
+  letter-spacing: 0.035em;
+  line-height: 1.1;
+  padding: 0;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -4166,13 +4206,18 @@
 }
 
 .p2p-offer-title {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: start;
   min-width: 0;
 }
 
 .p2p-order-title-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto auto;
+  justify-content: start;
   align-items: center;
-  gap: 7px;
+  column-gap: 7px;
   margin-top: 0;
   min-width: 0;
 }
@@ -4181,8 +4226,10 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  flex: 0 1 auto;
+  grid-column: 1;
   min-width: 0;
+  max-width: min(100%, 14rem);
+  overflow: hidden;
 }
 
 .p2p-order-title-main,
@@ -4230,7 +4277,9 @@
 .p2p-order-subline .p2p-order-id,
 .p2p-order-subline .p2p-offer-status,
 .p2p-order-subline .p2p-order-chip,
-.p2p-order-subline .p2p-expiry-chip {
+.p2p-order-subline .p2p-expiry-chip,
+.p2p-order-date-row .p2p-order-chip,
+.p2p-order-date-row .p2p-expiry-chip {
   font-size: 0.66rem;
   line-height: 1;
   text-transform: none;
@@ -4244,12 +4293,14 @@
 }
 
 .p2p-order-title-row .p2p-offer-status {
-  flex: 0 0 auto;
-  margin-top: 1px;
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 0;
 }
 
 .p2p-order-title-row .p2p-order-chip-owner {
-  flex: 0 0 auto;
+  grid-column: 3;
+  justify-self: start;
   padding: 3px 7px;
   font-size: 0.66rem;
 }
@@ -4257,7 +4308,9 @@
 .p2p-order-title-row .p2p-order-chip,
 .p2p-order-title-row .p2p-expiry-chip,
 .p2p-order-subline .p2p-order-chip,
-.p2p-order-subline .p2p-expiry-chip {
+.p2p-order-subline .p2p-expiry-chip,
+.p2p-order-date-row .p2p-order-chip,
+.p2p-order-date-row .p2p-expiry-chip {
   color: #d9d3ff;
 }
 
@@ -6201,12 +6254,6 @@
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.p2p-recurring-card-head .p2p-order-tag-stack .p2p-order-subline {
-  display: flex !important;
-  overflow: visible;
-  white-space: normal;
 }
 
 .p2p-recurring-price-grid,

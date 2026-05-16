@@ -202,6 +202,8 @@ import {
   buildTradeAssetExplorerUrl,
   buildTransactionExplorerUrl,
   canEditPublicTrade,
+  formatTradeContractIdLabel,
+  getTradeContractNamespaceLabel,
   formatHiddenFixedPriceTerms,
   formatTradeExpiryParts,
   formatTradeListTerms,
@@ -214,6 +216,7 @@ import {
   getSnapshotKey,
   getTradeCompletionSummary,
   getTradeDisplayTerms,
+  getTradeAccessFilter,
   getTradePairFilterOptions,
   getTradeTermsVisibility,
   hasHydratedDirectTradeTerms,
@@ -234,6 +237,18 @@ import BurnerPinModal from './BurnerPinModal';
 import TradingBalancesSheet, { TradingBalanceDock } from './TradingBalancesSheet';
 import TradingContractsModal from './TradingContractsModal';
 import TradeComposerPanel, { TradeTokenSelect } from './TradeComposerPanel';
+
+const formatCompactTradeTimestamp = (timestamp?: number): string => {
+  if (!timestamp || !Number.isFinite(timestamp)) {
+    return '';
+  }
+  return new Date(timestamp * 1000).toLocaleString(undefined, {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
 
 type TradeVisibility = 'public' | 'unlisted' | 'direct';
 type MyTradeGroupView = 'received' | 'active' | 'history';
@@ -413,7 +428,7 @@ const buildMakerControlsKey = (surface: MakerControlsSurface, tradeKey: string):
 
 const OPEN_TERMINAL_LABEL = 'Open terminal';
 const SHARE_LABEL = 'Share';
-const PRIVATE_ORDER_LABEL = 'Private order';
+const UNLISTED_ORDER_LABEL = 'Unlisted';
 const PRIVATE_LIQUIDITY_LABEL = 'Private liquidity';
 const PUBLIC_LIQUIDITY_LABEL = 'Public liquidity';
 const HYBRID_LIQUIDITY_LABEL = 'Hybrid liquidity';
@@ -866,6 +881,8 @@ export default function P2PTradingPage({
   const [historyLifecycleTxHashes, setHistoryLifecycleTxHashes] = useState<Record<string, string>>({});
   const [historyTransactionTxHashes, setHistoryTransactionTxHashes] = useState<Record<string, string>>({});
   const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
+  const mobileDeskScrollRef = useRef<Record<'public' | 'mine', number>>({ public: 0, mine: 0 });
+  const mobileTerminalReturnSurfaceRef = useRef<'public' | 'mine'>('public');
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
     () => loadStoredTradeAccessSecrets()
   );
@@ -2805,7 +2822,7 @@ export default function P2PTradingPage({
           if (forceReveal) {
             throw privateFillReceiptsResult.reason instanceof Error
               ? privateFillReceiptsResult.reason
-              : new Error('Private order history reveal failed. AES may need to be refreshed.');
+              : new Error('Private liquidity history reveal failed. AES may need to be refreshed.');
           }
           return stripOtherWalletPrivateReveal(snapshot);
         }
@@ -2826,12 +2843,12 @@ export default function P2PTradingPage({
           if (forceReveal) {
             throw remainingOfferAmountResult.reason instanceof Error
               ? remainingOfferAmountResult.reason
-              : new Error('Private order reveal failed. AES may need to be refreshed.');
+              : new Error('Private liquidity reveal failed. AES may need to be refreshed.');
           }
           return stripOtherWalletPrivateReveal(recoveredSnapshot);
         }
         if (forceReveal) {
-          throw new Error('This private order could not expose maker liquidity or private fill receipts on the active contract.');
+          throw new Error('This private liquidity order could not expose maker liquidity or private fill receipts on the active contract.');
         }
         return stripOtherWalletPrivateReveal(recoveredSnapshot);
       }
@@ -2921,7 +2938,7 @@ export default function P2PTradingPage({
       setTradeActionError('');
       try {
         if (!walletKey) {
-          throw new Error('Connect the wallet that made or filled this private order.');
+          throw new Error('Connect the wallet that made or filled this private liquidity order.');
         }
         const revealWalletKey = walletKey;
         setRevealingPrivateTradeKey(tradeKey);
@@ -2960,7 +2977,7 @@ export default function P2PTradingPage({
         mergeTradeSnapshot(revealedSnapshot);
         pushActionNotice({ action: 'reveal', status: 'success', surface: noticeSurface, tradeKey });
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to reveal this private order.';
+        const message = error instanceof Error ? error.message : 'Unable to reveal this private liquidity order.';
         setTradeActionError(message);
         pushActionNotice({ action: 'reveal', message, status: 'error', surface: noticeSurface, tradeKey });
       } finally {
@@ -2976,6 +2993,46 @@ export default function P2PTradingPage({
     ]
   );
 
+  const getTradingShellScrollTop = useCallback((): number => {
+    const shell = document.querySelector<HTMLElement>('.standalone-trades-shell');
+    return shell?.scrollTop ?? window.scrollY ?? 0;
+  }, []);
+
+  const saveMobileDeskScroll = useCallback(
+    (view = route.view) => {
+      if (!isMobileNav) {
+        return;
+      }
+      const surface = view === 'mine' ? 'mine' : view === 'public' ? 'public' : null;
+      if (!surface) {
+        return;
+      }
+      mobileTerminalReturnSurfaceRef.current = surface;
+      mobileDeskScrollRef.current[surface] = getTradingShellScrollTop();
+    },
+    [getTradingShellScrollTop, isMobileNav, route.view]
+  );
+
+  const restoreMobileDeskScroll = useCallback(
+    (surface: 'public' | 'mine') => {
+      if (!isMobileNav) {
+        return;
+      }
+      const top = mobileDeskScrollRef.current[surface] ?? 0;
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const shell = document.querySelector<HTMLElement>('.standalone-trades-shell');
+          if (shell) {
+            shell.scrollTo({ top, behavior: 'auto' });
+            return;
+          }
+          window.scrollTo({ top, behavior: 'auto' });
+        });
+      });
+    },
+    [isMobileNav]
+  );
+
   const openTradeSnapshot = useCallback(
     (snapshot: TradeSnapshot, accessSecret?: string) => {
       const knownAccessSecret =
@@ -2983,11 +3040,12 @@ export default function P2PTradingPage({
         (snapshot.isPublic === false || snapshot.hasAccessHash
           ? resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract)
           : '');
+      saveMobileDeskScroll();
       setEmptyTerminalDrawerOpen(false);
       setDetailTrade(snapshot);
       openTrade(snapshot.tradeId, knownAccessSecret || undefined, snapshot.escrowContract);
     },
-    [openTrade, resolveKnownTradeAccessSecret]
+    [openTrade, resolveKnownTradeAccessSecret, saveMobileDeskScroll]
   );
 
   const openTradeFromInput = useCallback(
@@ -3060,7 +3118,7 @@ export default function P2PTradingPage({
       if (!normalizeAccessHash(detailTrade.accessHash)) {
         forgetTradeAccessSecret(detailTrade.tradeId, detailTrade.escrowContract);
         if (routeSecret) {
-          setTradeActionError('This private order link could not be verified. Open the full Share link from the maker and try again.');
+          setTradeActionError('This unlisted link could not be verified. Open the full Share link from the maker and try again.');
         }
         return;
       }
@@ -3093,7 +3151,7 @@ export default function P2PTradingPage({
       }
       forgetTradeAccessSecret(detailTrade.tradeId, detailTrade.escrowContract);
       if (routeSecret) {
-        setTradeActionError('This private order link could not be verified. Open the full Share link from the maker and try again.');
+        setTradeActionError('This unlisted link could not be verified. Open the full Share link from the maker and try again.');
       }
     });
 
@@ -4583,6 +4641,8 @@ export default function P2PTradingPage({
     const recurringTitleRelationTags = recurringRelationTags.filter((label) => label === 'Maker');
     const recurringMetaRelationTags = recurringRelationTags.filter((label) => label !== 'Maker');
     const recurringModeTags = [modeLabel].filter((label): label is string => Boolean(label));
+    const showRecurringDateRow = options.groupId === 'history' || recurring.recurringStatus !== 'active';
+    const recurringDateLabel = formatCompactTradeTimestamp(snapshot.createdAt);
     const baseInventoryLabel =
       baseHidden && revealedBaseInventory !== undefined
         ? formatRecurringTokenAmount(recurring.baseAsset, revealedBaseInventory, false)
@@ -4679,7 +4739,7 @@ export default function P2PTradingPage({
       recurring.mode === 'public'
         ? 'Execution history'
         : isMaker
-          ? 'Private order history'
+          ? 'Private liquidity history'
           : 'Your private history';
     const recurringHistoryEmptyCopy =
       recurring.mode === 'public'
@@ -4696,7 +4756,8 @@ export default function P2PTradingPage({
           options.selected ? 'p2p-order-card-selected' : '',
           detail ? 'p2p-recurring-order-card-detail' : '',
           recurring.mode !== 'public' ? 'p2p-recurring-order-card-private' : '',
-          `p2p-recurring-order-card-${recurring.recurringStatus}`
+          `p2p-recurring-order-card-${recurring.recurringStatus}`,
+          showRecurringDateRow ? 'p2p-order-card-fixed-date' : ''
         ]
           .filter(Boolean)
           .join(' ')}
@@ -4720,24 +4781,40 @@ export default function P2PTradingPage({
             </div>
             <div className="p2p-order-meta-line p2p-order-tag-stack">
               <p className="p2p-order-subline p2p-order-subline-primary">
-                <span className="p2p-offer-kind p2p-order-kind-marker">Recurring OTC</span>
-                <span className="p2p-order-id">#{recurring.orderId}</span>
-                {recurringMetaRelationTags.map((label) => (
-                  <span
-                    className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
-                    key={`${tradeKey}:relation:${label}`}
-                    title={label === 'Maker' ? 'Created by you' : undefined}
-                  >
-                    {label}
-                  </span>
-                ))}
-                {recurringModeTags.map((label) => (
-                  <span className="p2p-order-chip" key={`${tradeKey}:tag:${label}`}>
-                    {label}
-                  </span>
-                ))}
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-id">
+                  <span className="p2p-order-id">{formatTradeContractIdLabel(snapshot)}</span>
+                </span>
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-relations">
+                  {recurringMetaRelationTags.map((label) => (
+                    <span
+                      className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
+                      key={`${tradeKey}:relation:${label}`}
+                      title={label === 'Maker' ? 'Created by you' : undefined}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </span>
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-tags">
+                  {recurringModeTags.map((label) => (
+                    <span className="p2p-order-chip" key={`${tradeKey}:tag:${label}`}>
+                      {label}
+                    </span>
+                  ))}
+                </span>
               </p>
             </div>
+            {showRecurringDateRow ? (
+              <p className="p2p-order-date-row">
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-id">
+                  <span className="p2p-offer-expiry p2p-expiry-chip" title={`Created: ${recurringDateLabel}`}>
+                    {recurringDateLabel}
+                  </span>
+                </span>
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-relations" />
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-tags" />
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -5059,17 +5136,7 @@ export default function P2PTradingPage({
     );
   };
 
-  const formatHistoryDate = (timestamp?: number) => {
-    if (!timestamp || !Number.isFinite(timestamp)) {
-      return '';
-    }
-    return new Date(timestamp * 1000).toLocaleString(undefined, {
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const formatHistoryDate = formatCompactTradeTimestamp;
 
   const renderHistoryLifecycleRows = (lifecycleRows: TradeLifecycleHistoryRow[]) => {
     if (!lifecycleRows.length) {
@@ -5259,7 +5326,7 @@ export default function P2PTradingPage({
 
     return {
       tradeKey,
-      title: `Offer #${snapshot.tradeId}`,
+      title: formatTradeContractIdLabel(snapshot),
       count: lifecycleRows.length + historyRows.length,
       emptyCopy: historyEmptyCopy,
       children: historyChildren,
@@ -5310,7 +5377,7 @@ export default function P2PTradingPage({
 
     return {
       tradeKey,
-      title: `Order #${recurring.orderId}`,
+      title: formatTradeContractIdLabel(snapshot),
       count: lifecycleRows.length + historyRows.length,
       emptyCopy: recurringHistoryEmptyCopy,
       children: recurringHistoryRows,
@@ -5487,7 +5554,7 @@ export default function P2PTradingPage({
         ? ''
         : buildTradeShareUrl(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
     const shareKey = `terminal-trade-link:${tradeKey}:${accessSecret ? 'secret' : 'public'}`;
-    const visibilityLabel = snapshot.isPublic === false ? PRIVATE_ORDER_LABEL : VISIBLE_LIQUIDITY_LABEL;
+    const visibilityLabel = snapshot.isPublic === false ? UNLISTED_ORDER_LABEL : VISIBLE_LIQUIDITY_LABEL;
     const liquidityLabel = getTradeLiquidityLabel(snapshot.offer, snapshot.request);
     const statusLabel =
       snapshot.status === 'open'
@@ -5495,8 +5562,9 @@ export default function P2PTradingPage({
         : snapshot.status === 'unknown'
           ? 'Unknown'
           : snapshot.status.charAt(0).toUpperCase() + snapshot.status.slice(1);
+    const hasExpiry = snapshot.expiresAt > 0;
     const expiryParts = formatTradeExpiryParts(snapshot.expiresAt);
-    const expiryCountdown = snapshot.status === 'open' ? formatExpiryCountdown(snapshot.expiresAt) : null;
+    const expiryCountdown = snapshot.status === 'open' && hasExpiry ? formatExpiryCountdown(snapshot.expiresAt) : null;
     const terminalPriceLeftAsset =
       isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, leftSide) ?? leftSide.asset : leftSide.asset;
     const terminalPriceRightAsset =
@@ -5625,18 +5693,17 @@ export default function P2PTradingPage({
     const maxPayInput = formatExactTokenAmountInput(remainingRequestAmount, displayTrade.request.decimals);
     const historyConfig = getStandardTerminalHistoryConfig(snapshot);
     const terminalAccessChip = liquidityLabel;
-    const terminalExpiryChip =
-      snapshot.status === 'open' && expiryCountdown ? expiryCountdown.label.replace(/^Expires /, '') : '';
+    const terminalExpiryChip = expiryCountdown ? expiryCountdown.label.replace(/^Expires /, '') : '';
     const counterRelation = getTradeCounterRelation(snapshot);
 
     return (
       <article className="p2p-terminal-shell p2p-terminal-shell-standard" key={tradeKey}>
         <header className="p2p-terminal-head">
           <div className="p2p-terminal-title">
-            <span className="p2p-terminal-eyebrow">P2P OTC Terminal</span>
+            <span className="p2p-terminal-eyebrow">{getTradeContractNamespaceLabel(snapshot)} Terminal</span>
             <h3>{orderSummary.directionLabel}</h3>
             <div className="p2p-terminal-tag-row" aria-label="Offer tags">
-              <span className="p2p-order-id">Offer #{snapshot.tradeId}</span>
+              <span className="p2p-order-id">{formatTradeContractIdLabel(snapshot)}</span>
               <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
               {terminalAccessChip ? <span className="p2p-order-chip">{terminalAccessChip}</span> : null}
               {counterRelation ? (
@@ -6196,13 +6263,12 @@ export default function P2PTradingPage({
       <article className="p2p-terminal-shell p2p-terminal-shell-recurring" key={tradeKey}>
         <header className="p2p-terminal-head">
           <div className="p2p-terminal-title">
-            <span className="p2p-terminal-eyebrow">Recurring OTC Terminal</span>
+            <span className="p2p-terminal-eyebrow">{getTradeContractNamespaceLabel(snapshot)} Terminal</span>
             <h3>{recurring.baseAsset.symbol}/{recurring.quoteAsset.symbol}</h3>
             <div className="p2p-terminal-tag-row" aria-label="Recurring order tags">
-              <span className="p2p-order-id">Order #{recurring.orderId}</span>
+              <span className="p2p-order-id">{formatTradeContractIdLabel(snapshot)}</span>
               <strong className={`p2p-offer-status p2p-offer-status-${snapshot.status}`}>{statusLabel}</strong>
               <span className="p2p-order-chip">{modeLabel}</span>
-              {recurring.mode !== 'public' ? <span className="p2p-order-chip">Shared order</span> : null}
             </div>
           </div>
           <div className="p2p-terminal-toolbar">
@@ -6913,7 +6979,8 @@ export default function P2PTradingPage({
         : trade.status === 'unknown'
           ? 'Unknown'
           : trade.status.charAt(0).toUpperCase() + trade.status.slice(1);
-    const parentExpiryCountdown = trade.status === 'open' ? formatExpiryCountdown(trade.expiresAt) : null;
+    const parentExpiryCountdown =
+      trade.status === 'open' && trade.expiresAt > 0 ? formatExpiryCountdown(trade.expiresAt) : null;
     const parentExpiryParts = formatTradeExpiryParts(trade.expiresAt);
     const parentAccessLabel = getTradeLiquidityLabel(trade.offer, trade.request);
     const ratioLabel =
@@ -7165,10 +7232,14 @@ export default function P2PTradingPage({
     const tradeTitleRelationTags = tradeRelationTags.filter((label) => label === 'Maker');
     const tradeMetaRelationTags = tradeRelationTags.filter((label) => label !== 'Maker');
     const tradeLiquidityLabel = getTradeLiquidityLabel(trade.offer, trade.request);
+    const tradeAccessTag =
+      options.groupId && getTradeAccessFilter(trade) === 'private-link' ? UNLISTED_ORDER_LABEL : null;
     const counterRelation = getTradeCounterRelation(trade);
+    const showExpiryInFixedRow = options.groupId === 'history' || trade.status !== 'open';
     const tradeSecondaryTags = [
+      tradeAccessTag,
       tradeLiquidityLabel,
-      counterRelation?.chipLabel ?? null,
+      showExpiryInFixedRow ? null : counterRelation?.chipLabel ?? null,
       trade.replacesTradeId ? `Edited #${trade.replacesTradeId}` : null,
       trade.replacementTradeId ? `Replaced #${trade.replacementTradeId}` : null
     ].filter((label): label is string => Boolean(label));
@@ -7276,13 +7347,13 @@ export default function P2PTradingPage({
       if (resolveHistoryTermAsset(side)) {
         return '';
       }
-      return canShowParticipantHiddenTerms ? '' : side.asset.kind === 'private-erc20' ? 'Private amount' : 'Public asset';
+      return canShowParticipantHiddenTerms ? '' : '';
     };
     const leftMetaLabel =
       isHiddenLiquidityTerms
         ? formatHiddenTermMetaLabel(leftSide)
         : isDirectPrivateTerms && !directTermsHydrated
-        ? 'Private terms'
+        ? ''
         : leftSide.role === 'offer'
         ? displayTerms.usingRemaining
           ? 'Remaining now'
@@ -7296,7 +7367,7 @@ export default function P2PTradingPage({
       isHiddenLiquidityTerms
         ? formatHiddenTermMetaLabel(rightSide)
         : isDirectPrivateTerms && !directTermsHydrated
-        ? 'Private terms'
+        ? ''
         : rightSide.role === 'offer'
         ? displayTerms.usingRemaining
           ? 'Remaining now'
@@ -7306,14 +7377,26 @@ export default function P2PTradingPage({
         : trade.status === 'open'
           ? takerLabel
           : '';
+    const hasExpiry = trade.expiresAt > 0;
     const expiryParts = formatTradeExpiryParts(trade.expiresAt);
-    const expiryCountdown = trade.status === 'open' ? formatExpiryCountdown(trade.expiresAt) : null;
+    const expiryCountdown = trade.status === 'open' && hasExpiry ? formatExpiryCountdown(trade.expiresAt) : null;
     const expiryChipLabel = expiryCountdown
       ? expiryCountdown.label.replace(/^Expires /, '').replace(/\s+/g, ' ')
       : expiryParts.time
         ? `${expiryParts.date} ${expiryParts.time}`
         : expiryParts.date;
-    const expiryChipTitle = `Created: ${formatMessageTimestamp(trade.createdAt)} · ${expiryParts.title}`;
+    const expiryChipTitle = `Created: ${formatMessageTimestamp(trade.createdAt)} - ${expiryParts.title}`;
+    const renderExpiryChip = () => hasExpiry ? (
+      <span
+        className={`p2p-offer-expiry p2p-expiry-chip ${
+          expiryCountdown ? `trade-card-expiry-${expiryCountdown.urgency}` : ''
+        }`}
+        title={expiryChipTitle}
+      >
+        {expiryChipLabel}
+      </span>
+    ) : null;
+    const showFixedDateRowContent = showExpiryInFixedRow && (hasExpiry || Boolean(counterRelation));
     return (
       <article
         key={tradeKey}
@@ -7322,7 +7405,8 @@ export default function P2PTradingPage({
           'p2p-offer-card',
           `p2p-offer-card-${trade.status}`,
           options.selected ? 'p2p-order-card-selected' : '',
-          isHiddenLiquidityTerms ? 'p2p-offer-card-private-liquidity' : ''
+          isHiddenLiquidityTerms ? 'p2p-offer-card-private-liquidity' : '',
+          showFixedDateRowContent ? 'p2p-order-card-fixed-date' : ''
         ]
           .filter(Boolean)
           .join(' ')}
@@ -7348,36 +7432,47 @@ export default function P2PTradingPage({
             </div>
             <div className="p2p-order-meta-line p2p-order-tag-stack">
               <p className="p2p-order-subline p2p-order-subline-primary">
-                <span className="p2p-offer-kind p2p-order-kind-marker">P2P OTC</span>
-                <span className="p2p-order-id">#{trade.tradeId}</span>
-                {tradeMetaRelationTags.map((label) => (
-                  <span
-                    className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
-                    key={`${tradeKey}:relation:${label}`}
-                    title={label === 'Maker' ? 'Created by you' : undefined}
-                  >
-                    {label}
-                  </span>
-                ))}
-                {tradeSecondaryTags.map((label) => (
-                  <span
-                    className="p2p-order-chip"
-                    key={`${tradeKey}:tag:${label}`}
-                    title={counterRelation?.chipLabel === label ? counterRelation.detail : undefined}
-                  >
-                    {label}
-                  </span>
-                ))}
-                <span
-                  className={`p2p-offer-expiry p2p-expiry-chip ${
-                    expiryCountdown ? `trade-card-expiry-${expiryCountdown.urgency}` : ''
-                  }`}
-                  title={expiryChipTitle}
-                >
-                  {expiryChipLabel}
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-id">
+                  <span className="p2p-order-id">{formatTradeContractIdLabel(trade)}</span>
+                </span>
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-relations">
+                  {tradeMetaRelationTags.map((label) => (
+                    <span
+                      className={label === 'Maker' ? 'p2p-order-chip p2p-order-chip-owner' : 'p2p-order-chip'}
+                      key={`${tradeKey}:relation:${label}`}
+                      title={label === 'Maker' ? 'Created by you' : undefined}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </span>
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-tags">
+                  {tradeSecondaryTags.map((label) => (
+                    <span
+                      className="p2p-order-chip"
+                      key={`${tradeKey}:tag:${label}`}
+                      title={counterRelation?.chipLabel === label ? counterRelation.detail : undefined}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                  {!showExpiryInFixedRow ? renderExpiryChip() : null}
                 </span>
               </p>
             </div>
+            {showFixedDateRowContent ? (
+              <p className="p2p-order-date-row">
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-id">{renderExpiryChip()}</span>
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-relations">
+                  {counterRelation ? (
+                    <span className="p2p-order-chip" title={counterRelation.detail}>
+                      {counterRelation.chipLabel}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="p2p-order-grid-cell p2p-order-grid-cell-tags" />
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -7438,9 +7533,11 @@ export default function P2PTradingPage({
             <strong title={formatVisibleTermTitle(leftSide)}>
               {formatVisibleTermText(leftSide)}
             </strong>
-            <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
-              {leftMetaLabel}
-            </small>
+            {leftMetaLabel ? (
+              <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
+                {leftMetaLabel}
+              </small>
+            ) : null}
           </div>
           <div className="p2p-offer-term-link" aria-hidden="true">
             →
@@ -7450,9 +7547,11 @@ export default function P2PTradingPage({
             <strong title={formatVisibleTermTitle(rightSide)}>
               {formatVisibleTermText(rightSide)}
             </strong>
-            <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
-              {rightMetaLabel}
-            </small>
+            {rightMetaLabel ? (
+              <small className={isHiddenLiquidityTerms || (isDirectPrivateTerms && !directTermsHydrated) ? 'p2p-order-muted-slot' : undefined}>
+                {rightMetaLabel}
+              </small>
+            ) : null}
           </div>
         </div>
         ) : null}
@@ -7765,6 +7864,7 @@ export default function P2PTradingPage({
     hasConnectedAppWallet: Boolean(burnerWalletRef.current),
     hasConnectedBrowserWallet: Boolean(providerRef.current),
     lastCopiedKey,
+    onOpenContracts: openTradingContractsModal,
     onCotiNetwork,
     preferredWalletOption,
     selectedWalletId,
@@ -7838,11 +7938,50 @@ export default function P2PTradingPage({
     [onHeaderWalletControlChange]
   );
   const openEmptyTerminalPanel = useCallback(() => {
+    saveMobileDeskScroll();
     setEmptyTerminalDrawerOpen(true);
     navigateToTradePath('/trades/open');
-  }, [navigateToTradePath]);
+  }, [navigateToTradePath, saveMobileDeskScroll]);
+  const scrollTradingShellToTop = useCallback(() => {
+    const shell = document.querySelector<HTMLElement>('.standalone-trades-shell');
+    if (shell) {
+      shell.scrollTo({ top: 0, behavior: 'smooth' });
+      if (route.view === 'public' || route.view === 'mine') {
+        mobileDeskScrollRef.current[route.view] = 0;
+      }
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (route.view === 'public' || route.view === 'mine') {
+      mobileDeskScrollRef.current[route.view] = 0;
+    }
+  }, [route.view]);
   const navigateDeskView = useCallback(
     (path: '/trades' | '/trades/mine') => {
+      if (isMobileNav) {
+        const targetView = path === '/trades' ? 'public' : 'mine';
+        const returningFromTerminal =
+          emptyTerminalDrawerOpen || route.view === 'trade' || (route.view === 'mine' && Boolean(selectedMyTradeDetailKey));
+        if (
+          route.view === targetView &&
+          !emptyTerminalDrawerOpen &&
+          !(route.view === 'mine' && selectedMyTradeDetailKey)
+        ) {
+          scrollTradingShellToTop();
+          return;
+        }
+        setEmptyTerminalDrawerOpen(false);
+        setSelectedMyTradeDetailKey('');
+        setTerminalFillInputSide('pay');
+        setTerminalPayInput('');
+        setTerminalBuyInput('');
+        setTerminalHistorySheetKey('');
+        navigateToTradePath(path);
+        if (returningFromTerminal) {
+          restoreMobileDeskScroll(targetView);
+        }
+        return;
+      }
       const targetSurface = path === '/trades' ? 'public' : 'mine';
       const targetView = targetSurface;
       const currentSurface =
@@ -7873,7 +8012,15 @@ export default function P2PTradingPage({
       }
       navigateToTradePath(path);
     },
-    [emptyTerminalDrawerOpen, navigateToTradePath, route.view, selectedMyTradeDetailKey]
+    [
+      emptyTerminalDrawerOpen,
+      isMobileNav,
+      navigateToTradePath,
+      restoreMobileDeskScroll,
+      route.view,
+      scrollTradingShellToTop,
+      selectedMyTradeDetailKey
+    ]
   );
   const tradeViewTabs = useMemo(
     () => (
@@ -7978,7 +8125,7 @@ export default function P2PTradingPage({
       count: myOpenTrades.length,
       trades: myOpenTrades,
       emptyTitle: 'No active trades',
-      emptyDescription: 'Create a public, private-link, or direct offer to start tracking it here.',
+      emptyDescription: 'Create a public, unlisted, or direct offer to start tracking it here.',
       emptySearchTitle: 'No active trades match',
       emptySearchMessage: 'No trades you created match that search.'
     },
@@ -8079,6 +8226,7 @@ export default function P2PTradingPage({
     if (!canOpenMyTradeTerminal(trade, groupId)) {
       return;
     }
+    saveMobileDeskScroll('mine');
     setTradeActionError('');
     setTerminalFillInputSide('pay');
     setTerminalPayInput('');
@@ -8086,7 +8234,7 @@ export default function P2PTradingPage({
     setTerminalHistorySheetKey('');
     setEmptyTerminalDrawerOpen(false);
     setSelectedMyTradeDetailKey(getSnapshotKey(trade));
-  }, [canOpenMyTradeTerminal, selectedMyTradeGroup.id]);
+  }, [canOpenMyTradeTerminal, saveMobileDeskScroll, selectedMyTradeGroup.id]);
   const tradePairFilterOptions = useMemo(
     () => getTradePairFilterOptions(route.view === 'mine' ? myTrades : publicOpenTrades),
     [myTrades, publicOpenTrades, route.view]
@@ -8119,7 +8267,7 @@ export default function P2PTradingPage({
           { value: 'one-off', label: 'One-off' },
           { value: 'recurring', label: 'Recurring' },
           { value: 'private-liquidity', label: PRIVATE_LIQUIDITY_LABEL },
-          { value: 'private-link', label: 'Private order links' },
+          { value: 'private-link', label: UNLISTED_ORDER_LABEL },
           { value: 'direct', label: 'Direct links' },
           { value: 'counter', label: 'Counters' },
           { value: 'visible', label: PUBLIC_LIQUIDITY_LABEL }
@@ -8602,6 +8750,18 @@ export default function P2PTradingPage({
     walletAddress
   ]);
   const closeTerminalPanel = () => {
+    if (isMobileNav) {
+      const targetSurface = route.view === 'mine' ? 'mine' : mobileTerminalReturnSurfaceRef.current;
+      setEmptyTerminalDrawerOpen(false);
+      setSelectedMyTradeDetailKey('');
+      setTerminalFillInputSide('pay');
+      setTerminalPayInput('');
+      setTerminalBuyInput('');
+      setTerminalHistorySheetKey('');
+      navigateToTradePath(targetSurface === 'mine' ? '/trades/mine' : '/trades');
+      restoreMobileDeskScroll(targetSurface);
+      return;
+    }
     setEmptyTerminalDrawerOpen(false);
     if (route.view === 'mine') {
       setSelectedMyTradeDetailKey('');
@@ -9582,7 +9742,7 @@ export default function P2PTradingPage({
                   onClick={() => setTradeVisibility('unlisted')}
                   aria-pressed={tradeVisibility === 'unlisted'}
                 >
-                  Private order
+                  Unlisted
                 </button>
                 <button
                   type="button"
@@ -9605,7 +9765,7 @@ export default function P2PTradingPage({
                     ? directTradeRecipientIsValid
                       ? `Sent to ${shortenAddress(directTradeRecipientNormalized)}`
                       : 'Only the recipient can act'
-                    : 'Shared link required to accept'}
+                    : 'Unlisted link required to accept'}
               </strong>
               <p>
                 {editingTrade
@@ -9614,7 +9774,7 @@ export default function P2PTradingPage({
                   ? 'Direct offers skip the public desk and appear under the recipient wallet received offers.'
                     : tradeVisibility === 'public'
                       ? 'Public offers appear on the desk while open. On-chain terms remain public to contract reads.'
-                      : 'Private order links stay off the public desk. On-chain terms remain public to contract reads.'}
+                      : 'Unlisted offers stay off the public desk. On-chain terms remain public to contract reads.'}
               </p>
             </div>
           </div>
@@ -9704,11 +9864,16 @@ export default function P2PTradingPage({
               </p>
             </div>
           ) : null}
-          {route.view === 'trade' && createdTradeLink && createdTradeId === route.tradeId ? (
+          {createdTradeId !== null && route.view === 'trade' && createdTradeLink && createdTradeId === route.tradeId ? (
             <div className="standalone-trade-created">
               <div>
-                <span>Offer #{createdTradeId}</span>
-                <strong>{resolvedRouteAccessSecret ? 'Private order ready' : 'Share ready'}</strong>
+                <span>
+                  {formatTradeContractIdLabel({
+                    tradeId: createdTradeId,
+                    escrowContract: routeEscrowContract ?? tradeFeeEscrowContract
+                  })}
+                </span>
+                <strong>{resolvedRouteAccessSecret ? 'Unlisted link ready' : 'Share ready'}</strong>
               </div>
               <button
                 type="button"
@@ -9754,7 +9919,7 @@ export default function P2PTradingPage({
             : null}
           {route.view === 'trade' && !loadingDetailTrade && tradeAccessBlocked ? (
             renderP2PEmptyState(
-              'Private order link required',
+              'Unlisted link required',
               'Paste the full shared link, not only the trade id.',
               <>
                 <button type="button" onClick={focusTradeLinkInput}>
@@ -9856,9 +10021,6 @@ export default function P2PTradingPage({
           walletConnected={Boolean(walletAddress)}
           onOpenContracts={openTradingContractsModal}
         />
-        <button type="button" className="p2p-mobile-contracts-btn" onClick={openTradingContractsModal}>
-          Contracts
-        </button>
       </div>
       <button
         type="button"
@@ -9868,8 +10030,9 @@ export default function P2PTradingPage({
         aria-expanded={showMobileBalancesSheet}
         onClick={() => setShowMobileBalancesSheet(true)}
       >
-        <WalletCards aria-hidden="true" size={17} strokeWidth={2.2} />
-        {visibleTradingBalances.length > 0 ? <strong>{visibleTradingBalances.length}</strong> : null}
+        <span className="p2p-mobile-balance-fab-icon" aria-hidden="true">
+          <WalletCards size={18} strokeWidth={2.1} />
+        </span>
       </button>
       <TradingBalancesSheet
         balances={visibleTradingBalances}

@@ -4,7 +4,7 @@ import {
   type TradeSnapshot
 } from './appShared';
 import { buildTradeSnapshotKey } from './appShared/core';
-import { getTradeTermsVisibility, hasHydratedDirectTradeTerms } from './p2pTradeView';
+import { formatTradeContractIdLabel, getTradeTermsVisibility, hasHydratedDirectTradeTerms } from './p2pTradeView';
 import { isZeroTradeTakerAddress } from './tradePerspective';
 
 export type TradeTransactionHistoryRole = 'maker' | 'taker' | 'filler';
@@ -115,7 +115,9 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
   const recurring = trade.recurringOrder;
   const sourceKind = resolveTradeSourceKind(trade);
   const localId = recurring?.orderId ?? trade.tradeId;
-  const subjectLabel = recurring ? `Order #${recurring.orderId}` : `Offer #${trade.tradeId}`;
+  const subjectLabel = formatTradeContractIdLabel(trade);
+  const formatRelatedTradeLabel = (tradeId: number): string =>
+    formatTradeContractIdLabel({ tradeId, escrowContract: trade.escrowContract });
   const rows: TradeLifecycleHistoryRow[] = [
     {
       key: `${snapshotKey}:lifecycle:created`,
@@ -138,7 +140,7 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
       sourceKind,
       action: 'edited',
       label: 'Edited',
-      detail: `Replaces Offer #${trade.replacesTradeId}`,
+      detail: `Replaces ${formatRelatedTradeLabel(trade.replacesTradeId)}`,
       actor: trade.maker,
       relatedTradeId: trade.replacesTradeId,
       ...(trade.createdAt ? { timestamp: trade.createdAt } : {})
@@ -153,7 +155,7 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
       sourceKind,
       action: 'replaced',
       label: 'Edited',
-      detail: `Replaced by Offer #${trade.replacementTradeId}`,
+      detail: `Replaced by ${formatRelatedTradeLabel(trade.replacementTradeId)}`,
       actor: trade.maker,
       relatedTradeId: trade.replacementTradeId
     });
@@ -171,7 +173,7 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
       sourceKind,
       action: 'accepted',
       label: 'Counter accepted',
-      detail: `Counter #${linkedCounterId} settled this parent offer`,
+      detail: `${formatRelatedTradeLabel(linkedCounterId)} settled this parent offer`,
       actor: trade.taker,
       relatedTradeId: linkedCounterId,
       ...(trade.acceptedTxHash ? { txHash: trade.acceptedTxHash } : {})
@@ -187,7 +189,7 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
       action: 'accepted',
       label: trade.counterParentTradeId ? 'Counter accepted' : 'Accepted',
       detail: trade.counterParentTradeId
-        ? `${subjectLabel} accepted as counter to #${trade.counterParentTradeId}`
+        ? `${subjectLabel} accepted as counter to ${formatRelatedTradeLabel(trade.counterParentTradeId)}`
         : `${subjectLabel} accepted`,
       actor: trade.taker,
       ...(trade.counterParentTradeId ? { relatedTradeId: trade.counterParentTradeId } : {}),

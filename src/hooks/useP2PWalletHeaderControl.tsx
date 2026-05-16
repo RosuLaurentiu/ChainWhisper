@@ -45,6 +45,7 @@ type UseP2PWalletHeaderControlArgs = {
   hasConnectedAppWallet: boolean;
   hasConnectedBrowserWallet: boolean;
   lastCopiedKey: string | null;
+  onOpenContracts?: () => void;
   onCotiNetwork: boolean;
   preferredWalletOption: InjectedWalletOption | null;
   selectedWalletId: string;
@@ -89,6 +90,7 @@ export default function useP2PWalletHeaderControl({
   hasConnectedAppWallet,
   hasConnectedBrowserWallet,
   lastCopiedKey,
+  onOpenContracts,
   onCotiNetwork,
   preferredWalletOption,
   selectedWalletId,
@@ -543,6 +545,23 @@ export default function useP2PWalletHeaderControl({
               </button>
             </div>
 
+            {compactMobileWallet && onOpenContracts ? (
+              <div className="p2p-wallet-menu-section">
+                <span>Utilities</span>
+                <button
+                  type="button"
+                  className="p2p-wallet-action"
+                  onClick={() => {
+                    setWalletMenuOpen(false);
+                    onOpenContracts();
+                  }}
+                  role="menuitem"
+                >
+                  Contracts
+                </button>
+              </div>
+            ) : null}
+
             <button
               type="button"
               className="p2p-wallet-action danger"
@@ -573,6 +592,7 @@ export default function useP2PWalletHeaderControl({
       handleSwitchTradeAppWallet,
       handleWalletPrimaryAction,
       mobileAppWalletSwitchOptions,
+      onOpenContracts,
       preferredWalletOption,
       selectedWalletId,
       setAppWalletMenuOpen,

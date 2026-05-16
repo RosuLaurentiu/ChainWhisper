@@ -335,7 +335,7 @@ describe('buildTradeLifecycleHistoryRows', () => {
       sourceKind: 'standard',
       action: 'created',
       label: 'Created',
-      detail: 'Offer #4 opened',
+      detail: 'P2P OTC #4 opened',
       actor: maker,
       timestamp: 123
     });
@@ -352,9 +352,9 @@ describe('buildTradeLifecycleHistoryRows', () => {
     );
 
     expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
-      'created:Offer #5 opened',
-      'edited:Replaces Offer #2',
-      'replaced:Replaced by Offer #8'
+      'created:P2P OTC #5 opened',
+      'edited:Replaces P2P OTC #2',
+      'replaced:Replaced by P2P OTC #8'
     ]);
   });
 
@@ -386,12 +386,12 @@ describe('buildTradeLifecycleHistoryRows', () => {
     expect(standardRows[standardRows.length - 1]).toMatchObject({
       action: 'cancelled',
       label: 'Cancelled',
-      detail: 'Offer #1 cancelled'
+      detail: 'P2P OTC #1 cancelled'
     });
     expect(recurringRows[recurringRows.length - 1]).toMatchObject({
       action: 'cancelled',
       label: 'Closed',
-      detail: 'Order #7 closed'
+      detail: 'Recurring OTC #7 closed'
     });
   });
 
@@ -406,8 +406,8 @@ describe('buildTradeLifecycleHistoryRows', () => {
     );
 
     expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
-      'created:Offer #1 opened',
-      'accepted:Counter #5 settled this parent offer'
+      'created:P2P OTC #1 opened',
+      'accepted:P2P OTC #5 settled this parent offer'
     ]);
     expect(rows[1]).toMatchObject({
       label: 'Counter accepted',
@@ -427,8 +427,8 @@ describe('buildTradeLifecycleHistoryRows', () => {
     );
 
     expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
-      'created:Offer #4 opened',
-      'accepted:Offer #4 accepted as counter to #1'
+      'created:P2P OTC #4 opened',
+      'accepted:P2P OTC #4 accepted as counter to P2P OTC #1'
     ]);
     expect(rows[1]).toMatchObject({
       label: 'Counter accepted',

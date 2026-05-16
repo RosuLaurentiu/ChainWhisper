@@ -26,11 +26,10 @@
 }
 
 .trade-card-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 12px;
-  flex-wrap: wrap;
 }
 
 .trade-card-title {
@@ -58,8 +57,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  flex: 1 1 auto;
-  min-width: min(100%, 12rem);
+  min-width: 0;
   flex-wrap: wrap;
 }
 
@@ -104,10 +102,11 @@
 }
 
 .trade-card-header-tags {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  min-height: 20px;
 }
 
 .trade-card-expiry-low { color: rgba(34, 197, 94, 0.9); }
