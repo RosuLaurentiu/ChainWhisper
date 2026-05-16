@@ -301,7 +301,6 @@ export default function TradeOfferCard({
   const canAcceptOpenTakerTrade = isOpen && isOpenTakerTrade && !isMaker;
   const hasWalletForOpenAccept = walletKey.length > 0;
   const showCounterUnavailable = Boolean(counterUnavailableReason && !showCounterAction && (isTaker || canAcceptOpenTakerTrade));
-  const showExpiryAt = isOpen && expiresAt > 0;
   const baseOffer = snapshot?.offer ?? offer.offer;
   const baseRequest = snapshot?.request ?? offer.request;
   const useRemainingTerms = Boolean(
@@ -319,6 +318,7 @@ export default function TradeOfferCard({
     : baseRequest;
   const createdAt = snapshot?.createdAt ?? offer.createdAt;
   const expiresAt = snapshot?.expiresAt ?? offer.expiresAt;
+  const showExpiryAt = isOpen && expiresAt > 0;
   const expiryCountdown = showExpiryAt ? formatExpiryCountdown(expiresAt) : null;
   const statusDisplayLabel = buildTradeStatusDisplayLabel(statusLabel, offer, currentWalletAddress, latestResponse);
   const offerVerifyUrl = buildTokenExplorerUrl(resolvedOffer?.tokenAddress);
