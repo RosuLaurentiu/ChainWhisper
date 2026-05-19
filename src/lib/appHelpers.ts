@@ -25,6 +25,13 @@ export type MessageReferenceCandidate = {
 
 export type TradeTokenPresetKey = string;
 
+export const PRIVATE_COTI_TOKEN_ADDRESS = '0xD2F2692B83C3ecDF2EAa0f7c2632BBd46Ae1cC91';
+export const PRIVATE_WETH_TOKEN_ADDRESS = '0x4727FE8D8450CEBcB142331FAc034Cd8d311f0E5';
+export const PRIVATE_WBTC_TOKEN_ADDRESS = '0x65449561257ba5756631Aa0d34f07f6457a319be';
+export const PRIVATE_USDT_TOKEN_ADDRESS = '0x42107250C3D385ddfABE69ab6de163702040FeB0';
+export const PRIVATE_USDC_E_TOKEN_ADDRESS = '0x63C9a1D05471fc8d47C83968725Dcfdcb5410392';
+export const PRIVATE_WADA_TOKEN_ADDRESS = '0x3a8b49aAC1dAD86aa45a75231FbeC5bEb810e416';
+export const PRIVATE_GCOTI_TOKEN_ADDRESS = '0x394b3c4328160f000763Ca391D07F902926EDaAc';
 export const HOTDOG_PRIVATE_TOKEN_ADDRESS = '0x5085Ea0611A9C49316972C57390ca25C9CF236AB';
 
 export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
@@ -41,6 +48,13 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   { address: '0xe757Ca19d2c237AA52eBb1d2E8E4368eeA3eb331', kind: 'erc20', symbol: 'wADA' },
   { address: '0xFc075Bd3e22d337C19b7Ca25635282ad8e24941a', kind: 'erc20', symbol: 'NIGHT' },
   { address: '0x639aCc80569c5FC83c6FBf2319A6Cc38bBfe26d1', kind: 'erc20', symbol: 'WETH' },
+  { address: PRIVATE_COTI_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.COTI' },
+  { address: PRIVATE_WETH_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.WETH' },
+  { address: PRIVATE_WBTC_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.WBTC' },
+  { address: PRIVATE_USDT_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.USDT' },
+  { address: PRIVATE_USDC_E_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.USDC.e' },
+  { address: PRIVATE_WADA_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.wADA' },
+  { address: PRIVATE_GCOTI_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.gCOTI' },
   { address: '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a', kind: 'private-erc20', symbol: 'pWISP' },
   { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20', symbol: 'pPENGO' },
   { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'HOTDOG' },

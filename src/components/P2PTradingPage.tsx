@@ -9865,8 +9865,8 @@ export default function P2PTradingPage({
           {!emptyTerminalOpen ? (
             <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
               <p>
-                <strong>P2P safety check:</strong> Verify maker, token contracts, amounts, and price before signing.
-                Escrow settles approved terms; it does not verify counterparty reputation.
+                <strong>P2P safety check:</strong> Verify maker, token contracts, amount, and price. Escrow settles
+                approved terms.
               </p>
             </div>
           ) : null}

@@ -5323,7 +5323,7 @@ summary:focus:not(:focus-visible),
 
   .app-shell-trades .p2p-mobile-balance-fab {
     right: 10px;
-    bottom: calc(46px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(52px + env(safe-area-inset-bottom, 0px));
     width: 34px;
     min-width: 34px;
     height: 34px;

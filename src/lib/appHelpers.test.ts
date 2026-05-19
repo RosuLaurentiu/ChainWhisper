@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  VERIFIED_ECOSYSTEM_TOKENS,
   buildMessageReferenceKeys,
   getOnChainFailureMessage,
   getVerifiedEcosystemToken,
@@ -91,6 +92,33 @@ describe('memo plaintext decoding', () => {
 });
 
 describe('verified ecosystem tokens', () => {
+  it('includes the official COTI Privacy Portal private tokens', () => {
+    const officialPrivateTokens = [
+      ['0xD2F2692B83C3ecDF2EAa0f7c2632BBd46Ae1cC91', 'p.COTI'],
+      ['0x4727FE8D8450CEBcB142331FAc034Cd8d311f0E5', 'p.WETH'],
+      ['0x65449561257ba5756631Aa0d34f07f6457a319be', 'p.WBTC'],
+      ['0x42107250C3D385ddfABE69ab6de163702040FeB0', 'p.USDT'],
+      ['0x63C9a1D05471fc8d47C83968725Dcfdcb5410392', 'p.USDC.e'],
+      ['0x3a8b49aAC1dAD86aa45a75231FbeC5bEb810e416', 'p.wADA'],
+      ['0x394b3c4328160f000763Ca391D07F902926EDaAc', 'p.gCOTI']
+    ] as const;
+
+    for (const [address, symbol] of officialPrivateTokens) {
+      expect(isVerifiedEcosystemToken(address)).toBe(true);
+      expect(getVerifiedEcosystemToken(address.toUpperCase())).toMatchObject({
+        address,
+        kind: 'private-erc20',
+        symbol
+      });
+    }
+  });
+
+  it('does not contain duplicate verified token addresses', () => {
+    const normalizedAddresses = VERIFIED_ECOSYSTEM_TOKENS.map((token) => token.address.toLowerCase());
+
+    expect(new Set(normalizedAddresses).size).toBe(normalizedAddresses.length);
+  });
+
   it('includes the active pWISP private token', () => {
     const address = '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a';
 
