@@ -7,7 +7,10 @@ import {
 } from './appShared';
 import {
   VERIFIED_ECOSYSTEM_TOKENS,
+  buildPrivateTradeTokenSymbolOrder,
+  buildPublicTradeTokenSymbolOrder,
   buildTradeCustomTokenInfoKey,
+  sortTradeTokenOptionsBySymbol,
   type PrivateTokenBalanceState,
   type TradeCustomTokenInfo
 } from './appHelpers';
@@ -80,6 +83,27 @@ const getCurrentWalletTokenInfo = (
 
   const info = customTradeTokenInfoByAddress[key];
   return info?.walletKey === walletKey ? info : null;
+};
+
+const orderVisibleTradingBalanceItems = (
+  items: TradingBalanceDisplayItem[],
+  rewardTokenSymbol: string,
+  privateRewardTokenSymbol: string
+): TradingBalanceDisplayItem[] => {
+  const nativeItems = items.filter((item) => item.kindLabel === 'Native');
+  const publicItems = sortTradeTokenOptionsBySymbol(
+    items.filter((item) => item.kindLabel === 'Public'),
+    buildPublicTradeTokenSymbolOrder(rewardTokenSymbol)
+  );
+  const privateItems = sortTradeTokenOptionsBySymbol(
+    items.filter((item) => item.kindLabel === 'Private'),
+    buildPrivateTradeTokenSymbolOrder(privateRewardTokenSymbol)
+  );
+
+  return [...nativeItems, ...publicItems, ...privateItems].map((item, index) => ({
+    ...item,
+    sortGroup: index
+  }));
 };
 
 export const buildVisibleTradingBalanceItems = ({
@@ -173,5 +197,5 @@ export const buildVisibleTradingBalanceItems = ({
     });
   }
 
-  return items.sort((left, right) => left.sortGroup - right.sortGroup || left.symbol.localeCompare(right.symbol));
+  return orderVisibleTradingBalanceItems(items, rewardTokenSymbol, privateRewardTokenSymbol);
 };

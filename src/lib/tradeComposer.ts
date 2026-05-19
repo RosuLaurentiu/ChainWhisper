@@ -17,9 +17,12 @@ import {
 } from './appShared';
 import {
   VERIFIED_ECOSYSTEM_TOKENS,
+  buildPrivateTradeTokenSymbolOrder,
+  buildPublicTradeTokenSymbolOrder,
   buildTradeCustomTokenInfoKey,
   getVerifiedEcosystemToken,
   isCustomTradeTokenSelection,
+  sortTradeTokenOptionsBySymbol,
   type ResolvedTradeToken,
   type TradeComposerFieldErrors,
   type TradeCustomTokenInfo,
@@ -228,18 +231,6 @@ const resolvePendingTradeTokenSymbol = ({
     : undefined;
 };
 
-const sortTradeTokenOptionsBySymbol = <T extends { symbol?: string }>(options: T[], symbolOrder: string[]): T[] => {
-  const orderBySymbol = new Map(symbolOrder.map((symbol, index) => [symbol.toLowerCase(), index]));
-  return options
-    .map((option, index) => ({
-      option,
-      index,
-      rank: orderBySymbol.get(option.symbol?.toLowerCase() ?? '') ?? Number.MAX_SAFE_INTEGER
-    }))
-    .sort((left, right) => left.rank - right.rank || left.index - right.index)
-    .map(({ option }) => option);
-};
-
 export const deriveTradeComposerModel = ({
   activeContact,
   walletAddress,
@@ -345,22 +336,11 @@ export const deriveTradeComposerModel = ({
   };
   const publicTradeTokenOptions = sortTradeTokenOptionsBySymbol(
     [...publicVerifiedTokenOptions, rewardTokenOption],
-    ['gCOTI', 'USDC.e', rewardTokenSymbol, 'WETH', 'WBTC', 'USDT', 'wADA', 'Pengo', 'WBBT', 'NIGHT']
+    buildPublicTradeTokenSymbolOrder(rewardTokenSymbol)
   );
   const privateTradeTokenOptions = sortTradeTokenOptionsBySymbol(
     [...privateVerifiedTokenOptions, privateRewardTokenOption],
-    [
-      'p.COTI',
-      'p.gCOTI',
-      'p.USDC.e',
-      privateRewardTokenSymbol,
-      'p.WETH',
-      'p.WBTC',
-      'p.USDT',
-      'p.wADA',
-      'pPENGO',
-      'HOTDOG'
-    ]
+    buildPrivateTradeTokenSymbolOrder(privateRewardTokenSymbol)
   );
   const tradeTokenOptions = [nativeCotiTokenOption, ...publicTradeTokenOptions, ...privateTradeTokenOptions];
 

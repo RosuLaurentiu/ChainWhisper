@@ -62,6 +62,50 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'HOTDOG' },
 ];
 
+export const PUBLIC_TRADE_TOKEN_SYMBOL_ORDER = [
+  'gCOTI',
+  'USDC.e',
+  'WISP',
+  'WETH',
+  'WBTC',
+  'USDT',
+  'wADA',
+  'Pengo',
+  'WBBT',
+  'NIGHT'
+] as const;
+
+export const PRIVATE_TRADE_TOKEN_SYMBOL_ORDER = [
+  'p.COTI',
+  'p.gCOTI',
+  'p.USDC.e',
+  'pWISP',
+  'p.WETH',
+  'p.WBTC',
+  'p.USDT',
+  'p.wADA',
+  'pPENGO',
+  'HOTDOG'
+] as const;
+
+export const buildPublicTradeTokenSymbolOrder = (rewardTokenSymbol: string): string[] =>
+  PUBLIC_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'WISP' ? rewardTokenSymbol : symbol));
+
+export const buildPrivateTradeTokenSymbolOrder = (privateRewardTokenSymbol: string): string[] =>
+  PRIVATE_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'pWISP' ? privateRewardTokenSymbol : symbol));
+
+export const sortTradeTokenOptionsBySymbol = <T extends { symbol?: string }>(options: T[], symbolOrder: string[]): T[] => {
+  const orderBySymbol = new Map(symbolOrder.map((symbol, index) => [symbol.toLowerCase(), index]));
+  return options
+    .map((option, index) => ({
+      option,
+      index,
+      rank: orderBySymbol.get(option.symbol?.toLowerCase() ?? '') ?? Number.MAX_SAFE_INTEGER
+    }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(({ option }) => option);
+};
+
 const VERIFIED_ECOSYSTEM_TOKEN_ADDRESS_SET = new Set(
   VERIFIED_ECOSYSTEM_TOKENS.map((t) => t.address.toLowerCase())
 );

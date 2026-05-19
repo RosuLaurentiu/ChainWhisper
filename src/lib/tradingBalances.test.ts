@@ -28,6 +28,14 @@ const buildCustomTokenInfo = (
   ...overrides
 });
 
+const verifiedTokenBySymbol = (symbol: string) => {
+  const token = VERIFIED_ECOSYSTEM_TOKENS.find((candidate) => candidate.symbol === symbol);
+  if (!token) {
+    throw new Error(`Missing verified token fixture: ${symbol}`);
+  }
+  return token;
+};
+
 describe('trading balance display model', () => {
   it('shows only loaded non-zero allowed balances', () => {
     const publicToken = VERIFIED_ECOSYSTEM_TOKENS.find((token) => token.symbol === 'gCOTI');
@@ -61,6 +69,43 @@ describe('trading balance display model', () => {
     expect(items.map((item) => item.symbol)).toEqual(['WISP', 'HOTDOG']);
     expect(items.find((item) => item.address === REWARD_TOKEN_ADDRESS)?.amountLabel).toBe('25');
     expect(items.find((item) => item.address === PRIVATE_REWARD_TOKEN_ADDRESS)).toBeUndefined();
+  });
+
+  it('orders loaded balances like the create token list', () => {
+    const gcotiToken = verifiedTokenBySymbol('gCOTI');
+    const usdcToken = verifiedTokenBySymbol('USDC.e');
+    const privateGcotiToken = verifiedTokenBySymbol('p.gCOTI');
+    const hotdogToken = verifiedTokenBySymbol('HOTDOG');
+
+    const items = buildVisibleTradingBalanceItems({
+      customTradeTokenInfoByAddress: {
+        [buildTradeCustomTokenInfoKey(gcotiToken.kind, gcotiToken.address)]: buildCustomTokenInfo(gcotiToken, {
+          balanceWei: tokenUnits(35n)
+        }),
+        [buildTradeCustomTokenInfoKey(usdcToken.kind, usdcToken.address)]: buildCustomTokenInfo(usdcToken, {
+          balanceWei: tokenUnits(12n)
+        }),
+        [buildTradeCustomTokenInfoKey(privateGcotiToken.kind, privateGcotiToken.address)]: buildCustomTokenInfo(
+          privateGcotiToken,
+          {
+            privateBalanceState: { status: 'ready', balanceWei: tokenUnits(7n) }
+          }
+        ),
+        [buildTradeCustomTokenInfoKey(hotdogToken.kind, hotdogToken.address)]: buildCustomTokenInfo(hotdogToken, {
+          privateBalanceState: { status: 'ready', balanceWei: tokenUnits(170n) }
+        })
+      },
+      nativeBalanceWei: 334n * 10n ** 18n,
+      privateRewardTokenBalanceState: { status: 'ready', balanceWei: tokenUnits(50n) },
+      privateRewardTokenDecimals: 6,
+      privateRewardTokenSymbol: 'pWISP',
+      rewardTokenBalanceWei: tokenUnits(2_371n),
+      rewardTokenDecimals: 6,
+      rewardTokenSymbol: 'WISP',
+      walletKey
+    });
+
+    expect(items.map((item) => item.symbol)).toEqual(['COTI', 'gCOTI', 'USDC.e', 'WISP', 'p.gCOTI', 'pWISP', 'HOTDOG']);
   });
 
   it('formats balances with two decimals and groups large whole numbers', () => {
