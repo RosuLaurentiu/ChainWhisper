@@ -17,7 +17,7 @@ const scrollTradeShellToBottom = async (page: Page) => {
 
 const expectAboveTradeTabs = async (page: Page, selector: string) => {
   const targetBox = await page.locator(selector).boundingBox();
-  const tabsBox = await page.getByRole('navigation', { name: 'P2P trade views' }).boundingBox();
+  const tabsBox = await page.getByRole('navigation', { name: 'OTC Desk views' }).boundingBox();
   expect(targetBox).not.toBeNull();
   expect(tabsBox).not.toBeNull();
   expect(targetBox!.y + targetBox!.height).toBeLessThanOrEqual(tabsBox!.y - 4);
@@ -113,7 +113,7 @@ test.describe('mobile layout polish', () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test('keeps P2P tabs and wallet controls usable on mobile', async ({ page }) => {
+  test('keeps OTC Desk tabs and wallet controls usable on mobile', async ({ page }) => {
     await page.goto('/trades');
 
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
@@ -131,7 +131,7 @@ test.describe('mobile layout polish', () => {
     await page.getByRole('button', { name: 'Hide app menu' }).click();
     await expect(appMenu).toBeHidden();
 
-    const tradeTabs = page.getByRole('navigation', { name: 'P2P trade views' });
+    const tradeTabs = page.getByRole('navigation', { name: 'OTC Desk views' });
     await expect(tradeTabs).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Desk' })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Create' })).toBeVisible();
@@ -198,7 +198,7 @@ test.describe('mobile layout polish', () => {
     });
     test.skip(savedTop < 24, 'Desk fixture is not tall enough to verify scroll restoration.');
 
-    const tradeTabs = page.getByRole('navigation', { name: 'P2P trade views' });
+    const tradeTabs = page.getByRole('navigation', { name: 'OTC Desk views' });
     await tradeTabs.getByRole('button', { name: 'Terminal', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Open terminal' })).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
@@ -331,7 +331,7 @@ test.describe('mobile layout polish', () => {
     await page.goto('/trades');
 
     await page.locator('.top-header').getByRole('button', { name: /^Connect MetaMask$/i }).click();
-    await page.getByRole('navigation', { name: 'P2P trade views' }).getByRole('button', { name: 'My Trades' }).click();
+    await page.getByRole('navigation', { name: 'OTC Desk views' }).getByRole('button', { name: 'My Trades' }).click();
 
     const myTradesSection = page.locator('.p2p-my-trades-section');
     await expect(myTradesSection).toBeVisible();
@@ -390,7 +390,7 @@ test.describe('mobile layout polish', () => {
     await expect(terminal.locator('.p2p-trade-window-warning')).toHaveCount(0);
     await expect(page.locator('.p2p-market-overview')).toBeHidden();
     await expect(page.locator('.p2p-public-trades-section')).toBeHidden();
-    await expect(page.getByRole('navigation', { name: 'P2P trade views' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'OTC Desk views' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -982,7 +982,7 @@ test.describe('trading responsive layout', () => {
 
     for (const route of routes) {
       await page.goto(route);
-      const tabs = page.getByRole('navigation', { name: 'P2P trade views' });
+      const tabs = page.getByRole('navigation', { name: 'OTC Desk views' });
       await expect(tabs).toBeVisible();
       const tabBounds = await tabs.boundingBox();
       expect(tabBounds).not.toBeNull();

@@ -27,7 +27,7 @@ describe('app wallet policy', () => {
     });
   });
 
-  it('keeps Trades browser-wallet focused', () => {
+  it('keeps OTC Desk browser-wallet focused', () => {
     expect(getAppWalletPolicy('trades')).toMatchObject({
       preferredWallet: 'browser',
       walletControlKind: 'trades'

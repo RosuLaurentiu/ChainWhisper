@@ -662,7 +662,7 @@ export default function TradeComposerPanel({
   );
 
   return (
-    <div className="trade-compose-panel" role="group" aria-label="P2P trade offer">
+    <div className="trade-compose-panel" role="group" aria-label="OTC trade offer">
       <div className="trade-compose-header">
         <strong>{title}</strong>
         <div className="trade-compose-header-meta">
@@ -1006,7 +1006,7 @@ export default function TradeComposerPanel({
       </div>
       <div className="trade-compose-warning" role="alert">
         <p>
-          <strong>P2P safety check:</strong> Verify token contracts, amounts, price, and expiry before signing. Escrow
+          <strong>OTC safety check:</strong> Verify token contracts, amounts, price, and expiry before signing. Escrow
           settles approved terms; it does not verify counterparty reputation.
         </p>
       </div>

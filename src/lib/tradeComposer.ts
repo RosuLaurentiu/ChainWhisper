@@ -272,7 +272,7 @@ export const deriveTradeComposerModel = ({
   tradeRequiredFeeWei,
   counterpartyRequired = true,
   missingCounterpartyMessage = 'Select a contact first.',
-  selfTradeMessage = 'P2P trades are only available in private chats with another wallet.'
+  selfTradeMessage = 'OTC Desk offers are only available in private chats with another wallet.'
 }: DeriveTradeComposerModelParams): TradeComposerModel => {
   const resolvedTradeFeeModeSelection: TradeFeeModeSelection =
     tradeFeeModeSelection === 'token' ? 'coti' : tradeFeeModeSelection;

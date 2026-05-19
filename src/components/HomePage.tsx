@@ -12,7 +12,7 @@ type HomePageProps = {
 
 const CORE_APPS = [
   { label: 'Chat', description: 'Private direct and group messaging' },
-  { label: 'Trades', description: 'P2P escrow orders and private orders' },
+  { label: 'OTC Desk', description: 'Peer offers, escrow settlement, and private orders' },
   { label: 'WISP Portal', description: 'WISP and pWISP privacy bridge' },
   { label: 'Treasury', description: 'Read-only COTI and gCOTI analytics' }
 ] as const;
@@ -35,7 +35,7 @@ export default function HomePage({
           <p className="landing-eyebrow">COTI Mainnet privacy hub</p>
           <h1 className="landing-title">ChainWhisper</h1>
           <p className="landing-description">
-            Private messaging, escrow trading, the WISP Portal, and treasury data in one COTI-native workspace.
+            Private messaging, the OTC Desk, the WISP Portal, and treasury data in one COTI-native workspace.
           </p>
 
           <div className="landing-hero-actions">
@@ -55,7 +55,7 @@ export default function HomePage({
               onFocus={onPrefetchTrades}
               onPointerEnter={onPrefetchTrades}
             >
-              Open Trades
+              Open OTC Desk
             </button>
           </div>
 
@@ -106,8 +106,8 @@ export default function HomePage({
 
           <article className="landing-module-card">
             <span className="landing-module-kicker">Trading</span>
-            <h3>P2P Trades</h3>
-            <p>Browse public orders, create escrow trades, share direct links, and manage private orders.</p>
+            <h3>OTC Desk</h3>
+            <p>Browse peer offers, create escrow orders, share direct links, and manage private orders.</p>
             <button
               type="button"
               className="landing-module-cta"
@@ -115,7 +115,7 @@ export default function HomePage({
               onFocus={onPrefetchTrades}
               onPointerEnter={onPrefetchTrades}
             >
-              Open Trades
+              Open OTC Desk
             </button>
           </article>
 

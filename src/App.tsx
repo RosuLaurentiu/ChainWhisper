@@ -1812,7 +1812,7 @@ export default function App() {
         tradeRequiredFeeWei,
         counterpartyRequired: true,
         missingCounterpartyMessage: 'Select a contact first.',
-        selfTradeMessage: 'P2P trades are only available in private chats with another wallet.'
+        selfTradeMessage: 'OTC Desk offers are only available in private chats with another wallet.'
       }),
     [
       activeContact,
@@ -5637,7 +5637,7 @@ export default function App() {
           : activePage === 'swap'
             ? 'WISP Portal | ChainWhisper'
           : activePage === 'trades'
-            ? 'P2P Escrow | ChainWhisper'
+            ? 'OTC Desk | ChainWhisper'
             : 'Treasury Data | ChainWhisper';
   }, [activePage]);
 
@@ -7566,7 +7566,7 @@ export default function App() {
   const appHeaderNavigationControl = useMemo(() => {
     const appNavItems: Array<{ page: AppPage; label: string; onPrefetch?: () => void }> = [
       { page: 'chat', label: 'Chat', onPrefetch: preloadChatPage },
-      { page: 'trades', label: 'Trades', onPrefetch: preloadTradesPage },
+      { page: 'trades', label: 'OTC Desk', onPrefetch: preloadTradesPage },
       { page: 'swap', label: 'WISP Portal', onPrefetch: preloadSwapPage },
       { page: 'treasury', label: 'Treasury', onPrefetch: preloadTreasuryPage }
     ];
@@ -7982,13 +7982,13 @@ export default function App() {
           brandActions={headerHomeAction}
           appNavigationControl={appHeaderNavigationControl}
           walletControl={activeTradeWalletControl}
-          subtitle="P2P Trades"
+          subtitle="OTC Desk"
           showSoundToggle
         />
         <AppErrorBoundary>
           <Suspense
             fallback={
-              <RouteLoadingFallback shellClassName="standalone-trades-shell" label="Loading trades" />
+              <RouteLoadingFallback shellClassName="standalone-trades-shell" label="Loading OTC Desk" />
             }
           >
             <P2PTradingPage

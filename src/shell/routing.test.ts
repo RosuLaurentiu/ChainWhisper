@@ -41,7 +41,18 @@ describe('app routing', () => {
     expect(getPathForAppPage('chat')).toBe('/chat');
     expect(getPathForAppPage('swap')).toBe('/portal');
     expect(getPathForAppPage('treasury')).toBe('/treasury');
-    expect(getPathForAppPage('trades')).toBe('/trades');
+    expect(getPathForAppPage('trades')).toBe('/otcdesk');
+  });
+
+  it('keeps old trade links while using OTC Desk as the friendly route', () => {
+    stubLocation('/otcdesk');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+
+    stubLocation('/trades');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+
+    stubLocation('/trades/l/abc');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
   });
 
   it('resolves stable trade shell URLs through the redirected path', () => {

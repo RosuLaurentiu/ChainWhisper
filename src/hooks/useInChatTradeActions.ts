@@ -346,7 +346,7 @@ export default function useInChatTradeActions({
       await runWalletTransactionFlow(async () => {
       const snapshot = await resolveTradeSnapshotForOffer(offer);
       if (snapshot.hiddenLiquidity) {
-        throw new Error('Open the shared P2P trade link to fill private orders.');
+        throw new Error('Open the shared OTC trade link to fill private orders.');
       }
       const remainingRequestAmount = (() => {
         try {

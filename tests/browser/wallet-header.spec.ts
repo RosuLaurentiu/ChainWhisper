@@ -4,12 +4,12 @@ const walletPanel = '.wallet-header-panel';
 
 test.describe('route wallet header policy', () => {
   test('shows the shared app menu on every top-level page', async ({ page }) => {
-    for (const route of ['/', '/chat', '/trades', '/portal', '/shield', '/treasury']) {
+    for (const route of ['/', '/chat', '/otcdesk', '/trades', '/portal', '/shield', '/treasury']) {
       await page.goto(route);
       const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' }).first();
       await expect(appMenu).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Chat' })).toBeVisible();
-      await expect(appMenu.getByRole('button', { name: 'Trades' })).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'OTC Desk' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'WISP Portal' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Treasury' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Home' })).toHaveCount(0);
@@ -31,7 +31,7 @@ test.describe('route wallet header policy', () => {
   });
 
   test('shows notification sound controls on app pages except Home', async ({ page }) => {
-    for (const route of ['/chat', '/trades', '/portal', '/shield', '/treasury']) {
+    for (const route of ['/chat', '/otcdesk', '/trades', '/portal', '/shield', '/treasury']) {
       await page.goto(route);
       await expect(page.locator('.sound-toggle-btn')).toBeVisible();
     }
@@ -58,7 +58,7 @@ test.describe('route wallet header policy', () => {
     await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
   });
 
-  test('shows Trades wallet controls without duplicate preferred browser action', async ({ page }) => {
+  test('shows OTC Desk wallet controls without duplicate preferred browser action', async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem(
         'chainwhisper-wallet-preference:v1',
@@ -66,7 +66,7 @@ test.describe('route wallet header policy', () => {
       );
     });
 
-    await page.goto('/trades');
+    await page.goto('/otcdesk');
 
     const header = page.locator('.top-header');
     await expect(header.locator(walletPanel)).toBeVisible();
@@ -83,9 +83,9 @@ test.describe('route wallet header policy', () => {
     }
   });
 
-  test('replaces Trades wallet header state when navigating back to Chat', async ({ page }) => {
-    await page.goto('/trades');
-    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^P2P Trades$/ })).toBeVisible();
+  test('replaces OTC Desk wallet header state when navigating back to Chat', async ({ page }) => {
+    await page.goto('/otcdesk');
+    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^OTC Desk$/ })).toBeVisible();
     await expect(page.locator(walletPanel)).toBeVisible();
 
     const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' }).first();
@@ -94,6 +94,6 @@ test.describe('route wallet header policy', () => {
     await expect(page).toHaveURL(/\/chat$/);
     await expect(page.locator('.top-header-brand-subtitle', { hasText: /^Chat$/ })).toBeVisible();
     await expect(page.locator(walletPanel)).toBeVisible();
-    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^P2P Trades$/ })).toHaveCount(0);
+    await expect(page.locator('.top-header-brand-subtitle', { hasText: /^OTC Desk$/ })).toHaveCount(0);
   });
 });

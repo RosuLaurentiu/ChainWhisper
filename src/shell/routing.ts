@@ -14,7 +14,7 @@ const CANONICAL_APP_PATHS: Record<AppPage, string> = {
   chat: '/chat',
   swap: '/portal',
   treasury: '/treasury',
-  trades: '/trades'
+  trades: '/otcdesk'
 };
 
 export const normalizeAppPathname = (pathname: string): string => {
@@ -76,7 +76,11 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     return { page: 'swap' };
   }
 
-  if (normalizedPathname === '/trades' || normalizedPathname.startsWith('/trades/')) {
+  if (
+    normalizedPathname === '/otcdesk' ||
+    normalizedPathname === '/trades' ||
+    normalizedPathname.startsWith('/trades/')
+  ) {
     return { page: 'trades' };
   }
 
@@ -96,6 +100,8 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     normalizedHash === 'whisper-shield' ||
     normalizedHash === 'treasury' ||
     normalizedHash === 'treasury-data' ||
+    normalizedHash === 'otcdesk' ||
+    normalizedHash === 'otc' ||
     normalizedHash === 'trades'
   ) {
     if (normalizedHash === 'messages' || normalizedHash === 'messenger') {
@@ -106,6 +112,9 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     }
     if (normalizedHash === 'treasury-data') {
       return { page: 'treasury' };
+    }
+    if (normalizedHash === 'otcdesk' || normalizedHash === 'otc') {
+      return { page: 'trades' };
     }
     return { page: normalizedHash as AppPage };
   }

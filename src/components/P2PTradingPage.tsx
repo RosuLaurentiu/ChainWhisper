@@ -8028,7 +8028,7 @@ export default function P2PTradingPage({
   );
   const tradeViewTabs = useMemo(
     () => (
-      <nav className="p2p-trade-tabs" aria-label="P2P trade views">
+      <nav className="p2p-trade-tabs" aria-label="OTC Desk views">
         <button
           type="button"
           className={route.view === 'public' ? 'active' : undefined}
@@ -8290,7 +8290,7 @@ export default function P2PTradingPage({
         copy: 'Offers and history.'
       }
       : {
-          title: 'P2P OTC Desk',
+          title: 'OTC Desk',
           copy: 'Wallet-to-wallet escrow offers.'
         };
   const createDeskIdentity = counterParentTrade
@@ -9012,7 +9012,7 @@ export default function P2PTradingPage({
             </div>
 
             {route.view === 'public' || route.view === 'trade' || route.view === 'mine' ? (
-              <div className="p2p-stats-strip" aria-label="P2P trading statistics">
+              <div className="p2p-stats-strip" aria-label="OTC Desk statistics">
                 {route.view === 'public' || route.view === 'trade' ? (
                   <div>
                     <span>Active offers</span>
@@ -9698,7 +9698,7 @@ export default function P2PTradingPage({
                 </div>
                 <div className="trade-compose-warning">
                   <p>
-                    <strong>P2P safety check:</strong> Verify token contracts, buy/sell prices, and funded liquidity
+                    <strong>OTC safety check:</strong> Verify token contracts, buy/sell prices, and funded liquidity
                     before signing. Buy and sell prices are independent.
                   </p>
                 </div>
@@ -9865,7 +9865,7 @@ export default function P2PTradingPage({
           {!emptyTerminalOpen ? (
             <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
               <p>
-                <strong>P2P safety check:</strong> Verify maker, token contracts, amount, and price. Escrow settles
+                <strong>OTC safety check:</strong> Verify maker, token contracts, amount, and price. Escrow settles
                 approved terms.
               </p>
             </div>

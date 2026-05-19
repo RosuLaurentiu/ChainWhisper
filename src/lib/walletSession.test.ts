@@ -269,7 +269,7 @@ describe('wallet header labels', () => {
 });
 
 describe('resolveWalletConnectionPrimaryAction', () => {
-  it('keeps Trades browser-first while exposing app wallet as a separate secondary path', () => {
+  it('keeps OTC Desk browser-first while exposing app wallet as a separate secondary path', () => {
     expect(
       resolveWalletConnectionPrimaryAction({
         hasSavedAppWallet: true,
@@ -556,7 +556,7 @@ describe('resolveWalletHeaderViewModel', () => {
     });
   });
 
-  it('keeps Trades browser-first and Chat app-first policies explicit in the model', () => {
+  it('keeps OTC Desk browser-first and Chat app-first policies explicit in the model', () => {
     expect(
       resolveWalletHeaderViewModel({
         chainId: null,

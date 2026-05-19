@@ -96,13 +96,13 @@ test.describe('trading V1 routes', () => {
       await page.goto(`${baseURL ?? 'http://127.0.0.1:4174'}/wallet-connect?p=${encodeURIComponent('/trades')}`);
 
       await expect(page).toHaveURL(/\/wallet-connect$/);
-      await expect(page.getByRole('button', { name: 'Trades', exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(page.getByRole('button', { name: 'OTC Desk', exact: true })).toHaveAttribute('aria-current', 'page');
       await page.getByRole('button', { name: 'Chat', exact: true }).click();
       await expect(page).toHaveURL(/\/wallet-connect$/);
       await expect(page.getByRole('button', { name: 'Chat', exact: true })).toHaveAttribute('aria-current', 'page');
-      await page.getByRole('button', { name: 'Trades', exact: true }).click();
+      await page.getByRole('button', { name: 'OTC Desk', exact: true }).click();
       await expect(page).toHaveURL(/\/wallet-connect$/);
-      await expect(page.getByRole('button', { name: 'Trades', exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(page.getByRole('button', { name: 'OTC Desk', exact: true })).toHaveAttribute('aria-current', 'page');
     } finally {
       await context.close();
     }
