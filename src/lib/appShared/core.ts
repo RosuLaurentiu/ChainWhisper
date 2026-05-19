@@ -227,7 +227,7 @@ export type GroupMessageEntry = {
 };
 
 export type GroupFeeModeSelection = 'coti' | 'token';
-export type SwapDirection = 'shield' | 'unshield';
+export type SwapDirection = 'shield' | 'unshield' | 'legacy-unshield';
 export type SwapFeeModeSelection = 'token' | 'coti';
 
 export const BURNER_WALLET_STORAGE_KEY = 'coti-chat-burner-wallet';
@@ -695,8 +695,8 @@ export const LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS = '0x922B39AC9FD4ccb5E5a9de0694
 export const LEGACY_SWAP_VAULT_CONTRACT_ADDRESS = '0x5C35CD3659991051F4Fb04F2C4120643739b7BdE';
 export const WHISPER_SHIELD_ENABLED = false;
 export const WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED = true;
-export const SWAP_VAULT_CONTRACT_ADDRESS = '';
-export const FALLBACK_REWARD_TOKEN_SYMBOL = 'TOKEN';
+export const WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS = '';
+export const FALLBACK_REWARD_TOKEN_SYMBOL = 'WISP';
 export const FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL = 'pWISP';
 export const FALLBACK_REWARD_TOKEN_DECIMALS = 6;
 export const MAX_ERC20_APPROVAL = (1n << 256n) - 1n;
@@ -1121,8 +1121,15 @@ export const PRIVATE_ERC20_TOKEN_VNEXT_ABI = [
   `function transferAndCall(address to, ${IT_UINT256_ABI} amount, bytes data)`
 ] as const;
 
-export const SWAP_VAULT_CONTRACT_ABI = [
-  'function shieldWithMode(uint256 amount, uint8 paymentMode) payable',
+export const WISP_PRIVACY_BRIDGE_CONTRACT_ABI = [
+  'function deposit(uint256 amount) payable',
+  'function withdraw(uint256 amount) payable',
+  'function nativeCotiFee() view returns (uint256)',
+  'function feeRecipient() view returns (address)',
+  'function publicReserve() view returns (uint256)'
+] as const;
+
+export const LEGACY_SWAP_VAULT_CONTRACT_ABI = [
   'function unshieldWithMode(uint256 amount, uint8 paymentMode) payable',
   'function swapFeeWei() view returns (uint256)',
   'function getTokenFeeAmount() view returns (uint256)',

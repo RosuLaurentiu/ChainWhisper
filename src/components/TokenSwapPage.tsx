@@ -1,8 +1,7 @@
 import {
   formatCotiAmount,
   formatTokenAmount,
-  type SwapDirection,
-  type SwapFeeModeSelection
+  type SwapDirection
 } from '../lib/appShared';
 
 type TokenSwapPageProps = {
@@ -17,8 +16,6 @@ type TokenSwapPageProps = {
   swapInputSymbol: string;
   swapDirection: SwapDirection;
   onSwapDirectionChange: (value: SwapDirection) => void;
-  swapFeeModeSelection: SwapFeeModeSelection;
-  onSwapFeeModeChange: (value: SwapFeeModeSelection) => void;
   loadingRewardBalances: boolean;
   swapFeeWei: bigint | null;
   swapTokenFeeAmount: bigint | null;
@@ -27,6 +24,7 @@ type TokenSwapPageProps = {
   hasAesReady: boolean;
   canShieldTokens: boolean;
   canUnshieldTokens: boolean;
+  canLegacyUnshieldTokens: boolean;
   currentSwapDirectionEnabled: boolean;
   onRefreshRewardBalances: () => void;
   canSwapRewardTokens: boolean;
@@ -56,6 +54,7 @@ export default function TokenSwapPage({
   hasAesReady,
   canShieldTokens,
   canUnshieldTokens,
+  canLegacyUnshieldTokens,
   currentSwapDirectionEnabled,
   onRefreshRewardBalances,
   canSwapRewardTokens,
@@ -65,9 +64,19 @@ export default function TokenSwapPage({
   error
 }: TokenSwapPageProps) {
   const swapOutputSymbol = swapDirection === 'shield' ? privateRewardTokenSymbol : rewardTokenSymbol;
-  const routeLabel = swapDirection === 'shield' ? 'Public -> Private' : 'Private -> Public';
+  const routeLabel =
+    swapDirection === 'shield'
+      ? 'Public -> Private'
+      : swapDirection === 'unshield'
+        ? 'Private -> Public'
+        : 'Old private -> Public';
   const receivePreview = swapAmountInput.trim() ? swapAmountInput : '0';
-  const directionUnavailableLabel = swapDirection === 'shield' ? 'Shield paused' : 'Legacy unshield unavailable';
+  const directionUnavailableLabel =
+    swapDirection === 'shield'
+      ? 'Shield paused'
+      : swapDirection === 'unshield'
+        ? 'Unshield paused'
+        : 'Legacy unshield unavailable';
   const shieldVaultBalanceLabel =
     !currentSwapDirectionEnabled
       ? 'Paused'
@@ -96,16 +105,20 @@ export default function TokenSwapPage({
     ? directionUnavailableLabel
     : loadingRewardBalances
     ? 'Loading...'
-    : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
-        swapTokenFeeAmount !== null ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6) : '--'
-      }`;
+    : swapDirection === 'legacy-unshield'
+      ? `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'} | ${rewardTokenSymbol} ${
+          swapTokenFeeAmount !== null ? formatTokenAmount(swapTokenFeeAmount, rewardTokenDecimals, 6) : '--'
+        }`
+      : `COTI ${swapFeeWei !== null ? formatCotiAmount(swapFeeWei) : '--'}`;
   const shieldState = !currentSwapDirectionEnabled
     ? {
         title: directionUnavailableLabel,
         description:
           swapDirection === 'shield'
-            ? 'New Shield deposits are paused while the replacement vault is prepared. Legacy unshield remains available for old private-token holders.'
-            : 'Legacy withdrawals are unavailable right now.',
+            ? 'New Shield deposits are paused while the replacement bridge is prepared. Legacy unshield remains available for old private-token holders.'
+            : swapDirection === 'unshield'
+              ? 'Current pWISP withdrawals are paused while the replacement bridge is prepared.'
+              : 'Legacy withdrawals are unavailable right now.',
         tone: 'locked'
       }
     : !walletAddress
@@ -189,6 +202,15 @@ export default function TokenSwapPage({
                 aria-pressed={swapDirection === 'unshield'}
               >
                 Unshield
+              </button>
+              <button
+                type="button"
+                className={swapDirection === 'legacy-unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
+                onClick={() => onSwapDirectionChange('legacy-unshield')}
+                disabled={!canLegacyUnshieldTokens || swappingTokens}
+                aria-pressed={swapDirection === 'legacy-unshield'}
+              >
+                Legacy
               </button>
             </div>
           </div>
