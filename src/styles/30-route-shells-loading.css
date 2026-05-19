@@ -125,12 +125,47 @@
   min-width: 0;
 }
 
+.swap-page-title-row {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .swap-page-title {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
   font-size: 1.48rem;
   line-height: 1;
   letter-spacing: -0.02em;
+}
+
+.swap-privacy-portal-link {
+  flex: 0 0 auto;
+  max-width: 100%;
+  border: 1px solid rgba(139, 92, 246, 0.42);
+  border-radius: 999px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #f1edff;
+  padding: 8px 11px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.swap-privacy-portal-link:hover,
+.swap-privacy-portal-link:focus-visible {
+  border-color: rgba(184, 151, 255, 0.74);
+  background: rgba(139, 92, 246, 0.24);
+  color: #ffffff;
 }
 
 .swap-page-heading p {

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const walletPanel = '.wallet-header-panel';
+const cotiPrivacyPortalUrl = 'https://privacy.coti.io/';
 
 test.describe('route wallet header policy', () => {
   test('shows the shared app menu on every top-level page', async ({ page }) => {
@@ -28,6 +29,20 @@ test.describe('route wallet header policy', () => {
     await page.goto('/treasury');
     await expect(page.locator('.top-header-brand-subtitle', { hasText: /^Treasury$/ })).toBeVisible();
     await expect(page.locator(walletPanel)).toHaveCount(0);
+  });
+
+  test('links Home and WISP Portal to the COTI Privacy Portal', async ({ page }) => {
+    await page.goto('/');
+    const headerPrivacyLink = page.getByRole('link', { name: 'Privacy Portal' });
+    await expect(headerPrivacyLink).toBeVisible();
+    await expect(headerPrivacyLink).toHaveAttribute('href', cotiPrivacyPortalUrl);
+    await expect(headerPrivacyLink).toHaveAttribute('target', '_blank');
+
+    await page.goto('/portal');
+    const portalPrivacyButton = page.getByRole('link', { name: 'Open COTI Privacy Portal' });
+    await expect(portalPrivacyButton).toBeVisible();
+    await expect(portalPrivacyButton).toHaveAttribute('href', cotiPrivacyPortalUrl);
+    await expect(portalPrivacyButton).toHaveAttribute('target', '_blank');
   });
 
   test('shows notification sound controls on app pages except Home', async ({ page }) => {

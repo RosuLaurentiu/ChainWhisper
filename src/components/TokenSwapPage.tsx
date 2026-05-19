@@ -3,6 +3,7 @@ import {
   formatTokenAmount,
   type SwapDirection
 } from '../lib/appShared';
+import { COTI_PRIVACY_PORTAL_URL } from '../lib/ecosystemLinks';
 
 type TokenSwapPageProps = {
   tokenToolsSummary: string;
@@ -161,7 +162,17 @@ export default function TokenSwapPage({
       <section className="swap-page-panel">
         <div className="swap-page-hero">
           <div className="swap-page-heading">
-            <h1 className="swap-page-title">WISP Portal</h1>
+            <div className="swap-page-title-row">
+              <h1 className="swap-page-title">WISP Portal</h1>
+              <a
+                className="swap-privacy-portal-link"
+                href={COTI_PRIVACY_PORTAL_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open COTI Privacy Portal
+              </a>
+            </div>
             <p>Move between WISP and pWISP on COTI Mainnet.</p>
           </div>
           <div className="swap-balance-pill">

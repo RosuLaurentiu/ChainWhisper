@@ -3,7 +3,10 @@ export type EcosystemLink = {
   label: string;
 };
 
+export const COTI_PRIVACY_PORTAL_URL = 'https://privacy.coti.io/';
+
 export const COTI_ECOSYSTEM_LINKS: readonly EcosystemLink[] = [
+  { href: COTI_PRIVACY_PORTAL_URL, label: 'Privacy Portal' },
   { href: 'https://ciphertrade.org/', label: 'CipherTrade' },
   { href: 'https://pengodefi.app/', label: 'PengoDeFi' },
   { href: 'https://bridge.coti.io/bridge', label: 'COTI Bridge' },
