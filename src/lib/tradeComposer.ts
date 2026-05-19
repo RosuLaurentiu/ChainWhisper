@@ -228,6 +228,18 @@ const resolvePendingTradeTokenSymbol = ({
     : undefined;
 };
 
+const sortTradeTokenOptionsBySymbol = <T extends { symbol?: string }>(options: T[], symbolOrder: string[]): T[] => {
+  const orderBySymbol = new Map(symbolOrder.map((symbol, index) => [symbol.toLowerCase(), index]));
+  return options
+    .map((option, index) => ({
+      option,
+      index,
+      rank: orderBySymbol.get(option.symbol?.toLowerCase() ?? '') ?? Number.MAX_SAFE_INTEGER
+    }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(({ option }) => option);
+};
+
 export const deriveTradeComposerModel = ({
   activeContact,
   walletAddress,
@@ -307,34 +319,50 @@ export const deriveTradeComposerModel = ({
   const publicVerifiedTokenOptions = verifiedTokenOptions.filter(
     (option) => getVerifiedEcosystemToken(option.value)?.kind !== 'private-erc20'
   );
-  const tradeTokenOptions = [
-    {
-      value: 'coti',
-      label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)`,
-      symbol: TIP_NATIVE_TOKEN_SYMBOL,
-      kindLabel: 'Native',
-      addressLabel: 'COTI Mainnet native asset',
-      verificationLabel: 'Native asset'
-    },
-    {
-      value: 'wisp',
-      label: `✓ ${rewardTokenSymbol} (public)`,
-      symbol: rewardTokenSymbol,
-      kindLabel: 'Public',
-      addressLabel: `CA ${shortenAddress(REWARD_TOKEN_ADDRESS)}`,
-      verificationLabel: 'CA loaded'
-    },
-    {
-      value: 'pwisp',
-      label: `✓ ${privateRewardTokenSymbol} (private)`,
-      symbol: privateRewardTokenSymbol,
-      kindLabel: 'Private',
-      addressLabel: `CA ${shortenAddress(PRIVATE_REWARD_TOKEN_ADDRESS)}`,
-      verificationLabel: 'Verified private token'
-    },
-    ...privateVerifiedTokenOptions,
-    ...publicVerifiedTokenOptions
-  ];
+  const nativeCotiTokenOption = {
+    value: 'coti',
+    label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)`,
+    symbol: TIP_NATIVE_TOKEN_SYMBOL,
+    kindLabel: 'Native',
+    addressLabel: 'COTI Mainnet native asset',
+    verificationLabel: 'Native asset'
+  };
+  const rewardTokenOption = {
+    value: 'wisp',
+    label: `✓ ${rewardTokenSymbol} (public)`,
+    symbol: rewardTokenSymbol,
+    kindLabel: 'Public',
+    addressLabel: `CA ${shortenAddress(REWARD_TOKEN_ADDRESS)}`,
+    verificationLabel: 'CA loaded'
+  };
+  const privateRewardTokenOption = {
+    value: 'pwisp',
+    label: `✓ ${privateRewardTokenSymbol} (private)`,
+    symbol: privateRewardTokenSymbol,
+    kindLabel: 'Private',
+    addressLabel: `CA ${shortenAddress(PRIVATE_REWARD_TOKEN_ADDRESS)}`,
+    verificationLabel: 'Verified private token'
+  };
+  const publicTradeTokenOptions = sortTradeTokenOptionsBySymbol(
+    [...publicVerifiedTokenOptions, rewardTokenOption],
+    ['gCOTI', 'USDC.e', rewardTokenSymbol, 'WETH', 'WBTC', 'USDT', 'wADA', 'Pengo', 'WBBT', 'NIGHT']
+  );
+  const privateTradeTokenOptions = sortTradeTokenOptionsBySymbol(
+    [...privateVerifiedTokenOptions, privateRewardTokenOption],
+    [
+      'p.COTI',
+      'p.gCOTI',
+      'p.USDC.e',
+      privateRewardTokenSymbol,
+      'p.WETH',
+      'p.WBTC',
+      'p.USDT',
+      'p.wADA',
+      'pPENGO',
+      'HOTDOG'
+    ]
+  );
+  const tradeTokenOptions = [nativeCotiTokenOption, ...publicTradeTokenOptions, ...privateTradeTokenOptions];
 
   const tradeCustomOfferTokenKey = (() => {
     if (isCustomTradeTokenSelection(tradeOfferTokenSelection)) {

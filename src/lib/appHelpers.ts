@@ -25,6 +25,8 @@ export type MessageReferenceCandidate = {
 
 export type TradeTokenPresetKey = string;
 
+export const GCOTI_TOKEN_ADDRESS = '0x7637C7838EC4Ec6b85080F28A678F8E234bB83D1';
+export const USDC_E_TOKEN_ADDRESS = '0xf1Feebc4376c68B7003450ae66343Ae59AB37D3C';
 export const PRIVATE_COTI_TOKEN_ADDRESS = '0xD2F2692B83C3ecDF2EAa0f7c2632BBd46Ae1cC91';
 export const PRIVATE_WETH_TOKEN_ADDRESS = '0x4727FE8D8450CEBcB142331FAc034Cd8d311f0E5';
 export const PRIVATE_WBTC_TOKEN_ADDRESS = '0x65449561257ba5756631Aa0d34f07f6457a319be';
@@ -39,11 +41,11 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
   symbol: string;
 }> = [
-  { address: '0x7637C7838EC4Ec6b85080F28A678F8E234bB83D1', kind: 'erc20', symbol: 'gCOTI' },
+  { address: GCOTI_TOKEN_ADDRESS, kind: 'erc20', symbol: 'gCOTI' },
   { address: '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8', kind: 'erc20', symbol: 'Pengo' },
   { address: '0x256353f5B4b515f488876dD1CAc2300c6C6f98B7', kind: 'erc20', symbol: 'WBBT' },
   { address: '0x8C39B1fD0e6260fdf20652Fc436d25026832bfEA', kind: 'erc20', symbol: 'WBTC' },
-  { address: '0xf1Feebc4376c68B7003450ae66343Ae59AB37D3C', kind: 'erc20', symbol: 'USDC.e' },
+  { address: USDC_E_TOKEN_ADDRESS, kind: 'erc20', symbol: 'USDC.e' },
   { address: '0xfA6f73446b17A97a56e464256DA54AD43c2Cbc3E', kind: 'erc20', symbol: 'USDT' },
   { address: '0xe757Ca19d2c237AA52eBb1d2E8E4368eeA3eb331', kind: 'erc20', symbol: 'wADA' },
   { address: '0xFc075Bd3e22d337C19b7Ca25635282ad8e24941a', kind: 'erc20', symbol: 'NIGHT' },

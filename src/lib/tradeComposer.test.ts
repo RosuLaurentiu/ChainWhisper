@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { shortenAddress } from './appShared';
-import { HOTDOG_PRIVATE_TOKEN_ADDRESS, buildTradeCustomTokenInfoKey } from './appHelpers';
+import {
+  GCOTI_TOKEN_ADDRESS,
+  HOTDOG_PRIVATE_TOKEN_ADDRESS,
+  USDC_E_TOKEN_ADDRESS,
+  VERIFIED_ECOSYSTEM_TOKENS,
+  buildTradeCustomTokenInfoKey
+} from './appHelpers';
 import { deriveTradeComposerModel } from './tradeComposer';
 
 const baseParams = {
@@ -35,7 +41,51 @@ const baseParams = {
   counterpartyRequired: false
 };
 
+const verifiedTokenValue = (symbol: string): string => {
+  const token = VERIFIED_ECOSYSTEM_TOKENS.find((candidate) => candidate.symbol === symbol);
+  if (!token) {
+    throw new Error(`Missing verified token fixture: ${symbol}`);
+  }
+  return token.address.toLowerCase();
+};
+
 describe('trade composer private token visibility', () => {
+  it('keeps public and private create token options in matching asset order', () => {
+    const model = deriveTradeComposerModel(baseParams);
+    const optionValues = model.tradeTokenOptions.map((option) => option.value);
+
+    const pairedPublicOrder = [
+      'coti',
+      GCOTI_TOKEN_ADDRESS.toLowerCase(),
+      USDC_E_TOKEN_ADDRESS.toLowerCase(),
+      'wisp',
+      verifiedTokenValue('WETH'),
+      verifiedTokenValue('WBTC'),
+      verifiedTokenValue('USDT'),
+      verifiedTokenValue('wADA'),
+      verifiedTokenValue('Pengo')
+    ];
+    const pairedPrivateOrder = [
+      verifiedTokenValue('p.COTI'),
+      verifiedTokenValue('p.gCOTI'),
+      verifiedTokenValue('p.USDC.e'),
+      'pwisp',
+      verifiedTokenValue('p.WETH'),
+      verifiedTokenValue('p.WBTC'),
+      verifiedTokenValue('p.USDT'),
+      verifiedTokenValue('p.wADA'),
+      verifiedTokenValue('pPENGO')
+    ];
+
+    expect(optionValues.slice(0, 3)).toEqual([
+      'coti',
+      GCOTI_TOKEN_ADDRESS.toLowerCase(),
+      USDC_E_TOKEN_ADDRESS.toLowerCase()
+    ]);
+    expect(optionValues.filter((value) => pairedPublicOrder.includes(value))).toEqual(pairedPublicOrder);
+    expect(optionValues.filter((value) => pairedPrivateOrder.includes(value))).toEqual(pairedPrivateOrder);
+  });
+
   it('allows visible private-token orders without forcing hidden amount mode', () => {
     const model = deriveTradeComposerModel(baseParams);
 
