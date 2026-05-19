@@ -792,18 +792,69 @@ export const readCurrentPrivateErc20BalanceWei = async (
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
   const privateTokenVNextInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
+  const legacyPrivateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_ABI);
+  let encryptedBalanceRaw: unknown = null;
 
-  const balanceByAddressCallData = privateTokenVNextInterface.encodeFunctionData('balanceOf(address)', [ownerAddress]);
-  const balanceByAddressRawResult = await readProvider.call({
-    from: ownerAddress,
-    to: tokenAddress,
-    data: balanceByAddressCallData
-  });
-  const decodedByAddress = privateTokenVNextInterface.decodeFunctionResult(
-    'balanceOf(address)',
-    balanceByAddressRawResult
-  );
-  const encryptedBalanceRaw = decodedByAddress?.[0] ?? null;
+  try {
+    const balanceByAddressCallData = privateTokenVNextInterface.encodeFunctionData('balanceOf(address)', [
+      ownerAddress
+    ]);
+    const balanceByAddressRawResult = await readProvider.call({
+      from: ownerAddress,
+      to: tokenAddress,
+      data: balanceByAddressCallData
+    });
+    const decodedByAddress = privateTokenVNextInterface.decodeFunctionResult(
+      'balanceOf(address)',
+      balanceByAddressRawResult
+    );
+    encryptedBalanceRaw = decodedByAddress?.[0] ?? null;
+  } catch {
+    encryptedBalanceRaw = null;
+  }
+
+  if (encryptedBalanceRaw === null) {
+    try {
+      const legacyBalanceByAddressCallData = legacyPrivateTokenInterface.encodeFunctionData('balanceOf(address)', [
+        ownerAddress
+      ]);
+      const legacyBalanceByAddressRawResult = await readProvider.call({
+        from: ownerAddress,
+        to: tokenAddress,
+        data: legacyBalanceByAddressCallData
+      });
+      const decodedLegacyByAddress = legacyPrivateTokenInterface.decodeFunctionResult(
+        'balanceOf(address)',
+        legacyBalanceByAddressRawResult
+      );
+      encryptedBalanceRaw = decodedLegacyByAddress?.[0] ?? null;
+    } catch {
+      encryptedBalanceRaw = null;
+    }
+  }
+
+  if (encryptedBalanceRaw === null) {
+    try {
+      const legacyBalanceCallData = legacyPrivateTokenInterface.encodeFunctionData('balanceOf()', []);
+      const legacyBalanceRawResult = await readProvider.call({
+        from: ownerAddress,
+        to: tokenAddress,
+        data: legacyBalanceCallData
+      });
+      const decodedLegacyBalance = legacyPrivateTokenInterface.decodeFunctionResult(
+        'balanceOf()',
+        legacyBalanceRawResult
+      );
+      encryptedBalanceRaw = decodedLegacyBalance?.[0] ?? null;
+    } catch {
+      encryptedBalanceRaw = null;
+    }
+  }
+
+  if (encryptedBalanceRaw === null) {
+    return null;
+  }
+
   void recoverOnFailure;
   return decryptPrivateTokenBalanceWei(encryptedBalanceRaw, signer);
 };

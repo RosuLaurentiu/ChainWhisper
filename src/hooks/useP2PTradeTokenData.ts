@@ -264,6 +264,13 @@ export default function useP2PTradeTokenData({
         return { status: 'locked' };
       }
 
+      const balanceWei = await readCurrentPrivateErc20BalanceWei(tokenAddress, walletAddress, signer).catch(
+        () => null
+      );
+      if (balanceWei !== null) {
+        return { status: 'ready', balanceWei };
+      }
+
       const encryptionAddress = await readPrivateTokenAccountEncryptionAddress(tokenAddress, walletAddress).catch(
         () => null
       );
@@ -271,10 +278,7 @@ export default function useP2PTradeTokenData({
         return { status: 'setup-needed' };
       }
 
-      const balanceWei = await readCurrentPrivateErc20BalanceWei(tokenAddress, walletAddress, signer).catch(
-        () => null
-      );
-      return balanceWei === null ? { status: 'decrypt-failed' } : { status: 'ready', balanceWei };
+      return { status: 'decrypt-failed' };
     },
     [walletAddress, walletHasAes]
   );

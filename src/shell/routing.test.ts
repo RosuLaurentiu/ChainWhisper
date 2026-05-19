@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getPathForAppPage, resolveAppRouteFromLocation, resolveNavigationPathFromLocation } from './routing';
+import {
+  getPathForAppPage,
+  resolveAppRouteFromLocation,
+  resolveNavigationPathFromLocation,
+  stripStaleTradeSearchParams
+} from './routing';
 
 const stubLocation = (pathname: string, search = '', hash = '') => {
   vi.stubGlobal('window', {
@@ -77,6 +82,15 @@ describe('app routing', () => {
 
     expect(resolveNavigationPathFromLocation()).toBe('/chat');
     expect(resolveAppRouteFromLocation()).toEqual({ page: 'chat' });
+  });
+
+  it('strips stale trade params outside deep trade routes', () => {
+    expect(stripStaleTradeSearchParams('/chat', '?order=4&escrow=private&debug=1')).toBe('?debug=1');
+    expect(stripStaleTradeSearchParams('/trades', '?order=4&escrow=private')).toBe('');
+    expect(stripStaleTradeSearchParams('/trades/recurring', '?order=4')).toBe('?order=4');
+    expect(stripStaleTradeSearchParams('/trades/l/abc', '?escrow=direct')).toBe('?escrow=direct');
+    expect(stripStaleTradeSearchParams('/otcdesk/terminal/recurring', '?order=4')).toBe('?order=4');
+    expect(stripStaleTradeSearchParams('/otcdesk/terminal/l/abc', '?escrow=direct')).toBe('?escrow=direct');
   });
 
   it('falls back safely for invalid wallet bootstrap routes', () => {

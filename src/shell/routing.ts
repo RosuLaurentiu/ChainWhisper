@@ -57,6 +57,33 @@ const resolveRoutePathname = (path: string): string => {
   }
 };
 
+const TRADE_ROUTE_SEARCH_PARAMS = ['order', 'id', 'escrow', 'contract', 'secret'];
+
+const canUseTradeSearchParams = (pathname: string): boolean => {
+  const normalizedPathname = resolveRoutePathname(pathname).toLowerCase();
+  return (
+    normalizedPathname === '/trades/recurring' ||
+    normalizedPathname === '/otcdesk/terminal/recurring' ||
+    normalizedPathname.startsWith('/trades/l/') ||
+    normalizedPathname.startsWith('/otcdesk/terminal/l/') ||
+    /^\/otcdesk\/terminal\/\d+$/.test(normalizedPathname) ||
+    /^\/trades\/\d+$/.test(normalizedPathname)
+  );
+};
+
+export const stripStaleTradeSearchParams = (pathname: string, search: string): string => {
+  if (!search.trim() || canUseTradeSearchParams(pathname)) {
+    return search;
+  }
+
+  const params = new URLSearchParams(search);
+  for (const paramName of TRADE_ROUTE_SEARCH_PARAMS) {
+    params.delete(paramName);
+  }
+  const nextSearch = params.toString();
+  return nextSearch ? `?${nextSearch}` : '';
+};
+
 export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
   const normalizedPathname = resolveRoutePathname(path).toLowerCase();
   if (normalizedPathname === '/' || normalizedPathname === '/home') {
