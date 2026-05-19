@@ -296,6 +296,9 @@ const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   !offer.hiddenLiquidity &&
   offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
+const WISP_BRIDGE_WRITE_GAS_LIMIT = 6_000_000n;
+const WISP_BRIDGE_PRIVATE_TOKEN_APPROVAL_GAS_LIMIT = 6_000_000n;
+
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -2266,7 +2269,10 @@ export default function App() {
             const approveTx = await publicTokenContract.approve(activeSwapVaultContractAddress, amount);
             await approveTx.wait();
           }
-          const tx = await swapContract.deposit(amount, { value: resolvedSwapFeeWei });
+          const tx = await swapContract.deposit(amount, {
+            value: resolvedSwapFeeWei,
+            gasLimit: WISP_BRIDGE_WRITE_GAS_LIMIT
+          });
           await tx.wait();
         } else if (swapDirection === 'unshield') {
           const privateTokenContract = new cotiEthers.Contract(
@@ -2276,13 +2282,21 @@ export default function App() {
           );
           const approvePrivatePlainAmount = privateTokenContract['approve(address,uint256)'] as (
             spender: string,
-            amountWei: bigint
+            amountWei: bigint,
+            overrides?: { gasLimit: bigint }
           ) => Promise<{ wait: () => Promise<unknown> }>;
-          const resetApprovalTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, 0n);
+          const resetApprovalTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, 0n, {
+            gasLimit: WISP_BRIDGE_PRIVATE_TOKEN_APPROVAL_GAS_LIMIT
+          });
           await resetApprovalTx.wait();
-          const approveTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, amount);
+          const approveTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, amount, {
+            gasLimit: WISP_BRIDGE_PRIVATE_TOKEN_APPROVAL_GAS_LIMIT
+          });
           await approveTx.wait();
-          const tx = await swapContract.withdraw(amount, { value: resolvedSwapFeeWei });
+          const tx = await swapContract.withdraw(amount, {
+            value: resolvedSwapFeeWei,
+            gasLimit: WISP_BRIDGE_WRITE_GAS_LIMIT
+          });
           await tx.wait();
         } else {
           const tx = await swapContract.unshieldWithMode(amount, 1, { value: resolvedSwapFeeWei });
