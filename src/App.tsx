@@ -2274,9 +2274,13 @@ export default function App() {
             PRIVATE_ERC20_TOKEN_VNEXT_ABI,
             signer
           );
-          const resetApprovalTx = await privateTokenContract.approve(activeSwapVaultContractAddress, 0n);
+          const approvePrivatePlainAmount = privateTokenContract['approve(address,uint256)'] as (
+            spender: string,
+            amountWei: bigint
+          ) => Promise<{ wait: () => Promise<unknown> }>;
+          const resetApprovalTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, 0n);
           await resetApprovalTx.wait();
-          const approveTx = await privateTokenContract.approve(activeSwapVaultContractAddress, amount);
+          const approveTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, amount);
           await approveTx.wait();
           const tx = await swapContract.withdraw(amount, { value: resolvedSwapFeeWei });
           await tx.wait();
