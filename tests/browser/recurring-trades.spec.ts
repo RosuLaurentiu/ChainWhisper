@@ -8,7 +8,7 @@ test.describe('trading V1 routes', () => {
 
     const drawer = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
     await expect(drawer).toBeVisible();
-    await expect(drawer.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
+    await expect(drawer.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
     await expect(drawer.locator('.p2p-terminal-eyebrow', { hasText: /^Recurring OTC Terminal$/ })).toBeVisible({
       timeout: 30_000
     });
@@ -64,7 +64,7 @@ test.describe('trading V1 routes', () => {
       await expect(page).toHaveURL(/\/wallet-connect$/);
       const terminal = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
       await expect(terminal).toBeVisible();
-      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
+      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -81,7 +81,7 @@ test.describe('trading V1 routes', () => {
       await expect(page).toHaveURL(/\/wallet-connect$/);
       const terminal = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
       await expect(terminal).toBeVisible();
-      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
+      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -123,7 +123,7 @@ test.describe('trading V1 routes', () => {
 
     await page.getByRole('button', { name: 'Desk', exact: true }).click();
 
-    await expect(page).toHaveURL(/\/trades$/);
+    await expect(page).toHaveURL(/\/otcdesk$/);
     const pendingRoute = await page.evaluate((storageKey) => window.sessionStorage.getItem(storageKey), PENDING_TERMINAL_ROUTE_KEY);
     expect(pendingRoute).toBeNull();
   });

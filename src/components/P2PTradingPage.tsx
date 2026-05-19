@@ -1090,7 +1090,7 @@ export default function P2PTradingPage({
     const routeReady =
       isWalletBootstrapStableUrl(window.location.pathname, window.location.search) &&
       !window.location.hash &&
-      activeRoutePath.toLowerCase().startsWith('/trades') &&
+      (activeRoutePath.toLowerCase().startsWith('/trades') || activeRoutePath.toLowerCase().startsWith('/otcdesk')) &&
       activeTradeRoute !== null &&
       buildRouteIdentity(activeTradeRoute) === buildRouteIdentity(route);
 
@@ -3811,7 +3811,7 @@ export default function P2PTradingPage({
     setTradePricingEditedFields([]);
     setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
     setTradeHasNoExpiry(false);
-    navigateToTradePath('/trades/open');
+    navigateToTradePath('/otcdesk/terminal');
   }, [clearCounterTrade, navigateToTradePath]);
 
   const startFreshRecurringOrder = useCallback(() => {
@@ -3897,7 +3897,7 @@ export default function P2PTradingPage({
       setRecurringRemoveSellInventoryInput('');
       setCreatedRecurringOrderId(null);
       setCreatedRecurringOrderLink('');
-      navigateToTradePath('/trades/create');
+      navigateToTradePath('/otcdesk/create');
     },
     [clearCounterTrade, clearEditTrade, navigateToTradePath, resolveRecurringAssetSelection]
   );
@@ -7944,7 +7944,7 @@ export default function P2PTradingPage({
   const openEmptyTerminalPanel = useCallback(() => {
     saveMobileDeskScroll();
     setEmptyTerminalDrawerOpen(true);
-    navigateToTradePath('/trades/open');
+    navigateToTradePath('/otcdesk/terminal');
   }, [navigateToTradePath, saveMobileDeskScroll]);
   const scrollTradingShellToTop = useCallback(() => {
     const shell = document.querySelector<HTMLElement>('.standalone-trades-shell');
@@ -7961,9 +7961,9 @@ export default function P2PTradingPage({
     }
   }, [route.view]);
   const navigateDeskView = useCallback(
-    (path: '/trades' | '/trades/mine') => {
+    (path: '/otcdesk' | '/otcdesk/mytrades') => {
       if (isMobileNav) {
-        const targetView = path === '/trades' ? 'public' : 'mine';
+        const targetView = path === '/otcdesk' ? 'public' : 'mine';
         const returningFromTerminal =
           emptyTerminalDrawerOpen || route.view === 'trade' || (route.view === 'mine' && Boolean(selectedMyTradeDetailKey));
         if (
@@ -7986,7 +7986,7 @@ export default function P2PTradingPage({
         }
         return;
       }
-      const targetSurface = path === '/trades' ? 'public' : 'mine';
+      const targetSurface = path === '/otcdesk' ? 'public' : 'mine';
       const targetView = targetSurface;
       const currentSurface =
         route.view === 'mine' ? 'mine' : route.view === 'public' || route.view === 'trade' ? 'public' : null;
@@ -8033,7 +8033,7 @@ export default function P2PTradingPage({
           type="button"
           className={route.view === 'public' ? 'active' : undefined}
           aria-current={route.view === 'public' ? 'page' : undefined}
-          onClick={() => navigateDeskView('/trades')}
+          onClick={() => navigateDeskView('/otcdesk')}
         >
           <span>Desk</span>
         </button>
@@ -8057,7 +8057,7 @@ export default function P2PTradingPage({
           type="button"
           className={route.view === 'mine' ? 'active' : undefined}
           aria-current={route.view === 'mine' ? 'page' : undefined}
-          onClick={() => navigateDeskView('/trades/mine')}
+          onClick={() => navigateDeskView('/otcdesk/mytrades')}
         >
           <span>My Trades</span>
         </button>
@@ -8286,7 +8286,7 @@ export default function P2PTradingPage({
   const tradeDeskIdentity =
     route.view === 'mine'
       ? {
-        title: 'My Desk',
+        title: 'My Trades',
         copy: 'Offers and history.'
       }
       : {
@@ -8762,7 +8762,7 @@ export default function P2PTradingPage({
       setTerminalPayInput('');
       setTerminalBuyInput('');
       setTerminalHistorySheetKey('');
-      navigateToTradePath(targetSurface === 'mine' ? '/trades/mine' : '/trades');
+      navigateToTradePath(targetSurface === 'mine' ? '/otcdesk/mytrades' : '/otcdesk');
       restoreMobileDeskScroll(targetSurface);
       return;
     }
@@ -8774,7 +8774,7 @@ export default function P2PTradingPage({
     if (route.view === 'public') {
       return;
     }
-    navigateToTradePath('/trades');
+    navigateToTradePath('/otcdesk');
   };
   const createdTradeCopyKey = 'created-trade-link';
   const focusTradeLinkInput = () => {
@@ -9233,9 +9233,9 @@ export default function P2PTradingPage({
                 'Open a trade in the trading terminal or from the desk, then choose Counter to compose a direct counter-offer.',
                 <>
                   <button type="button" onClick={openEmptyTerminalPanel}>
-                    Trading Terminal
+                    Terminal
                   </button>
-                  <button type="button" onClick={() => navigateToTradePath('/trades')}>
+                  <button type="button" onClick={() => navigateToTradePath('/otcdesk')}>
                     Open Desk
                   </button>
                 </>
@@ -9822,7 +9822,7 @@ export default function P2PTradingPage({
         <section className="standalone-trades-section standalone-trade-detail-section">
           <div className="standalone-trades-section-head">
             <div>
-              <p className="landing-eyebrow">Trading Terminal</p>
+              <p className="landing-eyebrow">Terminal</p>
               <h2>{terminalPanelTrade ? 'Review offer' : OPEN_TERMINAL_LABEL}</h2>
             </div>
             <button type="button" className="standalone-trade-secondary-btn" onClick={closeTerminalPanel}>
@@ -9847,14 +9847,14 @@ export default function P2PTradingPage({
                 <button type="submit">{OPEN_TERMINAL_LABEL}</button>
               </form>
               <div className="p2p-terminal-open-actions" aria-label="Terminal alternatives">
-                <button type="button" onClick={() => navigateToTradePath('/trades')}>
+                <button type="button" onClick={() => navigateToTradePath('/otcdesk')}>
                   Open desk
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setEmptyTerminalDrawerOpen(false);
-                    navigateToTradePath('/trades/create');
+                    navigateToTradePath('/otcdesk/create');
                   }}
                 >
                   Create offer
@@ -9908,7 +9908,7 @@ export default function P2PTradingPage({
                     Paste Link
                   </button>
                 )}
-                <button type="button" onClick={() => navigateToTradePath('/trades')}>
+                  <button type="button" onClick={() => navigateToTradePath('/otcdesk')}>
                   Open Desk
                 </button>
               </>,
@@ -9931,7 +9931,7 @@ export default function P2PTradingPage({
                 <button type="button" onClick={focusTradeLinkInput}>
                   Paste Link
                 </button>
-                <button type="button" onClick={() => navigateToTradePath('/trades')}>
+                <button type="button" onClick={() => navigateToTradePath('/otcdesk')}>
                   Open Desk
                 </button>
               </>,

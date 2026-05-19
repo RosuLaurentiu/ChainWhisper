@@ -254,7 +254,7 @@ export default function useP2PTradeComposerActions({
       setCreatedTradeId(null);
       setCreatedTradeLink('');
       setDetailTrade(null);
-      navigateToTradePath('/trades/open/counter');
+      navigateToTradePath('/otcdesk/terminal/counter');
     },
     [
       navigateToTradePath,
@@ -332,7 +332,7 @@ export default function useP2PTradeComposerActions({
       setTradeHasNoExpiry(snapshot.expiresAt <= 0);
       setTradeHidePrivateLiquidity(Boolean(snapshot.hiddenLiquidity));
       setTradeActionError('');
-      navigateToTradePath('/trades/create');
+      navigateToTradePath('/otcdesk/create');
     },
     [
       canEditPublicTrade,
@@ -367,7 +367,7 @@ export default function useP2PTradeComposerActions({
     clearEditTrade();
     setTradeHidePrivateLiquidity(false);
     setTradeHasNoExpiry(false);
-    navigateToTradePath('/trades/create');
+    navigateToTradePath('/otcdesk/create');
   }, [clearCounterTrade, clearEditTrade, navigateToTradePath, setTradeHasNoExpiry, setTradeHidePrivateLiquidity]);
 
   const createTrade = useCallback(async () => {

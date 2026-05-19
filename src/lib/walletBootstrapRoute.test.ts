@@ -67,6 +67,9 @@ describe('wallet bootstrap route helpers', () => {
     expect(buildWalletBootstrapPath('/trades/l/abc?escrow=direct#secret', 'https://chainwhisper.example')).toBe(
       '/wallet-connect?p=%2Ftrades%2Fl%2Fabc%3Fescrow%3Ddirect%23secret'
     );
+    expect(buildWalletBootstrapPath('/otcdesk/mytrades', 'https://chainwhisper.example')).toBe(
+      '/wallet-connect?p=%2Fotcdesk%2Fmytrades'
+    );
     expect(buildWalletBootstrapPath('/chat', 'https://chainwhisper.example')).toBe('/wallet-connect?p=%2Fchat');
   });
 

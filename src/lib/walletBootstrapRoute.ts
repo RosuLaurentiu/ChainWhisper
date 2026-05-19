@@ -41,6 +41,8 @@ const isAllowedBootstrapTargetPathname = (pathname: string): boolean => {
     lowerPathname === '/whisper-shield' ||
     lowerPathname === '/treasury' ||
     lowerPathname === '/treasury-data' ||
+    lowerPathname === '/otcdesk' ||
+    lowerPathname.startsWith('/otcdesk/') ||
     lowerPathname === '/trades' ||
     lowerPathname.startsWith('/trades/')
   );
@@ -108,7 +110,11 @@ const isBootstrapDiagnosticsEnabled = (): boolean => {
 
 const sanitizeBootstrapPathForDiagnostics = (path: string): string => {
   const pathname = path.split('?')[0]?.split('#')[0] ?? path;
-  return pathname.toLowerCase().startsWith('/trades/') ? '/trades/[route]' : path.replace(/#.+$/, '#[redacted]');
+  return pathname.toLowerCase().startsWith('/trades/')
+    ? '/trades/[route]'
+    : pathname.toLowerCase().startsWith('/otcdesk/')
+      ? '/otcdesk/[route]'
+      : path.replace(/#.+$/, '#[redacted]');
 };
 
 const logWalletBootstrapDiagnostic = (event: string, detail: Record<string, unknown> = {}): void => {

@@ -9,6 +9,10 @@ describe('chatLinks', () => {
       external: false,
       href: '/trades/l/abc123?escrow=private'
     });
+    expect(resolveChatMessageLink('/otcdesk/mytrades', ORIGIN)).toEqual({
+      external: false,
+      href: '/otcdesk/mytrades'
+    });
   });
 
   it('resolves same-origin full URLs as internal app links', () => {
@@ -26,9 +30,9 @@ describe('chatLinks', () => {
   });
 
   it('splits trailing punctuation away from links', () => {
-    expect(parseChatMessageLinkParts('Open /trades/l/abc123.', ORIGIN)).toEqual([
+    expect(parseChatMessageLinkParts('Open /otcdesk/terminal.', ORIGIN)).toEqual([
       { type: 'text', text: 'Open ' },
-      { type: 'link', text: '/trades/l/abc123', href: '/trades/l/abc123', external: false },
+      { type: 'link', text: '/otcdesk/terminal', href: '/otcdesk/terminal', external: false },
       { type: 'text', text: '.' }
     ]);
   });

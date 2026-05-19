@@ -47,12 +47,27 @@ type TradeRouteStorage = Pick<Storage, 'getItem' | 'removeItem' | 'setItem'>;
 
 const PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
 const PENDING_TRADE_TERMINAL_ROUTE_TTL_MS = 10 * 60 * 1000;
+const OTC_DESK_ROUTE = '/otcdesk';
+const OTC_DESK_CREATE_ROUTE = '/otcdesk/create';
+const OTC_DESK_MY_TRADES_ROUTE = '/otcdesk/mytrades';
+const OTC_DESK_TERMINAL_ROUTE = '/otcdesk/terminal';
+const OTC_DESK_COUNTER_ROUTE = '/otcdesk/terminal/counter';
 const createEmptyPublicRoute = (): TradeRouteState => ({ view: 'public', tradeId: null, accessSecret: '', routeError: '' });
 const createEmptyTradeRoute = (): TradeRouteState => ({ view: 'trade', tradeId: null, accessSecret: '', routeError: '' });
 
 const normalizeTradePathname = (value: string): string => {
   const normalized = value.trim().replace(/\/+$/, '');
   return normalized || '/';
+};
+
+const isTradeAppPath = (pathname: string): boolean => {
+  const normalizedPathname = normalizeTradePathname(pathname).toLowerCase();
+  return (
+    normalizedPathname === '/trades' ||
+    normalizedPathname.startsWith('/trades/') ||
+    normalizedPathname === OTC_DESK_ROUTE ||
+    normalizedPathname.startsWith(`${OTC_DESK_ROUTE}/`)
+  );
 };
 
 const normalizeTradeSearch = (value: string): string => {
@@ -80,7 +95,7 @@ const getCurrentTradePath = (): string => {
     return '/trades';
   }
   const bootstrapTargetPath = resolveWalletBootstrapActiveRoute();
-  if (bootstrapTargetPath.toLowerCase().startsWith('/trades')) {
+  if (isTradeAppPath(bootstrapTargetPath)) {
     return bootstrapTargetPath;
   }
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -183,7 +198,7 @@ export const resolvePendingTradeTerminalRoutePath = (
   now = Date.now()
 ): string | null => {
   const normalizedCurrentPath = normalizeTradePathname(currentPath.split('?')[0]?.split('#')[0] ?? currentPath);
-  if (route.view !== 'public' || normalizedCurrentPath !== '/trades') {
+  if (route.view !== 'public' || (normalizedCurrentPath !== '/trades' && normalizedCurrentPath !== OTC_DESK_ROUTE)) {
     return null;
   }
 
@@ -238,13 +253,13 @@ export const resolveTradeRouteFromParts = (
   const lowerPathname = pathname.toLowerCase();
   const escrowContract = resolveRouteEscrowContract(searchValue);
 
-  if (lowerPathname === '/trades/create') {
+  if (lowerPathname === '/trades/create' || lowerPathname === OTC_DESK_CREATE_ROUTE) {
     return { view: 'create', tradeId: null, accessSecret: '', routeError: '' };
   }
-  if (lowerPathname === '/trades/mine') {
+  if (lowerPathname === '/trades/mine' || lowerPathname === OTC_DESK_MY_TRADES_ROUTE) {
     return { view: 'mine', tradeId: null, accessSecret: '', routeError: '' };
   }
-  if (lowerPathname === '/trades/recurring') {
+  if (lowerPathname === '/trades/recurring' || lowerPathname === `${OTC_DESK_TERMINAL_ROUTE}/recurring`) {
     const params = new URLSearchParams(normalizeTradeSearch(searchValue));
     const orderId = Number.parseInt(params.get('order') ?? params.get('id') ?? '', 10);
     if (Number.isSafeInteger(orderId) && orderId > 0) {
@@ -258,14 +273,14 @@ export const resolveTradeRouteFromParts = (
     }
     return { view: 'create', tradeId: null, accessSecret: '', routeError: '' };
   }
-  if (lowerPathname === '/trades/open') {
+  if (lowerPathname === '/trades/open' || lowerPathname === OTC_DESK_TERMINAL_ROUTE) {
     return createEmptyTradeRoute();
   }
-  if (lowerPathname === '/trades/open/counter') {
+  if (lowerPathname === '/trades/open/counter' || lowerPathname === OTC_DESK_COUNTER_ROUTE) {
     return { view: 'counter', tradeId: null, accessSecret: '', routeError: '' };
   }
 
-  const encodedMatch = pathname.match(/^\/trades\/l\/([^/?#]+)$/i);
+  const encodedMatch = pathname.match(/^\/(?:trades|otcdesk\/terminal)\/l\/([^/?#]+)$/i);
   if (encodedMatch) {
     let linkCode = encodedMatch[1];
     try {
@@ -294,6 +309,14 @@ export const resolveTradeRouteFromParts = (
       : { view: 'trade', tradeId: null, accessSecret: '', routeError: 'This trade id is not valid.' };
   }
 
+  const terminalNumericMatch = pathname.match(/^\/otcdesk\/terminal\/(\d+)$/i);
+  if (terminalNumericMatch) {
+    const tradeId = Number.parseInt(terminalNumericMatch[1], 10);
+    return Number.isSafeInteger(tradeId) && tradeId > 0
+      ? { view: 'trade', tradeId, escrowContract, accessSecret: resolveLegacyTradeSecret(searchValue, hashValue), routeError: '' }
+      : { view: 'trade', tradeId: null, accessSecret: '', routeError: 'This trade id is not valid.' };
+  }
+
   return createEmptyPublicRoute();
 };
 
@@ -306,7 +329,7 @@ export const resolveTradeRouteFromLocation = (): TradeRouteState => {
   if (bootstrapTargetPath) {
     try {
       const bootstrapTargetUrl = new URL(bootstrapTargetPath, window.location.origin);
-      return bootstrapTargetUrl.pathname.toLowerCase().startsWith('/trades')
+      return isTradeAppPath(bootstrapTargetUrl.pathname)
         ? resolveTradeRouteFromParts(bootstrapTargetUrl.pathname, bootstrapTargetUrl.search, bootstrapTargetUrl.hash)
         : createEmptyPublicRoute();
     } catch {
@@ -425,22 +448,37 @@ export const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escro
   return `/trades/l/${code}${search}`;
 };
 
+export const buildTradeTerminalPath = (tradeId: number, accessSecret?: string, escrowContract?: string): string => {
+  if (escrowContract?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
+    const secret = normalizeAccessSecret(accessSecret);
+    return `${OTC_DESK_TERMINAL_ROUTE}/recurring?order=${tradeId}${secret ? `#${secret}` : ''}`;
+  }
+  const code = encodeTradeLink(tradeId, accessSecret);
+  const search =
+    escrowContract && escrowContract.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
+      ? '?escrow=private'
+      : escrowContract && escrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
+        ? '?escrow=direct'
+        : '';
+  return `${OTC_DESK_TERMINAL_ROUTE}/l/${code}${search}`;
+};
+
 export const buildTradeRoutePath = (route: TradeRouteState): string => {
   if (route.view === 'create') {
-    return '/trades/create';
+    return OTC_DESK_CREATE_ROUTE;
   }
   if (route.view === 'mine') {
-    return '/trades/mine';
+    return OTC_DESK_MY_TRADES_ROUTE;
   }
   if (route.view === 'counter') {
-    return '/trades/open/counter';
+    return OTC_DESK_COUNTER_ROUTE;
   }
   if (route.view === 'trade') {
     return route.tradeId
-      ? buildTradeLinkPath(route.tradeId, route.accessSecret || undefined, route.escrowContract)
-      : '/trades/open';
+      ? buildTradeTerminalPath(route.tradeId, route.accessSecret || undefined, route.escrowContract)
+      : OTC_DESK_TERMINAL_ROUTE;
   }
-  return '/trades';
+  return OTC_DESK_ROUTE;
 };
 
 type UseP2PTradeRouteResult = {
@@ -508,14 +546,14 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
 
   const openTrade = useCallback(
     (tradeId: number, accessSecret?: string, escrowContract?: string, options?: TradeNavigationOptions) => {
-      navigateToTradePath(buildTradeLinkPath(tradeId, accessSecret, escrowContract), options);
+      navigateToTradePath(buildTradeTerminalPath(tradeId, accessSecret, escrowContract), options);
     },
     [navigateToTradePath]
   );
 
   const rememberTradeTerminalReturn = useCallback(
     (tradeId: number, accessSecret?: string, escrowContract?: string) => {
-      rememberPendingTradeTerminalRoute(buildTradeLinkPath(tradeId, accessSecret, escrowContract));
+      rememberPendingTradeTerminalRoute(buildTradeTerminalPath(tradeId, accessSecret, escrowContract));
     },
     []
   );

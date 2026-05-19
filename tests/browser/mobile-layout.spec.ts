@@ -375,11 +375,11 @@ test.describe('mobile layout polish', () => {
   });
 
   test('opens the mobile trading terminal as focused page content', async ({ page }) => {
-    await page.goto('/trades/open');
+    await page.goto('/otcdesk/terminal');
 
     const terminal = page.locator('.standalone-trade-detail-section');
     await expect(terminal).toBeVisible();
-    await expect(terminal.locator('.landing-eyebrow', { hasText: /^Trading Terminal$/ })).toBeVisible();
+    await expect(terminal.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
     await expect(terminal.getByRole('heading', { name: 'Open terminal' })).toBeVisible();
     await expect(terminal.getByText('Paste a shared offer link')).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible();
@@ -453,7 +453,7 @@ test.describe('mobile layout polish', () => {
     const terminalTopBox = await terminalTop.boundingBox();
     expect(terminalTopBox).not.toBeNull();
     expect(terminalTopBox!.height).toBeLessThanOrEqual(48);
-    await expect(terminalTop.locator('.landing-eyebrow')).toContainText('Trading Terminal');
+    await expect(terminalTop.locator('.landing-eyebrow')).toContainText('Terminal');
     await expect(terminalTop.getByRole('button', { name: 'Close' })).toBeVisible();
 
     const warningBox = await page.locator('.p2p-trade-window-warning').boundingBox();
@@ -530,7 +530,7 @@ test.describe('mobile layout polish', () => {
     await expect(page.getByText('Unlisted link required to accept')).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
-    await page.goto('/trades/open');
+    await page.goto('/otcdesk/terminal');
     const terminal = page.locator('.standalone-trade-detail-section');
     await expect(terminal.getByPlaceholder('Paste offer link, compact code, or id')).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible();
@@ -590,7 +590,7 @@ test.describe('mobile layout polish', () => {
 });
 
 test.describe('trading responsive layout', () => {
-  for (const route of ['/trades', '/trades/create', '/trades/open', '/trades/mine']) {
+  for (const route of ['/otcdesk', '/otcdesk/create', '/otcdesk/terminal', '/otcdesk/mytrades']) {
     test(`keeps ${route} free of horizontal overflow on desktop and mobile`, async ({ page }) => {
       await page.setViewportSize({ width: 1440, height: 950 });
       await page.goto(route);
@@ -605,7 +605,7 @@ test.describe('trading responsive layout', () => {
   test('keeps desktop trading gutters and balance dock aligned across routes', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
 
-    for (const route of ['/trades', '/trades/create', '/trades/open', '/trades/mine']) {
+    for (const route of ['/otcdesk', '/otcdesk/create', '/otcdesk/terminal', '/otcdesk/mytrades']) {
       await page.goto(route);
       await expect(page.locator('.p2p-trading-shell')).toBeVisible();
       await expect(page.locator('.p2p-balance-dock')).toBeVisible();
@@ -720,10 +720,10 @@ test.describe('trading responsive layout', () => {
     await expect(page.locator('.p2p-direct-recipient')).toBeVisible();
     await expect(composer.getByRole('button', { name: 'Create Offer' })).toBeVisible();
 
-    await page.goto('/trades/open/counter');
+    await page.goto('/otcdesk/terminal/counter');
     await expect(page.locator('.p2p-trading-shell-create')).toBeVisible();
     await expect(page.getByText('Choose an offer to counter')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Trading Terminal' })).toBeVisible();
+    await expect(page.locator('.p2p-empty-actions').getByRole('button', { name: 'Terminal' })).toBeVisible();
 
     await page.goto('/trades/create');
     await page.getByRole('button', { name: /Recurring/ }).click();
@@ -852,7 +852,7 @@ test.describe('trading responsive layout', () => {
 
   test('stretches the empty terminal desk layout to the balance dock', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
-    await page.goto('/trades/open');
+    await page.goto('/otcdesk/terminal');
 
     await expect(page.locator('.p2p-public-trades-section .p2p-order-card').first()).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.standalone-trade-detail-section')).toContainText('Open terminal');
@@ -896,7 +896,7 @@ test.describe('trading responsive layout', () => {
 
   test('keeps the empty terminal drawer open between Desk and My Trades', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
-    await page.goto('/trades/open');
+    await page.goto('/otcdesk/terminal');
 
     const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
     const terminal = page.locator('.standalone-trade-detail-section');
@@ -905,14 +905,14 @@ test.describe('trading responsive layout', () => {
     await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
 
     await marketTabs.filter({ hasText: /^My Trades$/ }).click();
-    await expect(page).toHaveURL(/\/trades\/mine$/);
+    await expect(page).toHaveURL(/\/otcdesk\/mytrades$/);
     await expect(page.locator('.p2p-my-trades-section')).toBeVisible();
     await expect(terminal).toContainText('Open terminal');
     await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
     await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
 
     await marketTabs.filter({ hasText: /^My Trades$/ }).click();
-    await expect(page).toHaveURL(/\/trades\/mine$/);
+    await expect(page).toHaveURL(/\/otcdesk\/mytrades$/);
     await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
@@ -929,9 +929,10 @@ test.describe('trading responsive layout', () => {
     const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
     await expect(terminal.locator('.p2p-terminal-shell')).toBeVisible();
     await expect(terminal).toContainText('Review offer');
+    await expect(page).toHaveURL(/\/otcdesk\/terminal\/(l\/|recurring\?order=)/);
 
     await marketTabs.filter({ hasText: /^Desk$/ }).click();
-    await expect(page).toHaveURL(/\/trades$/);
+    await expect(page).toHaveURL(/\/otcdesk$/);
     await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
     await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
@@ -949,23 +950,24 @@ test.describe('trading responsive layout', () => {
     const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
     await expect(terminal.locator('.p2p-terminal-shell')).toBeVisible();
     await expect(terminal).toContainText('Review offer');
+    await expect(page).toHaveURL(/\/otcdesk\/terminal\/(l\/|recurring\?order=)/);
 
     await marketTabs.filter({ hasText: /^My Trades$/ }).click();
-    await expect(page).toHaveURL(/\/trades\/mine$/);
+    await expect(page).toHaveURL(/\/otcdesk\/mytrades$/);
     await expect(page.locator('.p2p-my-trades-section')).toBeVisible();
     await expect(terminal).toContainText('Open terminal');
     await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
     await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
 
     await marketTabs.filter({ hasText: /^Desk$/ }).click();
-    await expect(page).toHaveURL(/\/trades$/);
+    await expect(page).toHaveURL(/\/otcdesk$/);
     await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
     await expect(terminal).toContainText('Open terminal');
     await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
     await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
 
     await marketTabs.filter({ hasText: /^Desk$/ }).click();
-    await expect(page).toHaveURL(/\/trades$/);
+    await expect(page).toHaveURL(/\/otcdesk$/);
     await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
@@ -973,7 +975,7 @@ test.describe('trading responsive layout', () => {
   test('keeps trading view tabs color-consistent across routes', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
 
-    const routes = ['/trades', '/trades/create', '/trades/open', '/trades/mine'];
+    const routes = ['/otcdesk', '/otcdesk/create', '/otcdesk/terminal', '/otcdesk/mytrades'];
     const routeStyles: Array<{
       active: Record<string, string | boolean>;
       bounds: { height: number; left: number; top: number };
@@ -1063,7 +1065,7 @@ test.describe('trading responsive layout', () => {
     };
 
     const deskFrame = await readDeskFrame('/trades');
-    const terminalFrame = await readDeskFrame('/trades/open');
+    const terminalFrame = await readDeskFrame('/otcdesk/terminal');
     expect(terminalFrame).toEqual(deskFrame);
   });
 

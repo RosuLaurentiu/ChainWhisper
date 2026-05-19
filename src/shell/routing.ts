@@ -78,6 +78,7 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
 
   if (
     normalizedPathname === '/otcdesk' ||
+    normalizedPathname.startsWith('/otcdesk/') ||
     normalizedPathname === '/trades' ||
     normalizedPathname.startsWith('/trades/')
   ) {

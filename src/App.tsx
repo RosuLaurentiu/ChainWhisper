@@ -5570,8 +5570,9 @@ export default function App() {
       if (preserveWalletBootstrap) {
         freezeWalletBootstrapUrlAfterEntry();
       }
+      const lowerCurrentPath = currentPath.toLowerCase();
       const canonicalPath =
-        nextRoute.page === 'trades' && currentPath.toLowerCase().startsWith('/trades')
+        nextRoute.page === 'trades' && (lowerCurrentPath.startsWith('/trades') || lowerCurrentPath.startsWith('/otcdesk'))
           ? currentPath
           : getPathForAppPage(nextRoute.page);
       const canonicalHash = nextRoute.page === 'trades' ? window.location.hash : '';

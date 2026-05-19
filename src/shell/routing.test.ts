@@ -48,6 +48,9 @@ describe('app routing', () => {
     stubLocation('/otcdesk');
     expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
 
+    stubLocation('/otcdesk/mytrades');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+
     stubLocation('/trades');
     expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
 
