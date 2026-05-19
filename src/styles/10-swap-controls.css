@@ -365,7 +365,8 @@
   font-weight: 700;
 }
 
-.swap-stats-header strong {
+.swap-stats-header strong,
+.swap-contract-link {
   max-width: 52%;
   white-space: nowrap;
   overflow: hidden;
@@ -376,6 +377,21 @@
   color: #d6c8ff;
   padding: 6px 9px;
   font-size: 0.72rem;
+}
+
+.swap-contract-link {
+  text-decoration: none;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease;
+}
+
+.swap-contract-link:hover,
+.swap-contract-link:focus-visible {
+  border-color: rgba(184, 151, 255, 0.75);
+  background: rgba(139, 92, 246, 0.2);
+  color: #ffffff;
 }
 
 .swap-mini-stats {

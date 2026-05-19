@@ -26,6 +26,7 @@ type TokenSwapPageProps = {
   canUnshieldTokens: boolean;
   canLegacyUnshieldTokens: boolean;
   currentSwapDirectionEnabled: boolean;
+  shieldVaultContractUrl: string;
   onRefreshRewardBalances: () => void;
   canSwapRewardTokens: boolean;
   swapButtonLabel: string;
@@ -56,6 +57,7 @@ export default function TokenSwapPage({
   canUnshieldTokens,
   canLegacyUnshieldTokens,
   currentSwapDirectionEnabled,
+  shieldVaultContractUrl,
   onRefreshRewardBalances,
   canSwapRewardTokens,
   swapButtonLabel,
@@ -274,7 +276,13 @@ export default function TokenSwapPage({
 
           <div className="swap-stats-header">
             <span>Shield vault</span>
-            <strong>{shieldVaultStatusLabel}</strong>
+            {shieldVaultContractUrl ? (
+              <a className="swap-contract-link" href={shieldVaultContractUrl} target="_blank" rel="noreferrer">
+                {shieldVaultStatusLabel}
+              </a>
+            ) : (
+              <strong>{shieldVaultStatusLabel}</strong>
+            )}
           </div>
 
           <div className="swap-mini-stats">

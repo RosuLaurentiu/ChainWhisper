@@ -1597,6 +1597,9 @@ export default function App() {
     swapDirection === 'legacy-unshield'
       ? LEGACY_SWAP_VAULT_CONTRACT_ADDRESS
       : WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS;
+  const activeSwapVaultContractUrl = activeSwapVaultContractAddress
+    ? `${COTI_NETWORK.blockExplorerUrl}/address/${activeSwapVaultContractAddress}#code`
+    : '';
   const swapPrivateRewardTokenBalanceWei =
     swapDirection === 'legacy-unshield' ? legacyPrivateRewardTokenBalanceWei : privateRewardTokenBalanceWei;
   const swapPrivateRewardTokenSymbol =
@@ -8046,6 +8049,7 @@ export default function App() {
               canUnshieldTokens={canUnshieldTokens}
               canLegacyUnshieldTokens={canLegacyUnshieldTokens}
               currentSwapDirectionEnabled={currentSwapDirectionEnabled}
+              shieldVaultContractUrl={activeSwapVaultContractUrl}
               onRefreshRewardBalances={() => setTopUpMetricsNonce((previous) => previous + 1)}
               canSwapRewardTokens={canSwapRewardTokens}
               swapButtonLabel={swapButtonLabel}
