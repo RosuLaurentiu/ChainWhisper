@@ -75,10 +75,11 @@ export default function TokenSwapPage({
   const receivePreview = swapAmountInput.trim() ? swapAmountInput : '0';
   const directionUnavailableLabel =
     swapDirection === 'shield'
-      ? 'Shield paused'
+      ? 'Portal paused'
       : swapDirection === 'unshield'
         ? 'Unshield paused'
         : 'Legacy unshield unavailable';
+  const bridgeLabel = swapDirection === 'legacy-unshield' ? 'Legacy vault' : 'WISP Privacy Bridge';
   const shieldVaultBalanceLabel =
     !currentSwapDirectionEnabled
       ? 'Paused'
@@ -117,7 +118,7 @@ export default function TokenSwapPage({
         title: directionUnavailableLabel,
         description:
           swapDirection === 'shield'
-            ? 'New Shield deposits are paused while the replacement bridge is prepared. Legacy unshield remains available for old private-token holders.'
+            ? 'WISP Portal deposits are paused while the bridge is prepared. Legacy unshield remains available for old private-token holders.'
             : swapDirection === 'unshield'
               ? 'Current pWISP withdrawals are paused while the replacement bridge is prepared.'
               : 'Legacy withdrawals are unavailable right now.',
@@ -126,7 +127,7 @@ export default function TokenSwapPage({
     : !walletAddress
     ? {
         title: 'Wallet needed',
-        description: 'Connect from the header to view balances and use Shield.',
+        description: 'Connect from the header to view balances and use WISP Portal.',
         tone: 'locked'
       }
     : !onCotiNetwork
@@ -144,13 +145,13 @@ export default function TokenSwapPage({
         : loadingRewardBalances
           ? {
               title: 'Loading balances',
-              description: 'Checking wallet balances, Shield reserve, and fee quote.',
+              description: `Checking wallet balances, ${bridgeLabel} reserve, and fee quote.`,
               tone: 'loading'
             }
           : shieldVaultTokenBalanceWei === null || swapFeeWei === null || swapTokenFeeAmount === null
             ? {
                 title: 'Quote unavailable',
-                description: 'Some Shield data did not load. Retry before swapping.',
+                description: 'Some WISP Portal data did not load. Retry before swapping.',
                 tone: 'error'
               }
             : null;
@@ -160,8 +161,8 @@ export default function TokenSwapPage({
       <section className="swap-page-panel">
         <div className="swap-page-hero">
           <div className="swap-page-heading">
-            <h1 className="swap-page-title">Whisper Shield</h1>
-            <p>Swap reward tokens between public and private balances on COTI Mainnet.</p>
+            <h1 className="swap-page-title">WISP Portal</h1>
+            <p>Move between WISP and pWISP on COTI Mainnet.</p>
           </div>
           <div className="swap-balance-pill">
             <span>Balance</span>
@@ -194,7 +195,7 @@ export default function TokenSwapPage({
                 disabled={!canShieldTokens || swappingTokens}
                 aria-pressed={swapDirection === 'shield'}
               >
-                Shield
+                To private
               </button>
               <button
                 type="button"
@@ -203,7 +204,7 @@ export default function TokenSwapPage({
                 disabled={!canUnshieldTokens || swappingTokens}
                 aria-pressed={swapDirection === 'unshield'}
               >
-                Unshield
+                To public
               </button>
               <button
                 type="button"
@@ -212,7 +213,7 @@ export default function TokenSwapPage({
                 disabled={!canLegacyUnshieldTokens || swappingTokens}
                 aria-pressed={swapDirection === 'legacy-unshield'}
               >
-                Legacy
+                Legacy unshield
               </button>
             </div>
           </div>
@@ -275,7 +276,7 @@ export default function TokenSwapPage({
           {error ? <p className="error swap-error">{error}</p> : null}
 
           <div className="swap-stats-header">
-            <span>Shield vault</span>
+            <span>{bridgeLabel}</span>
             {shieldVaultContractUrl ? (
               <a className="swap-contract-link" href={shieldVaultContractUrl} target="_blank" rel="noreferrer">
                 {shieldVaultStatusLabel}
@@ -298,7 +299,7 @@ export default function TokenSwapPage({
               <strong>{shieldVaultStatusLabel}</strong>
             </div>
             <div>
-              <span>{`${rewardTokenSymbol} in shield vault`}</span>
+              <span>{`${rewardTokenSymbol} in ${bridgeLabel}`}</span>
               <strong>{shieldVaultBalanceLabel}</strong>
             </div>
             <div>

@@ -13,7 +13,7 @@ type HomePageProps = {
 const CORE_APPS = [
   { label: 'Chat', description: 'Private direct and group messaging' },
   { label: 'Trades', description: 'P2P escrow orders and private orders' },
-  { label: 'Shield', description: 'Public/private reward-token swaps' },
+  { label: 'WISP Portal', description: 'WISP and pWISP privacy bridge' },
   { label: 'Treasury', description: 'Read-only COTI and gCOTI analytics' }
 ] as const;
 
@@ -35,7 +35,7 @@ export default function HomePage({
           <p className="landing-eyebrow">COTI Mainnet privacy hub</p>
           <h1 className="landing-title">ChainWhisper</h1>
           <p className="landing-description">
-            Private messaging, escrow trading, reward-token shielding, and treasury data in one COTI-native workspace.
+            Private messaging, escrow trading, the WISP Portal, and treasury data in one COTI-native workspace.
           </p>
 
           <div className="landing-hero-actions">
@@ -121,8 +121,8 @@ export default function HomePage({
 
           <article className="landing-module-card">
             <span className="landing-module-kicker">Private tokens</span>
-            <h3>Whisper Shield</h3>
-            <p>Swap reward tokens between public and private balances through the Shield vault.</p>
+            <h3>WISP Portal</h3>
+            <p>Move between WISP and pWISP through the WISP Privacy Bridge.</p>
             <button
               type="button"
               className="landing-module-cta"
@@ -130,7 +130,7 @@ export default function HomePage({
               onFocus={onPrefetchSwap}
               onPointerEnter={onPrefetchSwap}
             >
-              Open Shield
+              Open WISP Portal
             </button>
           </article>
 

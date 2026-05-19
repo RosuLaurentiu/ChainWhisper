@@ -24,6 +24,9 @@ describe('app routing', () => {
   });
 
   it('keeps legacy links as aliases for renamed pages', () => {
+    stubLocation('/portal');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'swap' });
+
     stubLocation('/swap');
     expect(resolveAppRouteFromLocation()).toEqual({ page: 'swap' });
 
@@ -36,7 +39,7 @@ describe('app routing', () => {
 
   it('returns clearer canonical page paths', () => {
     expect(getPathForAppPage('chat')).toBe('/chat');
-    expect(getPathForAppPage('swap')).toBe('/shield');
+    expect(getPathForAppPage('swap')).toBe('/portal');
     expect(getPathForAppPage('treasury')).toBe('/treasury');
     expect(getPathForAppPage('trades')).toBe('/trades');
   });

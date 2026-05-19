@@ -186,7 +186,7 @@ describe('wallet header labels', () => {
     ).toBe('connect-btn wallet-inline-btn p2p-wallet-address copied');
   });
 
-  it('uses the same blocked-action labels for Shield and wallet panels', () => {
+  it('uses the same blocked-action labels for WISP Portal and wallet panels', () => {
     expect(resolveWalletBlockedActionLabel({ hasAesReady: false, onCotiNetwork: false, walletAddress: '' })).toBe(
       'Connect wallet'
     );
@@ -314,7 +314,7 @@ describe('resolveWalletConnectionPrimaryAction', () => {
     });
   });
 
-  it('keeps Chat and Shield app-first when no wallet is connected', () => {
+  it('keeps Chat and WISP Portal app-first when no wallet is connected', () => {
     expect(
       resolveWalletConnectionPrimaryAction({
         hasSavedAppWallet: true,

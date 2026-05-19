@@ -1678,7 +1678,7 @@ export default function App() {
     ? 'Swapping...'
     : !currentSwapDirectionEnabled
       ? swapDirection === 'shield'
-        ? 'Shield paused'
+        ? 'Portal paused'
         : swapDirection === 'unshield'
           ? 'Unshield paused'
           : 'Legacy unshield unavailable'
@@ -1687,8 +1687,8 @@ export default function App() {
         : parsedSwapAmount === null || parsedSwapAmount <= 0n
           ? `Enter ${swapInputSymbol} amount`
           : swapDirection === 'shield'
-            ? `Shield to ${swapPrivateRewardTokenSymbol}`
-            : `Unshield to ${rewardTokenSymbol}`;
+            ? `Move to ${swapPrivateRewardTokenSymbol}`
+            : `Move to ${rewardTokenSymbol}`;
   const topUpAmountLabel = useMemo(() => {
     if (topUpAmountWei !== null) {
       return `${formatCotiAmount(topUpAmountWei, 3)} COTI`;
@@ -2206,7 +2206,7 @@ export default function App() {
     if (!currentSwapDirectionEnabled || !activeSwapVaultContractAddress) {
       setError(
         swapDirection === 'shield'
-          ? 'Shield deposits are paused.'
+          ? 'WISP Portal deposits are paused.'
           : swapDirection === 'unshield'
             ? 'Current pWISP unshield is paused.'
             : 'Legacy unshield is unavailable.'
@@ -5635,7 +5635,7 @@ export default function App() {
         : activePage === 'chat'
           ? 'Encrypted Chat | ChainWhisper'
           : activePage === 'swap'
-            ? 'Whisper Shield | ChainWhisper'
+            ? 'WISP Portal | ChainWhisper'
           : activePage === 'trades'
             ? 'P2P Escrow | ChainWhisper'
             : 'Treasury Data | ChainWhisper';
@@ -7567,7 +7567,7 @@ export default function App() {
     const appNavItems: Array<{ page: AppPage; label: string; onPrefetch?: () => void }> = [
       { page: 'chat', label: 'Chat', onPrefetch: preloadChatPage },
       { page: 'trades', label: 'Trades', onPrefetch: preloadTradesPage },
-      { page: 'swap', label: 'Shield', onPrefetch: preloadSwapPage },
+      { page: 'swap', label: 'WISP Portal', onPrefetch: preloadSwapPage },
       { page: 'treasury', label: 'Treasury', onPrefetch: preloadTreasuryPage }
     ];
 
@@ -8017,14 +8017,14 @@ export default function App() {
           brandActions={headerHomeAction}
           appNavigationControl={appHeaderNavigationControl}
           walletControl={activeChatWalletControl}
-          subtitle="Shield"
+          subtitle="WISP Portal"
           showSoundToggle
         />
         {walletSessionModals}
         <AppErrorBoundary>
           <Suspense
             fallback={
-              <RouteLoadingFallback shellClassName="swap-page-shell" label="Loading Shield" />
+              <RouteLoadingFallback shellClassName="swap-page-shell" label="Loading WISP Portal" />
             }
           >
             <TokenSwapPage

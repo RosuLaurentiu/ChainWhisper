@@ -4,13 +4,13 @@ const walletPanel = '.wallet-header-panel';
 
 test.describe('route wallet header policy', () => {
   test('shows the shared app menu on every top-level page', async ({ page }) => {
-    for (const route of ['/', '/chat', '/trades', '/shield', '/treasury']) {
+    for (const route of ['/', '/chat', '/trades', '/portal', '/shield', '/treasury']) {
       await page.goto(route);
       const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' }).first();
       await expect(appMenu).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Chat' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Trades' })).toBeVisible();
-      await expect(appMenu.getByRole('button', { name: 'Shield' })).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'WISP Portal' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Treasury' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Home' })).toHaveCount(0);
     }
@@ -31,7 +31,7 @@ test.describe('route wallet header policy', () => {
   });
 
   test('shows notification sound controls on app pages except Home', async ({ page }) => {
-    for (const route of ['/chat', '/trades', '/shield', '/treasury']) {
+    for (const route of ['/chat', '/trades', '/portal', '/shield', '/treasury']) {
       await page.goto(route);
       await expect(page.locator('.sound-toggle-btn')).toBeVisible();
     }
@@ -40,12 +40,16 @@ test.describe('route wallet header policy', () => {
     await expect(page.locator('.sound-toggle-btn')).toHaveCount(0);
   });
 
-  test('shows Chat and Shield app-wallet controls', async ({ page }) => {
+  test('shows Chat and WISP Portal app-wallet controls', async ({ page }) => {
     await page.goto('/chat');
     await expect(page.locator(walletPanel)).toBeVisible();
     await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
 
     await page.goto('/shield');
+    await expect(page.locator(walletPanel)).toBeVisible();
+    await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
+
+    await page.goto('/portal');
     await expect(page.locator(walletPanel)).toBeVisible();
     await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
 

@@ -12,7 +12,7 @@ export type AppRoute = {
 const CANONICAL_APP_PATHS: Record<AppPage, string> = {
   home: '/',
   chat: '/chat',
-  swap: '/shield',
+  swap: '/portal',
   treasury: '/treasury',
   trades: '/trades'
 };
@@ -67,7 +67,12 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     return { page: 'treasury' };
   }
 
-  if (normalizedPathname === '/swap' || normalizedPathname === '/shield' || normalizedPathname === '/whisper-shield') {
+  if (
+    normalizedPathname === '/portal' ||
+    normalizedPathname === '/swap' ||
+    normalizedPathname === '/shield' ||
+    normalizedPathname === '/whisper-shield'
+  ) {
     return { page: 'swap' };
   }
 
@@ -85,6 +90,7 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     normalizedHash === 'chat' ||
     normalizedHash === 'messages' ||
     normalizedHash === 'messenger' ||
+    normalizedHash === 'portal' ||
     normalizedHash === 'swap' ||
     normalizedHash === 'shield' ||
     normalizedHash === 'whisper-shield' ||
@@ -95,7 +101,7 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     if (normalizedHash === 'messages' || normalizedHash === 'messenger') {
       return { page: 'chat' };
     }
-    if (normalizedHash === 'shield' || normalizedHash === 'whisper-shield') {
+    if (normalizedHash === 'portal' || normalizedHash === 'shield' || normalizedHash === 'whisper-shield') {
       return { page: 'swap' };
     }
     if (normalizedHash === 'treasury-data') {

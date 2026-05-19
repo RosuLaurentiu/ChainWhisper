@@ -16,7 +16,7 @@ describe('app wallet policy', () => {
     });
   });
 
-  it('keeps Chat and Shield app-wallet focused', () => {
+  it('keeps Chat and WISP Portal app-wallet focused', () => {
     expect(getAppWalletPolicy('chat')).toMatchObject({
       preferredWallet: 'app',
       walletControlKind: 'chat'
@@ -43,4 +43,3 @@ describe('app wallet policy', () => {
     }
   });
 });
-
