@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CARBON_NATIVE_TOKEN_ADDRESS,
+  CARBON_MCP_DEV_PROXY_BASE_URL,
+  CARBON_MCP_EXPLORE_PAIR_PATH,
+  CARBON_MCP_SUPABASE_FUNCTION_NAME,
+  DEFAULT_SUPABASE_PROJECT_URL,
   clearCarbonPairReferenceCache,
   fetchCarbonPairReference,
   formatCarbonPairReferenceDisplay,
+  resolveCarbonApiBaseUrl,
+  resolveCarbonExplorePairUrl,
   resolveCarbonPricePair,
   resolveCarbonToken
 } from './carbonMarketPrice';
@@ -59,6 +65,28 @@ describe('carbonMarketPrice helpers', () => {
       symbol: 'CUSTOM',
       usedPublicCounterpart: false
     });
+  });
+
+  it('resolves deploy-safe Carbon API base URLs', () => {
+    expect(resolveCarbonApiBaseUrl({ isDev: true })).toBe(CARBON_MCP_DEV_PROXY_BASE_URL);
+    expect(resolveCarbonApiBaseUrl({ isDev: false })).toBe(
+      `${DEFAULT_SUPABASE_PROJECT_URL}/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`
+    );
+    expect(resolveCarbonApiBaseUrl({ isDev: false, supabaseProjectUrl: 'https://example.supabase.co/' })).toBe(
+      `https://example.supabase.co/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`
+    );
+    expect(resolveCarbonApiBaseUrl({ configuredBaseUrl: 'https://carbon-proxy.example/', isDev: false })).toBe(
+      'https://carbon-proxy.example'
+    );
+    expect(resolveCarbonExplorePairUrl({ isDev: true })).toBe(
+      `${CARBON_MCP_DEV_PROXY_BASE_URL}${CARBON_MCP_EXPLORE_PAIR_PATH}`
+    );
+    expect(resolveCarbonExplorePairUrl({ isDev: false })).toBe(
+      `${DEFAULT_SUPABASE_PROJECT_URL}/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`
+    );
+    expect(resolveCarbonExplorePairUrl({ configuredBaseUrl: 'https://carbon-proxy.example/', isDev: false })).toBe(
+      `https://carbon-proxy.example${CARBON_MCP_EXPLORE_PAIR_PATH}`
+    );
   });
 
   it('maps verified private tokens to their public Carbon counterpart', () => {

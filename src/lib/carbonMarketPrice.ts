@@ -19,7 +19,10 @@ import {
 
 export const CARBON_NATIVE_TOKEN_ADDRESS = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 export const DEFAULT_CARBON_MCP_API_BASE_URL = 'https://mcp.carbondefi.xyz';
+export const CARBON_MCP_EXPLORE_PAIR_PATH = '/tools/explore_pair';
 export const CARBON_MCP_DEV_PROXY_BASE_URL = '/carbon-mcp';
+export const DEFAULT_SUPABASE_PROJECT_URL = 'https://ousgmjyajyorywpqbdkf.supabase.co';
+export const CARBON_MCP_SUPABASE_FUNCTION_NAME = 'carbon-explore-pair';
 export const CARBON_PAIR_REFERENCE_CACHE_TTL_MS = 60_000;
 
 export type CarbonPriceAsset = {
@@ -272,10 +275,44 @@ export const resolveCarbonPricePair = (
   };
 };
 
-const getCarbonApiBaseUrl = (): string => {
-  const configured = import.meta.env.VITE_CARBON_MCP_API_BASE_URL?.trim();
-  const defaultBaseUrl = import.meta.env.DEV ? CARBON_MCP_DEV_PROXY_BASE_URL : DEFAULT_CARBON_MCP_API_BASE_URL;
-  return (configured || defaultBaseUrl).replace(/\/+$/u, '');
+export const resolveCarbonApiBaseUrl = ({
+  configuredBaseUrl,
+  isDev,
+  supabaseProjectUrl
+}: {
+  configuredBaseUrl?: string;
+  isDev: boolean;
+  supabaseProjectUrl?: string;
+}): string => {
+  const configured = configuredBaseUrl?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/u, '');
+  }
+  if (isDev) {
+    return CARBON_MCP_DEV_PROXY_BASE_URL;
+  }
+
+  const projectUrl = (supabaseProjectUrl?.trim() || DEFAULT_SUPABASE_PROJECT_URL).replace(/\/+$/u, '');
+  return `${projectUrl}/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`;
+};
+
+export const resolveCarbonExplorePairUrl = (options: {
+  configuredBaseUrl?: string;
+  isDev: boolean;
+  supabaseProjectUrl?: string;
+}): string => {
+  const baseUrl = resolveCarbonApiBaseUrl(options);
+  return baseUrl.endsWith(`/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`)
+    ? baseUrl
+    : `${baseUrl}${CARBON_MCP_EXPLORE_PAIR_PATH}`;
+};
+
+const getCarbonExplorePairUrl = (): string => {
+  return resolveCarbonExplorePairUrl({
+    configuredBaseUrl: import.meta.env.VITE_CARBON_MCP_API_BASE_URL,
+    isDev: import.meta.env.DEV,
+    supabaseProjectUrl: import.meta.env.VITE_SUPABASE_PROJECT_URL
+  });
 };
 
 const readStrategyMarginalPrice = (strategy: NonNullable<CarbonExplorePairResponse['active_strategies']>[number]): number | null => {
@@ -381,7 +418,7 @@ export const fetchCarbonPairReference = async ({
   }
 
   try {
-    const response = await fetcher(`${getCarbonApiBaseUrl()}/tools/explore_pair`, {
+    const response = await fetcher(getCarbonExplorePairUrl(), {
       body: JSON.stringify({
         base_token: pair.base.address,
         chain: 'coti',
