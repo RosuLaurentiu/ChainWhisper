@@ -2520,6 +2520,32 @@
   line-height: 1.35;
 }
 
+.p2p-carbon-price-reference {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid rgba(167, 139, 250, 0.16);
+  border-radius: 999px;
+  background: rgba(16, 12, 31, 0.38);
+  color: rgba(216, 205, 255, 0.74);
+  padding: 2px 6px;
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.p2p-terminal-price-card .p2p-carbon-price-reference {
+  margin-top: 2px;
+  border-color: transparent;
+  background: transparent;
+  color: rgba(183, 174, 215, 0.78);
+  padding: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
 .p2p-terminal-flow {
   position: relative;
   display: grid;

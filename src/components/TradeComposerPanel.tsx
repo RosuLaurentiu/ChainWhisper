@@ -6,6 +6,7 @@ import {
   shortenAddress,
   type TradeFeeModeSelection
 } from '../lib/appShared';
+import type { CarbonPairReferenceDisplay } from '../lib/carbonMarketPrice';
 import type { TradePricingField } from '../lib/tradePricing';
 
 export type TradeComposerTokenOption = {
@@ -53,6 +54,7 @@ type TradeComposerPanelProps = {
   onPriceInputChange?: (value: string) => void;
   priceLabel?: string;
   pricePlaceholder?: string;
+  priceReference?: CarbonPairReferenceDisplay | null;
   priceSummaryLabel?: string;
   priceHelpText?: string;
   pricePlacement?: 'bottom' | 'sell-side';
@@ -460,6 +462,7 @@ export default function TradeComposerPanel({
   onPriceInputChange,
   priceLabel = 'Price',
   pricePlaceholder = 'quote per base',
+  priceReference = null,
   priceSummaryLabel = '',
   priceHelpText = 'Fill any two fields; the third updates automatically.',
   pricePlacement = 'bottom',
@@ -609,6 +612,12 @@ export default function TradeComposerPanel({
     const fieldIsDerived = pricingSourceFields.length >= 2 && !fieldIsSource;
     return fieldIsDerived ? <span className="trade-compose-pricing-state">Derived</span> : null;
   };
+  const renderPriceReference = () =>
+    priceReference ? (
+      <p className="p2p-carbon-price-reference" title={priceReference.title}>
+        {priceReference.label}
+      </p>
+    ) : null;
   const priceField = showPriceInput ? (
     <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-price-field', 'price')}>
       <span className="trade-compose-field-head">
@@ -774,6 +783,7 @@ export default function TradeComposerPanel({
             <div className="trade-compose-inline-price">
               {priceField}
               <p>{priceHelpText}</p>
+              {renderPriceReference()}
             </div>
           ) : null}
         </section>
@@ -911,6 +921,7 @@ export default function TradeComposerPanel({
           <div className="trade-compose-pricing-row">
             {priceField}
             <p>{priceHelpText}</p>
+            {renderPriceReference()}
           </div>
         ) : null}
 

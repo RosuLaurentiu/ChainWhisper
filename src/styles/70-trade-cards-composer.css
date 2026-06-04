@@ -1813,10 +1813,13 @@
 
 .trade-compose-inline-price {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
+  min-width: 0;
   margin-top: auto;
   border-top: 1px solid rgba(74, 64, 112, 0.48);
   padding-top: 10px;
+  padding-bottom: 4px;
 }
 
 .trade-compose-inline-price p {
@@ -2040,6 +2043,17 @@
   line-height: 1;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.trade-compose-inline-price .p2p-carbon-price-reference,
+.trade-compose-pricing-row .p2p-carbon-price-reference,
+.p2p-recurring-price-field .p2p-carbon-price-reference {
+  display: inline-block;
+  margin-top: 2px;
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .trade-compose-section-sell .trade-compose-field-value {

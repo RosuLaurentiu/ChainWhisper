@@ -97,6 +97,15 @@ import {
   type TradePricingField
 } from '../lib/tradePricing';
 import {
+  CARBON_PAIR_REFERENCE_CACHE_TTL_MS,
+  fetchCarbonPairReference,
+  formatCarbonPairReferenceDisplay,
+  resolveCarbonPricePair,
+  type CarbonPairReference,
+  type CarbonPairReferenceDisplay,
+  type CarbonPriceAsset
+} from '../lib/carbonMarketPrice';
+import {
   filterAllowedBrowserWalletOptions,
   getPreferredInjectedWalletOption,
   isMobileBrowserUserAgent,
@@ -258,6 +267,15 @@ type TradeCreateMode = 'one-off' | 'recurring';
 type TerminalFillInputSide = 'pay' | 'buy';
 type MakerControlsSurface = 'desk' | 'terminal';
 type TradeFilterRouteScope = 'desk' | 'mine' | null;
+type CarbonPairReferenceState = {
+  reference: CarbonPairReference | null;
+  updatedAt: number;
+};
+type CarbonPairRequest = {
+  baseAsset: CarbonPriceAsset;
+  quoteAsset: CarbonPriceAsset;
+  pairKey: string;
+};
 type TradeOpenActionCta = { kind: 'direction' | 'cycle' | 'manage' | 'view'; label: string };
 type TradeOverviewCardOptions = {
   canOpenTerminal?: boolean;
@@ -881,6 +899,7 @@ export default function P2PTradingPage({
   const [historyLifecycleTxHashes, setHistoryLifecycleTxHashes] = useState<Record<string, string>>({});
   const [historyTransactionTxHashes, setHistoryTransactionTxHashes] = useState<Record<string, string>>({});
   const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
+  const [carbonPairReferences, setCarbonPairReferences] = useState<Record<string, CarbonPairReferenceState>>({});
   const mobileDeskScrollRef = useRef<Record<'public' | 'mine', number>>({ public: 0, mine: 0 });
   const mobileTerminalReturnSurfaceRef = useRef<'public' | 'mine'>('public');
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
@@ -4548,6 +4567,25 @@ export default function P2PTradingPage({
     return <span>{action.label}</span>;
   };
 
+  const getCarbonReferenceDisplay = (
+    baseAsset?: CarbonPriceAsset | null,
+    quoteAsset?: CarbonPriceAsset | null,
+    inverted = false
+  ): CarbonPairReferenceDisplay | null => {
+    const pair = resolveCarbonPricePair(baseAsset, quoteAsset);
+    if (!pair) {
+      return null;
+    }
+    return formatCarbonPairReferenceDisplay(carbonPairReferences[pair.pairKey]?.reference, { inverted });
+  };
+
+  const renderCarbonPriceReference = (reference: CarbonPairReferenceDisplay | null) =>
+    reference ? (
+      <small className="p2p-carbon-price-reference" title={reference.title}>
+        {reference.label}
+      </small>
+    ) : null;
+
   const renderDeskPriceLabel = (label: string) => {
     const trimmedLabel = label.trim();
     const [amount, ...unitParts] = trimmedLabel.split(/\s+/);
@@ -5593,6 +5631,11 @@ export default function P2PTradingPage({
             priceRatioDisplay.isReversed ? leftSide : rightSide
           )
         : '';
+    const terminalCarbonPriceReference = getCarbonReferenceDisplay(
+      terminalPriceLeftAsset,
+      terminalPriceRightAsset,
+      priceRatioDisplay?.isReversed ?? false
+    );
     const resolveHistoryTermAsset = (side: typeof leftSide | typeof rightSide) =>
       isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side) : null;
     const formatTerminalTerm = (side: typeof leftSide | typeof rightSide): string => {
@@ -5747,6 +5790,7 @@ export default function P2PTradingPage({
               <span>Price ratio</span>
               {terminalPriceSideLabel ? <span className="p2p-price-side-label">{terminalPriceSideLabel}</span> : null}
               <strong>{tradeRateText}</strong>
+              {renderCarbonPriceReference(terminalCarbonPriceReference)}
             </button>
 
             {terminalOrderProgressSummary ? (
@@ -6159,6 +6203,11 @@ export default function P2PTradingPage({
       toggleInverse: Boolean(reversedRateTradeIds[tradeKey]),
       subjectLabel: `Recurring order ${recurring.orderId}`
     });
+    const recurringCarbonPriceReference = getCarbonReferenceDisplay(
+      recurring.baseAsset,
+      recurring.quoteAsset,
+      recurringPriceDisplay.isReversed
+    );
     const shareUrl = buildTradeShareUrl(snapshot.tradeId, undefined, snapshot.escrowContract);
     const shareKey = `terminal-recurring-order-link:${tradeKey}`;
     const buyProcessing = processingRecurringAction === `${tradeKey}:buy`;
@@ -6308,6 +6357,7 @@ export default function P2PTradingPage({
                   <strong>{recurringPriceDisplay.displaySellSide.priceLabel}</strong>
                 </div>
               </div>
+              {renderCarbonPriceReference(recurringCarbonPriceReference)}
             </button>
 
             <div className="p2p-terminal-liquidity-grid" aria-label="Recurring order liquidity">
@@ -6828,6 +6878,10 @@ export default function P2PTradingPage({
     tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
       ? `${tradeComposerModel.selectedTradeRequestToken.symbol}/${tradeComposerModel.selectedTradeOfferToken.symbol}`
       : 'quote/base';
+  const tradeComposerCarbonPriceReference = getCarbonReferenceDisplay(
+    tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerModel.selectedTradeRequestToken
+  );
 
   const composerActionNotice = renderP2PActionNotice('composer');
 
@@ -6909,6 +6963,7 @@ export default function P2PTradingPage({
       pricePlaceholder={`${tradeComposerModel.selectedTradeRequestToken?.symbol ?? 'quote'} per ${
         tradeComposerModel.selectedTradeOfferToken?.symbol ?? 'base'
       }`}
+      priceReference={tradeComposerCarbonPriceReference}
       priceSummaryLabel={tradePricePairLabel}
       priceHelpText="Any two fields set the offer; the third updates."
       pricePlacement="sell-side"
@@ -8318,6 +8373,105 @@ export default function P2PTradingPage({
   const myTradeTerminalOpen = route.view === 'mine' && !emptyTerminalOpen && Boolean(selectedMyTradeDetail);
   const terminalPanelOpen = route.view === 'trade' || myTradeTerminalOpen || emptyTerminalOpen;
   const terminalPanelTrade = emptyTerminalOpen ? null : route.view === 'mine' ? selectedMyTradeDetail : detailTrade;
+  const activeCarbonPairRequests = useMemo(() => {
+    const requests: CarbonPairRequest[] = [];
+    const seenPairKeys = new Set<string>();
+    const addPair = (baseAsset?: CarbonPriceAsset | null, quoteAsset?: CarbonPriceAsset | null) => {
+      const pair = resolveCarbonPricePair(baseAsset, quoteAsset);
+      if (!pair || seenPairKeys.has(pair.pairKey) || !baseAsset || !quoteAsset) {
+        return;
+      }
+      seenPairKeys.add(pair.pairKey);
+      requests.push({
+        baseAsset,
+        pairKey: pair.pairKey,
+        quoteAsset
+      });
+    };
+
+    if (route.view === 'create' || route.view === 'counter') {
+      addPair(tradeComposerModel.selectedTradeOfferToken, tradeComposerModel.selectedTradeRequestToken);
+    }
+
+    if (terminalPanelTrade) {
+      const recurring = terminalPanelTrade.recurringOrder;
+      if (recurring) {
+        addPair(recurring.baseAsset, recurring.quoteAsset);
+      } else {
+        const displayTerms = getTradeDisplayTerms(terminalPanelTrade);
+        const displayTrade = {
+          ...terminalPanelTrade,
+          offer: displayTerms.offer,
+          request: displayTerms.request
+        };
+        const orderSummary = resolveTradeOrderSummary(displayTrade, walletAddress);
+        addPair(orderSummary.primarySide.asset, orderSummary.secondarySide.asset);
+      }
+    }
+
+    return requests;
+  }, [
+    route.view,
+    terminalPanelTrade,
+    tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerModel.selectedTradeRequestToken,
+    walletAddress
+  ]);
+  useEffect(() => {
+    const now = Date.now();
+    const requestsToFetch = activeCarbonPairRequests.filter((request) => {
+      const cached = carbonPairReferences[request.pairKey];
+      return !cached || now - cached.updatedAt >= CARBON_PAIR_REFERENCE_CACHE_TTL_MS;
+    });
+    if (!requestsToFetch.length) {
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    Promise.all(
+      requestsToFetch.map(async (request) => {
+        const reference = await fetchCarbonPairReference({
+          baseAsset: request.baseAsset,
+          quoteAsset: request.quoteAsset,
+          signal: controller.signal
+        });
+        return {
+          pairKey: request.pairKey,
+          reference,
+          updatedAt: Date.now()
+        };
+      })
+    )
+      .then((results) => {
+        if (cancelled) {
+          return;
+        }
+        setCarbonPairReferences((previous) => {
+          let next = previous;
+          for (const result of results) {
+            const current = next[result.pairKey];
+            if (current?.reference === result.reference && current.updatedAt === result.updatedAt) {
+              continue;
+            }
+            if (next === previous) {
+              next = { ...previous };
+            }
+            next[result.pairKey] = {
+              reference: result.reference,
+              updatedAt: result.updatedAt
+            };
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [activeCarbonPairRequests, carbonPairReferences]);
   useEffect(() => {
     const recurring = terminalPanelTrade?.recurringOrder;
     if (!terminalPanelTrade || !recurring || recurring.mode !== 'public' || !walletKey || recurring.executionCount <= 0) {
@@ -8783,6 +8937,7 @@ export default function P2PTradingPage({
   const recurringTokenOptions = tradeComposerModel.tradeTokenOptions.filter((option) => !option.value.startsWith('custom'));
   const recurringBaseToken = tradeComposerModel.selectedTradeOfferToken;
   const recurringQuoteToken = tradeComposerModel.selectedTradeRequestToken;
+  const recurringComposerCarbonPriceReference = getCarbonReferenceDisplay(recurringBaseToken, recurringQuoteToken);
   const recurringHasPrivateToken =
     recurringBaseToken?.kind === 'private-erc20' || recurringQuoteToken?.kind === 'private-erc20';
   const recurringPrivateAmountsHidden = recurringHasPrivateToken && recurringHidePrivateAmounts;
@@ -9320,6 +9475,7 @@ export default function P2PTradingPage({
                         placeholder={`${recurringQuoteToken?.symbol ?? 'quote'} per ${recurringBaseToken?.symbol ?? 'base'}`}
                         disabled={creatingRecurringOrder}
                       />
+                      {renderCarbonPriceReference(recurringComposerCarbonPriceReference)}
                     </label>
                     {!editingRecurringOrder ? (
                       <>
@@ -9419,6 +9575,7 @@ export default function P2PTradingPage({
                         placeholder={`${recurringQuoteToken?.symbol ?? 'quote'} per ${recurringBaseToken?.symbol ?? 'base'}`}
                         disabled={creatingRecurringOrder}
                       />
+                      {renderCarbonPriceReference(recurringComposerCarbonPriceReference)}
                     </label>
                     {!editingRecurringOrder ? (
                       <>

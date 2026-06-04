@@ -1,6 +1,63 @@
 import { expect, test } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 
 const PENDING_TERMINAL_ROUTE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
+const CARBON_EXPLORE_PAIR_URL = '**/tools/explore_pair';
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const mockCarbonPairReference = async (page: Page, marketPrice: number | null) => {
+  await page.route(CARBON_EXPLORE_PAIR_URL, async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') {
+      await route.fulfill({
+        headers: {
+          'Access-Control-Allow-Headers': 'accept, content-type',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Origin': '*'
+        },
+        status: 204
+      });
+      return;
+    }
+
+    await route.fulfill({
+      body: JSON.stringify({
+        active_strategies: marketPrice
+          ? [
+              {
+                buy: { marginal: String(marketPrice) },
+                sell: { marginal: String(marketPrice) }
+              }
+            ]
+          : [],
+        market_price: marketPrice,
+        status: 'ok'
+      }),
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      },
+      status: 200
+    });
+  });
+};
+
+const selectComposerToken = async (
+  page: Page,
+  sectionSelector: string,
+  symbol: string,
+  scope: 'Public' | 'Private'
+) => {
+  const section = page.locator(sectionSelector);
+  await section.locator('.trade-token-select-trigger').click();
+  const dropdown = section.locator('.trade-token-select-dropdown');
+  await expect(dropdown).toBeVisible();
+  await dropdown.getByRole('tab', { name: new RegExp(`^${scope}\\b`) }).click();
+  await dropdown.getByLabel('Search trade tokens').fill(symbol);
+  const option = dropdown.getByRole('option', { name: new RegExp(`^${escapeRegExp(symbol)}\\b`) });
+  await expect(option).toHaveCount(1);
+  await option.click();
+  await expect(section.locator('.trade-token-select-trigger strong')).toHaveText(symbol);
+};
 
 test.describe('trading V1 routes', () => {
   test('uses the recurring read path for recurring links', async ({ page }) => {
@@ -152,6 +209,103 @@ test.describe('trading V1 routes', () => {
     await expect(page.getByText('You receive').first()).toBeVisible();
     await expect(page.getByText('Liquidity stays in this order and cycles between sides.')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Swap recurring token sides' })).toHaveCount(1);
+  });
+
+  test('shows Carbon reference prices in create and terminal surfaces', async ({ page }) => {
+    await mockCarbonPairReference(page, 0.000286);
+
+    await page.goto('/trades/create');
+    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
+      'Carbon price 0.000286 COTI/WISP'
+    );
+
+    await selectComposerToken(page, '.trade-compose-section-sell', 'pWISP', 'Private');
+    await selectComposerToken(page, '.trade-compose-section-buy', 'p.COTI', 'Private');
+    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
+      'Carbon price 0.000286 COTI/WISP'
+    );
+
+    await selectComposerToken(page, '.trade-compose-section-sell', 'gCOTI', 'Public');
+    await selectComposerToken(page, '.trade-compose-section-buy', 'COTI', 'Public');
+    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
+      'Carbon price 0.000286 COTI/gCOTI'
+    );
+
+    await selectComposerToken(page, '.trade-compose-section-sell', 'p.gCOTI', 'Private');
+    await selectComposerToken(page, '.trade-compose-section-buy', 'p.COTI', 'Private');
+    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
+      'Carbon price 0.000286 COTI/gCOTI'
+    );
+
+    await page.getByRole('button', { name: /Recurring/ }).click();
+    await expect(page.locator('.p2p-recurring-price-field .p2p-carbon-price-reference').first()).toContainText(
+      'Carbon price 0.000286 COTI/gCOTI'
+    );
+
+    await page.goto('/trades/3');
+    const standardTerminal = page.locator('.p2p-terminal-shell').filter({ hasText: 'P2P OTC #3' });
+    await expect(standardTerminal.locator('.p2p-carbon-price-reference')).toContainText(
+      /Carbon price/,
+      { timeout: 30_000 }
+    );
+  });
+
+  test('keeps the one-off Carbon price inside the narrow create price area', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 720 });
+    await mockCarbonPairReference(page, 3172.212);
+
+    await page.goto('/trades/create');
+    await selectComposerToken(page, '.trade-compose-section-sell', 'COTI', 'Public');
+    await selectComposerToken(page, '.trade-compose-section-buy', 'Pengo', 'Public');
+
+    const carbonReference = page.locator('.trade-compose-inline-price .p2p-carbon-price-reference');
+    await expect(carbonReference).toContainText('Carbon price');
+
+    const bounds = await page.evaluate(() => {
+      const carbon = document.querySelector('.trade-compose-inline-price .p2p-carbon-price-reference');
+      const inlinePrice = carbon?.closest('.trade-compose-inline-price');
+      const sellSection = carbon?.closest('.trade-compose-section-sell');
+      const panel = carbon?.closest('.trade-compose-panel');
+      const privacy = panel?.querySelector('.trade-compose-privacy-panel');
+      const readBounds = (element: Element | null | undefined, label: string) => {
+        if (!element) {
+          throw new Error(`Missing ${label}`);
+        }
+        const rect = element.getBoundingClientRect();
+        return {
+          bottom: rect.bottom,
+          right: rect.right,
+          top: rect.top
+        };
+      };
+
+      return {
+        carbon: readBounds(carbon, 'Carbon price reference'),
+        inlinePrice: readBounds(inlinePrice, 'inline price'),
+        privacy: readBounds(privacy, 'privacy panel'),
+        sellSection: readBounds(sellSection, 'sell section')
+      };
+    });
+
+    expect(bounds.carbon.bottom).toBeLessThanOrEqual(bounds.sellSection.bottom - 6);
+    expect(bounds.inlinePrice.bottom).toBeLessThanOrEqual(bounds.sellSection.bottom - 6);
+    expect(bounds.carbon.right).toBeLessThanOrEqual(bounds.sellSection.right - 6);
+    expect(bounds.sellSection.bottom).toBeLessThanOrEqual(bounds.privacy.top - 6);
+  });
+
+  test('hides Carbon reference prices for same-underlying public/private terminal pairs', async ({ page }) => {
+    await mockCarbonPairReference(page, 0.000286);
+
+    await page.goto('/trades/recurring?order=1');
+    await expect(page.locator('.p2p-terminal-shell-recurring')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.p2p-terminal-shell-recurring .p2p-carbon-price-reference')).toHaveCount(0);
+  });
+
+  test('hides Carbon reference prices when Carbon has no pair data', async ({ page }) => {
+    await mockCarbonPairReference(page, null);
+
+    await page.goto('/trades/create');
+    await expect(page.locator('.p2p-carbon-price-reference')).toHaveCount(0);
   });
 
   test('calculates recurring receive amounts from price and liquidity', async ({ page }) => {

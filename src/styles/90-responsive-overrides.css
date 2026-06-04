@@ -6060,12 +6060,12 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-panel:not(.p2p-recurring-builder) .trade-compose-grid {
-    min-height: 286px;
+    min-height: 316px;
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-section {
     min-height: 0;
-    height: 100%;
+    height: auto;
     gap: 8px;
     padding: 10px;
     border-color: rgba(148, 163, 184, 0.16);
@@ -6076,13 +6076,16 @@ summary:focus:not(:focus-visible),
   .app-shell-trades .p2p-trading-shell-create .trade-compose-inline-price {
     gap: 4px;
     padding-top: 8px;
+    padding-bottom: 6px;
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-section-sell {
+    grid-column: 1;
     border-left-color: rgba(239, 102, 102, 0.34);
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-section-buy {
+    grid-column: 3;
     border-left-color: rgba(45, 212, 191, 0.3);
   }
 
@@ -6119,6 +6122,7 @@ summary:focus:not(:focus-visible),
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-swap-indicator {
+    grid-column: 2;
     width: 36px;
     min-width: 36px;
     height: 36px;
@@ -6128,6 +6132,10 @@ summary:focus:not(:focus-visible),
     background:
       radial-gradient(circle at 35% 20%, rgba(196, 181, 253, 0.22), transparent 52%),
       rgba(20, 18, 34, 0.88);
+  }
+
+  .app-shell-trades .p2p-trading-shell-create .trade-compose-swap-indicator svg {
+    transform: none;
   }
 
   .app-shell-trades .p2p-trading-shell-create .trade-compose-quote-dock {

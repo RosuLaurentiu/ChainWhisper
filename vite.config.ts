@@ -64,6 +64,15 @@ export default defineConfig({
   // Custom domain (chainwhisper.chat) serves the app from root.
   base: '/',
   plugins: [react()],
+  server: {
+    proxy: {
+      '/carbon-mcp': {
+        target: 'https://mcp.carbondefi.xyz',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/carbon-mcp/u, '')
+      }
+    }
+  },
   build: {
     chunkSizeWarningLimit: 900,
     rollupOptions: {
