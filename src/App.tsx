@@ -7974,6 +7974,7 @@ export default function App() {
           onOpenTrades={() => navigateToPage('trades')}
           isConnected={isConnected}
         />
+        {walletSessionModals}
       </div>
     );
   }
@@ -7995,6 +7996,7 @@ export default function App() {
           subtitle="OTC Desk"
           showSoundToggle
         />
+        {walletSessionModals}
         <AppErrorBoundary>
           <Suspense
             fallback={
@@ -8098,6 +8100,7 @@ export default function App() {
             <TreasuryPage isCompactLayout={isMobileNav} />
           </Suspense>
         </AppErrorBoundary>
+        {walletSessionModals}
       </div>
     );
   }

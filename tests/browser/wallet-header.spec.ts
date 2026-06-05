@@ -73,6 +73,24 @@ test.describe('route wallet header policy', () => {
     await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
   });
 
+  test('opens the app-wallet PIN dialog from every wallet-enabled app shell', async ({ page }) => {
+    for (const route of ['/chat', '/shield', '/otcdesk']) {
+      await page.goto(route);
+      const header = page.locator('.top-header');
+      await expect(header.locator(walletPanel)).toBeVisible();
+
+      await header.getByRole('button', { name: /^Open Wallet menu$/i }).click();
+      await page.getByRole('menuitem', { name: /^Generate wallet$/i }).click();
+
+      const pinDialog = page.getByRole('dialog', { name: /Set PIN|Unlock Wallet/i });
+      await expect(pinDialog).toBeVisible();
+      await expect(pinDialog.getByLabel('Wallet PIN')).toBeVisible();
+
+      await pinDialog.getByRole('button', { name: /^Cancel$/i }).click();
+      await expect(pinDialog).toHaveCount(0);
+    }
+  });
+
   test('shows OTC Desk wallet controls without duplicate preferred browser action', async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem(
