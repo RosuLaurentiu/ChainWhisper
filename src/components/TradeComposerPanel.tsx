@@ -373,8 +373,7 @@ export function TradeTokenSelect({
                     ]
                       .filter(Boolean)
                       .join(' ')}
-                    onPointerDown={(event) => {
-                      event.preventDefault();
+                    onClick={() => {
                       selectOption(option);
                     }}
                     onKeyDown={(event) => {

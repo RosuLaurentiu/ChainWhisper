@@ -511,6 +511,9 @@ test.describe('mobile layout polish', () => {
     const tokenState = page.locator('.trade-token-select-state').first();
     await expect(tokenDropdown).toBeVisible();
     await expect(tokenDropdown.getByLabel('Search trade tokens')).not.toBeFocused();
+    const firstTokenOption = tokenDropdown.locator('.trade-token-select-option').first();
+    await firstTokenOption.dispatchEvent('pointerdown', { pointerType: 'touch', isPrimary: true });
+    await expect(tokenDropdown).toBeVisible();
     await tokenDropdown.getByLabel('Search trade tokens').click();
     await expect(tokenDropdown.getByLabel('Search trade tokens')).toBeFocused();
     await expect(tokenState).toContainText(/Whitelisted|Native asset|Balance pending/);
