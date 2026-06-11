@@ -295,12 +295,8 @@ export const resolveRecurringPriceDeskDisplay = ({
   const isReversed = Boolean(toggleInverse) !== defaultReversed;
   const basisLabel = isReversed ? reverseBasisLabel : forwardBasisLabel;
   const nextBasisLabel = isReversed ? forwardBasisLabel : reverseBasisLabel;
-  const makerBuySide = isReversed
-    ? { label: `Sell ${terms.quoteAsset.symbol}`, priceLabel: buyReverseLabel }
-    : { label: `Buy ${terms.baseAsset.symbol}`, priceLabel: buyForwardLabel };
-  const makerSellSide = isReversed
-    ? { label: `Buy ${terms.quoteAsset.symbol}`, priceLabel: sellReverseLabel }
-    : { label: `Sell ${terms.baseAsset.symbol}`, priceLabel: sellForwardLabel };
+  const makerBuySide = { label: `Buy ${terms.baseAsset.symbol}`, priceLabel: isReversed ? buyReverseLabel : buyForwardLabel };
+  const makerSellSide = { label: `Sell ${terms.baseAsset.symbol}`, priceLabel: isReversed ? sellReverseLabel : sellForwardLabel };
   const displayBuySide = isReversed ? makerSellSide : makerBuySide;
   const displaySellSide = isReversed ? makerBuySide : makerSellSide;
 

@@ -319,10 +319,10 @@ describe('price display helpers', () => {
 
     expect(display).toMatchObject({
       basisLabel: 'AAA/BBB',
-      displayBuySide: { label: 'Buy BBB', priceLabel: '5 AAA/BBB' },
-      displaySellSide: { label: 'Sell BBB', priceLabel: '10 AAA/BBB' },
-      makerBuySide: { label: 'Sell BBB', priceLabel: '10 AAA/BBB' },
-      makerSellSide: { label: 'Buy BBB', priceLabel: '5 AAA/BBB' }
+      displayBuySide: { label: 'Sell AAA', priceLabel: '5 AAA/BBB' },
+      displaySellSide: { label: 'Buy AAA', priceLabel: '10 AAA/BBB' },
+      makerBuySide: { label: 'Buy AAA', priceLabel: '10 AAA/BBB' },
+      makerSellSide: { label: 'Sell AAA', priceLabel: '5 AAA/BBB' }
     });
     expect(buyPrice).toBeLessThanOrEqual(sellPrice);
   });

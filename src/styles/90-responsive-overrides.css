@@ -4429,6 +4429,11 @@ summary:focus:not(:focus-visible),
   font-size: clamp(0.5rem, 0.62vw, 0.56rem);
 }
 
+.app-shell-trades .p2p-terminal-price-desk .p2p-recurring-price-box .p2p-price-unit {
+  font-size: clamp(0.62rem, 0.78vw, 0.68rem);
+  line-height: 1.08;
+}
+
 @container (min-width: 330px) {
   .app-shell-trades .p2p-recurring-order-card .p2p-recurring-price-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4511,6 +4516,16 @@ summary:focus:not(:focus-visible),
   border-color: rgba(148, 163, 184, 0.12);
   background: rgba(3, 4, 9, 0.42);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+}
+
+.app-shell-trades .p2p-recurring-price-box.is-active {
+  border-color: rgba(167, 139, 250, 0.72);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.18), rgba(76, 29, 149, 0.1)),
+    rgba(3, 4, 9, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
 .app-shell-trades .p2p-terminal-shell,

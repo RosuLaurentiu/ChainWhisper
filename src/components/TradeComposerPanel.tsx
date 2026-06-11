@@ -332,7 +332,6 @@ export function TradeTokenSelect({
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
               placeholder={`Search ${activeScope} tokens`}
-              autoFocus
               aria-label="Search trade tokens"
             />
             <div className="trade-token-select-tabs" role="tablist" aria-label="Token type">

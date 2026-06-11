@@ -6438,6 +6438,11 @@
   white-space: normal;
 }
 
+.p2p-terminal-price-desk .p2p-recurring-price-box .p2p-price-unit {
+  font-size: clamp(0.62rem, 0.78vw, 0.68rem);
+  line-height: 1.08;
+}
+
 .p2p-recurring-price-box small {
   display: block;
   min-width: 0;
@@ -6463,6 +6468,24 @@
 
 .p2p-recurring-price-sell {
   border-color: rgba(148, 163, 184, 0.16);
+}
+
+.p2p-recurring-price-box.is-active {
+  border-color: rgba(167, 139, 250, 0.72);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.18), rgba(76, 29, 149, 0.1)),
+    rgba(3, 4, 9, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.p2p-recurring-fill-price-note {
+  margin: -2px 0 0;
+  color: rgba(218, 211, 255, 0.72);
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .p2p-recurring-inventory-strip {

@@ -3,7 +3,48 @@ import type { Page, Route } from '@playwright/test';
 
 const PENDING_TERMINAL_ROUTE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
 const CARBON_EXPLORE_PAIR_URL = '**/tools/explore_pair';
+const COTI_CHAIN_ID_HEX = '0x282b34';
+const RECURRING_ORDER_ONE_MAKER = '0xbf01185A70CDfEF1858659836D57BFf085ebed55';
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const installMockTradingWallet = async (page: Page, address: string) => {
+  await page.addInitScript(({ walletAddress, chainIdHex }) => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const provider = {
+      isMetaMask: true,
+      selectedAddress: walletAddress,
+      request: async ({ method }: { method: string }) => {
+        switch (method) {
+          case 'eth_requestAccounts':
+          case 'eth_accounts':
+            return [walletAddress];
+          case 'eth_chainId':
+            return chainIdHex;
+          case 'wallet_requestPermissions':
+            return [{ parentCapability: 'eth_accounts', caveats: [] }];
+          case 'wallet_switchEthereumChain':
+          case 'wallet_addEthereumChain':
+            return null;
+          default:
+            return null;
+        }
+      },
+      on: (eventName: string, handler: (...args: unknown[]) => void) => {
+        const handlers = listeners.get(eventName) ?? new Set<(...args: unknown[]) => void>();
+        handlers.add(handler);
+        listeners.set(eventName, handlers);
+      },
+      removeListener: (eventName: string, handler: (...args: unknown[]) => void) => {
+        listeners.get(eventName)?.delete(handler);
+      }
+    };
+
+    Object.defineProperty(window, 'ethereum', {
+      configurable: true,
+      value: provider
+    });
+  }, { walletAddress: address, chainIdHex: COTI_CHAIN_ID_HEX });
+};
 
 const mockCarbonPairReference = async (page: Page, marketPrice: number | null) => {
   await page.route(CARBON_EXPLORE_PAIR_URL, async (route: Route) => {
@@ -75,6 +116,40 @@ test.describe('trading V1 routes', () => {
     await expect(page.locator('.p2p-terminal-history-window')).toBeVisible();
     await expect(page.getByText('Trade could not load')).toHaveCount(0);
     await expect(page.getByText('contract.getTradeView is not a function')).toHaveCount(0);
+  });
+
+  test('keeps recurring order prices stable while mapping the fill action to the filled side', async ({ page }) => {
+    await page.goto('/trades/recurring?order=1');
+
+    const terminal = page.locator('.p2p-terminal-shell-recurring');
+    await expect(terminal).toBeVisible({ timeout: 30_000 });
+    const priceDesk = terminal.locator('.p2p-terminal-price-desk');
+    const orderBuySide = priceDesk.locator('.p2p-recurring-price-buy');
+    const orderSellSide = priceDesk.locator('.p2p-recurring-price-sell');
+
+    await expect(priceDesk.locator('.p2p-recurring-price-card-head')).toContainText('Price ratio');
+    await expect(orderBuySide).toContainText(/^Sell /i);
+    await expect(orderSellSide).toContainText(/^Buy /i);
+    await expect(orderSellSide).toHaveClass(/is-active/);
+    await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You buy .* at/i);
+
+    await terminal.locator('.p2p-terminal-tabs').getByRole('tab', { name: 'Sell' }).click();
+    await expect(orderBuySide).toHaveClass(/is-active/);
+    await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You sell .* at/i);
+  });
+
+  test('shows recurring price sides from the maker perspective after wallet connect', async ({ page }) => {
+    await installMockTradingWallet(page, RECURRING_ORDER_ONE_MAKER);
+    await page.goto('/trades');
+
+    const header = page.locator('.top-header');
+    await header.getByRole('button', { name: /^Connect MetaMask$/ }).click();
+
+    const recurringCard = page.locator('.p2p-public-trade-grid .p2p-recurring-order-card').first();
+    await expect(recurringCard).toBeVisible({ timeout: 30_000 });
+    await expect(recurringCard.locator('.p2p-order-chip-owner')).toContainText('Maker');
+    await expect(recurringCard.locator('.p2p-recurring-price-buy')).toContainText(/^Buy /i);
+    await expect(recurringCard.locator('.p2p-recurring-price-sell')).toContainText(/^Sell /i);
   });
 
   test('shows functional desk filters', async ({ page }) => {

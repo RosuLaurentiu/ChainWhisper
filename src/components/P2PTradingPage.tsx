@@ -166,6 +166,8 @@ import {
   formatTradeRatioLabel,
   groupWalletTradesByPerspective,
   isZeroTradeTakerAddress,
+  type RecurringPriceDeskDisplay,
+  type RecurringPriceDeskSideDisplay,
   resolveRecurringPriceDeskDisplay,
   resolveTradePriceRatioDisplay,
   resolveTradeOrderSummary
@@ -4617,6 +4619,27 @@ export default function P2PTradingPage({
     return tokenSymbol;
   };
 
+  const formatRecurringPriceSideLabel = (
+    side: RecurringPriceDeskSideDisplay,
+    display: RecurringPriceDeskDisplay,
+    baseSymbol: string,
+    isMakerView: boolean
+  ): string => {
+    const isMakerBuySide = side === display.makerBuySide;
+    if (isMakerView) {
+      return `${isMakerBuySide ? 'Buy' : 'Sell'} ${baseSymbol}`;
+    }
+    return `${isMakerBuySide ? 'Sell' : 'Buy'} ${baseSymbol}`;
+  };
+
+  const formatRecurringPriceDeskAriaLabel = (
+    subjectLabel: string,
+    display: RecurringPriceDeskDisplay,
+    buySideLabel: string,
+    sellSideLabel: string
+  ): string =>
+    `${subjectLabel} price desk quoted in ${display.basisLabel}. ${buySideLabel}: ${display.displayBuySide.priceLabel}. ${sellSideLabel}: ${display.displaySellSide.priceLabel}. Switch to ${display.nextBasisLabel}.`;
+
   const renderDeskLiquidityLabel = (label: string) => {
     const trimmedLabel = label.trim();
     const [amount, ...unitParts] = trimmedLabel.split(/\s+/);
@@ -4732,6 +4755,45 @@ export default function P2PTradingPage({
       toggleInverse: Boolean(reversedRateTradeIds[tradeKey]),
       subjectLabel: `Recurring order ${recurring.orderId}`
     });
+    const recurringBuyPriceSideLabel = formatRecurringPriceSideLabel(
+      recurringPriceDisplay.displayBuySide,
+      recurringPriceDisplay,
+      recurring.baseAsset.symbol,
+      isMaker
+    );
+    const recurringSellPriceSideLabel = formatRecurringPriceSideLabel(
+      recurringPriceDisplay.displaySellSide,
+      recurringPriceDisplay,
+      recurring.baseAsset.symbol,
+      isMaker
+    );
+    const recurringPriceAriaLabel = formatRecurringPriceDeskAriaLabel(
+      `Recurring order ${recurring.orderId}`,
+      recurringPriceDisplay,
+      recurringBuyPriceSideLabel,
+      recurringSellPriceSideLabel
+    );
+    const showTakerRecurringPrices = detail && !isMaker;
+    const activeRecurringOrderPriceSide =
+      recurringTerminalSide === 'buy' ? recurringPriceDisplay.makerSellSide : recurringPriceDisplay.makerBuySide;
+    const recurringFillPriceNote =
+      recurringTerminalSide === 'buy'
+        ? `You buy ${recurring.baseAsset.symbol} at ${recurringPriceDisplay.makerSellSide.priceLabel}.`
+        : `You sell ${recurring.baseAsset.symbol} at ${recurringPriceDisplay.makerBuySide.priceLabel}.`;
+    const recurringBuyPriceClassName = [
+      'p2p-recurring-price-box',
+      'p2p-recurring-price-buy',
+      showTakerRecurringPrices && recurringPriceDisplay.displayBuySide === activeRecurringOrderPriceSide ? 'is-active' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const recurringSellPriceClassName = [
+      'p2p-recurring-price-box',
+      'p2p-recurring-price-sell',
+      showTakerRecurringPrices && recurringPriceDisplay.displaySellSide === activeRecurringOrderPriceSide ? 'is-active' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
     const formatRecurringExecutionAmount = (asset: TradeAssetPayload, amount?: string): string =>
       amount !== undefined ? formatRecurringTokenAmount(asset, amount, false) : `Private ${asset.symbol}`;
     const shareUrl = buildTradeShareUrl(snapshot.tradeId, undefined, snapshot.escrowContract);
@@ -4862,18 +4924,18 @@ export default function P2PTradingPage({
           className="p2p-recurring-price-card p2p-order-market-panel"
           onClick={() => toggleTradeRateDirection(snapshot.tradeId, snapshot.escrowContract)}
           title={recurringPriceDisplay.toggleTitle}
-          aria-label={recurringPriceDisplay.ariaLabel}
+          aria-label={recurringPriceAriaLabel}
         >
           <div className="p2p-recurring-price-card-head">
             <span>Price ratio</span>
           </div>
           <div className="p2p-recurring-price-grid">
-            <div className="p2p-recurring-price-box p2p-recurring-price-buy">
-              <span>{recurringPriceDisplay.displayBuySide.label}</span>
+            <div className={recurringBuyPriceClassName}>
+              <span>{recurringBuyPriceSideLabel}</span>
               <strong className="p2p-price-label">{renderDeskPriceLabel(recurringPriceDisplay.displayBuySide.priceLabel)}</strong>
             </div>
-            <div className="p2p-recurring-price-box p2p-recurring-price-sell">
-              <span>{recurringPriceDisplay.displaySellSide.label}</span>
+            <div className={recurringSellPriceClassName}>
+              <span>{recurringSellPriceSideLabel}</span>
               <strong className="p2p-price-label">{renderDeskPriceLabel(recurringPriceDisplay.displaySellSide.priceLabel)}</strong>
             </div>
           </div>
@@ -5007,6 +5069,7 @@ export default function P2PTradingPage({
                 Sell
               </button>
             </div>
+            <p className="p2p-recurring-fill-price-note">{recurringFillPriceNote}</p>
             <div className="p2p-recurring-terminal-ticket" role="tabpanel">
               <label className="trade-compose-field">
                 <span>{activeRecurringTerminalState.inputLabel}</span>
@@ -6203,6 +6266,45 @@ export default function P2PTradingPage({
       toggleInverse: Boolean(reversedRateTradeIds[tradeKey]),
       subjectLabel: `Recurring order ${recurring.orderId}`
     });
+    const recurringBuyPriceSideLabel = formatRecurringPriceSideLabel(
+      recurringPriceDisplay.displayBuySide,
+      recurringPriceDisplay,
+      recurring.baseAsset.symbol,
+      isMaker
+    );
+    const recurringSellPriceSideLabel = formatRecurringPriceSideLabel(
+      recurringPriceDisplay.displaySellSide,
+      recurringPriceDisplay,
+      recurring.baseAsset.symbol,
+      isMaker
+    );
+    const recurringPriceAriaLabel = formatRecurringPriceDeskAriaLabel(
+      `Recurring order ${recurring.orderId}`,
+      recurringPriceDisplay,
+      recurringBuyPriceSideLabel,
+      recurringSellPriceSideLabel
+    );
+    const showTakerRecurringPrices = !isMaker;
+    const activeRecurringOrderPriceSide =
+      recurringTerminalSide === 'buy' ? recurringPriceDisplay.makerSellSide : recurringPriceDisplay.makerBuySide;
+    const recurringFillPriceNote =
+      recurringTerminalSide === 'buy'
+        ? `You buy ${recurring.baseAsset.symbol} at ${recurringPriceDisplay.makerSellSide.priceLabel}.`
+        : `You sell ${recurring.baseAsset.symbol} at ${recurringPriceDisplay.makerBuySide.priceLabel}.`;
+    const recurringBuyPriceClassName = [
+      'p2p-recurring-price-box',
+      'p2p-recurring-price-buy',
+      showTakerRecurringPrices && recurringPriceDisplay.displayBuySide === activeRecurringOrderPriceSide ? 'is-active' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const recurringSellPriceClassName = [
+      'p2p-recurring-price-box',
+      'p2p-recurring-price-sell',
+      showTakerRecurringPrices && recurringPriceDisplay.displaySellSide === activeRecurringOrderPriceSide ? 'is-active' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
     const recurringCarbonPriceReference = getCarbonReferenceDisplay(
       recurring.baseAsset,
       recurring.quoteAsset,
@@ -6342,19 +6444,19 @@ export default function P2PTradingPage({
               className="p2p-terminal-price-card p2p-terminal-price-desk"
               onClick={() => toggleTradeRateDirection(snapshot.tradeId, snapshot.escrowContract)}
               title={recurringPriceDisplay.toggleTitle}
-              aria-label={recurringPriceDisplay.ariaLabel}
+              aria-label={recurringPriceAriaLabel}
             >
               <div className="p2p-recurring-price-card-head">
                 <span>Price ratio</span>
               </div>
               <div className="p2p-recurring-price-grid">
-                <div className="p2p-recurring-price-box p2p-recurring-price-buy">
-                  <span>{recurringPriceDisplay.displayBuySide.label}</span>
-                  <strong>{recurringPriceDisplay.displayBuySide.priceLabel}</strong>
+                <div className={recurringBuyPriceClassName}>
+                  <span>{recurringBuyPriceSideLabel}</span>
+                  <strong className="p2p-price-label">{renderDeskPriceLabel(recurringPriceDisplay.displayBuySide.priceLabel)}</strong>
                 </div>
-                <div className="p2p-recurring-price-box p2p-recurring-price-sell">
-                  <span>{recurringPriceDisplay.displaySellSide.label}</span>
-                  <strong>{recurringPriceDisplay.displaySellSide.priceLabel}</strong>
+                <div className={recurringSellPriceClassName}>
+                  <span>{recurringSellPriceSideLabel}</span>
+                  <strong className="p2p-price-label">{renderDeskPriceLabel(recurringPriceDisplay.displaySellSide.priceLabel)}</strong>
                 </div>
               </div>
               {renderCarbonPriceReference(recurringCarbonPriceReference)}
@@ -6503,6 +6605,7 @@ export default function P2PTradingPage({
                     Sell
                   </button>
                 </div>
+                <p className="p2p-recurring-fill-price-note">{recurringFillPriceNote}</p>
                 <div className="p2p-terminal-amount-grid" aria-label="Recurring order amount calculator">
                   <label
                     className={`p2p-terminal-input-field p2p-terminal-input-field-${recurringBaseFieldAction}${

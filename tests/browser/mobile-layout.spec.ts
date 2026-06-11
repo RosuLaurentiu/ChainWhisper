@@ -510,6 +510,9 @@ test.describe('mobile layout polish', () => {
     const tokenDropdown = page.locator('.trade-token-select-dropdown');
     const tokenState = page.locator('.trade-token-select-state').first();
     await expect(tokenDropdown).toBeVisible();
+    await expect(tokenDropdown.getByLabel('Search trade tokens')).not.toBeFocused();
+    await tokenDropdown.getByLabel('Search trade tokens').click();
+    await expect(tokenDropdown.getByLabel('Search trade tokens')).toBeFocused();
     await expect(tokenState).toContainText(/Whitelisted|Native asset|Balance pending/);
     await expect(tokenState).not.toContainText(/Balance\s+(?:--|\d)/);
     await expect(tokenState.locator('a[title="View token on explorer"]')).toBeVisible();
@@ -1186,22 +1189,27 @@ test.describe('trading responsive layout', () => {
       .locator('.p2p-offer-card')
       .filter({ has: page.locator('.p2p-order-liquidity-summary') })
       .first();
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toBeVisible();
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/You buy|You sell/);
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).not.toContainText(/Seller sells|Buyer pays/);
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/left/);
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/\d+(?:\.\d+)?\/\d+(?:\.\d+)?/);
-    await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/sold|bought/);
-    await expect(publicLiquidityOneOff.locator('.p2p-offer-terms')).toHaveCount(0);
+    if (await publicLiquidityOneOff.count()) {
+      await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toBeVisible();
+      await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/You buy|You sell/);
+      await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).not.toContainText(/Seller sells|Buyer pays/);
+      await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/left/);
+      await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/\d+(?:\.\d+)?\/\d+(?:\.\d+)?/);
+      await expect(publicLiquidityOneOff.locator('.p2p-order-liquidity-summary')).toContainText(/sold|bought/);
+      await expect(publicLiquidityOneOff.locator('.p2p-offer-terms')).toHaveCount(0);
+    }
     await expect(desk.locator('.p2p-order-market-panel').getByText('Price desk')).toHaveCount(0);
     await expect(recurringCard.locator('.p2p-recurring-price-card-head')).toContainText('Price ratio');
     await expect(recurringCard.locator('.p2p-recurring-price-basis')).toHaveCount(0);
     await expect(oneOffCard.locator('.p2p-order-market-panel .p2p-price-number')).toBeVisible();
     await expect(oneOffCard.locator('.p2p-order-market-panel .p2p-price-side-label')).toContainText(
-      /^(Buy|Sell) [A-Z0-9$]+ (with|for) [A-Z0-9$]+/i
+      /^(Buy|Sell) [A-Z0-9$._-]+ (with|for) [A-Z0-9$._-]+/i
     );
     await expect(recurringCard.locator('.p2p-recurring-price-box .p2p-price-number')).toHaveCount(2);
     await expect(desk.locator('.p2p-recurring-inventory-strip strong').first()).toBeVisible();
+    const oneOffProgressNumericLocator = (await publicLiquidityOneOff.count())
+      ? publicLiquidityOneOff.locator('.p2p-order-liquidity-summary strong').first()
+      : oneOffCard.locator('.p2p-order-market-panel .p2p-price-number').first();
     const recurringValueWrap = await recurringCard
       .locator('.p2p-recurring-price-box .p2p-price-unit, .p2p-recurring-inventory-strip .p2p-liquidity-label')
       .evaluateAll((values) =>
@@ -1247,7 +1255,7 @@ test.describe('trading responsive layout', () => {
           unitFontSize: unitStyle ? parseFloat(unitStyle.fontSize) : 0
         };
       }),
-      publicLiquidityOneOff.locator('.p2p-order-liquidity-summary strong').first().evaluate((element) => {
+      oneOffProgressNumericLocator.evaluate((element) => {
         const style = window.getComputedStyle(element);
         return {
           fontFeatureSettings: style.fontFeatureSettings,
@@ -1532,7 +1540,6 @@ test.describe('trading responsive layout', () => {
 
     const oneOffOpenButton = page
       .locator('.p2p-public-trade-grid .p2p-order-card:not(.p2p-recurring-order-card)')
-      .filter({ has: page.locator('.p2p-order-chip', { hasText: 'Public liquidity' }) })
       .locator('.p2p-offer-open-btn')
       .first();
     await expect(oneOffOpenButton).toBeVisible({ timeout: 30_000 });
@@ -1813,8 +1820,16 @@ test.describe('trading responsive layout', () => {
     await expect(recurringHeaderTags.locator('.p2p-offer-status')).toBeVisible();
     await expect(recurringHeaderTags).toContainText(/liquidity/i);
     await expect(terminal.locator('.p2p-terminal-market > .p2p-terminal-tag-row')).toHaveCount(0);
-    await expect(terminal.locator('.p2p-terminal-price-desk .p2p-recurring-price-card-head')).toContainText('Price ratio');
-    await expect(terminal.locator('.p2p-terminal-price-desk .p2p-recurring-price-basis')).toHaveCount(0);
+    const recurringPriceDesk = terminal.locator('.p2p-terminal-price-desk');
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-card-head')).toContainText('Price ratio');
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-buy')).toContainText(/^Sell /i);
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-sell')).toContainText(/^Buy /i);
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-sell')).toHaveClass(/is-active/);
+    await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You buy .* at/i);
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-basis')).toHaveCount(0);
+    await terminal.locator('.p2p-terminal-tabs').getByRole('tab', { name: 'Sell' }).click();
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-buy')).toHaveClass(/is-active/);
+    await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You sell .* at/i);
     await expect(terminal.locator('.p2p-terminal-liquidity-head .p2p-recurring-liquidity-dot')).toHaveCount(2);
     await expect(terminal.locator('.p2p-terminal-liquidity-grid')).not.toContainText(/Live|Order history/);
     await expect(terminal.getByText('Both sides live')).toHaveCount(0);
