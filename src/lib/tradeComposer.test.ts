@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shortenAddress } from './appShared';
+import { REWARD_TOKEN_ADDRESS, shortenAddress } from './appShared';
 import {
   GCOTI_TOKEN_ADDRESS,
   HOTDOG_PRIVATE_TOKEN_ADDRESS,
@@ -228,6 +228,39 @@ describe('trade composer private token visibility', () => {
 
     expect(model.tradeOfferBalanceSummaryLabel).toBe('123.456 WISP');
     expect(model.tradeRequestBalanceSummaryLabel).toBe('2 COTI');
+  });
+
+  it('uses combined owner and ChainWhisper balances for max and validation', () => {
+    const model = deriveTradeComposerModel({
+      ...baseParams,
+      tradeOfferTokenSelection: 'wisp',
+      tradeRequestTokenSelection: 'coti',
+      tradeOfferAmountInput: '150',
+      rewardTokenBalanceWei: 100_000_000n,
+      combinedBalanceByAssetKey: {
+        [`erc20:${REWARD_TOKEN_ADDRESS.toLowerCase()}`]: {
+          combinedBalanceWei: 200_000_000n
+        }
+      }
+    });
+
+    expect(model.tradeComposerFieldErrors.offerAmount).toBeUndefined();
+    expect(model.tradeOfferMaxInputValue).toBe('200');
+  });
+
+  it('rejects same-asset trades even when the amounts differ', () => {
+    const model = deriveTradeComposerModel({
+      ...baseParams,
+      tradeOfferTokenSelection: 'coti',
+      tradeRequestTokenSelection: 'coti',
+      tradeOfferAmountInput: '100',
+      tradeRequestAmountInput: '2',
+      tipNativeBalanceWei: 200n * 10n ** 18n,
+      tradeRequiredFeeWei: 2n * 10n ** 18n
+    });
+
+    expect(model.tradeComposerFieldErrors.general).toBe('Choose two different assets for the trade.');
+    expect(model.canSendTradeOffer).toBe(false);
   });
 
   it('still supports explicit hidden amount mode when the offered token is private', () => {

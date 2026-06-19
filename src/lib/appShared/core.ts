@@ -96,11 +96,15 @@ export type ConversationPreferenceState = {
   hidden?: boolean;
 };
 
+export type WalletAccountRole = 'chainwhisper' | 'owner';
+
 export type ChatMessage = {
   id: string;
   direction: 'incoming' | 'outgoing';
   text: string;
   senderAddress?: string;
+  accountAddress?: string;
+  accountRole?: WalletAccountRole;
   isSystem?: boolean;
   replyToMessageId?: string;
   replyToText?: string;
@@ -111,6 +115,7 @@ export type ChatMessage = {
   reactionToBlockNumber?: number;
   reactionToLogIndex?: number;
   reactionEmoji?: string;
+  tradeReference?: TradeMessageReferencePayload;
   timestamp?: number;
   blockNumber?: number;
   logIndex?: number;
@@ -123,6 +128,8 @@ export type HistoryEntry = {
   contact: string;
   direction: 'incoming' | 'outgoing';
   text: string;
+  accountAddress?: string;
+  accountRole?: WalletAccountRole;
   replyToMessageId?: string;
   replyToText?: string;
   replyToTxHash?: string;
@@ -132,6 +139,7 @@ export type HistoryEntry = {
   reactionToBlockNumber?: number;
   reactionToLogIndex?: number;
   reactionEmoji?: string;
+  tradeReference?: TradeMessageReferencePayload;
   txHash: string;
   blockNumber: number;
   logIndex: number;
@@ -210,6 +218,8 @@ export type GroupMessageEntry = {
   direction: 'incoming' | 'outgoing';
   text: string;
   senderAddress?: string;
+  accountAddress?: string;
+  accountRole?: WalletAccountRole;
   isSystem?: boolean;
   replyToMessageId?: string;
   replyToText?: string;
@@ -233,6 +243,8 @@ export type SwapFeeModeSelection = 'token' | 'coti';
 export const BURNER_WALLET_STORAGE_KEY = 'coti-chat-burner-wallet';
 export const BURNER_WALLET_STORAGE_PROBE_KEY = 'coti-chat-burner-wallet-probe';
 export const BURNER_WALLET_STORAGE_VERSION = 2;
+export const BURNER_OWNER_AES_WALLET_STORAGE_VERSION = 1;
+export const BURNER_OWNER_AES_WALLET_STORAGE_SCHEME = 'owner-aes-gcm-v1';
 export const BURNER_WALLET_VAULT_VERSION = 1;
 export const BURNER_PIN_MIN_LENGTH = 5;
 export const LEGACY_BURNER_PIN_MIN_LENGTH = 4;
@@ -266,6 +278,8 @@ export const CONTACT_NAME_METADATA_PREFIX = '\u2065';
 export const REACTION_METADATA_PREFIX = '\u2066';
 export const CONVERSATION_STATE_METADATA_PREFIX = '\u2062';
 export const LEGACY_CONVERSATION_STATE_METADATA_PREFIX = '\u2067';
+export const TRADE_REFERENCE_METADATA_PREFIX = '~cwtr~';
+export const LEGACY_TRADE_REFERENCE_METADATA_PREFIX = '\u2068';
 export const CONVERSATION_STATE_METADATA_PREFIXES = [
   CONVERSATION_STATE_METADATA_PREFIX,
   LEGACY_CONVERSATION_STATE_METADATA_PREFIX
@@ -415,6 +429,10 @@ export type BurnerWalletRecord = {
   name?: string;
   privateKey: string;
   mnemonic?: string;
+  onboardInfo?: OnboardInfo;
+  recoveryDefault?: boolean;
+  recoveryProfileId?: number;
+  recoveryProfileVersion?: string;
 };
 
 export type BurnerWalletVault = {
@@ -431,6 +449,14 @@ export type EncryptedBurnerWalletRecord = {
   iterations: number;
 };
 
+export type OwnerAesBurnerWalletRecord = {
+  version: number;
+  scheme: typeof BURNER_OWNER_AES_WALLET_STORAGE_SCHEME;
+  ownerAddress: string;
+  iv: string;
+  ciphertext: string;
+};
+
 export type LegacyBurnerWalletVaultRecord = {
   wallets: BurnerWalletRecord[];
   activeWalletId?: string;
@@ -440,13 +466,14 @@ export type BurnerWalletStorageState =
   | { kind: 'none' }
   | { kind: 'legacy'; record: BurnerWalletRecord }
   | { kind: 'legacy-vault'; record: LegacyBurnerWalletVaultRecord }
-  | { kind: 'encrypted'; record: EncryptedBurnerWalletRecord };
+  | { kind: 'encrypted'; record: EncryptedBurnerWalletRecord }
+  | { kind: 'owner-aes'; record: OwnerAesBurnerWalletRecord };
 
 export type BurnerInitMode = 'generate' | 'import' | 'stored';
 export type SignerSource = 'burner' | 'metamask';
 export type BurnerPinMode = 'set' | 'unlock';
 export type BurnerInitResult = 'connected' | 'needs-funding' | 'imported' | 'failed';
-export type SensitiveAction = 'reveal-backup';
+export type SensitiveAction = 'reveal-backup' | 'link-pin-account';
 export type MobileView = 'contacts' | 'chat';
 export type TipTokenSelection = 'coti' | 'wisp' | 'pwisp';
 export type TradeAssetKind = 'native' | 'erc20' | 'private-erc20';
@@ -476,6 +503,13 @@ export type TradeOfferMessagePayload = {
   parentTradeId?: number;
   hiddenLiquidity?: boolean;
   accessSecret?: string;
+};
+
+export type TradeMessageReferencePayload = {
+  version: 1;
+  tradeId: number;
+  escrowContract: string;
+  terminalPath: string;
 };
 
 export type TradeFillStatePayload = {
@@ -601,6 +635,12 @@ export type TradeSnapshot = {
   makerPrivateProgress?: PrivateTradeMakerProgressPayload;
   privateFillReceipts?: PrivateTradeFillReceiptPayload[];
   recurringOrder?: RecurringTradeSnapshotPayload;
+  accountAddress?: string;
+  accountRole?: WalletAccountRole;
+  accountMatches?: Array<{
+    address: string;
+    role: WalletAccountRole;
+  }>;
 };
 
 export type PendingBurnerInit = {
@@ -813,6 +853,10 @@ export const DIRECT_OTC_CONTRACT_ADDRESS = '0x634c6dddda784c29d0435Cc54ca072Af05
 export const RECURRING_OTC_CONTRACT_ADDRESS = '0x7235B18b9CD59fB9853BC3BF3a0A65bc32162cd5';
 export const OTC_REGISTRY_CONTRACT_ADDRESS = '0x91e32EdFAb1e74DA07ea3012491a44D983aeBA46';
 export const OTC_HISTORY_READER_CONTRACT_ADDRESS = '0x650666328A771d70881c189F3B2BB1F3fBfe0514';
+const configuredProfileRegistryAddress = import.meta.env.VITE_CW_PROFILE_REGISTRY_CONTRACT_ADDRESS?.trim() ?? '';
+export const CW_PROFILE_REGISTRY_CONTRACT_ADDRESS = /^0x[a-fA-F0-9]{40}$/.test(configuredProfileRegistryAddress)
+  ? configuredProfileRegistryAddress
+  : '';
 export const TRADE_ESCROW_CONTRACT_ADDRESS = OTC_ESCROW_CONTRACT_ADDRESS;
 export const PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS = PRIVATE_ORDERS_CONTRACT_ADDRESS;
 export const DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS = DIRECT_OTC_CONTRACT_ADDRESS;
@@ -1005,6 +1049,21 @@ export const OTC_REGISTRY_CONTRACT_ABI = [
   'function getContracts() view returns ((address standardEscrow, address privateEscrow, address directEscrow, address recurringEscrow, address reader, address historyReader))',
   'function setContracts((address standardEscrow, address privateEscrow, address directEscrow, address recurringEscrow, address reader, address historyReader) nextContracts)',
   'event ContractsUpdated(address indexed updater, address standardEscrow, address privateEscrow, address directEscrow, address recurringEscrow, address reader, address historyReader)'
+] as const;
+
+export const CW_PROFILE_REGISTRY_GC_CONTRACT_ABI = [
+  'function contractVersion() pure returns (string)',
+  'function supportsFeature(bytes32 feature) pure returns (bool)',
+  'function MAX_PROFILE_CELLS() view returns (uint256)',
+  'function addProfile(((uint256[] value), bytes[] signature) encryptedPayload, bool makeDefault) returns (uint256 profileId)',
+  'function setProfile(uint256 profileId, ((uint256[] value), bytes[] signature) encryptedPayload)',
+  'function clearProfile(uint256 profileId)',
+  'function setDefaultProfile(uint256 profileId)',
+  'function getProfile(address owner, uint256 profileId) view returns ((uint256[] value) encryptedPayload, bool active, uint64 version, uint256 cellCount)',
+  'function getProfileSummary(address owner, uint256 profileId) view returns (uint64 version, bool active, uint256 cellCount)',
+  'function getProfileSummaries(address owner) view returns ((uint64 version, bool active, uint32 cellCount)[] summaries, uint256 defaultProfileId, bool hasDefault)',
+  'function getDefaultProfile(address owner) view returns (uint256 profileId, bool exists)',
+  'function profileCount(address owner) view returns (uint256)'
 ] as const;
 
 export const OTC_HISTORY_READER_CONTRACT_ABI = [

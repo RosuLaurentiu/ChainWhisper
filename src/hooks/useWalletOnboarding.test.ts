@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InjectedWalletOption } from '../lib/appShared';
 import { COTI_NETWORK } from '../lib/appShared';
-import { storeFallbackAesSessionOnboardInfo } from '../lib/cotiAesUnlock';
 import { resetMetaMaskConnectMobileForTests } from '../lib/metamaskConnectMobile';
 import { readPassiveBrowserWalletRestore } from './useWalletOnboarding';
 
@@ -114,16 +113,13 @@ describe('readPassiveBrowserWalletRestore', () => {
     expect(methods).toEqual(['eth_accounts']);
   });
 
-  it('rehydrates fallback AES for the same wallet/provider session', async () => {
+  it('does not rehydrate fallback AES during passive owner restore', async () => {
     const walletAddress = '0x0000000000000000000000000000000000000002';
-    const { option, provider } = createWalletOption([walletAddress]);
-    storeFallbackAesSessionOnboardInfo(walletAddress, provider, { aesKey: 'session-aes' } as never);
+    const { option } = createWalletOption([walletAddress]);
 
     const restore = await readPassiveBrowserWalletRestore(option);
 
-    expect(restore?.onboardInfo).toMatchObject({
-      aesKey: 'session-aes'
-    });
+    expect(restore?.onboardInfo).toBeNull();
   });
 
   it('prefers injected MetaMask for mobile bootstrap restore when it is already authorized', async () => {

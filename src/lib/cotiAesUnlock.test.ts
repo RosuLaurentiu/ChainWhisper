@@ -4,6 +4,7 @@ import type { Eip1193Provider } from './appShared';
 import {
   clearFallbackAesSessionOnboardInfo,
   clearCotiAesUnlockRequest,
+  clearSignerAesKey,
   createWalletScopedSnapAesState,
   getOrRecoverValidatedAesForWallet,
   getCotiAesWalletSessionKey,
@@ -547,6 +548,85 @@ describe('getOrRecoverAesForWallet', () => {
     expect(getCotiSnapAesKeyResult).toHaveBeenCalledWith(activeProvider, snapContext);
     expect(deleteCotiSnapAesKeyResult).not.toHaveBeenCalled();
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
+  });
+
+  it('preserves recoverable onboarding metadata when clearing only a bad AES key', () => {
+    let onboardInfo = { aesKey: 'wrong-aes', rsaKey, txHash: '0xabc' } as OnboardInfo;
+    const replacingSigner = {
+      generateOrRecoverAes: vi.fn(),
+      getUserOnboardInfo: vi.fn(() => onboardInfo),
+      setUserOnboardInfo: vi.fn((nextInfo: OnboardInfo) => {
+        onboardInfo = nextInfo;
+      })
+    };
+
+    clearSignerAesKey(replacingSigner as never);
+
+    expect(replacingSigner.setUserOnboardInfo).toHaveBeenCalledWith({
+      aesKey: null,
+      rsaKey,
+      txHash: '0xabc'
+    });
+    expect(onboardInfo).toMatchObject({
+      aesKey: null,
+      rsaKey,
+      txHash: '0xabc'
+    });
+  });
+
+  it('can repair recovery AES without allowing a fresh unrecoverable AES reset', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer('wrong-aes', true);
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'wrong-snap-aes' });
+
+    await expect(
+      repairCotiAesForWallet({
+        allowUnrecoverableReset: false,
+        provider: activeProvider,
+        signer: activeSigner as never,
+        validationProbes: [
+          {
+            name: 'app-wallet-recovery',
+            validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fallback-aes'
+          }
+        ],
+        walletAddress
+      })
+    ).resolves.toMatchObject({
+      source: 'fallback',
+      status: 'ready',
+      validation: { passedProbes: ['app-wallet-recovery'] }
+    });
+
+    expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    expect(activeSigner.getUserOnboardInfo()).toMatchObject({
+      aesKey: 'fallback-aes',
+      rsaKey,
+      txHash: '0xabc'
+    });
+  });
+
+  it('does not create a fresh AES during recovery repair when metadata is unrecoverable', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer('wrong-aes');
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'wrong-snap-aes' });
+
+    await expect(
+      repairCotiAesForWallet({
+        allowUnrecoverableReset: false,
+        provider: activeProvider,
+        signer: activeSigner as never,
+        validationProbes: [
+          {
+            name: 'app-wallet-recovery',
+            validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fallback-aes'
+          }
+        ],
+        walletAddress
+      })
+    ).resolves.toMatchObject({ status: 'fallback-unavailable', reason: 'unrecoverable' });
+
+    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
   });
 
   it('stops repair after a fresh Snap AES validates', async () => {

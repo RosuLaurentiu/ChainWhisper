@@ -1,6 +1,9 @@
 import { unzlibSync, zlibSync } from 'fflate';
+import type { OnboardInfo } from '@coti-io/coti-ethers';
 import {
   BackupReadStateEntry,
+  BURNER_OWNER_AES_WALLET_STORAGE_SCHEME,
+  BURNER_OWNER_AES_WALLET_STORAGE_VERSION,
   BURNER_PIN_PBKDF2_ITERATIONS,
   BURNER_WALLET_STORAGE_KEY,
   BURNER_WALLET_STORAGE_VERSION,
@@ -19,6 +22,7 @@ import {
   ConversationPreferenceState,
   decodeBase64Url,
   DEFAULT_REACTION_EMOJIS,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   encodeBase64Url,
   EncryptedBurnerWalletRecord,
   EXTERNAL_REPLY_TXHASH_REGEX,
@@ -38,14 +42,17 @@ import {
   MessageReactionPayload,
   NICKNAME_DELIMITER,
   normalizeContactName,
+  OwnerAesBurnerWalletRecord,
   parseTipNoticePayload,
   parseTokenTipNotice,
   PROFILE_METADATA_PREFIX,
   REACTION_HIDDEN_NIBBLE_LOOKUP,
   REACTION_METADATA_PREFIX,
+  RECURRING_OTC_CONTRACT_ADDRESS,
   READ_CURSOR_PREFIX,
   ReadCursorPayload,
   RecentPeerMeta,
+  LEGACY_TRADE_REFERENCE_METADATA_PREFIX,
   REPLY_DELIMITER,
   REPLY_METADATA_PREFIX,
   REPLY_METADATA_PREFIX_REGEX,
@@ -57,14 +64,23 @@ import {
   SubmitMemoPayload,
   TEXT_DECODER,
   TEXT_ENCODER,
+  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS,
   TRADE_OFFER_MESSAGE_PREFIX,
+  TRADE_REFERENCE_METADATA_PREFIX,
   TRADE_RESPONSE_MESSAGE_PREFIX,
   TradeAssetPayload,
+  TradeMessageReferencePayload,
   TradeOfferMessagePayload,
   TradeResponseMessagePayload,
   toSafeNumber
 } from './core';
+import { decodeTradeLink, encodeTradeLink } from '../tradeLinks';
+
+const TRADE_REFERENCE_METADATA_PREFIXES = [
+  TRADE_REFERENCE_METADATA_PREFIX,
+  LEGACY_TRADE_REFERENCE_METADATA_PREFIX
+] as const;
 
 export const parseConversationBlockRange = (rangeRaw: unknown): ConversationBlockRange | null => {
   if (!rangeRaw) {
@@ -243,17 +259,24 @@ export const extractUserCiphertext = (memo: unknown): { value: bigint[] } | null
     return null;
   }
 
+  if (memo && typeof memo === 'object' && 'userCiphertext' in memo) {
+    return { value: toBigIntArray((memo as { userCiphertext: unknown }).userCiphertext) };
+  }
+
+  if (memo && typeof memo === 'object' && 'value' in memo) {
+    return { value: toBigIntArray((memo as { value: unknown }).value) };
+  }
+
   if (Array.isArray(memo)) {
+    if (memo.every((item) => typeof item === 'bigint' || typeof item === 'number' || typeof item === 'string')) {
+      return { value: toBigIntArray(memo) };
+    }
     if (memo.length > 1) {
       return { value: toBigIntArray(memo[1]) };
     }
     if (memo.length === 1) {
       return extractUserCiphertext(memo[0]);
     }
-  }
-
-  if (memo && typeof memo === 'object' && 'userCiphertext' in memo) {
-    return { value: toBigIntArray((memo as { userCiphertext: unknown }).userCiphertext) };
   }
 
   // Some providers/ABI decoders wrap single tuple returns as { outputName: tuple } or { 0: tuple }.
@@ -762,6 +785,11 @@ export const createBurnerWalletId = (): string =>
     ? globalThis.crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
+const normalizeBurnerWalletOnboardInfo = (onboardInfo?: OnboardInfo): OnboardInfo | undefined => {
+  const aesKey = typeof onboardInfo?.aesKey === 'string' ? onboardInfo.aesKey.trim() : '';
+  return aesKey ? ({ aesKey } as OnboardInfo) : undefined;
+};
+
 export const createBurnerWalletVault = async (
   records: BurnerWalletRecord[],
   preferredActiveWalletId?: string
@@ -787,12 +815,22 @@ export const createBurnerWalletVault = async (
       address: new cotiEthers.Wallet(privateKey).address,
       name: normalizeContactName(typeof walletRecord.name === 'string' ? walletRecord.name : ''),
       privateKey,
-      mnemonic: walletRecord.mnemonic?.trim() || undefined
+      mnemonic: walletRecord.mnemonic?.trim() || undefined,
+      onboardInfo: normalizeBurnerWalletOnboardInfo(walletRecord.onboardInfo),
+      recoveryDefault: walletRecord.recoveryDefault === true,
+      recoveryProfileId:
+        typeof walletRecord.recoveryProfileId === 'number' && Number.isSafeInteger(walletRecord.recoveryProfileId) && walletRecord.recoveryProfileId >= 0
+          ? walletRecord.recoveryProfileId
+          : undefined,
+      recoveryProfileVersion:
+        typeof walletRecord.recoveryProfileVersion === 'string' && /^\d+$/.test(walletRecord.recoveryProfileVersion)
+          ? walletRecord.recoveryProfileVersion
+          : undefined
     });
   }
 
   if (normalizedWallets.length === 0) {
-    throw new Error('No valid burner wallets found in storage.');
+    throw new Error('No valid app wallets found in storage.');
   }
 
   const activeWallet =
@@ -823,7 +861,19 @@ export const upsertBurnerWalletInVault = async (
           ? {
               ...existingWalletRecord,
               name: normalizeContactName(typeof walletRecord.name === 'string' ? walletRecord.name : '') ?? existingWalletRecord.name,
-              mnemonic: walletRecord.mnemonic?.trim() || existingWalletRecord.mnemonic
+              mnemonic: walletRecord.mnemonic?.trim() || existingWalletRecord.mnemonic,
+              onboardInfo:
+                normalizeBurnerWalletOnboardInfo(walletRecord.onboardInfo) ??
+                normalizeBurnerWalletOnboardInfo(existingWalletRecord.onboardInfo),
+              recoveryDefault: walletRecord.recoveryDefault === true,
+              recoveryProfileId:
+                typeof walletRecord.recoveryProfileId === 'number' && Number.isSafeInteger(walletRecord.recoveryProfileId) && walletRecord.recoveryProfileId >= 0
+                  ? walletRecord.recoveryProfileId
+                  : existingWalletRecord.recoveryProfileId,
+              recoveryProfileVersion:
+                typeof walletRecord.recoveryProfileVersion === 'string' && /^\d+$/.test(walletRecord.recoveryProfileVersion)
+                  ? walletRecord.recoveryProfileVersion
+                  : existingWalletRecord.recoveryProfileVersion
             }
           : existingWalletRecord
       ),
@@ -834,7 +884,7 @@ export const upsertBurnerWalletInVault = async (
   const cotiEthers = await loadCotiEthersModule();
   const privateKey = walletRecord.privateKey.trim();
   if (!/^0x[a-fA-F0-9]{64}$/.test(privateKey)) {
-    throw new Error('Invalid burner wallet private key format.');
+    throw new Error('Invalid app wallet private key format.');
   }
 
   const createdWallet: BurnerWalletRecord = {
@@ -842,7 +892,17 @@ export const upsertBurnerWalletInVault = async (
     address: new cotiEthers.Wallet(privateKey).address,
     name: normalizeContactName(typeof walletRecord.name === 'string' ? walletRecord.name : ''),
     privateKey,
-    mnemonic: walletRecord.mnemonic?.trim() || undefined
+    mnemonic: walletRecord.mnemonic?.trim() || undefined,
+    onboardInfo: normalizeBurnerWalletOnboardInfo(walletRecord.onboardInfo),
+    recoveryDefault: walletRecord.recoveryDefault === true,
+    recoveryProfileId:
+      typeof walletRecord.recoveryProfileId === 'number' && Number.isSafeInteger(walletRecord.recoveryProfileId) && walletRecord.recoveryProfileId >= 0
+        ? walletRecord.recoveryProfileId
+        : undefined,
+    recoveryProfileVersion:
+      typeof walletRecord.recoveryProfileVersion === 'string' && /^\d+$/.test(walletRecord.recoveryProfileVersion)
+        ? walletRecord.recoveryProfileVersion
+        : undefined
   };
 
   return {
@@ -862,6 +922,42 @@ export const parseBurnerWalletStorageState = (): BurnerWalletStorageState => {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object') {
       return { kind: 'none' };
+    }
+
+    const ownerAesCandidate = parsed as {
+      version?: unknown;
+      scheme?: unknown;
+      ownerAddress?: unknown;
+      iv?: unknown;
+      ciphertext?: unknown;
+    };
+    const ownerAddress =
+      typeof ownerAesCandidate.ownerAddress === 'string' ? ownerAesCandidate.ownerAddress.trim() : '';
+    const hasOwnerAesShape =
+      ownerAesCandidate.scheme === BURNER_OWNER_AES_WALLET_STORAGE_SCHEME &&
+      isWalletAddress(ownerAddress) &&
+      typeof ownerAesCandidate.iv === 'string' &&
+      typeof ownerAesCandidate.ciphertext === 'string';
+    if (hasOwnerAesShape) {
+      const parsedVersion =
+        typeof ownerAesCandidate.version === 'number'
+          ? ownerAesCandidate.version
+          : typeof ownerAesCandidate.version === 'string'
+            ? Number(ownerAesCandidate.version)
+            : Number.NaN;
+      return {
+        kind: 'owner-aes',
+        record: {
+          version:
+            Number.isFinite(parsedVersion) && parsedVersion > 0
+              ? Math.floor(parsedVersion)
+              : BURNER_OWNER_AES_WALLET_STORAGE_VERSION,
+          scheme: BURNER_OWNER_AES_WALLET_STORAGE_SCHEME,
+          ownerAddress: ownerAddress.toLowerCase(),
+          iv: ownerAesCandidate.iv as string,
+          ciphertext: ownerAesCandidate.ciphertext as string
+        }
+      };
     }
 
     const encryptedCandidate = parsed as {
@@ -939,6 +1035,40 @@ export const parseBurnerWalletStorageState = (): BurnerWalletStorageState => {
   }
 };
 
+const requireOwnerAesStorageInputs = (ownerAddress: string, ownerAesKey: string): {
+  ownerAddress: string;
+  ownerAesKey: string;
+} => {
+  const normalizedOwnerAddress = ownerAddress.trim().toLowerCase();
+  const normalizedOwnerAesKey = ownerAesKey.trim();
+  if (!isWalletAddress(normalizedOwnerAddress)) {
+    throw new Error('Connect a valid owner wallet to unlock the app wallet.');
+  }
+  if (!normalizedOwnerAesKey) {
+    throw new Error('Unlock the owner wallet AES key to unlock the app wallet.');
+  }
+  return {
+    ownerAddress: normalizedOwnerAddress,
+    ownerAesKey: normalizedOwnerAesKey
+  };
+};
+
+const deriveBurnerOwnerAesStorageKey = async (
+  ownerAddress: string,
+  ownerAesKey: string,
+  usages: KeyUsage[]
+): Promise<CryptoKey> => {
+  const { subtle } = getSecureWebCrypto();
+  const inputs = requireOwnerAesStorageInputs(ownerAddress, ownerAesKey);
+  const keyDigest = await subtle.digest(
+    'SHA-256',
+    toArrayBuffer(
+      TEXT_ENCODER.encode(`ChainWhisperAppWalletLocalVaultV1:${inputs.ownerAddress}:${inputs.ownerAesKey}`)
+    )
+  );
+  return subtle.importKey('raw', keyDigest, { name: 'AES-GCM' }, false, usages);
+};
+
 export const deriveBurnerPinKey = async (
   pin: string,
   salt: Uint8Array,
@@ -962,6 +1092,69 @@ export const deriveBurnerPinKey = async (
     false,
     usages
   );
+};
+
+export const encryptBurnerWalletVaultWithOwnerAes = async (
+  vault: BurnerWalletVault,
+  ownerAddress: string,
+  ownerAesKey: string
+): Promise<OwnerAesBurnerWalletRecord> => {
+  const { webCrypto, subtle } = getSecureWebCrypto();
+  const inputs = requireOwnerAesStorageInputs(ownerAddress, ownerAesKey);
+  const normalizedVault = await createBurnerWalletVault(vault.wallets, vault.activeWalletId);
+  const iv = webCrypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveBurnerOwnerAesStorageKey(inputs.ownerAddress, inputs.ownerAesKey, ['encrypt']);
+  const encrypted = await subtle.encrypt(
+    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
+    key,
+    TEXT_ENCODER.encode(JSON.stringify(normalizedVault))
+  );
+
+  return {
+    version: BURNER_OWNER_AES_WALLET_STORAGE_VERSION,
+    scheme: BURNER_OWNER_AES_WALLET_STORAGE_SCHEME,
+    ownerAddress: inputs.ownerAddress,
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(new Uint8Array(encrypted))
+  };
+};
+
+export const decryptBurnerWalletVaultWithOwnerAes = async (
+  encryptedRecord: OwnerAesBurnerWalletRecord,
+  ownerAddress: string,
+  ownerAesKey: string
+): Promise<BurnerWalletVault> => {
+  const inputs = requireOwnerAesStorageInputs(ownerAddress, ownerAesKey);
+  if (encryptedRecord.scheme !== BURNER_OWNER_AES_WALLET_STORAGE_SCHEME) {
+    throw new Error('Unsupported app wallet owner storage scheme.');
+  }
+  if (encryptedRecord.ownerAddress.trim().toLowerCase() !== inputs.ownerAddress) {
+    throw new Error('This app wallet is saved for a different owner wallet.');
+  }
+
+  const iv = base64ToBytes(encryptedRecord.iv);
+  const ciphertext = base64ToBytes(encryptedRecord.ciphertext);
+  const key = await deriveBurnerOwnerAesStorageKey(inputs.ownerAddress, inputs.ownerAesKey, ['decrypt']);
+  const { subtle } = getSecureWebCrypto();
+  const decrypted = await subtle.decrypt(
+    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
+    key,
+    toArrayBuffer(ciphertext)
+  );
+  const parsed = JSON.parse(TEXT_DECODER.decode(decrypted)) as unknown;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Invalid app wallet payload.');
+  }
+
+  const asVault = parsed as { version?: unknown; wallets?: unknown; activeWalletId?: unknown };
+  if (asVault.version === BURNER_WALLET_VAULT_VERSION && Array.isArray(asVault.wallets)) {
+    return createBurnerWalletVault(
+      asVault.wallets as BurnerWalletRecord[],
+      typeof asVault.activeWalletId === 'string' ? asVault.activeWalletId : undefined
+    );
+  }
+
+  throw new Error('Invalid app wallet payload.');
 };
 
 export const encryptBurnerWalletVault = async (vault: BurnerWalletVault, pin: string): Promise<EncryptedBurnerWalletRecord> => {
@@ -1005,7 +1198,7 @@ export const decryptBurnerWalletVault = async (
   const parsed = JSON.parse(rawPayload) as unknown;
 
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Invalid burner wallet payload.');
+    throw new Error('Invalid app wallet payload.');
   }
 
   const asVault = parsed as { version?: unknown; wallets?: unknown; activeWalletId?: unknown };
@@ -1019,7 +1212,7 @@ export const decryptBurnerWalletVault = async (
   const legacyRecord = parsed as { privateKey?: unknown; mnemonic?: unknown };
   const privateKey = typeof legacyRecord.privateKey === 'string' ? legacyRecord.privateKey.trim() : '';
   if (!/^0x[a-fA-F0-9]{64}$/.test(privateKey)) {
-    throw new Error('Invalid burner wallet private key format.');
+    throw new Error('Invalid app wallet private key format.');
   }
 
   return createBurnerWalletVault([
@@ -1033,7 +1226,7 @@ export const decryptBurnerWalletVault = async (
 export const loadBurnerWalletVaultFromStorage = async (pin: string): Promise<BurnerWalletVault> => {
   const storageState = parseBurnerWalletStorageState();
   if (storageState.kind === 'none') {
-    throw new Error('No saved burner wallet found. Generate or import one first.');
+    throw new Error('No saved ChainWhisper account found. Generate or import one first.');
   }
 
   if (storageState.kind === 'legacy') {
@@ -1044,14 +1237,40 @@ export const loadBurnerWalletVaultFromStorage = async (pin: string): Promise<Bur
     return createBurnerWalletVault(storageState.record.wallets, storageState.record.activeWalletId);
   }
 
+  if (storageState.kind === 'owner-aes') {
+    throw new Error('Connect the owner wallet to unlock this app wallet.');
+  }
+
   if (!pin.trim()) {
-    throw new Error('Enter PIN to unlock burner wallet.');
+    throw new Error('Enter PIN to unlock app wallet.');
   }
 
   try {
     return await decryptBurnerWalletVault(storageState.record, pin);
   } catch {
-    throw new Error('Invalid PIN or corrupted burner wallet data.');
+    throw new Error('Invalid PIN or corrupted app wallet data.');
+  }
+};
+
+export const loadBurnerWalletVaultFromOwnerAesStorage = async (
+  ownerAddress: string,
+  ownerAesKey: string
+): Promise<BurnerWalletVault> => {
+  const storageState = parseBurnerWalletStorageState();
+  if (storageState.kind === 'none') {
+    throw new Error('No saved ChainWhisper account found. Generate, import, or recover one first.');
+  }
+  if (storageState.kind !== 'owner-aes') {
+    throw new Error('Saved app wallet uses PIN unlock.');
+  }
+
+  try {
+    return await decryptBurnerWalletVaultWithOwnerAes(storageState.record, ownerAddress, ownerAesKey);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'This app wallet is saved for a different owner wallet.') {
+      throw error;
+    }
+    throw new Error('Unable to unlock the saved app wallet with this owner wallet.');
   }
 };
 
@@ -1060,6 +1279,22 @@ export const saveEncryptedBurnerWalletVault = async (vault: BurnerWalletVault, p
     throw new Error('Browser storage is unavailable. Disable private browsing or storage restrictions, then try again.');
   }
   const encrypted = await encryptBurnerWalletVault(vault, pin);
+  try {
+    window.localStorage.setItem(BURNER_WALLET_STORAGE_KEY, JSON.stringify(encrypted));
+  } catch {
+    throw new Error('Failed to persist wallet data in browser storage.');
+  }
+};
+
+export const saveOwnerAesBurnerWalletVault = async (
+  vault: BurnerWalletVault,
+  ownerAddress: string,
+  ownerAesKey: string
+): Promise<void> => {
+  if (!isBurnerStorageAvailable()) {
+    throw new Error('Browser storage is unavailable. Disable private browsing or storage restrictions, then try again.');
+  }
+  const encrypted = await encryptBurnerWalletVaultWithOwnerAes(vault, ownerAddress, ownerAesKey);
   try {
     window.localStorage.setItem(BURNER_WALLET_STORAGE_KEY, JSON.stringify(encrypted));
   } catch {
@@ -2060,6 +2295,172 @@ export const parseTradeResponseMessagePayload = (text: string): TradeResponseMes
   };
 };
 
+const TRADE_REFERENCE_TYPE_DIRECT = 'd';
+const TRADE_REFERENCE_TYPE_PRIVATE = 'p';
+const TRADE_REFERENCE_TYPE_RECURRING = 'r';
+
+const getTradeReferenceTypeCode = (escrowContract?: string): string => {
+  const normalized = escrowContract?.trim().toLowerCase() ?? '';
+  if (normalized === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    return TRADE_REFERENCE_TYPE_DIRECT;
+  }
+  if (normalized === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    return TRADE_REFERENCE_TYPE_PRIVATE;
+  }
+  if (normalized === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
+    return TRADE_REFERENCE_TYPE_RECURRING;
+  }
+  return '';
+};
+
+const getTradeReferenceEscrowContract = (typeCode: string): string => {
+  if (typeCode === TRADE_REFERENCE_TYPE_DIRECT) {
+    return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
+  }
+  if (typeCode === TRADE_REFERENCE_TYPE_PRIVATE) {
+    return PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
+  }
+  if (typeCode === TRADE_REFERENCE_TYPE_RECURRING) {
+    return RECURRING_OTC_CONTRACT_ADDRESS;
+  }
+  return TRADE_ESCROW_CONTRACT_ADDRESS;
+};
+
+const buildTradeReferenceTerminalPath = (tradeId: number, escrowContract: string): string => {
+  const typeCode = getTradeReferenceTypeCode(escrowContract);
+  if (typeCode === TRADE_REFERENCE_TYPE_RECURRING) {
+    return `/otcdesk/terminal/recurring?order=${tradeId}`;
+  }
+  const escrowSearch =
+    typeCode === TRADE_REFERENCE_TYPE_DIRECT
+      ? '?escrow=direct'
+      : typeCode === TRADE_REFERENCE_TYPE_PRIVATE
+        ? '?escrow=private'
+        : '';
+  return `/otcdesk/terminal/l/${encodeTradeLink(tradeId)}${escrowSearch}`;
+};
+
+const encodeTradeMessageReference = (tradeReference?: TradeMessageReferencePayload | null): string => {
+  const tradeId = toSafeNumber(tradeReference?.tradeId);
+  if (tradeId <= 0) {
+    return '';
+  }
+  const typeCode = getTradeReferenceTypeCode(tradeReference?.escrowContract);
+  return typeCode ? `${tradeId.toString(36)}:${typeCode}` : tradeId.toString(36);
+};
+
+const parseTradeMessageReference = (value: unknown): TradeMessageReferencePayload | null => {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const match = raw.match(/^([0-9a-z]{1,10})(?::([dpr]))?$/);
+  if (!match) {
+    return null;
+  }
+  const tradeId = Number.parseInt(match[1], 36);
+  if (!Number.isSafeInteger(tradeId) || tradeId <= 0) {
+    return null;
+  }
+  const escrowContract = getTradeReferenceEscrowContract(match[2] ?? '');
+  return {
+    version: 1,
+    tradeId,
+    escrowContract,
+    terminalPath: buildTradeReferenceTerminalPath(tradeId, escrowContract)
+  };
+};
+
+const parseLegacyTradeReferencePath = (value: unknown): TradeMessageReferencePayload | null => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw || raw.length > 220 || !raw.startsWith('/') || raw.startsWith('//')) {
+    return null;
+  }
+
+  try {
+    const url = new URL(raw, 'https://chainwhisper.local');
+    const lowerPath = url.pathname.toLowerCase();
+    if (
+      !lowerPath.startsWith('/otcdesk/terminal') &&
+      !lowerPath.startsWith('/trades/')
+    ) {
+      return null;
+    }
+
+    if (lowerPath.includes('/recurring')) {
+      const tradeId = toSafeNumber(url.searchParams.get('order'));
+      return tradeId > 0
+        ? {
+            version: 1,
+            tradeId,
+            escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+            terminalPath: buildTradeReferenceTerminalPath(tradeId, RECURRING_OTC_CONTRACT_ADDRESS)
+          }
+        : null;
+    }
+
+    const segments = url.pathname.split('/').filter(Boolean);
+    const linkedTradeIndex = segments.findIndex((segment) => segment.toLowerCase() === 'l');
+    const code = linkedTradeIndex >= 0 ? segments[linkedTradeIndex + 1] : '';
+    const decoded = code ? decodeTradeLink(code) : null;
+    if (!decoded?.tradeId) {
+      return null;
+    }
+
+    const escrow = url.searchParams.get('escrow')?.trim().toLowerCase() ?? '';
+    const escrowContract =
+      escrow === 'direct'
+        ? DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS
+        : escrow === 'private'
+          ? PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS
+          : TRADE_ESCROW_CONTRACT_ADDRESS;
+    return {
+      version: 1,
+      tradeId: decoded.tradeId,
+      escrowContract,
+      terminalPath: buildTradeReferenceTerminalPath(decoded.tradeId, escrowContract)
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const buildMessageWithTradeReferencePayload = (
+  plainText: string,
+  tradeReference?: TradeMessageReferencePayload | null
+): string => {
+  const encodedReference = encodeTradeMessageReference(tradeReference);
+  if (!encodedReference) {
+    return plainText;
+  }
+
+  return `${TRADE_REFERENCE_METADATA_PREFIX}${encodedReference}${TRADE_REFERENCE_METADATA_PREFIX}${plainText}`;
+};
+
+export const parseMessageTradeReferencePayload = (
+  text: string
+): { cleanText: string; tradeReference?: TradeMessageReferencePayload } => {
+  for (const prefix of TRADE_REFERENCE_METADATA_PREFIXES) {
+    if (!text.startsWith(prefix)) {
+      continue;
+    }
+
+    const metadataEnd = text.indexOf(prefix, prefix.length);
+    if (metadataEnd <= prefix.length) {
+      return { cleanText: text };
+    }
+
+    const metadataChunk = text.slice(prefix.length, metadataEnd);
+    const tradeReference = parseTradeMessageReference(metadataChunk) ?? parseLegacyTradeReferencePath(metadataChunk);
+    if (!tradeReference) {
+      return { cleanText: text };
+    }
+    return {
+      cleanText: text.slice(metadataEnd + prefix.length),
+      tradeReference
+    };
+  }
+
+  return { cleanText: text };
+};
+
 export const formatTradeOfferDisplayText = (
   payload: TradeOfferMessagePayload,
   direction?: 'incoming' | 'outgoing'
@@ -2110,12 +2511,14 @@ export const parseChatMessagePayload = (text: string): {
   embeddedContactName?: string;
   embeddedConversationState?: ConversationPreferenceState;
   embeddedReaction?: MessageReactionPayload;
+  tradeReference?: TradeMessageReferencePayload;
 } => {
   const conversationStateParsed = parseConversationStatePayload(text);
   const contactNameParsed = parseContactNamePayload(conversationStateParsed.cleanText);
   const profileParsed = parseMessageProfilePayload(contactNameParsed.cleanText);
   const reactionParsed = parseMessageReactionPayload(profileParsed.cleanText);
-  const replyParsed = parseMessageReplyPayload(reactionParsed.cleanText);
+  const tradeReferenceParsed = parseMessageTradeReferencePayload(reactionParsed.cleanText);
+  const replyParsed = parseMessageReplyPayload(tradeReferenceParsed.cleanText);
 
   return {
     cleanText: replyParsed.cleanText,
@@ -2127,7 +2530,8 @@ export const parseChatMessagePayload = (text: string): {
     embeddedNickname: profileParsed.nickname,
     embeddedContactName: contactNameParsed.contactName,
     embeddedConversationState: conversationStateParsed.conversationState,
-    embeddedReaction: reactionParsed.reaction
+    embeddedReaction: reactionParsed.reaction,
+    tradeReference: tradeReferenceParsed.tradeReference
   };
 };
 

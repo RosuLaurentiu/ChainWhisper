@@ -65,7 +65,7 @@ export default function TopUpModal({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <h3 id="topup-modal-title">Top Up App Wallet</h3>
+        <h3 id="topup-modal-title">Move Funds</h3>
         <div className="topup-stats-grid">
           <div className="topup-stat">
             <span>Balance</span>
@@ -103,7 +103,7 @@ export default function TopUpModal({
             }}
             disabled={initializingBurner || loadingTopUpQuote || !canTopUp}
           >
-            Top Up with Wallet
+            Move from Owner Wallet
           </button>
         </div>
       </div>

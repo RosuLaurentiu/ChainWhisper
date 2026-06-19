@@ -1,6 +1,6 @@
 import type { AppPage } from './routing';
 
-export type AppWalletControlKind = 'none' | 'chat' | 'trades';
+export type AppWalletControlKind = 'none' | 'app';
 export type AppWalletPreference = 'none' | 'app' | 'browser';
 
 export type AppWalletPolicy = {
@@ -18,17 +18,17 @@ const APP_WALLET_POLICIES: Record<AppPage, AppWalletPolicy> = {
   chat: {
     preserveConnectedSession: true,
     preferredWallet: 'app',
-    walletControlKind: 'chat'
+    walletControlKind: 'app'
   },
   swap: {
     preserveConnectedSession: true,
     preferredWallet: 'app',
-    walletControlKind: 'chat'
+    walletControlKind: 'app'
   },
   trades: {
     preserveConnectedSession: true,
-    preferredWallet: 'browser',
-    walletControlKind: 'trades'
+    preferredWallet: 'app',
+    walletControlKind: 'app'
   },
   treasury: {
     preserveConnectedSession: true,
@@ -38,4 +38,3 @@ const APP_WALLET_POLICIES: Record<AppPage, AppWalletPolicy> = {
 };
 
 export const getAppWalletPolicy = (page: AppPage): AppWalletPolicy => APP_WALLET_POLICIES[page];
-

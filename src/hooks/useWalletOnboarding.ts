@@ -20,11 +20,10 @@ import {
 import {
   buildWalletAesHealthState,
   clearCotiAesUnlockRequest,
-  clearFallbackAesSessionOnboardInfo,
-  getOrRecoverAesForWallet,
-  readFallbackAesSessionOnboardInfo
+  clearFallbackAesSessionOnboardInfo
 } from '../lib/cotiAesUnlock';
 import type { WalletAesHealthState } from '../lib/cotiAesUnlock';
+import { getCotiSnapOwnerAesKeyResult, getCotiSnapOwnerAesStatusMessage } from '../lib/cotiSnap';
 import {
   logMobileWalletDiagnostic,
   maskWalletForDiagnostics
@@ -122,11 +121,10 @@ const readInjectedPassiveBrowserWalletRestore = async (
   }
   const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
   const normalizedChainId = normalizeChainId(currentChain);
-  const onboardInfo = readFallbackAesSessionOnboardInfo(selected, provider);
   return {
     address: selected,
     chainId: normalizedChainId,
-    onboardInfo,
+    onboardInfo: null,
     provider,
     source: 'injected',
     walletId: walletOption.id,
@@ -172,7 +170,7 @@ export const readPassiveBrowserWalletRestore = async (
         });
         return {
           ...session,
-          onboardInfo: readFallbackAesSessionOnboardInfo(session.address, session.provider),
+          onboardInfo: null,
           source: 'metamask-connect-mobile'
         };
       }
@@ -515,21 +513,16 @@ export function useWalletOnboarding({
           })
         );
       }
-      await getOrRecoverAesForWallet({
-        allowUnrecoverableReset: refreshMismatch,
-        forceFreshAes: refreshMismatch,
-        forceLegacyRefresh: refreshMismatch,
-        forceRefresh: true,
-        provider: promptProvider,
-        signer,
-        walletAddress: address
-      });
+      const snapAesResult = await getCotiSnapOwnerAesKeyResult(promptProvider, address);
+      if (snapAesResult.status !== 'ready') {
+        throw new Error(getCotiSnapOwnerAesStatusMessage(snapAesResult.status));
+      }
 
-      const rawOnboardInfo = signer.getUserOnboardInfo();
-      const onboardInfo = mergeOnboardInfo(undefined, rawOnboardInfo);
+      const onboardInfo = mergeOnboardInfo(signer.getUserOnboardInfo(), { aesKey: snapAesResult.aesKey } as OnboardInfo);
+      signer.setUserOnboardInfo(onboardInfo);
       const aesKey = onboardInfo.aesKey ?? '';
       if (!aesKey) {
-        throw new Error('AES key was not returned during onboarding.');
+        throw new Error('Privacy unlock was not returned during onboarding.');
       }
 
       setSessionOnboardInfo((previous) => ({
@@ -544,7 +537,7 @@ export function useWalletOnboarding({
         })
       );
 
-      setOnboardStatus('AES key ready');
+      setOnboardStatus('Owner privacy ready');
       return onboardInfo;
     },
     [
@@ -990,7 +983,7 @@ export function useWalletOnboarding({
               walletAddress: restore.address
             })
           );
-          setOnboardStatus('AES key ready');
+          setOnboardStatus('Privacy ready');
         }
 
         logMobileWalletDiagnostic('passive-restore-connected', {

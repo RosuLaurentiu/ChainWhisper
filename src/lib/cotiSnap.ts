@@ -34,6 +34,21 @@ export type CotiSnapAesKeyResult =
   | { status: 'rejected' }
   | { status: 'error' };
 
+export type CotiSnapOwnerAesStatus =
+  | 'ready'
+  | 'snap-not-installed'
+  | 'snap-missing-aes'
+  | 'unsupported'
+  | 'unsupported-mobile'
+  | 'wallet-mismatch'
+  | 'wrong-network'
+  | 'rejected'
+  | 'error';
+
+export type CotiSnapOwnerAesResult =
+  | { status: 'ready'; aesKey: string }
+  | { status: Exclude<CotiSnapOwnerAesStatus, 'ready'> };
+
 const getCurrentOrigin = (): string | null => {
   const maybeWindow = globalThis as { window?: { location?: { origin?: unknown } } };
   const origin = maybeWindow.window?.location?.origin;
@@ -314,6 +329,50 @@ export const getCotiSnapAesKeyResult = async (
 export const getCotiSnapAesKey = async (provider: Eip1193Provider): Promise<string | null> => {
   const result = await getCotiSnapAesKeyResult(provider);
   return result.status === 'ready' ? result.aesKey : null;
+};
+
+export const getCotiSnapOwnerAesKeyResult = async (
+  provider: Eip1193Provider,
+  ownerAddress: string,
+  context?: Omit<CotiSnapWalletContext, 'walletAddress'>
+): Promise<CotiSnapOwnerAesResult> => {
+  const result = await getCotiSnapAesKeyResult(provider, {
+    ...context,
+    expectedChainId: context?.expectedChainId ?? COTI_NETWORK.chainIdDecimal,
+    walletAddress: ownerAddress
+  });
+  if (result.status === 'ready') {
+    return result;
+  }
+  if (result.status === 'not-installed') {
+    return { status: 'snap-not-installed' };
+  }
+  if (result.status === 'missing-aes') {
+    return { status: 'snap-missing-aes' };
+  }
+  return { status: result.status };
+};
+
+export const getCotiSnapOwnerAesStatusMessage = (status: Exclude<CotiSnapOwnerAesStatus, 'ready'>): string => {
+  switch (status) {
+    case 'snap-not-installed':
+      return 'COTI Snap is not installed. Install the COTI Snap in MetaMask desktop, then try again.';
+    case 'snap-missing-aes':
+      return 'Open COTI Snap and onboard this owner wallet, then grant AES key access.';
+    case 'unsupported-mobile':
+      return 'MetaMask Mobile does not support COTI Snap here. Use MetaMask desktop with COTI Snap for account recovery.';
+    case 'unsupported':
+      return 'This wallet does not support COTI Snap. Use MetaMask desktop with COTI Snap for account recovery.';
+    case 'wallet-mismatch':
+      return 'The active MetaMask account changed. Select the same owner wallet and try again.';
+    case 'wrong-network':
+      return 'Switch MetaMask to COTI mainnet before unlocking account recovery.';
+    case 'rejected':
+      return 'The COTI Snap request was rejected.';
+    case 'error':
+    default:
+      return 'COTI Snap could not return the owner AES key. Check the Snap connection and try again.';
+  }
 };
 
 export const storeCotiSnapAesKeyResult = async (

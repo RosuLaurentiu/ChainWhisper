@@ -4,7 +4,7 @@ import { getAppWalletPolicy } from './walletPolicy';
 
 const appPages: AppPage[] = ['home', 'chat', 'swap', 'trades', 'treasury'];
 
-describe('app wallet policy', () => {
+describe('ChainWhisper account wallet policy', () => {
   it('keeps wallet controls off Home and Treasury', () => {
     expect(getAppWalletPolicy('home')).toMatchObject({
       preferredWallet: 'none',
@@ -16,22 +16,13 @@ describe('app wallet policy', () => {
     });
   });
 
-  it('keeps Chat and WISP Portal app-wallet focused', () => {
-    expect(getAppWalletPolicy('chat')).toMatchObject({
-      preferredWallet: 'app',
-      walletControlKind: 'chat'
-    });
-    expect(getAppWalletPolicy('swap')).toMatchObject({
-      preferredWallet: 'app',
-      walletControlKind: 'chat'
-    });
-  });
-
-  it('keeps OTC Desk browser-wallet focused', () => {
-    expect(getAppWalletPolicy('trades')).toMatchObject({
-      preferredWallet: 'browser',
-      walletControlKind: 'trades'
-    });
+  it('uses one ChainWhisper-account-focused header policy for app pages that need wallets', () => {
+    for (const page of ['chat', 'swap', 'trades'] satisfies AppPage[]) {
+      expect(getAppWalletPolicy(page)).toMatchObject({
+        preferredWallet: 'app',
+        walletControlKind: 'app'
+      });
+    }
   });
 
   it('preserves connected sessions when navigating between every app route', () => {

@@ -2,11 +2,13 @@ import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
   COTI_NETWORK,
   shortenAddress,
+  type BurnerWalletStorageState,
   type BurnerWalletRecord,
   type Eip1193Provider,
   type SignerSource
 } from './appShared/core';
 import type { WalletAesHealthState } from './cotiAesUnlock';
+import type { WalletReadAccount } from './walletAccountScope';
 
 export type SharedWalletSession = {
   actions?: WalletSessionActions;
@@ -23,6 +25,7 @@ export type SharedWalletSession = {
   sessionOnboardInfo: Record<string, OnboardInfo>;
   walletAesHealthByAddress?: Record<string, WalletAesHealthState>;
   walletAddress: string;
+  walletReadAccounts?: WalletReadAccount[];
 };
 
 export type WalletBrowserConnectOptions = {
@@ -42,6 +45,8 @@ export type WalletSessionActions = {
   generateAppWallet: () => Promise<void> | void;
   getSigner: (requireAes: boolean, options?: WalletSessionSignerOptions) => Promise<JsonRpcSigner | Wallet>;
   importAppWallet: () => Promise<void> | void;
+  linkAppWalletRecovery?: () => Promise<void> | void;
+  recoverLinkedAppWallet?: () => Promise<void> | void;
   runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   switchAppWallet: (walletIdOrAddress: string) => Promise<void> | void;
   unlockPrivacy: (options?: { forceFreshPrivacy?: boolean }) => Promise<unknown>;
@@ -211,6 +216,108 @@ export type AppWalletSwitchOptionModel = {
   walletId: string;
 };
 
+export type AppWalletStorageKind =
+  | 'none'
+  | 'legacy'
+  | 'legacy-vault'
+  | 'encrypted'
+  | 'owner-aes';
+
+export type AppWalletSetupStorageKind =
+  | 'none'
+  | 'owner-aes-current-owner'
+  | 'owner-aes-other-owner'
+  | 'pin-encrypted'
+  | 'legacy'
+  | 'legacy-vault';
+
+export type AppWalletMenuActionVisibility = {
+  showBackupWallet: boolean;
+  showChangePin: boolean;
+  showGenerateAccount: boolean;
+  showImportAccount: boolean;
+  showLinkExistingPinAccount: boolean;
+  showOwnerDirectFallback: boolean;
+  showPinOnlyFallback: boolean;
+  showRecoverWallet: boolean;
+  showSaveRecovery: boolean;
+};
+
+export type OwnerAccountFlowState =
+  | 'connect-owner'
+  | 'unlock-owner-aes'
+  | 'checking-recovery'
+  | 'account-active'
+  | 'setup-needed'
+  | 'recovery-error';
+
+export type OwnerAccountFlowModel = {
+  primaryLabel: string;
+  state: OwnerAccountFlowState;
+  statusLabel: string;
+  statusTone: WalletStatusTone;
+};
+
+export type WalletOnboardingProgressStepState = 'pending' | 'active' | 'complete';
+
+export type WalletOnboardingProgressStep = {
+  label: string;
+  state: WalletOnboardingProgressStepState;
+};
+
+export type WalletOnboardingProgressModel = {
+  active: boolean;
+  detail: string;
+  steps: WalletOnboardingProgressStep[];
+  title: string;
+};
+
+export type OwnerAccountFlowInput = {
+  connectedWithAppWallet: boolean;
+  hasAesReady: boolean;
+  hasOwnerLinkedSavedAccount?: boolean;
+  initializingAccount: boolean;
+  ownerRecoveryError?: string;
+  ownerWalletConnected: boolean;
+  preferredOwnerWalletLabel?: string;
+  recoveryChecking: boolean;
+};
+
+export type WalletOnboardingProgressInput = {
+  appWalletAddress: string;
+  connectedWithAppWallet: boolean;
+  connectingOwner: boolean;
+  initializingAccount: boolean;
+  ownerAesReady: boolean;
+  ownerWalletConnected: boolean;
+  recoveryChecking: boolean;
+  recoveringAccount: boolean;
+  walletAesReady: boolean;
+};
+
+export type OwnerLocalAccountAutoConnectInput = {
+  attemptNonce?: number;
+  chainId: number | null;
+  initializing: boolean;
+  ownerAddress: string;
+  ownerAesKey: string;
+  ownerWalletConnected?: boolean;
+  storageState: BurnerWalletStorageState;
+};
+
+export type OwnerRecoveryAutoConnectInput = {
+  attemptNonce?: number;
+  chainId: number | null;
+  currentAttemptKey?: string;
+  hasAesReady: boolean;
+  initializing: boolean;
+  ownerAddress: string;
+  ownerAesKey: string;
+  ownerWalletConnected?: boolean;
+  recoveryConfigured: boolean;
+  registryAddress: string;
+};
+
 export const WALLET_STATUS_LABEL = {
   disconnected: 'Disconnected',
   wrongNetwork: 'Wrong network',
@@ -232,6 +339,36 @@ export const hasSessionAesKey = (
 ): boolean => {
   const walletKey = normalizeWalletKey(walletAddress);
   return Boolean(walletKey && sessionOnboardInfo[walletKey]?.aesKey);
+};
+
+export type OwnerRecoveryWalletState = {
+  ownerAesKey: string;
+  ownerAesReady: boolean;
+  ownerWalletAddress: string;
+};
+
+export const resolveOwnerRecoveryWalletState = ({
+  activeSignerSource,
+  browserWalletAddress = '',
+  sessionOnboardInfo,
+  walletAddress,
+  walletAesHealthByAddress = {}
+}: {
+  activeSignerSource: SignerSource;
+  browserWalletAddress?: string;
+  sessionOnboardInfo: Record<string, OnboardInfo>;
+  walletAddress: string;
+  walletAesHealthByAddress?: Record<string, WalletAesHealthState>;
+}): OwnerRecoveryWalletState => {
+  const ownerWalletAddress = browserWalletAddress.trim() || (activeSignerSource === 'metamask' ? walletAddress : '');
+  const ownerKey = normalizeWalletKey(ownerWalletAddress);
+  const sessionAesKey = sessionOnboardInfo[ownerKey]?.aesKey;
+  const ownerAesKey = typeof sessionAesKey === 'string' ? sessionAesKey.trim() : '';
+  return {
+    ownerAesKey,
+    ownerAesReady: Boolean(ownerKey && ownerAesKey && walletAesHealthByAddress[ownerKey]?.status !== 'key-mismatch'),
+    ownerWalletAddress
+  };
 };
 
 export const isSessionOnCotiNetwork = (chainId: number | null): boolean => chainId === COTI_NETWORK.chainIdDecimal;
@@ -325,11 +462,11 @@ export const resolveWalletModeLabel = ({
   const browserLabel = browserWalletLabel?.trim() || 'Browser wallet';
   if (connectedWithAppWallet) {
     return hasBrowserWalletAvailable
-      ? `App + ${(appWithBrowserLabel?.trim() || browserLabel)}`
-      : 'App wallet';
+      ? `ChainWhisper account + ${(appWithBrowserLabel?.trim() || browserLabel)}`
+      : 'ChainWhisper account';
   }
 
-  return hasAppWalletAvailable ? `${browserLabel} + app` : browserLabel;
+  return hasAppWalletAvailable ? `${browserLabel} + ChainWhisper account` : browserLabel;
 };
 
 export const resolveWalletPrimaryButtonLabel = ({
@@ -434,7 +571,7 @@ export const resolveWalletConnectionPrimaryAction = ({
     return {
       disabled: false,
       kind: hasSavedAppWallet ? 'connect-app-wallet' : 'generate-app-wallet',
-      label: hasSavedAppWallet ? 'Connect app wallet' : 'Generate app wallet'
+      label: hasSavedAppWallet ? 'Connect ChainWhisper account' : 'Set up ChainWhisper account'
     };
   }
 
@@ -500,7 +637,7 @@ export const resolveWalletPrivacyUnlockPrompt = ({
   if (unlocking) {
     return {
       label: 'Unlocking...',
-      title: 'Check your wallet prompt to finish the privacy unlock.'
+      title: 'Check MetaMask to unlock owner privacy.'
     };
   }
 
@@ -514,7 +651,7 @@ export const resolveWalletPrivacyUnlockPrompt = ({
   if (connectedWithAppWallet) {
     return {
       label: WALLET_ACTION_LABEL.unlockPrivacy,
-      title: 'Unlock privacy with the connected app wallet.'
+      title: 'Unlock privacy with the connected ChainWhisper account.'
     };
   }
 
@@ -522,24 +659,24 @@ export const resolveWalletPrivacyUnlockPrompt = ({
     case 'installed':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'Unlock with COTI Snap.'
+        title: 'Unlock owner privacy for account recovery.'
       };
     case 'installed-aes-ready':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'Unlock with COTI Snap.'
+        title: 'Unlock owner privacy for account recovery.'
       };
     case 'installed-aes-missing':
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'COTI Snap has no AES key for this account. Make sure this account was selected during Snap install. Onboard it in the COTI Snap wallet, then unlock again.'
+        title: 'Onboard this owner wallet in COTI Snap, then try again.'
       };
     case 'installed-aes-stale':
     case 'key-mismatch':
     case 'repair-needed':
       return {
-        label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'Unlock privacy will refresh this wallet AES key if the Snap key does not decrypt wallet data.'
+        label: 'Unlock privacy',
+        title: 'Unlock owner privacy again.'
       };
     case 'rejected':
       return {
@@ -548,29 +685,29 @@ export const resolveWalletPrivacyUnlockPrompt = ({
       };
     case 'not-installed':
       return {
-        label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'COTI Snap is not installed for this wallet. Unlock privacy will use wallet AES if Snap is unavailable.'
+        label: 'Unlock privacy',
+        title: 'Install and connect COTI Snap in MetaMask desktop to recover a ChainWhisper account.'
       };
     case 'unsupported-mobile':
       return {
-        label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'MetaMask Mobile does not support Snaps here. Unlock privacy will use wallet AES.'
+        label: 'Use desktop',
+        title: 'MetaMask Mobile does not support COTI Snap here. Use MetaMask desktop for owner-linked recovery.'
       };
     case 'unsupported':
       return {
-        label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'COTI Snap is unavailable for this wallet provider. Unlock privacy will use wallet AES.'
+        label: 'Use MetaMask',
+        title: 'This wallet provider cannot use COTI Snap. Use MetaMask desktop for owner-linked recovery.'
       };
     case 'error':
       return {
-        label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'COTI Snap status could not be checked. Try unlocking privacy and approve the wallet prompts.'
+        label: 'Unlock privacy',
+        title: 'Owner privacy could not be checked. Try again and approve the MetaMask prompts.'
       };
     case 'unknown':
     default:
       return {
         label: WALLET_ACTION_LABEL.unlockPrivacy,
-        title: 'Unlock privacy to reveal private balances, receipts, and encrypted trade history.'
+        title: 'Unlock owner privacy for ChainWhisper account recovery.'
       };
   }
 };
@@ -890,14 +1027,314 @@ export const resolveAppWalletSwitchOptions = ({
       walletRecord.name?.trim() ||
       (walletRecordAddress ? shortenAddress(walletRecordAddress) : `Wallet ${index + 1}`);
 
+    const labelParts = [displayName];
+    if (walletRecord.recoveryDefault) {
+      labelParts.push('default');
+    }
+    if (isSelected) {
+      labelParts.push('active');
+    }
+
     return {
       active: isSelected,
       disabled: Boolean(disabled || !switchValue || isSelected),
       address: walletRecordAddress,
       id: switchValue,
       key: walletRecord.id ?? `${walletRecord.privateKey}-${index}`,
-      label: isSelected ? `${displayName} active` : displayName,
+      label: labelParts.join(' '),
       walletId
     };
   });
+};
+
+export const resolveAppWalletSetupStorageKind = ({
+  ownerAddress,
+  storageKind,
+  storageOwnerAddress
+}: {
+  ownerAddress: string;
+  storageKind: AppWalletStorageKind;
+  storageOwnerAddress?: string;
+}): AppWalletSetupStorageKind => {
+  if (storageKind === 'owner-aes') {
+    const ownerKey = normalizeWalletKey(ownerAddress);
+    const storageOwnerKey = normalizeWalletKey(storageOwnerAddress ?? '');
+    return ownerKey && storageOwnerKey === ownerKey
+      ? 'owner-aes-current-owner'
+      : 'owner-aes-other-owner';
+  }
+  if (storageKind === 'encrypted') {
+    return 'pin-encrypted';
+  }
+  if (storageKind === 'legacy' || storageKind === 'legacy-vault') {
+    return storageKind;
+  }
+  return 'none';
+};
+
+export const resolveOwnerLocalAccountAutoConnectAttemptKey = ({
+  attemptNonce = 0,
+  chainId,
+  initializing,
+  ownerAddress,
+  ownerAesKey,
+  ownerWalletConnected = true,
+  storageState
+}: OwnerLocalAccountAutoConnectInput): string => {
+  const ownerKey = normalizeWalletKey(ownerAddress);
+  const aesKey = ownerAesKey.trim();
+  if (
+    !ownerWalletConnected ||
+    chainId !== COTI_NETWORK.chainIdDecimal ||
+    initializing ||
+    !ownerKey ||
+    !aesKey ||
+    storageState.kind !== 'owner-aes' ||
+    normalizeWalletKey(storageState.record.ownerAddress) !== ownerKey
+  ) {
+    return '';
+  }
+
+  return [
+    ownerKey,
+    storageState.record.version,
+    storageState.record.iv,
+    storageState.record.ciphertext.length,
+    Math.max(0, Math.floor(attemptNonce))
+  ].join(':');
+};
+
+export const resolveOwnerAccountFlowModel = ({
+  connectedWithAppWallet,
+  hasAesReady,
+  hasOwnerLinkedSavedAccount = false,
+  initializingAccount,
+  ownerRecoveryError = '',
+  ownerWalletConnected,
+  preferredOwnerWalletLabel,
+  recoveryChecking
+}: OwnerAccountFlowInput): OwnerAccountFlowModel => {
+  if (connectedWithAppWallet) {
+    return {
+      primaryLabel: 'ChainWhisper account ready',
+      state: 'account-active',
+      statusLabel: 'ChainWhisper account ready',
+      statusTone: 'ready'
+    };
+  }
+
+  if (ownerRecoveryError.trim()) {
+    return {
+      primaryLabel: 'Recover account',
+      state: 'recovery-error',
+      statusLabel: 'Recovery needs attention',
+      statusTone: 'warning'
+    };
+  }
+
+  if (recoveryChecking || initializingAccount) {
+    return {
+      primaryLabel: 'Checking saved account...',
+      state: 'checking-recovery',
+      statusLabel: 'Checking saved account',
+      statusTone: 'muted'
+    };
+  }
+
+  if (!ownerWalletConnected) {
+    return {
+      primaryLabel: `Connect ${preferredOwnerWalletLabel || 'owner wallet'}`,
+      state: 'connect-owner',
+      statusLabel: 'Owner wallet needed',
+      statusTone: 'muted'
+    };
+  }
+
+  if (!hasAesReady) {
+    return {
+      primaryLabel: 'Unlock privacy',
+      state: 'unlock-owner-aes',
+      statusLabel: 'Unlock privacy',
+      statusTone: 'locked'
+    };
+  }
+
+  if (hasOwnerLinkedSavedAccount) {
+    return {
+      primaryLabel: 'Account ready',
+      state: 'setup-needed',
+      statusLabel: 'Account saved locally',
+      statusTone: 'warning'
+    };
+  }
+
+  return {
+    primaryLabel: 'Set up ChainWhisper account',
+    state: 'setup-needed',
+    statusLabel: 'Account needed',
+    statusTone: 'warning'
+  };
+};
+
+export const resolveWalletOnboardingProgressModel = ({
+  appWalletAddress,
+  connectedWithAppWallet,
+  connectingOwner,
+  initializingAccount,
+  ownerAesReady,
+  ownerWalletConnected,
+  recoveryChecking,
+  recoveringAccount,
+  walletAesReady
+}: WalletOnboardingProgressInput): WalletOnboardingProgressModel => {
+  const accountKnown = connectedWithAppWallet || Boolean(appWalletAddress.trim());
+  const findingAccount = recoveryChecking || recoveringAccount;
+  const preparingAccount = initializingAccount || (connectedWithAppWallet && !walletAesReady);
+  const active = connectingOwner || findingAccount || preparingAccount;
+  const includeOwnerStep = ownerWalletConnected || connectingOwner;
+
+  const steps: WalletOnboardingProgressStep[] = [];
+  if (includeOwnerStep) {
+    steps.push({
+      label: 'Owner privacy',
+      state: ownerAesReady ? 'complete' : connectingOwner ? 'active' : 'pending'
+    });
+  }
+  steps.push({
+    label: 'Find account',
+    state: accountKnown ? 'complete' : findingAccount ? 'active' : 'pending'
+  });
+  steps.push({
+    label: 'Prepare account',
+    state: connectedWithAppWallet && walletAesReady ? 'complete' : preparingAccount ? 'active' : 'pending'
+  });
+
+  if (connectingOwner) {
+    return {
+      active,
+      detail: 'Approve the wallet prompt to continue.',
+      steps,
+      title: 'Connecting owner wallet'
+    };
+  }
+
+  if (findingAccount) {
+    return {
+      active,
+      detail: 'Automatically checking for your saved ChainWhisper account.',
+      steps,
+      title: recoveryChecking ? 'Checking saved account' : 'Recovering account'
+    };
+  }
+
+  if (preparingAccount) {
+    return {
+      active,
+      detail: 'Preparing private chat and trading access.',
+      steps,
+      title: 'Preparing account'
+    };
+  }
+
+  if (connectedWithAppWallet && walletAesReady) {
+    return {
+      active: false,
+      detail: 'ChainWhisper account is ready.',
+      steps,
+      title: 'Account ready'
+    };
+  }
+
+  return {
+    active: false,
+    detail: ownerWalletConnected ? 'Create, import, or recover an account.' : 'Connect the owner wallet to continue.',
+    steps,
+    title: 'Account setup needed'
+  };
+};
+
+export const resolveOwnerRecoveryAutoConnectAttemptKey = ({
+  attemptNonce = 0,
+  chainId,
+  currentAttemptKey = '',
+  hasAesReady,
+  initializing,
+  ownerAddress,
+  ownerAesKey,
+  ownerWalletConnected = true,
+  recoveryConfigured,
+  registryAddress
+}: OwnerRecoveryAutoConnectInput): string => {
+  const ownerKey = normalizeWalletKey(ownerAddress);
+  const aesKey = ownerAesKey.trim();
+  const registryKey = normalizeWalletKey(registryAddress);
+  if (
+    !ownerWalletConnected ||
+    chainId !== COTI_NETWORK.chainIdDecimal ||
+    !hasAesReady ||
+    initializing ||
+    !ownerKey ||
+    !aesKey ||
+    !recoveryConfigured ||
+    !registryKey
+  ) {
+    return '';
+  }
+
+  const attemptKey = `${ownerKey}:${chainId}:${registryKey}:${Math.max(0, Math.floor(attemptNonce))}`;
+  return attemptKey === currentAttemptKey ? '' : attemptKey;
+};
+
+export const resolveAppWalletMenuActionVisibility = ({
+  connectedWithAppWallet,
+  hasMnemonicBackup,
+  hasSavedAppWallet,
+  ownerWalletConnected = false,
+  ownerWalletReady = false,
+  recoveryConfigured,
+  recoveryChecking = false,
+  recordReady,
+  setupStorageKind,
+  storageKind
+}: {
+  connectedWithAppWallet: boolean;
+  hasMnemonicBackup: boolean;
+  hasSavedAppWallet: boolean;
+  ownerWalletConnected?: boolean;
+  ownerWalletReady?: boolean;
+  recoveryConfigured: boolean;
+  recoveryChecking?: boolean;
+  recordReady: boolean;
+  setupStorageKind?: AppWalletSetupStorageKind;
+  storageKind: AppWalletStorageKind;
+}): AppWalletMenuActionVisibility => {
+  const resolvedSetupStorageKind =
+    setupStorageKind ??
+    resolveAppWalletSetupStorageKind({
+      ownerAddress: '',
+      storageKind
+    });
+  const hasOwnerLinkedAccount = resolvedSetupStorageKind === 'owner-aes-current-owner';
+  const hasPinBackedAccount =
+    resolvedSetupStorageKind === 'pin-encrypted' ||
+    resolvedSetupStorageKind === 'legacy' ||
+    resolvedSetupStorageKind === 'legacy-vault';
+  const needsPrimarySetup = !connectedWithAppWallet && !hasOwnerLinkedAccount && !hasPinBackedAccount;
+
+  return {
+    showBackupWallet: Boolean(connectedWithAppWallet && hasMnemonicBackup),
+    showChangePin: Boolean(
+      connectedWithAppWallet &&
+      hasSavedAppWallet &&
+      recordReady &&
+      storageKind !== 'owner-aes'
+    ),
+    showGenerateAccount: Boolean(needsPrimarySetup && !recoveryChecking),
+    showImportAccount: Boolean(needsPrimarySetup && !recoveryChecking),
+    showLinkExistingPinAccount: Boolean(!connectedWithAppWallet && ownerWalletReady && hasPinBackedAccount && !recoveryChecking),
+    showOwnerDirectFallback: Boolean(ownerWalletConnected),
+    showPinOnlyFallback: Boolean(hasPinBackedAccount),
+    showRecoverWallet: Boolean(recoveryConfigured && !connectedWithAppWallet && !hasOwnerLinkedAccount && !recoveryChecking),
+    showSaveRecovery: Boolean(connectedWithAppWallet && recoveryConfigured)
+  };
 };

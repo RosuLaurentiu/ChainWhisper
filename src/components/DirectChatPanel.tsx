@@ -1,13 +1,15 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
-import DirectChatCompose from './DirectChatCompose';
+import DirectChatCompose, { type ChatComposerPromptEstimate } from './DirectChatCompose';
 import ChatImage from './ChatImage';
+import LinkedTradeContextPanel from './LinkedTradeContextPanel';
 import MessageActions from './MessageActions';
 import MessageTextWithLinks from './MessageTextWithLinks';
 import TradeOfferCard from './TradeOfferCard';
 import type { ImageAttachmentPreviewState } from '../lib/imageAttachmentPreview';
 import { parseImageTag } from '../lib/imagePull';
 import useVirtualizedPrependScrollAnchor from '../hooks/useVirtualizedPrependScrollAnchor';
+import { buildTradeTerminalPath } from '../hooks/useP2PTradeRoute';
 import {
   buildTradeSnapshotKey,
   formatMessageTimestamp,
@@ -19,10 +21,15 @@ import {
   type ChatMessage,
   type Contact,
   type TipTokenSelection,
+  type TradeMessageReferencePayload,
   type TradeOfferMessagePayload,
   type TradeResponseMessagePayload,
   type TradeSnapshot
 } from '../lib/appShared';
+import {
+  extractTradeTerminalPathFromMessage,
+  type LinkedTradeContext
+} from '../lib/linkedTradeContext';
 import { getCounterOfferUnavailableReason } from '../lib/tradeCounterSupport';
 
 type MessageReactionSummary = {
@@ -36,6 +43,12 @@ const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
 const DIRECT_MESSAGE_SKELETON_ROWS = [0, 1, 2, 3, 4];
+
+const getTradeReferenceLabel = (reference: TradeMessageReferencePayload): string =>
+  `Trade #${reference.tradeId}`;
+
+const getTradeReferenceSummary = (reference: TradeMessageReferencePayload): string =>
+  `Open trade #${reference.tradeId} in the terminal.`;
 
 type DirectChatPanelProps = {
   activeContact: string;
@@ -72,8 +85,13 @@ type DirectChatPanelProps = {
   ) => void;
   getReplyReferenceFallbackLabel: (message: ChatMessage) => string;
   tradeSnapshotsById: Record<string, TradeSnapshot>;
+  linkedTradeContext?: LinkedTradeContext | null;
+  linkedTradeContextShareCopied?: boolean;
   walletAddress: string;
   processingTradeActionId: string;
+  onCopyLinkedTradeContextLink: (value: string) => void;
+  onDismissLinkedTradeContext: () => void;
+  onOpenTradeTerminalPath: (path: string) => void;
   onAcceptTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
   onDeclineTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
   onCounterTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
@@ -110,6 +128,7 @@ type DirectChatPanelProps = {
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
+  promptEstimate?: ChatComposerPromptEstimate | null;
   onOpenInternalAppLink: (href: string) => void;
   sending: boolean;
   tipToggleDisabled: boolean;
@@ -147,8 +166,13 @@ function DirectChatPanel({
   onJumpToReferencedMessage,
   getReplyReferenceFallbackLabel,
   tradeSnapshotsById,
+  linkedTradeContext,
+  linkedTradeContextShareCopied = false,
   walletAddress,
   processingTradeActionId,
+  onCopyLinkedTradeContextLink,
+  onDismissLinkedTradeContext,
+  onOpenTradeTerminalPath,
   onAcceptTrade,
   onDeclineTrade,
   onCounterTrade,
@@ -185,6 +209,7 @@ function DirectChatPanel({
   onSendMessage,
   maxMessageLength,
   onMessageInputChange,
+  promptEstimate,
   onOpenInternalAppLink,
   sending,
   tipToggleDisabled,
@@ -274,6 +299,16 @@ function DirectChatPanel({
   });
   const showHistorySyncIndicator = loadingOlderHistory && renderableMessages.length > 0;
   const showInitialMessageSkeleton = loadingOlderHistory && renderableMessages.length === 0;
+  const linkedTradeContextContent = linkedTradeContext ? (
+    <LinkedTradeContextPanel
+      context={linkedTradeContext}
+      currentWalletAddress={walletAddress}
+      onCopyShareLink={onCopyLinkedTradeContextLink}
+      onDismiss={onDismissLinkedTradeContext}
+      onOpenTerminal={onOpenTradeTerminalPath}
+      shareCopied={linkedTradeContextShareCopied}
+    />
+  ) : null;
 
   return (
     <div className="chat-shell">
@@ -361,6 +396,10 @@ function DirectChatPanel({
             const parsedTradeOffer =
               parsedTradeOfferRaw && isInChatTradeOffer(parsedTradeOfferRaw) ? parsedTradeOfferRaw : null;
             const messageDisplayText = getMessageDisplayText(message.text, message.direction);
+            const messageTradeTerminalPath =
+              !parsedTradeOffer && !message.tradeReference && messageDisplayText
+                ? extractTradeTerminalPathFromMessage(messageDisplayText)
+                : null;
             const parsedImageTag = parseImageTag(message.text);
             const messageReactions = getReactionsForMessage(message);
             const reactedEmojiSet = new Set(
@@ -431,6 +470,19 @@ function DirectChatPanel({
                       {'\u21AA'} {getReplyReferenceFallbackLabel(message)}
                     </button>
                   ) : null}
+                  {message.tradeReference ? (
+                    <button
+                      type="button"
+                      className="message-trade-reference"
+                      onClick={() => onOpenTradeTerminalPath(message.tradeReference!.terminalPath)}
+                      title="Open trade in terminal"
+                      aria-label={`Open ${getTradeReferenceLabel(message.tradeReference)} in terminal`}
+                    >
+                      <span className="message-trade-reference-kicker">Trade</span>
+                      <strong>{getTradeReferenceLabel(message.tradeReference)}</strong>
+                      <span>{getTradeReferenceSummary(message.tradeReference)}</span>
+                    </button>
+                  ) : null}
                   {parsedTradeOffer ? (
                     (() => {
                       const tradeKey = buildTradeSnapshotKey(parsedTradeOffer.tradeId, parsedTradeOffer.escrowContract);
@@ -441,6 +493,11 @@ function DirectChatPanel({
                       const counterUnavailableReason = snapshot
                         ? getCounterOfferUnavailableReason(snapshot, walletAddress.trim().toLowerCase())
                         : undefined;
+                      const terminalPath = buildTradeTerminalPath(
+                        parsedTradeOffer.tradeId,
+                        parsedTradeOffer.accessSecret,
+                        parsedTradeOffer.escrowContract
+                      );
 
                       return (
                         <TradeOfferCard
@@ -459,6 +516,7 @@ function DirectChatPanel({
                               [tradeKey]: !(previous[tradeKey] ?? defaultExpanded)
                             }));
                           }}
+                          onOpenTerminal={() => onOpenTradeTerminalPath(terminalPath)}
                           onAccept={() => {
                             onAcceptTrade(parsedTradeOffer, message).catch(() => {});
                           }}
@@ -477,9 +535,20 @@ function DirectChatPanel({
                   ) : parsedImageTag ? (
                     <ChatImage tag={message.text} parsed={parsedImageTag} messageTimestamp={message.timestamp} />
                   ) : messageDisplayText ? (
-                    <div className="message-text">
-                      <MessageTextWithLinks text={messageDisplayText} onOpenInternalLink={onOpenInternalAppLink} />
-                    </div>
+                    <>
+                      <div className="message-text">
+                        <MessageTextWithLinks text={messageDisplayText} onOpenInternalLink={onOpenInternalAppLink} />
+                      </div>
+                      {messageTradeTerminalPath ? (
+                        <button
+                          type="button"
+                          className="message-open-terminal"
+                          onClick={() => onOpenTradeTerminalPath(messageTradeTerminalPath)}
+                        >
+                          Open terminal
+                        </button>
+                      ) : null}
+                    </>
                   ) : null}
                   {messageReactions.length > 0 ? (
                     <div className="message-reactions">
@@ -508,8 +577,11 @@ function DirectChatPanel({
                       ))}
                     </div>
                   ) : null}
-                  {showMessageMeta && (message.timestamp || deliveryLabel) ? (
+                  {showMessageMeta && (message.timestamp || deliveryLabel || message.accountRole === 'owner') ? (
                     <div className="message-meta">
+                      {message.accountRole === 'owner' ? (
+                        <span className="message-account-badge">Owner wallet</span>
+                      ) : null}
                       {message.timestamp ? (
                         <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span>
                       ) : null}
@@ -557,6 +629,7 @@ function DirectChatPanel({
         onSendTip={onSendTip}
         tradeComposerOpen={tradeComposerOpen}
         tradeComposerContent={tradeComposerContent}
+        linkedTradeContextContent={linkedTradeContextContent}
         onToggleTradeComposer={onToggleTradeComposer}
         composerRef={composerRef}
         isMobileNav={isMobileNav}
@@ -569,6 +642,7 @@ function DirectChatPanel({
         onSendMessage={onSendMessage}
         maxMessageLength={maxMessageLength}
         onMessageInputChange={onMessageInputChange}
+        promptEstimate={promptEstimate}
         sending={sending}
         tipToggleDisabled={tipToggleDisabled}
         tipToggleTitle={tipToggleTitle}

@@ -37,8 +37,10 @@ export default function BurnerBackupModal({ isOpen, mnemonic, onClose }: BurnerB
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <h3 id="burner-backup-title">Wallet Backup</h3>
-        <p className="wallet-reminder">Save this seed phrase offline. Anyone with it can recover this app wallet.</p>
+        <h3 id="burner-backup-title">ChainWhisper Account Backup</h3>
+        <p className="wallet-reminder">
+          Save this recovery phrase offline. Anyone with it can recover this ChainWhisper account.
+        </p>
         <p className="wallet-secret-phrase">{mnemonic}</p>
         <div className="modal-actions">
           <button type="button" className="connect-btn" onClick={onClose}>

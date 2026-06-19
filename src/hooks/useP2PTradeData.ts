@@ -14,11 +14,17 @@ import {
 } from '../lib/appChain';
 import type { TradePageView } from './useP2PTradeRoute';
 import { getWalletTransactionFlowState } from '../lib/walletTransactionFlow';
+import {
+  buildWalletReadAccountsKey,
+  mergeWalletAccountMatches,
+  type WalletReadAccount
+} from '../lib/walletAccountScope';
 
 const TRADE_DETAIL_LOAD_TIMEOUT_MS = 18_000;
 const PUBLIC_TRADE_EMPTY_RETRY_DELAY_MS = 1_200;
 const PUBLIC_TRADE_EMPTY_RETRY_LIMIT = 2;
 const WALLET_FLOW_LIST_REFRESH_RETRY_MS = 450;
+const P2P_TRADE_DATA_WARM_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const shouldHoldTradeReadForWalletFlow = (silent: boolean, hasExistingData: boolean): boolean => {
   const flowState = getWalletTransactionFlowState();
@@ -147,7 +153,7 @@ const mergeTradeSnapshotEnrichment = (
     existing && shouldApplyWalletScope ? filterWalletScopedTradeSnapshot(existing, walletKey) : existing;
 
   if (!walletScopedExisting || getSnapshotKey(walletScopedExisting) !== getSnapshotKey(walletScopedIncoming)) {
-    return walletScopedIncoming;
+    return mergeWalletAccountMatches(walletScopedExisting, walletScopedIncoming);
   }
 
   const merged: TradeSnapshot = {
@@ -186,6 +192,34 @@ const mergeTradeSnapshotEnrichment = (
     };
   }
 
+  return mergeWalletAccountMatches(walletScopedExisting, merged);
+};
+
+const annotateTradeSnapshotForAccount = (snapshot: TradeSnapshot, account: WalletReadAccount): TradeSnapshot => ({
+  ...snapshot,
+  accountAddress: account.address,
+  accountRole: account.role,
+  accountMatches: [
+    {
+      address: account.address,
+      role: account.role
+    }
+  ]
+});
+
+const mergeAccountScopedSnapshot = (
+  incoming: TradeSnapshot,
+  existing: TradeSnapshot | undefined,
+  accountKey: string
+): TradeSnapshot => {
+  const merged = mergeTradeSnapshotEnrichment(incoming, existing, accountKey);
+  if (existing?.accountRole === 'chainwhisper' && incoming.accountRole === 'owner') {
+    return {
+      ...merged,
+      accountAddress: existing.accountAddress,
+      accountRole: existing.accountRole
+    };
+  }
   return merged;
 };
 
@@ -239,6 +273,7 @@ type UseP2PTradeDataArgs = TokenMetadata & {
   syncSessionKey: string;
   walletAddress: string;
   walletKey: string;
+  walletReadAccounts?: WalletReadAccount[];
 };
 
 type UseP2PTradeDataResult = {
@@ -263,6 +298,47 @@ type UseP2PTradeDataResult = {
   tradeAccessBlocked: boolean;
 };
 
+type P2PTradeDataWarmCacheEntry = {
+  detailTrade: TradeSnapshot | null;
+  detailTradeError: string;
+  myTrades: TradeSnapshot[];
+  myTradesError: string;
+  publicTrades: TradeSnapshot[];
+  publicTradesError: string;
+  routeEscrowContract?: string;
+  routeTradeId: number | null;
+  routeView: TradePageView;
+  tradeAccessBlocked: boolean;
+  updatedAt: number;
+};
+
+const p2pTradeDataWarmCacheBySession = new Map<string, P2PTradeDataWarmCacheEntry>();
+
+const readP2PTradeDataWarmCache = (syncSessionKey: string): P2PTradeDataWarmCacheEntry | null => {
+  const cached = p2pTradeDataWarmCacheBySession.get(syncSessionKey);
+  if (!cached) {
+    return null;
+  }
+  if (Date.now() - cached.updatedAt > P2P_TRADE_DATA_WARM_CACHE_TTL_MS) {
+    p2pTradeDataWarmCacheBySession.delete(syncSessionKey);
+    return null;
+  }
+  return cached;
+};
+
+const cachedRouteMatches = (
+  cached: P2PTradeDataWarmCacheEntry | null,
+  routeView: TradePageView,
+  routeTradeId: number | null,
+  routeEscrowContract?: string
+): boolean =>
+  Boolean(
+    cached &&
+      cached.routeView === routeView &&
+      cached.routeTradeId === routeTradeId &&
+      (cached.routeEscrowContract ?? '').toLowerCase() === (routeEscrowContract ?? '').toLowerCase()
+  );
+
 export default function useP2PTradeData({
   enrichMakerPrivateProgress,
   privateRewardTokenDecimals,
@@ -276,18 +352,32 @@ export default function useP2PTradeData({
   routeView,
   syncSessionKey,
   walletAddress,
-  walletKey
+  walletKey,
+  walletReadAccounts = []
 }: UseP2PTradeDataArgs): UseP2PTradeDataResult {
-  const [publicTrades, setPublicTrades] = useState<TradeSnapshot[]>([]);
-  const [myTrades, setMyTrades] = useState<TradeSnapshot[]>([]);
-  const [detailTrade, setDetailTrade] = useState<TradeSnapshot | null>(null);
+  const initialWarmCache = readP2PTradeDataWarmCache(syncSessionKey);
+  const initialWarmCacheRouteMatches = cachedRouteMatches(
+    initialWarmCache,
+    routeView,
+    routeTradeId,
+    routeEscrowContract
+  );
+  const [publicTrades, setPublicTrades] = useState<TradeSnapshot[]>(() => initialWarmCache?.publicTrades ?? []);
+  const [myTrades, setMyTrades] = useState<TradeSnapshot[]>(() => initialWarmCache?.myTrades ?? []);
+  const [detailTrade, setDetailTrade] = useState<TradeSnapshot | null>(() =>
+    initialWarmCacheRouteMatches ? initialWarmCache?.detailTrade ?? null : null
+  );
   const [loadingPublicTrades, setLoadingPublicTrades] = useState(false);
   const [loadingMyTrades, setLoadingMyTrades] = useState(false);
   const [loadingDetailTrade, setLoadingDetailTrade] = useState(false);
-  const [tradeAccessBlocked, setTradeAccessBlocked] = useState(false);
-  const [publicTradesError, setPublicTradesError] = useState('');
-  const [myTradesError, setMyTradesError] = useState('');
-  const [detailTradeError, setDetailTradeError] = useState('');
+  const [tradeAccessBlocked, setTradeAccessBlocked] = useState(() =>
+    initialWarmCacheRouteMatches ? Boolean(initialWarmCache?.tradeAccessBlocked) : false
+  );
+  const [publicTradesError, setPublicTradesError] = useState(() => initialWarmCache?.publicTradesError ?? '');
+  const [myTradesError, setMyTradesError] = useState(() => initialWarmCache?.myTradesError ?? '');
+  const [detailTradeError, setDetailTradeError] = useState(() =>
+    initialWarmCacheRouteMatches ? initialWarmCache?.detailTradeError ?? '' : ''
+  );
   const publicTradesRefreshRef = useRef<Promise<void> | null>(null);
   const myTradesRefreshRef = useRef<Promise<void> | null>(null);
   const publicTradesRefreshQueuedRef = useRef(false);
@@ -321,6 +411,50 @@ export default function useP2PTradeData({
   }, [walletKey]);
 
   useEffect(() => {
+    const cached = readP2PTradeDataWarmCache(syncSessionKey);
+    if (!cached) {
+      return;
+    }
+
+    const routeMatches = cachedRouteMatches(cached, routeView, routeTradeId, routeEscrowContract);
+    setPublicTrades(cached.publicTrades);
+    setMyTrades(cached.myTrades);
+    setPublicTradesError(cached.publicTradesError);
+    setMyTradesError(cached.myTradesError);
+    setDetailTrade(routeMatches ? cached.detailTrade : null);
+    setDetailTradeError(routeMatches ? cached.detailTradeError : routeError);
+    setTradeAccessBlocked(routeMatches ? cached.tradeAccessBlocked : false);
+  }, [routeError, routeEscrowContract, routeTradeId, routeView, syncSessionKey]);
+
+  useEffect(() => {
+    p2pTradeDataWarmCacheBySession.set(syncSessionKey, {
+      detailTrade,
+      detailTradeError,
+      myTrades,
+      myTradesError,
+      publicTrades,
+      publicTradesError,
+      routeEscrowContract,
+      routeTradeId,
+      routeView,
+      tradeAccessBlocked,
+      updatedAt: Date.now()
+    });
+  }, [
+    detailTrade,
+    detailTradeError,
+    myTrades,
+    myTradesError,
+    publicTrades,
+    publicTradesError,
+    routeEscrowContract,
+    routeTradeId,
+    routeView,
+    syncSessionKey,
+    tradeAccessBlocked
+  ]);
+
+  useEffect(() => {
     const previousWalletKey = previousWalletKeyRef.current;
     if (previousWalletKey === walletKey) {
       return;
@@ -342,7 +476,8 @@ export default function useP2PTradeData({
     privateRewardTokenSymbol,
     rewardTokenDecimals,
     rewardTokenSymbol,
-    walletAddress
+    walletAddress,
+    walletReadAccounts
   });
   useEffect(() => {
     latestMyTradesRefreshArgsRef.current = {
@@ -351,7 +486,8 @@ export default function useP2PTradeData({
       privateRewardTokenSymbol,
       rewardTokenDecimals,
       rewardTokenSymbol,
-      walletAddress
+      walletAddress,
+      walletReadAccounts
     };
   }, [
     enrichMakerPrivateProgressForList,
@@ -359,7 +495,8 @@ export default function useP2PTradeData({
     privateRewardTokenSymbol,
     rewardTokenDecimals,
     rewardTokenSymbol,
-    walletAddress
+    walletAddress,
+    walletReadAccounts
   ]);
 
   const fetchPublicTradeSnapshotBatch = useCallback(
@@ -436,7 +573,22 @@ export default function useP2PTradeData({
     if (shouldHoldTradeReadForWalletFlow(silent, myTradesRef.current.length > 0)) {
       return;
     }
-    if (!walletAddress) {
+    const initialReadAccounts =
+      walletReadAccounts.length > 0
+        ? walletReadAccounts
+        : walletAddress
+          ? [
+              {
+                address: walletAddress,
+                canReadPrivate: true,
+                isActionAccount: true,
+                key: normalizeWalletKey(walletAddress),
+                label: 'ChainWhisper account',
+                role: 'chainwhisper' as const
+              }
+            ]
+          : [];
+    if (initialReadAccounts.length === 0) {
       setMyTrades([]);
       return;
     }
@@ -463,34 +615,86 @@ export default function useP2PTradeData({
           privateRewardTokenSymbol: latestPrivateRewardTokenSymbol,
           rewardTokenDecimals: latestRewardTokenDecimals,
           rewardTokenSymbol: latestRewardTokenSymbol,
-          walletAddress: latestWalletAddress
+          walletAddress: latestWalletAddress,
+          walletReadAccounts: latestWalletReadAccounts
         } = latestMyTradesRefreshArgsRef.current;
-        if (!latestWalletAddress) {
+        const readAccounts =
+          latestWalletReadAccounts.length > 0
+            ? latestWalletReadAccounts
+            : latestWalletAddress
+              ? [
+                  {
+                    address: latestWalletAddress,
+                    canReadPrivate: true,
+                    isActionAccount: true,
+                    key: normalizeWalletKey(latestWalletAddress),
+                    label: 'ChainWhisper account',
+                    role: 'chainwhisper' as const
+                  }
+                ]
+              : [];
+        if (readAccounts.length === 0) {
           setMyTrades([]);
           setMyTradesError('');
           setLoadingMyTrades(false);
           break;
         }
-        const requestWalletKey = normalizeWalletKey(latestWalletAddress);
+        const requestWalletKey = buildWalletReadAccountsKey(readAccounts);
         if (!currentSilent) {
           setLoadingMyTrades(true);
           setMyTradesError('');
         }
         try {
-          const snapshotsRaw = await fetchWalletTradeSnapshots(latestWalletAddress, {
-            rewardTokenSymbol: latestRewardTokenSymbol,
-            rewardTokenDecimals: latestRewardTokenDecimals,
-            privateRewardTokenSymbol: latestPrivateRewardTokenSymbol,
-            privateRewardTokenDecimals: latestPrivateRewardTokenDecimals,
-            limit: 80
-          });
-          const snapshots = await enrichLatestMakerPrivateProgressForList(snapshotsRaw);
-          if (normalizeWalletKey(latestMyTradesRefreshArgsRef.current.walletAddress) !== requestWalletKey) {
+          const snapshotsByAccount = await Promise.all(
+            readAccounts.map(async (account) => {
+              const snapshotsRaw = await fetchWalletTradeSnapshots(account.address, {
+                rewardTokenSymbol: latestRewardTokenSymbol,
+                rewardTokenDecimals: latestRewardTokenDecimals,
+                privateRewardTokenSymbol: latestPrivateRewardTokenSymbol,
+                privateRewardTokenDecimals: latestPrivateRewardTokenDecimals,
+                limit: 80
+              });
+              const snapshots = await enrichLatestMakerPrivateProgressForList(snapshotsRaw);
+              return {
+                account,
+                snapshots: snapshots.map((snapshot) => annotateTradeSnapshotForAccount(snapshot, account))
+              };
+            })
+          );
+          const latestReadAccountsKey =
+            latestMyTradesRefreshArgsRef.current.walletReadAccounts.length > 0
+              ? buildWalletReadAccountsKey(latestMyTradesRefreshArgsRef.current.walletReadAccounts)
+              : buildWalletReadAccountsKey([
+                  {
+                    address: latestMyTradesRefreshArgsRef.current.walletAddress,
+                    canReadPrivate: true,
+                    isActionAccount: true,
+                    key: normalizeWalletKey(latestMyTradesRefreshArgsRef.current.walletAddress),
+                    label: 'ChainWhisper account',
+                    role: 'chainwhisper'
+                  }
+                ]);
+          if (latestReadAccountsKey !== requestWalletKey) {
             myTradesRefreshQueuedRef.current = true;
             continue;
           }
           if (latestSyncSessionKeyRef.current === requestSessionKey) {
-            setMyTrades((previous) => sortTrades(mergeTradeSnapshotList(snapshots, previous, requestWalletKey)));
+            const snapshotsByKey = new Map<string, TradeSnapshot>();
+            for (const { account, snapshots } of snapshotsByAccount) {
+              for (const snapshot of snapshots) {
+                const snapshotKey = getSnapshotKey(snapshot);
+                const existing = snapshotsByKey.get(snapshotKey);
+                snapshotsByKey.set(snapshotKey, mergeAccountScopedSnapshot(snapshot, existing, account.key));
+              }
+            }
+            setMyTrades((previous) => {
+              const previousByKey = new Map(previous.map((trade) => [getSnapshotKey(trade), trade]));
+              const incoming = Array.from(snapshotsByKey.values()).map((snapshot) => {
+                const accountKey = snapshot.accountAddress?.trim().toLowerCase() || latestWalletKeyRef.current;
+                return mergeAccountScopedSnapshot(snapshot, previousByKey.get(getSnapshotKey(snapshot)), accountKey);
+              });
+              return sortTrades(mergeTradeSnapshotList(incoming, previous, undefined));
+            });
             if (currentSilent) {
               setMyTradesError('');
             }
@@ -521,7 +725,8 @@ export default function useP2PTradeData({
     rewardTokenDecimals,
     rewardTokenSymbol,
     syncSessionKey,
-    walletAddress
+    walletAddress,
+    walletReadAccounts
   ]);
 
   const mergeTradeSnapshot = useCallback(

@@ -10,7 +10,8 @@ import {
   toSafeNumber,
   type ChatMessage,
   type GroupMessageEntry,
-  type SyncGroupOptions
+  type SyncGroupOptions,
+  type WalletAccountRole
 } from './appShared';
 import { resolveGroupCursorRange } from './groupSyncPlan';
 
@@ -84,6 +85,7 @@ type SyncActiveGroupMessagesArgs = {
   pendingForcedBottomAnchorThreadKeyRef: MutableRefObject<string | null>;
   readProvider: ReadProviderLike;
   requestedWalletAddress: string;
+  requestedWalletRole?: WalletAccountRole;
   setMessagesByGroup: Dispatch<SetStateAction<Record<string, ChatMessage[]>>>;
   signer: Wallet | JsonRpcSigner;
   stickToBottomRef: MutableRefObject<boolean>;
@@ -123,6 +125,8 @@ export const mergeGroupMessageEntries = (
       direction: entry.direction,
       text: entry.text,
       senderAddress: entry.senderAddress,
+      accountAddress: entry.accountAddress,
+      accountRole: entry.accountRole,
       isSystem: entry.isSystem,
       replyToMessageId: entry.replyToMessageId,
       replyToText: entry.replyToText,
@@ -177,6 +181,7 @@ export const syncActiveGroupMessagesFast = async ({
   pendingForcedBottomAnchorThreadKeyRef,
   readProvider,
   requestedWalletAddress,
+  requestedWalletRole,
   setMessagesByGroup,
   signer,
   stickToBottomRef,
@@ -350,6 +355,8 @@ export const syncActiveGroupMessagesFast = async ({
       direction,
       text: messageText,
       senderAddress,
+      accountAddress: requestedWalletAddress,
+      accountRole: requestedWalletRole,
       replyToMessageId,
       replyToText,
       replyToTxHash,
@@ -386,6 +393,8 @@ export const syncActiveGroupMessagesFast = async ({
       direction: 'incoming',
       text: formatGroupMembershipEventText('added', account),
       senderAddress: account,
+      accountAddress: requestedWalletAddress,
+      accountRole: requestedWalletRole,
       isSystem: true,
       txHash: log.transactionHash,
       blockNumber: log.blockNumber,
@@ -402,6 +411,8 @@ export const syncActiveGroupMessagesFast = async ({
       direction: 'incoming',
       text: formatGroupMembershipEventText('removed', account),
       senderAddress: account,
+      accountAddress: requestedWalletAddress,
+      accountRole: requestedWalletRole,
       isSystem: true,
       txHash: log.transactionHash,
       blockNumber: log.blockNumber,
@@ -418,6 +429,8 @@ export const syncActiveGroupMessagesFast = async ({
       direction: 'incoming',
       text: formatGroupMembershipEventText('left', account),
       senderAddress: account,
+      accountAddress: requestedWalletAddress,
+      accountRole: requestedWalletRole,
       isSystem: true,
       txHash: log.transactionHash,
       blockNumber: log.blockNumber,

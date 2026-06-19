@@ -1,5 +1,6 @@
 import {
   createBurnerWalletVault,
+  loadBurnerWalletVaultFromOwnerAesStorage,
   loadBurnerWalletVaultFromStorage,
   loadCotiEthersModule,
   looksLikePrivateKeyInput,
@@ -8,6 +9,7 @@ import {
   normalizePrivateKeyInput,
   parseBurnerWalletStorageState,
   saveEncryptedBurnerWalletVault,
+  saveOwnerAesBurnerWalletVault,
   upsertBurnerWalletInVault,
   type BurnerInitMode,
   type BurnerWalletRecord,
@@ -83,7 +85,7 @@ export const loadStoredBurnerWalletRecord = async (
   const vault = await loadBurnerWalletVaultFromStorage(pin);
   const selectedWallet = selectBurnerWalletFromVault(vault, preferredWalletSelector);
   if (!selectedWallet) {
-    throw new Error('No saved burner wallet found. Generate or import one first.');
+    throw new Error('No saved ChainWhisper account found. Generate or import one first.');
   }
 
   return {
@@ -109,6 +111,30 @@ export const saveBurnerWalletRecordWithPin = async (
     : await createBurnerWalletVault([record]);
 
   await saveEncryptedBurnerWalletVault(nextVault, pin);
+  return nextVault;
+};
+
+export const saveBurnerWalletRecordWithOwnerAes = async (
+  record: BurnerWalletRecord,
+  ownerAddress: string,
+  ownerAesKey: string
+): Promise<BurnerWalletVault> => {
+  const storageState = parseBurnerWalletStorageState();
+  let existingVault: BurnerWalletVault | null = null;
+  if (storageState.kind === 'owner-aes') {
+    try {
+      existingVault = await loadBurnerWalletVaultFromOwnerAesStorage(ownerAddress, ownerAesKey);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('different owner wallet')) {
+        throw error;
+      }
+    }
+  }
+  const nextVault = existingVault
+    ? await upsertBurnerWalletInVault(existingVault, record)
+    : await createBurnerWalletVault([record]);
+
+  await saveOwnerAesBurnerWalletVault(nextVault, ownerAddress, ownerAesKey);
   return nextVault;
 };
 

@@ -41,6 +41,7 @@ type TradeOfferCardProps = {
   shareCopied?: boolean;
   tradeWindowLayout?: boolean;
   onCopyShareLink?: () => void;
+  onOpenTerminal?: () => void;
   onRevealPrivateProgress?: () => void;
   revealPrivateProgressPending?: boolean;
   showCounterAction?: boolean;
@@ -265,6 +266,7 @@ export default function TradeOfferCard({
   shareCopied = false,
   tradeWindowLayout = false,
   onCopyShareLink,
+  onOpenTerminal,
   onRevealPrivateProgress,
   revealPrivateProgressPending = false,
   showCounterAction = true,
@@ -505,13 +507,13 @@ export default function TradeOfferCard({
     ? {
         heading: 'Private terms',
         body: 'Reveal the exact Direct OTC terms shared with this wallet.',
-        title: 'Reveal this Direct offer with your wallet AES key',
+        title: 'Reveal this Direct offer with wallet privacy',
         button: 'Reveal terms'
       }
     : {
         heading: 'Owner budget',
         body: 'Reveal remaining hidden liquidity and private fills for this order.',
-        title: 'Reveal this private liquidity order with your wallet AES key',
+        title: 'Reveal this private liquidity order with wallet privacy',
         button: 'Reveal budget'
       };
   const canShowPartialFill = Boolean(
@@ -593,6 +595,11 @@ export default function TradeOfferCard({
                   onClick={onCopyShareLink}
                 >
                   {shareCopied ? 'Shared' : shareLabel}
+                </button>
+              ) : null}
+              {onOpenTerminal ? (
+                <button type="button" className="trade-card-link-button" onClick={onOpenTerminal}>
+                  Open terminal
                 </button>
               ) : null}
               {canToggleCollapsed ? (

@@ -6,6 +6,8 @@ import {
   getCotiSnapAesKey,
   getCotiSnapAesKeyResult,
   getCotiSnapAesStatus,
+  getCotiSnapOwnerAesKeyResult,
+  getCotiSnapOwnerAesStatusMessage,
   storeCotiSnapAesKey,
   storeCotiSnapAesKeyResult
 } from './cotiSnap';
@@ -302,7 +304,7 @@ describe('getCotiSnapAesKey', () => {
     vi.useRealTimers();
   });
 
-  it('skips Snap install prompts for MetaMask Mobile and lets callers use fallback AES', async () => {
+  it('skips Snap install prompts for MetaMask Mobile', async () => {
     const requestedMethods: string[] = [];
 
     await expect(
@@ -345,6 +347,39 @@ describe('getCotiSnapAesKey', () => {
     ).resolves.toEqual({ status: 'unsupported-mobile' });
 
     expect(requestedMethods).toEqual(['eth_accounts', 'eth_chainId']);
+  });
+});
+
+describe('getCotiSnapOwnerAesKeyResult', () => {
+  it('returns owner AES only from the active owner wallet on COTI mainnet', async () => {
+    await expect(
+      getCotiSnapOwnerAesKeyResult(
+        provider(({ method, params }) => {
+          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return true;
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'get-aes-key') return ' owner-aes ';
+          return null;
+        }),
+        '0x1111111111111111111111111111111111111111'
+      )
+    ).resolves.toEqual({ status: 'ready', aesKey: 'owner-aes' });
+  });
+
+  it('maps missing Snap AES to an owner recovery setup message', async () => {
+    await expect(
+      getCotiSnapOwnerAesKeyResult(
+        provider(({ method, params }) => {
+          if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return false;
+          return null;
+        }),
+        '0x1111111111111111111111111111111111111111'
+      )
+    ).resolves.toEqual({ status: 'snap-missing-aes' });
+
+    expect(getCotiSnapOwnerAesStatusMessage('snap-missing-aes')).toContain('onboard this owner wallet');
   });
 });
 

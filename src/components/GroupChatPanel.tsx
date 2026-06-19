@@ -581,8 +581,11 @@ export default function GroupChatPanel({
                       ))}
                     </div>
                   ) : null}
-                  {message.timestamp || deliveryLabel ? (
+                  {message.timestamp || deliveryLabel || message.accountRole === 'owner' ? (
                     <div className="message-meta">
+                      {message.accountRole === 'owner' ? (
+                        <span className="message-account-badge">Owner wallet</span>
+                      ) : null}
                       {message.timestamp ? (
                         <span className="message-time">{formatMessageTimestamp(message.timestamp)}</span>
                       ) : null}

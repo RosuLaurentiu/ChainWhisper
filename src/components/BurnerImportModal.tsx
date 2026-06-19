@@ -46,12 +46,16 @@ export default function BurnerImportModal({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <h3 id="burner-import-title">Import Burner Wallet</h3>
+        <h3 id="burner-import-title">Import ChainWhisper Account</h3>
+        <p className="modal-copy">
+          Paste the mnemonic or private key for the account used in chat and trades. If an owner wallet is connected,
+          this account is saved with owner-wallet recovery.
+        </p>
         <input
           value={burnerImportInput}
           onChange={(event) => onBurnerImportInputChange(event.target.value)}
-          placeholder="Mnemonic phrase or 0x private key"
-          aria-label="Import burner wallet"
+          placeholder="Account mnemonic phrase or 0x private key"
+          aria-label="Import ChainWhisper account"
         />
         {error ? <p className="error">{error}</p> : null}
         <div className="modal-actions">

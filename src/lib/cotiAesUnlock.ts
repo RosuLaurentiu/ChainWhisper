@@ -377,7 +377,7 @@ const hasRecoverableOnboardInfo = (onboardInfo?: OnboardInfo): boolean =>
   Boolean(onboardInfo?.txHash && onboardInfo.rsaKey?.privateKey && onboardInfo.rsaKey.publicKey);
 
 export const clearSignerAesKey = (signer: CotiAesSigner): void => {
-  signer.setUserOnboardInfo({ aesKey: null } as OnboardInfo);
+  signer.setUserOnboardInfo(clearOnboardInfoAesKey(signer.getUserOnboardInfo()) ?? ({ aesKey: null } as OnboardInfo));
 };
 
 export const resetSignerOnboardInfoForFreshAes = (signer: CotiAesSigner): void => {
@@ -659,7 +659,7 @@ export const repairCotiAesForWallet = async (
 
   return getOrRecoverValidatedAesForWallet({
     ...args,
-    allowUnrecoverableReset: true,
+    allowUnrecoverableReset: args.allowUnrecoverableReset ?? true,
     forceFreshAes: false,
     forceLegacyRefresh: true,
     forceRefresh: true

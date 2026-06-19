@@ -16,6 +16,11 @@ import {
   isVerifiedEcosystemToken,
   type TradeTokenPresetKey
 } from '../lib/appHelpers';
+import {
+  isTradeActionConfirmationCancelledError,
+  type TradeActionConfirmSummaryRow,
+  type TradeFundingPreflightInput
+} from '../lib/tradeActionConfirm';
 import type { TradeComposerModel } from '../lib/tradeComposer';
 import {
   counterTradeAndCloseCounteredTradeOnChain,
@@ -29,6 +34,7 @@ import { createTradeAccessSecret } from '../lib/directTradeTerms';
 import { resolveOneOffTradeAccessPlan, type TradeVisibility } from '../lib/tradeCreationAccess';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 import type { P2PActionNoticeAction, P2PActionNoticeInput } from '../lib/p2pActionNotice';
+import { formatWalletFundAmount } from '../lib/walletFunds';
 
 type TradeSigner = JsonRpcSigner | Wallet;
 
@@ -62,6 +68,41 @@ const hasVisibleTradeAmount = (asset: TradeAssetPayload): boolean => {
   } catch {
     return false;
   }
+};
+
+const buildAmountLabel = (
+  amountWei: bigint,
+  asset: Pick<TradeAssetPayload, 'decimals' | 'kind' | 'symbol' | 'tokenAddress'>
+): string =>
+  formatWalletFundAmount(amountWei, asset, 6);
+
+const getVisibilitySummaryLabel = ({
+  hiddenLiquidity,
+  isCounterTrade,
+  isEditTrade,
+  tradeVisibility
+}: {
+  hiddenLiquidity: boolean;
+  isCounterTrade: boolean;
+  isEditTrade: boolean;
+  tradeVisibility: TradeVisibility;
+}): string => {
+  if (hiddenLiquidity) {
+    return 'Hidden liquidity';
+  }
+  if (isCounterTrade) {
+    return 'Counter offer';
+  }
+  if (isEditTrade) {
+    return 'Updated offer';
+  }
+  if (tradeVisibility === 'direct') {
+    return 'Direct offer';
+  }
+  if (tradeVisibility === 'unlisted') {
+    return 'Unlisted offer';
+  }
+  return 'Public offer';
 };
 
 const resolveTradeAssetSelection = (
@@ -122,6 +163,7 @@ type UseP2PTradeComposerActionsArgs = {
   directTradeRecipientIsValid: boolean;
   directTradeRecipientNormalized: string;
   editingTrade: TradeSnapshot | null;
+  ensureTradeFunding?: (input: TradeFundingPreflightInput) => Promise<void>;
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   hashTradeAccessSecret: (accessSecret: string) => Promise<string>;
   loadWalletBalances: (signer?: TradeSigner) => Promise<void>;
@@ -178,6 +220,7 @@ export default function useP2PTradeComposerActions({
   directTradeRecipientIsValid,
   directTradeRecipientNormalized,
   editingTrade,
+  ensureTradeFunding,
   getTradeSigner,
   hashTradeAccessSecret,
   loadWalletBalances,
@@ -411,7 +454,6 @@ export default function useP2PTradeComposerActions({
 
     try {
       setCreatingTrade(true);
-      notifyComposerAction({ action: composerAction, status: 'pending' });
       const createdResult = await runTradeWalletPromptFlow(async () => {
       const isCounterTrade = counterParentTrade !== null;
       const isCounterReplacement = Boolean(counterParentTrade?.counterParentTradeId);
@@ -459,10 +501,6 @@ export default function useP2PTradeComposerActions({
           ? createTradeAccessSecret()
           : '';
       const directEditAccessSecret = isEditingDirectTrade ? existingEditAccessSecret || accessSecret : accessSecret;
-      const accessHash = directEditAccessSecret ? await hashTradeAccessSecret(directEditAccessSecret) : ZERO_BYTES32;
-      const signer = await getTradeSigner(
-        isPrivateTradeAsset(offerToken) || isPrivateTradeAsset(requestToken) || hiddenLiquidity || visiblePrivateTokenDirectTrade
-      );
       const nativeFeeWei = await resolveRequiredFeeForTradeCreate(
         resolveComposerFeeEscrowContract({
           counterParentTrade,
@@ -470,6 +508,86 @@ export default function useP2PTradeComposerActions({
           hiddenLiquidity,
           tradeVisibility
         })
+      );
+      const actionLabel = isEditTrade ? 'update trade' : isCounterTrade ? 'create counter offer' : 'create trade';
+      const actionTitle = isEditTrade
+        ? 'Confirm trade update'
+        : isCounterTrade
+          ? 'Confirm counter offer'
+          : 'Confirm new trade';
+      const actionPrimaryLabel = isEditTrade ? 'Update trade' : isCounterTrade ? 'Create counter' : 'Create trade';
+      const tradeSummary: TradeActionConfirmSummaryRow[] = [
+        {
+          label: 'You sell',
+          value: buildAmountLabel(offerAmount, offerToken)
+        },
+        {
+          label: 'You buy',
+          value: buildAmountLabel(requestAmount, requestToken)
+        },
+        {
+          label: 'Type',
+          value: getVisibilitySummaryLabel({
+            hiddenLiquidity,
+            isCounterTrade,
+            isEditTrade,
+            tradeVisibility
+          })
+        }
+      ];
+      if (isCounterTrade && counterParentTrade) {
+        tradeSummary.push({
+          label: 'Reply to',
+          value: `Offer #${counterParentTrade.tradeId}`
+        });
+      }
+      if (tradeVisibility === 'direct' && !isCounterTrade) {
+        tradeSummary.push({
+          label: 'Recipient',
+          value: directTradeRecipientNormalized
+        });
+      }
+      if (nativeFeeWei > 0n) {
+        tradeSummary.push({
+          label: 'Fee',
+          value: formatWalletFundAmount(
+            nativeFeeWei,
+            {
+              kind: 'native',
+              symbol: 'COTI',
+              decimals: 18
+            },
+            6
+          )
+        });
+      }
+      await ensureTradeFunding?.({
+        actionLabel,
+        confirmButtonLabel: actionPrimaryLabel,
+        confirmTitle: actionTitle,
+        confirmationPolicy: 'always',
+        requirements: [
+          {
+            asset: offerToken,
+            amountWei: offerAmount,
+            reason: 'trade offer'
+          },
+          {
+            asset: {
+              kind: 'native',
+              symbol: 'COTI',
+              decimals: 18
+            },
+            amountWei: nativeFeeWei,
+            reason: 'trade fee'
+          }
+        ],
+        tradeSummary
+      });
+      notifyComposerAction({ action: composerAction, status: 'pending' });
+      const accessHash = directEditAccessSecret ? await hashTradeAccessSecret(directEditAccessSecret) : ZERO_BYTES32;
+      const signer = await getTradeSigner(
+        isPrivateTradeAsset(offerToken) || isPrivateTradeAsset(requestToken) || hiddenLiquidity || visiblePrivateTokenDirectTrade
       );
       const expiresAt = tradeHasNoExpiry
         ? 0
@@ -655,6 +773,9 @@ export default function useP2PTradeComposerActions({
       }
       notifyComposerAction({ action: composerAction, status: 'success', txHash: createdResult.txHash });
     } catch (error) {
+      if (isTradeActionConfirmationCancelledError(error)) {
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Failed to create trade.';
       const actionError = getOnChainFailureMessage(error, message);
       setTradeActionError(actionError);
@@ -669,6 +790,7 @@ export default function useP2PTradeComposerActions({
     directTradeRecipientIsValid,
     directTradeRecipientNormalized,
     editingTrade,
+    ensureTradeFunding,
     getTradeSigner,
     hashTradeAccessSecret,
     loadWalletBalances,

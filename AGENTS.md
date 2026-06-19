@@ -22,12 +22,13 @@ Current route behavior is intentional:
 
 ## Wallet Rules
 
-- Chat app: prioritize the app wallet (generated/saved burner wallet). Connect the saved app wallet first on load; generate one when none is saved. Browser wallets remain available from the header menu.
-- P2P Trading app: prioritize MetaMask and CipherTrade by default. Exclude Brave Wallet from the trading wallet list. App wallet options remain in the header menu.
-- Whisper Shield: use the app-wallet-focused header wallet behavior shared with chat.
-- Shared rule: if a wallet is already connected when navigating between apps, keep it connected. Do not disconnect or re-prompt.
+- Chat, P2P Trading, and Whisper Shield use the owner-first ChainWhisper account model: MetaMask/browser wallet is owner login, recovery, funding, and fallback; the ChainWhisper account is the default chat/trading/swap account.
+- Connect/recover the owner-linked ChainWhisper account automatically after owner privacy is available. If no account exists, show create/import/recover setup actions.
 - Home and Treasury are non-interactive pages and must not show wallet controls.
-- Keep burner wallet vault behavior consistent between chat, trades, and shield. If wallet behavior changes, prefer extracting a page-neutral wallet session hook over patching one app only.
+- Shared rule: if a wallet is already connected when navigating between apps, keep it connected. Do not disconnect or re-prompt.
+- Keep the ChainWhisper account vault behavior consistent between chat, trades, and shield. Internal `burner` naming can remain where risky to rename, but user-facing text should say ChainWhisper account, owner wallet, or browser wallet.
+- Read/display can include both owner wallet and ChainWhisper account activity where supported; new messages, new trades, counters, and normal app actions default to the ChainWhisper account.
+- Owner-wallet signing should be limited to funding/recovery and existing owner-targeted fallback actions where the current contract requires the owner address.
 
 ## Chat App - Feature Summary
 
@@ -70,7 +71,7 @@ Current route behavior is intentional:
 - Hidden-amount private orders must hide private token amounts and private fill amounts from public/detail views. Public views should prioritize price ratio, order direction, expiry, and access type.
 - Hidden-amount private orders and private recurring orders use user-scoped private ledger snapshots and fill receipts. Makers can reveal their own live budget/liquidity and progress from My Trades once AES is available. Fillers can reveal their own buy/sell history even when an order is only partially filled. Do not expose maker-only values in the public explorer view.
 - For hidden-amount standard trades, private fill receipts can be the only revealed source for the payment side when public request terms are hidden. Keep card and terminal progress summaries two-sided whenever receipt amounts are available.
-- Trades privacy flows use the COTI MetaMask Snap first for AES key access, with the existing COTI wallet onboarding path as fallback. Do not move Chat or Whisper Shield to Snap.
+- Owner recovery/privacy uses the COTI MetaMask Snap where available. Keep owner AES and ChainWhisper-account AES state separate; do not let the active ChainWhisper account privacy state stand in for owner recovery privacy.
 - Hidden-amount private-order fills are settled by the contract from the taker payment amount; the contract path handles partial fill/overshoot privately where private tokens are involved.
 - Recurring orders live as an option inside the Create window. They are reusable two-sided OTC orders, not cadence/timer orders: maker buy fills add base inventory to the sell side, and maker sell fills add quote inventory to the buy side. Recurring private-token orders must offer explicit `Private liquidity` and `Visible amounts` paths.
 - Recurring inventory is live order liquidity, not normal unused funds. Makers can edit prices, per-side amounts, and add/remove liquidity in place without changing the order link. The normal closing action should read as "Close order" and return remaining inventory.
@@ -102,7 +103,7 @@ Current route behavior is intentional:
 - P2P should feel like a P2P OTC trading desk: clear buy/sell direction, concise ratio display, direct action buttons, peer/settlement language, and low visual noise.
 - Hidden-amount private-order cards should lead with price ratio and direction. Do not show one side's amount if the other side is hidden.
 - Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", "Private liquidity", "Visible amounts", and "Unlisted" consistently across explorer cards, detail cards, and in-chat cards.
-- Wallet/AES readiness states should be clear enough that users know whether they need to connect, switch network, sign AES, top up, or unlock an app wallet.
+- Wallet/privacy readiness states should be clear enough that users know whether they need to connect owner wallet, unlock privacy, recover/create a ChainWhisper account, move funds, or use an owner-wallet fallback.
 
 ## Important Source Map
 
@@ -116,7 +117,8 @@ Current route behavior is intentional:
 - `src/components/MessageTextWithLinks.tsx` and `src/lib/chatLinks.ts` - shared chat link rendering and internal app-link interception.
 - `src/lib/treasuryData.ts` - live/feed/on-chain data loading and normalization.
 - `src/lib/appShared.ts` - re-exports `src/lib/appShared/core.ts` and `src/lib/appShared/parsers.ts`. Shared constants, wallet helpers, parsers, memo encoding, COTI provider loading, and formatting belong there.
-- `src/hooks/useWalletOnboarding.ts` and `src/hooks/useBurnerWallet.ts` - reusable wallet/onboarding hooks.
+- `src/hooks/useWalletOnboarding.ts` and `src/hooks/useBurnerWallet.ts` - reusable owner wallet, ChainWhisper account, recovery, and onboarding hooks.
+- `src/lib/appWalletRecovery.ts`, `src/lib/burnerWalletVault.ts`, `src/lib/walletAccountScope.ts`, and `src/lib/walletFunds.ts` - recovery payloads, local account vaults, owner + ChainWhisper read scope, and move/withdraw funding helpers.
 - `src/hooks/useInChatTradeActions.ts` - DM trade action orchestration for create, accept, decline, cancel, and counter preparation.
 - `src/hooks/useGroupAdminActions.ts` - group create, invite, join-code, join-by-code, remove, rename, leave, handoff, disband, and invite accept/decline flows.
 - `src/lib/groupMessageSync.ts` - active-group message and member-event sync helpers.
@@ -125,7 +127,7 @@ Current route behavior is intentional:
 - `src/lib/tradeHistory.ts` - wallet-scoped trade history rows, including private fill receipt rows used by My Trades and terminal history.
 - `src/lib/appHelpers.ts` - verified ecosystem token presets, message helpers, and shared user-facing error helpers.
 - `src/lib/tradeComposer.ts`, `src/lib/tradeActions.ts`, `src/lib/tradeLinks.ts`, `src/lib/tradePerspective.ts`, `src/lib/appChain.ts` - shared trade logic. Extend these before duplicating trade behavior in components.
-- `src/lib/walletOptions.ts` - browser wallet filtering/detection. MetaMask and CipherTrade are allowed for trading; Brave is filtered out.
+- `src/lib/walletOptions.ts` - browser wallet filtering/detection. Browser wallets are owner/fallback wallets in the normal app model.
 - `src/hooks/useModalA11y.ts` - shared modal focus trap, Escape, and focus-restore behavior.
 - Supabase image storage is limited to encrypted chat image attachments: `src/lib/imagePull.ts`, `src/lib/supabaseClient.ts`, and `supabase/`.
 - `src/styles.css` - ordered stylesheet import hub. Route/domain CSS lives in `src/styles/`; preserve import order when moving rules.
@@ -157,6 +159,14 @@ npm run build
 
 Run `npm run test:browser` for route, wallet-header, mobile layout, and other visible UI changes.
 
-Use focused tests for parser/link/perspective/routing changes first, then run the full suite. For P2P display/progress changes, `npm run test -- src/lib/p2pTradeView.test.ts` is a useful fast check before the full test run.
+Use focused tests first, then run the full suite:
+
+```bash
+npm run test:wallet
+npm run test:trading
+npm run test:chat
+```
+
+Add or update tests for money movement, recovery/encryption, private-balance reads, signer choice, route/link parsing, message encoding, or fixed regressions. For simple styling/copy/layout changes, prefer manual/browser smoke checks unless the UI state protects a critical wallet, recovery, trade, or privacy path.
 
 Local research notes that should not be uploaded belong in ignored Markdown files such as `OTC_SECURITY_PRIVACY_REVIEW.md`.

@@ -13,7 +13,9 @@ export const historyEntryToChatMessage = (
   id: entry.id,
   direction: entry.direction,
   text: entry.text,
-  senderAddress: entry.direction === 'outgoing' ? requestedWalletAddress : entry.contact,
+  senderAddress: entry.direction === 'outgoing' ? entry.accountAddress ?? requestedWalletAddress : entry.contact,
+  accountAddress: entry.accountAddress ?? requestedWalletAddress,
+  accountRole: entry.accountRole,
   replyToMessageId: entry.replyToMessageId,
   replyToText: entry.replyToText,
   replyToTxHash: entry.replyToTxHash,
@@ -23,6 +25,7 @@ export const historyEntryToChatMessage = (
   reactionToBlockNumber: entry.reactionToBlockNumber,
   reactionToLogIndex: entry.reactionToLogIndex,
   reactionEmoji: entry.reactionEmoji,
+  tradeReference: entry.tradeReference,
   timestamp: entry.timestamp,
   blockNumber: entry.blockNumber,
   logIndex: entry.logIndex,
@@ -197,12 +200,23 @@ export const mergeDirectHistoryEntries = (
       existingIdsByContact.set(key, existingIds);
     }
 
+    const confirmedMessage = historyEntryToChatMessage(entry, requestedWalletAddress);
+
     if (existingIds.has(entry.id)) {
+      next[key] = existing.map((message) =>
+        message.id === entry.id
+          ? {
+              ...message,
+              ...confirmedMessage,
+              deliveryState: undefined
+            }
+          : message
+      );
       continue;
     }
 
     existingIds.add(entry.id);
-    next[key] = [...existing, historyEntryToChatMessage(entry, requestedWalletAddress)];
+    next[key] = [...existing, confirmedMessage];
   }
 
   return normalizeMessagesByContact(next);

@@ -7,6 +7,11 @@ import { CHAT_IMAGE_FILE_ACCEPT } from '../lib/imagePull';
 import type { ImageAttachmentPreviewState } from '../lib/imageAttachmentPreview';
 import { insertChatComposerLineBreak, syncChatComposerText } from './chatComposeText';
 
+export type ChatComposerPromptEstimate = {
+  tone: 'ok' | 'warning';
+  label: string;
+};
+
 type DirectChatComposeProps = {
   replyPreviewText: string;
   onCancelReply: () => void;
@@ -28,6 +33,7 @@ type DirectChatComposeProps = {
   onSendTip: () => void;
   tradeComposerOpen: boolean;
   tradeComposerContent?: ReactNode;
+  linkedTradeContextContent?: ReactNode;
   onToggleTradeComposer: () => void;
   composerRef: Ref<HTMLDivElement>;
   isMobileNav: boolean;
@@ -40,6 +46,7 @@ type DirectChatComposeProps = {
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
+  promptEstimate?: ChatComposerPromptEstimate | null;
   sending: boolean;
   tipToggleDisabled: boolean;
   tipToggleTitle: string;
@@ -68,6 +75,7 @@ export default function DirectChatCompose({
   onSendTip,
   tradeComposerOpen,
   tradeComposerContent,
+  linkedTradeContextContent,
   onToggleTradeComposer,
   composerRef,
   isMobileNav,
@@ -80,6 +88,7 @@ export default function DirectChatCompose({
   onSendMessage,
   maxMessageLength,
   onMessageInputChange,
+  promptEstimate,
   sending,
   tipToggleDisabled,
   tipToggleTitle,
@@ -166,6 +175,7 @@ export default function DirectChatCompose({
           ) : null}
         </div>
       ) : null}
+      {linkedTradeContextContent}
       {tradeComposerOpen ? tradeComposerContent : null}
       {imageAttachmentStatus ? (
         <ImageAttachmentPreview
@@ -277,6 +287,11 @@ export default function DirectChatCompose({
             >
               {msgLength}/{maxMessageLength}
             </span>
+          </div>
+        ) : null}
+        {promptEstimate ? (
+          <div className={`chat-compose-prompt-estimate ${promptEstimate.tone}`}>
+            {promptEstimate.label}
           </div>
         ) : null}
         <div className="chat-compose-actions">

@@ -33,6 +33,61 @@ describe('directConversationSyncHelpers', () => {
     });
   });
 
+  it('preserves trade references from confirmed history entries', () => {
+    const tradeReference = {
+      version: 1 as const,
+      tradeId: 42,
+      escrowContract: '0x1111111111111111111111111111111111111111',
+      terminalPath: '/otcdesk/terminal/l/ViAq'
+    };
+
+    expect(historyEntryToChatMessage(entry({ tradeReference }), wallet).tradeReference).toEqual(tradeReference);
+  });
+
+  it('preserves the read account metadata for owner-wallet history', () => {
+    expect(
+      historyEntryToChatMessage(
+        entry({
+          accountAddress: wallet,
+          accountRole: 'owner'
+        }),
+        '0xcccccccccccccccccccccccccccccccccccccccc'
+      )
+    ).toMatchObject({
+      accountAddress: wallet,
+      accountRole: 'owner',
+      senderAddress: wallet
+    });
+  });
+
+  it('refreshes existing confirmed messages with parsed trade references', () => {
+    const tradeReference = {
+      version: 1 as const,
+      tradeId: 42,
+      escrowContract: '0x1111111111111111111111111111111111111111',
+      terminalPath: '/otcdesk/terminal/l/ViAq'
+    };
+    const existing: ChatMessage = {
+      id: '0xtx-1-out',
+      direction: 'outgoing',
+      text: 'hello',
+      txHash: '0xtx',
+      blockNumber: 10,
+      logIndex: 1,
+      timestamp: 100
+    };
+
+    const next = mergeDirectHistoryEntries(
+      { [peer]: [existing] },
+      [entry({ tradeReference })],
+      wallet,
+      { pruneOptimisticOutgoing: false }
+    );
+
+    expect(next[peer]).toHaveLength(1);
+    expect(next[peer][0].tradeReference).toEqual(tradeReference);
+  });
+
   it('dedupes confirmed outgoing messages against optimistic local messages', () => {
     const optimistic: ChatMessage = {
       id: 'local-1',

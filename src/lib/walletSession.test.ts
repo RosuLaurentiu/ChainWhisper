@@ -3,13 +3,20 @@ import type { OnboardInfo } from '@coti-io/coti-ethers';
 import { COTI_NETWORK, hasInsufficientFundsError } from './appShared/core';
 import {
   hasSessionAesKey,
+  resolveAppWalletMenuActionVisibility,
+  resolveAppWalletSetupStorageKind,
   resolveTradingBrowserWalletState,
   resolveAppWalletSwitchOptions,
+  resolveOwnerAccountFlowModel,
+  resolveOwnerLocalAccountAutoConnectAttemptKey,
+  resolveOwnerRecoveryAutoConnectAttemptKey,
+  resolveOwnerRecoveryWalletState,
   resolveWalletConnectionPrimaryAction,
   resolveWalletBlockedActionLabel,
   resolveWalletHeaderActionVisibility,
   resolveWalletHeaderViewModel,
   resolveWalletModeLabel,
+  resolveWalletOnboardingProgressModel,
   resolveWalletPrimaryButtonClassName,
   resolveWalletPrimaryButtonLabel,
   resolveWalletPrivacyDisplayState,
@@ -52,7 +59,7 @@ describe('resolveWalletReadiness', () => {
 });
 
 describe('resolveWalletModeLabel', () => {
-  it('describes app, browser, and warm secondary wallet modes consistently', () => {
+  it('describes ChainWhisper, browser, and warm secondary wallet modes consistently', () => {
     expect(
       resolveWalletModeLabel({
         connectedWithAppWallet: true,
@@ -60,7 +67,7 @@ describe('resolveWalletModeLabel', () => {
         walletAddress: '0xabc',
         appWithBrowserLabel: 'MetaMask'
       })
-    ).toBe('App + MetaMask');
+    ).toBe('ChainWhisper account + MetaMask');
     expect(
       resolveWalletModeLabel({
         connectedWithAppWallet: false,
@@ -68,7 +75,7 @@ describe('resolveWalletModeLabel', () => {
         hasAppWalletAvailable: true,
         walletAddress: '0xabc'
       })
-    ).toBe('CipherTrade + app');
+    ).toBe('CipherTrade + ChainWhisper account');
     expect(resolveWalletModeLabel({ connectedWithAppWallet: false, walletAddress: '' })).toBe('No wallet connected');
   });
 });
@@ -207,7 +214,7 @@ describe('wallet header labels', () => {
       })
     ).toMatchObject({
       label: 'Unlock privacy',
-      title: 'Unlock with COTI Snap.'
+      title: 'Unlock owner privacy for account recovery.'
     });
     expect(
       resolveWalletPrivacyUnlockPrompt({
@@ -215,21 +222,21 @@ describe('wallet header labels', () => {
         snapStatus: 'installed-aes-missing',
         unlocking: false
       }).title
-    ).toContain('Onboard it in the COTI Snap wallet');
+    ).toContain('Onboard this owner wallet');
     expect(
       resolveWalletPrivacyUnlockPrompt({
         hasAesReady: false,
         snapStatus: 'unsupported',
         unlocking: false
       }).title
-    ).toContain('wallet AES');
+    ).toContain('MetaMask desktop');
     expect(
       resolveWalletPrivacyUnlockPrompt({
         hasAesReady: false,
         snapStatus: 'unsupported-mobile',
         unlocking: false
       }).title
-    ).toContain('MetaMask Mobile does not support Snaps');
+    ).toContain('Use MetaMask desktop');
     expect(
       resolveWalletPrivacyUnlockPrompt({
         hasAesReady: false,
@@ -269,7 +276,7 @@ describe('wallet header labels', () => {
 });
 
 describe('resolveWalletConnectionPrimaryAction', () => {
-  it('keeps OTC Desk browser-first while exposing app wallet as a separate secondary path', () => {
+  it('still supports browser-wallet fallback primary actions when explicitly requested', () => {
     expect(
       resolveWalletConnectionPrimaryAction({
         hasSavedAppWallet: true,
@@ -314,7 +321,7 @@ describe('resolveWalletConnectionPrimaryAction', () => {
     });
   });
 
-  it('keeps Chat and WISP Portal app-first when no wallet is connected', () => {
+  it('keeps app pages app-first when no wallet is connected', () => {
     expect(
       resolveWalletConnectionPrimaryAction({
         hasSavedAppWallet: true,
@@ -327,7 +334,7 @@ describe('resolveWalletConnectionPrimaryAction', () => {
     ).toMatchObject({
       disabled: false,
       kind: 'connect-app-wallet',
-      label: 'Connect app wallet'
+      label: 'Connect ChainWhisper account'
     });
 
     expect(
@@ -340,7 +347,7 @@ describe('resolveWalletConnectionPrimaryAction', () => {
     ).toMatchObject({
       disabled: false,
       kind: 'generate-app-wallet',
-      label: 'Generate app wallet'
+      label: 'Set up ChainWhisper account'
     });
   });
 
@@ -556,7 +563,7 @@ describe('resolveWalletHeaderViewModel', () => {
     });
   });
 
-  it('keeps OTC Desk browser-first and Chat app-first policies explicit in the model', () => {
+  it('keeps app-first and browser-fallback policies explicit in the model', () => {
     expect(
       resolveWalletHeaderViewModel({
         chainId: null,
@@ -586,6 +593,491 @@ describe('resolveWalletHeaderViewModel', () => {
       privacyActionKind: 'none',
       walletKind: 'none'
     });
+  });
+});
+
+describe('resolveAppWalletMenuActionVisibility', () => {
+  it('shows PIN changes only for connected non-owner-AES app wallets', () => {
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: true,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        recoveryConfigured: true,
+        recordReady: true,
+        storageKind: 'encrypted'
+      }).showChangePin
+    ).toBe(true);
+
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: true,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        recoveryConfigured: true,
+        recordReady: true,
+        storageKind: 'owner-aes'
+      }).showChangePin
+    ).toBe(false);
+  });
+
+  it('shows mnemonic backup only when the connected app wallet has a mnemonic', () => {
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: true,
+        hasMnemonicBackup: true,
+        hasSavedAppWallet: true,
+        recoveryConfigured: false,
+        recordReady: true,
+        storageKind: 'encrypted'
+      }).showBackupWallet
+    ).toBe(true);
+
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: true,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        recoveryConfigured: false,
+        recordReady: true,
+        storageKind: 'encrypted'
+      }).showBackupWallet
+    ).toBe(false);
+  });
+
+  it('shows save and recover actions only when app wallet recovery is configured', () => {
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: true,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        recoveryConfigured: true,
+        recordReady: true,
+        storageKind: 'owner-aes'
+      })
+    ).toMatchObject({
+      showRecoverWallet: false,
+      showSaveRecovery: true
+    });
+
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: true,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        recoveryConfigured: false,
+        recordReady: true,
+        storageKind: 'owner-aes'
+      })
+    ).toMatchObject({
+      showRecoverWallet: false,
+      showSaveRecovery: false
+    });
+  });
+
+  it('surfaces setup, recovery, and linking actions from owner-first storage state', () => {
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: false,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: false,
+        ownerWalletConnected: true,
+        ownerWalletReady: true,
+        recoveryConfigured: true,
+        recordReady: false,
+        setupStorageKind: 'none',
+        storageKind: 'none'
+      })
+    ).toMatchObject({
+      showGenerateAccount: true,
+      showImportAccount: true,
+      showRecoverWallet: true,
+      showLinkExistingPinAccount: false
+    });
+
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: false,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        ownerWalletConnected: true,
+        ownerWalletReady: true,
+        recoveryConfigured: true,
+        recordReady: false,
+        setupStorageKind: 'pin-encrypted',
+        storageKind: 'encrypted'
+      })
+    ).toMatchObject({
+      showGenerateAccount: false,
+      showImportAccount: false,
+      showLinkExistingPinAccount: true,
+      showPinOnlyFallback: true
+    });
+  });
+
+  it('holds primary setup actions while owner recovery is checking', () => {
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: false,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        ownerWalletConnected: true,
+        ownerWalletReady: true,
+        recoveryChecking: true,
+        recoveryConfigured: true,
+        recordReady: false,
+        setupStorageKind: 'pin-encrypted',
+        storageKind: 'encrypted'
+      })
+    ).toMatchObject({
+      showGenerateAccount: false,
+      showImportAccount: false,
+      showLinkExistingPinAccount: false,
+      showRecoverWallet: false,
+      showOwnerDirectFallback: true,
+      showPinOnlyFallback: true
+    });
+  });
+});
+
+describe('owner-linked app wallet setup helpers', () => {
+  it('keeps active app-wallet AES separate from owner recovery AES', () => {
+    const ownerAddress = '0x1111111111111111111111111111111111111111';
+    const appWalletAddress = '0x2222222222222222222222222222222222222222';
+
+    expect(
+      resolveOwnerRecoveryWalletState({
+        activeSignerSource: 'burner',
+        browserWalletAddress: ownerAddress,
+        sessionOnboardInfo: {
+          [appWalletAddress]: { aesKey: 'app-wallet-aes' } as OnboardInfo
+        },
+        walletAddress: appWalletAddress
+      })
+    ).toMatchObject({
+      ownerWalletAddress: ownerAddress,
+      ownerAesKey: '',
+      ownerAesReady: false
+    });
+  });
+
+  it('keeps owner AES ready while the ChainWhisper account is active', () => {
+    const ownerAddress = '0x1111111111111111111111111111111111111111';
+    const appWalletAddress = '0x2222222222222222222222222222222222222222';
+
+    expect(
+      resolveOwnerRecoveryWalletState({
+        activeSignerSource: 'burner',
+        browserWalletAddress: ownerAddress,
+        sessionOnboardInfo: {
+          [ownerAddress]: { aesKey: 'owner-snap-aes' } as OnboardInfo,
+          [appWalletAddress]: { aesKey: 'app-wallet-aes' } as OnboardInfo
+        },
+        walletAddress: appWalletAddress
+      })
+    ).toMatchObject({
+      ownerWalletAddress: ownerAddress,
+      ownerAesKey: 'owner-snap-aes',
+      ownerAesReady: true
+    });
+  });
+
+  it('models the owner-first account flow states', () => {
+    expect(
+      resolveOwnerAccountFlowModel({
+        connectedWithAppWallet: false,
+        hasAesReady: false,
+        initializingAccount: false,
+        ownerWalletConnected: false,
+        preferredOwnerWalletLabel: 'MetaMask',
+        recoveryChecking: false
+      })
+    ).toMatchObject({
+      primaryLabel: 'Connect MetaMask',
+      state: 'connect-owner',
+      statusLabel: 'Owner wallet needed'
+    });
+
+    expect(
+      resolveOwnerAccountFlowModel({
+        connectedWithAppWallet: false,
+        hasAesReady: false,
+        initializingAccount: false,
+        ownerWalletConnected: true,
+        recoveryChecking: false
+      })
+    ).toMatchObject({
+      primaryLabel: 'Unlock privacy',
+      state: 'unlock-owner-aes',
+      statusLabel: 'Unlock privacy'
+    });
+
+    expect(
+      resolveOwnerAccountFlowModel({
+        connectedWithAppWallet: false,
+        hasAesReady: true,
+        initializingAccount: false,
+        ownerWalletConnected: true,
+        recoveryChecking: true
+      })
+    ).toMatchObject({
+      primaryLabel: 'Checking saved account...',
+      state: 'checking-recovery',
+      statusLabel: 'Checking saved account'
+    });
+
+    expect(
+      resolveOwnerAccountFlowModel({
+        connectedWithAppWallet: true,
+        hasAesReady: true,
+        initializingAccount: false,
+        ownerWalletConnected: true,
+        recoveryChecking: false
+      })
+    ).toMatchObject({
+      primaryLabel: 'ChainWhisper account ready',
+      state: 'account-active',
+      statusTone: 'ready'
+    });
+
+    expect(
+      resolveOwnerAccountFlowModel({
+        connectedWithAppWallet: false,
+        hasAesReady: true,
+        hasOwnerLinkedSavedAccount: true,
+        initializingAccount: false,
+        ownerWalletConnected: true,
+        recoveryChecking: false
+      })
+    ).toMatchObject({
+      primaryLabel: 'Account ready',
+      state: 'setup-needed',
+      statusLabel: 'Account saved locally'
+    });
+
+    expect(
+      resolveOwnerAccountFlowModel({
+        connectedWithAppWallet: false,
+        hasAesReady: true,
+        initializingAccount: false,
+        ownerWalletConnected: true,
+        recoveryChecking: false
+      })
+    ).toMatchObject({
+      primaryLabel: 'Set up ChainWhisper account',
+      state: 'setup-needed',
+      statusLabel: 'Account needed'
+    });
+
+    expect(
+      resolveOwnerAccountFlowModel({
+        connectedWithAppWallet: false,
+        hasAesReady: true,
+        initializingAccount: false,
+        ownerRecoveryError: 'Failed to recover ChainWhisper account.',
+        ownerWalletConnected: true,
+        recoveryChecking: false
+      })
+    ).toMatchObject({
+      primaryLabel: 'Recover account',
+      state: 'recovery-error',
+      statusLabel: 'Recovery needs attention'
+    });
+  });
+
+  it('shows onboarding progress while a saved ChainWhisper account is being recovered', () => {
+    const progress = resolveWalletOnboardingProgressModel({
+      appWalletAddress: '',
+      connectedWithAppWallet: false,
+      connectingOwner: false,
+      initializingAccount: false,
+      ownerAesReady: true,
+      ownerWalletConnected: true,
+      recoveryChecking: true,
+      recoveringAccount: true,
+      walletAesReady: false
+    });
+
+    expect(progress).toMatchObject({
+      active: true,
+      title: 'Checking saved account',
+      detail: 'Automatically checking for your saved ChainWhisper account.'
+    });
+    expect(progress.steps).toEqual([
+      { label: 'Owner privacy', state: 'complete' },
+      { label: 'Find account', state: 'active' },
+      { label: 'Prepare account', state: 'pending' }
+    ]);
+  });
+
+  it('shows account preparation after the ChainWhisper address is selected but privacy is not ready', () => {
+    const progress = resolveWalletOnboardingProgressModel({
+      appWalletAddress: '0x2222222222222222222222222222222222222222',
+      connectedWithAppWallet: true,
+      connectingOwner: false,
+      initializingAccount: true,
+      ownerAesReady: true,
+      ownerWalletConnected: true,
+      recoveryChecking: false,
+      recoveringAccount: false,
+      walletAesReady: false
+    });
+
+    expect(progress).toMatchObject({
+      active: true,
+      title: 'Preparing account',
+      detail: 'Preparing private chat and trading access.'
+    });
+    expect(progress.steps).toEqual([
+      { label: 'Owner privacy', state: 'complete' },
+      { label: 'Find account', state: 'complete' },
+      { label: 'Prepare account', state: 'active' }
+    ]);
+  });
+
+  it('classifies owner-linked storage for the current owner', () => {
+    expect(
+      resolveAppWalletSetupStorageKind({
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        storageKind: 'owner-aes',
+        storageOwnerAddress: '0x1111111111111111111111111111111111111111'
+      })
+    ).toBe('owner-aes-current-owner');
+
+    expect(
+      resolveAppWalletSetupStorageKind({
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        storageKind: 'owner-aes',
+        storageOwnerAddress: '0x2222222222222222222222222222222222222222'
+      })
+    ).toBe('owner-aes-other-owner');
+
+    expect(resolveAppWalletSetupStorageKind({ ownerAddress: '', storageKind: 'encrypted' })).toBe('pin-encrypted');
+  });
+
+  it('returns a local auto-connect key only for current-owner encrypted storage', () => {
+    const storageState = {
+      kind: 'owner-aes',
+      record: {
+        ciphertext: 'encrypted-local-vault',
+        iv: 'local-iv',
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        scheme: 'owner-aes-gcm-v1',
+        version: 1
+      }
+    } as const;
+    const attemptKey = resolveOwnerLocalAccountAutoConnectAttemptKey({
+      attemptNonce: 2,
+      chainId: COTI_NETWORK.chainIdDecimal,
+      initializing: false,
+      ownerAddress: '0x1111111111111111111111111111111111111111',
+      ownerAesKey: 'owner-aes',
+      storageState
+    });
+
+    expect(attemptKey).toBe('0x1111111111111111111111111111111111111111:1:local-iv:21:2');
+    expect(
+      resolveOwnerLocalAccountAutoConnectAttemptKey({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        initializing: false,
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        ownerAesKey: '',
+        storageState
+      })
+    ).toBe('');
+    expect(
+      resolveOwnerLocalAccountAutoConnectAttemptKey({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        initializing: false,
+        ownerAddress: '0x2222222222222222222222222222222222222222',
+        ownerAesKey: 'owner-aes',
+        storageState
+      })
+    ).toBe('');
+    expect(
+      resolveOwnerLocalAccountAutoConnectAttemptKey({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        initializing: false,
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        ownerAesKey: 'owner-aes',
+        ownerWalletConnected: false,
+        storageState
+      })
+    ).toBe('');
+    expect(
+      resolveOwnerLocalAccountAutoConnectAttemptKey({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        initializing: false,
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        ownerAesKey: 'owner-aes',
+        storageState: { kind: 'encrypted', record: { ciphertext: 'x', iterations: 1, iv: 'iv', salt: 'salt', version: 1 } }
+      })
+    ).toBe('');
+  });
+
+  it('returns a one-shot auto-recovery key when owner AES and registry are ready', () => {
+    const attemptKey = resolveOwnerRecoveryAutoConnectAttemptKey({
+      chainId: COTI_NETWORK.chainIdDecimal,
+      hasAesReady: true,
+      initializing: false,
+      ownerAddress: '0x1111111111111111111111111111111111111111',
+      ownerAesKey: 'owner-aes',
+      recoveryConfigured: true,
+      registryAddress: '0x2222222222222222222222222222222222222222'
+    });
+
+    expect(attemptKey).toBe(
+      '0x1111111111111111111111111111111111111111:2632500:0x2222222222222222222222222222222222222222:0'
+    );
+    expect(
+      resolveOwnerRecoveryAutoConnectAttemptKey({
+        attemptNonce: 0,
+        chainId: COTI_NETWORK.chainIdDecimal,
+        currentAttemptKey: attemptKey,
+        hasAesReady: true,
+        initializing: false,
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        ownerAesKey: 'owner-aes',
+        recoveryConfigured: true,
+        registryAddress: '0x2222222222222222222222222222222222222222'
+      })
+    ).toBe('');
+    expect(
+      resolveOwnerRecoveryAutoConnectAttemptKey({
+        attemptNonce: 1,
+        chainId: COTI_NETWORK.chainIdDecimal,
+        currentAttemptKey: attemptKey,
+        hasAesReady: true,
+        initializing: false,
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        ownerAesKey: 'owner-aes',
+        recoveryConfigured: true,
+        registryAddress: '0x2222222222222222222222222222222222222222'
+      })
+    ).toBe('0x1111111111111111111111111111111111111111:2632500:0x2222222222222222222222222222222222222222:1');
+    expect(
+      resolveOwnerRecoveryAutoConnectAttemptKey({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        initializing: false,
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        ownerAesKey: '',
+        recoveryConfigured: true,
+        registryAddress: '0x2222222222222222222222222222222222222222'
+      })
+    ).toBe('');
+    expect(
+      resolveOwnerRecoveryAutoConnectAttemptKey({
+        chainId: COTI_NETWORK.chainIdDecimal,
+        hasAesReady: true,
+        initializing: false,
+        ownerAddress: '0x1111111111111111111111111111111111111111',
+        ownerAesKey: 'owner-aes',
+        ownerWalletConnected: false,
+        recoveryConfigured: true,
+        registryAddress: '0x2222222222222222222222222222222222222222'
+      })
+    ).toBe('');
   });
 });
 

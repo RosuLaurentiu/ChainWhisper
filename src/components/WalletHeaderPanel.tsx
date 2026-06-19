@@ -4,11 +4,12 @@ import { resolveWalletStatusTone, type WalletStatusTone } from '../lib/walletSes
 
 type WalletHeaderPanelProps = {
   action?: ReactNode;
+  busy?: boolean;
   menu: ReactNode;
   menuDisabled?: boolean;
   menuLabel?: string;
   menuOpen: boolean;
-  modeLabel: string;
+  modeLabel: ReactNode;
   onPrimaryAction: () => void;
   onToggleMenu: () => void;
   primaryAddon?: ReactNode;
@@ -20,13 +21,14 @@ type WalletHeaderPanelProps = {
   statusActionDisabled?: boolean;
   statusActionLabel?: string;
   statusActionTitle?: string;
-  statusLabel: string;
+  statusLabel?: string;
   statusTone?: WalletStatusTone;
   onStatusAction?: () => void;
 };
 
 export default function WalletHeaderPanel({
   action,
+  busy = false,
   menu,
   menuDisabled = false,
   menuLabel = 'Wallet',
@@ -47,13 +49,18 @@ export default function WalletHeaderPanel({
   statusTone,
   onStatusAction
 }: WalletHeaderPanelProps) {
-  const resolvedStatusTone = statusTone ?? resolveWalletStatusTone(statusLabel);
+  const resolvedStatusTone = statusTone ?? resolveWalletStatusTone(statusLabel ?? '');
   const menuId = useId();
   const hasStatusAction = Boolean(statusActionLabel && onStatusAction);
-  const StatusActionIcon = statusActionLabel?.toLowerCase().includes('refresh') ||
-    statusActionLabel?.toLowerCase().includes('set up')
-    ? RefreshCw
-    : LockKeyhole;
+  const hasStatusText = Boolean(modeLabel || statusLabel);
+  const normalizedStatusActionLabel = statusActionLabel?.toLowerCase() ?? '';
+  const StatusActionIcon =
+    normalizedStatusActionLabel.includes('refresh') ||
+    normalizedStatusActionLabel.includes('recover') ||
+    normalizedStatusActionLabel.includes('retry') ||
+    normalizedStatusActionLabel.includes('set up')
+      ? RefreshCw
+      : LockKeyhole;
   const statusIndicatorContent = (
     <>
       <i aria-hidden="true" />
@@ -68,7 +75,7 @@ export default function WalletHeaderPanel({
 
   return (
     <div
-      className="p2p-wallet-panel wallet-header-panel"
+      className={busy ? 'p2p-wallet-panel wallet-header-panel is-wallet-busy' : 'p2p-wallet-panel wallet-header-panel'}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && menuOpen) {
           event.preventDefault();
@@ -77,7 +84,7 @@ export default function WalletHeaderPanel({
       }}
     >
       <div className="p2p-wallet-status">
-        <div className="p2p-wallet-identity">
+        <div className={hasStatusText ? 'p2p-wallet-identity' : 'p2p-wallet-identity no-status'}>
           <div className={primaryAddon ? 'p2p-wallet-primary-wrap has-addon' : 'p2p-wallet-primary-wrap'}>
             <button
               type="button"
@@ -88,33 +95,37 @@ export default function WalletHeaderPanel({
               aria-label={primaryButtonTitle ?? primaryButtonLabel}
             >
               <span>{primaryButtonLabel}</span>
-              {primaryMetaLabel ? <small>{primaryMetaLabel}</small> : null}
+              {primaryMetaLabel ? <small aria-live="polite">{primaryMetaLabel}</small> : null}
             </button>
             {primaryAddon ? <div className="p2p-wallet-primary-addon">{primaryAddon}</div> : null}
           </div>
-          <div
-            className={`p2p-wallet-status-text p2p-wallet-status-${resolvedStatusTone}${
-              hasStatusAction ? ' has-status-action' : ''
-            }`}
-          >
-            <span>{modeLabel}</span>
-            <div className="p2p-wallet-status-row">
-              {hasStatusAction ? (
-                <button
-                  type="button"
-                  className="p2p-wallet-status-indicator p2p-wallet-status-button"
-                  onClick={onStatusAction}
-                  disabled={statusActionDisabled}
-                  title={statusActionTitle}
-                  aria-label={statusActionTitle ?? statusActionLabel ?? statusLabel}
-                >
-                  {statusIndicatorContent}
-                </button>
-              ) : (
-                <strong className="p2p-wallet-status-indicator">{statusIndicatorContent}</strong>
-              )}
+          {hasStatusText ? (
+            <div
+              className={`p2p-wallet-status-text p2p-wallet-status-${resolvedStatusTone}${
+                hasStatusAction ? ' has-status-action' : ''
+              }`}
+            >
+              {modeLabel ? <div className="p2p-wallet-mode-label">{modeLabel}</div> : null}
+              {statusLabel ? (
+                <div className="p2p-wallet-status-row">
+                  {hasStatusAction ? (
+                    <button
+                      type="button"
+                      className="p2p-wallet-status-indicator p2p-wallet-status-button"
+                      onClick={onStatusAction}
+                      disabled={statusActionDisabled}
+                      title={statusActionTitle}
+                      aria-label={statusActionTitle ?? statusActionLabel ?? statusLabel}
+                    >
+                      {statusIndicatorContent}
+                    </button>
+                  ) : (
+                    <strong className="p2p-wallet-status-indicator">{statusIndicatorContent}</strong>
+                  )}
+                </div>
+              ) : null}
             </div>
-          </div>
+          ) : null}
         </div>
         {action ? <div className="p2p-wallet-status-actions">{action}</div> : null}
       </div>

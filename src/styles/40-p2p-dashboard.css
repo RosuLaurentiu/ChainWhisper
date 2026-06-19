@@ -38,8 +38,31 @@
   padding-left: 8px;
 }
 
-.p2p-wallet-panel .connect-btn.copied small {
-  color: #d9d3ff;
+.p2p-wallet-panel .connect-btn.copied {
+  border-color: rgba(34, 197, 94, 0.48);
+  background:
+    linear-gradient(180deg, rgba(24, 39, 35, 0.82), rgba(16, 24, 24, 0.86));
+  color: #f5fff8;
+}
+
+.p2p-wallet-panel .connect-btn.copied > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.p2p-wallet-panel .connect-btn.copied > span::after,
+.p2p-wallet-mode-copy.copied::after,
+.p2p-wallet-menu-address-button.copied::after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  flex: 0 0 auto;
+  border-left: 2px solid #86efac;
+  border-bottom: 2px solid #86efac;
+  transform: rotate(-45deg) translateY(-1px);
+  animation: p2p-wallet-copy-pop 160ms ease-out;
 }
 
 .p2p-wallet-primary-wrap {
@@ -137,11 +160,11 @@
 
 .p2p-wallet-identity {
   display: grid;
-  grid-template-columns: minmax(126px, auto) minmax(82px, max-content);
+  grid-template-columns: minmax(126px, auto) minmax(0, max-content);
   align-items: center;
   gap: 3px;
   min-width: 0;
-  max-width: min(390px, 48vw);
+  max-width: min(430px, 48vw);
   border: 1px solid rgba(74, 64, 112, 0.58);
   border-radius: 999px;
   background:
@@ -150,6 +173,11 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 8px 22px rgba(0, 0, 0, 0.14);
   padding: 2px;
+}
+
+.p2p-wallet-identity.no-status {
+  grid-template-columns: minmax(0, auto);
+  max-width: min(260px, 34vw);
 }
 
 .p2p-wallet-address {
@@ -176,15 +204,84 @@
   min-width: 0;
 }
 
-.p2p-wallet-status-text span {
+.p2p-wallet-mode-label {
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 800;
   line-height: 1;
-  text-transform: uppercase;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.p2p-wallet-mode-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: copy;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.p2p-wallet-mode-copy:hover:not(:disabled),
+.p2p-wallet-mode-copy.copied {
+  color: #f5f3ff;
+}
+
+.p2p-wallet-copy-address {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes p2p-wallet-copy-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(2px) scale(0.94);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes p2p-wallet-busy-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.36);
+  }
+
+  70% {
+    box-shadow: 0 0 0 7px rgba(167, 139, 250, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(167, 139, 250, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .p2p-wallet-panel .connect-btn.copied > span::after,
+  .p2p-wallet-mode-copy.copied::after,
+  .p2p-wallet-menu-address-button.copied::after,
+  .wallet-header-panel.is-wallet-busy .p2p-wallet-status-indicator i {
+    animation: none;
+  }
+}
+
+.p2p-wallet-mode-copy:focus-visible,
+.p2p-wallet-menu-address-button:focus-visible {
+  outline: 2px solid rgba(196, 181, 253, 0.72);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .p2p-wallet-status-indicator {
@@ -193,7 +290,8 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
+  font-weight: 900;
   line-height: 1.1;
   white-space: nowrap;
   overflow: hidden;
@@ -261,6 +359,12 @@
   border-radius: 999px;
   background: rgba(161, 161, 184, 0.8);
   box-shadow: 0 0 0 3px rgba(161, 161, 184, 0.08);
+}
+
+.wallet-header-panel.is-wallet-busy .p2p-wallet-status-indicator i {
+  background: #a78bfa;
+  box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.32);
+  animation: p2p-wallet-busy-pulse 1.35s ease-in-out infinite;
 }
 
 .p2p-wallet-status-action-icon {
@@ -412,29 +516,223 @@
   z-index: 30;
   display: grid;
   gap: 8px;
-  width: min(292px, calc(100vw - 32px));
+  width: min(326px, calc(100vw - 28px));
   border: 1px solid rgba(74, 64, 112, 0.74);
-  border-radius: 10px;
+  border-radius: 12px;
   background: rgba(13, 13, 22, 0.98);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
-  padding: 10px;
+  padding: 9px;
 }
 
 .p2p-wallet-menu-section {
   display: grid;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
-  border: 1px solid rgba(74, 64, 112, 0.44);
-  border-radius: 8px;
-  background: rgba(17, 17, 27, 0.58);
-  padding: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .p2p-wallet-menu-section > span {
   color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 800;
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 0 2px;
   text-transform: uppercase;
+}
+
+.p2p-wallet-menu-action-section {
+  border: 1px solid rgba(74, 64, 112, 0.42);
+  border-radius: 10px;
+  background: rgba(8, 8, 15, 0.46);
+  padding: 8px;
+}
+
+.p2p-wallet-menu-action-section.muted {
+  background: rgba(7, 7, 14, 0.32);
+}
+
+.p2p-wallet-account-model {
+  gap: 7px;
+  border: 1px solid rgba(74, 64, 112, 0.5);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(21, 18, 33, 0.72), rgba(11, 10, 18, 0.74));
+  padding: 9px;
+}
+
+.p2p-wallet-onboarding-progress {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(139, 92, 246, 0.36);
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(80, 55, 132, 0.22), rgba(15, 14, 26, 0.7)),
+    rgba(9, 8, 17, 0.72);
+  padding: 9px;
+}
+
+.p2p-wallet-onboarding-progress-head {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.p2p-wallet-onboarding-progress-head strong {
+  color: #f5f3ff;
+  font-size: 0.8rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.p2p-wallet-onboarding-progress-head small {
+  color: rgba(217, 211, 255, 0.72);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.p2p-wallet-onboarding-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.p2p-wallet-onboarding-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  border: 1px solid rgba(74, 64, 112, 0.56);
+  border-radius: 999px;
+  background: rgba(7, 7, 14, 0.58);
+  color: rgba(217, 211, 255, 0.64);
+  font-size: 0.64rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+
+.p2p-wallet-onboarding-step i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(161, 161, 184, 0.58);
+}
+
+.p2p-wallet-onboarding-step.complete {
+  border-color: rgba(34, 197, 94, 0.32);
+  color: rgba(220, 252, 231, 0.82);
+}
+
+.p2p-wallet-onboarding-step.complete i {
+  background: #22c55e;
+}
+
+.p2p-wallet-onboarding-step.active {
+  border-color: rgba(167, 139, 250, 0.62);
+  background: rgba(139, 92, 246, 0.2);
+  color: #f5f3ff;
+}
+
+.p2p-wallet-onboarding-step.active i {
+  background: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.14);
+}
+
+.p2p-wallet-account-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px 10px;
+  min-width: 0;
+  border: 1px solid rgba(74, 64, 112, 0.42);
+  border-radius: 9px;
+  background: rgba(7, 7, 14, 0.56);
+  padding: 8px 9px;
+}
+
+.p2p-wallet-account-card.primary {
+  border-color: rgba(167, 139, 250, 0.42);
+  background:
+    linear-gradient(180deg, rgba(55, 38, 89, 0.32), rgba(13, 12, 23, 0.62));
+}
+
+.p2p-wallet-account-card small {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1;
+  min-width: 0;
+  text-transform: uppercase;
+}
+
+.p2p-wallet-account-card strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  justify-self: end;
+}
+
+.p2p-wallet-account-card em {
+  grid-column: 1 / -1;
+  color: rgba(217, 211, 255, 0.62);
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-wallet-menu-address-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 160px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: copy;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  padding: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-wallet-menu-address-button:hover,
+.p2p-wallet-menu-address-button.copied {
+  color: #f5f3ff;
+}
+
+.p2p-wallet-account-model p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.p2p-wallet-account-funds-action {
+  margin-top: 1px;
 }
 
 .p2p-wallet-menu .p2p-wallet-action,
@@ -448,11 +746,44 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 7px;
-  border-radius: 7px;
+  gap: 8px;
+  min-height: 36px;
+  border-color: rgba(74, 64, 112, 0.54);
+  border-radius: 9px;
+  background: rgba(8, 8, 15, 0.66);
+  color: #eee9ff;
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 8px 10px;
   text-align: left;
   width: 100%;
   max-width: none;
+}
+
+.p2p-wallet-menu .p2p-wallet-action.primary {
+  border-color: rgba(139, 92, 246, 0.5);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.18), rgba(61, 39, 111, 0.12)),
+    rgba(9, 8, 17, 0.72);
+}
+
+.p2p-wallet-menu .p2p-wallet-account-funds-action {
+  border-color: rgba(45, 212, 191, 0.34);
+  background:
+    linear-gradient(180deg, rgba(20, 184, 166, 0.14), rgba(15, 118, 110, 0.08)),
+    rgba(6, 13, 14, 0.72);
+  color: #d8fff7;
+}
+
+.p2p-wallet-menu .p2p-wallet-action.danger {
+  border-color: rgba(248, 113, 113, 0.58);
+  background: rgba(82, 18, 28, 0.42);
+  color: #fecdd3;
+}
+
+.p2p-wallet-menu .p2p-wallet-disconnect-action {
+  margin-top: 1px;
 }
 
 .p2p-wallet-menu .p2p-wallet-action.active::before,
@@ -1199,25 +1530,30 @@
   justify-self: stretch;
   color: var(--muted);
   font-size: 0.8rem;
+  line-height: 1;
 }
 
 .p2p-balance-dock {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
+  align-items: center;
   gap: 7px;
   width: 100%;
   max-width: none;
   box-sizing: border-box;
   border: 1px solid rgba(74, 64, 112, 0.46);
-  border-radius: 10px;
+  border-radius: 9px;
   background:
     linear-gradient(180deg, rgba(10, 9, 18, 0.82), rgba(4, 4, 9, 0.86));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  min-height: 30px;
   padding: 4px 7px;
 }
 
 .p2p-balance-dock-title {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
   border: 0;
   background: transparent;
   color: #8f88aa;
@@ -1225,7 +1561,8 @@
   font-size: 0.6rem;
   font-weight: 900;
   letter-spacing: 0.08em;
-  padding: 0;
+  line-height: 1;
+  padding: 0 2px;
   text-transform: uppercase;
 }
 
@@ -1238,20 +1575,85 @@
 }
 
 .p2p-balance-groups {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 6px;
   min-width: 0;
-  overflow-x: auto;
-  padding: 1px;
-  scrollbar-width: thin;
+  overflow: hidden;
+  padding: 0;
+}
+
+.p2p-balance-view-toggle {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 22px;
+  border: 1px solid rgba(74, 64, 112, 0.54);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.32), rgba(82, 51, 154, 0.22)),
+    rgba(26, 17, 44, 0.86);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: #f6f3ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.p2p-balance-view-toggle:hover {
+  border-color: rgba(167, 139, 250, 0.72);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.42), rgba(82, 51, 154, 0.28)),
+    rgba(32, 20, 54, 0.92);
+}
+
+.p2p-balance-view-toggle:focus-visible {
+  outline: 2px solid rgba(196, 181, 253, 0.72);
+  outline-offset: 2px;
+}
+
+.p2p-balance-view-toggle small {
+  color: inherit;
+  font-size: 0.55rem;
+  opacity: 0.72;
+}
+
+.p2p-balance-account-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  color: #8f88aa;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.p2p-balance-account-label small {
+  color: rgba(217, 211, 255, 0.62);
+  font-size: 0.55rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .p2p-balance-list {
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: max-content;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0;
+  scrollbar-width: thin;
 }
 
 .p2p-balance-list-private {
@@ -1263,13 +1665,15 @@
   display: inline-grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 6px;
-  min-width: max-content;
+  gap: 5px;
+  min-width: 0;
+  max-width: 235px;
+  min-height: 22px;
   border: 1px solid rgba(74, 64, 112, 0.42);
   border-radius: 999px;
   background: rgba(5, 5, 12, 0.58);
   color: #d9d3ff;
-  padding: 3px 7px;
+  padding: 2px 7px;
 }
 
 .p2p-balance-item[data-balance-kind="Native"],
@@ -1299,6 +1703,10 @@
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   font-weight: 900;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .p2p-balance-empty {
@@ -1381,9 +1789,16 @@
 
 .p2p-balances-sheet-card .p2p-balance-groups {
   display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
   gap: 8px;
   max-height: 300px;
   overflow: auto;
+}
+
+.p2p-balances-sheet-card .p2p-balance-view-toggle {
+  justify-self: stretch;
+  justify-content: center;
 }
 
 .p2p-balances-sheet-card .p2p-balance-list {
@@ -1402,6 +1817,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;
+  max-width: none;
   border-radius: 10px;
   padding: 8px 9px;
 }
@@ -2280,6 +2696,7 @@
 .p2p-trading-shell-drawer-open .p2p-footer-links {
   grid-column: 1 / -1;
   width: 100%;
+  margin-top: -4px;
 }
 
 .p2p-trading-shell-drawer-open.p2p-trading-shell-empty-terminal {
@@ -2293,6 +2710,7 @@
 .p2p-trading-shell-drawer-open.p2p-trading-shell-empty-terminal .p2p-footer-links {
   grid-area: footer;
   align-self: end;
+  margin-top: 0;
 }
 
 .standalone-trade-detail-section > *,

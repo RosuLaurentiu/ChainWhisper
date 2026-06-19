@@ -724,6 +724,420 @@ body {
   outline: none;
 }
 
+.account-funds-modal {
+  width: min(540px, 94vw);
+}
+
+.trade-action-confirm-modal {
+  width: min(460px, 94vw);
+}
+
+.trade-action-confirm-modal > .modal-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.38;
+}
+
+.trade-action-confirm-summary,
+.trade-action-confirm-funding {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(12, 12, 21, 0.62);
+  padding: 8px;
+}
+
+.trade-action-confirm-summary > div,
+.trade-action-confirm-funding-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.52fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trade-action-confirm-summary span,
+.trade-action-confirm-funding > span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.trade-action-confirm-summary strong,
+.trade-action-confirm-funding-row strong,
+.trade-action-confirm-funding-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trade-action-confirm-summary strong,
+.trade-action-confirm-funding-row strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.trade-action-confirm-funding {
+  border-color: rgba(34, 197, 94, 0.28);
+  background:
+    linear-gradient(180deg, rgba(18, 38, 30, 0.44), rgba(12, 12, 21, 0.62));
+}
+
+.trade-action-confirm-funding-row {
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+  border: 1px solid rgba(34, 197, 94, 0.18);
+  border-radius: 7px;
+  background: rgba(4, 10, 8, 0.28);
+  padding: 7px 8px;
+}
+
+.trade-action-confirm-funding-row small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  text-align: right;
+}
+
+.trade-action-confirm-stats {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.account-funds-modal > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.account-funds-direction {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(12, 12, 21, 0.72);
+}
+
+.account-funds-direction button {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.account-funds-direction button {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.account-funds-direction button.active {
+  border-color: rgba(167, 139, 250, 0.62);
+  background: rgba(139, 92, 246, 0.18);
+  color: var(--text);
+}
+
+.account-funds-direction button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.account-funds-token-picker {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(12, 12, 21, 0.62);
+  overflow: hidden;
+}
+
+.account-funds-token-list-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px 0;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.account-funds-token-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-bottom: 1px solid rgba(74, 64, 112, 0.44);
+  background: rgba(10, 10, 18, 0.48);
+}
+
+.account-funds-token-tabs button {
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+  padding: 8px;
+}
+
+.account-funds-token-tabs button.active {
+  background: rgba(124, 58, 237, 0.36);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.34);
+}
+
+.account-funds-token-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.account-funds-token-tabs span {
+  color: rgba(235, 230, 255, 0.58);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.account-funds-token-list {
+  display: grid;
+  gap: 0;
+  max-height: 220px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.account-funds-token-list li {
+  min-width: 0;
+}
+
+.account-funds-token-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  min-width: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+  user-select: none;
+}
+
+.account-funds-token-row:hover {
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.account-funds-token-row.active {
+  background:
+    linear-gradient(90deg, rgba(139, 92, 246, 0.22), rgba(58, 43, 96, 0.12)),
+    rgba(139, 92, 246, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.36);
+  color: #f5f3ff;
+}
+
+.account-funds-token-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.account-funds-token-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.account-funds-token-main strong {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-funds-token-main small {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(217, 211, 255, 0.62);
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-funds-token-side {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-funds-token-side > strong {
+  min-width: 0;
+  max-width: 132px;
+  overflow: hidden;
+  color: #f6f3ff;
+  font-size: 0.78rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-funds-token-kind {
+  justify-self: end;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(12, 11, 20, 0.72);
+  color: rgba(235, 230, 255, 0.78);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 4px 6px;
+  text-transform: uppercase;
+}
+
+.account-funds-empty,
+.account-funds-warning {
+  margin: 0;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: rgba(17, 17, 27, 0.58);
+  font-size: 0.82rem;
+}
+
+.account-funds-warning {
+  border-color: rgba(245, 158, 11, 0.42);
+  color: rgba(255, 237, 213, 0.92);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.account-funds-route {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-funds-route > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(17, 17, 27, 0.58);
+}
+
+.account-funds-route span,
+.account-funds-field-head > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.account-funds-route strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-funds-field {
+  display: grid;
+  gap: 6px;
+}
+
+.account-funds-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.account-funds-field-head small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(217, 211, 255, 0.68);
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-funds-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.account-funds-input-row input {
+  min-width: 0;
+}
+
+.account-funds-input-row button {
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: rgba(24, 24, 39, 0.82);
+  color: var(--text);
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.account-funds-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 560px) {
+  .account-funds-route {
+    grid-template-columns: 1fr;
+  }
+
+  .account-funds-token-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-funds-token-list-head {
+    display: none;
+  }
+
+  .account-funds-token-side {
+    justify-content: space-between;
+  }
+}
+
 .meta-row {
   display: flex;
   align-items: center;

@@ -58,6 +58,14 @@ type DeriveTradeComposerModelParams = {
   tipNativeBalanceWei: bigint | null;
   rewardTokenBalanceWei: bigint | null;
   privateRewardTokenBalanceWei: bigint | null;
+  combinedBalanceByAssetKey?: Record<
+    string,
+    {
+      combinedBalanceWei: bigint | null;
+      ownerPrivacyRequired?: boolean;
+      splitLabel?: string;
+    }
+  >;
   tradeRequiredFeeWei: bigint | null;
   counterpartyRequired?: boolean;
   missingCounterpartyMessage?: string;
@@ -195,6 +203,19 @@ const buildTradeCustomMetaLabel = (address: string, tokenInfo?: TradeCustomToken
   return 'Loading token metadata...';
 };
 
+export const buildTradeComposerAssetBalanceKey = (
+  token: Pick<ResolvedTradeToken, 'kind' | 'tokenAddress'> | null
+): string => {
+  if (!token) {
+    return '';
+  }
+  if (token.kind === 'native') {
+    return 'native:coti';
+  }
+  const tokenAddress = token.tokenAddress?.trim().toLowerCase();
+  return tokenAddress ? `${token.kind}:${tokenAddress}` : '';
+};
+
 const isTradeTokenMetadataPending = ({
   selection,
   customAddress,
@@ -260,6 +281,7 @@ export const deriveTradeComposerModel = ({
   tipNativeBalanceWei,
   rewardTokenBalanceWei,
   privateRewardTokenBalanceWei,
+  combinedBalanceByAssetKey,
   tradeRequiredFeeWei,
   counterpartyRequired = true,
   missingCounterpartyMessage = 'Select a contact first.',
@@ -446,6 +468,20 @@ export const deriveTradeComposerModel = ({
   };
   const selectedTradeOfferBalanceWei = resolveSelectedTradeBalanceWei(selectedTradeOfferToken);
   const selectedTradeRequestBalanceWei = resolveSelectedTradeBalanceWei(selectedTradeRequestToken);
+  const selectedTradeOfferBalanceKey = buildTradeComposerAssetBalanceKey(selectedTradeOfferToken);
+  const selectedTradeRequestBalanceKey = buildTradeComposerAssetBalanceKey(selectedTradeRequestToken);
+  const selectedTradeOfferCombinedBalance = selectedTradeOfferBalanceKey
+    ? combinedBalanceByAssetKey?.[selectedTradeOfferBalanceKey]
+    : undefined;
+  const selectedTradeRequestCombinedBalance = selectedTradeRequestBalanceKey
+    ? combinedBalanceByAssetKey?.[selectedTradeRequestBalanceKey]
+    : undefined;
+  const selectedTradeOfferAvailableBalanceWei =
+    selectedTradeOfferCombinedBalance?.combinedBalanceWei ?? selectedTradeOfferBalanceWei;
+  const selectedTradeRequestAvailableBalanceWei =
+    selectedTradeRequestCombinedBalance?.combinedBalanceWei ?? selectedTradeRequestBalanceWei;
+  const nativeCombinedBalance = combinedBalanceByAssetKey?.['native:coti'];
+  const nativeAvailableBalanceWei = nativeCombinedBalance?.combinedBalanceWei ?? tipNativeBalanceWei;
 
   const parsedTradeOfferAmountWei = selectedTradeOfferToken
     ? parseTokenAmountInput(tradeOfferAmountInput, selectedTradeOfferToken.decimals)
@@ -502,12 +538,18 @@ export const deriveTradeComposerModel = ({
     }
     return `0 ${symbol}`;
   };
-  const formatBalanceSummaryLabel = (selectedToken: ResolvedTradeToken | null, balanceWei: bigint | null): string =>
-    selectedToken && balanceWei !== null
-      ? `${formatTokenAmount(balanceWei, selectedToken.decimals, 6)} ${selectedToken.symbol}`
-      : selectedToken
-        ? `-- ${selectedToken.symbol}`
-        : '--';
+  const formatBalanceSummaryLabel = (
+    selectedToken: ResolvedTradeToken | null,
+    balanceWei: bigint | null,
+    combinedBalance?: { splitLabel?: string }
+  ): string =>
+    selectedToken && combinedBalance?.splitLabel
+      ? combinedBalance.splitLabel
+      : selectedToken && balanceWei !== null
+        ? `${formatTokenAmount(balanceWei, selectedToken.decimals, 6)} ${selectedToken.symbol}`
+        : selectedToken
+          ? `-- ${selectedToken.symbol}`
+          : '--';
   const tradeOfferAmountSummaryLabel = formatAmountSummaryLabel({
     input: tradeOfferAmountInput,
     parsedAmountWei: parsedTradeOfferAmountWei,
@@ -522,11 +564,13 @@ export const deriveTradeComposerModel = ({
   });
   const tradeOfferBalanceSummaryLabel = formatBalanceSummaryLabel(
     selectedTradeOfferToken,
-    selectedTradeOfferBalanceWei
+    selectedTradeOfferAvailableBalanceWei,
+    selectedTradeOfferCombinedBalance
   );
   const tradeRequestBalanceSummaryLabel = formatBalanceSummaryLabel(
     selectedTradeRequestToken,
-    selectedTradeRequestBalanceWei
+    selectedTradeRequestAvailableBalanceWei,
+    selectedTradeRequestCombinedBalance
   );
   const tradeOfferVerifyUrl = selectedTradeOfferToken?.tokenAddress
     ? `${COTI_NETWORK.blockExplorerUrl}/address/${selectedTradeOfferToken.tokenAddress}`
@@ -628,22 +672,20 @@ export const deriveTradeComposerModel = ({
   }
 
   const offerAmountValid = selectedTradeOfferToken !== null && parsedTradeOfferAmountWei !== null && parsedTradeOfferAmountWei > 0n;
-  const requestAmountValid =
-    selectedTradeRequestToken !== null && parsedTradeRequestAmountWei !== null && parsedTradeRequestAmountWei > 0n;
 
   if (selectedTradeOfferToken?.kind === 'native' && offerAmountValid) {
-    if (tipNativeBalanceWei === null) {
+    if (nativeAvailableBalanceWei === null) {
       tradeComposerFieldErrors.offerAmount = 'Unable to read your COTI balance yet.';
     } else {
       const requiredNativeBalance = (parsedTradeOfferAmountWei as bigint) + (tradeRequiredFeeWei ?? 0n);
-      if (requiredNativeBalance > tipNativeBalanceWei) {
+      if (requiredNativeBalance > nativeAvailableBalanceWei) {
         tradeComposerFieldErrors.offerAmount = `Need ${formatTokenAmount(requiredNativeBalance, TIP_NATIVE_TOKEN_DECIMALS, 6)} ${TIP_NATIVE_TOKEN_SYMBOL} to cover the send amount and fee.`;
       }
     }
   } else if (selectedTradeOfferToken && offerAmountValid) {
-    if (selectedTradeOfferBalanceWei === null) {
+    if (selectedTradeOfferAvailableBalanceWei === null) {
       tradeComposerFieldErrors.offerAmount = `Unable to read ${selectedTradeOfferToken.symbol} balance yet.`;
-    } else if ((parsedTradeOfferAmountWei as bigint) > selectedTradeOfferBalanceWei) {
+    } else if ((parsedTradeOfferAmountWei as bigint) > selectedTradeOfferAvailableBalanceWei) {
       tradeComposerFieldErrors.offerAmount = `Insufficient ${selectedTradeOfferToken.symbol} balance to send this amount.`;
     }
   }
@@ -651,7 +693,7 @@ export const deriveTradeComposerModel = ({
   if (tradeRequiredFeeWei === null) {
     tradeComposerFieldErrors.fee = 'Loading trade fee...';
   } else if (selectedTradeOfferToken?.kind !== 'native') {
-    if (tipNativeBalanceWei === null || tipNativeBalanceWei < tradeRequiredFeeWei) {
+    if (nativeAvailableBalanceWei === null || nativeAvailableBalanceWei < tradeRequiredFeeWei) {
       tradeComposerFieldErrors.fee = `Need ${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL} for the trade fee.`;
     }
   }
@@ -660,15 +702,14 @@ export const deriveTradeComposerModel = ({
     tradeComposerFieldErrors.expiry = 'Set an expiry between 1 and 720 hours.';
   }
 
-  if (selectedTradeOfferToken && selectedTradeRequestToken && offerAmountValid && requestAmountValid) {
+  if (selectedTradeOfferToken && selectedTradeRequestToken) {
     const offerTokenKey = selectedTradeOfferToken.tokenAddress?.toLowerCase() ?? 'native';
     const requestTokenKey = selectedTradeRequestToken.tokenAddress?.toLowerCase() ?? 'native';
     if (
       selectedTradeOfferToken.kind === selectedTradeRequestToken.kind &&
-      offerTokenKey === requestTokenKey &&
-      parsedTradeOfferAmountWei === parsedTradeRequestAmountWei
+      offerTokenKey === requestTokenKey
     ) {
-      tradeComposerFieldErrors.general = 'Choose different send and receive terms.';
+      tradeComposerFieldErrors.general = 'Choose two different assets for the trade.';
     }
   }
 
@@ -692,8 +733,8 @@ export const deriveTradeComposerModel = ({
   let tradeOfferMaxAmountWei: bigint | null = null;
   if (selectedTradeOfferToken) {
     if (selectedTradeOfferToken.kind === 'native') {
-      if (tipNativeBalanceWei !== null) {
-        tradeOfferMaxAmountWei = tipNativeBalanceWei;
+      if (nativeAvailableBalanceWei !== null) {
+        tradeOfferMaxAmountWei = nativeAvailableBalanceWei;
         if (resolvedTradeFeeModeSelection === 'coti') {
           tradeOfferMaxAmountWei =
             tradeRequiredFeeWei === null
@@ -703,8 +744,8 @@ export const deriveTradeComposerModel = ({
                 : 0n;
         }
       }
-    } else if (selectedTradeOfferBalanceWei !== null) {
-      tradeOfferMaxAmountWei = selectedTradeOfferBalanceWei;
+    } else if (selectedTradeOfferAvailableBalanceWei !== null) {
+      tradeOfferMaxAmountWei = selectedTradeOfferAvailableBalanceWei;
     }
   }
 

@@ -32,6 +32,18 @@ export default function BurnerPinModal({
     return null;
   }
 
+  const title = burnerPinMode === 'set' ? 'Set ChainWhisper Account PIN' : 'Unlock ChainWhisper Account';
+  const placeholder =
+    burnerPinMode === 'set'
+      ? `Choose PIN (${pinMinLength}+ digits)`
+      : 'Enter PIN';
+  const submitLabel =
+    initializingBurner
+      ? 'Please wait...'
+      : burnerPinMode === 'set'
+        ? 'Save & Connect'
+        : 'Unlock';
+
   return (
     <div
       className="modal-backdrop"
@@ -50,7 +62,7 @@ export default function BurnerPinModal({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <h3 id="burner-pin-title">{burnerPinMode === 'set' ? 'Set PIN' : 'Unlock Wallet'}</h3>
+        <h3 id="burner-pin-title">{title}</h3>
         {error ? <p className="error">{error}</p> : null}
         <input
           value={burnerPinInput}
@@ -63,8 +75,8 @@ export default function BurnerPinModal({
           data-1p-ignore="true"
           data-bwignore="true"
           onChange={(event) => onBurnerPinInputChange(event.target.value)}
-          placeholder={burnerPinMode === 'set' ? `Choose PIN (${pinMinLength}+ digits)` : 'Enter PIN'}
-          aria-label="Wallet PIN"
+          placeholder={placeholder}
+          aria-label="ChainWhisper account PIN"
           type="password"
         />
         <div className="modal-actions">
@@ -79,7 +91,7 @@ export default function BurnerPinModal({
             }}
             disabled={initializingBurner}
           >
-            {initializingBurner ? 'Please wait...' : burnerPinMode === 'set' ? 'Save & Connect' : 'Unlock'}
+            {submitLabel}
           </button>
         </div>
       </div>

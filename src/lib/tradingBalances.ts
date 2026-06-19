@@ -18,13 +18,19 @@ import {
 export type TradingBalanceDisplayItem = {
   id: string;
   symbol: string;
+  amountWei: bigint;
   amountLabel: string;
+  decimals: number;
   kindLabel: 'Native' | 'Public' | 'Private';
   sortGroup: number;
   address?: string;
+  accountRole?: 'chainwhisper' | 'owner';
+  accountLabel?: string;
 };
 
 type BuildVisibleTradingBalanceItemsInput = {
+  accountLabel?: string;
+  accountRole?: 'chainwhisper' | 'owner';
   customTradeTokenInfoByAddress: Record<string, TradeCustomTokenInfo>;
   nativeBalanceWei: bigint | null;
   privateRewardTokenBalanceState: PrivateTokenBalanceState;
@@ -106,7 +112,65 @@ const orderVisibleTradingBalanceItems = (
   }));
 };
 
+const resolveTotalBalanceKey = (item: TradingBalanceDisplayItem): string =>
+  item.kindLabel === 'Native'
+    ? 'native:coti'
+    : `${item.kindLabel.toLowerCase()}:${(item.address ?? item.symbol).toLowerCase()}`;
+
+const formatPositiveBalanceForItem = (item: Pick<TradingBalanceDisplayItem, 'amountWei' | 'decimals' | 'kindLabel'>): string =>
+  item.kindLabel === 'Native'
+    ? formatPositiveNativeBalance(item.amountWei)
+    : formatPositiveTokenBalance(item.amountWei, item.decimals);
+
+export const buildTotalTradingBalanceItems = (items: TradingBalanceDisplayItem[]): TradingBalanceDisplayItem[] => {
+  const totalsByKey = new Map<string, TradingBalanceDisplayItem>();
+
+  for (const item of items) {
+    if (item.amountWei <= 0n) {
+      continue;
+    }
+
+    const totalKey = resolveTotalBalanceKey(item);
+    const existing = totalsByKey.get(totalKey);
+    if (existing) {
+      const amountWei = existing.amountWei + item.amountWei;
+      totalsByKey.set(totalKey, {
+        ...existing,
+        amountWei,
+        amountLabel: formatPositiveBalanceForItem({ ...existing, amountWei }),
+        sortGroup: Math.min(existing.sortGroup, item.sortGroup)
+      });
+      continue;
+    }
+
+    const totalItem = { ...item };
+    delete totalItem.accountLabel;
+    delete totalItem.accountRole;
+    totalsByKey.set(totalKey, {
+      ...totalItem,
+      id: `total:${totalKey}`,
+      accountLabel: 'Total',
+      amountLabel: formatPositiveBalanceForItem(item)
+    });
+  }
+
+  return Array.from(totalsByKey.values()).sort((a, b) => {
+    const kindOrder = { Native: 0, Public: 1, Private: 2 } as const;
+    const kindDelta = kindOrder[a.kindLabel] - kindOrder[b.kindLabel];
+    if (kindDelta !== 0) {
+      return kindDelta;
+    }
+    const sortDelta = a.sortGroup - b.sortGroup;
+    if (sortDelta !== 0) {
+      return sortDelta;
+    }
+    return a.symbol.localeCompare(b.symbol);
+  });
+};
+
 export const buildVisibleTradingBalanceItems = ({
+  accountLabel,
+  accountRole = 'chainwhisper',
   customTradeTokenInfoByAddress,
   nativeBalanceWei,
   privateRewardTokenBalanceState,
@@ -118,37 +182,52 @@ export const buildVisibleTradingBalanceItems = ({
   walletKey
 }: BuildVisibleTradingBalanceItemsInput): TradingBalanceDisplayItem[] => {
   const items: TradingBalanceDisplayItem[] = [];
+  const itemPrefix = accountRole === 'owner' ? 'owner' : 'chainwhisper';
+  const withAccount = (
+    item: Omit<TradingBalanceDisplayItem, 'accountLabel' | 'accountRole'>
+  ): TradingBalanceDisplayItem => ({
+    ...item,
+    id: `${itemPrefix}:${item.id}`,
+    accountLabel,
+    accountRole
+  });
 
   if (isPositiveBalance(nativeBalanceWei)) {
-    items.push({
+    items.push(withAccount({
       id: 'native:coti',
       symbol: TIP_NATIVE_TOKEN_SYMBOL,
+      amountWei: nativeBalanceWei,
       amountLabel: formatPositiveNativeBalance(nativeBalanceWei),
+      decimals: 18,
       kindLabel: 'Native',
       sortGroup: 0
-    });
+    }));
   }
 
   if (isPositiveBalance(rewardTokenBalanceWei)) {
-    items.push({
+    items.push(withAccount({
       id: `erc20:${REWARD_TOKEN_ADDRESS.toLowerCase()}`,
       symbol: rewardTokenSymbol,
+      amountWei: rewardTokenBalanceWei,
       amountLabel: formatPositiveTokenBalance(rewardTokenBalanceWei, rewardTokenDecimals),
+      decimals: rewardTokenDecimals,
       kindLabel: 'Public',
       sortGroup: 10,
       address: REWARD_TOKEN_ADDRESS
-    });
+    }));
   }
 
   if (privateRewardTokenBalanceState.status === 'ready' && privateRewardTokenBalanceState.balanceWei > 0n) {
-    items.push({
+    items.push(withAccount({
       id: `private-erc20:${PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()}`,
       symbol: privateRewardTokenSymbol,
+      amountWei: privateRewardTokenBalanceState.balanceWei,
       amountLabel: formatPositiveTokenBalance(privateRewardTokenBalanceState.balanceWei, privateRewardTokenDecimals),
+      decimals: privateRewardTokenDecimals,
       kindLabel: 'Private',
       sortGroup: 20,
       address: PRIVATE_REWARD_TOKEN_ADDRESS
-    });
+    }));
   }
 
   const builtInTokenKeys = new Set([
@@ -172,14 +251,16 @@ export const buildVisibleTradingBalanceItems = ({
       if (state?.status !== 'ready' || state.balanceWei <= 0n) {
         continue;
       }
-      items.push({
+      items.push(withAccount({
         id: key,
         symbol: info.symbol?.trim() || token.symbol,
+        amountWei: state.balanceWei,
         amountLabel: formatPositiveTokenBalance(state.balanceWei, info.decimals),
+        decimals: info.decimals,
         kindLabel: 'Private',
         sortGroup: 40 + index,
         address: token.address
-      });
+      }));
       continue;
     }
 
@@ -187,14 +268,16 @@ export const buildVisibleTradingBalanceItems = ({
       continue;
     }
 
-    items.push({
+    items.push(withAccount({
       id: key,
       symbol: info.symbol?.trim() || token.symbol,
+      amountWei: info.balanceWei,
       amountLabel: formatPositiveTokenBalance(info.balanceWei, info.decimals),
+      decimals: info.decimals,
       kindLabel: 'Public',
       sortGroup: 30 + index,
       address: token.address
-    });
+    }));
   }
 
   return orderVisibleTradingBalanceItems(items, rewardTokenSymbol, privateRewardTokenSymbol);

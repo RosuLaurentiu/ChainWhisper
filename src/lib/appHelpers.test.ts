@@ -13,11 +13,17 @@ import {
 import {
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
+  buildMessageWithTradeReferencePayload,
   decodeMemoPlaintextStrict,
+  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   encodeCompactMemoPlaintext,
   encodeMemoPlaintext,
-  parseChatMessagePayload
+  LEGACY_TRADE_REFERENCE_METADATA_PREFIX,
+  parseChatMessagePayload,
+  RECURRING_OTC_CONTRACT_ADDRESS,
+  TRADE_REFERENCE_METADATA_PREFIX
 } from './appShared';
+import { encodeTradeLink } from './tradeLinks';
 
 describe('message reference helpers', () => {
   it('matches shared tx references with case-sensitive base64url prefixes', () => {
@@ -70,6 +76,64 @@ describe('message reference helpers', () => {
 
     expect(sanitizeOutgoingMessagePlainText(plain)).toBe(plain);
     expect(parseChatMessagePayload(payload).cleanText).toBe(plain);
+  });
+
+  it('round-trips trade references alongside reply metadata', () => {
+    const terminalPath = `/otcdesk/terminal/l/${encodeTradeLink(42)}?escrow=direct`;
+    const replyPayload = buildMessageWithReplyPayload(
+      'I can do that size.',
+      'Can you fill this?',
+      `0x${'12'.repeat(32)}`,
+      12345,
+      7
+    );
+    const payload = buildMessageWithTradeReferencePayload(replyPayload, {
+      version: 1,
+      tradeId: 42,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      terminalPath
+    });
+    const parsed = parseChatMessagePayload(payload);
+
+    expect(payload).toContain('16:d');
+    expect(payload).toContain(TRADE_REFERENCE_METADATA_PREFIX);
+    expect(payload).not.toContain(LEGACY_TRADE_REFERENCE_METADATA_PREFIX);
+    expect(payload).not.toContain(terminalPath);
+    expect(payload).not.toContain('terminalPath');
+    expect(payload).not.toContain('summary');
+    expect(parsed.cleanText).toBe('I can do that size.');
+    expect(parsed.replyToText).toBe('Can you fill this?');
+    expect(parsed.tradeReference).toMatchObject({
+      tradeId: 42,
+      terminalPath
+    });
+    expect(decodeMemoPlaintextStrict(encodeCompactMemoPlaintext(payload))).toBe(payload);
+  });
+
+  it('does not embed external trade reference paths', () => {
+    const payload = buildMessageWithTradeReferencePayload('hello', {
+      version: 1,
+      tradeId: 42,
+      escrowContract: '0x1111111111111111111111111111111111111111',
+      terminalPath: 'https://evil.example/otcdesk/terminal/42'
+    });
+
+    expect(payload).not.toContain('evil.example');
+    expect(parseChatMessagePayload(payload).tradeReference).toMatchObject({
+      tradeId: 42
+    });
+  });
+
+  it('strips old path-only trade references without showing the path as text', () => {
+    const payload = `${LEGACY_TRADE_REFERENCE_METADATA_PREFIX}/otcdesk/terminal/recurring?order=5${LEGACY_TRADE_REFERENCE_METADATA_PREFIX}would you trade at 0.25?`;
+    const parsed = parseChatMessagePayload(payload);
+
+    expect(parsed.cleanText).toBe('would you trade at 0.25?');
+    expect(parsed.tradeReference).toMatchObject({
+      tradeId: 5,
+      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+      terminalPath: '/otcdesk/terminal/recurring?order=5'
+    });
   });
 });
 

@@ -26,6 +26,7 @@ import {
   type ConversationBlockRange,
   type ConversationPreferenceState,
   type HistoryEntry,
+  type RecentPeerMeta,
   type StateBackupPayload,
   type SyncConversationOptions
 } from '../lib/appShared';
@@ -37,6 +38,7 @@ import {
   parseChatGcMessageView,
   type ChatGcMessageView
 } from '../lib/chatGc';
+import type { WalletReadAccount } from '../lib/walletAccountScope';
 
 type StateSetter<T> = (next: T | ((previous: T) => T)) => void;
 type MemoSignerBundle = {
@@ -63,6 +65,7 @@ type UseDirectConversationSyncArgs = {
   ) => Promise<string>;
   fetchOnChainNicknames: (addresses: string[]) => Promise<Map<string, string>>;
   getMemoSigner: () => Promise<MemoSignerBundle>;
+  getMemoSignerForAccount?: (account: WalletReadAccount) => Promise<MemoSignerBundle>;
   hasAesReady: boolean;
   lastAutoBackupAttemptBlockRef: MutableRefObject<Record<string, number>>;
   lastReadAllTsRef: MutableRefObject<number>;
@@ -95,6 +98,7 @@ type UseDirectConversationSyncArgs = {
   setUnreadMap: StateSetter<Record<string, boolean>>;
   unreadMapRef: MutableRefObject<Record<string, boolean>>;
   walletAddress: string;
+  readAccounts?: WalletReadAccount[];
 };
 
 type ParsedDirectMessage = {
@@ -159,8 +163,39 @@ const readMessageChunk = async (
 ): Promise<unknown> => {
   return (contract as {
     getMessageChunk: (messageId: string, chunkIndex: number, options?: { from?: string }) => Promise<unknown>;
-  }).getMessageChunk(messageId, chunkIndex, { from: viewerAddress });
+}).getMessageChunk(messageId, chunkIndex, { from: viewerAddress });
 };
+
+const resolveReadableDirectAccounts = (
+  walletAddress: string,
+  hasAesReady: boolean,
+  readAccounts?: WalletReadAccount[]
+): WalletReadAccount[] => {
+  if (readAccounts && readAccounts.length > 0) {
+    return readAccounts
+      .filter((account) => account.canReadPrivate && isWalletAddress(account.address))
+      .map((account) => ({
+        ...account,
+        key: account.key || account.address.toLowerCase()
+      }));
+  }
+
+  const normalized = walletAddress.trim();
+  return hasAesReady && isWalletAddress(normalized)
+    ? [
+        {
+          address: normalized,
+          canReadPrivate: true,
+          isActionAccount: true,
+          key: normalized.toLowerCase(),
+          label: 'ChainWhisper account',
+          role: 'chainwhisper'
+        }
+      ]
+    : [];
+};
+
+const buildPerAccountContactKey = (accountKey: string, contactKey: string): string => `${accountKey}:${contactKey}`;
 
 export default function useDirectConversationSync(args: UseDirectConversationSyncArgs) {
   const argsRef = useRef(args);
@@ -209,7 +244,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       messageId: string,
       requestedWalletAddress: string,
       signer: Wallet | JsonRpcSigner,
-      cacheKey: string
+      cacheKey: string,
+      readAccount?: WalletReadAccount
     ): Promise<ParsedDirectMessage | null> => {
       const walletKey = requestedWalletAddress.toLowerCase();
       const view = await readMessageView(contract, messageId, requestedWalletAddress);
@@ -279,6 +315,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
               contact: contactAddress,
               direction,
               text: parsedMessage.cleanText,
+              accountAddress: readAccount?.address ?? requestedWalletAddress,
+              accountRole: readAccount?.role,
               replyToMessageId: parsedMessage.replyToMessageId,
               replyToText: parsedMessage.replyToText,
               replyToTxHash: parsedMessage.replyToTxHash,
@@ -288,6 +326,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
               reactionToBlockNumber: parsedMessage.embeddedReaction?.targetBlockNumber,
               reactionToLogIndex: parsedMessage.embeddedReaction?.targetLogIndex,
               reactionEmoji: parsedMessage.embeddedReaction?.emoji,
+              tradeReference: parsedMessage.tradeReference,
               txHash: messageKey,
               blockNumber: view.blockNumber,
               logIndex,
@@ -306,6 +345,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       currentWalletKeyRef,
       fetchOnChainNicknames,
       getMemoSigner,
+      getMemoSignerForAccount,
       hasAesReady,
       lastAutoBackupAttemptBlockRef,
       lastReadAllTsRef,
@@ -321,7 +361,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       setSyncingHistory,
       setUnreadMap,
       unreadMapRef,
-      walletAddress
+      walletAddress,
+      readAccounts
     } = argsRef.current;
 
     setError('');
@@ -329,7 +370,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
-    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
+    const readableAccounts = resolveReadableDirectAccounts(walletAddress, hasAesReady, readAccounts);
+    if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress) || readableAccounts.length === 0) {
       return;
     }
 
@@ -345,7 +387,6 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         setSyncingHistory(true);
       }
 
-      const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
@@ -366,64 +407,98 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       const discoveredNicknames = new Map<string, string>();
       const discoveredConversationStates = new Map<string, ConversationPreferenceState>();
       const latestIncomingMessageTimeByContact = new Map<string, number>();
+      const recentPeersByAccount = new Map<string, RecentPeerMeta[]>();
+      const signerBundles: Array<{ account: WalletReadAccount; signer: Wallet | JsonRpcSigner; cacheKey: string }> = [];
 
-      const recentPeersWithMeta = useActiveContactOnly
-        ? []
-        : await resolveRecentPeersWithMeta(contract, requestedWalletAddress);
-      const peersToRead = new Map<string, string>();
-      const addPeer = (address?: string | null) => {
-        const normalized = address?.trim() ?? '';
-        if (!isWalletAddress(normalized) || normalized.toLowerCase() === requestedWalletKey) {
-          return;
-        }
-        peersToRead.set(normalized.toLowerCase(), normalized);
-        discoveredContacts.add(normalized);
-      };
-
-      if (useActiveContactOnly) {
-        addPeer(activeContactAddress);
-      } else {
-        for (const peer of recentPeersWithMeta) {
-          addPeer(peer.address);
-        }
-        if (options?.deep) {
-          contacts.forEach((contact) => addPeer(contact.address));
+      for (const account of readableAccounts) {
+        try {
+          const signerBundle = getMemoSignerForAccount
+            ? await getMemoSignerForAccount(account)
+            : await getMemoSigner();
+          signerBundles.push({ account, ...signerBundle });
+        } catch (signerError) {
+          if (account.isActionAccount) {
+            throw signerError;
+          }
+          debugLog('[sync] skipped unreadable owner account', {
+            account: account.address,
+            reason: signerError instanceof Error ? signerError.message : String(signerError)
+          });
         }
       }
 
-      if (!options?.contactsOnly || shouldLoadContactPreviews || useActiveContactOnly) {
-        for (const peerAddress of peersToRead.values()) {
-          const count = await readConversationMessageCount(contract, requestedWalletAddress, peerAddress).catch(() => 0);
-          if (count <= 0) {
-            hasOlderHistoryByContactRef.current[peerAddress.toLowerCase()] = false;
-            continue;
+      if (signerBundles.length === 0) {
+        return;
+      }
+
+      for (const { account, signer, cacheKey } of signerBundles) {
+        const accountAddress = account.address.trim();
+        const accountKey = account.key || accountAddress.toLowerCase();
+        const recentPeersWithMeta = useActiveContactOnly
+          ? []
+          : await resolveRecentPeersWithMeta(contract, accountAddress);
+        recentPeersByAccount.set(accountKey, recentPeersWithMeta);
+        const peersToRead = new Map<string, string>();
+        const addPeer = (address?: string | null) => {
+          const normalized = address?.trim() ?? '';
+          if (!isWalletAddress(normalized) || normalized.toLowerCase() === accountKey) {
+            return;
           }
+          peersToRead.set(normalized.toLowerCase(), normalized);
+          discoveredContacts.add(normalized);
+        };
 
-          const limit = shouldLoadContactPreviews
-            ? 1
-            : Math.min(options?.deep ? CHAT_GC_DEEP_THREAD_PAGE_SIZE : CHAT_GC_THREAD_PAGE_SIZE, count);
-          const offset = Math.max(0, count - limit);
-          const ids = await readConversationMessageIds(contract, requestedWalletAddress, peerAddress, offset, limit);
-          oldestLoadedOffsetByContactRef.current[peerAddress.toLowerCase()] = offset;
-          hasOlderHistoryByContactRef.current[peerAddress.toLowerCase()] = offset > 0;
+        if (useActiveContactOnly) {
+          addPeer(activeContactAddress);
+        } else {
+          for (const peer of recentPeersWithMeta) {
+            addPeer(peer.address);
+          }
+          if (options?.deep) {
+            contacts.forEach((contact) => addPeer(contact.address));
+          }
+        }
 
-          for (const messageId of ids) {
-            const parsed = await parseMessageById(contract, messageId, requestedWalletAddress, signer, cacheKey);
-            if (!parsed) {
+        if (!options?.contactsOnly || shouldLoadContactPreviews || useActiveContactOnly) {
+          for (const peerAddress of peersToRead.values()) {
+            const peerKey = peerAddress.toLowerCase();
+            const cacheContactKey = buildPerAccountContactKey(accountKey, peerKey);
+            const count = await readConversationMessageCount(contract, accountAddress, peerAddress).catch(() => 0);
+            if (count <= 0) {
+              hasOlderHistoryByContactRef.current[cacheContactKey] = false;
               continue;
             }
-            discoveredContacts.add(parsed.contactAddress);
-            if (parsed.entry) {
-              entries.push(parsed.entry);
-            }
-            if (parsed.contactName) {
-              discoveredNicknames.set(parsed.contactAddress.toLowerCase(), parsed.contactName);
-            }
-            if (parsed.conversationState) {
-              discoveredConversationStates.set(parsed.contactAddress.toLowerCase(), parsed.conversationState);
-            }
-            if (typeof parsed.latestIncomingTime === 'number' && parsed.latestIncomingTime > 0) {
-              latestIncomingMessageTimeByContact.set(parsed.contactAddress.toLowerCase(), parsed.latestIncomingTime);
+
+            const limit = shouldLoadContactPreviews
+              ? 1
+              : Math.min(options?.deep ? CHAT_GC_DEEP_THREAD_PAGE_SIZE : CHAT_GC_THREAD_PAGE_SIZE, count);
+            const offset = Math.max(0, count - limit);
+            const ids = await readConversationMessageIds(contract, accountAddress, peerAddress, offset, limit);
+            oldestLoadedOffsetByContactRef.current[cacheContactKey] = offset;
+            hasOlderHistoryByContactRef.current[cacheContactKey] = offset > 0;
+
+            for (const messageId of ids) {
+              const parsed = await parseMessageById(contract, messageId, accountAddress, signer, cacheKey, account);
+              if (!parsed) {
+                continue;
+              }
+              discoveredContacts.add(parsed.contactAddress);
+              if (parsed.entry) {
+                entries.push(parsed.entry);
+              }
+              if (parsed.contactName) {
+                discoveredNicknames.set(parsed.contactAddress.toLowerCase(), parsed.contactName);
+              }
+              if (parsed.conversationState) {
+                discoveredConversationStates.set(parsed.contactAddress.toLowerCase(), parsed.conversationState);
+              }
+              if (typeof parsed.latestIncomingTime === 'number' && parsed.latestIncomingTime > 0) {
+                const latestExisting = latestIncomingMessageTimeByContact.get(parsed.contactAddress.toLowerCase()) ?? 0;
+                latestIncomingMessageTimeByContact.set(
+                  parsed.contactAddress.toLowerCase(),
+                  Math.max(latestExisting, parsed.latestIncomingTime)
+                );
+              }
             }
           }
         }
@@ -476,7 +551,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         new Set([
           ...contacts.map((contact) => contact.address),
           ...Array.from(discoveredContacts),
-          ...recentPeersWithMeta.map((peer) => peer.address)
+          ...Array.from(recentPeersByAccount.values()).flatMap((peers) => peers.map((peer) => peer.address))
         ])
       );
       const activeKey = isWalletAddress(activeContactAddress) ? activeContactAddress.toLowerCase() : undefined;
@@ -524,11 +599,20 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         lastSyncedBlockRef.current[requestedWalletKey] = latestBlock;
       }
 
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
+      setSessionOnboardInfo((previous) => {
+        let next = previous;
+        for (const { signer, cacheKey } of signerBundles) {
+          const nextOnboardInfo = signer.getUserOnboardInfo();
+          if (!nextOnboardInfo) {
+            continue;
+          }
+          next = {
+            ...next,
+            [cacheKey]: mergeOnboardInfo(next[cacheKey], nextOnboardInfo)
+          };
+        }
+        return next;
+      });
     } catch (syncError) {
       try {
         console.error('[sync] ChatGC error', syncError);
@@ -556,6 +640,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       currentWalletKeyRef,
       fetchOnChainNicknames,
       getMemoSigner,
+      getMemoSignerForAccount,
       hasAesReady,
       messagesByContact,
       setContacts,
@@ -563,10 +648,18 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       setLoadingOlderHistory,
       setMessagesByContact,
       setSessionOnboardInfo,
-      walletAddress
+      walletAddress,
+      readAccounts
     } = argsRef.current;
 
-    if (loadingOlderHistoryRef.current || syncingHistoryRef.current || !walletAddress || !activeContact || !hasAesReady) {
+    const readableAccounts = resolveReadableDirectAccounts(walletAddress, hasAesReady, readAccounts);
+    if (
+      loadingOlderHistoryRef.current ||
+      syncingHistoryRef.current ||
+      !walletAddress ||
+      !activeContact ||
+      readableAccounts.length === 0
+    ) {
       return;
     }
 
@@ -587,7 +680,6 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       setLoadingOlderHistory(true);
       setError('');
 
-      const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
       const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
@@ -595,35 +687,57 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         return;
       }
 
-      const count = await readConversationMessageCount(contract, requestedWalletAddress, contactAddress);
-      const loadedConfirmedCount = (messagesByContact[contactKey] ?? []).filter(
-        (message) => !message.id.startsWith('local-') && message.txHash?.startsWith('chatgc:')
-      ).length;
-      const currentOffset =
-        oldestLoadedOffsetByContactRef.current[contactKey] ?? Math.max(0, count - loadedConfirmedCount);
-      if (count <= 0 || currentOffset <= 0) {
-        hasOlderHistoryByContactRef.current[contactKey] = false;
-        return;
-      }
-
-      const nextOffset = Math.max(0, currentOffset - CHAT_GC_THREAD_PAGE_SIZE);
-      const limit = currentOffset - nextOffset;
-      const ids = await readConversationMessageIds(contract, requestedWalletAddress, contactAddress, nextOffset, limit);
-      oldestLoadedOffsetByContactRef.current[contactKey] = nextOffset;
-      hasOlderHistoryByContactRef.current[contactKey] = nextOffset > 0;
-
       const entries: HistoryEntry[] = [];
       const discoveredNicknames = new Map<string, string>();
-      for (const messageId of ids) {
-        const parsed = await parseMessageById(contract, messageId, requestedWalletAddress, signer, cacheKey);
-        if (!parsed) {
+      const signerBundles: Array<{ account: WalletReadAccount; signer: Wallet | JsonRpcSigner; cacheKey: string }> = [];
+      for (const account of readableAccounts) {
+        try {
+          const signerBundle = getMemoSignerForAccount
+            ? await getMemoSignerForAccount(account)
+            : await getMemoSigner();
+          signerBundles.push({ account, ...signerBundle });
+        } catch (signerError) {
+          if (account.isActionAccount) {
+            throw signerError;
+          }
+        }
+      }
+
+      for (const { account, signer, cacheKey } of signerBundles) {
+        const accountAddress = account.address.trim();
+        const accountKey = account.key || accountAddress.toLowerCase();
+        const accountContactCacheKey = buildPerAccountContactKey(accountKey, contactKey);
+        const count = await readConversationMessageCount(contract, accountAddress, contactAddress).catch(() => 0);
+        const loadedConfirmedCount = (messagesByContact[contactKey] ?? []).filter(
+          (message) =>
+            !message.id.startsWith('local-') &&
+            message.txHash?.startsWith('chatgc:') &&
+            (message.accountAddress ?? requestedWalletAddress).trim().toLowerCase() === accountKey
+        ).length;
+        const currentOffset =
+          oldestLoadedOffsetByContactRef.current[accountContactCacheKey] ?? Math.max(0, count - loadedConfirmedCount);
+        if (count <= 0 || currentOffset <= 0) {
+          hasOlderHistoryByContactRef.current[accountContactCacheKey] = false;
           continue;
         }
-        if (parsed.entry) {
-          entries.push(parsed.entry);
-        }
-        if (parsed.contactName) {
-          discoveredNicknames.set(parsed.contactAddress.toLowerCase(), parsed.contactName);
+
+        const nextOffset = Math.max(0, currentOffset - CHAT_GC_THREAD_PAGE_SIZE);
+        const limit = currentOffset - nextOffset;
+        const ids = await readConversationMessageIds(contract, accountAddress, contactAddress, nextOffset, limit);
+        oldestLoadedOffsetByContactRef.current[accountContactCacheKey] = nextOffset;
+        hasOlderHistoryByContactRef.current[accountContactCacheKey] = nextOffset > 0;
+
+        for (const messageId of ids) {
+          const parsed = await parseMessageById(contract, messageId, accountAddress, signer, cacheKey, account);
+          if (!parsed) {
+            continue;
+          }
+          if (parsed.entry) {
+            entries.push(parsed.entry);
+          }
+          if (parsed.contactName) {
+            discoveredNicknames.set(parsed.contactAddress.toLowerCase(), parsed.contactName);
+          }
         }
       }
 
@@ -658,11 +772,20 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         );
       }
 
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
+      setSessionOnboardInfo((previous) => {
+        let next = previous;
+        for (const { signer, cacheKey } of signerBundles) {
+          const nextOnboardInfo = signer.getUserOnboardInfo();
+          if (!nextOnboardInfo) {
+            continue;
+          }
+          next = {
+            ...next,
+            [cacheKey]: mergeOnboardInfo(next[cacheKey], nextOnboardInfo)
+          };
+        }
+        return next;
+      });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load older history.');
     } finally {
@@ -671,7 +794,8 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     }
   };
 
-  const { activeContact, activeGroupId, activeMessagesLength, hasAesReady, walletAddress } = args;
+  const { activeContact, activeGroupId, activeMessagesLength, hasAesReady, walletAddress, readAccounts } = args;
+  const hasReadableDirectAccount = resolveReadableDirectAccounts(walletAddress, hasAesReady, readAccounts).length > 0;
   useEffect(() => {
     if (
       !activeContact ||
@@ -679,7 +803,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       syncingHistoryRef.current ||
       loadingOlderHistoryRef.current ||
       !walletAddress ||
-      !hasAesReady
+      !hasReadableDirectAccount
     ) {
       return;
     }
@@ -710,7 +834,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     activeContact,
     activeGroupId,
     activeMessagesLength,
-    hasAesReady,
+    hasReadableDirectAccount,
     loadOlderMessagesForActiveContact,
     walletAddress
   ]);

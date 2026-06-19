@@ -23,7 +23,7 @@ type AppWalletSwitchButtonProps = {
 export default function AppWalletSwitchButton({
   disabled = false,
   menuOpen,
-  menuLabel = 'App wallets',
+  menuLabel = 'Accounts',
   onSelectWallet,
   onToggleMenu,
   options,

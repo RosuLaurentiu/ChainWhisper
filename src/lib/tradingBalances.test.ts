@@ -9,7 +9,7 @@ import {
   buildTradeCustomTokenInfoKey,
   type TradeCustomTokenInfo
 } from './appHelpers';
-import { buildVisibleTradingBalanceItems } from './tradingBalances';
+import { buildTotalTradingBalanceItems, buildVisibleTradingBalanceItems } from './tradingBalances';
 
 const walletKey = '0x1234567890abcdef1234567890abcdef12345678';
 const tokenUnits = (amount: bigint, decimals = 6): bigint => amount * 10n ** BigInt(decimals);
@@ -132,5 +132,40 @@ describe('trading balance display model', () => {
     expect(items.find((item) => item.symbol === 'Pengo')?.amountLabel).toBe('957,570');
     expect(items.find((item) => item.symbol === 'pWISP')?.amountLabel).toBe('12.34');
     expect(items.find((item) => item.symbol === 'WISP')?.amountLabel).toBe('<0.01');
+  });
+
+  it('builds total balances across ChainWhisper and owner wallets', () => {
+    const chainwhisperItems = buildVisibleTradingBalanceItems({
+      accountRole: 'chainwhisper',
+      customTradeTokenInfoByAddress: {},
+      nativeBalanceWei: 9n * 10n ** 18n,
+      privateRewardTokenBalanceState: { status: 'ready', balanceWei: tokenUnits(109n) },
+      privateRewardTokenDecimals: 6,
+      privateRewardTokenSymbol: 'pWISP',
+      rewardTokenBalanceWei: tokenUnits(228_962n),
+      rewardTokenDecimals: 6,
+      rewardTokenSymbol: 'WISP',
+      walletKey
+    });
+    const ownerItems = buildVisibleTradingBalanceItems({
+      accountRole: 'owner',
+      customTradeTokenInfoByAddress: {},
+      nativeBalanceWei: 34_321n * 10n ** 18n,
+      privateRewardTokenBalanceState: { status: 'ready', balanceWei: tokenUnits(963n) },
+      privateRewardTokenDecimals: 6,
+      privateRewardTokenSymbol: 'pWISP',
+      rewardTokenBalanceWei: tokenUnits(20_000n),
+      rewardTokenDecimals: 6,
+      rewardTokenSymbol: 'WISP',
+      walletKey
+    });
+
+    const totals = buildTotalTradingBalanceItems([...chainwhisperItems, ...ownerItems]);
+
+    expect(totals.map((item) => `${item.symbol}:${item.amountLabel}`)).toEqual([
+      'COTI:34,330',
+      'WISP:248,962',
+      'pWISP:1,072'
+    ]);
   });
 });

@@ -30,6 +30,7 @@ type SubmitDirectMemoArgs = {
   selector: string;
   requiredFee: bigint;
   encodeMemo: (plain: string) => string;
+  allowMultipart?: boolean;
 };
 
 type SubmitHiddenContactNameArgs = {
@@ -57,7 +58,8 @@ export const submitDirectMemo = async ({
   plainText,
   selector,
   requiredFee,
-  encodeMemo
+  encodeMemo,
+  allowMultipart = true
 }: SubmitDirectMemoArgs): Promise<{ txHash: string; wait: () => Promise<unknown> }> => {
   const normalizedAddress = contactAddress.trim();
   if (!isWalletAddress(normalizedAddress)) {
@@ -81,15 +83,27 @@ export const submitDirectMemo = async ({
         try {
           return await contract.submit(normalizedAddress, submitMemoPayloadToTuple(submitMemoPayload), { value: requiredFee });
         } catch (submitError) {
+          if (!allowMultipart && isLikelySingleSubmitSizeError(submitError)) {
+            throw new Error('Message is too large for MetaMask single-sign send. Try a shorter message.');
+          }
           if (!isLikelySingleSubmitSizeError(submitError)) {
             throw submitError;
           }
         }
+      } else if (!allowMultipart) {
+        throw new Error('Message is too large for MetaMask single-sign send. Try a shorter message.');
       }
     } catch (singleSubmitError) {
+      if (!allowMultipart && isLikelySingleSubmitSizeError(singleSubmitError)) {
+        throw singleSubmitError;
+      }
       if (!isLikelySingleSubmitSizeError(singleSubmitError)) {
         throw singleSubmitError;
       }
+    }
+
+    if (!allowMultipart) {
+      throw new Error('Message is too large for MetaMask single-sign send. Try a shorter message.');
     }
 
     const chunks = splitUtf8SafeChunks(plainText);

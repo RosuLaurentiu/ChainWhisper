@@ -50,6 +50,8 @@ type UseInChatTradeActionsArgs = {
   parsedTradeOfferAmountWei: bigint | null;
   parsedTradeRequestAmountWei: bigint | null;
   processingTradeActionId: string;
+  onRequestAccountFunding?: (message: string) => void;
+  preflightDirectMessageSend: (messageText: string, replyTarget?: ChatMessage | null) => boolean;
   replyingToMessage: ChatMessage | null;
   runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
@@ -78,12 +80,13 @@ type UseInChatTradeActionsArgs = {
   setTradeRequestTokenSelection: (next: TradeTokenPresetKey) => void;
   setTradeSnapshotsById: Dispatch<SetStateAction<Record<string, TradeSnapshot>>>;
   tipping: boolean;
-  topUpBurnerWithWallet: () => Promise<void>;
   tradeComposerValidationMessage: string;
   tradeCounterContext: PendingTradeCounterContext | null;
   tradeCounterParentId: number | null;
   walletAddress: string;
 };
+
+const ESTIMATED_DIRECT_TRADE_NOTIFICATION_TRADE_ID = 999_999_999;
 
 export default function useInChatTradeActions({
   activeContact,
@@ -95,6 +98,8 @@ export default function useInChatTradeActions({
   parsedTradeOfferAmountWei,
   parsedTradeRequestAmountWei,
   processingTradeActionId,
+  onRequestAccountFunding,
+  preflightDirectMessageSend,
   replyingToMessage,
   runWalletTransactionFlow,
   resolveRequiredFeeForTradeCreate,
@@ -123,7 +128,6 @@ export default function useInChatTradeActions({
   setTradeRequestTokenSelection,
   setTradeSnapshotsById,
   tipping,
-  topUpBurnerWithWallet,
   tradeComposerValidationMessage,
   tradeCounterContext,
   tradeCounterParentId,
@@ -164,6 +168,23 @@ export default function useInChatTradeActions({
       return;
     }
 
+    const directAccessSecret = createTradeAccessSecret();
+    const estimatedCreatedAt = Math.floor(Date.now() / 1000);
+    const estimatedTradeMessagePayload = buildTradeOfferMessagePayload({
+      version: 2,
+      tradeId: ESTIMATED_DIRECT_TRADE_NOTIFICATION_TRADE_ID,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      maker: requestedWalletAddress,
+      taker: activeContact,
+      createdAt: estimatedCreatedAt,
+      expiresAt: estimatedCreatedAt + parsedTradeExpiryHours * 3600,
+      parentTradeId: tradeCounterParentId ?? undefined,
+      accessSecret: directAccessSecret || undefined
+    });
+    if (!preflightDirectMessageSend(estimatedTradeMessagePayload, overrideReplyTarget ?? replyingToMessage)) {
+      return;
+    }
+
     try {
       setCreatingTrade(true);
       if (pendingCounterContext) {
@@ -200,7 +221,6 @@ export default function useInChatTradeActions({
       const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
       const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
       const publicOfferAmount = parsedTradeOfferAmountWei;
-      const directAccessSecret = createTradeAccessSecret();
       const createResult =
         isCounterReplacement && counteredSnapshot
           ? await counterTradeAndCloseCounteredTradeOnChain({
@@ -318,12 +338,7 @@ export default function useInChatTradeActions({
           : getOnChainFailureMessage(tradeError, 'Failed to create trade offer.');
       setError(message);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
+        onRequestAccountFunding?.(message);
       }
     } finally {
       setCreatingTrade(false);

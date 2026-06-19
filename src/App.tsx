@@ -1,5 +1,10 @@
-import { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppErrorBoundary from './components/AppErrorBoundary';
+import type {
+  AccountFundsAssetOption,
+  AccountFundsDirection,
+  AccountFundsSubmitRequest
+} from './components/AccountFundsModal';
 import AppHeader from './components/AppHeader';
 import ContactsSidebar from './components/ContactsSidebar';
 import GroupActionControls from './components/GroupActionControls';
@@ -9,7 +14,7 @@ import MobileBottomNav from './components/MobileBottomNav';
 import { readChatComposerText } from './components/chatComposeText';
 import useBlockTimestampCache from './hooks/useBlockTimestampCache';
 import { useBurnerWallet } from './hooks/useBurnerWallet';
-import useChatWalletHeaderControl from './hooks/useChatWalletHeaderControl';
+import useAppWalletHeaderControl from './hooks/useChatWalletHeaderControl';
 import useDirectConversationSync from './hooks/useDirectConversationSync';
 import useGroupAdminActions from './hooks/useGroupAdminActions';
 import useInChatTradeActions from './hooks/useInChatTradeActions';
@@ -21,6 +26,8 @@ import { useWalletOnboarding } from './hooks/useWalletOnboarding';
 import {
   buildMessageReferenceKey,
   buildMessageReferenceKeys,
+  buildPrivateTradeTokenSymbolOrder,
+  buildPublicTradeTokenSymbolOrder,
   buildTradeCustomTokenInfoKey,
   DEFAULT_TRADE_EXPIRY_HOURS,
   getVerifiedEcosystemToken,
@@ -30,6 +37,7 @@ import {
   parseSharedTxReference,
   resolveTradePresetKind,
   sanitizeOutgoingMessagePlainText,
+  VERIFIED_ECOSYSTEM_TOKENS,
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from './lib/appHelpers';
@@ -42,12 +50,17 @@ import {
 import {
   buildWalletAesHealthState,
   getOrRecoverAesForWallet,
-  hydrateSignerWithFallbackAesSession,
   type WalletAesHealthState
 } from './lib/cotiAesUnlock';
+import { getCotiSnapOwnerAesKeyResult, getCotiSnapOwnerAesStatusMessage } from './lib/cotiSnap';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
+import { buildTradeMessageReferenceFromContext, type LinkedTradeContext } from './lib/linkedTradeContext';
 import { submitGroupMemo } from './lib/groupChatChain';
 import { isWalletTransactionFlowActive, runWalletTransactionFlow } from './lib/walletTransactionFlow';
+import {
+  transferWalletFundAsset,
+  type WalletFundAsset
+} from './lib/walletFunds';
 import {
   submitDirectMemo,
   submitHiddenContactNameMemo,
@@ -66,6 +79,11 @@ import {
   setStoredGroupRemovalNoticeMarker as setStoredGroupRemovalNoticeMarkerStorage
 } from './lib/appStorage';
 import { sendChatImageAttachment } from './lib/chatImageAttachment';
+import {
+  buildMetaMaskPromptEstimateMessage,
+  estimateChatWalletPromptLoad,
+  type ChatWalletPromptEstimate
+} from './lib/chatWalletPromptEstimate';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { mergeDirectSyncOptions } from './lib/directSyncPlan';
 import { syncActiveGroupMessagesFast, type GroupMessageSyncContract } from './lib/groupMessageSync';
@@ -82,10 +100,18 @@ import {
 } from './lib/groupSyncPlan';
 import {
   hasSessionAesKey,
+  resolveOwnerLocalAccountAutoConnectAttemptKey,
+  resolveOwnerRecoveryAutoConnectAttemptKey,
+  resolveOwnerRecoveryWalletState,
   resolveWalletBlockedActionLabel,
   type SharedWalletSession,
   type WalletSessionActions
 } from './lib/walletSession';
+import {
+  buildWalletReadAccountsKey,
+  buildWalletAccountScope,
+  type WalletReadAccount
+} from './lib/walletAccountScope';
 import {
   getPathForAppPage,
   resolveAppRouteFromPath,
@@ -108,13 +134,15 @@ import { useChatUiStore } from './state/chatUiStore';
 import { useGroupUiStore } from './state/groupUiStore';
 import { useInChatTradeStore } from './state/inChatTradeStore';
 import { useTokenToolsStore } from './state/tokenToolsStore';
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
   AUTO_SYNC_INTERVAL_MS,
   BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI,
   buildTradeSnapshotKey,
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
+  buildTradeOfferMessagePayload,
+  buildMessageWithTradeReferencePayload,
   BURNER_PIN_MIN_LENGTH,
   BurnerWalletRecord,
   calculateEstimatedBurnerTopUpAmount,
@@ -126,6 +154,7 @@ import {
   ConversationPreferenceState,
   COPY_FEEDBACK_DURATION_MS,
   COTI_NETWORK,
+  CW_PROFILE_REGISTRY_CONTRACT_ADDRESS,
   createCotiBrowserProvider,
   decodeMemoPlaintextStrict,
   encodeCompactMemoPlaintext,
@@ -168,6 +197,7 @@ import {
   normalizeReactionEmoji,
   normalizeTokenDecimals,
   parseChatMessagePayload,
+  parseBurnerWalletStorageState,
   parseTradeOfferMessagePayload,
   parseStoredGroupTitle,
   parseSubmitMemoPayload,
@@ -204,8 +234,10 @@ import {
 } from './lib/appShared';
 
 const BurnerBackupModal = lazy(() => import('./components/BurnerBackupModal'));
+const AccountFundsModal = lazy(() => import('./components/AccountFundsModal'));
 const BurnerImportModal = lazy(() => import('./components/BurnerImportModal'));
 const BurnerPinModal = lazy(() => import('./components/BurnerPinModal'));
+const RecoverySaveConfirmModal = lazy(() => import('./components/RecoverySaveConfirmModal'));
 const QuickActionsModal = lazy(() => import('./components/QuickActionsModal'));
 const TopUpModal = lazy(() => import('./components/TopUpModal'));
 let directChatPanelModulePromise: Promise<typeof import('./components/DirectChatPanel')> | null = null;
@@ -297,8 +329,19 @@ const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   !offer.hiddenLiquidity &&
   offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
+const BROWSER_WALLET_DIRECT_MESSAGE_MAX_LENGTH = 240;
+const METAMASK_PROMPT_WARNING_WALLET_PROMPTS = 3;
+const ESTIMATED_DIRECT_TRADE_NOTIFICATION_TRADE_ID = 999_999_999;
+const ESTIMATED_DIRECT_TRADE_ACCESS_SECRET = `0x${'f'.repeat(64)}`;
 const WISP_BRIDGE_WRITE_GAS_LIMIT = 6_000_000n;
 const WISP_BRIDGE_PRIVATE_TOKEN_APPROVAL_GAS_LIMIT = 6_000_000n;
+
+const resolveMetaMaskPromptEstimateTone = (
+  estimate: ChatWalletPromptEstimate
+): 'ok' | 'warning' =>
+  estimate.likelyMultipart || estimate.estimatedWalletPrompts >= METAMASK_PROMPT_WARNING_WALLET_PROMPTS
+    ? 'warning'
+    : 'ok';
 
 export default function App() {
   const MOBILE_NAV_BREAKPOINT_PX = 920;
@@ -308,6 +351,7 @@ export default function App() {
   >({});
   const [activeContact, setActiveContact] = useState<string | null>(null);
   const [activeGroupId, setActiveGroupId] = useState<number | null>(null);
+  const [linkedTradeContext, setLinkedTradeContext] = useState<LinkedTradeContext | null>(null);
   const [myNickname, setMyNickname] = useState('');
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});
@@ -519,7 +563,15 @@ export default function App() {
     stopNotificationSound
   } = useNotificationSound(soundEnabled);
   const [error, setError] = useState<string>('');
-  const [tradeHeaderWalletControl, setTradeHeaderWalletControl] = useState<ReactNode>(null);
+  const [accountFundsDirection, setAccountFundsDirection] = useState<AccountFundsDirection | null>(null);
+  const [accountFundsProcessing, setAccountFundsProcessing] = useState(false);
+  const [ownerNativeBalanceWei, setOwnerNativeBalanceWei] = useState<bigint | null>(null);
+  const [ownerRewardTokenBalanceWei, setOwnerRewardTokenBalanceWei] = useState<bigint | null>(null);
+  const [ownerPrivateRewardTokenBalanceWei, setOwnerPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
+  const [ownerPrivateRewardBalanceLocked, setOwnerPrivateRewardBalanceLocked] = useState(false);
+  const [ownerCustomTradeTokenInfoByAddress, setOwnerCustomTradeTokenInfoByAddress] = useState<
+    Record<string, TradeCustomTokenInfo>
+  >({});
   const [walletAesHealthByAddress, setWalletAesHealthByAddress] = useState<Record<string, WalletAesHealthState>>({});
   const {
     activePage,
@@ -890,7 +942,9 @@ export default function App() {
   );
   const {
     beginBurnerPinFlow,
+    beginLinkExistingPinWallet,
     beginRevealBurnerBackup,
+    bootstrapOwnerLinkedAccount,
     burnerAddress,
     burnerBalanceWei,
     burnerImportInput,
@@ -902,17 +956,29 @@ export default function App() {
     burnerWalletRef,
     burnerWalletSelectionValue,
     burnerWallets,
+    cancelRecoverySavePrompt,
     closeBurnerBackup,
     closeBurnerPinModal,
+    confirmRecoverySavePrompt,
+    checkingOwnerRecovery,
+    deleteActiveRecoveryProfile,
     importBurnerWallet,
     initializingBurner,
+    isAppWalletRecoveryConfigured,
+    linkBurnerRecoveryWithWallet,
     openChangeBurnerPin,
+    ownerRecoveryError,
+    recoverySavePrompt,
+    recoverLinkedBurnerWallet,
+    recoveringAppWallet,
     resetBurnerSession,
     savedBurnerWalletCount,
+    setActiveRecoveryProfileAsDefault,
     setBurnerBalanceWei,
     setBurnerImportInput,
     setBurnerPinInput,
     setShowBurnerImportModal,
+    setRecoverySavePromptMakeDefault,
     setTopUpMetricsNonce,
     setTopUpMessageTarget,
     showBurnerImportModal,
@@ -925,6 +991,7 @@ export default function App() {
     topUpMessageTarget
   } = useBurnerWallet({
     activeSignerSource,
+    browserWalletSession,
     currentWalletKeyRef,
     ensureCotiNetwork,
     loadMyNicknameFromChainRef,
@@ -948,6 +1015,16 @@ export default function App() {
     walletAddress
   });
   resetBurnerSessionRef.current = resetBurnerSession;
+  const ownerSnapAesAutoUnlockAttemptRef = useRef('');
+  const ownerLocalAccountAutoConnectAttemptRef = useRef('');
+  const ownerRecoveryAutoConnectAttemptRef = useRef('');
+  const [ownerRecoveryAttemptNonce, setOwnerRecoveryAttemptNonce] = useState(0);
+  const resetOwnerRecoveryAttempt = useCallback(() => {
+    ownerSnapAesAutoUnlockAttemptRef.current = '';
+    ownerLocalAccountAutoConnectAttemptRef.current = '';
+    ownerRecoveryAutoConnectAttemptRef.current = '';
+    setOwnerRecoveryAttemptNonce((previous) => previous + 1);
+  }, []);
 
   useEffect(() => {
     if (preferredBrowserWalletId) {
@@ -1008,7 +1085,8 @@ export default function App() {
   const onCotiNetwork = chainId === COTI_NETWORK.chainIdDecimal;
   const browserWalletLiteMode = activeSignerSource === 'metamask';
   const readStateFeaturesEnabled = activeSignerSource === 'burner';
-  const browserWalletLiteModeTitle = 'Use the app wallet for this chat feature.';
+  const browserWalletLiteModeTitle = 'Use the ChainWhisper account for this chat feature.';
+  const directMessageMaxLength = browserWalletLiteMode ? BROWSER_WALLET_DIRECT_MESSAGE_MAX_LENGTH : MAX_MESSAGE_LENGTH;
   useEffect(() => {
     if (readStateFeaturesEnabled) {
       return;
@@ -1473,6 +1551,14 @@ export default function App() {
     () => contacts.find((contact) => contact.address.toLowerCase() === activeContact?.toLowerCase()),
     [contacts, activeContact]
   );
+  const activeLinkedTradeContext = useMemo(() => {
+    const activeContactKey = activeContact?.trim().toLowerCase() ?? '';
+    const contextContactKey = linkedTradeContext?.counterpartyAddress?.trim().toLowerCase() ?? '';
+    return activeContactKey && contextContactKey && activeContactKey === contextContactKey ? linkedTradeContext : null;
+  }, [activeContact, linkedTradeContext]);
+  const activeLinkedTradeContextCopyKey = activeLinkedTradeContext
+    ? `linked-trade-context:${activeLinkedTradeContext.escrowContract ?? 'default'}:${activeLinkedTradeContext.tradeId}`
+    : '';
   const isConversationStateSyncPending = useCallback(
     (address?: string | null): boolean => {
       const normalized = String(address ?? '').trim().toLowerCase();
@@ -1503,6 +1589,32 @@ export default function App() {
     },
     [walletAddress, sessionOnboardInfo, walletAesHealthByAddress]
   );
+  const { ownerAesKey, ownerAesReady, ownerWalletAddress } = useMemo(
+    () =>
+      resolveOwnerRecoveryWalletState({
+        activeSignerSource,
+        browserWalletAddress: browserWalletSession?.address,
+        sessionOnboardInfo,
+        walletAddress,
+        walletAesHealthByAddress
+      }),
+    [activeSignerSource, browserWalletSession?.address, sessionOnboardInfo, walletAddress, walletAesHealthByAddress]
+  );
+  const walletAccountScope = useMemo(
+    () =>
+      buildWalletAccountScope({
+        actionAddress: walletAddress,
+        actionAesReady: hasAesReady,
+        ownerAddress: ownerWalletAddress,
+        ownerAesReady
+      }),
+    [hasAesReady, ownerAesReady, ownerWalletAddress, walletAddress]
+  );
+  const readableWalletAccounts = walletAccountScope.readAccounts;
+  const readableWalletAccountKeys = useMemo(
+    () => buildWalletReadAccountsKey(readableWalletAccounts, { includePrivateReadState: true }),
+    [readableWalletAccounts]
+  );
   const canManageActiveGroupJoinCodes = useMemo(() => {
     if (activeGroupId === null) {
       return false;
@@ -1518,6 +1630,108 @@ export default function App() {
     }
   }, [canManageActiveGroupJoinCodes, groupInviteMenuView]);
   const hasSavedBurnerWallet = savedBurnerWalletCount > 0;
+  const bootstrapOwnerRecoveryOnce = useCallback(
+    async (ownerAddress: string, aesKey: string) => {
+      const ownerKey = ownerAddress.trim().toLowerCase();
+      const normalizedAesKey = aesKey.trim();
+      if (!ownerKey || !normalizedAesKey || burnerWalletRef.current) {
+        return;
+      }
+
+      const bootstrapAttemptKey = resolveOwnerRecoveryAutoConnectAttemptKey({
+        attemptNonce: ownerRecoveryAttemptNonce,
+        chainId,
+        hasAesReady: Boolean(normalizedAesKey),
+        initializing: false,
+        ownerAddress,
+        ownerAesKey: normalizedAesKey,
+        recoveryConfigured: Boolean(CW_PROFILE_REGISTRY_CONTRACT_ADDRESS),
+        registryAddress: CW_PROFILE_REGISTRY_CONTRACT_ADDRESS
+      });
+      if (!bootstrapAttemptKey) {
+        return;
+      }
+      if (ownerRecoveryAutoConnectAttemptRef.current === bootstrapAttemptKey) {
+        return;
+      }
+
+      ownerRecoveryAutoConnectAttemptRef.current = bootstrapAttemptKey;
+      await bootstrapOwnerLinkedAccount({
+        ownerAddress,
+        ownerAesKey: normalizedAesKey
+      });
+    },
+    [bootstrapOwnerLinkedAccount, chainId, ownerRecoveryAttemptNonce]
+  );
+
+  useEffect(() => {
+    if (
+      chainId !== COTI_NETWORK.chainIdDecimal ||
+      !ownerWalletAddress ||
+      connectingMethod !== null ||
+      initializingBurner ||
+      recoveringAppWallet ||
+      showBurnerPinModal ||
+      showBurnerImportModal ||
+      burnerWalletRef.current
+    ) {
+      return;
+    }
+
+    const ownerKey = ownerWalletAddress.trim().toLowerCase();
+    const storageState = parseBurnerWalletStorageState();
+    const localAccountAttemptKey = resolveOwnerLocalAccountAutoConnectAttemptKey({
+      attemptNonce: ownerRecoveryAttemptNonce,
+      chainId,
+      initializing: initializingBurner,
+      ownerAddress: ownerWalletAddress,
+      ownerAesKey,
+      storageState
+    });
+
+    if (ownerAesReady && ownerAesKey.trim()) {
+      if (localAccountAttemptKey) {
+        if (ownerLocalAccountAutoConnectAttemptRef.current !== localAccountAttemptKey) {
+          ownerLocalAccountAutoConnectAttemptRef.current = localAccountAttemptKey;
+          beginBurnerPinFlow('stored').catch(() => {
+            ownerLocalAccountAutoConnectAttemptRef.current = '';
+          });
+        }
+        return;
+      }
+      bootstrapOwnerRecoveryOnce(ownerWalletAddress, ownerAesKey).catch(() => {});
+      return;
+    }
+
+    const snapAttemptKey = `${ownerKey}:${chainId}:${ownerRecoveryAttemptNonce}`;
+    if (ownerSnapAesAutoUnlockAttemptRef.current === snapAttemptKey) {
+      return;
+    }
+
+    ownerSnapAesAutoUnlockAttemptRef.current = snapAttemptKey;
+    activateBrowserWalletSessionGuarded(undefined, {
+      preparePrivacy: true
+    })
+      .then((onboardInfo) => {
+        const returnedOwnerAesKey = typeof onboardInfo?.aesKey === 'string' ? onboardInfo.aesKey.trim() : '';
+        return bootstrapOwnerRecoveryOnce(ownerWalletAddress, returnedOwnerAesKey);
+      })
+      .catch(() => {});
+  }, [
+    activateBrowserWalletSessionGuarded,
+    beginBurnerPinFlow,
+    bootstrapOwnerRecoveryOnce,
+    chainId,
+    connectingMethod,
+    initializingBurner,
+    ownerAesKey,
+    ownerAesReady,
+    ownerRecoveryAttemptNonce,
+    ownerWalletAddress,
+    recoveringAppWallet,
+    showBurnerImportModal,
+    showBurnerPinModal
+  ]);
   const findContactNameForWalletAddress = (address?: string): string | undefined => {
     if (!address) {
       return undefined;
@@ -1645,7 +1859,7 @@ export default function App() {
         ? formatTokenAmount(swapPrivateRewardTokenBalanceWei, swapPrivateRewardTokenDecimals, 4)
         : hasAesReady
           ? '--'
-          : 'AES';
+          : 'locked';
     return `${rewardTokenSymbol} ${publicBalance} | ${swapPrivateRewardTokenSymbol} ${privateBalance}`;
   }, [
     loadingRewardBalances,
@@ -1687,15 +1901,364 @@ export default function App() {
         ? swapBlockedActionLabel
         : parsedSwapAmount === null || parsedSwapAmount <= 0n
           ? `Enter ${swapInputSymbol} amount`
-          : swapDirection === 'shield'
+        : swapDirection === 'shield'
             ? `Move to ${swapPrivateRewardTokenSymbol}`
             : `Move to ${rewardTokenSymbol}`;
+  const getOwnerFundsSigner = useCallback(
+    async (requirePrivacy: boolean): Promise<JsonRpcSigner> => {
+      const normalizedOwnerAddress = ownerWalletAddress.trim();
+      if (!normalizedOwnerAddress || !isWalletAddress(normalizedOwnerAddress)) {
+        throw new Error('Connect the owner wallet first.');
+      }
+
+      const connectedProvider = browserWalletSession?.provider ?? getConnectedProvider();
+      const provider = await resolveWalletPromptProvider(connectedProvider, normalizedOwnerAddress);
+      if (!provider) {
+        throw new Error('Owner wallet provider not detected. Connect the owner wallet first.');
+      }
+
+      if (chainId !== COTI_NETWORK.chainIdDecimal || provider !== connectedProvider) {
+        await ensureCotiNetwork(provider);
+        const currentChain = (await provider.request({ method: 'eth_chainId' })) as string | number;
+        setChainId(normalizeChainId(currentChain));
+      }
+
+      const cacheKey = normalizedOwnerAddress.toLowerCase();
+      const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
+      let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
+      if (signer && signerProviderCacheRef.current[cacheKey] !== provider) {
+        delete signerCacheRef.current[cacheKey];
+        delete signerProviderCacheRef.current[cacheKey];
+        signer = undefined;
+      }
+      if (!signer) {
+        const browserProvider = await createCotiBrowserProvider(provider);
+        signer = await browserProvider.getSigner(normalizedOwnerAddress, cachedOnboardInfo);
+        signer.disableAutoOnboard();
+        signerCacheRef.current[cacheKey] = signer;
+        signerProviderCacheRef.current[cacheKey] = provider;
+      } else if (cachedOnboardInfo) {
+        signer.setUserOnboardInfo(cachedOnboardInfo);
+      }
+
+      signer.disableAutoOnboard();
+      const cachedOwnerAesKey = ownerAesKey.trim();
+      if (cachedOwnerAesKey && !signer.getUserOnboardInfo()?.aesKey) {
+        signer.setUserOnboardInfo(
+          mergeOnboardInfo(signer.getUserOnboardInfo(), {
+            aesKey: cachedOwnerAesKey
+          } as OnboardInfo)
+        );
+      }
+
+      if (requirePrivacy && !signer.getUserOnboardInfo()?.aesKey) {
+        const snapAesResult = await getCotiSnapOwnerAesKeyResult(provider, normalizedOwnerAddress);
+        if (snapAesResult.status !== 'ready') {
+          throw new Error(getCotiSnapOwnerAesStatusMessage(snapAesResult.status));
+        }
+        signer.setUserOnboardInfo(
+          mergeOnboardInfo(signer.getUserOnboardInfo(), {
+            aesKey: snapAesResult.aesKey
+          } as OnboardInfo)
+        );
+      }
+
+      const onboardInfo = signer.getUserOnboardInfo();
+      if (onboardInfo?.aesKey) {
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+        }));
+        setWalletAesHealth(normalizedOwnerAddress, buildWalletAesHealthState({
+          status: 'ready-unverified',
+          walletAddress: normalizedOwnerAddress
+        }));
+      }
+
+      return signer;
+    },
+    [
+      browserWalletSession?.provider,
+      chainId,
+      ensureCotiNetwork,
+      getConnectedProvider,
+      ownerAesKey,
+      ownerWalletAddress,
+      resolveWalletPromptProvider,
+      sessionOnboardInfo,
+      setChainId,
+      setSessionOnboardInfo,
+      setWalletAesHealth,
+      signerCacheRef,
+      signerProviderCacheRef
+    ]
+  );
+  const getChainWhisperFundsSigner = useCallback(
+    async (requirePrivacy: boolean): Promise<Wallet> => {
+      const signer = burnerWalletRef.current;
+      if (!signer) {
+        throw new Error('Set up the ChainWhisper account first.');
+      }
+
+      const cacheKey = signer.address.toLowerCase();
+      const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
+      if (cachedOnboardInfo) {
+        signer.setUserOnboardInfo(cachedOnboardInfo);
+      }
+      signer.disableAutoOnboard();
+
+      if (requirePrivacy && !signer.getUserOnboardInfo()?.aesKey) {
+        await getOrRecoverAesForWallet({
+          signer,
+          walletAddress: signer.address
+        });
+      }
+
+      const onboardInfo = signer.getUserOnboardInfo();
+      if (onboardInfo?.aesKey) {
+        setSessionOnboardInfo((previous) => ({
+          ...previous,
+          [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
+        }));
+        setOnboardStatus('Privacy ready');
+      }
+
+      return signer;
+    },
+    [burnerWalletRef, sessionOnboardInfo, setOnboardStatus, setSessionOnboardInfo]
+  );
+  const runOwnerFundsTransactionFlow = useCallback(
+    async <T,>(operation: () => Promise<T>): Promise<T> =>
+      runWalletTransactionFlow(
+        {
+          chainId,
+          provider: browserWalletSession?.provider ?? getConnectedProvider(),
+          providerKey: browserWalletSession?.walletId ?? currentInjectedWalletOption?.id ?? preferredBrowserWalletId,
+          walletAddress: ownerWalletAddress
+        },
+        operation
+      ),
+    [
+      browserWalletSession?.provider,
+      browserWalletSession?.walletId,
+      chainId,
+      currentInjectedWalletOption?.id,
+      getConnectedProvider,
+      ownerWalletAddress,
+      preferredBrowserWalletId
+    ]
+  );
+  const accountFundsAssets = useMemo<AccountFundsAssetOption[]>(() => {
+    const chainwhisperWalletKey = walletAddress.trim().toLowerCase();
+    const ownerWalletKey = ownerWalletAddress.trim().toLowerCase();
+    const builtInTokenAddressSet = new Set([
+      REWARD_TOKEN_ADDRESS.toLowerCase(),
+      PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()
+    ]);
+    const getCurrentTokenInfo = (
+      source: Record<string, TradeCustomTokenInfo>,
+      key: string,
+      expectedWalletKey: string
+    ): TradeCustomTokenInfo | null => {
+      const info = source[key];
+      if (!info || !expectedWalletKey || info.walletKey !== expectedWalletKey) {
+        return null;
+      }
+      return info;
+    };
+    const getPrivateInfoBalance = (info: TradeCustomTokenInfo | null): bigint | null => {
+      if (!info) {
+        return null;
+      }
+      if (info.privateBalanceState?.status === 'ready') {
+        return info.privateBalanceState.balanceWei;
+      }
+      return info.balanceWei;
+    };
+    const orderBySymbol = (options: AccountFundsAssetOption[], symbolOrder: string[]): AccountFundsAssetOption[] => {
+      const rankBySymbol = new Map(symbolOrder.map((symbol, index) => [symbol.toLowerCase(), index]));
+      return [...options].sort((left, right) => {
+        const leftRank = rankBySymbol.get(left.asset.symbol.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+        const rightRank = rankBySymbol.get(right.asset.symbol.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+        return leftRank - rightRank || left.asset.symbol.localeCompare(right.asset.symbol);
+      });
+    };
+
+    const nativeAsset: WalletFundAsset = {
+      kind: 'native',
+      symbol: TIP_NATIVE_TOKEN_SYMBOL,
+      decimals: TIP_NATIVE_TOKEN_DECIMALS
+    };
+    const publicRewardAsset: WalletFundAsset = {
+      kind: 'erc20',
+      tokenAddress: REWARD_TOKEN_ADDRESS,
+      symbol: rewardTokenSymbol,
+      decimals: rewardTokenDecimals
+    };
+    const privateRewardAsset: WalletFundAsset = {
+      kind: 'private-erc20',
+      tokenAddress: PRIVATE_REWARD_TOKEN_ADDRESS,
+      symbol: privateRewardTokenSymbol,
+      decimals: privateRewardTokenDecimals
+    };
+
+    const nativeOption: AccountFundsAssetOption = {
+      id: 'native:coti',
+      asset: nativeAsset,
+      chainwhisperBalanceWei: burnerBalanceWei,
+      ownerBalanceWei: ownerNativeBalanceWei
+    };
+    const publicOptions: AccountFundsAssetOption[] = [
+      {
+        id: `erc20:${REWARD_TOKEN_ADDRESS.toLowerCase()}`,
+        asset: publicRewardAsset,
+        chainwhisperBalanceWei: rewardTokenBalanceWei,
+        ownerBalanceWei: ownerRewardTokenBalanceWei
+      }
+    ];
+    const privateOptions: AccountFundsAssetOption[] = [
+      {
+        id: `private-erc20:${PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()}`,
+        asset: privateRewardAsset,
+        chainwhisperBalanceWei: privateRewardTokenBalanceWei,
+        ownerBalanceWei: ownerPrivateRewardTokenBalanceWei,
+        chainwhisperPrivacyRequired: Boolean(burnerAddress && !hasAesReady && privateRewardTokenBalanceWei === null),
+        ownerPrivacyRequired: ownerPrivateRewardBalanceLocked
+      }
+    ];
+
+    for (const token of VERIFIED_ECOSYSTEM_TOKENS) {
+      const normalizedAddress = token.address.toLowerCase();
+      if (builtInTokenAddressSet.has(normalizedAddress)) {
+        continue;
+      }
+
+      const key = buildTradeCustomTokenInfoKey(token.kind, token.address);
+      const chainwhisperInfo = getCurrentTokenInfo(customTradeTokenInfoByAddress, key, chainwhisperWalletKey);
+      const ownerInfo = getCurrentTokenInfo(ownerCustomTradeTokenInfoByAddress, key, ownerWalletKey);
+      const chainwhisperBalanceWei =
+        token.kind === 'private-erc20' ? getPrivateInfoBalance(chainwhisperInfo) : chainwhisperInfo?.balanceWei ?? null;
+      const ownerBalanceWei =
+        token.kind === 'private-erc20' ? getPrivateInfoBalance(ownerInfo) : ownerInfo?.balanceWei ?? null;
+      const symbol = chainwhisperInfo?.symbol?.trim() || ownerInfo?.symbol?.trim() || token.symbol;
+      const decimals = normalizeTokenDecimals(chainwhisperInfo?.decimals ?? ownerInfo?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS);
+      const option: AccountFundsAssetOption = {
+        id: key,
+        asset: {
+          kind: token.kind,
+          tokenAddress: token.address,
+          symbol,
+          decimals
+        },
+        chainwhisperBalanceWei,
+        ownerBalanceWei,
+        chainwhisperPrivacyRequired: token.kind === 'private-erc20' && Boolean(burnerAddress && !hasAesReady),
+        ownerPrivacyRequired: token.kind === 'private-erc20' && Boolean(ownerWalletAddress && !ownerAesReady)
+      };
+
+      if (token.kind === 'private-erc20') {
+        privateOptions.push(option);
+      } else {
+        publicOptions.push(option);
+      }
+    }
+
+    return [
+      nativeOption,
+      ...orderBySymbol(publicOptions, buildPublicTradeTokenSymbolOrder(rewardTokenSymbol)),
+      ...orderBySymbol(privateOptions, buildPrivateTradeTokenSymbolOrder(privateRewardTokenSymbol))
+    ];
+  }, [
+    burnerAddress,
+    burnerBalanceWei,
+    customTradeTokenInfoByAddress,
+    hasAesReady,
+    ownerAesReady,
+    ownerCustomTradeTokenInfoByAddress,
+    ownerNativeBalanceWei,
+    ownerWalletAddress,
+    ownerPrivateRewardBalanceLocked,
+    ownerPrivateRewardTokenBalanceWei,
+    ownerRewardTokenBalanceWei,
+    privateRewardTokenBalanceWei,
+    privateRewardTokenDecimals,
+    privateRewardTokenSymbol,
+    rewardTokenBalanceWei,
+    rewardTokenDecimals,
+    rewardTokenSymbol,
+    walletAddress
+  ]);
   const topUpAmountLabel = useMemo(() => {
     if (topUpAmountWei !== null) {
       return `${formatCotiAmount(topUpAmountWei, 3)} COTI`;
     }
     return '--';
   }, [topUpAmountWei]);
+  const openAccountFundsModal = useCallback((direction: AccountFundsDirection) => {
+    setAccountFundsDirection(direction);
+  }, []);
+  const requestChainWhisperFundingAfterError = useCallback(
+    (message: string) => {
+      setError(`${message} Move funds from the owner wallet to ChainWhisper, then try again.`);
+      openAccountFundsModal('move');
+    },
+    [openAccountFundsModal]
+  );
+  const closeAccountFundsModal = useCallback(() => {
+    if (!accountFundsProcessing) {
+      setAccountFundsDirection(null);
+    }
+  }, [accountFundsProcessing]);
+  const submitAccountFundsTransfer = useCallback(
+    async ({ amountWei, asset, direction }: AccountFundsSubmitRequest) => {
+      setAccountFundsProcessing(true);
+      try {
+        const toAddress = direction === 'move' ? burnerAddress : ownerWalletAddress;
+        if (!toAddress || !isWalletAddress(toAddress)) {
+          throw new Error(direction === 'move' ? 'Set up the ChainWhisper account first.' : 'Connect the owner wallet first.');
+        }
+
+        const transfer = async () => {
+          const signer =
+            direction === 'move'
+              ? await getOwnerFundsSigner(asset.kind === 'private-erc20')
+              : await getChainWhisperFundsSigner(asset.kind === 'private-erc20');
+          await transferWalletFundAsset({
+            amountWei,
+            asset,
+            signer,
+            toAddress
+          });
+        };
+
+        setStatus(direction === 'move' ? 'Moving funds...' : 'Withdrawing funds...');
+        if (direction === 'move') {
+          await runOwnerFundsTransactionFlow(transfer);
+          setStatus('Funds moved to ChainWhisper.');
+        } else {
+          await runSharedWalletTransactionFlow(transfer);
+          setStatus('Funds withdrawn to owner wallet.');
+        }
+        setTopUpMetricsNonce((previous) => previous + 1);
+        setAccountFundsDirection(null);
+      } catch (fundsError) {
+        const fallbackMessage = direction === 'move' ? 'Move funds failed.' : 'Withdrawal failed.';
+        setError(getProviderErrorMessage(fundsError, fallbackMessage));
+        throw fundsError;
+      } finally {
+        setAccountFundsProcessing(false);
+      }
+    },
+    [
+      burnerAddress,
+      getChainWhisperFundsSigner,
+      getOwnerFundsSigner,
+      ownerWalletAddress,
+      runOwnerFundsTransactionFlow,
+      runSharedWalletTransactionFlow,
+      setTopUpMetricsNonce
+    ]
+  );
   const activeTipTokenSymbol =
     tipTokenSelection === 'coti'
       ? TIP_NATIVE_TOKEN_SYMBOL
@@ -1870,9 +2433,18 @@ export default function App() {
     setTradeRequestAmountInput
   ]);
   useEffect(() => {
+    const verifiedTokenRequests =
+      walletAddress.trim() && chainId === COTI_NETWORK.chainIdDecimal
+        ? VERIFIED_ECOSYSTEM_TOKENS.map((token) => ({
+            key: buildTradeCustomTokenInfoKey(token.kind, token.address),
+            address: token.address.trim().toLowerCase(),
+            kind: token.kind
+          }))
+        : [];
     const customTokenRequests = Array.from(
       new Map(
         [
+          ...verifiedTokenRequests,
           isCustomTradeTokenSelection(tradeOfferTokenSelection) && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
             ? {
                 key: buildTradeCustomTokenInfoKey(tradeCustomOfferTokenKind, normalizedTradeOfferCustomTokenAddress),
@@ -1958,7 +2530,7 @@ export default function App() {
       const readProvider = await loadCotiReadProvider(true);
       const walletKey = walletAddress.trim().toLowerCase();
       const signerBundle =
-        walletKey && customTokenRequests.some((request) => request.kind === 'private-erc20')
+        walletKey && hasAesReady && customTokenRequests.some((request) => request.kind === 'private-erc20')
           ? await getMemoSigner()
               .then((result) => result)
               .catch(() => null)
@@ -1979,7 +2551,7 @@ export default function App() {
             if (walletKey) {
               if (request.kind === 'private-erc20') {
                 if (!signerBundle) {
-                  error = 'Unlock your AES key to read this private token balance.';
+                  error = 'Unlock privacy to read this private token balance.';
                 } else {
                   balanceWei = await readCurrentPrivateErc20BalanceWei(
                     request.address,
@@ -2004,6 +2576,14 @@ export default function App() {
               loading: false,
               walletKey,
               aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
+              privateBalanceState:
+                request.kind === 'private-erc20'
+                  ? typeof balanceWei === 'bigint'
+                    ? { status: 'ready', balanceWei }
+                    : signerBundle
+                      ? { status: 'decrypt-failed' }
+                      : { status: 'locked' }
+                  : undefined,
               error
             } satisfies TradeCustomTokenInfo;
           } catch {
@@ -2016,6 +2596,7 @@ export default function App() {
               loading: false,
               walletKey,
               aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
+              privateBalanceState: request.kind === 'private-erc20' ? { status: 'unsupported' } : undefined,
               error: 'Unable to load token metadata.'
             } satisfies TradeCustomTokenInfo;
           }
@@ -2061,6 +2642,7 @@ export default function App() {
             loading: false,
             walletKey,
             aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
+            privateBalanceState: request.kind === 'private-erc20' ? { status: 'unsupported' } : undefined,
             error: 'Unable to load token metadata.'
           };
         }
@@ -2080,6 +2662,7 @@ export default function App() {
     tradeRequestTokenSelection,
     walletAddress,
     hasAesReady,
+    chainId,
     topUpMetricsNonce
   ]);
   useEffect(() => {
@@ -2454,9 +3037,74 @@ export default function App() {
     }, 1800);
   }, [activeThreadKey, setHighlightedMessageId, visibleThreadMessageCount]);
 
+  const activeComposerMaxMessageLength = activeGroupId !== null ? MAX_MESSAGE_LENGTH : directMessageMaxLength;
   const handleMessageInputChange = useCallback((value: string) => {
-    setMessageInput(sanitizeOutgoingMessagePlainText(value).slice(0, MAX_MESSAGE_LENGTH));
-  }, [setMessageInput]);
+    setMessageInput(sanitizeOutgoingMessagePlainText(value).slice(0, activeComposerMaxMessageLength));
+  }, [activeComposerMaxMessageLength, setMessageInput]);
+  const tradeComposerPromptEstimate = useMemo(() => {
+    const makerAddress = walletAddress.trim();
+    const takerAddress = activeContact?.trim() ?? '';
+    if (
+      !browserWalletLiteMode ||
+      !tradeComposerOpen ||
+      activeGroupId !== null ||
+      !isWalletAddress(makerAddress) ||
+      !isWalletAddress(takerAddress)
+    ) {
+      return null;
+    }
+
+    const createdAt = Math.floor(Date.now() / 1000);
+    const payload = buildTradeOfferMessagePayload({
+      version: 2,
+      tradeId: ESTIMATED_DIRECT_TRADE_NOTIFICATION_TRADE_ID,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      maker: makerAddress,
+      taker: takerAddress,
+      createdAt,
+      expiresAt: createdAt + parsedTradeExpiryHours * 3600,
+      parentTradeId: tradeCounterParentId ?? undefined,
+      accessSecret: ESTIMATED_DIRECT_TRADE_ACCESS_SECRET
+    });
+    const estimate = estimateChatWalletPromptLoad(payload, encodeCompactMemoPlaintext);
+
+    return {
+      tone: resolveMetaMaskPromptEstimateTone(estimate),
+      label: buildMetaMaskPromptEstimateMessage(estimate, 'the trade notification')
+    };
+  }, [
+    activeContact,
+    activeGroupId,
+    browserWalletLiteMode,
+    parsedTradeExpiryHours,
+    tradeComposerOpen,
+    tradeCounterParentId,
+    walletAddress
+  ]);
+  const directComposerPromptEstimate = useMemo(() => {
+    if (!browserWalletLiteMode || activeGroupId !== null || tradeComposerOpen) {
+      return null;
+    }
+
+    const plainText = sanitizeOutgoingMessagePlainText(messageInput).trim();
+    if (!plainText || plainText.startsWith(IMAGE_MESSAGE_PREFIX)) {
+      return null;
+    }
+
+    const linkedTradeReference = activeLinkedTradeContext
+      ? buildTradeMessageReferenceFromContext(activeLinkedTradeContext)
+      : undefined;
+    const plainTextWithMetadata = buildMessageWithTradeReferencePayload(plainText, linkedTradeReference);
+    const estimate = estimateChatWalletPromptLoad(plainTextWithMetadata, encodeCompactMemoPlaintext);
+    const estimateSubject = linkedTradeReference
+      ? `this message with Trade #${linkedTradeReference.tradeId} reference`
+      : 'this message';
+
+    return {
+      tone: resolveMetaMaskPromptEstimateTone(estimate),
+      label: buildMetaMaskPromptEstimateMessage(estimate, estimateSubject)
+    };
+  }, [activeGroupId, activeLinkedTradeContext, browserWalletLiteMode, messageInput, tradeComposerOpen]);
 
   const handleAddContact = (event: FormEvent) => {
     event.preventDefault();
@@ -2559,7 +3207,7 @@ export default function App() {
 
   const toggleConversationMuteForContact = async (address: string) => {
     if (browserWalletLiteMode) {
-      setError('Use the app wallet to sync muted or hidden conversations.');
+      setError('Use the ChainWhisper account to sync muted or hidden conversations.');
       return;
     }
 
@@ -2605,7 +3253,7 @@ export default function App() {
 
   const toggleConversationHiddenForContact = async (address: string) => {
     if (browserWalletLiteMode) {
-      setError('Use the app wallet to sync muted or hidden conversations.');
+      setError('Use the ChainWhisper account to sync muted or hidden conversations.');
       return;
     }
 
@@ -2936,11 +3584,11 @@ export default function App() {
     if (activeSignerSource === 'metamask') {
       const provider = getConnectedProvider();
       if (!provider) {
-        throw new Error('Wallet provider not detected. Connect without burner first.');
+        throw new Error('Owner wallet provider not detected. Connect your owner wallet first.');
       }
 
       if (!walletAddress) {
-        throw new Error('Connect your wallet first.');
+        throw new Error('Connect your owner wallet first.');
       }
 
       if (chainId !== COTI_NETWORK.chainIdDecimal) {
@@ -2976,22 +3624,18 @@ export default function App() {
       }
 
       if (!onboardInfo?.aesKey) {
-        const aesHealth = walletAesHealthByAddress[cacheKey];
-        const repairMismatch = aesHealth?.status === 'key-mismatch' || aesHealth?.status === 'repair-needed';
-        await getOrRecoverAesForWallet({
-          allowUnrecoverableReset: repairMismatch,
-          forceFreshAes: repairMismatch,
-          forceLegacyRefresh: repairMismatch,
-          forceRefresh: repairMismatch,
-          provider,
-          signer,
-          walletAddress
-        });
-        onboardInfo = signer.getUserOnboardInfo();
+        const snapAesResult = await getCotiSnapOwnerAesKeyResult(provider, walletAddress);
+        if (snapAesResult.status !== 'ready') {
+          throw new Error(getCotiSnapOwnerAesStatusMessage(snapAesResult.status));
+        }
+        onboardInfo = mergeOnboardInfo(signer.getUserOnboardInfo(), {
+          aesKey: snapAesResult.aesKey
+        } as OnboardInfo);
+        signer.setUserOnboardInfo(onboardInfo);
       }
 
       if (!onboardInfo?.aesKey) {
-        throw new Error('AES key unavailable. Complete the privacy unlock signature once.');
+        throw new Error('Privacy unlock unavailable. Complete the privacy unlock signature once.');
       }
 
       setSessionOnboardInfo((previous) => ({
@@ -3003,13 +3647,13 @@ export default function App() {
         walletAddress
       }));
 
-      setOnboardStatus('AES key ready');
+      setOnboardStatus('Owner privacy ready');
       return { signer, cacheKey };
     }
 
     const signer = burnerWalletRef.current;
     if (!signer) {
-      throw new Error('Burner wallet not initialized.');
+      throw new Error('ChainWhisper account is not initialized.');
     }
 
     const cacheKey = signer.address.toLowerCase();
@@ -3025,7 +3669,7 @@ export default function App() {
     }
 
     if (!onboardInfo?.aesKey) {
-      throw new Error('AES key unavailable in this session. Please sign to enable encryption.');
+      throw new Error('Privacy unlock unavailable in this session. Please sign to enable encryption.');
     }
 
     setSessionOnboardInfo((previous) => ({
@@ -3033,11 +3677,60 @@ export default function App() {
       [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
     }));
 
-    setOnboardStatus('AES key ready');
+    setOnboardStatus('Privacy ready');
 
     return { signer, cacheKey };
   };
   getMemoSignerRef.current = getMemoSigner;
+
+  const getMemoSignerForAccount = async (account: WalletReadAccount) => {
+    const accountKey = account.key || account.address.trim().toLowerCase();
+    const activeWalletKey = walletAddress.trim().toLowerCase();
+    if (accountKey === activeWalletKey) {
+      return getMemoSigner();
+    }
+
+    const ownerKey = ownerWalletAddress.trim().toLowerCase();
+    if (account.role !== 'owner' || !ownerKey || accountKey !== ownerKey) {
+      return getMemoSigner();
+    }
+
+    const provider = browserWalletSession?.provider ?? getConnectedProvider();
+    if (!provider) {
+      throw new Error('Owner wallet is not connected.');
+    }
+    if (chainId !== COTI_NETWORK.chainIdDecimal) {
+      throw new Error('Switch to COTI network first.');
+    }
+
+    const cachedOnboardInfo = sessionOnboardInfo[ownerKey];
+    if (!cachedOnboardInfo?.aesKey) {
+      throw new Error('Owner privacy is locked.');
+    }
+
+    let signer = signerCacheRef.current[ownerKey] as JsonRpcSigner | undefined;
+    if (signer && signerProviderCacheRef.current[ownerKey] !== provider) {
+      delete signerCacheRef.current[ownerKey];
+      delete signerProviderCacheRef.current[ownerKey];
+      signer = undefined;
+    }
+    if (!signer) {
+      const browserProvider = await createCotiBrowserProvider(provider);
+      signer = await browserProvider.getSigner(ownerWalletAddress, cachedOnboardInfo);
+      signer.disableAutoOnboard();
+      signerCacheRef.current[ownerKey] = signer;
+      signerProviderCacheRef.current[ownerKey] = provider;
+    } else {
+      signer.setUserOnboardInfo(cachedOnboardInfo);
+    }
+
+    signer.disableAutoOnboard();
+    if (!signer.getUserOnboardInfo()?.aesKey) {
+      throw new Error('Owner privacy is locked.');
+    }
+
+    return { signer, cacheKey: ownerKey };
+  };
 
   const encodeMemoForActiveSigner = (plain: string): string => {
     return activeSignerSource === 'metamask' ? encodeCompactMemoPlaintext(plain) : encodeMemoPlaintext(plain);
@@ -3068,7 +3761,7 @@ export default function App() {
     const message =
       previousError instanceof Error
         ? previousError.message
-        : 'The AES key did not decrypt existing wallet data.';
+        : 'The privacy key did not decrypt existing wallet data.';
     if (currentHealth !== 'ready') {
       setWalletAesHealth(cacheKey, buildWalletAesHealthState({
         message,
@@ -3077,7 +3770,7 @@ export default function App() {
       }));
       setOnboardStatus('Privacy key needs refresh');
     } else {
-      setOnboardStatus('AES key ready');
+      setOnboardStatus('Privacy ready');
     }
     return false;
   };
@@ -3372,6 +4065,7 @@ export default function App() {
     decryptMemoPlaintextWithRecovery,
     fetchOnChainNicknames,
     getMemoSigner,
+    getMemoSignerForAccount,
     hasAesReady,
     lastAutoBackupAttemptBlockRef,
     lastReadAllTsRef,
@@ -3392,7 +4086,8 @@ export default function App() {
     setSyncingHistory,
     setUnreadMap,
     unreadMapRef,
-    walletAddress
+    walletAddress,
+    readAccounts: readableWalletAccounts
   });
 
   useEffect(() => {
@@ -3427,6 +4122,9 @@ export default function App() {
     }
 
     const walletKey = requestedWalletKey;
+    const requestedWalletRole =
+      walletAccountScope.readAccounts.find((account) => account.key === walletKey)?.role ??
+      (activeSignerSource === 'metamask' ? 'owner' : 'chainwhisper');
 
     try {
       syncGroupDataInFlightRef.current = true;
@@ -3464,6 +4162,7 @@ export default function App() {
         pendingForcedBottomAnchorThreadKeyRef,
         readProvider,
         requestedWalletAddress,
+        requestedWalletRole,
         setMessagesByGroup,
         signer,
         stickToBottomRef,
@@ -4474,12 +5173,7 @@ export default function App() {
       const message = syncError instanceof Error ? syncError.message : 'Failed to sync contact name alias.';
       setError(`Saved locally, but alias sync failed: ${message}`);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
+        requestChainWhisperFundingAfterError(message);
       }
     }
   };
@@ -4531,7 +5225,7 @@ export default function App() {
     visibleNotice = ''
   ): Promise<boolean> => {
     if (browserWalletLiteMode) {
-      setError('Use the app wallet to sync muted or hidden conversations.');
+      setError('Use the ChainWhisper account to sync muted or hidden conversations.');
       return false;
     }
 
@@ -4559,12 +5253,7 @@ export default function App() {
       const message = syncError instanceof Error ? syncError.message : 'Failed to sync conversation state.';
       setError(`Conversation state sync failed. No local change was applied: ${message}`);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
+        requestChainWhisperFundingAfterError(message);
       }
       return false;
     }
@@ -4574,7 +5263,7 @@ export default function App() {
     setError('');
 
     if (browserWalletLiteMode) {
-      setError('Use the app wallet to send reactions.');
+      setError('Use the ChainWhisper account to send reactions.');
       return;
     }
 
@@ -4857,12 +5546,7 @@ export default function App() {
       }
 
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
+        requestChainWhisperFundingAfterError(message);
       }
     } finally {
       setSendingReaction(false);
@@ -4882,8 +5566,12 @@ export default function App() {
       return;
     }
 
-    if (plainText.length > MAX_MESSAGE_LENGTH) {
-      setError(`Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`);
+    if (plainText.length > directMessageMaxLength) {
+      setError(
+        browserWalletLiteMode
+          ? `Message is too long for MetaMask mode (max ${directMessageMaxLength} characters).`
+          : `Message is too long (max ${directMessageMaxLength} characters).`
+      );
       return;
     }
 
@@ -4907,6 +5595,30 @@ export default function App() {
     const contactKey = contactAddress.toLowerCase();
     const replyTarget = browserWalletLiteMode ? null : overrideReplyTarget ?? replyingToMessage;
     const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
+    const linkedTradeReference =
+      typeof overrideMessageText === 'undefined' && activeLinkedTradeContext
+        ? buildTradeMessageReferenceFromContext(activeLinkedTradeContext)
+        : undefined;
+    const plainTextWithReply = buildMessageWithReplyPayload(
+      plainText,
+      replyingPreviewText,
+      replyTarget?.txHash,
+      replyTarget?.blockNumber,
+      replyTarget?.logIndex,
+      false
+    );
+    const plainTextWithMetadata = buildMessageWithTradeReferencePayload(plainTextWithReply, linkedTradeReference);
+    if (activeSignerSource === 'metamask') {
+      const promptEstimate = estimateChatWalletPromptLoad(plainTextWithMetadata, encodeCompactMemoPlaintext);
+      if (promptEstimate.likelyMultipart) {
+        const estimateSubject = linkedTradeReference
+          ? `this message with Trade #${linkedTradeReference.tradeId} reference`
+          : 'this message';
+        setError(buildMetaMaskPromptEstimateMessage(promptEstimate, estimateSubject));
+        return;
+      }
+    }
+
     const localMessageId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
 
@@ -4926,6 +5638,7 @@ export default function App() {
             replyToTxHash: replyTarget?.txHash,
             replyToBlockNumber: replyTarget?.blockNumber,
             replyToLogIndex: replyTarget?.logIndex,
+            tradeReference: linkedTradeReference,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
@@ -4936,21 +5649,14 @@ export default function App() {
       const { signer, cacheKey } = await getMemoSigner();
       const selector = await resolveSubmitSelector();
       const requiredFee = await resolveRequiredFeeForSend();
-      const plainTextWithReply = buildMessageWithReplyPayload(
-        plainText,
-        replyingPreviewText,
-        replyTarget?.txHash,
-        replyTarget?.blockNumber,
-        replyTarget?.logIndex,
-        false
-      );
       const submittedTx = await submitDirectMemo({
         signer,
         contactAddress,
-        plainText: plainTextWithReply,
+        plainText: plainTextWithMetadata,
         selector,
         requiredFee,
-        encodeMemo: encodeMemoForActiveSigner
+        encodeMemo: encodeMemoForActiveSigner,
+        allowMultipart: activeSignerSource !== 'metamask'
       });
       const submittedTxHash = submittedTx.txHash;
       if (currentWalletKeyRef.current !== requestedWalletKey) {
@@ -4982,6 +5688,11 @@ export default function App() {
                 return (
                   message.text === localMessageRecord.text &&
                   (message.replyToText ?? '') === (localMessageRecord.replyToText ?? '') &&
+                  (message.tradeReference?.tradeId ?? 0) === (localMessageRecord.tradeReference?.tradeId ?? 0) &&
+                  (message.tradeReference?.escrowContract ?? '').toLowerCase() ===
+                    (localMessageRecord.tradeReference?.escrowContract ?? '').toLowerCase() &&
+                  (message.tradeReference?.terminalPath ?? '') ===
+                    (localMessageRecord.tradeReference?.terminalPath ?? '') &&
                   messageReferencesMatch(
                     {
                       txHash: message.replyToTxHash,
@@ -5080,18 +5791,41 @@ export default function App() {
       }));
 
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
+        requestChainWhisperFundingAfterError(message);
       }
     } finally {
       sendingRef.current = false;
       setSending(false);
     }
   };
+
+  const preflightDirectMessageSend = useCallback(
+    (messageText: string, overrideReplyTarget?: ChatMessage | null): boolean => {
+      if (activeSignerSource !== 'metamask') {
+        return true;
+      }
+
+      const plainText = sanitizeOutgoingMessagePlainText(messageText).trim();
+      const replyTarget = browserWalletLiteMode ? null : overrideReplyTarget ?? null;
+      const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
+      const plainTextWithReply = buildMessageWithReplyPayload(
+        plainText,
+        replyingPreviewText,
+        replyTarget?.txHash,
+        replyTarget?.blockNumber,
+        replyTarget?.logIndex,
+        false
+      );
+      const estimate = estimateChatWalletPromptLoad(plainTextWithReply, encodeCompactMemoPlaintext);
+      if (!estimate.likelyMultipart) {
+        return true;
+      }
+
+      setError(buildMetaMaskPromptEstimateMessage(estimate, 'the trade notification'));
+      return false;
+    },
+    [activeSignerSource, browserWalletLiteMode, setError]
+  );
 
   const {
     acceptTradeOffer,
@@ -5109,6 +5843,8 @@ export default function App() {
     parsedTradeOfferAmountWei,
     parsedTradeRequestAmountWei,
     processingTradeActionId,
+    onRequestAccountFunding: requestChainWhisperFundingAfterError,
+    preflightDirectMessageSend,
     replyingToMessage,
     runWalletTransactionFlow: runSharedWalletTransactionFlow,
     resolveRequiredFeeForTradeCreate,
@@ -5137,7 +5873,6 @@ export default function App() {
     setTradeRequestTokenSelection,
     setTradeSnapshotsById,
     tipping,
-    topUpBurnerWithWallet,
     tradeComposerValidationMessage,
     tradeCounterContext,
     tradeCounterParentId,
@@ -5270,12 +6005,7 @@ export default function App() {
       const message = rawMessage || (transferSucceeded ? 'Tip sent, but notification message failed.' : 'Failed to send tip.');
       setError(transferSucceeded ? `Tip sent, but notification failed: ${message}` : message);
       if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        const shouldTopUp = window.confirm(
-          'Burner wallet has insufficient funds. Do you want to top up now with your wallet?'
-        );
-        if (shouldTopUp) {
-          await topUpBurnerWithWallet();
-        }
+        requestChainWhisperFundingAfterError(message);
       }
     } finally {
       setTipping(false);
@@ -5486,7 +6216,7 @@ export default function App() {
 
     const cachedOnboardInfo = sessionOnboardInfo[walletAddress.toLowerCase()];
     if (cachedOnboardInfo?.aesKey) {
-      setOnboardStatus('AES key ready');
+      setOnboardStatus('Privacy ready');
       return;
     }
 
@@ -5559,6 +6289,36 @@ export default function App() {
     setActivePage(resolveAppRouteFromLocation().page);
   }, []);
 
+  const ensureContactAndOpenTradeChat = useCallback(
+    (counterpartyAddress: string, context: LinkedTradeContext) => {
+      const address = counterpartyAddress.trim();
+      if (!isWalletAddress(address)) {
+        setError('Could not open chat for this trade participant.');
+        return;
+      }
+
+      const addressKey = address.toLowerCase();
+      setContacts((previous) =>
+        previous.some((contact) => contact.address.trim().toLowerCase() === addressKey)
+          ? previous
+          : [...previous, { address }]
+      );
+      activeGroupIdRef.current = null;
+      setActiveGroupId(null);
+      setActiveContact(address);
+      setLinkedTradeContext({
+        ...context,
+        counterpartyAddress: address
+      });
+      markConversationAsRead(address);
+      if (isMobileNav) {
+        setActiveMobileView('chat');
+      }
+      navigateToPage('chat');
+    },
+    [isMobileNav, markConversationAsRead, navigateToPage, setActiveMobileView]
+  );
+
   useEffect(() => {
     const syncPageWithLocation = () => {
       if (isWalletTransactionFlowActive()) {
@@ -5615,13 +6375,13 @@ export default function App() {
     setMobileLinksOpen(false);
     setChatWalletMenuOpen(false);
     if (activePage !== 'trades') {
-      setTradeHeaderWalletControl(null);
     }
     if (activePage !== 'chat') {
       setShowQuickActionsModal(false);
       setMobileGroupOptionsOpen(false);
     }
     if (activePage !== 'chat' && activePage !== 'trades' && activePage !== 'swap') {
+      setAccountFundsDirection(null);
       setShowTopUpModal(false);
       setShowBurnerImportModal(false);
       closeBurnerPinModal();
@@ -5989,6 +6749,191 @@ export default function App() {
       cancelled = true;
     };
   }, [burnerAddress, topUpMessageTarget, topUpMetricsNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!ownerWalletAddress || !isWalletAddress(ownerWalletAddress) || chainId !== COTI_NETWORK.chainIdDecimal) {
+      setOwnerNativeBalanceWei(null);
+      return;
+    }
+
+    const loadOwnerNativeBalance = async () => {
+      try {
+        const readProvider = await loadCotiReadProvider(true);
+        const nativeBalance = (await readProvider.getBalance(ownerWalletAddress)) as bigint;
+        if (!cancelled) {
+          setOwnerNativeBalanceWei(nativeBalance);
+        }
+      } catch {
+        if (!cancelled) {
+          setOwnerNativeBalanceWei(null);
+        }
+      }
+    };
+
+    loadOwnerNativeBalance().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chainId, ownerWalletAddress, topUpMetricsNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!ownerWalletAddress || !isWalletAddress(ownerWalletAddress) || chainId !== COTI_NETWORK.chainIdDecimal) {
+      setOwnerRewardTokenBalanceWei(null);
+      setOwnerPrivateRewardTokenBalanceWei(null);
+      setOwnerPrivateRewardBalanceLocked(false);
+      setOwnerCustomTradeTokenInfoByAddress({});
+      return;
+    }
+
+    const loadOwnerTokenBalances = async () => {
+      try {
+        const cotiEthers = await loadCotiEthersModule();
+        const readProvider = await loadCotiReadProvider(true);
+        const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
+        const rewardBalanceRaw = await rewardTokenContract.balanceOf(ownerWalletAddress).catch(() => null);
+        const ownerWalletKey = ownerWalletAddress.trim().toLowerCase();
+        const builtInTokenAddressSet = new Set([
+          REWARD_TOKEN_ADDRESS.toLowerCase(),
+          PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()
+        ]);
+        const customTokenRequests = VERIFIED_ECOSYSTEM_TOKENS.filter(
+          (token) => !builtInTokenAddressSet.has(token.address.toLowerCase())
+        );
+        let ownerPrivateSigner: JsonRpcSigner | null = null;
+        let privateBalanceWei: bigint | null = null;
+
+        if (ownerAesReady) {
+          try {
+            const ownerAesKeyForRead = ownerAesKey.trim();
+            const provider = browserWalletSession?.provider ?? getConnectedProvider();
+            if (!ownerAesKeyForRead || !provider) {
+              throw new Error('Owner privacy is locked.');
+            }
+            const browserProvider = await createCotiBrowserProvider(provider);
+            const signer = await browserProvider.getSigner(ownerWalletAddress, {
+              aesKey: ownerAesKeyForRead
+            } as OnboardInfo);
+            signer.disableAutoOnboard();
+            ownerPrivateSigner = signer;
+            privateBalanceWei = await readCurrentPrivateErc20BalanceWei(
+              PRIVATE_REWARD_TOKEN_ADDRESS,
+              ownerWalletAddress,
+              signer
+            ).catch(() => null);
+          } catch {
+            privateBalanceWei = null;
+          }
+        }
+        const ownerCustomEntries = await Promise.all(
+          customTokenRequests.map(async (token): Promise<TradeCustomTokenInfo> => {
+            const fallbackTokenSymbol = getVerifiedEcosystemToken(token.address)?.symbol ?? shortenAddress(token.address);
+            try {
+              const tokenAbi = token.kind === 'private-erc20' ? PRIVATE_ERC20_TOKEN_VNEXT_ABI : ERC20_TOKEN_ABI;
+              const tokenContract = new cotiEthers.Contract(token.address, tokenAbi, readProvider);
+              const [symbolRaw, decimalsRaw] = await Promise.all([
+                tokenContract.symbol().catch(() => null),
+                tokenContract.decimals().catch(() => null)
+              ]);
+              const symbol =
+                typeof symbolRaw === 'string' && symbolRaw.trim().length > 0
+                  ? symbolRaw.trim().slice(0, 24)
+                  : fallbackTokenSymbol;
+              const decimals = normalizeTokenDecimals(Number(decimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS));
+
+              if (token.kind === 'private-erc20') {
+                const balanceWei =
+                  ownerPrivateSigner !== null
+                    ? await readCurrentPrivateErc20BalanceWei(
+                        token.address,
+                        ownerWalletAddress,
+                        ownerPrivateSigner
+                      ).catch(() => null)
+                    : null;
+                return {
+                  kind: token.kind,
+                  address: token.address.trim().toLowerCase(),
+                  symbol,
+                  decimals,
+                  balanceWei,
+                  loading: false,
+                  walletKey: ownerWalletKey,
+                  aesReady: ownerAesReady,
+                  privateBalanceState:
+                    typeof balanceWei === 'bigint'
+                      ? { status: 'ready', balanceWei }
+                      : ownerPrivateSigner
+                        ? { status: 'decrypt-failed' }
+                        : { status: 'locked' },
+                  error: ownerPrivateSigner ? undefined : 'Unlock privacy to read this private token balance.'
+                };
+              }
+
+              const balanceRaw = await tokenContract.balanceOf(ownerWalletAddress).catch(() => null);
+              return {
+                kind: token.kind,
+                address: token.address.trim().toLowerCase(),
+                symbol,
+                decimals,
+                balanceWei: typeof balanceRaw === 'bigint' ? balanceRaw : null,
+                loading: false,
+                walletKey: ownerWalletKey
+              };
+            } catch {
+              return {
+                kind: token.kind,
+                address: token.address.trim().toLowerCase(),
+                symbol: fallbackTokenSymbol,
+                decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
+                balanceWei: null,
+                loading: false,
+                walletKey: ownerWalletKey,
+                aesReady: token.kind === 'private-erc20' ? ownerAesReady : undefined,
+                privateBalanceState: token.kind === 'private-erc20' ? { status: 'unsupported' } : undefined,
+                error: 'Unable to load token metadata.'
+              };
+            }
+          })
+        );
+
+        if (!cancelled) {
+          setOwnerRewardTokenBalanceWei(typeof rewardBalanceRaw === 'bigint' ? rewardBalanceRaw : null);
+          setOwnerPrivateRewardTokenBalanceWei(privateBalanceWei);
+          setOwnerPrivateRewardBalanceLocked(!ownerAesReady);
+          setOwnerCustomTradeTokenInfoByAddress(
+            Object.fromEntries(
+              ownerCustomEntries.map((entry) => [buildTradeCustomTokenInfoKey(entry.kind, entry.address), entry])
+            )
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setOwnerRewardTokenBalanceWei(null);
+          setOwnerPrivateRewardTokenBalanceWei(null);
+          setOwnerPrivateRewardBalanceLocked(!ownerAesReady);
+          setOwnerCustomTradeTokenInfoByAddress({});
+        }
+      }
+    };
+
+    loadOwnerTokenBalances().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    browserWalletSession?.provider,
+    chainId,
+    getConnectedProvider,
+    ownerAesKey,
+    ownerAesReady,
+    ownerWalletAddress,
+    topUpMetricsNonce
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -6378,12 +7323,10 @@ export default function App() {
   }, [burnerAddress]);
 
   useEffect(() => {
-    if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal) {
-      setDirectRealtimeStatus('idle');
-      return;
-    }
-
-    if (!hasAesReady) {
+    const directRealtimeAccounts = readableWalletAccounts.filter(
+      (account) => account.canReadPrivate && isWalletAddress(account.address)
+    );
+    if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal || directRealtimeAccounts.length === 0) {
       setDirectRealtimeStatus('idle');
       return;
     }
@@ -6522,8 +7465,10 @@ export default function App() {
         markCotiWsHealthyNow();
         const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, wsProvider);
 
-        const incomingFilter = contract.filters.MessageSubmitted(null, walletAddress, null);
-        const outgoingFilter = contract.filters.MessageSubmitted(null, null, walletAddress);
+        const directMessageFilters = directRealtimeAccounts.flatMap((account) => [
+          contract.filters.MessageSubmitted(null, account.address, null),
+          contract.filters.MessageSubmitted(null, null, account.address)
+        ]);
         const nicknameFilter = contract.filters.NicknameSet();
         const resolveDirectRealtimeSyncOptions = (_messageId: unknown, recipient: unknown, from: unknown): SyncConversationOptions => {
           const activeContactKey = activeContactRef.current?.trim().toLowerCase() ?? '';
@@ -6570,8 +7515,9 @@ export default function App() {
           );
         };
 
-        contract.on(incomingFilter, handleMessageSubmitted);
-        contract.on(outgoingFilter, handleMessageSubmitted);
+        for (const filter of directMessageFilters) {
+          contract.on(filter, handleMessageSubmitted);
+        }
         contract.on(nicknameFilter, handleNicknameSet);
         unsubscribeWsDisconnect?.();
         unsubscribeWsDisconnect = attachWsDisconnectListeners(wsProvider, handleRealtimeDisconnect);
@@ -6579,8 +7525,9 @@ export default function App() {
         if (cancelled) {
           unsubscribeWsDisconnect?.();
           unsubscribeWsDisconnect = null;
-          contract.off(incomingFilter, handleMessageSubmitted);
-          contract.off(outgoingFilter, handleMessageSubmitted);
+          for (const filter of directMessageFilters) {
+            contract.off(filter, handleMessageSubmitted);
+          }
           contract.off(nicknameFilter, handleNicknameSet);
           return;
         }
@@ -6588,8 +7535,9 @@ export default function App() {
         unsubscribe = () => {
           unsubscribeWsDisconnect?.();
           unsubscribeWsDisconnect = null;
-          contract.off(incomingFilter, handleMessageSubmitted);
-          contract.off(outgoingFilter, handleMessageSubmitted);
+          for (const filter of directMessageFilters) {
+            contract.off(filter, handleMessageSubmitted);
+          }
           contract.off(nicknameFilter, handleNicknameSet);
         };
 
@@ -6642,7 +7590,14 @@ export default function App() {
       }
       unsubscribe?.();
     };
-  }, [chainId, hasAesReady, isSyncingConversationHistoryRef, setDirectRealtimeStatus, walletAddress]);
+  }, [
+    chainId,
+    isSyncingConversationHistoryRef,
+    readableWalletAccountKeys,
+    readableWalletAccounts,
+    setDirectRealtimeStatus,
+    walletAddress
+  ]);
 
   useEffect(() => {
     if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal || !hasAesReady) {
@@ -7130,6 +8085,11 @@ export default function App() {
     setTradeOfferAmountInput(nextOfferAmountInput);
     setTradeRequestAmountInput(nextRequestAmountInput);
   };
+  const tradeComposerActionNotice = tradeComposerPromptEstimate ? (
+    <p className={`chat-compose-prompt-estimate ${tradeComposerPromptEstimate.tone}`}>
+      {tradeComposerPromptEstimate.label}
+    </p>
+  ) : undefined;
   const tradeComposerContent = tradeComposerOpen ? (
     <Suspense fallback={<div className="chat-placeholder">Loading trade composer...</div>}>
       <TradeComposerPanel
@@ -7178,6 +8138,7 @@ export default function App() {
         expiryError={tradeComposerFieldErrors.expiry}
         sending={creatingTrade}
         canSend={canSendTradeOffer}
+        actionNotice={tradeComposerActionNotice}
         onSendTradeOffer={() => {
           createTradeOffer().catch(() => {});
         }}
@@ -7186,14 +8147,57 @@ export default function App() {
       />
     </Suspense>
   ) : null;
+  const activateBrowserWalletSessionWithBootstrap = useCallback(
+    async (
+      walletId?: string,
+      options?: Parameters<typeof activateBrowserWalletSessionGuarded>[1]
+    ) => {
+      const onboardInfo = await activateBrowserWalletSessionGuarded(walletId, options);
+      const returnedOwnerAesKey =
+        options?.preparePrivacy && typeof onboardInfo?.aesKey === 'string'
+          ? onboardInfo.aesKey.trim()
+          : '';
+      if (!returnedOwnerAesKey || burnerWalletRef.current) {
+        return onboardInfo;
+      }
+
+      let bootstrapOwnerAddress = ownerWalletAddress;
+      if (!bootstrapOwnerAddress) {
+        const provider =
+          browserWalletSession?.provider ??
+          (walletId ? injectedWalletOptions.find((option) => option.id === walletId)?.provider : null) ??
+          preferredInjectedWalletOption?.provider ??
+          null;
+        const accounts = provider
+          ? ((await provider.request({ method: 'eth_accounts' }).catch(() => [])) as string[])
+          : [];
+        bootstrapOwnerAddress = accounts.find((account) => isWalletAddress(account)) ?? '';
+      }
+
+      if (bootstrapOwnerAddress) {
+        bootstrapOwnerRecoveryOnce(bootstrapOwnerAddress, returnedOwnerAesKey).catch(() => {});
+      }
+
+      return onboardInfo;
+    },
+    [
+      activateBrowserWalletSessionGuarded,
+      bootstrapOwnerRecoveryOnce,
+      browserWalletSession?.provider,
+      injectedWalletOptions,
+      ownerWalletAddress,
+      preferredInjectedWalletOption?.provider
+    ]
+  );
   const {
     chatPreferredBrowserWalletOption,
-    chatWalletHeaderControl,
+    chatWalletHeaderControl: appWalletHeaderControl,
     chatWarmAppWallet
-  } = useChatWalletHeaderControl({
+  } = useAppWalletHeaderControl({
     activeSignerSource,
     appWallet: burnerWalletRef.current,
-    activateBrowserWalletSession: activateBrowserWalletSessionGuarded,
+    activateBrowserWalletSession: activateBrowserWalletSessionWithBootstrap,
+    beginLinkExistingPinWallet,
     beginBurnerPinFlow,
     beginRevealBurnerBackup,
     browserWalletSession,
@@ -7205,6 +8209,7 @@ export default function App() {
     chainId,
     chatAppWalletMenuOpen,
     chatWalletMenuOpen,
+    checkingOwnerRecovery,
     connectingMethod,
     connectingWalletLabel,
     connectionMethod,
@@ -7219,21 +8224,26 @@ export default function App() {
     hasSavedBurnerWallet,
     injectedWalletOptions,
     initializingBurner,
+    isAppWalletRecoveryConfigured,
     isConnected,
     isMobileLayout: isMobileNav,
     lastCopiedKey,
-    loadingTopUpQuote,
+    deleteActiveRecoveryProfile,
+    linkBurnerRecoveryWithWallet,
     onCotiNetwork,
     openChangeBurnerPin,
+    ownerAesReady,
+    ownerRecoveryError,
     preferredBrowserWalletId,
-    preferredInjectedWalletOption,
+    recoverLinkedBurnerWallet,
+    recoveringAppWallet,
+    resetOwnerRecoveryAttempt,
+    setActiveRecoveryProfileAsDefault,
     setChatAppWalletMenuOpen,
     setChatWalletMenuOpen,
     setError,
     setShowBurnerImportModal,
-    setShowTopUpModal,
-    topUpAmountLabel,
-    topUpAmountWei,
+    onOpenFundsTransfer: openAccountFundsModal,
     walletAesHealth: walletAesHealthByAddress[walletAddress.trim().toLowerCase()] ?? null,
     walletAddress
   });
@@ -7243,11 +8253,11 @@ export default function App() {
         const connectedProvider = getConnectedProvider();
         const provider = await resolveWalletPromptProvider(connectedProvider, walletAddress);
         if (!provider) {
-          throw new Error('Wallet provider not detected. Connect without burner first.');
+          throw new Error('Owner wallet provider not detected. Connect your owner wallet first.');
         }
 
         if (!walletAddress) {
-          throw new Error('Connect your wallet first.');
+          throw new Error('Connect your owner wallet first.');
         }
 
         if (chainId !== COTI_NETWORK.chainIdDecimal || provider !== connectedProvider) {
@@ -7274,18 +8284,17 @@ export default function App() {
           signer.setUserOnboardInfo(cachedOnboardInfo);
         }
 
-        if (!signer.getUserOnboardInfo()?.aesKey) {
-          hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
-        }
-
         signer.disableAutoOnboard();
         if (requireAes && (options.refreshAes || !signer.getUserOnboardInfo()?.aesKey)) {
-          await getOrRecoverAesForWallet({
-            forceRefresh: options.refreshAes,
-            provider,
-            signer,
-            walletAddress
-          });
+          const snapAesResult = await getCotiSnapOwnerAesKeyResult(provider, walletAddress);
+          if (snapAesResult.status !== 'ready') {
+            throw new Error(getCotiSnapOwnerAesStatusMessage(snapAesResult.status));
+          }
+          signer.setUserOnboardInfo(
+            mergeOnboardInfo(signer.getUserOnboardInfo(), {
+              aesKey: snapAesResult.aesKey
+            } as OnboardInfo)
+          );
         }
 
         const onboardInfo = signer.getUserOnboardInfo();
@@ -7298,7 +8307,7 @@ export default function App() {
             status: 'ready-unverified',
             walletAddress
           }));
-          setOnboardStatus('AES key ready');
+          setOnboardStatus('Owner privacy ready');
         }
 
         return signer;
@@ -7306,7 +8315,7 @@ export default function App() {
 
       const signer = burnerWalletRef.current;
       if (!signer) {
-        throw new Error('Burner wallet not initialized.');
+        throw new Error('ChainWhisper account is not initialized.');
       }
 
       const cacheKey = signer.address.toLowerCase();
@@ -7330,7 +8339,7 @@ export default function App() {
           ...previous,
           [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
         }));
-        setOnboardStatus('AES key ready');
+        setOnboardStatus('Privacy ready');
       }
 
       return signer;
@@ -7362,20 +8371,24 @@ export default function App() {
         await beginBurnerPinFlow('stored');
       },
       connectBrowserWallet: (walletId?: string, options = {}) =>
-        activateBrowserWalletSessionGuarded(walletId, {
+        activateBrowserWalletSessionWithBootstrap(walletId, {
           forceAccountPicker: options.forceAccountPicker,
           forceFreshPrivacy: options.forceFreshPrivacy,
           preparePrivacy: options.preparePrivacy
         }),
       disconnect: disconnectWallet,
-      generateAppWallet: () => beginBurnerPinFlow('generate'),
+      generateAppWallet: async () => {
+        await beginBurnerPinFlow('generate');
+      },
       getSigner: getSharedWalletSigner,
       importAppWallet: () => {
         setShowBurnerImportModal(true);
       },
+      linkAppWalletRecovery: () => linkBurnerRecoveryWithWallet(),
+      recoverLinkedAppWallet: () => recoverLinkedBurnerWallet(),
       runWalletTransactionFlow: runSharedWalletTransactionFlow,
       switchAppWallet: (walletIdOrAddress: string) => Promise.resolve(handleSwitchActiveBurnerWallet(walletIdOrAddress)),
-      unlockPrivacy: (options = {}) => {
+      unlockPrivacy: async (options = {}) => {
         if (activeSignerSource === 'metamask') {
           return runSharedWalletTransactionFlow(() =>
             getSharedWalletSigner(true, {
@@ -7383,16 +8396,19 @@ export default function App() {
             })
           );
         }
-        return beginBurnerPinFlow('stored');
+        await beginBurnerPinFlow('stored');
+        return null;
       }
     }),
     [
-      activateBrowserWalletSessionGuarded,
+      activateBrowserWalletSessionWithBootstrap,
       activeSignerSource,
       beginBurnerPinFlow,
       disconnectWallet,
       getSharedWalletSigner,
       handleSwitchActiveBurnerWallet,
+      linkBurnerRecoveryWithWallet,
+      recoverLinkedBurnerWallet,
       runSharedWalletTransactionFlow,
       setShowBurnerImportModal
     ]
@@ -7420,7 +8436,8 @@ export default function App() {
       onSwitchActiveBurnerWallet: handleSwitchActiveBurnerWallet,
       sessionOnboardInfo,
       walletAesHealthByAddress,
-      walletAddress
+      walletAddress,
+      walletReadAccounts: readableWalletAccounts
     }),
     [
       activeProvider,
@@ -7443,7 +8460,8 @@ export default function App() {
       sharedWalletActions,
       setWalletAesHealth,
       walletAesHealthByAddress,
-      walletAddress
+      walletAddress,
+      readableWalletAccounts
     ]
   );
   // --- Stable callbacks for ContactsSidebar ---
@@ -7528,7 +8546,7 @@ export default function App() {
 
   const handleReplyToMessage = useCallback((message: ChatMessage) => {
     if (browserWalletLiteMode) {
-      setError('Use the app wallet to send replies.');
+      setError('Use the ChainWhisper account to send replies.');
       return;
     }
     setReplyingToMessage(message);
@@ -7544,10 +8562,8 @@ export default function App() {
   }, []);
 
   const activePageWalletPolicy = getAppWalletPolicy(activePage);
-  const activeChatWalletControl =
-    activePageWalletPolicy.walletControlKind === 'chat' ? chatWalletHeaderControl : null;
-  const activeTradeWalletControl =
-    activePageWalletPolicy.walletControlKind === 'trades' ? tradeHeaderWalletControl : null;
+  const activeAppWalletControl =
+    activePageWalletPolicy.walletControlKind === 'app' ? appWalletHeaderControl : null;
 
   const headerHomeAction =
     activePage !== 'home' ? (
@@ -7653,6 +8669,35 @@ export default function App() {
         </Suspense>
       ) : null}
 
+      {recoverySavePrompt ? (
+        <Suspense fallback={null}>
+          <RecoverySaveConfirmModal
+            isOpen={Boolean(recoverySavePrompt)}
+            estimate={recoverySavePrompt.estimate}
+            makeDefault={recoverySavePrompt.makeDefault}
+            message={recoverySavePrompt.message}
+            onCancel={cancelRecoverySavePrompt}
+            onConfirm={confirmRecoverySavePrompt}
+            onMakeDefaultChange={setRecoverySavePromptMakeDefault}
+          />
+        </Suspense>
+      ) : null}
+
+      {accountFundsDirection ? (
+        <Suspense fallback={null}>
+          <AccountFundsModal
+            assets={accountFundsAssets}
+            chainwhisperAddress={burnerAddress}
+            initialDirection={accountFundsDirection}
+            isOpen={Boolean(accountFundsDirection)}
+            ownerAddress={ownerWalletAddress}
+            processing={accountFundsProcessing}
+            onClose={closeAccountFundsModal}
+            onSubmit={submitAccountFundsTransfer}
+          />
+        </Suspense>
+      ) : null}
+
       {showTopUpModal ? (
         <Suspense fallback={null}>
           <TopUpModal
@@ -7732,7 +8777,7 @@ export default function App() {
             {!isConnected ? (
               <div className="chat-placeholder chat-placeholder-state" role="status" aria-live="polite">
                 <strong>Wallet needed</strong>
-                <p>Use the header wallet control to connect or unlock your app wallet.</p>
+                <p>Use the header wallet control to connect or unlock your ChainWhisper account.</p>
               </div>
             ) : activeGroupId !== null ? (
               <GroupChatPanel
@@ -7776,7 +8821,7 @@ export default function App() {
                 replyingToMessage={replyingToMessage}
                 onReplyToMessage={(message) => {
                   if (browserWalletLiteMode) {
-                    setError('Use the app wallet to send replies.');
+                    setError('Use the ChainWhisper account to send replies.');
                     return;
                   }
                   setReplyingToMessage(message);
@@ -7860,8 +8905,17 @@ export default function App() {
                 onJumpToReferencedMessage={jumpToReferencedMessage}
                 getReplyReferenceFallbackLabel={getReplyReferenceFallbackLabel}
                 tradeSnapshotsById={tradeSnapshotsById}
+                linkedTradeContext={activeLinkedTradeContext}
+                linkedTradeContextShareCopied={lastCopiedKey === activeLinkedTradeContextCopyKey}
                 walletAddress={walletAddress}
                 processingTradeActionId={processingTradeActionId}
+                onCopyLinkedTradeContextLink={(value) => {
+                  if (activeLinkedTradeContextCopyKey) {
+                    copyWithFeedback(value, activeLinkedTradeContextCopyKey).catch(() => {});
+                  }
+                }}
+                onDismissLinkedTradeContext={() => setLinkedTradeContext(null)}
+                onOpenTradeTerminalPath={navigateToInternalAppLink}
                 onAcceptTrade={acceptTradeOffer}
                 onDeclineTrade={declineTradeOffer}
                 onCounterTrade={prepareCounterTrade}
@@ -7896,8 +8950,9 @@ export default function App() {
                 imageAttachTitle={uploadingImage ? 'Uploading image...' : 'Attach or paste an image'}
                 onDismissImageAttachmentStatus={clearImageAttachmentStatus}
                 onSendMessage={handleSendMessage}
-                maxMessageLength={MAX_MESSAGE_LENGTH}
+                maxMessageLength={directMessageMaxLength}
                 onMessageInputChange={handleMessageInputChange}
+                promptEstimate={directComposerPromptEstimate}
                 onOpenInternalAppLink={navigateToInternalAppLink}
                 sending={sending}
                 tipToggleDisabled={tipping || sending || uploadingImage || !activeContact || isSelfChat}
@@ -7992,7 +9047,7 @@ export default function App() {
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
           appNavigationControl={appHeaderNavigationControl}
-          walletControl={activeTradeWalletControl}
+          walletControl={activeAppWalletControl}
           subtitle="OTC Desk"
           showSoundToggle
         />
@@ -8006,8 +9061,7 @@ export default function App() {
             <P2PTradingPage
               isMobileNav={isMobileNav}
               sharedWalletSession={sharedTradeWalletSession}
-              onDisconnectWallet={disconnectWallet}
-              onHeaderWalletControlChange={setTradeHeaderWalletControl}
+              onOpenTradeConversation={ensureContactAndOpenTradeChat}
             />
           </Suspense>
         </AppErrorBoundary>
@@ -8028,7 +9082,7 @@ export default function App() {
           onCloseMobileLinks={() => setMobileLinksOpen(false)}
           brandActions={headerHomeAction}
           appNavigationControl={appHeaderNavigationControl}
-          walletControl={activeChatWalletControl}
+          walletControl={activeAppWalletControl}
           subtitle="WISP Portal"
           showSoundToggle
         />
@@ -8118,7 +9172,7 @@ export default function App() {
         debugControl={debugControl}
         brandActions={chatBrandActions}
         appNavigationControl={appHeaderNavigationControl}
-        walletControl={activeChatWalletControl}
+        walletControl={activeAppWalletControl}
         subtitle="Chat"
         showSoundToggle
       />
