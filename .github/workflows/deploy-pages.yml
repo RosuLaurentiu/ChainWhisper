@@ -32,6 +32,9 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          VITE_ENABLE_DEFAULT_CARBON_PROXY: "true"
+          VITE_SUPABASE_PROJECT_URL: https://ousgmjyajyorywpqbdkf.supabase.co
         run: npm run build
 
       - name: Preserve custom domain

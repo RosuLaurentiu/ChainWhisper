@@ -208,6 +208,16 @@ Deployment outline:
 2. Deploy `supabase/functions/chat-image-cleanup`.
 3. Set `VITE_SUPABASE_PROJECT_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
 
+## Supabase Carbon Price Proxy
+
+Carbon market price references use `supabase/functions/carbon-explore-pair` in production because the Carbon MCP endpoint is not browser-CORS friendly. GitHub Pages builds with `VITE_ENABLE_DEFAULT_CARBON_PROXY=true`, so the Edge Function must be deployed for deployed pages to show Carbon prices.
+
+Deployment outline:
+
+1. Add `SUPABASE_ACCESS_TOKEN` to GitHub repository secrets.
+2. Keep `SUPABASE_PROJECT_ID` unset to use the default project `ousgmjyajyorywpqbdkf`, or set it as a repository variable.
+3. Run the `Deploy Supabase Functions` workflow, or push changes under `supabase/functions/**`.
+
 ## GitHub Pages
 
 The app is configured for a custom-domain GitHub Pages deployment from the repository root (`base: '/'`). The deploy workflow preserves `CNAME` and writes `dist/.nojekyll`.
