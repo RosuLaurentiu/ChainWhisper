@@ -18,11 +18,8 @@ import {
 } from './appHelpers';
 
 export const CARBON_NATIVE_TOKEN_ADDRESS = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
-export const DEFAULT_CARBON_MCP_API_BASE_URL = 'https://mcp.carbondefi.xyz';
-export const CARBON_MCP_EXPLORE_PAIR_PATH = '/tools/explore_pair';
-export const CARBON_MCP_DEV_PROXY_BASE_URL = '/carbon-mcp';
-export const DEFAULT_SUPABASE_PROJECT_URL = 'https://ousgmjyajyorywpqbdkf.supabase.co';
-export const CARBON_MCP_SUPABASE_FUNCTION_NAME = 'carbon-explore-pair';
+export const DEFAULT_CARBON_COTI_API_BASE_URL = 'https://api.carbondefi.xyz/v1/coti';
+export const CARBON_MARKET_RATE_PATH = '/market-rate';
 export const CARBON_PAIR_REFERENCE_CACHE_TTL_MS = 60_000;
 
 export type CarbonPriceAsset = {
@@ -45,7 +42,7 @@ export type CarbonPricePair = {
   usedPublicCounterpart: boolean;
 };
 
-export type CarbonPairReferenceSource = 'market_price' | 'marginal';
+export type CarbonPairReferenceSource = 'market_price';
 
 export type CarbonPairReference = {
   status: 'ready';
@@ -65,15 +62,9 @@ export type CarbonPairReferenceDisplay = {
   basisLabel: string;
 };
 
-type CarbonExplorePairResponse = {
-  status?: unknown;
-  market_price?: unknown;
-  active_strategies?: Array<{
-    base_token?: unknown;
-    buy?: { marginal?: unknown };
-    quote_token?: unknown;
-    sell?: { marginal?: unknown };
-  }>;
+type CarbonMarketRateResponse = {
+  data?: Record<string, unknown>;
+  provider?: unknown;
 };
 
 type CarbonReferenceCacheEntry = {
@@ -168,12 +159,10 @@ export const formatCarbonPriceValue = (price: number): string => {
 const buildCarbonPairReferenceTitle = ({
   baseSymbol,
   quoteSymbol,
-  source,
   usedPublicCounterpart
-}: Pick<CarbonPairReference, 'baseSymbol' | 'quoteSymbol' | 'source' | 'usedPublicCounterpart'>): string => {
-  const sourceLabel = source === 'market_price' ? 'Carbon market price' : 'Carbon strategy marginal price';
+}: Pick<CarbonPairReference, 'baseSymbol' | 'quoteSymbol' | 'usedPublicCounterpart'>): string => {
   const counterpartLabel = usedPublicCounterpart ? ' Public-token counterpart used for private tokens.' : '';
-  return `${sourceLabel} for ${baseSymbol}/${quoteSymbol}.${counterpartLabel}`;
+  return `Carbon market price for ${baseSymbol}/${quoteSymbol}.${counterpartLabel}`;
 };
 
 export const formatCarbonPairReferenceDisplay = (
@@ -192,13 +181,12 @@ export const formatCarbonPairReferenceDisplay = (
   const baseSymbol = inverted ? reference.quoteSymbol : reference.baseSymbol;
   const quoteSymbol = inverted ? reference.baseSymbol : reference.quoteSymbol;
   const basisLabel = `${quoteSymbol}/${baseSymbol}`;
-  const sourceLabel = reference.source === 'market_price' ? 'Carbon market price' : 'Carbon marginal price';
   const counterpartLabel = reference.usedPublicCounterpart ? ' Public-token counterpart used for private tokens.' : '';
 
   return {
     basisLabel,
     label: `Carbon price ${formatCarbonPriceValue(price)} ${basisLabel}`,
-    title: `${sourceLabel} for ${baseSymbol}/${quoteSymbol}.${counterpartLabel}`
+    title: `Carbon market price for ${baseSymbol}/${quoteSymbol}.${counterpartLabel}`
   };
 };
 
@@ -275,105 +263,34 @@ export const resolveCarbonPricePair = (
   };
 };
 
-export const resolveCarbonApiBaseUrl = ({
-  configuredBaseUrl,
-  enableDefaultSupabaseProxy = false,
-  isDev,
-  supabaseProjectUrl
+export const resolveCarbonMarketRateUrl = ({
+  address,
+  configuredBaseUrl
 }: {
+  address: string;
   configuredBaseUrl?: string;
-  enableDefaultSupabaseProxy?: boolean;
-  isDev: boolean;
-  supabaseProjectUrl?: string;
-}): string | null => {
-  const configured = configuredBaseUrl?.trim();
-  if (configured) {
-    return configured.replace(/\/+$/u, '');
-  }
-  if (isDev) {
-    return CARBON_MCP_DEV_PROXY_BASE_URL;
-  }
-  if (!enableDefaultSupabaseProxy) {
-    return null;
-  }
-
-  const projectUrl = (supabaseProjectUrl?.trim() || DEFAULT_SUPABASE_PROJECT_URL).replace(/\/+$/u, '');
-  return `${projectUrl}/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`;
+}): string => {
+  const baseUrl = (configuredBaseUrl?.trim() || DEFAULT_CARBON_COTI_API_BASE_URL).replace(/\/+$/u, '');
+  const url = new URL(`${baseUrl}${CARBON_MARKET_RATE_PATH}`);
+  url.searchParams.set('address', address);
+  url.searchParams.set('convert', 'USD');
+  return url.toString();
 };
 
-export const resolveCarbonExplorePairUrl = (options: {
-  configuredBaseUrl?: string;
-  enableDefaultSupabaseProxy?: boolean;
-  isDev: boolean;
-  supabaseProjectUrl?: string;
-}): string | null => {
-  const baseUrl = resolveCarbonApiBaseUrl(options);
-  if (!baseUrl) {
-    return null;
-  }
-  return baseUrl.endsWith(`/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`)
-    ? baseUrl
-    : `${baseUrl}${CARBON_MCP_EXPLORE_PAIR_PATH}`;
-};
-
-const getCarbonExplorePairUrl = (): string | null => {
-  return resolveCarbonExplorePairUrl({
-    configuredBaseUrl: import.meta.env.VITE_CARBON_MCP_API_BASE_URL,
-    enableDefaultSupabaseProxy: import.meta.env.VITE_ENABLE_DEFAULT_CARBON_PROXY === 'true',
-    isDev: import.meta.env.DEV,
-    supabaseProjectUrl: import.meta.env.VITE_SUPABASE_PROJECT_URL
+const getCarbonMarketRateUrl = (address: string): string => {
+  return resolveCarbonMarketRateUrl({
+    address,
+    configuredBaseUrl: import.meta.env.VITE_CARBON_MARKET_API_BASE_URL
   });
 };
 
-const readStrategyMarginalPrice = (strategy: NonNullable<CarbonExplorePairResponse['active_strategies']>[number]): number | null => {
-  const buyMarginal = readPositiveNumber(strategy.buy?.marginal);
-  if (buyMarginal !== null) {
-    return buyMarginal;
-  }
-  return readPositiveNumber(strategy.sell?.marginal);
-};
-
-const getMarginalFallbackPrice = (payload: CarbonExplorePairResponse, pair: CarbonPricePair): number | null => {
-  const strategies = Array.isArray(payload.active_strategies) ? payload.active_strategies : [];
-  let firstUnscopedMarginal: number | null = null;
-  const pairBaseAddress = normalizeAddress(pair.base.address);
-  const pairQuoteAddress = normalizeAddress(pair.quote.address);
-
-  for (const strategy of strategies) {
-    const marginal = readStrategyMarginalPrice(strategy);
-    if (marginal === null) {
-      continue;
-    }
-
-    const strategyBaseAddress = typeof strategy.base_token === 'string' ? normalizeAddress(strategy.base_token) : '';
-    const strategyQuoteAddress = typeof strategy.quote_token === 'string' ? normalizeAddress(strategy.quote_token) : '';
-    if (!strategyBaseAddress || !strategyQuoteAddress) {
-      firstUnscopedMarginal ??= marginal;
-      continue;
-    }
-
-    if (strategyBaseAddress === pairBaseAddress && strategyQuoteAddress === pairQuoteAddress) {
-      return marginal;
-    }
-    if (strategyBaseAddress === pairQuoteAddress && strategyQuoteAddress === pairBaseAddress) {
-      return 1 / marginal;
-    }
-  }
-  return firstUnscopedMarginal;
-};
-
-const buildCarbonReferenceFromPayload = (
-  payload: CarbonExplorePairResponse,
+const buildCarbonReferenceFromMarketRate = (
+  baseUsd: number,
+  quoteUsd: number,
   pair: CarbonPricePair
 ): CarbonPairReference | null => {
-  if (payload.status !== 'ok') {
-    return null;
-  }
-
-  const marketPrice = readPositiveNumber(payload.market_price);
-  const source: CarbonPairReferenceSource = marketPrice !== null ? 'market_price' : 'marginal';
-  const price = marketPrice ?? getMarginalFallbackPrice(payload, pair);
-  if (price === null) {
+  const price = baseUsd / quoteUsd;
+  if (!isPositiveFiniteNumber(price)) {
     return null;
   }
 
@@ -383,7 +300,7 @@ const buildCarbonReferenceFromPayload = (
     baseSymbol: pair.base.symbol,
     quoteSymbol: pair.quote.symbol,
     price,
-    source,
+    source: 'market_price',
     usedPublicCounterpart: pair.usedPublicCounterpart,
     label: '',
     title: ''
@@ -398,6 +315,52 @@ const buildCarbonReferenceFromPayload = (
     label: display.label,
     title: buildCarbonPairReferenceTitle(reference)
   };
+};
+
+const fetchCarbonUsdMarketRate = async ({
+  address,
+  fetcher,
+  signal
+}: {
+  address: string;
+  fetcher: typeof fetch;
+  signal?: AbortSignal;
+}): Promise<number | null> => {
+  const response = await fetcher(getCarbonMarketRateUrl(address), {
+    headers: {
+      accept: 'application/json'
+    },
+    method: 'GET',
+    signal
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as CarbonMarketRateResponse;
+  return readPositiveNumber(payload.data?.USD);
+};
+
+const fetchCarbonMarketRateReference = async ({
+  fetcher,
+  pair,
+  signal
+}: {
+  fetcher: typeof fetch;
+  pair: CarbonPricePair;
+  signal?: AbortSignal;
+}): Promise<CarbonPairReference | null> => {
+  const [baseUsd, quoteUsd] = await Promise.all([
+    fetchCarbonUsdMarketRate({ address: pair.base.address, fetcher, signal }),
+    fetchCarbonUsdMarketRate({ address: pair.quote.address, fetcher, signal })
+  ]);
+
+  if (baseUsd === null || quoteUsd === null) {
+    return null;
+  }
+
+  return buildCarbonReferenceFromMarketRate(baseUsd, quoteUsd, pair);
 };
 
 export const clearCarbonPairReferenceCache = (): void => {
@@ -427,35 +390,8 @@ export const fetchCarbonPairReference = async ({
     return cached.reference;
   }
 
-  const explorePairUrl = getCarbonExplorePairUrl();
-  if (!explorePairUrl) {
-    carbonReferenceCache.set(pair.pairKey, { expiresAt: now + CARBON_PAIR_REFERENCE_CACHE_TTL_MS, reference: null });
-    return null;
-  }
-
   try {
-    const response = await fetcher(explorePairUrl, {
-      body: JSON.stringify({
-        base_token: pair.base.address,
-        chain: 'coti',
-        quote_token: pair.quote.address,
-        top_n: 3
-      }),
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json'
-      },
-      method: 'POST',
-      signal
-    });
-
-    if (!response.ok) {
-      carbonReferenceCache.set(pair.pairKey, { expiresAt: now + CARBON_PAIR_REFERENCE_CACHE_TTL_MS, reference: null });
-      return null;
-    }
-
-    const payload = (await response.json()) as CarbonExplorePairResponse;
-    const reference = buildCarbonReferenceFromPayload(payload, pair);
+    const reference = await fetchCarbonMarketRateReference({ fetcher, pair, signal });
     carbonReferenceCache.set(pair.pairKey, { expiresAt: now + CARBON_PAIR_REFERENCE_CACHE_TTL_MS, reference });
     return reference;
   } catch (error) {

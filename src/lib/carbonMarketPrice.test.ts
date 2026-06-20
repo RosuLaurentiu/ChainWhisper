@@ -1,15 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CARBON_NATIVE_TOKEN_ADDRESS,
-  CARBON_MCP_DEV_PROXY_BASE_URL,
-  CARBON_MCP_EXPLORE_PAIR_PATH,
-  CARBON_MCP_SUPABASE_FUNCTION_NAME,
-  DEFAULT_SUPABASE_PROJECT_URL,
+  CARBON_MARKET_RATE_PATH,
+  DEFAULT_CARBON_COTI_API_BASE_URL,
   clearCarbonPairReferenceCache,
   fetchCarbonPairReference,
   formatCarbonPairReferenceDisplay,
-  resolveCarbonApiBaseUrl,
-  resolveCarbonExplorePairUrl,
+  resolveCarbonMarketRateUrl,
   resolveCarbonPricePair,
   resolveCarbonToken
 } from './carbonMarketPrice';
@@ -43,6 +40,31 @@ const jsonResponse = (payload: unknown, status = 200): Response =>
     status
   });
 
+const marketRateResponse = (usd: number | null, status = 200): Response =>
+  jsonResponse({ data: usd === null ? {} : { USD: usd }, provider: 'carbon' }, status);
+
+const marketRateFetcher = ({
+  baseAddress,
+  baseUsd,
+  quoteAddress,
+  quoteUsd
+}: {
+  baseAddress: string;
+  baseUsd: number | null;
+  quoteAddress: string;
+  quoteUsd: number | null;
+}): ReturnType<typeof vi.fn<typeof fetch>> =>
+  vi.fn(async (input) => {
+    const url = String(input);
+    if (url.includes(baseAddress)) {
+      return marketRateResponse(baseUsd);
+    }
+    if (url.includes(quoteAddress)) {
+      return marketRateResponse(quoteUsd);
+    }
+    return marketRateResponse(null, 404);
+  });
+
 describe('carbonMarketPrice helpers', () => {
   beforeEach(() => {
     clearCarbonPairReferenceCache();
@@ -67,33 +89,15 @@ describe('carbonMarketPrice helpers', () => {
     });
   });
 
-  it('resolves deploy-safe Carbon API base URLs', () => {
-    expect(resolveCarbonApiBaseUrl({ isDev: true })).toBe(CARBON_MCP_DEV_PROXY_BASE_URL);
-    expect(resolveCarbonApiBaseUrl({ isDev: false })).toBeNull();
-    expect(resolveCarbonApiBaseUrl({ enableDefaultSupabaseProxy: true, isDev: false })).toBe(
-      `${DEFAULT_SUPABASE_PROJECT_URL}/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`
+  it('resolves Carbon market-rate API URLs', () => {
+    expect(resolveCarbonMarketRateUrl({ address: REWARD_TOKEN_ADDRESS })).toBe(
+      `${DEFAULT_CARBON_COTI_API_BASE_URL}${CARBON_MARKET_RATE_PATH}?address=${REWARD_TOKEN_ADDRESS}&convert=USD`
     );
-    expect(
-      resolveCarbonApiBaseUrl({
-        enableDefaultSupabaseProxy: true,
-        isDev: false,
-        supabaseProjectUrl: 'https://example.supabase.co/'
-      })
-    ).toBe(
-      `https://example.supabase.co/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`
-    );
-    expect(resolveCarbonApiBaseUrl({ configuredBaseUrl: 'https://carbon-proxy.example/', isDev: false })).toBe(
-      'https://carbon-proxy.example'
-    );
-    expect(resolveCarbonExplorePairUrl({ isDev: true })).toBe(
-      `${CARBON_MCP_DEV_PROXY_BASE_URL}${CARBON_MCP_EXPLORE_PAIR_PATH}`
-    );
-    expect(resolveCarbonExplorePairUrl({ isDev: false })).toBeNull();
-    expect(resolveCarbonExplorePairUrl({ enableDefaultSupabaseProxy: true, isDev: false })).toBe(
-      `${DEFAULT_SUPABASE_PROJECT_URL}/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`
-    );
-    expect(resolveCarbonExplorePairUrl({ configuredBaseUrl: 'https://carbon-proxy.example/', isDev: false })).toBe(
-      `https://carbon-proxy.example${CARBON_MCP_EXPLORE_PAIR_PATH}`
+    expect(resolveCarbonMarketRateUrl({
+      address: REWARD_TOKEN_ADDRESS,
+      configuredBaseUrl: 'https://carbon-api.example/coti/'
+    })).toBe(
+      `https://carbon-api.example/coti${CARBON_MARKET_RATE_PATH}?address=${REWARD_TOKEN_ADDRESS}&convert=USD`
     );
   });
 
@@ -147,15 +151,12 @@ describe('carbonMarketPrice helpers', () => {
   });
 
   it('uses Carbon market price when available', async () => {
-    const fetcher = vi.fn(async () =>
-      jsonResponse({
-        active_strategies: [
-          { buy: { marginal: '0.000292' } }
-        ],
-        market_price: 0.000286,
-        status: 'ok'
-      })
-    );
+    const fetcher = marketRateFetcher({
+      baseAddress: REWARD_TOKEN_ADDRESS,
+      baseUsd: 0.00000286,
+      quoteAddress: CARBON_NATIVE_TOKEN_ADDRESS,
+      quoteUsd: 0.01
+    });
 
     const reference = await fetchCarbonPairReference({
       baseAsset: asset('WISP', 'erc20', REWARD_TOKEN_ADDRESS),
@@ -163,12 +164,10 @@ describe('carbonMarketPrice helpers', () => {
       quoteAsset: asset('COTI', 'native')
     });
 
+    expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher).toHaveBeenCalledWith(
-      expect.stringMatching(/\/tools\/explore_pair$/u),
-      expect.objectContaining({
-        body: expect.stringContaining(REWARD_TOKEN_ADDRESS),
-        method: 'POST'
-      })
+      expect.stringContaining(`${CARBON_MARKET_RATE_PATH}?address=${REWARD_TOKEN_ADDRESS}`),
+      expect.objectContaining({ method: 'GET' })
     );
     expect(reference).toMatchObject({
       baseSymbol: 'WISP',
@@ -178,64 +177,33 @@ describe('carbonMarketPrice helpers', () => {
     });
   });
 
-  it('falls back to the first active strategy marginal price', async () => {
-    const fetcher = vi.fn(async () =>
-      jsonResponse({
-        active_strategies: [
-          { buy: { marginal: '0' }, sell: { marginal: '0.000292' } }
-        ],
-        market_price: null,
-        status: 'ok'
-      })
-    );
-
-    const reference = await fetchCarbonPairReference({
-      baseAsset: asset('WISP', 'erc20', REWARD_TOKEN_ADDRESS),
-      fetcher,
-      quoteAsset: asset('COTI', 'native')
-    });
-
-    expect(reference).toMatchObject({
-      label: 'Carbon price 0.000292 COTI/WISP',
-      source: 'marginal'
-    });
-  });
-
-  it('inverts opposite-orientation strategy marginals for Carbon pair fallback', async () => {
+  it('computes pair price from Carbon token market rates', async () => {
     const reference = await fetchCarbonPairReference({
       baseAsset: asset('Pengo', 'erc20', '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8'),
-      fetcher: vi.fn(async () =>
-        jsonResponse({
-          active_strategies: [
-            {
-              base_token: CARBON_NATIVE_TOKEN_ADDRESS,
-              buy: { marginal: '3171841876378.036133' },
-              quote_token: '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8'
-            }
-          ],
-          market_price: 0,
-          status: 'ok'
-        })
-      ),
+      fetcher: marketRateFetcher({
+        baseAddress: '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8',
+        baseUsd: 0.000000000003153,
+        quoteAddress: CARBON_NATIVE_TOKEN_ADDRESS,
+        quoteUsd: 0.01
+      }),
       quoteAsset: asset('COTI', 'native')
     });
 
     expect(reference).toMatchObject({
-      label: 'Carbon price 3.153e-13 COTI/Pengo',
-      source: 'marginal'
+      label: 'Carbon price 3.153e-10 COTI/Pengo',
+      source: 'market_price'
     });
   });
 
   it('formats inverted Carbon reference basis for flipped price displays', async () => {
     const reference = await fetchCarbonPairReference({
       baseAsset: asset('WISP', 'erc20', REWARD_TOKEN_ADDRESS),
-      fetcher: vi.fn(async () =>
-        jsonResponse({
-          active_strategies: [],
-          market_price: 0.00025,
-          status: 'ok'
-        })
-      ),
+      fetcher: marketRateFetcher({
+        baseAddress: REWARD_TOKEN_ADDRESS,
+        baseUsd: 0.0000025,
+        quoteAddress: CARBON_NATIVE_TOKEN_ADDRESS,
+        quoteUsd: 0.01
+      }),
       quoteAsset: asset('COTI', 'native')
     });
 
@@ -248,14 +216,24 @@ describe('carbonMarketPrice helpers', () => {
   it('fails soft for no data, malformed responses, and request failures', async () => {
     await expect(fetchCarbonPairReference({
       baseAsset: asset('WISP', 'erc20', REWARD_TOKEN_ADDRESS),
-      fetcher: vi.fn(async () => jsonResponse({ active_strategies: [], market_price: null, status: 'ok' })),
+      fetcher: marketRateFetcher({
+        baseAddress: REWARD_TOKEN_ADDRESS,
+        baseUsd: null,
+        quoteAddress: CARBON_NATIVE_TOKEN_ADDRESS,
+        quoteUsd: 0.01
+      }),
       quoteAsset: asset('COTI', 'native')
     })).resolves.toBeNull();
 
     clearCarbonPairReferenceCache();
     await expect(fetchCarbonPairReference({
       baseAsset: asset('WISP', 'erc20', REWARD_TOKEN_ADDRESS),
-      fetcher: vi.fn(async () => jsonResponse({ active_strategies: [], market_price: 0.1, status: 'error' })),
+      fetcher: marketRateFetcher({
+        baseAddress: REWARD_TOKEN_ADDRESS,
+        baseUsd: 0.00000286,
+        quoteAddress: CARBON_NATIVE_TOKEN_ADDRESS,
+        quoteUsd: null
+      }),
       quoteAsset: asset('COTI', 'native')
     })).resolves.toBeNull();
 
@@ -284,13 +262,12 @@ describe('carbonMarketPrice helpers', () => {
       signal: controller.signal
     })).resolves.toBeNull();
 
-    const successfulFetcher = vi.fn(async () =>
-      jsonResponse({
-        active_strategies: [],
-        market_price: 0.000286,
-        status: 'ok'
-      })
-    );
+    const successfulFetcher = marketRateFetcher({
+      baseAddress: REWARD_TOKEN_ADDRESS,
+      baseUsd: 0.00000286,
+      quoteAddress: CARBON_NATIVE_TOKEN_ADDRESS,
+      quoteUsd: 0.01
+    });
 
     await expect(fetchCarbonPairReference({
       baseAsset: asset('WISP', 'erc20', REWARD_TOKEN_ADDRESS),
@@ -300,17 +277,16 @@ describe('carbonMarketPrice helpers', () => {
     })).resolves.toMatchObject({
       label: 'Carbon price 0.000286 COTI/WISP'
     });
-    expect(successfulFetcher).toHaveBeenCalledTimes(1);
+    expect(successfulFetcher).toHaveBeenCalledTimes(2);
   });
 
   it('caches pair references for the TTL window', async () => {
-    const fetcher = vi.fn(async () =>
-      jsonResponse({
-        active_strategies: [],
-        market_price: 0.000286,
-        status: 'ok'
-      })
-    );
+    const fetcher = marketRateFetcher({
+      baseAddress: REWARD_TOKEN_ADDRESS,
+      baseUsd: 0.00000286,
+      quoteAddress: CARBON_NATIVE_TOKEN_ADDRESS,
+      quoteUsd: 0.01
+    });
 
     const first = await fetchCarbonPairReference({
       baseAsset: asset('WISP', 'erc20', REWARD_TOKEN_ADDRESS),
@@ -326,6 +302,6 @@ describe('carbonMarketPrice helpers', () => {
     });
 
     expect(first).toBe(second);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });
