@@ -599,7 +599,7 @@ export default function TradeOfferCard({
               ) : null}
               {onOpenTerminal ? (
                 <button type="button" className="trade-card-link-button" onClick={onOpenTerminal}>
-                  Open terminal
+                  Open order
                 </button>
               ) : null}
               {canToggleCollapsed ? (

@@ -129,7 +129,7 @@ describe('trade escrow contract resolution', () => {
     const secret = `0x${'34'.repeat(32)}`;
     const path = buildTradeLinkPath(12, secret, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
 
-    expect(path).toBe(`/trades/l/${encodeTradeLink(12, secret)}?escrow=direct`);
+    expect(path).toBe(`/otc/order/link/${encodeTradeLink(12, secret)}?escrow=direct`);
     expect(resolveTradeRouteFromParts(path.split('?')[0], path.slice(path.indexOf('?')))).toMatchObject({
       tradeId: 12,
       escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,

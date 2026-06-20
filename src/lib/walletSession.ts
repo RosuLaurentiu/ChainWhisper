@@ -1320,6 +1320,7 @@ export const resolveAppWalletMenuActionVisibility = ({
     resolvedSetupStorageKind === 'legacy' ||
     resolvedSetupStorageKind === 'legacy-vault';
   const needsPrimarySetup = !connectedWithAppWallet && !hasOwnerLinkedAccount && !hasPinBackedAccount;
+  const canCheckOwnerRecovery = !connectedWithAppWallet && ownerWalletConnected && !hasOwnerLinkedAccount && !recoveryChecking;
 
   return {
     showBackupWallet: Boolean(connectedWithAppWallet && hasMnemonicBackup),
@@ -1334,7 +1335,7 @@ export const resolveAppWalletMenuActionVisibility = ({
     showLinkExistingPinAccount: Boolean(!connectedWithAppWallet && ownerWalletReady && hasPinBackedAccount && !recoveryChecking),
     showOwnerDirectFallback: Boolean(ownerWalletConnected),
     showPinOnlyFallback: Boolean(hasPinBackedAccount),
-    showRecoverWallet: Boolean(recoveryConfigured && !connectedWithAppWallet && !hasOwnerLinkedAccount && !recoveryChecking),
+    showRecoverWallet: Boolean(canCheckOwnerRecovery),
     showSaveRecovery: Boolean(connectedWithAppWallet && recoveryConfigured)
   };
 };

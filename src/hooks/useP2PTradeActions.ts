@@ -164,8 +164,18 @@ type UseP2PTradeActionsResult = {
   acceptTrade: (snapshot: TradeSnapshot, counterAcceptMode?: CounterAcceptMode) => Promise<void>;
   cancelTrade: (snapshot: TradeSnapshot) => Promise<void>;
   declineTrade: (snapshot: TradeSnapshot) => Promise<void>;
-  partialFillTrade: (snapshot: TradeSnapshot, amountInput: string) => Promise<void>;
+  partialFillTrade: (snapshot: TradeSnapshot, amountInput: string, options?: TradeFillActionOptions) => Promise<void>;
   processingTradeActionId: string;
+};
+
+export type TradeFillActionOptions = Partial<
+  Pick<
+    TradeFundingPreflightInput,
+    'actionLabel' | 'confirmButtonLabel' | 'confirmMessage' | 'confirmTitle' | 'confirmationPolicy' | 'tradeSummary'
+  >
+> & {
+  openAfterAction?: boolean;
+  rememberTerminalReturn?: boolean;
 };
 
 export default function useP2PTradeActions({
@@ -446,7 +456,7 @@ export default function useP2PTradeActions({
   );
 
   const partialFillTrade = useCallback(
-    async (snapshot: TradeSnapshot, amountInput: string) => {
+    async (snapshot: TradeSnapshot, amountInput: string, options?: TradeFillActionOptions) => {
       const tradeKey = getSnapshotKey(snapshot);
       if (!walletAddress) {
         const message = 'Connect a wallet first.';
@@ -468,7 +478,9 @@ export default function useP2PTradeActions({
         const actionResult = await runTradeWalletPromptFlow(async () => {
         const actionWalletAddress = resolveActionWalletAddress?.(snapshot, 'fill') || walletAddress;
         const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
+        if (options?.rememberTerminalReturn !== false) {
+          rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
+        }
         const latestSnapshot = (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
         if (latestSnapshot.counterParentTradeId) {
           throw new Error('Counter offers use full-size fill, or close the parent first and accept.');
@@ -505,27 +517,32 @@ export default function useP2PTradeActions({
           resolveTradeEscrowContractConfig(latestSnapshot.escrowContract).directVisible &&
           canUseWalletAuthorityForDirectAccess(latestSnapshot, actionWalletAddress);
 
+        const defaultTradeSummary = [
+          {
+            label: 'Trade',
+            value: `#${latestSnapshot.tradeId}`
+          },
+          {
+            label: 'You pay',
+            value: formatWalletFundAmount(requestedAmount, latestSnapshot.request)
+          },
+          {
+            label: 'Receive',
+            value: latestSnapshotHiddenLiquidity
+              ? latestSnapshot.offer.symbol
+              : formatWalletFundAmount(
+                  (requestedAmount * getRemainingOfferAmount(latestSnapshot)) / remainingRequestAmount,
+                  latestSnapshot.offer
+              )
+          }
+        ];
         await ensureTradeFunding?.({
-          actionLabel: 'fill trade',
-          tradeSummary: [
-            {
-              label: 'Trade',
-              value: `#${latestSnapshot.tradeId}`
-            },
-            {
-              label: 'You pay',
-              value: formatWalletFundAmount(requestedAmount, latestSnapshot.request)
-            },
-            {
-              label: 'Receive',
-              value: latestSnapshotHiddenLiquidity
-                ? latestSnapshot.offer.symbol
-                : formatWalletFundAmount(
-                    (requestedAmount * getRemainingOfferAmount(latestSnapshot)) / remainingRequestAmount,
-                    latestSnapshot.offer
-                  )
-            }
-          ],
+          actionLabel: options?.actionLabel ?? 'fill trade',
+          confirmButtonLabel: options?.confirmButtonLabel,
+          confirmMessage: options?.confirmMessage,
+          confirmTitle: options?.confirmTitle,
+          confirmationPolicy: options?.confirmationPolicy,
+          tradeSummary: options?.tradeSummary ?? defaultTradeSummary,
           requirements: [
             {
               asset: latestSnapshot.request,
@@ -587,7 +604,9 @@ export default function useP2PTradeActions({
             }
           });
         }
-        openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
+        if (options?.openAfterAction !== false) {
+          openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
+        }
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
         return { txHash: fillResult.filledTxHash };
         });

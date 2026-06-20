@@ -14,7 +14,7 @@ const CANONICAL_APP_PATHS: Record<AppPage, string> = {
   chat: '/chat',
   swap: '/portal',
   treasury: '/treasury',
-  trades: '/otcdesk'
+  trades: '/otc'
 };
 
 export const normalizeAppPathname = (pathname: string): string => {
@@ -62,10 +62,14 @@ const TRADE_ROUTE_SEARCH_PARAMS = ['order', 'id', 'escrow', 'contract', 'secret'
 const canUseTradeSearchParams = (pathname: string): boolean => {
   const normalizedPathname = resolveRoutePathname(pathname).toLowerCase();
   return (
+    normalizedPathname === '/otc/order/recurring' ||
     normalizedPathname === '/trades/recurring' ||
+    /^\/otc\/order\/recurring\/\d+$/.test(normalizedPathname) ||
     normalizedPathname === '/otcdesk/terminal/recurring' ||
+    normalizedPathname.startsWith('/otc/order/link/') ||
     normalizedPathname.startsWith('/trades/l/') ||
     normalizedPathname.startsWith('/otcdesk/terminal/l/') ||
+    /^\/otc\/order\/\d+$/.test(normalizedPathname) ||
     /^\/otcdesk\/terminal\/\d+$/.test(normalizedPathname) ||
     /^\/trades\/\d+$/.test(normalizedPathname)
   );
@@ -104,6 +108,8 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
   }
 
   if (
+    normalizedPathname === '/otc' ||
+    normalizedPathname.startsWith('/otc/') ||
     normalizedPathname === '/otcdesk' ||
     normalizedPathname.startsWith('/otcdesk/') ||
     normalizedPathname === '/trades' ||

@@ -57,7 +57,7 @@ type TradeComposerPanelProps = {
   priceReference?: CarbonPairReferenceDisplay | null;
   priceSummaryLabel?: string;
   priceHelpText?: string;
-  pricePlacement?: 'bottom' | 'sell-side';
+  pricePlacement?: 'bottom' | 'sell-side' | 'top';
   showPriceRatioPreview?: boolean;
   canUseMaxOfferAmount?: boolean;
   onUseMaxOfferAmount?: () => void;
@@ -93,6 +93,7 @@ type TradeComposerPanelProps = {
   sendingLabel?: string;
   sendTitle?: string;
   actionNotice?: ReactNode;
+  settingsSlot?: ReactNode;
   onSendTradeOffer: () => void;
   generalError?: string;
   validationMessage?: string;
@@ -504,6 +505,7 @@ export default function TradeComposerPanel({
   sendingLabel = 'Creating...',
   sendTitle = 'Create the escrow trade and send the encrypted offer to this chat.',
   actionNotice,
+  settingsSlot,
   onSendTradeOffer,
   generalError,
   validationMessage
@@ -694,11 +696,29 @@ export default function TradeComposerPanel({
         </div>
       </div>
 
+      {showPriceInput && pricePlacement === 'top' ? (
+        <div className="trade-compose-limit-price">
+          {priceField}
+          {priceHelpText ? <p>{priceHelpText}</p> : null}
+          {renderPriceReference()}
+        </div>
+      ) : null}
+
       <div className="trade-compose-grid">
         <section className="trade-compose-section trade-compose-section-sell" aria-label="Asset you are sending">
           <div className="trade-compose-section-header">
             <strong>You sell</strong>
-            <span>Available: {offerBalanceSummaryLabel}</span>
+            <span className="trade-compose-section-balance">
+              <span>Available: {offerBalanceSummaryLabel}</span>
+              <button
+                type="button"
+                className="trade-compose-max"
+                onClick={() => onUseMaxOfferAmount?.()}
+                disabled={!canUseMaxOfferAmount || sending}
+              >
+                Max
+              </button>
+            </span>
           </div>
           {offerBalanceBreakdownLabel ? (
             <div className="trade-compose-balance-breakdown">{offerBalanceBreakdownLabel}</div>
@@ -760,17 +780,9 @@ export default function TradeComposerPanel({
           <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-amount-field', 'baseAmount')}>
               <span className="trade-compose-field-head">
                 <span className="trade-compose-field-label">{offerAmountLabel}</span>
-                <span className="trade-compose-field-tools">
-                  {renderPricingFieldState('baseAmount')}
-                  <strong className="trade-compose-field-value">{offerAmountSummaryLabel}</strong>
-                  <button
-                    type="button"
-                  className="trade-compose-max"
-                  onClick={() => onUseMaxOfferAmount?.()}
-                  disabled={!canUseMaxOfferAmount || sending}
-                >
-                  Max
-                </button>
+              <span className="trade-compose-field-tools">
+                {renderPricingFieldState('baseAmount')}
+                <strong className="trade-compose-field-value">{offerAmountSummaryLabel}</strong>
               </span>
             </span>
             <input
@@ -930,11 +942,13 @@ export default function TradeComposerPanel({
         </div>
       ) : null}
 
+      {settingsSlot ? <div className="trade-compose-settings-slot">{settingsSlot}</div> : null}
+
       <div className="trade-compose-quote-dock">
         {showPriceInput && pricePlacement === 'bottom' ? (
           <div className="trade-compose-pricing-row">
             {priceField}
-            <p>{priceHelpText}</p>
+            {priceHelpText ? <p>{priceHelpText}</p> : null}
             {renderPriceReference()}
           </div>
         ) : null}

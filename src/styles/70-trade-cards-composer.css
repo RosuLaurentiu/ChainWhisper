@@ -1942,6 +1942,34 @@
   padding-bottom: 4px;
 }
 
+.trade-compose-limit-price {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 10px;
+  background: rgba(16, 16, 27, 0.78);
+}
+
+.trade-compose-limit-price .trade-compose-price-field {
+  gap: 5px;
+}
+
+.trade-compose-limit-price .trade-compose-input {
+  min-height: 48px;
+  border-color: rgba(167, 139, 250, 0.36);
+  background: rgba(5, 5, 12, 0.72);
+  font-size: clamp(1.8rem, 3.6vw, 2.8rem);
+}
+
+.trade-compose-limit-price > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .trade-compose-inline-price p {
   margin: 0;
   color: var(--muted);
@@ -1987,7 +2015,7 @@
 }
 
 .p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-buy {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 1;
 }
 
@@ -1999,6 +2027,10 @@
 .p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-sell {
   grid-column: 1;
   grid-row: 1;
+}
+
+.p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .p2p-trading-shell .standalone-trade-create-panel .trade-compose-section-buy:not(.p2p-recurring-side-panel) .trade-compose-amount-field .trade-compose-input {

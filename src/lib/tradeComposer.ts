@@ -123,7 +123,7 @@ export type TradeComposerModel = {
   hiddenPriceRequestAmountWei: bigint | null;
 };
 
-const resolveSelectedTradeToken = ({
+export const resolveSelectedTradeToken = ({
   selection,
   customTokenInfo,
   customAddress,

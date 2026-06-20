@@ -8,7 +8,7 @@ Current route behavior is intentional:
 
 - `/` - canonical Home launcher and product overview. `/home` is an alias. No wallet controls shown here.
 - `/chat` - main encrypted messaging app for direct chat and group chat. `/messages` and `/messenger` are aliases.
-- `/trades` and nested `/trades/...` - standalone P2P OTC escrow trading app with deep trade routes.
+- `/otc` and nested `/otc/...` - canonical OTC trading app. `/trades` and `/otcdesk` are legacy aliases that must keep resolving.
 - `/shield` - canonical Whisper Shield private-token swap app. `/swap` and `/whisper-shield` are aliases.
 - `/treasury` - Treasury Data analytics. `/treasury-data` is an alias. No wallet interaction needed.
 
@@ -17,7 +17,7 @@ Current route behavior is intentional:
 - Keep the route map above as-is unless the user explicitly asks to change routing.
 - Top-level route ownership lives in `src/shell/routing.ts`; update `src/shell/routing.test.ts` with any route change.
 - Launching apps from Home must navigate in-place with client-side routing. Do not open a new browser tab or trigger a full page reload because wallet session state should remain available across apps.
-- Keep deep trade routes under `/trades/...` intact when syncing browser location.
+- Generate new OTC links under `/otc...`; keep old `/trades...` and `/otcdesk...` routes working as aliases.
 - Internal trade links should preserve app context whenever practical. Avoid changes that unexpectedly disconnect wallets or lose known access-secret context.
 
 ## Wallet Rules
@@ -60,20 +60,27 @@ Current route behavior is intentional:
 - Read/unread state is backed up as an on-chain self-memo.
 - Block cache (`restoreCache`) skips re-scanning already-indexed read-state backup blocks on reconnect.
 
-## P2P Trading App - Feature Summary
+## OTC Trading App - Feature Summary
 
-- P2P is an OTC desk, not a pool/router-style DEX. Use desk, offer, peer, shared link, and settlement language where it reads naturally.
-- Public desk: users can browse active public offers from anyone.
+- OTC is an order-based trading app, not a pool/router-style DEX. Use Trade, Desk, Orders, Order review, offer, peer, shared link, and settlement language where it reads naturally.
+- Top navigation is `Trade`, `Desk`, `Orders`.
+- `Trade` at `/otc` contains `Swap`, `Limit`, and `Recurring`.
+- `Desk` at `/otc/desk` is for browsing active public offers from anyone.
+- `Orders` at `/otc/orders` is for account-owned and received order activity.
+- `Order` review lives under `/otc/order...`. Generate new links under `/otc/order/link/:code`, `/otc/order/:id`, or `/otc/order/recurring/:id`; keep `/trades...` and `/otcdesk...` aliases working.
+- Swap is a best single-order surface. It can execute one selected ChainWhisper order directly, but must never aggregate, route, or average across multiple orders.
+- Swap and Order review share the same price mental model: `Sell`/`Buy` changes the executable side, while the token flip changes the displayed ratio basis. Carbon and ChainWhisper prices must always be displayed in the same basis.
+- Same-token pairs should be impossible to select in Trade modes, not merely rejected after selection.
 - Trade cards should read like buy/sell orders at a price ratio, not like generic token transfer cards.
 - Normal trades use the Trading V1 OTC escrow/reader contracts and support public offers, private links, direct-recipient links, partial fills, permanent/no-expiry offers, counters, cancel, decline, edit by cancel-and-replace, and visible private-token amount flows.
 - Private tokens are not automatically hidden. If `Visible amounts` is selected, private-token order size, fills, and remaining amounts are public and the order routes through the normal OTC contract.
 - Hidden-amount private orders use `PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS`. Fully private hidden-amount orders use private ERC-20 tokens on both sides; hybrid private orders offer a private token and let the taker pay with a public/native asset.
 - Hidden-amount private orders must hide private token amounts and private fill amounts from public/detail views. Public views should prioritize price ratio, order direction, expiry, and access type.
-- Hidden-amount private orders and private recurring orders use user-scoped private ledger snapshots and fill receipts. Makers can reveal their own live budget/liquidity and progress from My Trades once AES is available. Fillers can reveal their own buy/sell history even when an order is only partially filled. Do not expose maker-only values in the public explorer view.
-- For hidden-amount standard trades, private fill receipts can be the only revealed source for the payment side when public request terms are hidden. Keep card and terminal progress summaries two-sided whenever receipt amounts are available.
+- Hidden-amount private orders and private recurring orders use user-scoped private ledger snapshots and fill receipts. Makers can reveal their own live budget/liquidity and progress from Orders once privacy is available. Fillers can reveal their own buy/sell history even when an order is only partially filled. Do not expose maker-only values in the public explorer view.
+- For hidden-amount standard trades, private fill receipts can be the only revealed source for the payment side when public request terms are hidden. Keep card and order-review progress summaries two-sided whenever receipt amounts are available.
 - Owner recovery/privacy uses the COTI MetaMask Snap where available. Keep owner AES and ChainWhisper-account AES state separate; do not let the active ChainWhisper account privacy state stand in for owner recovery privacy.
 - Hidden-amount private-order fills are settled by the contract from the taker payment amount; the contract path handles partial fill/overshoot privately where private tokens are involved.
-- Recurring orders live as an option inside the Create window. They are reusable two-sided OTC orders, not cadence/timer orders: maker buy fills add base inventory to the sell side, and maker sell fills add quote inventory to the buy side. Recurring private-token orders must offer explicit `Private liquidity` and `Visible amounts` paths.
+- Recurring orders live in the Trade page. They are reusable two-sided OTC orders, not cadence/timer orders: maker buy fills add base inventory to the sell side, and maker sell fills add quote inventory to the buy side. Recurring private-token orders must offer explicit `Private liquidity` and `Visible amounts` paths.
 - Recurring inventory is live order liquidity, not normal unused funds. Makers can edit prices, per-side amounts, and add/remove liquidity in place without changing the order link. The normal closing action should read as "Close order" and return remaining inventory.
 - Private-link and direct trades should only be visible when their requirements are satisfied. Direct links may be shared manually.
 - Counters: a counter-offer to an existing standard trade is itself a direct trade between the parties.
@@ -81,7 +88,7 @@ Current route behavior is intentional:
 - Private-order counters are not currently supported by the action layer; avoid presenting them as available unless contract/action support changes.
 - Trade IDs are contract-local. Always include the escrow contract in links, keys, fetches, and UI identity. Use `buildTradeSnapshotKey(tradeId, escrowContract)`.
 - Trade cards show offer/request assets, price ratio, expiry countdown with urgency color-coding, status, access type, and relevant maker/taker actions.
-- Trade links can be shared publicly.
+- Order links can be shared publicly.
 
 ## Treasury App
 
@@ -100,7 +107,7 @@ Current route behavior is intentional:
 - Dark purple minimalist aesthetic is intentional and should be preserved.
 - Small polish improvements to spacing, typography, hierarchy, and empty states are welcome.
 - No major layout restructuring, theme toggles, or new color palettes without a specific request.
-- P2P should feel like a P2P OTC trading desk: clear buy/sell direction, concise ratio display, direct action buttons, peer/settlement language, and low visual noise.
+- OTC should feel like a focused order-based trading app: clear buy/sell direction, consistent price basis, concise ratio display, direct action buttons, peer/settlement language, and low visual noise.
 - Hidden-amount private-order cards should lead with price ratio and direction. Do not show one side's amount if the other side is hidden.
 - Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", "Private liquidity", "Visible amounts", and "Unlisted" consistently across explorer cards, detail cards, and in-chat cards.
 - Wallet/privacy readiness states should be clear enough that users know whether they need to connect owner wallet, unlock privacy, recover/create a ChainWhisper account, move funds, or use an owner-wallet fallback.
@@ -109,7 +116,7 @@ Current route behavior is intentional:
 
 - `src/App.tsx` - app shell, top-level composition, chat orchestration, shared wallet state for chat, lazy loading of page apps.
 - `src/shell/routing.ts` - top-level route parsing, canonical route paths, aliases, and browser location sync.
-- `src/components/P2PTradingPage.tsx` - standalone trades app. Do not reintroduce the older `StandaloneTradesPage` path.
+- `src/components/P2PTradingPage.tsx` - standalone OTC trading app. Internal P2P/terminal names still exist, but user-facing language should be Trade, Desk, Orders, and Order.
 - `src/components/TradeComposerPanel.tsx` - shared trade create/edit form.
 - `src/components/TradeOfferCard.tsx` - trade card used for shared links and in-chat rendering.
 - `src/components/TreasuryPage.tsx` - Treasury Data presentation.
@@ -123,8 +130,9 @@ Current route behavior is intentional:
 - `src/hooks/useGroupAdminActions.ts` - group create, invite, join-code, join-by-code, remove, rename, leave, handoff, disband, and invite accept/decline flows.
 - `src/lib/groupMessageSync.ts` - active-group message and member-event sync helpers.
 - `src/lib/directConversationSyncHelpers.ts` - direct-chat merge, unread, nickname/contact, and optimistic reconciliation helpers.
-- `src/lib/p2pTradeView.ts` - P2P display, search/filter, snapshot-key, explorer-link, local storage, and maker-private-progress helpers.
-- `src/lib/tradeHistory.ts` - wallet-scoped trade history rows, including private fill receipt rows used by My Trades and terminal history.
+- `src/lib/p2pTradeView.ts` - OTC display, search/filter, snapshot-key, explorer-link, local storage, and maker-private-progress helpers.
+- `src/lib/tradeHistory.ts` - wallet-scoped trade history rows, including private fill receipt rows used by Orders and order-review history.
+- `src/lib/otcSwapQuote.ts`, `src/lib/otcSwapUi.ts`, and `src/lib/otcSwapIntent.ts` - Swap quote selection, side/basis UI rules, order-review handoff, direct execution intent, and local requested-vs-filled notes.
 - `src/lib/appHelpers.ts` - verified ecosystem token presets, message helpers, and shared user-facing error helpers.
 - `src/lib/tradeComposer.ts`, `src/lib/tradeActions.ts`, `src/lib/tradeLinks.ts`, `src/lib/tradePerspective.ts`, `src/lib/appChain.ts` - shared trade logic. Extend these before duplicating trade behavior in components.
 - `src/lib/walletOptions.ts` - browser wallet filtering/detection. Browser wallets are owner/fallback wallets in the normal app model.

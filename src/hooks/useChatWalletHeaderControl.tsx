@@ -763,29 +763,6 @@ export default function useChatWalletHeaderControl({
                 Import account
               </button>
             ) : null}
-            {appWalletMenuVisibility.showRecoverWallet ? (
-              <button
-                type="button"
-                className="p2p-wallet-action primary"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  if (ownerAesReady) {
-                    resetOwnerRecoveryAttempt();
-                  } else {
-                    Promise.resolve(recoverLinkedBurnerWallet()).catch(() => {});
-                  }
-                }}
-                disabled={initializingBurner || recoveringAppWallet || checkingOwnerRecovery || !chatOwnerWalletAddress}
-                role="menuitem"
-                title="Recover the ChainWhisper account saved for this owner wallet"
-              >
-                {recoveringAppWallet || checkingOwnerRecovery
-                  ? 'Checking saved account...'
-                  : ownerAesReady
-                    ? 'Recover account'
-                    : 'Unlock privacy and recover'}
-              </button>
-            ) : null}
             {appWalletMenuVisibility.showLinkExistingPinAccount ? (
               <button
                 type="button"
@@ -879,6 +856,25 @@ export default function useChatWalletHeaderControl({
                     : 'MetaMask or CipherTrade not detected'}
                 </button>
               )
+            ) : null}
+            {appWalletMenuVisibility.showRecoverWallet ? (
+              <button
+                type="button"
+                className="p2p-wallet-action primary"
+                onClick={() => {
+                  setChatWalletMenuOpen(false);
+                  Promise.resolve(recoverLinkedBurnerWallet()).catch(() => {});
+                }}
+                disabled={initializingBurner || recoveringAppWallet || checkingOwnerRecovery || !chatOwnerWalletAddress}
+                role="menuitem"
+                title="Check the owner wallet recovery profile for a saved ChainWhisper account"
+              >
+                {recoveringAppWallet || checkingOwnerRecovery
+                  ? 'Checking saved account...'
+                  : ownerAesReady
+                    ? 'Recover account'
+                    : 'Unlock privacy and recover'}
+              </button>
             ) : null}
             {appWalletMenuVisibility.showSaveRecovery && !activeRecoveryProfileLinked ? (
               <button

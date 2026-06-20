@@ -18,7 +18,7 @@ type WalletBootstrapHistoryState = Record<string, unknown> & {
 };
 
 const DEFAULT_BOOTSTRAP_TARGET_PATH = '/';
-const DEFAULT_METAMASK_MOBILE_BOOTSTRAP_TARGET_PATH = '/trades';
+const DEFAULT_METAMASK_MOBILE_BOOTSTRAP_TARGET_PATH = '/otc';
 const FALLBACK_ORIGIN = 'https://chainwhisper.local';
 const MOBILE_WALLET_DIAGNOSTICS_KEY = 'chainwhisper:mobile-wallet-diagnostics';
 const PERSISTED_BOOTSTRAP_ROUTE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -41,6 +41,8 @@ const isAllowedBootstrapTargetPathname = (pathname: string): boolean => {
     lowerPathname === '/whisper-shield' ||
     lowerPathname === '/treasury' ||
     lowerPathname === '/treasury-data' ||
+    lowerPathname === '/otc' ||
+    lowerPathname.startsWith('/otc/') ||
     lowerPathname === '/otcdesk' ||
     lowerPathname.startsWith('/otcdesk/') ||
     lowerPathname === '/trades' ||
@@ -110,11 +112,13 @@ const isBootstrapDiagnosticsEnabled = (): boolean => {
 
 const sanitizeBootstrapPathForDiagnostics = (path: string): string => {
   const pathname = path.split('?')[0]?.split('#')[0] ?? path;
-  return pathname.toLowerCase().startsWith('/trades/')
-    ? '/trades/[route]'
-    : pathname.toLowerCase().startsWith('/otcdesk/')
-      ? '/otcdesk/[route]'
-      : path.replace(/#.+$/, '#[redacted]');
+  return pathname.toLowerCase().startsWith('/otc/')
+    ? '/otc/[route]'
+    : pathname.toLowerCase().startsWith('/trades/')
+      ? '/trades/[route]'
+      : pathname.toLowerCase().startsWith('/otcdesk/')
+        ? '/otcdesk/[route]'
+        : path.replace(/#.+$/, '#[redacted]');
 };
 
 const logWalletBootstrapDiagnostic = (event: string, detail: Record<string, unknown> = {}): void => {

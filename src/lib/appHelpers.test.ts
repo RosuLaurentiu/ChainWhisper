@@ -79,7 +79,7 @@ describe('message reference helpers', () => {
   });
 
   it('round-trips trade references alongside reply metadata', () => {
-    const terminalPath = `/otcdesk/terminal/l/${encodeTradeLink(42)}?escrow=direct`;
+    const terminalPath = `/otc/order/link/${encodeTradeLink(42)}?escrow=direct`;
     const replyPayload = buildMessageWithReplyPayload(
       'I can do that size.',
       'Can you fill this?',
@@ -115,7 +115,7 @@ describe('message reference helpers', () => {
       version: 1,
       tradeId: 42,
       escrowContract: '0x1111111111111111111111111111111111111111',
-      terminalPath: 'https://evil.example/otcdesk/terminal/42'
+      terminalPath: 'https://evil.example/otc/order/42'
     });
 
     expect(payload).not.toContain('evil.example');
@@ -132,7 +132,7 @@ describe('message reference helpers', () => {
     expect(parsed.tradeReference).toMatchObject({
       tradeId: 5,
       escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
-      terminalPath: '/otcdesk/terminal/recurring?order=5'
+      terminalPath: '/otc/order/recurring/5'
     });
   });
 });

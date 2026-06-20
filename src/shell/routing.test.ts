@@ -46,10 +46,19 @@ describe('app routing', () => {
     expect(getPathForAppPage('chat')).toBe('/chat');
     expect(getPathForAppPage('swap')).toBe('/portal');
     expect(getPathForAppPage('treasury')).toBe('/treasury');
-    expect(getPathForAppPage('trades')).toBe('/otcdesk');
+    expect(getPathForAppPage('trades')).toBe('/otc');
   });
 
-  it('keeps old trade links while using OTC Desk as the friendly route', () => {
+  it('keeps old trade links while using OTC as the friendly route', () => {
+    stubLocation('/otc');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+
+    stubLocation('/otc/orders');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+
+    stubLocation('/otc/order/link/abc');
+    expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
+
     stubLocation('/otcdesk');
     expect(resolveAppRouteFromLocation()).toEqual({ page: 'trades' });
 
@@ -87,6 +96,8 @@ describe('app routing', () => {
   it('strips stale trade params outside deep trade routes', () => {
     expect(stripStaleTradeSearchParams('/chat', '?order=4&escrow=private&debug=1')).toBe('?debug=1');
     expect(stripStaleTradeSearchParams('/trades', '?order=4&escrow=private')).toBe('');
+    expect(stripStaleTradeSearchParams('/otc/order/recurring/4', '?escrow=recurring')).toBe('?escrow=recurring');
+    expect(stripStaleTradeSearchParams('/otc/order/link/abc', '?escrow=direct')).toBe('?escrow=direct');
     expect(stripStaleTradeSearchParams('/trades/recurring', '?order=4')).toBe('?order=4');
     expect(stripStaleTradeSearchParams('/trades/l/abc', '?escrow=direct')).toBe('?escrow=direct');
     expect(stripStaleTradeSearchParams('/otcdesk/terminal/recurring', '?order=4')).toBe('?order=4');

@@ -49,7 +49,7 @@ export default function LinkedTradeContextPanel({
   const title = preview ? summary?.directionLabel ?? formatTradeContractIdLabel(preview) : `Trade #${context.tradeId}`;
   const meta = preview
     ? `${formatTradeContractIdLabel(preview)} with ${shortenAddress(context.counterpartyAddress ?? preview.maker)}`
-    : `Linked terminal trade #${context.tradeId}`;
+    : `Linked order #${context.tradeId}`;
 
   return (
     <section className="linked-trade-context" aria-label="Linked trade context">
@@ -80,7 +80,7 @@ export default function LinkedTradeContextPanel({
       </div>
       <div className="linked-trade-context-actions">
         <button type="button" onClick={() => onOpenTerminal(context.terminalPath)}>
-          Open terminal
+          Open order
         </button>
         {context.shareUrl ? (
           <button type="button" onClick={() => onCopyShareLink(context.shareUrl as string)} aria-live="polite">

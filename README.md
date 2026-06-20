@@ -1,6 +1,6 @@
 # ChainWhisper
 
-ChainWhisper is a browser-based COTI Mainnet app hub for private coordination. It combines a Home launcher, encrypted wallet chat, a P2P OTC escrow trading desk, Whisper Shield private-token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
+ChainWhisper is a browser-based COTI Mainnet app hub for private coordination. It combines a Home launcher, encrypted wallet chat, OTC escrow trading, Whisper Shield private-token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
 
 The app uses `@coti-io/coti-ethers`, `viem`, Recharts, Zustand, TanStack Virtual, and Supabase Storage for temporary encrypted chat image blobs.
 
@@ -12,13 +12,13 @@ Current route behavior is intentional and should stay as-is unless a future chan
 
 - `/` - canonical Home launcher. `/home` is accepted as an alias.
 - `/chat` - ChainWhisper Chat. `/messages` and `/messenger` are accepted aliases.
-- `/trades` and `/trades/...` - P2P OTC trading workspace and deep trade routes.
+- `/otc` and `/otc/...` - canonical OTC trading workspace. `/trades` and `/otcdesk` routes are accepted as legacy aliases.
 - `/shield` - canonical Whisper Shield swap page. `/swap` and `/whisper-shield` are accepted aliases.
 - `/treasury` - Treasury Data. `/treasury-data` is accepted as an alias.
 
 ### Home (`/`)
 
-The home page launches the app suite and routes in-place to Chat, P2P Trades, Whisper Shield, and Treasury Data so the wallet session can remain available across pages.
+The home page launches the app suite and routes in-place to Chat, OTC Trading, Whisper Shield, and Treasury Data so the wallet session can remain available across pages.
 
 Home does not show wallet controls because it is a launcher rather than an interactive contract page.
 
@@ -33,28 +33,35 @@ The chat app is a wallet-native encrypted messenger for COTI.
 - App wallet, MetaMask, and CipherTrade wallet sessions, with owner + ChainWhisper account activity shown together where supported.
 - Contact aliases, hidden and muted conversations, replies, emoji reactions, read-state backup, notification sound, and wallet-to-wallet tips.
 - Encrypted image attachments uploaded to Supabase Storage and cleaned up after 24 hours.
-- Inline P2P trade offers inside private chats using the shared trade composer and escrow action logic.
-- Linked trade context from terminal-to-chat navigation, compact trade references in sent messages, and Open Terminal actions from chat trade cards/links.
+- Inline OTC order offers inside private chats using the shared trade composer and escrow action logic.
+- Linked order context from OTC-to-chat navigation, compact order references in sent messages, and Open order actions from chat trade cards/links.
 - Contacts are the first chat workspace on desktop and mobile; wallet actions live in the top header wallet menu.
 
-### P2P Trades (`/trades`)
+### OTC Trading (`/otc`)
 
-The standalone P2P app is an OTC-style escrow desk backed by COTI contracts.
+The standalone OTC app is an escrow trading workspace backed by COTI contracts. It has three top-level surfaces and one detail surface.
 
-- Desk view for active public offers with search, filters, refresh, trade terminal, and wallet balance context.
-- Create `Limit buy/sell` orders and `Recurring` reusable OTC orders from the Create window, with Public, Unlisted, Direct, counter, `Private liquidity`, `Visible amounts`, and hybrid private-token flows.
+- `Trade` at `/otc` is the action surface with `Swap`, `Limit`, and `Recurring` modes.
+- `Desk` at `/otc/desk` browses active public orders with search, filters, refresh, inline order review, and wallet balance context.
+- `Orders` at `/otc/orders` groups received offers, active offers, and history for the connected owner + ChainWhisper account scope.
+- `Order` review lives under `/otc/order...`. Canonical generated links use `/otc/order/link/:code`, `/otc/order/:id`, or `/otc/order/recurring/:id`.
+- Legacy `/trades...`, `/otcdesk...`, and old terminal links still resolve for compatibility, but new app-generated links should use `/otc...`.
+- Swap finds and can execute the best single compatible ChainWhisper order for the selected pair and side. It never routes or averages across multiple orders.
+- Swap follows the same mental model as order review: `Sell`/`Buy` chooses the executable side; the center token flip changes the displayed price basis. Carbon and ChainWhisper prices must always share the exact same basis.
+- When no single order is available, Swap points users toward browsing Desk or opening a Limit order.
+- Limit creates one-off OTC offers with Public, Unlisted, Direct, counter/edit flows, `Private liquidity`, `Visible amounts`, expiry, fee, and hybrid private-token support.
+- Recurring creates reusable two-sided OTC liquidity in the same Trade ticket, with independent sell-side and buy-side prices/liquidity.
 - Normal trades use the Trading V1 OTC escrow and reader contracts and support public, private-link, direct, counter, partial fill, cancel, decline, permanent/no-expiry, edit-by-replace, and visible private-token amount flows.
 - Private tokens are not automatically hidden. When `Visible amounts` is selected, private-token order size, fills, and remaining amounts are public and route through the normal OTC contract.
 - Hidden-amount private orders use the Trading V1 private-orders contract. Fully private orders use private tokens on both sides; hybrid private orders offer a private token while the taker pays with public/native assets.
 - Hidden-amount private orders and private recurring orders use a user-scoped private ledger for maker live liquidity snapshots and participant fill receipts.
-- Owner recovery uses the COTI MetaMask Snap for owner privacy where available. ChainWhisper account privacy remains wallet-scoped so owner and ChainWhisper AES state stay separate.
+- Owner recovery uses the COTI MetaMask Snap for owner privacy where available. ChainWhisper account privacy remains wallet-scoped so owner and ChainWhisper privacy state stay separate.
 - Hidden-amount public/detail views hide private amounts and fill amounts while showing price ratio, direction, expiry, and access type.
-- Makers can reveal their own private-order progress and recurring live liquidity from My Trades after AES is available. Fillers can reveal their own private fill history, including partial fills on open orders. Standard private-liquidity cards and terminal views show two-sided progress when private fill receipts reveal both values.
+- Makers can reveal their own private-order progress and recurring live liquidity from Orders after privacy is available. Fillers can reveal their own private fill history, including partial fills on open orders. Standard private-liquidity cards and order review views show two-sided progress when private fill receipts reveal both values.
 - Unlisted orders are not auto-posted into chat, but copied share links can be pasted into conversations.
 - Recurring orders are reusable two-sided OTC liquidity, not timed/cadence orders: buy fills add base inventory to the sell side, and sell fills add quote inventory to the buy side. Makers can edit prices, per-side amounts, and add/remove live liquidity without changing the order link; closing the order returns remaining inventory.
-- Open compact trade links, full URLs, legacy trade IDs, or redirected GitHub Pages links.
+- Open compact order links, full URLs, legacy trade IDs, or redirected GitHub Pages links.
 - A completed counter trade cancels the parent/initial trade automatically.
-- My Trades groups received offers, active offers, and history.
 - The shared top-header wallet control uses the ChainWhisper account for new trade actions by default. Owner-wallet fallback is reserved for funding/recovery and existing owner-targeted actions where the contract requires the owner address.
 - The trading UI can show combined owner + ChainWhisper balances, move missing funds before important trade actions, preserve a small COTI fee reserve, and confirm maker actions with app-styled modals.
 
@@ -63,7 +70,7 @@ The standalone P2P app is an OTC-style escrow desk backed by COTI contracts.
 Whisper Shield is a compact reward-token swap page.
 
 - Swaps reward tokens into private token form and back through the reward swap vault.
-- Uses the same owner-first ChainWhisper account header as Chat and OTC Desk.
+- Uses the same owner-first ChainWhisper account header as Chat and OTC.
 - Keeps account setup, recovery, backup, move/withdraw funds, and advanced owner-wallet fallback actions in the wallet menu.
 
 ### Treasury Data (`/treasury`)
@@ -94,10 +101,11 @@ App pages should remain visually distinct where workflow density requires it, bu
 - `src/components/TradeOfferCard.tsx` renders trade links and in-chat trade cards.
 - `src/lib/tradeComposer.ts` derives trade composer state, validation, labels, balances, fees, and private-order availability.
 - `src/lib/tradeActions.ts` submits OTC, private-order, and recurring-order create/fill/control transactions.
-- `src/lib/tradeLinks.ts` encodes and decodes compact trade links.
-- `src/lib/tradePerspective.ts` resolves maker/taker/open-trade perspective, buy/sell order semantics, ratio labels, and My Trades grouping.
+- `src/lib/tradeLinks.ts` encodes and decodes compact order links.
+- `src/lib/tradePerspective.ts` resolves maker/taker/open-trade perspective, buy/sell order semantics, ratio labels, and Orders grouping.
 - `src/lib/p2pTradeView.ts` contains P2P display helpers, search/filter helpers, snapshot keys, explorer links, local trade access-secret cache helpers, and maker private-progress labels.
-- `src/lib/tradeHistory.ts` builds wallet-scoped trade history rows, including private fill receipt rows used by My Trades and terminal history.
+- `src/lib/tradeHistory.ts` builds wallet-scoped trade history rows, including private fill receipt rows used by Orders and order review history.
+- `src/lib/otcSwapQuote.ts`, `src/lib/otcSwapUi.ts`, and `src/lib/otcSwapIntent.ts` own Swap candidate selection, side/basis display rules, order handoff, direct execution intent, and local requested-vs-filled notes.
 - `src/lib/cotiSnap.ts` wraps the COTI MetaMask Snap RPC methods used by owner recovery/privacy flows.
 - `src/lib/appWalletRecovery.ts`, `src/lib/burnerWalletVault.ts`, `src/lib/walletAccountScope.ts`, and `src/lib/walletFunds.ts` own recovery payloads, local account vaults, owner + ChainWhisper account read scope, and move/withdraw funding helpers.
 - `src/lib/appHelpers.ts` contains verified ecosystem token presets, message helpers, and shared user-facing error helpers.

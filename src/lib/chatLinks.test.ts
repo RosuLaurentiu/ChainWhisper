@@ -9,6 +9,10 @@ describe('chatLinks', () => {
       external: false,
       href: '/trades/l/abc123?escrow=private'
     });
+    expect(resolveChatMessageLink('/otc/orders', ORIGIN)).toEqual({
+      external: false,
+      href: '/otc/orders'
+    });
     expect(resolveChatMessageLink('/otcdesk/mytrades', ORIGIN)).toEqual({
       external: false,
       href: '/otcdesk/mytrades'
@@ -30,9 +34,9 @@ describe('chatLinks', () => {
   });
 
   it('splits trailing punctuation away from links', () => {
-    expect(parseChatMessageLinkParts('Open /otcdesk/terminal.', ORIGIN)).toEqual([
+    expect(parseChatMessageLinkParts('Open /otc/order.', ORIGIN)).toEqual([
       { type: 'text', text: 'Open ' },
-      { type: 'link', text: '/otcdesk/terminal', href: '/otcdesk/terminal', external: false },
+      { type: 'link', text: '/otc/order', href: '/otc/order', external: false },
       { type: 'text', text: '.' }
     ]);
   });

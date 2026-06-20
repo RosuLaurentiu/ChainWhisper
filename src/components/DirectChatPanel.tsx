@@ -48,7 +48,7 @@ const getTradeReferenceLabel = (reference: TradeMessageReferencePayload): string
   `Trade #${reference.tradeId}`;
 
 const getTradeReferenceSummary = (reference: TradeMessageReferencePayload): string =>
-  `Open trade #${reference.tradeId} in the terminal.`;
+  `Open trade #${reference.tradeId} in order review.`;
 
 type DirectChatPanelProps = {
   activeContact: string;
@@ -475,8 +475,8 @@ function DirectChatPanel({
                       type="button"
                       className="message-trade-reference"
                       onClick={() => onOpenTradeTerminalPath(message.tradeReference!.terminalPath)}
-                      title="Open trade in terminal"
-                      aria-label={`Open ${getTradeReferenceLabel(message.tradeReference)} in terminal`}
+                      title="Open order"
+                      aria-label={`Open ${getTradeReferenceLabel(message.tradeReference)} order`}
                     >
                       <span className="message-trade-reference-kicker">Trade</span>
                       <strong>{getTradeReferenceLabel(message.tradeReference)}</strong>
@@ -545,7 +545,7 @@ function DirectChatPanel({
                           className="message-open-terminal"
                           onClick={() => onOpenTradeTerminalPath(messageTradeTerminalPath)}
                         >
-                          Open terminal
+                          Open order
                         </button>
                       ) : null}
                     </>

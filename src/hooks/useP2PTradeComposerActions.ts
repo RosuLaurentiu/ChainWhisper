@@ -297,7 +297,7 @@ export default function useP2PTradeComposerActions({
       setCreatedTradeId(null);
       setCreatedTradeLink('');
       setDetailTrade(null);
-      navigateToTradePath('/otcdesk/terminal/counter');
+      navigateToTradePath('/otc/order/counter');
     },
     [
       navigateToTradePath,
@@ -375,7 +375,7 @@ export default function useP2PTradeComposerActions({
       setTradeHasNoExpiry(snapshot.expiresAt <= 0);
       setTradeHidePrivateLiquidity(Boolean(snapshot.hiddenLiquidity));
       setTradeActionError('');
-      navigateToTradePath('/otcdesk/create');
+      navigateToTradePath('/otc/limit');
     },
     [
       canEditPublicTrade,
@@ -408,9 +408,9 @@ export default function useP2PTradeComposerActions({
   const startFreshTrade = useCallback(() => {
     clearCounterTrade();
     clearEditTrade();
-    setTradeHidePrivateLiquidity(false);
+    setTradeHidePrivateLiquidity(true);
     setTradeHasNoExpiry(false);
-    navigateToTradePath('/otcdesk/create');
+    navigateToTradePath('/otc/limit');
   }, [clearCounterTrade, clearEditTrade, navigateToTradePath, setTradeHasNoExpiry, setTradeHidePrivateLiquidity]);
 
   const createTrade = useCallback(async () => {
@@ -758,7 +758,7 @@ export default function useP2PTradeComposerActions({
       setTradeRequestAmountInput('');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
       setTradeHasNoExpiry(false);
-      setTradeHidePrivateLiquidity(false);
+      setTradeHidePrivateLiquidity(true);
       openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
       await Promise.all([
         loadWalletBalances(signer),

@@ -2329,7 +2329,7 @@ const getTradeReferenceEscrowContract = (typeCode: string): string => {
 const buildTradeReferenceTerminalPath = (tradeId: number, escrowContract: string): string => {
   const typeCode = getTradeReferenceTypeCode(escrowContract);
   if (typeCode === TRADE_REFERENCE_TYPE_RECURRING) {
-    return `/otcdesk/terminal/recurring?order=${tradeId}`;
+    return `/otc/order/recurring/${tradeId}`;
   }
   const escrowSearch =
     typeCode === TRADE_REFERENCE_TYPE_DIRECT
@@ -2337,7 +2337,7 @@ const buildTradeReferenceTerminalPath = (tradeId: number, escrowContract: string
       : typeCode === TRADE_REFERENCE_TYPE_PRIVATE
         ? '?escrow=private'
         : '';
-  return `/otcdesk/terminal/l/${encodeTradeLink(tradeId)}${escrowSearch}`;
+  return `/otc/order/link/${encodeTradeLink(tradeId)}${escrowSearch}`;
 };
 
 const encodeTradeMessageReference = (tradeReference?: TradeMessageReferencePayload | null): string => {
@@ -2378,6 +2378,7 @@ const parseLegacyTradeReferencePath = (value: unknown): TradeMessageReferencePay
     const url = new URL(raw, 'https://chainwhisper.local');
     const lowerPath = url.pathname.toLowerCase();
     if (
+      !lowerPath.startsWith('/otc/order') &&
       !lowerPath.startsWith('/otcdesk/terminal') &&
       !lowerPath.startsWith('/trades/')
     ) {
@@ -2385,7 +2386,9 @@ const parseLegacyTradeReferencePath = (value: unknown): TradeMessageReferencePay
     }
 
     if (lowerPath.includes('/recurring')) {
-      const tradeId = toSafeNumber(url.searchParams.get('order'));
+      const recurringPathSegments = url.pathname.split('/').filter(Boolean);
+      const recurringPathId = recurringPathSegments[recurringPathSegments.length - 1] ?? '';
+      const tradeId = toSafeNumber(url.searchParams.get('order')) || toSafeNumber(recurringPathId);
       return tradeId > 0
         ? {
             version: 1,
@@ -2397,7 +2400,10 @@ const parseLegacyTradeReferencePath = (value: unknown): TradeMessageReferencePay
     }
 
     const segments = url.pathname.split('/').filter(Boolean);
-    const linkedTradeIndex = segments.findIndex((segment) => segment.toLowerCase() === 'l');
+    const linkedTradeIndex = segments.findIndex((segment) => {
+      const lowerSegment = segment.toLowerCase();
+      return lowerSegment === 'l' || lowerSegment === 'link';
+    });
     const code = linkedTradeIndex >= 0 ? segments[linkedTradeIndex + 1] : '';
     const decoded = code ? decodeTradeLink(code) : null;
     if (!decoded?.tradeId) {

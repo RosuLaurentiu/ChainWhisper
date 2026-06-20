@@ -39,13 +39,27 @@ describe('P2P trade route helpers', () => {
   });
 
   it('resolves top-level trade routes without changing route ownership', () => {
+    expect(resolveTradeRouteFromParts('/otc')).toMatchObject({ view: 'swap', tradeMode: 'swap', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otc/limit')).toMatchObject({
+      view: 'create',
+      tradeMode: 'limit',
+      tradeId: null
+    });
+    expect(resolveTradeRouteFromParts('/otc/recurring')).toMatchObject({
+      view: 'create',
+      tradeMode: 'recurring',
+      tradeId: null
+    });
+    expect(resolveTradeRouteFromParts('/otc/desk')).toMatchObject({ view: 'public', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otc/orders')).toMatchObject({ view: 'mine', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades')).toMatchObject({ view: 'public', tradeId: null });
-    expect(resolveTradeRouteFromParts('/otcdesk')).toMatchObject({ view: 'public', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otcdesk')).toMatchObject({ view: 'swap', tradeMode: 'swap', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otcdesk/desk')).toMatchObject({ view: 'public', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/create')).toMatchObject({ view: 'create', tradeId: null });
-    expect(resolveTradeRouteFromParts('/otcdesk/create')).toMatchObject({ view: 'create', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otcdesk/create')).toMatchObject({ view: 'create', tradeMode: 'limit', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/mine')).toMatchObject({ view: 'mine', tradeId: null });
     expect(resolveTradeRouteFromParts('/otcdesk/mytrades')).toMatchObject({ view: 'mine', tradeId: null });
-    expect(resolveTradeRouteFromParts('/trades/recurring')).toMatchObject({ view: 'create', tradeId: null });
+    expect(resolveTradeRouteFromParts('/trades/recurring')).toMatchObject({ view: 'create', tradeMode: 'recurring', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/recurring', '?order=11')).toMatchObject({
       view: 'trade',
       tradeId: 11,
@@ -56,22 +70,35 @@ describe('P2P trade route helpers', () => {
       tradeId: 11,
       escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
     });
+    expect(resolveTradeRouteFromParts('/otc/order/recurring/11')).toMatchObject({
+      view: 'trade',
+      tradeId: 11,
+      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
+    });
     expect(resolveTradeRouteFromParts('/trades/open')).toMatchObject({ view: 'trade', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otc/order')).toMatchObject({ view: 'trade', tradeId: null });
     expect(resolveTradeRouteFromParts('/otcdesk/terminal')).toMatchObject({ view: 'trade', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/open/counter')).toMatchObject({ view: 'counter', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otc/order/counter')).toMatchObject({ view: 'counter', tradeId: null });
     expect(resolveTradeRouteFromParts('/otcdesk/terminal/counter')).toMatchObject({ view: 'counter', tradeId: null });
   });
 
   it('builds clean OTC Desk app routes while preserving public share links', () => {
-    expect(buildTradeRoutePath({ view: 'public', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otcdesk');
-    expect(buildTradeRoutePath({ view: 'create', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otcdesk/create');
-    expect(buildTradeRoutePath({ view: 'mine', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otcdesk/mytrades');
-    expect(buildTradeRoutePath({ view: 'trade', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otcdesk/terminal');
+    expect(buildTradeRoutePath({ view: 'swap', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc');
+    expect(buildTradeRoutePath({ view: 'public', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc/desk');
+    expect(buildTradeRoutePath({ view: 'create', tradeMode: 'limit', tradeId: null, accessSecret: '', routeError: '' })).toBe(
+      '/otc/limit'
+    );
+    expect(buildTradeRoutePath({ view: 'create', tradeMode: 'recurring', tradeId: null, accessSecret: '', routeError: '' })).toBe(
+      '/otc/recurring'
+    );
+    expect(buildTradeRoutePath({ view: 'mine', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc/orders');
+    expect(buildTradeRoutePath({ view: 'trade', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc/order');
     expect(buildTradeRoutePath({ view: 'counter', tradeId: null, accessSecret: '', routeError: '' })).toBe(
-      '/otcdesk/terminal/counter'
+      '/otc/order/counter'
     );
     expect(buildTradeRoutePath({ view: 'trade', tradeId: 7, accessSecret: ACCESS_SECRET, routeError: '' })).toContain(
-      '/otcdesk/terminal/l/'
+      '/otc/order/link/'
     );
   });
 
@@ -86,6 +113,13 @@ describe('P2P trade route helpers', () => {
       routeError: ''
     });
     expect(resolveTradeRouteFromParts(`/otcdesk/terminal/l/${code}`, '?escrow=private')).toMatchObject({
+      view: 'trade',
+      tradeId: 42,
+      escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessSecret: ACCESS_SECRET,
+      routeError: ''
+    });
+    expect(resolveTradeRouteFromParts(`/otc/order/link/${code}`, '?escrow=private')).toMatchObject({
       view: 'trade',
       tradeId: 42,
       escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -123,44 +157,49 @@ describe('P2P trade route helpers', () => {
       escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
       accessSecret: ACCESS_SECRET
     });
+    expect(resolveTradeLinkInput(`http://localhost:5173/otc/order/recurring/7#${ACCESS_SECRET}`)).toEqual({
+      tradeId: 7,
+      escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+      accessSecret: ACCESS_SECRET
+    });
     expect(resolveTradeLinkInput('123abc')).toBeNull();
   });
 
   it('preserves recurring private-link secrets in share paths', () => {
     expect(buildTradeLinkPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
-      `/trades/recurring?order=7#${ACCESS_SECRET}`
+      `/otc/order/recurring/7#${ACCESS_SECRET}`
     );
     expect(buildTradeLinkPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
-      `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+      `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
     );
   });
 
   it('builds clean internal terminal links while keeping share links legacy-compatible', () => {
     expect(buildTradeTerminalPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
-      `/otcdesk/terminal/recurring?order=7#${ACCESS_SECRET}`
+      `/otc/order/recurring/7#${ACCESS_SECRET}`
     );
     expect(buildTradeTerminalPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
-      `/otcdesk/terminal/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+      `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
     );
     expect(buildTradeLinkPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
-      `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+      `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
     );
   });
 
   it('remembers and restores a pending terminal route from the desk route', () => {
     const storage = createMemoryStorage();
-    const pending = rememberPendingTradeTerminalRoute('/otcdesk/terminal/recurring?order=7', storage, 1_000);
+    const pending = rememberPendingTradeTerminalRoute('/otc/order/recurring/7', storage, 1_000);
 
     expect(pending).toMatchObject({
-      path: '/otcdesk/terminal/recurring?order=7',
+      path: '/otc/order/recurring/7',
       tradeId: 7
     });
     expect(readPendingTradeTerminalRoute(storage, 1_500)).toMatchObject({ tradeId: 7 });
     expect(resolvePendingTradeTerminalRoutePath(resolveTradeRouteFromParts('/trades'), '/trades', storage, 1_500)).toBe(
-      '/otcdesk/terminal/recurring?order=7'
+      '/otc/order/recurring/7'
     );
-    expect(resolvePendingTradeTerminalRoutePath(resolveTradeRouteFromParts('/otcdesk'), '/otcdesk', storage, 1_500)).toBe(
-      '/otcdesk/terminal/recurring?order=7'
+    expect(resolvePendingTradeTerminalRoutePath(resolveTradeRouteFromParts('/otc/desk'), '/otc/desk', storage, 1_500)).toBe(
+      '/otc/order/recurring/7'
     );
   });
 
@@ -198,7 +237,7 @@ describe('P2P trade route helpers', () => {
       escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
     });
     expect(buildTradeLinkPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
-      `/trades/recurring?order=7#${ACCESS_SECRET}`
+      `/otc/order/recurring/7#${ACCESS_SECRET}`
     );
   });
 });

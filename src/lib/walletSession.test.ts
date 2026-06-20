@@ -713,6 +713,26 @@ describe('resolveAppWalletMenuActionVisibility', () => {
       showLinkExistingPinAccount: true,
       showPinOnlyFallback: true
     });
+
+    expect(
+      resolveAppWalletMenuActionVisibility({
+        connectedWithAppWallet: false,
+        hasMnemonicBackup: false,
+        hasSavedAppWallet: true,
+        ownerWalletConnected: true,
+        ownerWalletReady: true,
+        recoveryConfigured: true,
+        recordReady: false,
+        setupStorageKind: 'owner-aes-other-owner',
+        storageKind: 'owner-aes'
+      })
+    ).toMatchObject({
+      showGenerateAccount: true,
+      showImportAccount: true,
+      showRecoverWallet: true,
+      showLinkExistingPinAccount: false,
+      showPinOnlyFallback: false
+    });
   });
 
   it('holds primary setup actions while owner recovery is checking', () => {

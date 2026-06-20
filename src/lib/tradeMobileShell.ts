@@ -1,10 +1,15 @@
 export const TRADE_ROUTE_PREFIX = '/trades';
 export const TRADE_MOBILE_SHELL_PATH = '/trades';
+const OTC_ROUTE_PREFIX = '/otc';
 const OTC_DESK_ROUTE_PREFIX = '/otcdesk';
 
 const isTradeAppRoute = (path: string): boolean => {
   const normalizedPath = path.toLowerCase();
-  return normalizedPath.startsWith(TRADE_ROUTE_PREFIX) || normalizedPath.startsWith(OTC_DESK_ROUTE_PREFIX);
+  return (
+    normalizedPath.startsWith(OTC_ROUTE_PREFIX) ||
+    normalizedPath.startsWith(TRADE_ROUTE_PREFIX) ||
+    normalizedPath.startsWith(OTC_DESK_ROUTE_PREFIX)
+  );
 };
 
 const getTradeShellRedirectPath = (search: string): string => {

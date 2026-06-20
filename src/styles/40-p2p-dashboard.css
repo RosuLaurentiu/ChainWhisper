@@ -45,6 +45,387 @@
   color: #f5fff8;
 }
 
+.p2p-swap-section {
+  display: grid;
+  justify-items: center;
+}
+
+.p2p-trade-entry-panel {
+  width: min(660px, 100%);
+  display: grid;
+  gap: 10px;
+  justify-items: stretch;
+}
+
+.p2p-trade-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(74, 64, 112, 0.66);
+  border-radius: 9px;
+  background: rgba(8, 8, 15, 0.74);
+}
+
+.p2p-trade-mode-tabs button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(217, 211, 255, 0.72);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.p2p-trade-mode-tabs button:hover {
+  color: var(--text);
+  background: rgba(139, 92, 246, 0.14);
+}
+
+.p2p-trade-mode-tabs button.active {
+  color: #f8f5ff;
+  background: linear-gradient(180deg, rgba(123, 66, 214, 0.62), rgba(92, 50, 166, 0.52));
+  box-shadow: inset 0 0 0 1px rgba(196, 181, 253, 0.16);
+}
+
+.p2p-trade-entry-mode-slot {
+  width: min(660px, 100%);
+  margin: 0 auto;
+}
+
+.p2p-swap-panel {
+  width: min(660px, 100%);
+  border: 1px solid rgba(74, 64, 112, 0.72);
+  border-radius: 8px;
+  background: rgba(10, 10, 18, 0.92);
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.p2p-swap-card {
+  position: relative;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 8px;
+  background: rgba(16, 16, 27, 0.84);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.p2p-swap-side-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 8px;
+  background: rgba(8, 8, 15, 0.66);
+  padding: 4px;
+}
+
+.p2p-swap-side-switch button {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.p2p-swap-side-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.p2p-swap-side-switch button.active:first-child {
+  border-color: rgba(244, 63, 94, 0.58);
+  background: linear-gradient(180deg, rgba(153, 27, 27, 0.92), rgba(127, 29, 29, 0.86));
+  color: #fff1f2;
+}
+
+.p2p-swap-side-switch button.active:last-child {
+  border-color: rgba(34, 197, 94, 0.62);
+  background: linear-gradient(180deg, rgba(21, 128, 61, 0.9), rgba(20, 83, 45, 0.88));
+  color: #ecfdf5;
+}
+
+.p2p-swap-link-panel {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(74, 64, 112, 0.42);
+  border-radius: 8px;
+  background: rgba(8, 8, 15, 0.42);
+  padding: 7px;
+}
+
+.p2p-swap-link-panel-pinned {
+  border-color: rgba(167, 139, 250, 0.46);
+}
+
+.p2p-swap-link-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.p2p-swap-link-form input {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 7px;
+  background: rgba(5, 5, 12, 0.82);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  outline: none;
+  padding: 7px 9px;
+}
+
+.p2p-swap-link-form input:focus {
+  border-color: rgba(167, 139, 250, 0.78);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.14);
+}
+
+.p2p-swap-link-form button,
+.p2p-swap-linked-order button {
+  min-height: 34px;
+  border: 1px solid rgba(139, 92, 246, 0.58);
+  border-radius: 7px;
+  background: rgba(22, 18, 34, 0.9);
+  color: #f6f1ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 900;
+  padding: 0 12px;
+}
+
+.p2p-swap-linked-order {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  border-radius: 7px;
+  background: rgba(30, 24, 48, 0.64);
+  color: #d8d0ff;
+  font-size: 0.78rem;
+  font-weight: 850;
+  padding: 6px 8px;
+}
+
+.p2p-swap-linked-order span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-swap-linked-order button {
+  min-height: 24px;
+  padding: 0 8px;
+}
+
+.p2p-swap-link-error {
+  margin: 0;
+  color: #fecaca;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.p2p-swap-card-sell {
+  border-color: rgba(244, 63, 94, 0.28);
+}
+
+.p2p-swap-card-buy {
+  border-color: rgba(34, 197, 94, 0.28);
+}
+
+.p2p-swap-card-head,
+.p2p-swap-card-body,
+.p2p-swap-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.p2p-swap-card-head {
+  justify-content: space-between;
+}
+
+.p2p-swap-card-head span,
+.p2p-swap-quote-card span,
+.p2p-swap-order-summary span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.p2p-swap-card-head small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  max-width: 55%;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-swap-card-body input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(1.9rem, 4vw, 3rem);
+  font-weight: 800;
+  letter-spacing: 0;
+  outline: none;
+  padding: 0;
+}
+
+.p2p-swap-card-body .trade-token-select {
+  flex: 0 0 min(245px, 48%);
+}
+
+.p2p-swap-token-flip {
+  justify-self: center;
+  width: 34px;
+  height: 34px;
+  margin: -6px 0;
+  border: 1px solid rgba(74, 64, 112, 0.68);
+  border-radius: 999px;
+  background: rgba(25, 25, 40, 0.96);
+  color: #f5f3ff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.p2p-swap-token-flip svg {
+  transform: rotate(90deg);
+}
+
+.p2p-swap-token-flip:hover {
+  border-color: rgba(167, 139, 250, 0.72);
+  background: rgba(39, 39, 62, 0.98);
+}
+
+.p2p-swap-quote-grid,
+.p2p-swap-order-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.p2p-swap-quote-card,
+.p2p-swap-order-summary > div,
+.p2p-swap-order-empty {
+  border: 1px solid rgba(74, 64, 112, 0.5);
+  border-radius: 8px;
+  background: rgba(8, 8, 15, 0.62);
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.p2p-swap-quote-card-chainwhisper {
+  border-color: rgba(34, 197, 94, 0.26);
+}
+
+.p2p-swap-quote-card strong,
+.p2p-swap-order-summary strong,
+.p2p-swap-order-empty strong {
+  font-size: 0.95rem;
+  line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-swap-quote-card strong.p2p-swap-market-price-label {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.p2p-swap-quote-card small,
+.p2p-swap-order-summary small,
+.p2p-swap-order-empty p {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.p2p-swap-order-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.p2p-swap-order-empty {
+  text-align: center;
+}
+
+.p2p-swap-order-empty .standalone-trade-secondary-btn {
+  justify-self: center;
+  margin-top: 2px;
+}
+
+.p2p-swap-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.p2p-swap-empty-actions .trade-card-action,
+.p2p-swap-empty-actions .standalone-trade-secondary-btn {
+  min-height: 36px;
+}
+
+.p2p-swap-actions {
+  justify-content: stretch;
+}
+
+.p2p-swap-review {
+  flex: 1 1 auto;
+}
+
+.p2p-swap-actions .standalone-trade-secondary-btn {
+  flex: 0 0 auto;
+}
+
+.p2p-terminal-history-note {
+  color: #d8d0ff;
+  font-weight: 750;
+}
+
 .p2p-wallet-panel .connect-btn.copied > span {
   display: inline-flex;
   align-items: center;
@@ -2575,7 +2956,8 @@
 
 .p2p-trading-shell-drawer-open .p2p-market-overview,
 .p2p-trading-shell-drawer-open .p2p-public-trades-section,
-.p2p-trading-shell-drawer-open .p2p-my-trades-section {
+.p2p-trading-shell-drawer-open .p2p-my-trades-section,
+.p2p-trading-shell-drawer-open .p2p-swap-section {
   grid-column: 1;
 }
 
@@ -2617,6 +2999,20 @@
   scrollbar-gutter: stable;
   gap: 10px;
   padding: 12px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-swap-section {
+  grid-area: desk;
+  align-self: stretch;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+}
+
+.p2p-trading-shell-drawer-open .p2p-swap-section .p2p-trade-entry-panel {
+  align-self: start;
 }
 
 .p2p-trading-shell-drawer-open .p2p-my-trades-section {
@@ -6322,9 +6718,20 @@
 
 .p2p-recurring-side-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   align-items: stretch;
+}
+
+.p2p-recurring-pair-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid rgba(139, 92, 246, 0.24);
+  border-radius: 8px;
+  background: rgba(12, 11, 20, 0.64);
 }
 
 .p2p-recurring-assets {
@@ -6389,7 +6796,7 @@
 }
 
 .p2p-recurring-side-panel-buy {
-  grid-column: 3;
+  grid-column: 2;
   order: 3;
 }
 
@@ -7389,6 +7796,7 @@
 
   .p2p-recurring-grid,
   .p2p-recurring-side-grid,
+  .p2p-recurring-pair-picker,
   .p2p-recurring-primary-pair,
   .p2p-recurring-privacy-note,
   .p2p-recurring-liquidity-edit-card,

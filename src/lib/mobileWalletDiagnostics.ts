@@ -29,11 +29,13 @@ export const maskWalletForDiagnostics = (value?: string | null): string => {
 };
 
 const sanitizePathForDiagnostics = (pathname: string): string =>
-  pathname.toLowerCase().startsWith('/trades/')
-    ? '/trades/[route]'
-    : pathname.toLowerCase().startsWith('/otcdesk/')
-      ? '/otcdesk/[route]'
-      : pathname;
+  pathname.toLowerCase().startsWith('/otc/')
+    ? '/otc/[route]'
+    : pathname.toLowerCase().startsWith('/trades/')
+      ? '/trades/[route]'
+      : pathname.toLowerCase().startsWith('/otcdesk/')
+        ? '/otcdesk/[route]'
+        : pathname;
 
 export const getCurrentRouteForDiagnostics = (): string => {
   if (typeof window === 'undefined') {

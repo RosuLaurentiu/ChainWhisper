@@ -6335,7 +6335,8 @@ export default function App() {
       }
       const lowerCurrentPath = currentPath.toLowerCase();
       const canonicalPath =
-        nextRoute.page === 'trades' && (lowerCurrentPath.startsWith('/trades') || lowerCurrentPath.startsWith('/otcdesk'))
+        nextRoute.page === 'trades' &&
+        (lowerCurrentPath.startsWith('/otc') || lowerCurrentPath.startsWith('/trades') || lowerCurrentPath.startsWith('/otcdesk'))
           ? currentPath
           : getPathForAppPage(nextRoute.page);
       const canonicalHash = nextRoute.page === 'trades' ? window.location.hash : '';
