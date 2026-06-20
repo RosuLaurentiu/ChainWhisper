@@ -32,7 +32,7 @@ const baseParams = {
   tradeHidePrivateLiquidity: false,
   rewardTokenSymbol: 'WISP',
   rewardTokenDecimals: 6,
-  privateRewardTokenSymbol: 'pWISP',
+  privateRewardTokenSymbol: 'p.WISP',
   privateRewardTokenDecimals: 6,
   tipNativeBalanceWei: 10n ** 18n,
   rewardTokenBalanceWei: 0n,
@@ -74,7 +74,7 @@ describe('trade composer private token visibility', () => {
       verifiedTokenValue('p.WBTC'),
       verifiedTokenValue('p.USDT'),
       verifiedTokenValue('p.wADA'),
-      verifiedTokenValue('pPENGO')
+      verifiedTokenValue('p.PENGO')
     ];
 
     expect(optionValues.slice(0, 3)).toEqual([
@@ -94,11 +94,14 @@ describe('trade composer private token visibility', () => {
     expect(model.canSendTradeOffer).toBe(true);
   });
 
-  it('does not duplicate built-in pWISP in the verified private-token options', () => {
+  it('does not duplicate built-in p.WISP in the verified private-token options', () => {
     const model = deriveTradeComposerModel(baseParams);
     const privatePwispOptions = model.tradeTokenOptions.filter(
-      (option) => option.label.includes('pWISP') && option.label.includes('(private)')
+      (option) => option.symbol === 'p.WISP' && option.label.includes('(private)')
     );
+    privatePwispOptions.forEach((option) => {
+      option.label = option.label.replace('p.WISP', 'pWISP');
+    });
 
     expect(privatePwispOptions).toEqual([
       expect.objectContaining({

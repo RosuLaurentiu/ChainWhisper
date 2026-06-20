@@ -22,6 +22,7 @@ import {
   buildTradeCustomTokenInfoKey,
   getVerifiedEcosystemToken,
   isCustomTradeTokenSelection,
+  resolveTradeTokenDisplaySymbol,
   sortTradeTokenOptionsBySymbol,
   type ResolvedTradeToken,
   type TradeComposerFieldErrors,
@@ -63,6 +64,8 @@ type DeriveTradeComposerModelParams = {
     {
       combinedBalanceWei: bigint | null;
       ownerPrivacyRequired?: boolean;
+      availableLabel?: string;
+      breakdownLabel?: string;
       splitLabel?: string;
     }
   >;
@@ -73,7 +76,14 @@ type DeriveTradeComposerModelParams = {
 };
 
 export type TradeComposerModel = {
-  tradeTokenOptions: Array<{ value: string; label: string }>;
+  tradeTokenOptions: Array<{
+    value: string;
+    label: string;
+    symbol?: string;
+    kindLabel?: 'Native' | 'Public' | 'Private';
+    addressLabel?: string;
+    verificationLabel?: string;
+  }>;
   tradeCustomOfferTokenInfo?: TradeCustomTokenInfo;
   tradeCustomRequestTokenInfo?: TradeCustomTokenInfo;
   selectedTradeOfferToken: ResolvedTradeToken | null;
@@ -85,6 +95,8 @@ export type TradeComposerModel = {
   tradeRequestAmountSummaryLabel: string;
   tradeOfferBalanceSummaryLabel: string;
   tradeRequestBalanceSummaryLabel: string;
+  tradeOfferBalanceBreakdownLabel?: string;
+  tradeRequestBalanceBreakdownLabel?: string;
   tradeOfferAmountLabel: string;
   tradeRequestAmountLabel: string;
   tradeOfferAmountPlaceholder: string;
@@ -159,7 +171,11 @@ const resolveSelectedTradeToken = ({
     return {
       kind: verifiedFallbackToken.kind,
       tokenAddress: verifiedFallbackToken.address,
-      symbol: verifiedFallbackToken.symbol,
+      symbol: resolveTradeTokenDisplaySymbol({
+        kind: verifiedFallbackToken.kind,
+        address: verifiedFallbackToken.address,
+        fallbackSymbol: verifiedFallbackToken.symbol
+      }),
       decimals: customTokenInfo?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
       custom: true
     };
@@ -169,16 +185,14 @@ const resolveSelectedTradeToken = ({
     return null;
   }
 
-  const verifiedToken = getVerifiedEcosystemToken(customTokenInfo.address);
-  const customTokenSymbol =
-    verifiedToken && customTokenInfo.symbol.trim() === shortenAddress(customTokenInfo.address)
-      ? verifiedToken.symbol
-      : customTokenInfo.symbol;
-
   return {
     kind: customTokenInfo.kind,
     tokenAddress: customTokenInfo.address,
-    symbol: customTokenSymbol,
+    symbol: resolveTradeTokenDisplaySymbol({
+      kind: customTokenInfo.kind,
+      address: customTokenInfo.address,
+      symbol: customTokenInfo.symbol
+    }),
     decimals: customTokenInfo.decimals,
     custom: true
   };
@@ -300,6 +314,11 @@ export const deriveTradeComposerModel = ({
   ).map(({ address, kind, symbol: fallbackSymbol }) => {
     const key = buildTradeCustomTokenInfoKey(kind, address);
     const info = customTradeTokenInfoByAddress[key];
+    const fallbackDisplaySymbol = resolveTradeTokenDisplaySymbol({
+      kind,
+      address,
+      fallbackSymbol
+    });
     if (
       !info ||
       info.loading ||
@@ -310,18 +329,23 @@ export const deriveTradeComposerModel = ({
       return {
         value: address.toLowerCase(),
         label: `✓ ${fallbackSymbol} (ecosystem)`,
-        symbol: fallbackSymbol,
-        kindLabel: kind === 'private-erc20' ? 'Private' : 'Public',
+        symbol: fallbackDisplaySymbol,
+        kindLabel: kind === 'private-erc20' ? ('Private' as const) : ('Public' as const),
         addressLabel: `CA ${shortenAddress(address)}`,
         verificationLabel: kind === 'private-erc20' ? 'Verified private token' : 'CA loaded'
       };
     }
-    const symbol = info.symbol.trim();
+    const symbol = resolveTradeTokenDisplaySymbol({
+      kind,
+      address,
+      symbol: info.symbol,
+      fallbackSymbol
+    });
     return {
       value: address.toLowerCase(),
       label: `✓ ${symbol} (ecosystem)`,
       symbol,
-      kindLabel: kind === 'private-erc20' ? 'Private' : 'Public',
+      kindLabel: kind === 'private-erc20' ? ('Private' as const) : ('Public' as const),
       addressLabel: `CA ${shortenAddress(address)}`,
       verificationLabel: kind === 'private-erc20' ? 'Verified private token' : 'CA loaded'
     };
@@ -336,7 +360,7 @@ export const deriveTradeComposerModel = ({
     value: 'coti',
     label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)`,
     symbol: TIP_NATIVE_TOKEN_SYMBOL,
-    kindLabel: 'Native',
+    kindLabel: 'Native' as const,
     addressLabel: 'COTI Mainnet native asset',
     verificationLabel: 'Native asset'
   };
@@ -344,7 +368,7 @@ export const deriveTradeComposerModel = ({
     value: 'wisp',
     label: `✓ ${rewardTokenSymbol} (public)`,
     symbol: rewardTokenSymbol,
-    kindLabel: 'Public',
+    kindLabel: 'Public' as const,
     addressLabel: `CA ${shortenAddress(REWARD_TOKEN_ADDRESS)}`,
     verificationLabel: 'CA loaded'
   };
@@ -352,7 +376,7 @@ export const deriveTradeComposerModel = ({
     value: 'pwisp',
     label: `✓ ${privateRewardTokenSymbol} (private)`,
     symbol: privateRewardTokenSymbol,
-    kindLabel: 'Private',
+    kindLabel: 'Private' as const,
     addressLabel: `CA ${shortenAddress(PRIVATE_REWARD_TOKEN_ADDRESS)}`,
     verificationLabel: 'Verified private token'
   };
@@ -538,18 +562,23 @@ export const deriveTradeComposerModel = ({
     }
     return `0 ${symbol}`;
   };
+  const stripAvailablePrefix = (value: string): string => value.replace(/^Available\s+/i, '');
   const formatBalanceSummaryLabel = (
     selectedToken: ResolvedTradeToken | null,
     balanceWei: bigint | null,
-    combinedBalance?: { splitLabel?: string }
+    combinedBalance?: { availableLabel?: string }
   ): string =>
-    selectedToken && combinedBalance?.splitLabel
-      ? combinedBalance.splitLabel
+    selectedToken && combinedBalance?.availableLabel
+      ? stripAvailablePrefix(combinedBalance.availableLabel)
       : selectedToken && balanceWei !== null
         ? `${formatTokenAmount(balanceWei, selectedToken.decimals, 6)} ${selectedToken.symbol}`
         : selectedToken
           ? `-- ${selectedToken.symbol}`
           : '--';
+  const formatBalanceBreakdownLabel = (
+    selectedToken: ResolvedTradeToken | null,
+    combinedBalance?: { breakdownLabel?: string }
+  ): string | undefined => (selectedToken && combinedBalance?.breakdownLabel ? combinedBalance.breakdownLabel : undefined);
   const tradeOfferAmountSummaryLabel = formatAmountSummaryLabel({
     input: tradeOfferAmountInput,
     parsedAmountWei: parsedTradeOfferAmountWei,
@@ -570,6 +599,14 @@ export const deriveTradeComposerModel = ({
   const tradeRequestBalanceSummaryLabel = formatBalanceSummaryLabel(
     selectedTradeRequestToken,
     selectedTradeRequestAvailableBalanceWei,
+    selectedTradeRequestCombinedBalance
+  );
+  const tradeOfferBalanceBreakdownLabel = formatBalanceBreakdownLabel(
+    selectedTradeOfferToken,
+    selectedTradeOfferCombinedBalance
+  );
+  const tradeRequestBalanceBreakdownLabel = formatBalanceBreakdownLabel(
+    selectedTradeRequestToken,
     selectedTradeRequestCombinedBalance
   );
   const tradeOfferVerifyUrl = selectedTradeOfferToken?.tokenAddress
@@ -825,6 +862,8 @@ export const deriveTradeComposerModel = ({
     tradeRequestAmountSummaryLabel,
     tradeOfferBalanceSummaryLabel,
     tradeRequestBalanceSummaryLabel,
+    tradeOfferBalanceBreakdownLabel,
+    tradeRequestBalanceBreakdownLabel,
     tradeOfferAmountLabel: 'You sell',
     tradeRequestAmountLabel: 'You receive',
     tradeOfferAmountPlaceholder: 'Amount you sell',

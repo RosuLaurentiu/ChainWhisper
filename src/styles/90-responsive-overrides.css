@@ -4960,8 +4960,19 @@ summary:focus:not(:focus-visible),
   color: #fff;
 }
 
-.app-shell-trades .p2p-terminal-tabs button:first-child.active,
-.app-shell-trades .p2p-recurring-terminal-tabs button:first-child.active {
+.app-shell-trades .p2p-terminal-tabs button.p2p-terminal-side-sell.active,
+.app-shell-trades .p2p-recurring-terminal-tabs button.p2p-terminal-side-sell.active {
+  background: linear-gradient(180deg, rgba(127, 29, 29, 0.58), rgba(75, 16, 16, 0.76));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -2px 0 rgba(239, 102, 102, 0.82),
+    0 0 0 1px rgba(239, 102, 102, 0.18),
+    0 0 16px rgba(239, 102, 102, 0.12);
+  color: #fecaca;
+}
+
+.app-shell-trades .p2p-terminal-tabs button.p2p-terminal-side-buy.active,
+.app-shell-trades .p2p-recurring-terminal-tabs button.p2p-terminal-side-buy.active {
   border-color: rgba(34, 197, 94, 0.58);
   background: linear-gradient(180deg, rgba(34, 197, 94, 0.38), rgba(20, 83, 45, 0.74));
   box-shadow:
@@ -4970,17 +4981,6 @@ summary:focus:not(:focus-visible),
     0 0 0 1px rgba(34, 197, 94, 0.18),
     0 0 16px rgba(34, 197, 94, 0.11);
   color: #dcfce7;
-}
-
-.app-shell-trades .p2p-terminal-tabs button:last-child.active,
-.app-shell-trades .p2p-recurring-terminal-tabs button:last-child.active {
-  background: linear-gradient(180deg, rgba(127, 29, 29, 0.58), rgba(75, 16, 16, 0.76));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 -2px 0 rgba(239, 102, 102, 0.82),
-    0 0 0 1px rgba(239, 102, 102, 0.18),
-    0 0 16px rgba(239, 102, 102, 0.12);
-  color: #fecaca;
 }
 
 .app-shell-trades .p2p-terminal-input-field-sell .p2p-terminal-field-head > span {
@@ -5001,18 +5001,18 @@ summary:focus:not(:focus-visible),
   box-shadow: 0 0 0 3px rgba(20, 83, 45, 0.28);
 }
 
-.app-shell-trades .p2p-terminal-ticket:has(.p2p-terminal-tabs button:first-child.active) .p2p-terminal-primary-action:not(:disabled),
-.app-shell-trades .p2p-recurring-terminal:has(.p2p-recurring-terminal-tabs button:first-child.active) .p2p-terminal-primary-action:not(:disabled) {
-  border-color: rgba(34, 197, 94, 0.58);
-  background: linear-gradient(180deg, rgba(34, 197, 94, 0.38), rgba(20, 83, 45, 0.74));
-  box-shadow: 0 12px 24px rgba(20, 83, 45, 0.22);
-}
-
-.app-shell-trades .p2p-terminal-ticket:has(.p2p-terminal-tabs button:last-child.active) .p2p-terminal-primary-action:not(:disabled),
-.app-shell-trades .p2p-recurring-terminal:has(.p2p-recurring-terminal-tabs button:last-child.active) .p2p-terminal-primary-action:not(:disabled) {
+.app-shell-trades .p2p-terminal-ticket:has(.p2p-terminal-tabs button.p2p-terminal-side-sell.active) .p2p-terminal-primary-action:not(:disabled),
+.app-shell-trades .p2p-recurring-terminal:has(.p2p-recurring-terminal-tabs button.p2p-terminal-side-sell.active) .p2p-terminal-primary-action:not(:disabled) {
   border-color: rgba(239, 102, 102, 0.64);
   background: linear-gradient(135deg, rgba(127, 29, 29, 0.94), rgba(75, 16, 16, 0.98));
   box-shadow: 0 12px 24px rgba(127, 29, 29, 0.22);
+}
+
+.app-shell-trades .p2p-terminal-ticket:has(.p2p-terminal-tabs button.p2p-terminal-side-buy.active) .p2p-terminal-primary-action:not(:disabled),
+.app-shell-trades .p2p-recurring-terminal:has(.p2p-recurring-terminal-tabs button.p2p-terminal-side-buy.active) .p2p-terminal-primary-action:not(:disabled) {
+  border-color: rgba(34, 197, 94, 0.58);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.38), rgba(20, 83, 45, 0.74));
+  box-shadow: 0 12px 24px rgba(20, 83, 45, 0.22);
 }
 
 .app-shell-trades .p2p-action-notice {

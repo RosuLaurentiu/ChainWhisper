@@ -23,6 +23,7 @@ export type CombinedWalletAssetBalance = {
   chainwhisperShortfallWei: bigint | null;
   ownerPrivacyRequired: boolean;
   availableLabel: string;
+  breakdownLabel: string;
   splitLabel: string;
 };
 
@@ -128,6 +129,7 @@ export const buildCombinedWalletAssetBalance = ({
     chainwhisperShortfallWei: shortfallWei,
     ownerPrivacyRequired,
     availableLabel,
+    breakdownLabel: `${chainwhisperLabel} in ChainWhisper - ${ownerLabel} in owner wallet`,
     splitLabel: `${availableLabel} - ${chainwhisperLabel} in ChainWhisper - ${ownerLabel} in owner wallet`
   };
 };

@@ -272,7 +272,7 @@ describe('price display helpers', () => {
     });
   });
 
-  it('shows recurring forward prices as buy and sell for the base asset', () => {
+  it('shows recurring prices as sell then buy for the base asset', () => {
     const display = resolveRecurringPriceDeskDisplay({
       terms: {
         baseAsset: { ...asset('AAA'), amount: '10000000000000000000' },
@@ -290,14 +290,16 @@ describe('price display helpers', () => {
 
     expect(display).toMatchObject({
       basisLabel: 'BBB/AAA',
-      displayBuySide: { label: 'Buy AAA', priceLabel: '0.1 BBB/AAA' },
-      displaySellSide: { label: 'Sell AAA', priceLabel: '0.2 BBB/AAA' },
+      displayBaseAsset: { symbol: 'AAA' },
+      displayQuoteAsset: { symbol: 'BBB' },
+      sellSide: { label: 'Sell AAA', priceLabel: '0.1 BBB/AAA' },
+      buySide: { label: 'Buy AAA', priceLabel: '0.2 BBB/AAA' },
       makerBuySide: { label: 'Buy AAA', priceLabel: '0.1 BBB/AAA' },
       makerSellSide: { label: 'Sell AAA', priceLabel: '0.2 BBB/AAA' }
     });
   });
 
-  it('shows recurring inverse prices as buy and sell for the quote asset with a valid spread', () => {
+  it('keeps recurring sell then buy order when the basis is inverted', () => {
     const display = resolveRecurringPriceDeskDisplay({
       terms: {
         baseAsset: { ...asset('AAA'), amount: '10000000000000000000' },
@@ -314,16 +316,14 @@ describe('price display helpers', () => {
       toggleInverse: true
     });
 
-    const buyPrice = Number(display.displayBuySide.priceLabel.match(/\d+(?:\.\d+)?/)?.[0] ?? 'NaN');
-    const sellPrice = Number(display.displaySellSide.priceLabel.match(/\d+(?:\.\d+)?/)?.[0] ?? 'NaN');
-
     expect(display).toMatchObject({
       basisLabel: 'AAA/BBB',
-      displayBuySide: { label: 'Sell AAA', priceLabel: '5 AAA/BBB' },
-      displaySellSide: { label: 'Buy AAA', priceLabel: '10 AAA/BBB' },
+      displayBaseAsset: { symbol: 'BBB' },
+      displayQuoteAsset: { symbol: 'AAA' },
+      sellSide: { label: 'Sell BBB', priceLabel: '5 AAA/BBB' },
+      buySide: { label: 'Buy BBB', priceLabel: '10 AAA/BBB' },
       makerBuySide: { label: 'Buy AAA', priceLabel: '10 AAA/BBB' },
       makerSellSide: { label: 'Sell AAA', priceLabel: '5 AAA/BBB' }
     });
-    expect(buyPrice).toBeLessThanOrEqual(sellPrice);
   });
 });

@@ -65,6 +65,8 @@ type TradeComposerPanelProps = {
   requestAmountSummaryLabel: string;
   offerBalanceSummaryLabel: string;
   requestBalanceSummaryLabel?: string;
+  offerBalanceBreakdownLabel?: string;
+  requestBalanceBreakdownLabel?: string;
   pricingSourceFields?: TradePricingField[];
   onSwapSides?: () => void;
   swapDisabled?: boolean;
@@ -232,6 +234,7 @@ export function TradeTokenSelect({
   options,
   value,
   onChange,
+  excludedValues = [],
   disabled,
   invalid,
   balanceLabel,
@@ -240,6 +243,7 @@ export function TradeTokenSelect({
   options: TradeComposerTokenOption[];
   value: string;
   onChange: (value: string) => void;
+  excludedValues?: string[];
   disabled?: boolean;
   invalid?: boolean;
   balanceLabel?: string;
@@ -254,9 +258,11 @@ export function TradeTokenSelect({
   const selectedVerificationLabel = resolveTokenVerificationLabel(selectedOption, balanceLabel);
   const selectedAddressLabel = resolveTokenAddressLabel(selectedOption);
   const normalizedSearch = searchInput.trim().toLowerCase();
-  const publicCount = options.filter((option) => resolveTokenOptionScope(option) === 'public').length;
-  const privateCount = options.filter((option) => resolveTokenOptionScope(option) === 'private').length;
-  const filteredOptions = options.filter((option) => {
+  const excludedValueSet = new Set(excludedValues.map((excludedValue) => excludedValue.trim().toLowerCase()).filter(Boolean));
+  const selectableOptions = options.filter((option) => !excludedValueSet.has(option.value.trim().toLowerCase()));
+  const publicCount = selectableOptions.filter((option) => resolveTokenOptionScope(option) === 'public').length;
+  const privateCount = selectableOptions.filter((option) => resolveTokenOptionScope(option) === 'private').length;
+  const filteredOptions = selectableOptions.filter((option) => {
     if (resolveTokenOptionScope(option) !== activeScope) return false;
     if (!normalizedSearch) return true;
     return `${option.label} ${option.value}`.toLowerCase().includes(normalizedSearch);
@@ -392,7 +398,7 @@ export function TradeTokenSelect({
                 );
               })
             ) : (
-              <li className="trade-token-select-empty">No {activeScope} tokens match that search.</li>
+              <li className="trade-token-select-empty">No other {activeScope} tokens match that search.</li>
             )}
           </ul>
         </div>
@@ -471,6 +477,8 @@ export default function TradeComposerPanel({
   requestAmountSummaryLabel,
   offerBalanceSummaryLabel,
   requestBalanceSummaryLabel = '--',
+  offerBalanceBreakdownLabel,
+  requestBalanceBreakdownLabel,
   pricingSourceFields = [],
   onSwapSides,
   swapDisabled,
@@ -690,8 +698,11 @@ export default function TradeComposerPanel({
         <section className="trade-compose-section trade-compose-section-sell" aria-label="Asset you are sending">
           <div className="trade-compose-section-header">
             <strong>You sell</strong>
-            <span>Balance: {offerBalanceSummaryLabel}</span>
+            <span>Available: {offerBalanceSummaryLabel}</span>
           </div>
+          {offerBalanceBreakdownLabel ? (
+            <div className="trade-compose-balance-breakdown">{offerBalanceBreakdownLabel}</div>
+          ) : null}
           <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
@@ -703,6 +714,7 @@ export default function TradeComposerPanel({
                 markTouched('offerAsset');
                 onOfferTokenSelectionChange(value);
               }}
+              excludedValues={[requestTokenSelection]}
               disabled={sending}
               invalid={showOfferAssetError}
               balanceLabel={offerBalanceSummaryLabel}
@@ -800,8 +812,11 @@ export default function TradeComposerPanel({
         <section className="trade-compose-section trade-compose-section-buy" aria-label="Asset you receive">
           <div className="trade-compose-section-header">
             <strong>You receive</strong>
-            <span>Balance: {requestBalanceSummaryLabel}</span>
+            <span>Available: {requestBalanceSummaryLabel}</span>
           </div>
+          {requestBalanceBreakdownLabel ? (
+            <div className="trade-compose-balance-breakdown">{requestBalanceBreakdownLabel}</div>
+          ) : null}
           <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
@@ -813,6 +828,7 @@ export default function TradeComposerPanel({
                 markTouched('requestAsset');
                 onRequestTokenSelectionChange(value);
               }}
+              excludedValues={[offerTokenSelection]}
               disabled={sending}
               invalid={showRequestAssetError}
               balanceLabel={requestBalanceSummaryLabel}

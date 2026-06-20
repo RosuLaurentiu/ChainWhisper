@@ -25,6 +25,7 @@ import {
   VERIFIED_ECOSYSTEM_TOKENS,
   buildTradeCustomTokenInfoKey,
   getVerifiedEcosystemToken,
+  resolveTradeTokenDisplaySymbol,
   resolveTradePresetKind,
   type PrivateTokenBalanceState,
   type TradeCustomTokenInfo,
@@ -303,9 +304,15 @@ export default function useP2PTradeTokenData({
       typeof rewardSymbolRaw === 'string' && rewardSymbolRaw.trim() ? rewardSymbolRaw.trim().slice(0, 12) : FALLBACK_REWARD_TOKEN_SYMBOL
     );
     setPrivateRewardTokenSymbol(
-      typeof privateSymbolRaw === 'string' && privateSymbolRaw.trim()
-        ? privateSymbolRaw.trim().slice(0, 12)
-        : FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL
+      resolveTradeTokenDisplaySymbol({
+        kind: 'private-erc20',
+        address: PRIVATE_REWARD_TOKEN_ADDRESS,
+        symbol:
+          typeof privateSymbolRaw === 'string' && privateSymbolRaw.trim()
+            ? privateSymbolRaw.trim().slice(0, 12)
+            : undefined,
+        fallbackSymbol: FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL
+      })
     );
     setRewardTokenDecimals(normalizeTokenDecimals(Number(rewardDecimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS)));
     setPrivateRewardTokenDecimals(normalizeTokenDecimals(Number(privateDecimalsRaw ?? FALLBACK_REWARD_TOKEN_DECIMALS)));
@@ -433,8 +440,15 @@ export default function useP2PTradeTokenData({
           tokenContract.symbol().catch(() => null),
           tokenContract.decimals().catch(() => null)
         ]);
-        const symbol =
-          typeof symbolRaw === 'string' && symbolRaw.trim() ? symbolRaw.trim().slice(0, 16) : fallbackTokenSymbol;
+        const symbol = resolveTradeTokenDisplaySymbol({
+          kind: token.kind,
+          address: normalizedAddress,
+          symbol:
+            typeof symbolRaw === 'string' && symbolRaw.trim()
+              ? symbolRaw.trim().slice(0, 16)
+              : undefined,
+          fallbackSymbol: fallbackTokenSymbol
+        });
         const decimals =
           typeof decimalsRaw === 'number' || typeof decimalsRaw === 'bigint'
             ? normalizeTokenDecimals(Number(decimalsRaw))
@@ -521,7 +535,11 @@ export default function useP2PTradeTokenData({
             [tokenKey]: {
               kind: token.kind,
               address: normalizedAddress,
-              symbol: fallbackTokenSymbol,
+              symbol: resolveTradeTokenDisplaySymbol({
+                kind: token.kind,
+                address: normalizedAddress,
+                fallbackSymbol: fallbackTokenSymbol
+              }),
               decimals: FALLBACK_REWARD_TOKEN_DECIMALS,
               balanceWei: null,
               loading: false,
@@ -556,10 +574,15 @@ export default function useP2PTradeTokenData({
             tokenContract.symbol().catch(() => null),
             tokenContract.decimals().catch(() => null)
           ]);
-          const symbol =
-            typeof symbolRaw === 'string' && symbolRaw.trim()
-              ? symbolRaw.trim().slice(0, 16)
-              : fallbackTokenSymbol;
+          const symbol = resolveTradeTokenDisplaySymbol({
+            kind: 'private-erc20',
+            address: normalizedAddress,
+            symbol:
+              typeof symbolRaw === 'string' && symbolRaw.trim()
+                ? symbolRaw.trim().slice(0, 16)
+                : undefined,
+            fallbackSymbol: fallbackTokenSymbol
+          });
           const decimals =
             typeof decimalsRaw === 'number' || typeof decimalsRaw === 'bigint'
               ? normalizeTokenDecimals(Number(decimalsRaw))

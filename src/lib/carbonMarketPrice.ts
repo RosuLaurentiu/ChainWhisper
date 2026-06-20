@@ -277,19 +277,24 @@ export const resolveCarbonPricePair = (
 
 export const resolveCarbonApiBaseUrl = ({
   configuredBaseUrl,
+  enableDefaultSupabaseProxy = false,
   isDev,
   supabaseProjectUrl
 }: {
   configuredBaseUrl?: string;
+  enableDefaultSupabaseProxy?: boolean;
   isDev: boolean;
   supabaseProjectUrl?: string;
-}): string => {
+}): string | null => {
   const configured = configuredBaseUrl?.trim();
   if (configured) {
     return configured.replace(/\/+$/u, '');
   }
   if (isDev) {
     return CARBON_MCP_DEV_PROXY_BASE_URL;
+  }
+  if (!enableDefaultSupabaseProxy) {
+    return null;
   }
 
   const projectUrl = (supabaseProjectUrl?.trim() || DEFAULT_SUPABASE_PROJECT_URL).replace(/\/+$/u, '');
@@ -298,18 +303,23 @@ export const resolveCarbonApiBaseUrl = ({
 
 export const resolveCarbonExplorePairUrl = (options: {
   configuredBaseUrl?: string;
+  enableDefaultSupabaseProxy?: boolean;
   isDev: boolean;
   supabaseProjectUrl?: string;
-}): string => {
+}): string | null => {
   const baseUrl = resolveCarbonApiBaseUrl(options);
+  if (!baseUrl) {
+    return null;
+  }
   return baseUrl.endsWith(`/functions/v1/${CARBON_MCP_SUPABASE_FUNCTION_NAME}`)
     ? baseUrl
     : `${baseUrl}${CARBON_MCP_EXPLORE_PAIR_PATH}`;
 };
 
-const getCarbonExplorePairUrl = (): string => {
+const getCarbonExplorePairUrl = (): string | null => {
   return resolveCarbonExplorePairUrl({
     configuredBaseUrl: import.meta.env.VITE_CARBON_MCP_API_BASE_URL,
+    enableDefaultSupabaseProxy: import.meta.env.VITE_ENABLE_DEFAULT_CARBON_PROXY === 'true',
     isDev: import.meta.env.DEV,
     supabaseProjectUrl: import.meta.env.VITE_SUPABASE_PROJECT_URL
   });
@@ -417,8 +427,14 @@ export const fetchCarbonPairReference = async ({
     return cached.reference;
   }
 
+  const explorePairUrl = getCarbonExplorePairUrl();
+  if (!explorePairUrl) {
+    carbonReferenceCache.set(pair.pairKey, { expiresAt: now + CARBON_PAIR_REFERENCE_CACHE_TTL_MS, reference: null });
+    return null;
+  }
+
   try {
-    const response = await fetcher(getCarbonExplorePairUrl(), {
+    const response = await fetcher(explorePairUrl, {
       body: JSON.stringify({
         base_token: pair.base.address,
         chain: 'coti',

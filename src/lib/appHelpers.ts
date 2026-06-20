@@ -11,6 +11,7 @@ import {
   REPLY_METADATA_PREFIX,
   extractRevertData,
   getProviderErrorMessage,
+  shortenAddress,
   type ChatMessage,
   type TradeAssetPayload,
   type TradeOfferMessagePayload,
@@ -57,8 +58,8 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   { address: PRIVATE_USDC_E_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.USDC.e' },
   { address: PRIVATE_WADA_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.wADA' },
   { address: PRIVATE_GCOTI_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.gCOTI' },
-  { address: '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a', kind: 'private-erc20', symbol: 'pWISP' },
-  { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20', symbol: 'pPENGO' },
+  { address: '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a', kind: 'private-erc20', symbol: 'p.WISP' },
+  { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20', symbol: 'p.PENGO' },
   { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'HOTDOG' },
 ];
 
@@ -79,12 +80,12 @@ export const PRIVATE_TRADE_TOKEN_SYMBOL_ORDER = [
   'p.COTI',
   'p.gCOTI',
   'p.USDC.e',
-  'pWISP',
+  'p.WISP',
   'p.WETH',
   'p.WBTC',
   'p.USDT',
   'p.wADA',
-  'pPENGO',
+  'p.PENGO',
   'HOTDOG'
 ] as const;
 
@@ -92,7 +93,55 @@ export const buildPublicTradeTokenSymbolOrder = (rewardTokenSymbol: string): str
   PUBLIC_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'WISP' ? rewardTokenSymbol : symbol));
 
 export const buildPrivateTradeTokenSymbolOrder = (privateRewardTokenSymbol: string): string[] =>
-  PRIVATE_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'pWISP' ? privateRewardTokenSymbol : symbol));
+  PRIVATE_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'p.WISP' ? privateRewardTokenSymbol : symbol));
+
+export const normalizePrivateTokenDisplaySymbol = (symbol: string): string => {
+  const trimmedSymbol = symbol.trim();
+  if (!trimmedSymbol) return trimmedSymbol;
+  if (/^p\./i.test(trimmedSymbol)) return trimmedSymbol;
+  const compactPrivateMatch = trimmedSymbol.match(/^p([A-Z0-9][A-Za-z0-9._-]*)$/);
+  if (!compactPrivateMatch) return trimmedSymbol;
+  return `p.${compactPrivateMatch[1]}`;
+};
+
+export const resolveTradeTokenDisplaySymbol = ({
+  kind,
+  address,
+  symbol,
+  fallbackSymbol
+}: {
+  kind: TradeAssetPayload['kind'];
+  address?: string;
+  symbol?: string | null;
+  fallbackSymbol?: string;
+}): string => {
+  const normalizedAddress = address?.trim().toLowerCase() ?? '';
+  const verifiedToken = normalizedAddress ? getVerifiedEcosystemToken(normalizedAddress) : undefined;
+  const verifiedSymbol =
+    verifiedToken?.kind === 'private-erc20'
+      ? normalizePrivateTokenDisplaySymbol(verifiedToken.symbol)
+      : verifiedToken?.symbol;
+  const fallback = fallbackSymbol
+    ? kind === 'private-erc20'
+      ? normalizePrivateTokenDisplaySymbol(fallbackSymbol)
+      : fallbackSymbol
+    : verifiedSymbol || (address ? shortenAddress(address) : 'TOKEN');
+  const cleanedSymbol = symbol?.trim();
+
+  if (kind !== 'private-erc20') {
+    return cleanedSymbol || fallback;
+  }
+
+  if (verifiedSymbol?.toLowerCase().startsWith('p.')) {
+    return verifiedSymbol;
+  }
+
+  if (!cleanedSymbol || (address && cleanedSymbol === shortenAddress(address))) {
+    return fallback;
+  }
+
+  return normalizePrivateTokenDisplaySymbol(cleanedSymbol);
+};
 
 export const sortTradeTokenOptionsBySymbol = <T extends { symbol?: string }>(options: T[], symbolOrder: string[]): T[] => {
   const orderBySymbol = new Map(symbolOrder.map((symbol, index) => [symbol.toLowerCase(), index]));

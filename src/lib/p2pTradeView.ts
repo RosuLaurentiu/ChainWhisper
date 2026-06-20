@@ -776,7 +776,7 @@ export const getRecurringTerminalSideState = (
     return {
       isOpen: false,
       disabledLabel: 'Order paused',
-      inputLabel: side === 'buy' ? 'Budget' : 'Amount',
+      inputLabel: 'You sell',
       actionLabel: side === 'buy' ? 'Buy' : 'Sell'
     };
   }
@@ -785,7 +785,7 @@ export const getRecurringTerminalSideState = (
     return {
       isOpen: recurring.sellSideOpen,
       disabledLabel: 'No sell liquidity',
-      inputLabel: `${recurring.quoteAsset.symbol} budget`,
+      inputLabel: `You sell ${recurring.quoteAsset.symbol}`,
       actionLabel: `Buy ${recurring.baseAsset.symbol}`
     };
   }
@@ -793,7 +793,7 @@ export const getRecurringTerminalSideState = (
   return {
     isOpen: recurring.buySideOpen,
     disabledLabel: 'No buy liquidity',
-    inputLabel: `${recurring.baseAsset.symbol} amount`,
+    inputLabel: `You sell ${recurring.baseAsset.symbol}`,
     actionLabel: `Sell ${recurring.baseAsset.symbol}`
   };
 };

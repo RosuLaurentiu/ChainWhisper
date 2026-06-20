@@ -183,14 +183,14 @@ describe('verified ecosystem tokens', () => {
     expect(new Set(normalizedAddresses).size).toBe(normalizedAddresses.length);
   });
 
-  it('includes the active pWISP private token', () => {
+  it('includes the active p.WISP private token', () => {
     const address = '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a';
 
     expect(isVerifiedEcosystemToken(address)).toBe(true);
     expect(getVerifiedEcosystemToken(address.toUpperCase())).toMatchObject({
       address,
       kind: 'private-erc20',
-      symbol: 'pWISP'
+      symbol: 'p.WISP'
     });
   });
 

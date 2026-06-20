@@ -1987,7 +1987,7 @@
 }
 
 .p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-buy {
-  grid-column: 1;
+  grid-column: 3;
   grid-row: 1;
 }
 
@@ -1997,7 +1997,7 @@
 }
 
 .p2p-trading-shell .standalone-trade-create-panel .p2p-recurring-side-panel-sell {
-  grid-column: 3;
+  grid-column: 1;
   grid-row: 1;
 }
 
@@ -2086,6 +2086,14 @@
 .trade-compose-expiry label {
   font-size: 0.72rem;
   color: var(--muted);
+}
+
+.trade-compose-balance-breakdown {
+  margin-top: -2px;
+  color: rgba(217, 211, 255, 0.62);
+  font-size: 0.72rem;
+  font-weight: 760;
+  line-height: 1.25;
 }
 
 .trade-compose-field {

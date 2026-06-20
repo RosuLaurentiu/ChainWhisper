@@ -80,11 +80,13 @@ export type RecurringPriceDeskSideDisplay = {
 export type RecurringPriceDeskDisplay = {
   basisLabel: string;
   nextBasisLabel: string;
+  displayBaseAsset: TradeAssetPayload;
+  displayQuoteAsset: TradeAssetPayload;
   isReversed: boolean;
   toggleTitle: string;
   ariaLabel: string;
-  displayBuySide: RecurringPriceDeskSideDisplay;
-  displaySellSide: RecurringPriceDeskSideDisplay;
+  sellSide: RecurringPriceDeskSideDisplay;
+  buySide: RecurringPriceDeskSideDisplay;
   makerBuySide: RecurringPriceDeskSideDisplay;
   makerSellSide: RecurringPriceDeskSideDisplay;
 };
@@ -289,25 +291,32 @@ export const resolveRecurringPriceDeskDisplay = ({
   const sellForwardLabel = formatTradeRatioLabel(sellBaseAsset, sellQuoteAsset) ?? forwardBasisLabel;
   const buyReverseLabel = formatTradeRatioLabel(buyQuoteAsset, buyBaseAsset) ?? reverseBasisLabel;
   const sellReverseLabel = formatTradeRatioLabel(sellQuoteAsset, sellBaseAsset) ?? reverseBasisLabel;
-  const defaultReversed =
-    shouldUseReversePriceRatioByDefault(buyBaseAsset, buyQuoteAsset) &&
-    shouldUseReversePriceRatioByDefault(sellBaseAsset, sellQuoteAsset);
-  const isReversed = Boolean(toggleInverse) !== defaultReversed;
+  const isReversed = Boolean(toggleInverse);
   const basisLabel = isReversed ? reverseBasisLabel : forwardBasisLabel;
   const nextBasisLabel = isReversed ? forwardBasisLabel : reverseBasisLabel;
   const makerBuySide = { label: `Buy ${terms.baseAsset.symbol}`, priceLabel: isReversed ? buyReverseLabel : buyForwardLabel };
   const makerSellSide = { label: `Sell ${terms.baseAsset.symbol}`, priceLabel: isReversed ? sellReverseLabel : sellForwardLabel };
-  const displayBuySide = isReversed ? makerSellSide : makerBuySide;
-  const displaySellSide = isReversed ? makerBuySide : makerSellSide;
+  const displayBaseAsset = isReversed ? terms.quoteAsset : terms.baseAsset;
+  const displayQuoteAsset = isReversed ? terms.baseAsset : terms.quoteAsset;
+  const sellSide = {
+    label: `Sell ${displayBaseAsset.symbol}`,
+    priceLabel: isReversed ? makerSellSide.priceLabel : makerBuySide.priceLabel
+  };
+  const buySide = {
+    label: `Buy ${displayBaseAsset.symbol}`,
+    priceLabel: isReversed ? makerBuySide.priceLabel : makerSellSide.priceLabel
+  };
 
   return {
     basisLabel,
     nextBasisLabel,
+    displayBaseAsset,
+    displayQuoteAsset,
     isReversed,
-    toggleTitle: `Switch price basis to ${nextBasisLabel}`,
-    ariaLabel: `${subjectLabel} price desk quoted in ${basisLabel}. ${displayBuySide.label}: ${displayBuySide.priceLabel}. ${displaySellSide.label}: ${displaySellSide.priceLabel}. Switch to ${nextBasisLabel}.`,
-    displayBuySide,
-    displaySellSide,
+    toggleTitle: `Switch pair direction to ${displayQuoteAsset.symbol}/${displayBaseAsset.symbol}`,
+    ariaLabel: `${subjectLabel} shown as ${displayBaseAsset.symbol}/${displayQuoteAsset.symbol}. ${sellSide.label}: ${sellSide.priceLabel}. ${buySide.label}: ${buySide.priceLabel}. Switch to ${displayQuoteAsset.symbol}/${displayBaseAsset.symbol}.`,
+    sellSide,
+    buySide,
     makerBuySide,
     makerSellSide
   };
