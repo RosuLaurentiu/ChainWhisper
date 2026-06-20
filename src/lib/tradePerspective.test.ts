@@ -326,4 +326,57 @@ describe('price display helpers', () => {
       makerSellSide: { label: 'Sell AAA', priceLabel: '5 AAA/BBB' }
     });
   });
+
+  it('defaults recurring prices to the smaller displayed ratio basis', () => {
+    const display = resolveRecurringPriceDeskDisplay({
+      terms: {
+        baseAsset: asset('AAA'),
+        quoteAsset: asset('BBB'),
+        buyTerms: {
+          baseAmount: '1000000000000000000',
+          quoteAmount: '8000000000000000000'
+        },
+        sellTerms: {
+          baseAmount: '1000000000000000000',
+          quoteAmount: '10000000000000000000'
+        }
+      }
+    });
+
+    expect(display).toMatchObject({
+      basisLabel: 'AAA/BBB',
+      displayBaseAsset: { symbol: 'BBB' },
+      displayQuoteAsset: { symbol: 'AAA' },
+      sellSide: { label: 'Sell BBB', priceLabel: '0.1 AAA/BBB' },
+      buySide: { label: 'Buy BBB', priceLabel: '0.125 AAA/BBB' },
+      makerBuySide: { label: 'Buy AAA', priceLabel: '0.125 AAA/BBB' },
+      makerSellSide: { label: 'Sell AAA', priceLabel: '0.1 AAA/BBB' }
+    });
+  });
+
+  it('toggles recurring prices away from the smaller default basis', () => {
+    const display = resolveRecurringPriceDeskDisplay({
+      terms: {
+        baseAsset: asset('AAA'),
+        quoteAsset: asset('BBB'),
+        buyTerms: {
+          baseAmount: '1000000000000000000',
+          quoteAmount: '8000000000000000000'
+        },
+        sellTerms: {
+          baseAmount: '1000000000000000000',
+          quoteAmount: '10000000000000000000'
+        }
+      },
+      toggleInverse: true
+    });
+
+    expect(display).toMatchObject({
+      basisLabel: 'BBB/AAA',
+      displayBaseAsset: { symbol: 'AAA' },
+      displayQuoteAsset: { symbol: 'BBB' },
+      sellSide: { label: 'Sell AAA', priceLabel: '8 BBB/AAA' },
+      buySide: { label: 'Buy AAA', priceLabel: '10 BBB/AAA' }
+    });
+  });
 });

@@ -4824,10 +4824,6 @@ summary:focus:not(:focus-visible),
 .app-shell-trades :is(
   button,
   .p2p-order-card,
-  .p2p-terminal-shell,
-  .p2p-terminal-market,
-  .p2p-terminal-ticket,
-  .p2p-terminal-history-row,
   .p2p-empty-state,
   .standalone-trades-section,
   .trade-compose-panel
@@ -5157,9 +5153,9 @@ summary:focus:not(:focus-visible),
   height: 10px;
   border-radius: 999px;
   background:
-    linear-gradient(90deg, rgba(111, 90, 167, 0.16), rgba(139, 92, 246, 0.32), rgba(111, 90, 167, 0.16));
-  background-size: 220% 100%;
-  animation: p2p-skeleton-slide 1.25s ease-in-out infinite;
+    linear-gradient(90deg, rgba(111, 90, 167, 0.18), rgba(139, 92, 246, 0.26), rgba(111, 90, 167, 0.18));
+  background-size: 100% 100%;
+  animation: none;
 }
 
 .app-shell-trades .p2p-loading-skeleton span:nth-child(2) {

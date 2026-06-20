@@ -8582,6 +8582,14 @@ export default function P2PTradingPage({
   const myTradeTerminalOpen = route.view === 'mine' && !emptyTerminalOpen && Boolean(selectedMyTradeDetail);
   const terminalPanelOpen = route.view === 'trade' || myTradeTerminalOpen || emptyTerminalOpen;
   const terminalPanelTrade = emptyTerminalOpen ? null : route.view === 'mine' ? selectedMyTradeDetail : detailTrade;
+  const terminalRouteDetailPending =
+    route.view === 'trade' &&
+    !emptyTerminalOpen &&
+    !detailTrade &&
+    !tradeAccessBlocked &&
+    !route.routeError &&
+    !detailTradeError;
+  const terminalHasTradeContent = !emptyTerminalOpen && Boolean(terminalPanelTrade);
   const activeCarbonPairRequests = useMemo(() => {
     const requests: CarbonPairRequest[] = [];
     const seenPairKeys = new Set<string>();
@@ -10207,7 +10215,7 @@ export default function P2PTradingPage({
           <div className="standalone-trades-section-head">
             <div>
               <p className="landing-eyebrow">Terminal</p>
-              <h2>{terminalPanelTrade ? 'Review offer' : OPEN_TERMINAL_LABEL}</h2>
+              <h2>{terminalPanelTrade || terminalRouteDetailPending ? 'Review offer' : OPEN_TERMINAL_LABEL}</h2>
             </div>
             <button type="button" className="standalone-trade-secondary-btn" onClick={closeTerminalPanel}>
               Close
@@ -10246,7 +10254,7 @@ export default function P2PTradingPage({
               </div>
             </div>
           ) : null}
-          {!emptyTerminalOpen ? (
+          {terminalHasTradeContent ? (
             <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
               <p>
                 <strong>OTC safety check:</strong> Verify maker, token contracts, amount, and price. Escrow settles
@@ -10299,7 +10307,7 @@ export default function P2PTradingPage({
               'error'
             )
             : null}
-          {route.view === 'trade' && loadingDetailTrade && !detailTrade
+          {terminalRouteDetailPending
             ? renderP2PEmptyState(
               routeIsRecurringOrder ? 'Reading recurring order' : 'Loading trade',
               routeIsRecurringOrder ? 'Reading reusable buy/sell terms and liquidity.' : 'Reading escrow terms and access rules.',

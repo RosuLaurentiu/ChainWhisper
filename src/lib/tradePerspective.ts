@@ -233,6 +233,86 @@ export const shouldUseReversePriceRatioByDefault = (
   }
 };
 
+type RatioFraction = {
+  denominator: bigint;
+  numerator: bigint;
+};
+
+const compareRatioFractions = (left: RatioFraction, right: RatioFraction): number => {
+  const leftScaled = left.numerator * right.denominator;
+  const rightScaled = right.numerator * left.denominator;
+  if (leftScaled < rightScaled) {
+    return -1;
+  }
+  if (leftScaled > rightScaled) {
+    return 1;
+  }
+  return 0;
+};
+
+const minRatioFraction = (ratios: RatioFraction[]): RatioFraction | null =>
+  ratios.reduce<RatioFraction | null>(
+    (smallest, ratio) => (smallest && compareRatioFractions(smallest, ratio) <= 0 ? smallest : ratio),
+    null
+  );
+
+const buildRecurringRatioFractions = (
+  baseAmount: string,
+  quoteAmount: string,
+  baseDecimals: number,
+  quoteDecimals: number
+): { forward: RatioFraction; reverse: RatioFraction } | null => {
+  try {
+    const parsedBaseAmount = BigInt(baseAmount);
+    const parsedQuoteAmount = BigInt(quoteAmount);
+    if (parsedBaseAmount <= 0n || parsedQuoteAmount <= 0n) {
+      return null;
+    }
+
+    const forwardNumerator = parsedQuoteAmount * 10n ** BigInt(Math.max(0, baseDecimals));
+    const forwardDenominator = parsedBaseAmount * 10n ** BigInt(Math.max(0, quoteDecimals));
+
+    return {
+      forward: {
+        numerator: forwardNumerator,
+        denominator: forwardDenominator
+      },
+      reverse: {
+        numerator: forwardDenominator,
+        denominator: forwardNumerator
+      }
+    };
+  } catch {
+    return null;
+  }
+};
+
+const shouldUseReverseRecurringPriceRatioByDefault = (terms: RecurringPriceDeskTerms): boolean => {
+  const buyRatio = buildRecurringRatioFractions(
+    terms.buyTerms.baseAmount,
+    terms.buyTerms.quoteAmount,
+    terms.baseAsset.decimals,
+    terms.quoteAsset.decimals
+  );
+  const sellRatio = buildRecurringRatioFractions(
+    terms.sellTerms.baseAmount,
+    terms.sellTerms.quoteAmount,
+    terms.baseAsset.decimals,
+    terms.quoteAsset.decimals
+  );
+  if (!buyRatio || !sellRatio) {
+    return false;
+  }
+
+  const smallestForward = minRatioFraction([buyRatio.forward, sellRatio.forward]);
+  const smallestReverse = minRatioFraction([buyRatio.reverse, sellRatio.reverse]);
+  if (!smallestForward || !smallestReverse) {
+    return false;
+  }
+
+  return compareRatioFractions(smallestReverse, smallestForward) < 0;
+};
+
 export const resolveTradePriceRatioDisplay = ({
   baseAsset,
   quoteAsset,
@@ -291,7 +371,8 @@ export const resolveRecurringPriceDeskDisplay = ({
   const sellForwardLabel = formatTradeRatioLabel(sellBaseAsset, sellQuoteAsset) ?? forwardBasisLabel;
   const buyReverseLabel = formatTradeRatioLabel(buyQuoteAsset, buyBaseAsset) ?? reverseBasisLabel;
   const sellReverseLabel = formatTradeRatioLabel(sellQuoteAsset, sellBaseAsset) ?? reverseBasisLabel;
-  const isReversed = Boolean(toggleInverse);
+  const defaultReversed = shouldUseReverseRecurringPriceRatioByDefault(terms);
+  const isReversed = Boolean(toggleInverse) !== defaultReversed;
   const basisLabel = isReversed ? reverseBasisLabel : forwardBasisLabel;
   const nextBasisLabel = isReversed ? forwardBasisLabel : reverseBasisLabel;
   const makerBuySide = { label: `Buy ${terms.baseAsset.symbol}`, priceLabel: isReversed ? buyReverseLabel : buyForwardLabel };

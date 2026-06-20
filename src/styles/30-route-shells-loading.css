@@ -91,6 +91,12 @@
   animation: chat-image-shimmer 1.35s ease-in-out infinite;
 }
 
+.standalone-trades-shell .route-loading-lines span::before {
+  transform: none;
+  opacity: 0.55;
+  animation: none;
+}
+
 .route-loading-lines span:nth-child(1) {
   width: 74%;
 }
