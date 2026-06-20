@@ -803,15 +803,15 @@ export default function TradeComposerPanel({
           className="trade-compose-swap-indicator"
           onClick={() => onSwapSides?.()}
           disabled={swapDisabled}
-          aria-label="Swap send and receive sides"
+          aria-label="Swap sell and buy sides"
           title="Swap trade sides"
         >
           <TradeSwapIcon />
         </button>
 
-        <section className="trade-compose-section trade-compose-section-buy" aria-label="Asset you receive">
+        <section className="trade-compose-section trade-compose-section-buy" aria-label="Asset you buy">
           <div className="trade-compose-section-header">
-            <strong>You receive</strong>
+            <strong>You buy</strong>
             <span>Available: {requestBalanceSummaryLabel}</span>
           </div>
           {requestBalanceBreakdownLabel ? (

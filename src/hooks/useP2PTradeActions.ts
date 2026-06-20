@@ -291,7 +291,7 @@ export default function useP2PTradeActions({
               value: formatWalletFundAmount(remainingRequestAmount, latestSnapshot.request)
             },
             {
-              label: 'You receive',
+              label: 'You buy',
               value: formatWalletFundAmount(getRemainingOfferAmount(latestSnapshot), latestSnapshot.offer)
             }
           ],

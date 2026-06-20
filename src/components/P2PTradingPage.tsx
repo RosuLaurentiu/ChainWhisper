@@ -7388,7 +7388,7 @@ export default function P2PTradingPage({
             <ArrowRight size={18} strokeWidth={2.2} />
           </div>
           <div className="p2p-counter-parent-term p2p-counter-parent-term-receive">
-            <span>You receive</span>
+            <span>You buy</span>
             <strong>{formatCounterParentAmount(counterReceiveAsset)}</strong>
             <small>What the parent offer sells</small>
           </div>
@@ -9707,12 +9707,16 @@ export default function P2PTradingPage({
                           }`}
                         >
                           <span className="trade-compose-field-head">
-                            <span>You receive</span>
+                            <span>You buy</span>
                             <button
                               type="button"
                               className="p2p-recurring-derived-toggle"
                               onClick={toggleRecurringSellReceiveEditable}
-                              aria-label={recurringSellReceiveEditable ? 'Preview sell receive' : 'Edit sell receive'}
+                              aria-label={
+                                recurringSellReceiveEditable
+                                  ? 'Preview amount bought on sell side'
+                                  : 'Edit amount bought on sell side'
+                              }
                               disabled={creatingRecurringOrder}
                             >
                               {recurringSellReceiveEditable ? 'Preview' : 'Edit'}
@@ -9808,12 +9812,16 @@ export default function P2PTradingPage({
                           }`}
                         >
                           <span className="trade-compose-field-head">
-                            <span>You receive</span>
+                            <span>You buy</span>
                             <button
                               type="button"
                               className="p2p-recurring-derived-toggle"
                               onClick={toggleRecurringBuyReceiveEditable}
-                              aria-label={recurringBuyReceiveEditable ? 'Preview buy receive' : 'Edit buy receive'}
+                              aria-label={
+                                recurringBuyReceiveEditable
+                                  ? 'Preview amount bought on buy side'
+                                  : 'Edit amount bought on buy side'
+                              }
                               disabled={creatingRecurringOrder}
                             >
                               {recurringBuyReceiveEditable ? 'Preview' : 'Edit'}
@@ -9921,12 +9929,16 @@ export default function P2PTradingPage({
                           }`}
                         >
                           <span className="trade-compose-field-head">
-                            <span>You receive</span>
+                            <span>You buy</span>
                             <button
                               type="button"
                               className="p2p-recurring-derived-toggle"
                               onClick={toggleRecurringSellReceiveEditable}
-                              aria-label={recurringSellReceiveEditable ? 'Preview sell receive' : 'Edit sell receive'}
+                              aria-label={
+                                recurringSellReceiveEditable
+                                  ? 'Preview amount bought on sell side'
+                                  : 'Edit amount bought on sell side'
+                              }
                               disabled={creatingRecurringOrder}
                             >
                               {recurringSellReceiveEditable ? 'Preview' : 'Edit'}
@@ -9979,12 +9991,16 @@ export default function P2PTradingPage({
                           }`}
                         >
                           <span className="trade-compose-field-head">
-                            <span>You receive</span>
+                            <span>You buy</span>
                             <button
                               type="button"
                               className="p2p-recurring-derived-toggle"
                               onClick={toggleRecurringBuyReceiveEditable}
-                              aria-label={recurringBuyReceiveEditable ? 'Preview buy receive' : 'Edit buy receive'}
+                              aria-label={
+                                recurringBuyReceiveEditable
+                                  ? 'Preview amount bought on buy side'
+                                  : 'Edit amount bought on buy side'
+                              }
                               disabled={creatingRecurringOrder}
                             >
                               {recurringBuyReceiveEditable ? 'Preview' : 'Edit'}

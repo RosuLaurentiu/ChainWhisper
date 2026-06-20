@@ -529,7 +529,7 @@ export const formatTradeListTerms = (trade: TradeSnapshot): string => {
   if (trade.recurringOrder) {
     const baseSymbol = trade.recurringOrder.baseAsset.symbol;
     const quoteSymbol = trade.recurringOrder.quoteAsset.symbol;
-    return `Recurring OTC ${baseSymbol}/${quoteSymbol}; buy and sell sides reuse liquidity`;
+    return `Recurring OTC ${baseSymbol}/${quoteSymbol}; sell and buy sides reuse liquidity`;
   }
   const displayTerms = getTradeDisplayTerms(trade);
   const termsVisibility = getTradeTermsVisibility(trade);

@@ -759,7 +759,7 @@ export default function TradeOfferCard({
                           }}
                           placeholder={`0 ${baseOffer.symbol}`}
                           disabled={partialFillDisabled}
-                          aria-label={`You buy in ${baseOffer.symbol}`}
+                          aria-label={`You buy ${baseOffer.symbol}`}
                         />
                       </label>
                     ) : null}
@@ -949,7 +949,7 @@ export default function TradeOfferCard({
                 onClick={onCancel}
                 disabled={actionPending}
               >
-                {actionPending ? 'Processing...' : 'Cancel Offer'}
+                {actionPending ? 'Processing...' : 'Cancel offer'}
               </button>
             </div>
           ) : null}
