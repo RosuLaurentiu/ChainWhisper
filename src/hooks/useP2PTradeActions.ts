@@ -421,9 +421,26 @@ export default function useP2PTradeActions({
           refreshTradeDataInBackground(latestSnapshot.counterParentTradeId, undefined, signer);
         }
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        return { txHash: acceptedTxHash };
+        return {
+          txHash: acceptedTxHash,
+          requestedFill:
+            shouldUsePrivateFillPath && !fillDirectCounterOnly
+              ? {
+                  amountWei: remainingRequestAmount.toString(),
+                  asset: latestSnapshot.request,
+                  role: 'sold' as const,
+                  privateLiquidity: true
+                }
+              : undefined
+        };
         });
-        notifyTerminalAction({ action: 'accept', status: 'success', tradeKey, txHash: actionResult.txHash });
+        notifyTerminalAction({
+          action: 'accept',
+          status: 'success',
+          tradeKey,
+          txHash: actionResult.txHash,
+          requestedFill: actionResult.requestedFill
+        });
       } catch (error) {
         if (isTradeActionConfirmationCancelledError(error)) {
           notifyTerminalAction({ action: 'accept', message: 'Action cancelled', status: 'info', tradeKey });
@@ -608,9 +625,25 @@ export default function useP2PTradeActions({
           openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
         }
         refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        return { txHash: fillResult.filledTxHash };
+        return {
+          txHash: fillResult.filledTxHash,
+          requestedFill: latestSnapshotHiddenLiquidity
+            ? {
+                amountWei: requestedAmount.toString(),
+                asset: latestSnapshot.request,
+                role: 'sold' as const,
+                privateLiquidity: true
+              }
+            : undefined
+        };
         });
-        notifyTerminalAction({ action: 'fill', status: 'success', tradeKey, txHash: actionResult.txHash });
+        notifyTerminalAction({
+          action: 'fill',
+          status: 'success',
+          tradeKey,
+          txHash: actionResult.txHash,
+          requestedFill: actionResult.requestedFill
+        });
       } catch (error) {
         if (isTradeActionConfirmationCancelledError(error)) {
           notifyTerminalAction({ action: 'fill', message: 'Action cancelled', status: 'info', tradeKey });

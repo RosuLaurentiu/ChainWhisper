@@ -214,6 +214,8 @@ import {
 } from '../lib/otcSwapQuote';
 import {
   getOtcSwapLinkedActionModes,
+  formatOtcSwapAvailabilityLabel,
+  formatOtcSwapFillHistoryNote,
   resolveOtcSwapLinkedActionMode,
   resolveOtcSwapPriceRatioDisplay,
   resolveSwapLimitPrefill,
@@ -1858,6 +1860,19 @@ export default function P2PTradingPage({
           requestedDecimals: requestedRole === 'sold' ? intent.sellTokenDecimals : intent.buyTokenDecimals,
           requestedRole,
           privateLiquidity: intent.privateLiquidity,
+          timestamp: Date.now()
+        });
+        setSwapFillNotes(nextNotes);
+      } else if (tradeKey && notice.requestedFill) {
+        const nextNotes = rememberOtcSwapFillNote({
+          tradeKey,
+          txHash: notice.txHash,
+          requestedAmountWei: notice.requestedFill.amountWei,
+          requestedAssetKey: getOtcSwapAssetKey(notice.requestedFill.asset),
+          requestedSymbol: notice.requestedFill.asset.symbol,
+          requestedDecimals: notice.requestedFill.asset.decimals,
+          requestedRole: notice.requestedFill.role,
+          privateLiquidity: notice.requestedFill.privateLiquidity,
           timestamp: Date.now()
         });
         setSwapFillNotes(nextNotes);
@@ -4901,7 +4916,16 @@ export default function P2PTradingPage({
           status: 'success',
           surface: 'terminal',
           tradeKey,
-          txHash: actionResult.filledTxHash
+          txHash: actionResult.filledTxHash,
+          requestedFill:
+            recurring.mode !== 'public'
+              ? {
+                  amountWei: inputAmountWei.toString(),
+                  asset: inputAsset,
+                  role: 'sold',
+                  privateLiquidity: true
+                }
+              : undefined
         });
       } catch (error) {
         if (isTradeActionConfirmationCancelledError(error)) {
@@ -5813,33 +5837,7 @@ export default function P2PTradingPage({
     return historyRows.map((row) => {
       const txHash = row.txHash ?? historyTransactionTxHashes[row.key];
       const swapFillNote = tradeKey ? findOtcSwapFillNote(swapFillNotes, tradeKey, txHash) : null;
-      const swapFillNoteLabel = (() => {
-        if (!swapFillNote) {
-          return '';
-        }
-        const requestedAmount = parseTokenAmountString(swapFillNote.requestedAmountWei);
-        const requestedLabel = `${formatTokenAmount(
-          requestedAmount,
-          swapFillNote.requestedDecimals,
-          6
-        )} ${swapFillNote.requestedSymbol}`;
-        if (swapFillNote.privateLiquidity) {
-          return `Requested ${requestedLabel}. Private fill amount is shown only when revealable.`;
-        }
-        const actualAsset = swapFillNote.requestedRole === 'sold' ? row.sold : row.bought;
-        const actualAmount =
-          actualAsset.visible && getOtcSwapAssetKey(actualAsset) === swapFillNote.requestedAssetKey
-            ? parseTokenAmountString(actualAsset.amount)
-            : 0n;
-        if (actualAmount > 0n && requestedAmount > actualAmount) {
-          return `Requested ${requestedLabel}, filled ${formatTokenAmount(
-            actualAmount,
-            actualAsset.decimals,
-            6
-          )} ${actualAsset.symbol} on this order.`;
-        }
-        return `Requested ${requestedLabel} on this order.`;
-      })();
+      const swapFillNoteLabel = formatOtcSwapFillHistoryNote(swapFillNote, row);
       const txUrl = buildTransactionExplorerUrl(txHash);
       const txLinkFeedback = txUrl && txHash
         ? getTransactionLinkFeedbackProps(`history-fill:${row.key}:${txHash}`, {
@@ -10079,15 +10077,7 @@ export default function P2PTradingPage({
     }`;
   };
   const formatSwapAvailability = (quote?: OtcSwapQuoteCandidate | null): string => {
-    if (!quote) {
-      return '--';
-    }
-    if (quote.availability.kind === 'terminal') {
-      return 'Availability checked in terminal';
-    }
-    return quote.complete || swapInputAmountWei <= 0n
-      ? `Up to ${formatSwapQuoteAmount(quote.availability.maxBuyAmountWei, swapBuyToken, 6)}`
-      : `Only ${formatSwapQuoteAmount(quote.availability.maxBuyAmountWei, swapBuyToken, 6)} at this price`;
+    return formatOtcSwapAvailabilityLabel(quote, swapInputMode, swapInputAmountWei, 6);
   };
   const buildSwapActionSummary = (quote: OtcSwapQuoteCandidate) => [
     {
@@ -10410,13 +10400,7 @@ export default function P2PTradingPage({
             </div>
             <div>
               <span>Availability</span>
-              <strong>
-                {swapDisplayQuote.availability.kind === 'known'
-                  ? swapDisplayQuote.complete || swapInputAmountWei <= 0n
-                    ? `Up to ${formatSwapQuoteAmount(swapDisplayQuote.availability.maxBuyAmountWei, swapBuyToken, 6)}`
-                    : `Only ${formatSwapQuoteAmount(swapDisplayQuote.availability.maxBuyAmountWei, swapBuyToken, 6)} at this price`
-                  : 'Availability checked in terminal'}
-              </strong>
+              <strong>{formatSwapAvailability(swapDisplayQuote)}</strong>
             </div>
           </div>
         ) : (

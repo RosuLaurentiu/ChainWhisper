@@ -1,6 +1,7 @@
 import type { OtcSwapInputMode } from './otcSwapQuote';
-import { OTC_SWAP_PRICE_SCALE, type OtcSwapQuoteCandidate } from './otcSwapQuote';
-import type { TradeAssetPayload } from './appShared';
+import { getOtcSwapAssetKey, OTC_SWAP_PRICE_SCALE, type OtcSwapQuoteCandidate } from './otcSwapQuote';
+import { formatTokenAmount, type TradeAssetPayload } from './appShared';
+import type { OtcSwapFillNote } from './otcSwapIntent';
 import { formatTradeRatioLabel, type TradePriceRatioDisplay } from './tradePerspective';
 
 export type OtcSwapActionState = {
@@ -166,4 +167,83 @@ export const resolveOtcSwapPriceRatioDisplay = (
     toggleTitle: `Switch swap price ratio to ${inverseBasisLabel}`,
     ariaLabel: `Swap price ratio for order ${quote.tradeId}. Current ratio: ${label}.`
   };
+};
+
+export const formatOtcSwapAvailabilityLabel = (
+  quote: OtcSwapQuoteCandidate | null | undefined,
+  inputMode: OtcSwapInputMode,
+  inputAmountWei = 0n,
+  precision = 6
+): string => {
+  if (!quote) {
+    return '--';
+  }
+  if (quote.availability.kind !== 'known') {
+    return 'Private liquidity';
+  }
+
+  const asset = inputMode === 'buy' ? quote.buyToken : quote.sellToken;
+  const amountWei =
+    inputMode === 'buy' ? quote.availability.maxBuyAmountWei : quote.availability.maxSellAmountWei;
+  const formattedAmount = `${formatTokenAmount(amountWei, asset.decimals, precision)} ${asset.symbol}`;
+  return quote.complete || inputAmountWei <= 0n
+    ? `Up to ${formattedAmount}`
+    : `Only ${formattedAmount} at this price`;
+};
+
+type OtcSwapFillHistoryAsset = TradeAssetPayload & {
+  visible: boolean;
+};
+
+export type OtcSwapFillHistoryRow = {
+  bought: OtcSwapFillHistoryAsset;
+  role?: 'maker' | 'taker' | 'filler';
+  sold: OtcSwapFillHistoryAsset;
+};
+
+const parseOtcSwapNoteAmount = (value: string): bigint => {
+  try {
+    return /^\d+$/.test(value) ? BigInt(value) : 0n;
+  } catch {
+    return 0n;
+  }
+};
+
+export const formatOtcSwapFillHistoryNote = (
+  note: OtcSwapFillNote | null | undefined,
+  row: OtcSwapFillHistoryRow,
+  precision = 6
+): string => {
+  if (!note) {
+    return '';
+  }
+  if (row.role === 'maker') {
+    return '';
+  }
+
+  const requestedAmount = parseOtcSwapNoteAmount(note.requestedAmountWei);
+  const requestedLabel = `${formatTokenAmount(requestedAmount, note.requestedDecimals, precision)} ${note.requestedSymbol}`;
+  const actualAsset = note.requestedRole === 'sold' ? row.sold : row.bought;
+  const actualAmount =
+    actualAsset.visible && getOtcSwapAssetKey(actualAsset) === note.requestedAssetKey
+      ? parseOtcSwapNoteAmount(actualAsset.amount)
+      : 0n;
+  const actualLabel =
+    actualAmount > 0n
+      ? `${formatTokenAmount(actualAmount, actualAsset.decimals, precision)} ${actualAsset.symbol}`
+      : '';
+
+  if (note.privateLiquidity) {
+    if (actualAmount > 0n) {
+      return requestedAmount > actualAmount
+        ? `Requested ${requestedLabel}, filled ${actualLabel}. Private liquidity only filled the amount available on this order.`
+        : `Requested ${requestedLabel}, filled ${actualLabel} from private liquidity.`;
+    }
+    return `Requested ${requestedLabel}. Private liquidity can fill less than requested; exact fill is shown when revealable.`;
+  }
+
+  if (actualAmount > 0n && requestedAmount > actualAmount) {
+    return `Requested ${requestedLabel}, filled ${actualLabel} on this order.`;
+  }
+  return `Requested ${requestedLabel} on this order.`;
 };

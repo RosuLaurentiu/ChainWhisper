@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { OtcSwapQuoteCandidate } from './otcSwapQuote';
 import {
+  formatOtcSwapAvailabilityLabel,
+  formatOtcSwapFillHistoryNote,
   getOtcSwapLinkedActionModes,
   resolveOtcSwapLinkedActionMode,
   resolveOtcSwapPriceRatioDisplay,
@@ -200,5 +202,94 @@ describe('OTC swap action UI model', () => {
       sell: true,
       buy: true
     });
+  });
+
+  it('shows public availability as the selected side budget', () => {
+    const publicQuote = {
+      ...quote(),
+      complete: true,
+      availability: {
+        kind: 'known' as const,
+        maxBuyAmountWei: 12_500_000_000_000_000_000n,
+        maxSellAmountWei: 2_500_000_000_000_000_000n
+      }
+    };
+
+    expect(formatOtcSwapAvailabilityLabel(publicQuote, 'sell')).toBe('Up to 2.5 p.gCOTI');
+    expect(formatOtcSwapAvailabilityLabel(publicQuote, 'buy')).toBe('Up to 12.5 p.COTI');
+  });
+
+  it('shows private availability as private liquidity', () => {
+    expect(formatOtcSwapAvailabilityLabel(quote(), 'buy')).toBe('Private liquidity');
+  });
+
+  it('explains private-liquidity partial fills when the reveal shows less than requested', () => {
+    expect(
+      formatOtcSwapFillHistoryNote(
+        {
+          tradeKey: '0xabc:7',
+          requestedAmountWei: '10000000000000000000',
+          requestedAssetKey: 'private-erc20:0xrequest',
+          requestedSymbol: 'p.USDC.e',
+          requestedDecimals: 18,
+          requestedRole: 'sold',
+          privateLiquidity: true,
+          timestamp: 1_000
+        },
+        {
+          bought: {
+            kind: 'private-erc20',
+            tokenAddress: '0xoffer',
+            symbol: 'p.COTI',
+            decimals: 18,
+            amount: '1000000000000000000',
+            visible: true
+          },
+          sold: {
+            kind: 'private-erc20',
+            tokenAddress: '0xrequest',
+            symbol: 'p.USDC.e',
+            decimals: 18,
+            amount: '6000000000000000000',
+            visible: true
+          }
+        }
+      )
+    ).toBe('Requested 10 p.USDC.e, filled 6 p.USDC.e. Private liquidity only filled the amount available on this order.');
+  });
+
+  it('explains hidden private-liquidity fills before exact amounts are revealable', () => {
+    expect(
+      formatOtcSwapFillHistoryNote(
+        {
+          tradeKey: '0xabc:7',
+          requestedAmountWei: '10000000000000000000',
+          requestedAssetKey: 'private-erc20:0xrequest',
+          requestedSymbol: 'p.USDC.e',
+          requestedDecimals: 18,
+          requestedRole: 'sold',
+          privateLiquidity: true,
+          timestamp: 1_000
+        },
+        {
+          bought: {
+            kind: 'private-erc20',
+            tokenAddress: '0xoffer',
+            symbol: 'p.COTI',
+            decimals: 18,
+            amount: '0',
+            visible: false
+          },
+          sold: {
+            kind: 'private-erc20',
+            tokenAddress: '0xrequest',
+            symbol: 'p.USDC.e',
+            decimals: 18,
+            amount: '0',
+            visible: false
+          }
+        }
+      )
+    ).toBe('Requested 10 p.USDC.e. Private liquidity can fill less than requested; exact fill is shown when revealable.');
   });
 });

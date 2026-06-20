@@ -1,3 +1,5 @@
+import type { TradeAssetPayload } from './appShared';
+
 export type P2PActionNoticeStatus = 'pending' | 'success' | 'error' | 'info';
 export type P2PActionNoticeSurface = 'terminal' | 'composer' | 'history';
 export type P2PActionNoticeAction =
@@ -20,6 +22,12 @@ export type P2PActionNoticeInput = {
   message?: string;
   tradeKey?: string;
   txHash?: string;
+  requestedFill?: {
+    amountWei: string;
+    asset: Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'symbol' | 'decimals'>;
+    role: 'sold' | 'bought';
+    privateLiquidity: boolean;
+  };
 };
 
 export type P2PActionNotice = P2PActionNoticeInput & {
