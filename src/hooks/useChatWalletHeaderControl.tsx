@@ -463,10 +463,17 @@ export default function useChatWalletHeaderControl({
   ]);
 
   const showOwnerRecoveryRetryAction = ownerAccountFlow.state === 'recovery-error';
+  const retryOwnerRecovery = () => {
+    if (recoveringAppWallet || checkingOwnerRecovery) {
+      return;
+    }
+    resetOwnerRecoveryAttempt();
+    Promise.resolve(recoverLinkedBurnerWallet()).catch(() => {});
+  };
 
   const handleChatWalletPrimaryAction = () => {
     if (ownerAccountFlow.state === 'recovery-error') {
-      resetOwnerRecoveryAttempt();
+      retryOwnerRecovery();
       return;
     }
 
@@ -658,7 +665,7 @@ export default function useChatWalletHeaderControl({
       onStatusAction={
         showOwnerRecoveryRetryAction
           ? () => {
-              resetOwnerRecoveryAttempt();
+              retryOwnerRecovery();
             }
           : undefined
       }
@@ -863,7 +870,7 @@ export default function useChatWalletHeaderControl({
                 className="p2p-wallet-action primary"
                 onClick={() => {
                   setChatWalletMenuOpen(false);
-                  Promise.resolve(recoverLinkedBurnerWallet()).catch(() => {});
+                  retryOwnerRecovery();
                 }}
                 disabled={initializingBurner || recoveringAppWallet || checkingOwnerRecovery || !chatOwnerWalletAddress}
                 role="menuitem"

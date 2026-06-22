@@ -6,12 +6,18 @@ import {
   encodeCompactAppWalletRecoveryPayload,
   estimateAppWalletRecoveryPromptLoad,
   getAppWalletRecoveryReadErrorMessage,
+  isAppWalletRecoveryConfigured,
   isAppWalletRecoveryNotFoundError,
   normalizeAppWalletRecoveryGcProfile
 } from './appWalletRecovery';
-import { createBurnerWalletVault } from './appShared';
+import { CW_PROFILE_REGISTRY_CONTRACT_ADDRESS, createBurnerWalletVault } from './appShared';
 
 describe('app wallet recovery helpers', () => {
+  it('keeps the default GC profile registry configured for local recovery', () => {
+    expect(CW_PROFILE_REGISTRY_CONTRACT_ADDRESS).toBe('0xf37196Fafe760E92d3542D837a1595B2a625F618');
+    expect(isAppWalletRecoveryConfigured()).toBe(true);
+  });
+
   it('normalizes GC profile results from named or indexed fields', () => {
     const encryptedPayload = { value: [1n, 2n] };
     const named = normalizeAppWalletRecoveryGcProfile({
