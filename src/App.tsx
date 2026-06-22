@@ -587,6 +587,8 @@ export default function App() {
     setDirectRealtimeStatus,
     setGroupRealtimeStatus
   } = useAppShellStore();
+  const activePageWalletPolicy = useMemo(() => getAppWalletPolicy(activePage), [activePage]);
+  const allowStartupWalletRestore = activePageWalletPolicy.walletControlKind === 'app';
   const [chatAppWalletMenuOpen, setChatAppWalletMenuOpen] = useState(false);
   const [isMobileNav, setIsMobileNav] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth <= MOBILE_NAV_BREAKPOINT_PX : false
@@ -886,7 +888,7 @@ export default function App() {
     signerProviderCacheRef,
     walletAddress
   } = useWalletOnboarding({
-    allowPassiveBrowserRestore: walletPreference?.kind === 'browser',
+    allowPassiveBrowserRestore: allowStartupWalletRestore && walletPreference?.kind === 'browser',
     clearCachedStateBackupMemo,
     loadMyNicknameFromChainRef,
     resetBurnerSessionRef,
@@ -1015,12 +1017,10 @@ export default function App() {
     walletAddress
   });
   resetBurnerSessionRef.current = resetBurnerSession;
-  const ownerSnapAesAutoUnlockAttemptRef = useRef('');
   const ownerLocalAccountAutoConnectAttemptRef = useRef('');
   const ownerRecoveryAutoConnectAttemptRef = useRef('');
   const [ownerRecoveryAttemptNonce, setOwnerRecoveryAttemptNonce] = useState(0);
   const resetOwnerRecoveryAttempt = useCallback(() => {
-    ownerSnapAesAutoUnlockAttemptRef.current = '';
     ownerLocalAccountAutoConnectAttemptRef.current = '';
     ownerRecoveryAutoConnectAttemptRef.current = '';
     setOwnerRecoveryAttemptNonce((previous) => previous + 1);
@@ -1666,6 +1666,7 @@ export default function App() {
 
   useEffect(() => {
     if (
+      !allowStartupWalletRestore ||
       chainId !== COTI_NETWORK.chainIdDecimal ||
       !ownerWalletAddress ||
       connectingMethod !== null ||
@@ -1678,7 +1679,6 @@ export default function App() {
       return;
     }
 
-    const ownerKey = ownerWalletAddress.trim().toLowerCase();
     const storageState = parseBurnerWalletStorageState();
     const localAccountAttemptKey = resolveOwnerLocalAccountAutoConnectAttemptKey({
       attemptNonce: ownerRecoveryAttemptNonce,
@@ -1702,23 +1702,8 @@ export default function App() {
       bootstrapOwnerRecoveryOnce(ownerWalletAddress, ownerAesKey).catch(() => {});
       return;
     }
-
-    const snapAttemptKey = `${ownerKey}:${chainId}:${ownerRecoveryAttemptNonce}`;
-    if (ownerSnapAesAutoUnlockAttemptRef.current === snapAttemptKey) {
-      return;
-    }
-
-    ownerSnapAesAutoUnlockAttemptRef.current = snapAttemptKey;
-    activateBrowserWalletSessionGuarded(undefined, {
-      preparePrivacy: true
-    })
-      .then((onboardInfo) => {
-        const returnedOwnerAesKey = typeof onboardInfo?.aesKey === 'string' ? onboardInfo.aesKey.trim() : '';
-        return bootstrapOwnerRecoveryOnce(ownerWalletAddress, returnedOwnerAesKey);
-      })
-      .catch(() => {});
   }, [
-    activateBrowserWalletSessionGuarded,
+    allowStartupWalletRestore,
     beginBurnerPinFlow,
     bootstrapOwnerRecoveryOnce,
     chainId,
@@ -8562,7 +8547,6 @@ export default function App() {
     sendTipToActiveContactRef.current(token, amount).catch(() => {});
   }, []);
 
-  const activePageWalletPolicy = getAppWalletPolicy(activePage);
   const activeAppWalletControl =
     activePageWalletPolicy.walletControlKind === 'app' ? appWalletHeaderControl : null;
 
