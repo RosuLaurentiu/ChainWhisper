@@ -6491,16 +6491,30 @@ summary:focus:not(:focus-visible),
 }
 
 .app-shell-trades .p2p-trading-shell-create > .standalone-trade-create-panel {
-  width: min(100%, 760px);
-  max-width: 760px;
-  justify-self: center;
-  align-self: start;
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+  align-self: stretch;
   align-content: start;
-  overflow: visible;
+  min-height: 0;
   border: 0;
   background: transparent;
   box-shadow: none;
-  padding: 12px;
+  padding: 12px 16px;
+}
+
+.app-shell-trades .p2p-trading-shell .p2p-trade-workspace-panel {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .trade-compose-panel,
+.app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .p2p-recurring-builder {
+  height: auto;
+  overflow: visible;
 }
 
 .app-shell-trades .p2p-trading-shell-create .standalone-trade-create-panel > .standalone-trades-section-head,

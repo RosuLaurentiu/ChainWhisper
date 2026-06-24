@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   COTI_NETWORK,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -52,9 +52,13 @@ type TradeComposerPanelProps = {
   requestAmountError?: string;
   priceInput?: string;
   onPriceInputChange?: (value: string) => void;
+  onPriceReverseInputChange?: (value: string) => void;
   priceLabel?: string;
   pricePlaceholder?: string;
   priceReference?: CarbonPairReferenceDisplay | null;
+  priceReverseInput?: string;
+  priceReverseReference?: CarbonPairReferenceDisplay | null;
+  priceReverseSummaryLabel?: string;
   priceSummaryLabel?: string;
   priceHelpText?: string;
   pricePlacement?: 'bottom' | 'sell-side' | 'top';
@@ -465,9 +469,13 @@ export default function TradeComposerPanel({
   requestAmountError,
   priceInput = '',
   onPriceInputChange,
+  onPriceReverseInputChange,
   priceLabel = 'Price',
   pricePlaceholder = 'quote per base',
   priceReference = null,
+  priceReverseInput = '',
+  priceReverseReference = null,
+  priceReverseSummaryLabel = '',
   priceSummaryLabel = '',
   priceHelpText = 'Fill any two fields; the third updates automatically.',
   pricePlacement = 'bottom',
@@ -510,6 +518,7 @@ export default function TradeComposerPanel({
   generalError,
   validationMessage
 }: TradeComposerPanelProps) {
+  const priceInputId = useId();
   const showOfferCustomToken = offerTokenSelection.startsWith('custom');
   const showRequestCustomToken = requestTokenSelection.startsWith('custom');
   const compactFeeSummaryLabel = feeSummaryLabel.replace(/^fee:\s*/i, '').trim();
@@ -522,7 +531,15 @@ export default function TradeComposerPanel({
   const [touchedFields, setTouchedFields] = useState<Partial<Record<TradeComposerValidationField, boolean>>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [sendWhenReady, setSendWhenReady] = useState(false);
+  const [showReversePriceDisplay, setShowReversePriceDisplay] = useState(false);
   const visibleTradeRateLabel = showReverseRate && tradeReverseRateLabel ? tradeReverseRateLabel : tradeRateLabel;
+  const canTogglePriceDisplay = Boolean(priceReverseSummaryLabel);
+  const showInvertedPriceDisplay = showReversePriceDisplay && canTogglePriceDisplay;
+  const displayedPriceSummaryLabel =
+    showInvertedPriceDisplay && priceReverseSummaryLabel ? priceReverseSummaryLabel : priceSummaryLabel;
+  const displayedPriceReference =
+    showInvertedPriceDisplay && priceReverseReference ? priceReverseReference : priceReference;
+  const displayedPriceInput = showInvertedPriceDisplay && priceReverseInput.trim() ? priceReverseInput : priceInput;
   const showHiddenLiquidityToggle = Boolean(onHidePrivateLiquidityChange);
   const privateLiquidityStateLabel = hidePrivateLiquidity
     ? 'Private-token amounts hidden'
@@ -621,37 +638,57 @@ export default function TradeComposerPanel({
     return fieldIsDerived ? <span className="trade-compose-pricing-state">Derived</span> : null;
   };
   const renderPriceReference = () =>
-    priceReference ? (
-      <p className="p2p-carbon-price-reference" title={priceReference.title}>
-        {priceReference.label}
+    displayedPriceReference && canTogglePriceDisplay ? (
+      <button
+        type="button"
+        className="p2p-carbon-price-reference"
+        onClick={() => setShowReversePriceDisplay((value) => !value)}
+        aria-pressed={showReversePriceDisplay}
+        title={displayedPriceReference.title}
+      >
+        {displayedPriceReference.label}
+      </button>
+    ) : displayedPriceReference ? (
+      <p className="p2p-carbon-price-reference" title={displayedPriceReference.title}>
+        {displayedPriceReference.label}
       </p>
     ) : null;
   const priceField = showPriceInput ? (
-    <label className={resolvePricingFieldClassName('trade-compose-field trade-compose-price-field', 'price')}>
+    <div className={resolvePricingFieldClassName('trade-compose-field trade-compose-price-field', 'price')}>
       <span className="trade-compose-field-head">
-        <span className="trade-compose-field-label">{priceLabel}</span>
-        {priceSummaryLabel || renderPricingFieldState('price') ? (
+        <label className="trade-compose-field-label" htmlFor={priceInputId}>{priceLabel}</label>
+        {displayedPriceSummaryLabel || renderPricingFieldState('price') ? (
           <span className="trade-compose-field-tools">
             {renderPricingFieldState('price')}
-            {priceSummaryLabel ? <strong className="trade-compose-field-value">{priceSummaryLabel}</strong> : null}
+            {displayedPriceSummaryLabel ? (
+              <strong className="trade-compose-field-value">{displayedPriceSummaryLabel}</strong>
+            ) : null}
           </span>
         ) : null}
       </span>
       <input
+        id={priceInputId}
         className="trade-compose-input"
         type="text"
         inputMode="decimal"
-        value={priceInput}
-        onChange={(event) => onPriceInputChange?.(event.target.value)}
+        value={displayedPriceInput}
+        onChange={(event) => {
+          if (showInvertedPriceDisplay && onPriceReverseInputChange) {
+            onPriceReverseInputChange(event.target.value);
+            return;
+          }
+          onPriceInputChange?.(event.target.value);
+        }}
         placeholder={pricePlaceholder}
         disabled={sending}
       />
-    </label>
+    </div>
   ) : null;
 
   useEffect(() => {
     setShowReverseRate(false);
-  }, [tradeRateLabel, tradeReverseRateLabel]);
+    setShowReversePriceDisplay(false);
+  }, [priceReverseSummaryLabel, priceSummaryLabel, tradeRateLabel, tradeReverseRateLabel]);
 
   const previewInReceivePanel = pricePlacement === 'sell-side' && hasTradePreview;
   const showDockPreview = hasTradePreview && !previewInReceivePanel;

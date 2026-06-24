@@ -133,7 +133,8 @@ const quoteAssetToPayload = (
 
 export const resolveOtcSwapPriceRatioDisplay = (
   quote: OtcSwapQuoteCandidate | null | undefined,
-  inputMode: OtcSwapInputMode
+  inputMode: OtcSwapInputMode,
+  toggleInverse = false
 ): TradePriceRatioDisplay | null => {
   if (!quote || quote.price <= 0n) {
     return null;
@@ -157,14 +158,18 @@ export const resolveOtcSwapPriceRatioDisplay = (
       : quoteAssetToPayload(quote.buyToken, buyAmountForOneSell);
   const basisLabel = `${quoteAsset.symbol}/${baseAsset.symbol}`;
   const inverseBasisLabel = `${baseAsset.symbol}/${quoteAsset.symbol}`;
-  const label = formatTradeRatioLabel(baseAsset, quoteAsset) ?? basisLabel;
+  const forwardLabel = formatTradeRatioLabel(baseAsset, quoteAsset) ?? basisLabel;
+  const reverseLabel = formatTradeRatioLabel(quoteAsset, baseAsset) ?? inverseBasisLabel;
+  const label = toggleInverse ? reverseLabel : forwardLabel;
+  const currentBasisLabel = toggleInverse ? inverseBasisLabel : basisLabel;
+  const nextBasisLabel = toggleInverse ? basisLabel : inverseBasisLabel;
 
   return {
     label,
-    basisLabel,
-    nextBasisLabel: inverseBasisLabel,
-    isReversed: false,
-    toggleTitle: `Switch swap price ratio to ${inverseBasisLabel}`,
+    basisLabel: currentBasisLabel,
+    nextBasisLabel,
+    isReversed: toggleInverse,
+    toggleTitle: `Switch swap price ratio to ${nextBasisLabel}`,
     ariaLabel: `Swap price ratio for order ${quote.tradeId}. Current ratio: ${label}.`
   };
 };

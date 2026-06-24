@@ -913,6 +913,7 @@ export default function P2PTradingPage({
   const [swapBuyAmountInput, setSwapBuyAmountInput] = useState('');
   const [swapInputMode, setSwapInputMode] = useState<OtcSwapInputMode>('buy');
   const [swapActionMode, setSwapActionMode] = useState<OtcSwapInputMode>('buy');
+  const [swapPriceDisplayInverted, setSwapPriceDisplayInverted] = useState(false);
   const [tradeOfferCustomTokenAddress, setTradeOfferCustomTokenAddress] = useState('');
   const [tradeRequestCustomTokenAddress, setTradeRequestCustomTokenAddress] = useState('');
   const [tradeOfferAmountInput, setTradeOfferAmountInput] = useState('');
@@ -922,6 +923,7 @@ export default function P2PTradingPage({
   const [tradeHasNoExpiry, setTradeHasNoExpiry] = useState(false);
   const [recurringBuyPriceInput, setRecurringBuyPriceInput] = useState('');
   const [recurringSellPriceInput, setRecurringSellPriceInput] = useState('');
+  const [recurringPriceDisplayInverted, setRecurringPriceDisplayInverted] = useState(false);
   const [recurringHidePrivateAmounts, setRecurringHidePrivateAmounts] = useState(true);
   const [editingRecurringOrder, setEditingRecurringOrder] = useState<TradeSnapshot | null>(null);
   const [recurringAddBuyBudgetInput, setRecurringAddBuyBudgetInput] = useState('');
@@ -3869,6 +3871,17 @@ export default function P2PTradingPage({
     setTradePricingEditedFields((previous) => nextTradePricingEditedFields(previous, 'price'));
   }, []);
 
+  const updateTradeReversePriceInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    if (!sanitized.trim()) {
+      updateTradePriceInput('');
+      return;
+    }
+
+    const nextPriceInput = invertPriceInput(sanitized);
+    updateTradePriceInput(nextPriceInput || '');
+  }, [updateTradePriceInput]);
+
   const updateRecurringBuyPriceInput = useCallback((value: string) => {
     const sanitized = sanitizeTokenAmountInput(value);
     setRecurringBuyPriceInput(sanitized);
@@ -3878,6 +3891,24 @@ export default function P2PTradingPage({
     const sanitized = sanitizeTokenAmountInput(value);
     setRecurringSellPriceInput(sanitized);
   }, []);
+
+  const updateRecurringBuyReversePriceInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    if (!sanitized.trim()) {
+      updateRecurringBuyPriceInput('');
+      return;
+    }
+    updateRecurringBuyPriceInput(invertPriceInput(sanitized) || '');
+  }, [updateRecurringBuyPriceInput]);
+
+  const updateRecurringSellReversePriceInput = useCallback((value: string) => {
+    const sanitized = sanitizeTokenAmountInput(value);
+    if (!sanitized.trim()) {
+      updateRecurringSellPriceInput('');
+      return;
+    }
+    updateRecurringSellPriceInput(invertPriceInput(sanitized) || '');
+  }, [updateRecurringSellPriceInput]);
 
   const swapRecurringOrderSides = useCallback(() => {
     if (creatingRecurringOrder || editingRecurringOrder) {
@@ -5113,12 +5144,32 @@ export default function P2PTradingPage({
     return formatCarbonPairReferenceDisplay(carbonPairReferences[pair.pairKey]?.reference, { inverted });
   };
 
-  const renderCarbonPriceReference = (reference: CarbonPairReferenceDisplay | null) =>
-    reference ? (
+  const renderCarbonPriceReference = (
+    reference: CarbonPairReferenceDisplay | null,
+    options?: {
+      onToggle?: () => void;
+      pressed?: boolean;
+    }
+  ) => {
+    if (!reference) {
+      return null;
+    }
+    return options?.onToggle ? (
+      <button
+        type="button"
+        className="p2p-carbon-price-reference"
+        onClick={options.onToggle}
+        aria-pressed={options.pressed}
+        title={reference.title}
+      >
+        {reference.label}
+      </button>
+    ) : (
       <small className="p2p-carbon-price-reference" title={reference.title}>
         {reference.label}
       </small>
-    ) : null;
+    );
+  };
 
   const renderDeskPriceLabel = (label: string) => {
     const trimmedLabel = label.trim();
@@ -7506,9 +7557,19 @@ export default function P2PTradingPage({
     tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
       ? `${tradeComposerModel.selectedTradeRequestToken.symbol}/${tradeComposerModel.selectedTradeOfferToken.symbol}`
       : 'quote/base';
+  const tradeReversePricePairLabel =
+    tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
+      ? `${tradeComposerModel.selectedTradeOfferToken.symbol}/${tradeComposerModel.selectedTradeRequestToken.symbol}`
+      : 'base/quote';
+  const tradeReversePriceInput = invertPriceInput(tradePriceInput);
   const tradeComposerCarbonPriceReference = getCarbonReferenceDisplay(
     tradeComposerModel.selectedTradeOfferToken,
     tradeComposerModel.selectedTradeRequestToken
+  );
+  const tradeComposerReverseCarbonPriceReference = getCarbonReferenceDisplay(
+    tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerModel.selectedTradeRequestToken,
+    true
   );
 
   const composerActionNotice = renderP2PActionNotice('composer');
@@ -7652,9 +7713,13 @@ export default function P2PTradingPage({
       requestAmountError={tradeComposerModel.tradeComposerFieldErrors.requestAmount}
       priceInput={tradePriceInput}
       onPriceInputChange={updateTradePriceInput}
+      onPriceReverseInputChange={updateTradeReversePriceInput}
       priceLabel="Price"
       pricePlaceholder="0"
       priceReference={tradeComposerCarbonPriceReference}
+      priceReverseInput={tradeReversePriceInput}
+      priceReverseReference={tradeComposerReverseCarbonPriceReference}
+      priceReverseSummaryLabel={tradeReversePricePairLabel}
       priceSummaryLabel={tradePricePairLabel}
       priceHelpText=""
       pricePlacement="top"
@@ -8838,6 +8903,15 @@ export default function P2PTradingPage({
   }, [swapBuyAmountInput, swapBuyToken, swapInputMode, swapSellAmountInput, swapSellToken]);
   const swapDisplayBaseToken = swapActionMode === 'buy' ? swapBuyToken : swapSellToken;
   const swapDisplayQuoteToken = swapActionMode === 'buy' ? swapSellToken : swapBuyToken;
+  const swapDisplayBaseKey = swapDisplayBaseToken
+    ? buildTradeComposerAssetBalanceKey(swapDisplayBaseToken)
+    : '';
+  const swapDisplayQuoteKey = swapDisplayQuoteToken
+    ? buildTradeComposerAssetBalanceKey(swapDisplayQuoteToken)
+    : '';
+  useEffect(() => {
+    setSwapPriceDisplayInverted(false);
+  }, [swapActionMode, swapDisplayBaseKey, swapDisplayQuoteKey]);
   const swapMarketSellQuote = useMemo(
     () =>
       swapDisplayBaseToken && swapDisplayQuoteToken
@@ -9833,7 +9907,16 @@ export default function P2PTradingPage({
   const recurringTokenOptions = tradeComposerModel.tradeTokenOptions.filter((option) => !option.value.startsWith('custom'));
   const recurringBaseToken = tradeComposerModel.selectedTradeOfferToken;
   const recurringQuoteToken = tradeComposerModel.selectedTradeRequestToken;
-  const recurringComposerCarbonPriceReference = getCarbonReferenceDisplay(recurringBaseToken, recurringQuoteToken);
+  const recurringBaseKey = recurringBaseToken ? buildTradeComposerAssetBalanceKey(recurringBaseToken) : '';
+  const recurringQuoteKey = recurringQuoteToken ? buildTradeComposerAssetBalanceKey(recurringQuoteToken) : '';
+  useEffect(() => {
+    setRecurringPriceDisplayInverted(false);
+  }, [recurringBaseKey, recurringQuoteKey]);
+  const recurringComposerCarbonPriceReference = getCarbonReferenceDisplay(
+    recurringBaseToken,
+    recurringQuoteToken,
+    recurringPriceDisplayInverted
+  );
   const recurringHasPrivateToken =
     recurringBaseToken?.kind === 'private-erc20' || recurringQuoteToken?.kind === 'private-erc20';
   const recurringPrivateAmountsHidden = recurringHasPrivateToken && recurringHidePrivateAmounts;
@@ -9853,6 +9936,12 @@ export default function P2PTradingPage({
   const recurringQuoteDecimals = recurringQuoteToken?.decimals ?? 18;
   const recurringBaseSymbol = recurringBaseToken?.symbol ?? 'base';
   const recurringQuoteSymbol = recurringQuoteToken?.symbol ?? 'quote';
+  const recurringDisplayedBuyPriceInput = recurringPriceDisplayInverted
+    ? invertPriceInput(recurringBuyPriceInput)
+    : recurringBuyPriceInput;
+  const recurringDisplayedSellPriceInput = recurringPriceDisplayInverted
+    ? invertPriceInput(recurringSellPriceInput)
+    : recurringSellPriceInput;
   const recurringFeeSummaryLabel = editingRecurringOrder
     ? `0 ${TIP_NATIVE_TOKEN_SYMBOL}`
     : tradeRequiredFeeWei !== null
@@ -10036,11 +10125,15 @@ export default function P2PTradingPage({
     if (!quote) {
       return null;
     }
-    return resolveOtcSwapPriceRatioDisplay(quote, mode);
+    return resolveOtcSwapPriceRatioDisplay(quote, mode, swapPriceDisplayInverted);
   };
   const swapPriceRatioDisplay = resolveVisibleSwapPriceRatioDisplay(swapBestQuote);
   const swapDisplayPriceRatioDisplay = resolveVisibleSwapPriceRatioDisplay(swapDisplayQuote);
-  const swapCarbonReference = getCarbonReferenceDisplay(swapDisplayBaseToken, swapDisplayQuoteToken);
+  const swapCarbonReference = getCarbonReferenceDisplay(
+    swapDisplayBaseToken,
+    swapDisplayQuoteToken,
+    swapPriceDisplayInverted
+  );
   const stripSwapPriceBasis = (label: string, basisLabel: string): string => {
     const suffix = ` ${basisLabel}`;
     return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
@@ -10239,7 +10332,7 @@ export default function P2PTradingPage({
             : `Sell ${swapSellToken?.symbol ?? 'token'}`;
 
   const renderOtcSwapPanel = () => (
-    <section className="standalone-trades-section p2p-swap-section" aria-label="OTC swap">
+    <section className="standalone-trades-section p2p-swap-section p2p-trade-workspace-panel" aria-label="OTC swap">
       <div className="p2p-trade-entry-panel">
         {tradeEntryModeTabs}
         <div className="p2p-swap-panel">
@@ -10382,7 +10475,19 @@ export default function P2PTradingPage({
         <div className="p2p-swap-quote-grid" aria-label="Price comparison">
           <div className="p2p-swap-quote-card">
             <span>Carbon reference</span>
-            <strong>{swapCarbonReference?.label ?? 'Carbon price unavailable'}</strong>
+            {swapCarbonReference ? (
+              <button
+                type="button"
+                className="p2p-swap-price-toggle"
+                onClick={() => setSwapPriceDisplayInverted((value) => !value)}
+                aria-pressed={swapPriceDisplayInverted}
+                title={swapCarbonReference.title}
+              >
+                {swapCarbonReference.label}
+              </button>
+            ) : (
+              <strong>Carbon price unavailable</strong>
+            )}
           </div>
           <div className="p2p-swap-quote-card p2p-swap-quote-card-chainwhisper">
             <span>ChainWhisper</span>
@@ -10691,7 +10796,7 @@ export default function P2PTradingPage({
       ) : null}
 
       {isComposerRoute ? (
-        <section className="standalone-trade-create-panel">
+        <section className="standalone-trade-create-panel p2p-trade-workspace-panel">
           <div className="standalone-trades-section-head">
             <div>
               <p className="landing-eyebrow">OTC Desk</p>
@@ -10815,7 +10920,10 @@ export default function P2PTradingPage({
                   </label>
                   {recurringComposerCarbonPriceReference ? (
                     <div className="p2p-recurring-pair-price">
-                      {renderCarbonPriceReference(recurringComposerCarbonPriceReference)}
+                      {renderCarbonPriceReference(recurringComposerCarbonPriceReference, {
+                        onToggle: () => setRecurringPriceDisplayInverted((value) => !value),
+                        pressed: recurringPriceDisplayInverted
+                      })}
                     </div>
                   ) : null}
                 </div>
@@ -10837,8 +10945,12 @@ export default function P2PTradingPage({
                         className="trade-compose-input"
                         type="text"
                         inputMode="decimal"
-                        value={recurringSellPriceInput}
-                        onChange={(event) => updateRecurringSellPriceInput(event.target.value)}
+                        value={recurringDisplayedSellPriceInput}
+                        onChange={(event) =>
+                          recurringPriceDisplayInverted
+                            ? updateRecurringSellReversePriceInput(event.target.value)
+                            : updateRecurringSellPriceInput(event.target.value)
+                        }
                         placeholder="0"
                         disabled={creatingRecurringOrder}
                       />
@@ -10909,8 +11021,12 @@ export default function P2PTradingPage({
                         className="trade-compose-input"
                         type="text"
                         inputMode="decimal"
-                        value={recurringBuyPriceInput}
-                        onChange={(event) => updateRecurringBuyPriceInput(event.target.value)}
+                        value={recurringDisplayedBuyPriceInput}
+                        onChange={(event) =>
+                          recurringPriceDisplayInverted
+                            ? updateRecurringBuyReversePriceInput(event.target.value)
+                            : updateRecurringBuyPriceInput(event.target.value)
+                        }
                         placeholder="0"
                         disabled={creatingRecurringOrder}
                       />

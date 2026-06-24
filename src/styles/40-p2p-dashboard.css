@@ -356,6 +356,7 @@
 }
 
 .p2p-swap-quote-card strong,
+.p2p-swap-price-toggle,
 .p2p-swap-order-summary strong,
 .p2p-swap-order-empty strong {
   font-size: 0.95rem;
@@ -364,6 +365,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.p2p-swap-price-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 900;
+  padding: 0;
+  text-align: left;
+}
+
+.p2p-swap-price-toggle:hover,
+.p2p-swap-price-toggle:focus-visible {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .p2p-swap-quote-card strong.p2p-swap-market-price-label {
@@ -3344,10 +3364,21 @@
   background: rgba(16, 12, 31, 0.38);
   color: rgba(216, 205, 255, 0.74);
   padding: 2px 6px;
+  font-family: inherit;
   font-size: 0.68rem;
   font-weight: 750;
   line-height: 1.2;
   overflow-wrap: anywhere;
+}
+
+button.p2p-carbon-price-reference {
+  cursor: pointer;
+}
+
+button.p2p-carbon-price-reference:hover,
+button.p2p-carbon-price-reference:focus-visible {
+  border-color: rgba(167, 139, 250, 0.44);
+  color: #fff;
 }
 
 .p2p-terminal-price-card .p2p-carbon-price-reference {
