@@ -34,6 +34,7 @@ import { createTradeAccessSecret } from '../lib/directTradeTerms';
 import { resolveOneOffTradeAccessPlan, type TradeVisibility } from '../lib/tradeCreationAccess';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../lib/tradePerspective';
 import type { P2PActionNoticeAction, P2PActionNoticeInput } from '../lib/p2pActionNotice';
+import type { TradeEntryMode, TradeSurfaceView } from './useP2PTradeRoute';
 import { formatWalletFundAmount } from '../lib/walletFunds';
 
 type TradeSigner = JsonRpcSigner | Wallet;
@@ -157,6 +158,7 @@ const resolveComposerFeeEscrowContract = ({
 };
 
 type UseP2PTradeComposerActionsArgs = {
+  buildCurrentTradeSurfacePath: (view: TradeSurfaceView, tradeMode?: TradeEntryMode) => string;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   canEditPublicTrade: (trade: TradeSnapshot, walletKey: string) => boolean;
   counterParentTrade: TradeSnapshot | null;
@@ -214,6 +216,7 @@ type UseP2PTradeComposerActionsResult = {
 };
 
 export default function useP2PTradeComposerActions({
+  buildCurrentTradeSurfacePath,
   buildTradeShareUrl,
   canEditPublicTrade,
   counterParentTrade,
@@ -297,9 +300,10 @@ export default function useP2PTradeComposerActions({
       setCreatedTradeId(null);
       setCreatedTradeLink('');
       setDetailTrade(null);
-      navigateToTradePath('/otc/order/counter');
+      navigateToTradePath(buildCurrentTradeSurfacePath('counter'));
     },
     [
+      buildCurrentTradeSurfacePath,
       navigateToTradePath,
       setCounterParentTrade,
       setCreatedTradeId,
@@ -375,9 +379,10 @@ export default function useP2PTradeComposerActions({
       setTradeHasNoExpiry(snapshot.expiresAt <= 0);
       setTradeHidePrivateLiquidity(Boolean(snapshot.hiddenLiquidity));
       setTradeActionError('');
-      navigateToTradePath('/otc/limit');
+      navigateToTradePath(buildCurrentTradeSurfacePath('create', 'limit'));
     },
     [
+      buildCurrentTradeSurfacePath,
       canEditPublicTrade,
       navigateToTradePath,
       setCounterParentTrade,
@@ -410,8 +415,15 @@ export default function useP2PTradeComposerActions({
     clearEditTrade();
     setTradeHidePrivateLiquidity(true);
     setTradeHasNoExpiry(false);
-    navigateToTradePath('/otc/limit');
-  }, [clearCounterTrade, clearEditTrade, navigateToTradePath, setTradeHasNoExpiry, setTradeHidePrivateLiquidity]);
+    navigateToTradePath(buildCurrentTradeSurfacePath('create', 'limit'));
+  }, [
+    buildCurrentTradeSurfacePath,
+    clearCounterTrade,
+    clearEditTrade,
+    navigateToTradePath,
+    setTradeHasNoExpiry,
+    setTradeHidePrivateLiquidity
+  ]);
 
   const createTrade = useCallback(async () => {
     const composerAction: P2PActionNoticeAction = counterParentTrade ? 'counter' : 'create-offer';

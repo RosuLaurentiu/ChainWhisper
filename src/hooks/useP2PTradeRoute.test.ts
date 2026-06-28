@@ -39,7 +39,7 @@ describe('P2P trade route helpers', () => {
   });
 
   it('resolves top-level trade routes without changing route ownership', () => {
-    expect(resolveTradeRouteFromParts('/otc')).toMatchObject({ view: 'swap', tradeMode: 'swap', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otc')).toMatchObject({ view: 'swap', tradeMode: 'swap', tradeId: null, routeFamily: 'desk' });
     expect(resolveTradeRouteFromParts('/otc/limit')).toMatchObject({
       view: 'create',
       tradeMode: 'limit',
@@ -52,7 +52,7 @@ describe('P2P trade route helpers', () => {
     });
     expect(resolveTradeRouteFromParts('/otc/desk')).toMatchObject({ view: 'public', tradeId: null });
     expect(resolveTradeRouteFromParts('/otc/orders')).toMatchObject({ view: 'mine', tradeId: null });
-    expect(resolveTradeRouteFromParts('/trades')).toMatchObject({ view: 'public', tradeId: null });
+    expect(resolveTradeRouteFromParts('/trades')).toMatchObject({ view: 'public', tradeId: null, routeFamily: 'trades' });
     expect(resolveTradeRouteFromParts('/otcdesk')).toMatchObject({ view: 'swap', tradeMode: 'swap', tradeId: null });
     expect(resolveTradeRouteFromParts('/otcdesk/desk')).toMatchObject({ view: 'public', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/create')).toMatchObject({ view: 'create', tradeId: null });
@@ -75,7 +75,7 @@ describe('P2P trade route helpers', () => {
       tradeId: 11,
       escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
     });
-    expect(resolveTradeRouteFromParts('/trades/open')).toMatchObject({ view: 'trade', tradeId: null });
+    expect(resolveTradeRouteFromParts('/trades/open')).toMatchObject({ view: 'trade', tradeId: null, routeFamily: 'trades' });
     expect(resolveTradeRouteFromParts('/otc/order')).toMatchObject({ view: 'trade', tradeId: null });
     expect(resolveTradeRouteFromParts('/otcdesk/terminal')).toMatchObject({ view: 'trade', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades/open/counter')).toMatchObject({ view: 'counter', tradeId: null });
@@ -84,22 +84,38 @@ describe('P2P trade route helpers', () => {
   });
 
   it('builds clean OTC Desk app routes while preserving public share links', () => {
-    expect(buildTradeRoutePath({ view: 'swap', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc');
-    expect(buildTradeRoutePath({ view: 'public', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc/desk');
-    expect(buildTradeRoutePath({ view: 'create', tradeMode: 'limit', tradeId: null, accessSecret: '', routeError: '' })).toBe(
+    expect(buildTradeRoutePath({ view: 'swap', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc');
+    expect(buildTradeRoutePath({ view: 'public', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc/desk');
+    expect(buildTradeRoutePath({ view: 'create', tradeMode: 'limit', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe(
       '/otc/limit'
     );
-    expect(buildTradeRoutePath({ view: 'create', tradeMode: 'recurring', tradeId: null, accessSecret: '', routeError: '' })).toBe(
+    expect(buildTradeRoutePath({ view: 'create', tradeMode: 'recurring', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe(
       '/otc/recurring'
     );
-    expect(buildTradeRoutePath({ view: 'mine', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc/orders');
-    expect(buildTradeRoutePath({ view: 'trade', tradeId: null, accessSecret: '', routeError: '' })).toBe('/otc/order');
-    expect(buildTradeRoutePath({ view: 'counter', tradeId: null, accessSecret: '', routeError: '' })).toBe(
+    expect(buildTradeRoutePath({ view: 'mine', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc/orders');
+    expect(buildTradeRoutePath({ view: 'trade', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc/order');
+    expect(buildTradeRoutePath({ view: 'counter', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe(
       '/otc/order/counter'
     );
-    expect(buildTradeRoutePath({ view: 'trade', tradeId: 7, accessSecret: ACCESS_SECRET, routeError: '' })).toContain(
+    expect(buildTradeRoutePath({ view: 'trade', tradeId: 7, accessSecret: ACCESS_SECRET, routeFamily: 'desk', routeError: '' })).toContain(
       '/otc/order/link/'
     );
+    expect(buildTradeRoutePath({ view: 'public', tradeId: null, accessSecret: '', routeFamily: 'trades', routeError: '' })).toBe(
+      '/trades'
+    );
+    expect(buildTradeRoutePath({ view: 'trade', tradeId: null, accessSecret: '', routeFamily: 'trades', routeError: '' })).toBe(
+      '/trades/open'
+    );
+    expect(
+      buildTradeRoutePath({
+        view: 'trade',
+        tradeId: 7,
+        escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+        accessSecret: ACCESS_SECRET,
+        routeFamily: 'trades',
+        routeError: ''
+      })
+    ).toBe(`/trades/recurring?order=7#${ACCESS_SECRET}`);
   });
 
   it('resolves compact private trade links with escrow aliases', () => {
@@ -178,8 +194,14 @@ describe('P2P trade route helpers', () => {
     expect(buildTradeTerminalPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS)).toBe(
       `/otc/order/recurring/7#${ACCESS_SECRET}`
     );
+    expect(buildTradeTerminalPath(7, ACCESS_SECRET, RECURRING_OTC_CONTRACT_ADDRESS, 'trades')).toBe(
+      `/trades/recurring?order=7#${ACCESS_SECRET}`
+    );
     expect(buildTradeTerminalPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
       `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+    );
+    expect(buildTradeTerminalPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, 'trades')).toBe(
+      `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
     );
     expect(buildTradeLinkPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
       `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`

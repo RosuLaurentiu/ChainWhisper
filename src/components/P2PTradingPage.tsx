@@ -119,6 +119,7 @@ import {
   type SharedWalletSession
 } from '../lib/walletSession';
 import useP2PTradeRoute, {
+  buildTradeSurfacePath,
   buildTradeTerminalPath,
   normalizeAccessSecret,
   resolveTradeLinkInput,
@@ -984,9 +985,10 @@ export default function P2PTradingPage({
   const lastAppliedSwapPinnedTradeKeyRef = useRef('');
   const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
   const [carbonPairReferences, setCarbonPairReferences] = useState<Record<string, CarbonPairReferenceState>>({});
-  const terminalReturnSurfaceRef = useRef<'swap' | 'public' | 'mine'>('swap');
+  const initialTerminalReturnSurface = route.routeFamily === 'trades' ? 'public' : 'swap';
+  const terminalReturnSurfaceRef = useRef<'swap' | 'public' | 'mine'>(initialTerminalReturnSurface);
   const mobileDeskScrollRef = useRef<Record<'swap' | 'public' | 'mine', number>>({ swap: 0, public: 0, mine: 0 });
-  const mobileTerminalReturnSurfaceRef = useRef<'swap' | 'public' | 'mine'>('swap');
+  const mobileTerminalReturnSurfaceRef = useRef<'swap' | 'public' | 'mine'>(initialTerminalReturnSurface);
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
     () => loadStoredTradeAccessSecrets()
   );
@@ -1133,6 +1135,11 @@ export default function P2PTradingPage({
   const terminalRouteReturnSurface = route.view === 'trade' ? terminalReturnSurfaceRef.current : null;
   const routeSurfaceView = route.view === 'trade' ? terminalRouteReturnSurface : route.view;
   const routeView = route.view;
+  const buildCurrentTradeSurfacePath = useCallback(
+    (view: Parameters<typeof buildTradeSurfacePath>[0], tradeMode?: TradeEntryMode) =>
+      buildTradeSurfacePath(view, route.routeFamily, tradeMode),
+    [route.routeFamily]
+  );
   const tradeFilterRouteScope: TradeFilterRouteScope =
     routeSurfaceView === 'mine' ? 'mine' : routeSurfaceView === 'public' ? 'desk' : null;
   const previousTradeFilterRouteScopeRef = useRef<TradeFilterRouteScope>(tradeFilterRouteScope);
@@ -3487,19 +3494,20 @@ export default function P2PTradingPage({
 
   const openTradeSnapshot = useCallback(
     (snapshot: TradeSnapshot, accessSecret?: string) => {
-      terminalReturnSurfaceRef.current =
-        route.view === 'public' ? 'public' : route.view === 'mine' ? 'mine' : 'swap';
+      const returnSurface =
+        routeSurfaceView === 'public' ? 'public' : routeSurfaceView === 'mine' ? 'mine' : 'swap';
+      terminalReturnSurfaceRef.current = returnSurface;
       const knownAccessSecret =
         accessSecret ||
         (snapshot.isPublic === false || snapshot.hasAccessHash
           ? resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract)
           : '');
-      saveMobileDeskScroll();
+      saveMobileDeskScroll(returnSurface);
       setEmptyTerminalDrawerOpen(false);
       setDetailTrade(snapshot);
       openTrade(snapshot.tradeId, knownAccessSecret || undefined, snapshot.escrowContract);
     },
-    [openTrade, resolveKnownTradeAccessSecret, route.view, saveMobileDeskScroll]
+    [openTrade, resolveKnownTradeAccessSecret, routeSurfaceView, saveMobileDeskScroll]
   );
 
   const openTradeFromInput = useCallback(
@@ -4099,6 +4107,7 @@ export default function P2PTradingPage({
     createTrade,
     startFreshTrade
   } = useP2PTradeComposerActions({
+    buildCurrentTradeSurfacePath,
     buildTradeShareUrl,
     canEditPublicTrade,
     counterParentTrade,
@@ -4180,8 +4189,8 @@ export default function P2PTradingPage({
     setTradePricingEditedFields([]);
     setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
     setTradeHasNoExpiry(false);
-    navigateToTradePath('/otc/order');
-  }, [clearCounterTrade, navigateToTradePath]);
+    navigateToTradePath(buildCurrentTradeSurfacePath('trade'));
+  }, [buildCurrentTradeSurfacePath, clearCounterTrade, navigateToTradePath]);
 
   const startFreshRecurringOrder = useCallback(() => {
     setTradeCreateMode('recurring');
@@ -4308,9 +4317,9 @@ export default function P2PTradingPage({
       setRecurringRemoveSellInventoryInput('');
       setCreatedRecurringOrderId(null);
       setCreatedRecurringOrderLink('');
-      navigateToTradePath('/otc/recurring');
+      navigateToTradePath(buildCurrentTradeSurfacePath('recurring'));
     },
-    [clearCounterTrade, clearEditTrade, navigateToTradePath, resolveRecurringAssetSelection]
+    [buildCurrentTradeSurfacePath, clearCounterTrade, clearEditTrade, navigateToTradePath, resolveRecurringAssetSelection]
   );
 
   const clearRecurringEdit = useCallback(() => {
@@ -8635,12 +8644,13 @@ export default function P2PTradingPage({
     );
   };
   const openEmptyTerminalPanel = useCallback(() => {
-    terminalReturnSurfaceRef.current =
-      route.view === 'public' ? 'public' : route.view === 'mine' ? 'mine' : 'swap';
-    saveMobileDeskScroll();
+    const returnSurface =
+      routeSurfaceView === 'public' ? 'public' : routeSurfaceView === 'mine' ? 'mine' : 'swap';
+    terminalReturnSurfaceRef.current = returnSurface;
+    saveMobileDeskScroll(returnSurface);
     setEmptyTerminalDrawerOpen(true);
-    navigateToTradePath('/otc/order');
-  }, [navigateToTradePath, route.view, saveMobileDeskScroll]);
+    navigateToTradePath(buildCurrentTradeSurfacePath('trade'));
+  }, [buildCurrentTradeSurfacePath, navigateToTradePath, routeSurfaceView, saveMobileDeskScroll]);
   const scrollTradingShellToTop = useCallback(() => {
     const shell = document.querySelector<HTMLElement>('.standalone-trades-shell');
     if (shell) {
@@ -8756,12 +8766,12 @@ export default function P2PTradingPage({
       }
       if (mode === 'recurring') {
         startFreshRecurringOrder();
-        navigateToTradePath('/otc/recurring');
+        navigateToTradePath(buildCurrentTradeSurfacePath('recurring'));
         return;
       }
       startFreshOneOffTrade();
     },
-    [navigateDeskView, navigateToTradePath, startFreshOneOffTrade, startFreshRecurringOrder]
+    [buildCurrentTradeSurfacePath, navigateDeskView, navigateToTradePath, startFreshOneOffTrade, startFreshRecurringOrder]
   );
   const openLimitOrderFromSwapPair = useCallback(() => {
     const prefill = resolveSwapLimitPrefill({
@@ -9872,10 +9882,10 @@ export default function P2PTradingPage({
       }
       navigateToTradePath(
         targetSurface === 'mine'
-          ? '/otc/orders'
+          ? buildCurrentTradeSurfacePath('mine')
           : targetSurface === 'public'
-            ? '/otc/desk'
-            : '/otc'
+            ? buildCurrentTradeSurfacePath('public')
+            : buildCurrentTradeSurfacePath('swap')
       );
       restoreMobileDeskScroll(targetSurface);
       return;
@@ -9894,10 +9904,10 @@ export default function P2PTradingPage({
     }
     navigateToTradePath(
       targetSurface === 'public'
-        ? '/otc/desk'
+        ? buildCurrentTradeSurfacePath('public')
         : targetSurface === 'mine'
-          ? '/otc/orders'
-          : '/otc'
+          ? buildCurrentTradeSurfacePath('mine')
+          : buildCurrentTradeSurfacePath('swap')
     );
   };
   const createdTradeCopyKey = 'created-trade-link';
@@ -11403,14 +11413,14 @@ export default function P2PTradingPage({
                 <button type="submit">{OPEN_TERMINAL_LABEL}</button>
               </form>
               <div className="p2p-terminal-open-actions" aria-label="Order alternatives">
-                <button type="button" onClick={() => navigateToTradePath('/otc/desk')}>
+                <button type="button" onClick={() => navigateToTradePath(buildCurrentTradeSurfacePath('public'))}>
                   Open desk
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setEmptyTerminalDrawerOpen(false);
-                    navigateToTradePath('/otc/limit');
+                    navigateToTradePath(buildCurrentTradeSurfacePath('create', 'limit'));
                   }}
                 >
                   Create offer
@@ -11464,7 +11474,7 @@ export default function P2PTradingPage({
                     Paste Link
                   </button>
                 )}
-                  <button type="button" onClick={() => navigateToTradePath('/otc/desk')}>
+                  <button type="button" onClick={() => navigateToTradePath(buildCurrentTradeSurfacePath('public'))}>
                   Open Desk
                 </button>
               </>,
@@ -11487,7 +11497,7 @@ export default function P2PTradingPage({
                 <button type="button" onClick={focusTradeLinkInput}>
                   Paste Link
                 </button>
-                <button type="button" onClick={() => navigateToTradePath('/otc/desk')}>
+                <button type="button" onClick={() => navigateToTradePath(buildCurrentTradeSurfacePath('public'))}>
                   Open Desk
                 </button>
               </>,
