@@ -12,7 +12,7 @@ import {
   resolveTradeChatTarget
 } from './linkedTradeContext';
 import { encodeTradeLink } from './tradeLinks';
-import { buildTradeTerminalPath } from '../hooks/useP2PTradeRoute';
+import { buildTradeTerminalPath } from '../features/trading/hooks/useP2PTradeRoute';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const taker = '0x2222222222222222222222222222222222222222';

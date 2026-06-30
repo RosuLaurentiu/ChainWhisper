@@ -1,12 +1,11 @@
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import type { TradeAssetPayload } from './appShared';
+import { bytesToHex, hexToBytes, TEXT_DECODER, TEXT_ENCODER, toArrayBuffer } from './byteEncoding';
 import { normalizeAccessHash } from './tradeLinks';
 
 const RECOVERY_PAYLOAD_VERSION = 1;
 const ENCRYPTED_PAYLOAD_VERSION = 1;
 const IV_BYTES = 12;
-const TEXT_ENCODER = new TextEncoder();
-const TEXT_DECODER = new TextDecoder();
 
 type RecoverySigner = Wallet | JsonRpcSigner;
 
@@ -35,24 +34,6 @@ export type TradeRecoveryPayload = {
   expiresAt?: number;
   parentEscrowContract?: string;
   parentTradeId?: number;
-};
-
-const bytesToHex = (bytes: Uint8Array): string =>
-  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-
-const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
-  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-
-const hexToBytes = (value: string): Uint8Array => {
-  const normalized = value.trim().replace(/^0x/i, '');
-  if (normalized.length % 2 !== 0 || !/^[a-fA-F0-9]*$/.test(normalized)) {
-    throw new Error('Invalid encrypted trade recovery payload.');
-  }
-  const bytes = new Uint8Array(normalized.length / 2);
-  for (let index = 0; index < bytes.length; index += 1) {
-    bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
-  }
-  return bytes;
 };
 
 const normalizeBigintString = (value?: bigint | number | string): string | undefined => {
@@ -163,14 +144,14 @@ export const encryptTradeRecoveryPayload = async (
   encryptedPayload[0] = ENCRYPTED_PAYLOAD_VERSION;
   encryptedPayload.set(iv, 1);
   encryptedPayload.set(ciphertext, 1 + iv.length);
-  return bytesToHex(encryptedPayload);
+  return bytesToHex(encryptedPayload, '0x');
 };
 
 export const decryptTradeRecoveryPayload = async (
   encryptedPayload: string,
   aesKey: string
 ): Promise<TradeRecoveryPayload> => {
-  const payload = hexToBytes(encryptedPayload);
+  const payload = hexToBytes(encryptedPayload, 'Invalid encrypted trade recovery payload.');
   if (payload.length <= 1 + IV_BYTES || payload[0] !== ENCRYPTED_PAYLOAD_VERSION) {
     throw new Error('Invalid encrypted trade recovery payload.');
   }

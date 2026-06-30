@@ -13,7 +13,7 @@ import {
 import { CW_PROFILE_REGISTRY_CONTRACT_ADDRESS, createBurnerWalletVault } from './appShared';
 
 describe('app wallet recovery helpers', () => {
-  it('keeps the default GC profile registry configured for local recovery', () => {
+  it('uses the canonical GC profile registry for local recovery', () => {
     expect(CW_PROFILE_REGISTRY_CONTRACT_ADDRESS).toBe('0xf37196Fafe760E92d3542D837a1595B2a625F618');
     expect(isAppWalletRecoveryConfigured()).toBe(true);
   });

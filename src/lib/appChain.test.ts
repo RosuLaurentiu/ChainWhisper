@@ -124,7 +124,7 @@ describe('trade escrow contract resolution', () => {
   });
 
   it('builds fresh Direct links with the Direct escrow alias', async () => {
-    const { buildTradeLinkPath, resolveTradeRouteFromParts } = await import('../hooks/useP2PTradeRoute');
+    const { buildTradeLinkPath, resolveTradeRouteFromParts } = await import('../features/trading/hooks/useP2PTradeRoute');
     const { encodeTradeLink } = await import('./tradeLinks');
     const secret = `0x${'34'.repeat(32)}`;
     const path = buildTradeLinkPath(12, secret, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);

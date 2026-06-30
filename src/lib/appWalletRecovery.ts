@@ -96,7 +96,7 @@ export const isAppWalletRecoveryConfigured = (): boolean =>
 
 const requireAppWalletRecoveryAddress = (): string => {
   if (!isAppWalletRecoveryConfigured()) {
-    throw new Error('ChainWhisper account recovery is not configured yet.');
+    throw new Error('ChainWhisper account recovery address is invalid in this build.');
   }
   return CW_PROFILE_REGISTRY_CONTRACT_ADDRESS;
 };
@@ -117,7 +117,7 @@ const requireGcRecoveryRegistry = async (
   const version = String(await contract.contractVersion().catch(() => '')).trim();
   if (version !== 'CWProfileRegistryGCV2') {
     throw new Error(
-      'ChainWhisper account recovery needs the optimized COTI GC profile registry. Deploy CWProfileRegistryGCV2 and update the app registry address.'
+      'ChainWhisper account recovery expected the optimized COTI GC profile registry at the canonical address.'
     );
   }
 };
@@ -152,7 +152,7 @@ export const getAppWalletRecoveryReadErrorMessage = (error: unknown): string => 
     normalized.includes('missing revert data') ||
     normalized.includes('call revert exception')
   ) {
-    return 'ChainWhisper account recovery could not be read on this network. Check the recovery registry address and COTI network.';
+    return 'ChainWhisper account recovery could not be read on this network. Check that COTI mainnet is selected and the registry is reachable.';
   }
   return message || 'Failed to read ChainWhisper account recovery.';
 };

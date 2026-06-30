@@ -1,4 +1,4 @@
-import { buildTradeTerminalPath, resolveTradeLinkInput } from '../hooks/useP2PTradeRoute';
+import { buildTradeTerminalPath, resolveTradeLinkInput } from '../features/trading/hooks/useP2PTradeRoute';
 import {
   isWalletAddress,
   TRADE_ESCROW_CONTRACT_ADDRESS,

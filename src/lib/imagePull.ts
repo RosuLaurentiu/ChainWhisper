@@ -1,3 +1,5 @@
+import { bytesToHex, hexToBytes } from './byteEncoding';
+
 export type ParsedImageTag = {
   blobId: string;
   keyHex: string;
@@ -100,27 +102,6 @@ export function parseImageTag(plaintext: string): ParsedImageTag | null {
   if (!ALLOWED_IMAGE_MIME_TYPES.has(normalizedMime)) return null;
 
   return { blobId, keyHex, ivHex, sizeBytes: parsedSize, mime: normalizedMime };
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  if (hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) {
-    throw new Error('Invalid hex data.');
-  }
-
-  const b = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    const part = hex.slice(i, i + 2);
-    const value = Number.parseInt(part, 16);
-    if (!Number.isFinite(value)) {
-      throw new Error('Invalid hex byte.');
-    }
-    b[i / 2] = value;
-  }
-  return b;
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function buildImageBlobId(): string {

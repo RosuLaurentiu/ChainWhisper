@@ -1,12 +1,11 @@
 import type { TradeAssetPayload } from './appShared';
+import { bytesToHex, hexToBytes, TEXT_DECODER, TEXT_ENCODER, toArrayBuffer } from './byteEncoding';
 import { normalizeAccessHash } from './tradeLinks';
 
 const TERMS_PAYLOAD_VERSION = 1;
 const ENCRYPTED_PAYLOAD_VERSION = 1;
 const IV_BYTES = 12;
 const SECRET_BYTES = 32;
-const TEXT_ENCODER = new TextEncoder();
-const TEXT_DECODER = new TextDecoder();
 
 export type DirectTradeTermsAsset = Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'amount'>;
 
@@ -21,28 +20,10 @@ export type DirectTradeTerms = {
   parentTradeId?: number;
 };
 
-const bytesToHex = (bytes: Uint8Array): string =>
-  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-
-const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
-  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-
-const hexToBytes = (value: string): Uint8Array => {
-  const normalized = value.trim().replace(/^0x/i, '');
-  if (normalized.length % 2 !== 0 || !/^[a-fA-F0-9]*$/.test(normalized)) {
-    throw new Error('Invalid encrypted trade terms payload.');
-  }
-  const bytes = new Uint8Array(normalized.length / 2);
-  for (let index = 0; index < bytes.length; index += 1) {
-    bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
-  }
-  return bytes;
-};
-
 export const createTradeAccessSecret = (): string => {
   const bytes = new Uint8Array(SECRET_BYTES);
   crypto.getRandomValues(bytes);
-  return bytesToHex(bytes);
+  return bytesToHex(bytes, '0x');
 };
 
 const parseAccessSecret = (accessSecret: string): Uint8Array => {
@@ -50,7 +31,7 @@ const parseAccessSecret = (accessSecret: string): Uint8Array => {
   if (!normalized) {
     throw new Error('A valid private trade link secret is required.');
   }
-  return hexToBytes(normalized);
+  return hexToBytes(normalized, 'Invalid encrypted trade terms payload.');
 };
 
 const deriveTermsKey = async (accessSecret: string, usages: KeyUsage[]): Promise<CryptoKey> => {
@@ -117,11 +98,11 @@ export const encryptDirectTradeTerms = async (terms: DirectTradeTerms, accessSec
   payload[0] = ENCRYPTED_PAYLOAD_VERSION;
   payload.set(iv, 1);
   payload.set(ciphertext, 1 + iv.length);
-  return bytesToHex(payload);
+  return bytesToHex(payload, '0x');
 };
 
 export const decryptDirectTradeTerms = async (encryptedPayload: string, accessSecret: string): Promise<DirectTradeTerms> => {
-  const payload = hexToBytes(encryptedPayload);
+  const payload = hexToBytes(encryptedPayload, 'Invalid encrypted trade terms payload.');
   if (payload.length <= 1 + IV_BYTES || payload[0] !== ENCRYPTED_PAYLOAD_VERSION) {
     throw new Error('Invalid encrypted trade terms payload.');
   }
