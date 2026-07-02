@@ -71,7 +71,7 @@ export const getOtcSwapLinkedActionModes = (
 
   const recurring = trade.recurringOrder;
   if (!recurring) {
-    return { sell: true, buy: true };
+    return { sell: true, buy: false };
   }
 
   return {

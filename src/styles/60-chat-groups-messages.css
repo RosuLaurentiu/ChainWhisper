@@ -1886,7 +1886,8 @@
   transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.message-react-action {
+.message-react-action,
+.message-draft-trade-action {
   position: absolute;
   top: 8px;
   right: 40px;
@@ -1905,15 +1906,22 @@
   transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
+.message-draft-trade-action {
+  right: 72px;
+}
+
 .message-reply-action svg,
-.message-react-action svg {
+.message-react-action svg,
+.message-draft-trade-action svg {
   pointer-events: none;
 }
 
 .message-bubble:hover .message-reply-action,
 .message-bubble:focus-within .message-reply-action,
 .message-bubble:hover .message-react-action,
-.message-bubble:focus-within .message-react-action {
+.message-bubble:focus-within .message-react-action,
+.message-bubble:hover .message-draft-trade-action,
+.message-bubble:focus-within .message-draft-trade-action {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1921,7 +1929,9 @@
 .message-reply-action:hover,
 .message-reply-action:focus-visible,
 .message-react-action:hover,
-.message-react-action:focus-visible {
+.message-react-action:focus-visible,
+.message-draft-trade-action:hover,
+.message-draft-trade-action:focus-visible {
   color: var(--text);
   border-color: var(--accent);
   outline: none;

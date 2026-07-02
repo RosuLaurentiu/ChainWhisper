@@ -233,6 +233,16 @@ import {
   type OtcSwapFillNote,
   type OtcSwapIntent
 } from '../../../lib/otcSwapIntent';
+import {
+  TRADE_AGENT_QUICK_ACTIONS,
+  consumeTradeAgentDraft,
+  fetchTradeAgentFeeQuote,
+  getTradeAgentPromptTokenMentions,
+  runTradeAgentRequest,
+  type TradeAgentActionType,
+  type TradeAgentFeeQuote,
+  type TradeAgentResponseAction
+} from '../../../lib/tradeAgent';
 import { applyTradeRecoveryPayloadToSnapshot } from '../../../lib/tradeRecoveryPayload';
 import {
   isWalletTransactionFlowActive,
@@ -604,12 +614,92 @@ type P2PTradingPageProps = {
 };
 
 const P2P_VISIBLE_SYNC_INTERVAL_MS = 20_000;
+const TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY = 'chainwhisper:trade-agent-retry-payment';
+const TRADE_AGENT_RETRY_PAYMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const EMPTY_STALE_TOKEN_ADDRESSES: string[] = [];
+type TradeAgentChatRole = 'assistant' | 'user' | 'status';
+type TradeAgentChatMessage = {
+  id: string;
+  role: TradeAgentChatRole;
+  title: string;
+  text: string;
+  warnings?: string[];
+  actions?: TradeAgentResponseAction[];
+};
+type TerminalReturnSurface = 'swap' | 'agent' | 'public' | 'mine';
 type TradeSigner = JsonRpcSigner | Wallet;
 type QueuedTradeDataRefresh = P2PSyncRequest<TradeSigner>;
 type RecurringFundingBalanceResult = {
   balanceWei: bigint | null;
   unavailableMessage?: string;
+};
+type TradeAgentRetryPaymentRecord = {
+  action: TradeAgentActionType;
+  prompt: string;
+  requestId: string;
+  txHash: string;
+};
+
+const isTradeAgentActionType = (value: unknown): value is TradeAgentActionType =>
+  value === 'explain_order' ||
+  value === 'find_price' ||
+  value === 'draft_counter' ||
+  value === 'draft_limit' ||
+  value === 'chat_to_trade';
+
+const readTradeAgentRetryPayment = (): TradeAgentRetryPaymentRecord | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const record = JSON.parse(raw) as {
+      action?: unknown;
+      createdAt?: unknown;
+      prompt?: unknown;
+      requestId?: unknown;
+      txHash?: unknown;
+    };
+    if (
+      !isTradeAgentActionType(record.action) ||
+      typeof record.prompt !== 'string' ||
+      typeof record.requestId !== 'string' ||
+      typeof record.txHash !== 'string' ||
+      !/^[0-9a-fA-F-]{36}$/.test(record.requestId) ||
+      !/^0x[0-9a-fA-F]{64}$/.test(record.txHash) ||
+      typeof record.createdAt !== 'number' ||
+      Date.now() - record.createdAt > TRADE_AGENT_RETRY_PAYMENT_MAX_AGE_MS
+    ) {
+      window.localStorage.removeItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
+      return null;
+    }
+    return {
+      action: record.action,
+      prompt: record.prompt,
+      requestId: record.requestId,
+      txHash: record.txHash
+    };
+  } catch {
+    window.localStorage.removeItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
+    return null;
+  }
+};
+
+const writeTradeAgentRetryPayment = (record: TradeAgentRetryPaymentRecord | null) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (!record) {
+    window.localStorage.removeItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(
+    TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY,
+    JSON.stringify({ ...record, createdAt: Date.now() })
+  );
 };
 
 const decimalScale = (decimals: number): bigint => 10n ** BigInt(Math.max(0, Math.floor(decimals)));
@@ -955,6 +1045,35 @@ export default function P2PTradingPage({
   const [swapOrderLinkInput, setSwapOrderLinkInput] = useState('');
   const [swapPinnedTradeKey, setSwapPinnedTradeKey] = useState('');
   const [swapOrderLinkError, setSwapOrderLinkError] = useState('');
+  const [initialTradeAgentRetryPayment] = useState(() => readTradeAgentRetryPayment());
+  const [tradeAgentAction, setTradeAgentAction] = useState<TradeAgentActionType>(
+    () => initialTradeAgentRetryPayment?.action ?? 'find_price'
+  );
+  const [tradeAgentPrompt, setTradeAgentPrompt] = useState(() => initialTradeAgentRetryPayment?.prompt ?? '');
+  const [tradeAgentMessages, setTradeAgentMessages] = useState<TradeAgentChatMessage[]>([
+    {
+      id: 'intro',
+      role: 'assistant',
+      title: 'Trade Agent',
+      text: 'Ask me to compare prices, find a ChainWhisper order, or turn text into a draft trade. You still confirm every action.'
+    }
+  ]);
+  const [tradeAgentFeeQuote, setTradeAgentFeeQuote] = useState<TradeAgentFeeQuote | null>(null);
+  const [tradeAgentExplicitContext, setTradeAgentExplicitContext] = useState<unknown | null>(null);
+  const [tradeAgentError, setTradeAgentError] = useState('');
+  const [tradeAgentRetryPaymentTxHash, setTradeAgentRetryPaymentTxHash] = useState(
+    () => initialTradeAgentRetryPayment?.txHash ?? ''
+  );
+  const [tradeAgentRetryPaymentRequestId, setTradeAgentRetryPaymentRequestId] = useState(
+    () => initialTradeAgentRetryPayment?.requestId ?? ''
+  );
+  const [tradeAgentStatus, setTradeAgentStatus] = useState(() =>
+    initialTradeAgentRetryPayment ? 'You can retry without paying again.' : ''
+  );
+  const [tradeAgentLoading, setTradeAgentLoading] = useState(false);
+  const [tradeAgentFeeLoading, setTradeAgentFeeLoading] = useState(false);
+  const tradeAgentMessageCounterRef = useRef(0);
+  const tradeAgentMessagesEndRef = useRef<HTMLDivElement | null>(null);
   const [tradeSearchInput, setTradeSearchInput] = useState('');
   const [tradePairFilter, setTradePairFilter] = useState('all');
   const [tradeTypeFilter, setTradeTypeFilter] = useState<TradeDeskTypeFilter>('all');
@@ -983,12 +1102,13 @@ export default function P2PTradingPage({
   const [swapFillNotes, setSwapFillNotes] = useState<OtcSwapFillNote[]>(() => loadOtcSwapFillNotes());
   const activeTerminalSwapIntentRef = useRef<OtcSwapIntent | null>(null);
   const lastAppliedSwapPinnedTradeKeyRef = useRef('');
+  const lastSyncedRouteSwapTradeKeyRef = useRef('');
   const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
   const [carbonPairReferences, setCarbonPairReferences] = useState<Record<string, CarbonPairReferenceState>>({});
-  const initialTerminalReturnSurface = route.routeFamily === 'trades' ? 'public' : 'swap';
-  const terminalReturnSurfaceRef = useRef<'swap' | 'public' | 'mine'>(initialTerminalReturnSurface);
-  const mobileDeskScrollRef = useRef<Record<'swap' | 'public' | 'mine', number>>({ swap: 0, public: 0, mine: 0 });
-  const mobileTerminalReturnSurfaceRef = useRef<'swap' | 'public' | 'mine'>(initialTerminalReturnSurface);
+  const initialTerminalReturnSurface: TerminalReturnSurface = route.routeFamily === 'trades' ? 'public' : 'swap';
+  const terminalReturnSurfaceRef = useRef<TerminalReturnSurface>(initialTerminalReturnSurface);
+  const mobileDeskScrollRef = useRef<Record<TerminalReturnSurface, number>>({ swap: 0, agent: 0, public: 0, mine: 0 });
+  const mobileTerminalReturnSurfaceRef = useRef<TerminalReturnSurface>(initialTerminalReturnSurface);
   const [knownTradeAccessSecrets, setKnownTradeAccessSecrets] = useState<Record<string, string>>(
     () => loadStoredTradeAccessSecrets()
   );
@@ -3462,7 +3582,8 @@ export default function P2PTradingPage({
       if (!isMobileNav) {
         return;
       }
-      const surface = view === 'mine' ? 'mine' : view === 'public' ? 'public' : view === 'swap' ? 'swap' : null;
+      const surface =
+        view === 'mine' ? 'mine' : view === 'public' ? 'public' : view === 'agent' ? 'agent' : view === 'swap' ? 'swap' : null;
       if (!surface) {
         return;
       }
@@ -3473,7 +3594,7 @@ export default function P2PTradingPage({
   );
 
   const restoreMobileDeskScroll = useCallback(
-    (surface: 'swap' | 'public' | 'mine') => {
+    (surface: TerminalReturnSurface) => {
       if (!isMobileNav) {
         return;
       }
@@ -3495,7 +3616,13 @@ export default function P2PTradingPage({
   const openTradeSnapshot = useCallback(
     (snapshot: TradeSnapshot, accessSecret?: string) => {
       const returnSurface =
-        routeSurfaceView === 'public' ? 'public' : routeSurfaceView === 'mine' ? 'mine' : 'swap';
+        routeSurfaceView === 'public'
+          ? 'public'
+          : routeSurfaceView === 'mine'
+            ? 'mine'
+            : routeSurfaceView === 'agent'
+              ? 'agent'
+              : 'swap';
       terminalReturnSurfaceRef.current = returnSurface;
       const knownAccessSecret =
         accessSecret ||
@@ -3503,6 +3630,10 @@ export default function P2PTradingPage({
           ? resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract)
           : '');
       saveMobileDeskScroll(returnSurface);
+      if (returnSurface === 'swap') {
+        lastAppliedSwapPinnedTradeKeyRef.current = '';
+        setSwapPinnedTradeKey(getSnapshotKey(snapshot));
+      }
       setEmptyTerminalDrawerOpen(false);
       setDetailTrade(snapshot);
       openTrade(snapshot.tradeId, knownAccessSecret || undefined, snapshot.escrowContract);
@@ -3554,6 +3685,7 @@ export default function P2PTradingPage({
       setSwapInputMode('sell');
       setSwapSellAmountInput('');
       setSwapBuyAmountInput('');
+      lastAppliedSwapPinnedTradeKeyRef.current = '';
       setSwapPinnedTradeKey(buildTradeSnapshotKey(parsedLink.tradeId, parsedLink.escrowContract));
       openTrade(parsedLink.tradeId, parsedLink.accessSecret, parsedLink.escrowContract);
     },
@@ -5152,6 +5284,43 @@ export default function P2PTradingPage({
     }
     return formatCarbonPairReferenceDisplay(carbonPairReferences[pair.pairKey]?.reference, { inverted });
   };
+  const getCarbonReferenceContext = (
+    baseAsset?: CarbonPriceAsset | null,
+    quoteAsset?: CarbonPriceAsset | null,
+    inverted = false,
+    referenceOverride?: CarbonPairReference | null
+  ) => {
+    const pair = resolveCarbonPricePair(baseAsset, quoteAsset);
+    if (!pair) {
+      return null;
+    }
+    const reference =
+      referenceOverride === undefined ? carbonPairReferences[pair.pairKey]?.reference ?? null : referenceOverride;
+    const display = formatCarbonPairReferenceDisplay(reference, { inverted });
+    return display
+      ? {
+          label: display.label,
+          basisLabel: display.basisLabel,
+          title: display.title,
+          baseSymbol: reference?.baseSymbol ?? pair.base.symbol,
+          quoteSymbol: reference?.quoteSymbol ?? pair.quote.symbol,
+          price: reference?.price ?? null,
+          usedPublicCounterpart: pair.usedPublicCounterpart || Boolean(reference?.usedPublicCounterpart),
+          sourcePair: `${pair.base.sourceSymbol}/${pair.quote.sourceSymbol}`,
+          carbonPair: `${pair.base.symbol}/${pair.quote.symbol}`
+        }
+      : {
+          label: null,
+          basisLabel: null,
+          title: null,
+          baseSymbol: pair.base.symbol,
+          quoteSymbol: pair.quote.symbol,
+          price: null,
+          usedPublicCounterpart: pair.usedPublicCounterpart,
+          sourcePair: `${pair.base.sourceSymbol}/${pair.quote.sourceSymbol}`,
+          carbonPair: `${pair.base.symbol}/${pair.quote.symbol}`
+        };
+  };
 
   const renderCarbonPriceReference = (
     reference: CarbonPairReferenceDisplay | null,
@@ -6409,6 +6578,9 @@ export default function P2PTradingPage({
             </div>
           </div>
           <div className="p2p-terminal-toolbar">
+            <button type="button" className="p2p-terminal-share" onClick={() => askAgentAboutOrder(snapshot)}>
+              Ask Agent
+            </button>
             {renderTradeConversationButton(snapshot, shareUrl || undefined, accessSecret || undefined)}
             {shareUrl ? (
               <button
@@ -7050,6 +7222,9 @@ export default function P2PTradingPage({
             </div>
           </div>
           <div className="p2p-terminal-toolbar">
+            <button type="button" className="p2p-terminal-share" onClick={() => askAgentAboutOrder(snapshot)}>
+              Ask Agent
+            </button>
             {renderTradeConversationButton(snapshot, shareUrl)}
             <button
               type="button"
@@ -8645,7 +8820,13 @@ export default function P2PTradingPage({
   };
   const openEmptyTerminalPanel = useCallback(() => {
     const returnSurface =
-      routeSurfaceView === 'public' ? 'public' : routeSurfaceView === 'mine' ? 'mine' : 'swap';
+      routeSurfaceView === 'public'
+        ? 'public'
+        : routeSurfaceView === 'mine'
+          ? 'mine'
+          : routeSurfaceView === 'agent'
+            ? 'agent'
+            : 'swap';
     terminalReturnSurfaceRef.current = returnSurface;
     saveMobileDeskScroll(returnSurface);
     setEmptyTerminalDrawerOpen(true);
@@ -8666,9 +8847,10 @@ export default function P2PTradingPage({
     }
   }, [route.view]);
   const navigateDeskView = useCallback(
-    (path: '/otc' | '/otc/desk' | '/otc/orders') => {
+    (path: '/otc' | '/otc/agent' | '/otc/desk' | '/otc/orders') => {
       const openingTradeSurface = path === '/otc';
-      const targetSurface = path === '/otc/orders' ? 'mine' : path === '/otc/desk' ? 'public' : 'swap';
+      const targetSurface =
+        path === '/otc/orders' ? 'mine' : path === '/otc/desk' ? 'public' : path === '/otc/agent' ? 'agent' : 'swap';
       if (openingTradeSurface) {
         resetSwapLinkedOrder();
       }
@@ -8727,6 +8909,8 @@ export default function P2PTradingPage({
               ? 'public'
               : route.view === 'swap'
                 ? 'swap'
+                : route.view === 'agent'
+                  ? 'agent'
                 : null;
       const currentDeskTerminalOpen =
         emptyTerminalDrawerOpen || route.view === 'trade' || (route.view === 'mine' && Boolean(selectedMyTradeDetailKey));
@@ -8844,6 +9028,14 @@ export default function P2PTradingPage({
         </button>
         <button
           type="button"
+          className={routeSurfaceView === 'agent' ? 'active' : undefined}
+          aria-current={routeSurfaceView === 'agent' ? 'page' : undefined}
+          onClick={() => navigateDeskView('/otc/agent')}
+        >
+          <span>Agent</span>
+        </button>
+        <button
+          type="button"
           className={routeSurfaceView === 'mine' ? 'active' : undefined}
           aria-current={routeSurfaceView === 'mine' ? 'page' : undefined}
           onClick={() => navigateDeskView('/otc/orders')}
@@ -8894,6 +9086,21 @@ export default function P2PTradingPage({
       null
     );
   }, [detailTrade, myTrades, publicOpenTrades, swapPinnedTradeKey]);
+  useEffect(() => {
+    if (route.view !== 'trade' || terminalReturnSurfaceRef.current !== 'swap' || !detailTrade) {
+      lastSyncedRouteSwapTradeKeyRef.current = '';
+      return;
+    }
+
+    const detailKey = getSnapshotKey(detailTrade);
+    if (lastSyncedRouteSwapTradeKeyRef.current === detailKey) {
+      return;
+    }
+
+    lastSyncedRouteSwapTradeKeyRef.current = detailKey;
+    lastAppliedSwapPinnedTradeKeyRef.current = '';
+    setSwapPinnedTradeKey(detailKey);
+  }, [detailTrade, route.view]);
   const swapInitialLinkedActionModes = useMemo(() => getOtcSwapLinkedActionModes(swapPinnedTrade), [swapPinnedTrade]);
   const swapPinnedOneOffOrder = Boolean(swapPinnedTrade && !swapPinnedTrade.recurringOrder);
   const changeSwapActionMode = useCallback(
@@ -9316,6 +9523,11 @@ export default function P2PTradingPage({
             title: 'Trade',
             copy: 'Swap from the best order, create a limit offer, or open recurring liquidity.'
           }
+      : routeSurfaceView === 'agent'
+        ? {
+            title: 'Trade Agent',
+            copy: 'Ask for quote help, order explanations, and trade drafts.'
+          }
       : {
           title: 'OTC Desk',
           copy: 'Wallet-to-wallet escrow offers.'
@@ -9372,7 +9584,7 @@ export default function P2PTradingPage({
     if (route.view === 'create' || route.view === 'counter') {
       addPair(tradeComposerModel.selectedTradeOfferToken, tradeComposerModel.selectedTradeRequestToken);
     }
-    if (routeSurfaceView === 'swap') {
+    if (routeSurfaceView === 'swap' || routeSurfaceView === 'agent') {
       addPair(swapBuyToken, swapSellToken);
     }
 
@@ -9910,7 +10122,9 @@ export default function P2PTradingPage({
           ? buildCurrentTradeSurfacePath('mine')
           : targetSurface === 'public'
             ? buildCurrentTradeSurfacePath('public')
-            : buildCurrentTradeSurfacePath('swap')
+            : targetSurface === 'agent'
+              ? buildCurrentTradeSurfacePath('agent')
+              : buildCurrentTradeSurfacePath('swap')
       );
       restoreMobileDeskScroll(targetSurface);
       return;
@@ -9932,7 +10146,9 @@ export default function P2PTradingPage({
         ? buildCurrentTradeSurfacePath('public')
         : targetSurface === 'mine'
           ? buildCurrentTradeSurfacePath('mine')
-          : buildCurrentTradeSurfacePath('swap')
+          : targetSurface === 'agent'
+            ? buildCurrentTradeSurfacePath('agent')
+            : buildCurrentTradeSurfacePath('swap')
     );
   };
   const createdTradeCopyKey = 'created-trade-link';
@@ -10169,6 +10385,11 @@ export default function P2PTradingPage({
     swapDisplayQuoteToken,
     swapPriceDisplayInverted
   );
+  const swapCarbonReferenceContext = getCarbonReferenceContext(
+    swapDisplayBaseToken,
+    swapDisplayQuoteToken,
+    swapPriceDisplayInverted
+  );
   const stripSwapPriceBasis = (label: string, basisLabel: string): string => {
     const suffix = ` ${basisLabel}`;
     return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
@@ -10287,6 +10508,8 @@ export default function P2PTradingPage({
     const quote = swapBestQuote;
     if (quote) {
       rememberSwapQuoteIntent(quote);
+      lastAppliedSwapPinnedTradeKeyRef.current = '';
+      setSwapPinnedTradeKey(getSnapshotKey(quote.trade));
       openTradeSnapshot(quote.trade);
       return;
     }
@@ -10365,6 +10588,694 @@ export default function P2PTradingPage({
           : swapActionMode === 'buy'
             ? `Buy ${swapBuyToken?.symbol ?? 'token'}`
             : `Sell ${swapSellToken?.symbol ?? 'token'}`;
+  const tradeAgentFeeLabel = useMemo(() => {
+    if (!tradeAgentFeeQuote) {
+      return 'WISP per request';
+    }
+    try {
+      return `${formatTokenAmount(BigInt(tradeAgentFeeQuote.feeAmountWei), tradeAgentFeeQuote.feeTokenDecimals, 4)} WISP per request`;
+    } catch {
+      return 'WISP per request';
+    }
+  }, [tradeAgentFeeQuote]);
+  const appendTradeAgentMessage = useCallback(
+    (message: Omit<TradeAgentChatMessage, 'id'>) => {
+      tradeAgentMessageCounterRef.current += 1;
+      const id = `agent:${Date.now()}:${tradeAgentMessageCounterRef.current}`;
+      setTradeAgentMessages((current) => [...current, { ...message, id }]);
+    },
+    []
+  );
+  const appendTradeAgentStatusMessage = useCallback(
+    (text: string) => {
+      appendTradeAgentMessage({
+        role: 'status',
+        title: 'Update',
+        text
+      });
+    },
+    [appendTradeAgentMessage]
+  );
+  useEffect(() => {
+    if (routeSurfaceView !== 'agent') {
+      return;
+    }
+    tradeAgentMessagesEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [routeSurfaceView, tradeAgentLoading, tradeAgentMessages, tradeAgentStatus]);
+  useEffect(() => {
+    if (routeSurfaceView !== 'agent') {
+      return;
+    }
+    const draft = consumeTradeAgentDraft();
+    if (!draft) {
+      return;
+    }
+    setTradeAgentAction(draft.action);
+    setTradeAgentPrompt(draft.prompt);
+    setTradeAgentExplicitContext(draft.context ?? null);
+    setTradeAgentStatus('Draft loaded from chat.');
+    appendTradeAgentStatusMessage('Draft loaded from chat.');
+  }, [appendTradeAgentStatusMessage, routeSurfaceView]);
+  const tradeAgentContext = useMemo(
+    () => ({
+      explicit: tradeAgentExplicitContext,
+      surface: routeSurfaceView ?? route.view,
+      selectedPair: {
+        sellToken: swapSellToken ? { symbol: swapSellToken.symbol, kind: swapSellToken.kind } : null,
+        buyToken: swapBuyToken ? { symbol: swapBuyToken.symbol, kind: swapBuyToken.kind } : null,
+        mode: swapActionMode,
+        favorabilityRule:
+          swapActionMode === 'buy'
+            ? 'Lower quote/base is better when buying the displayed base token.'
+            : 'Higher quote/base is better when selling the displayed base token.'
+      },
+      swap: {
+        carbonReference: swapCarbonReferenceContext,
+        chainwhisperPrice: swapChainWhisperMarketLabel,
+        bestOrder: swapDisplayQuote
+          ? {
+              id: swapDisplayQuote.tradeId,
+              escrowContract: swapDisplayQuote.escrowContract,
+              source: getOtcSwapSourceLabel(swapDisplayQuote.sourceType),
+              availability: formatSwapAvailability(swapDisplayQuote)
+            }
+          : null
+      },
+      openedOrder: detailTrade
+        ? {
+            id: detailTrade.recurringOrder?.orderId ?? detailTrade.tradeId,
+            source: detailTrade.recurringOrder ? 'Recurring OTC' : 'One-off OTC',
+            status: detailTrade.status,
+            terms: getTradeDisplayTerms(detailTrade)
+          }
+        : null
+    }),
+    [
+      detailTrade,
+      formatSwapAvailability,
+      route.view,
+      routeSurfaceView,
+      swapActionMode,
+      swapBuyToken,
+      swapCarbonReference?.label,
+      swapCarbonReferenceContext,
+      swapChainWhisperMarketLabel,
+      swapDisplayQuote,
+      tradeAgentExplicitContext,
+      swapSellToken
+    ]
+  );
+  const buildPromptOnlyTradeAgentContext = useCallback(
+    (includeExplicit = false) => ({
+      explicit: includeExplicit ? tradeAgentExplicitContext : null,
+      openedOrder: null,
+      selectedPair: null,
+      surface: routeSurfaceView ?? route.view,
+      swap: {
+        bestOrder: null,
+        carbonReference: null,
+        chainwhisperPrice: null
+      }
+    }),
+    [route.view, routeSurfaceView, tradeAgentExplicitContext]
+  );
+  const askAgentAboutOrder = useCallback(
+    (snapshot: TradeSnapshot) => {
+      const id = snapshot.recurringOrder?.orderId ?? snapshot.tradeId;
+      const source = snapshot.recurringOrder ? 'Recurring OTC' : 'One-off OTC';
+      terminalReturnSurfaceRef.current = 'agent';
+      saveMobileDeskScroll('agent');
+      setEmptyTerminalDrawerOpen(false);
+      setSelectedMyTradeDetailKey('');
+      setTradeAgentAction('explain_order');
+      setTradeAgentExplicitContext({
+        openedOrder: {
+          escrowContract: snapshot.escrowContract,
+          id,
+          source,
+          status: snapshot.status,
+          terms: getTradeDisplayTerms(snapshot)
+        }
+      });
+      setTradeAgentPrompt(`Explain ${source} #${id}. Keep it short and point out what I should review.`);
+      setTradeAgentStatus('Order loaded.');
+      appendTradeAgentStatusMessage(`${source} #${id} loaded.`);
+      if (route.view !== 'trade') {
+        openTrade(snapshot.tradeId, undefined, snapshot.escrowContract);
+      }
+    },
+    [appendTradeAgentStatusMessage, openTrade, route.view, saveMobileDeskScroll]
+  );
+  const resolveTradeAgentTokenSelection = useCallback(
+    (value?: string): TradeTokenPresetKey | null => {
+      const raw = value?.trim().toLowerCase() ?? '';
+      if (!raw) {
+        return null;
+      }
+      const match = tradeComposerModel.tradeTokenOptions.find((option) => {
+        const optionValues = [option.value, option.symbol, option.label]
+          .map((candidate) => candidate?.trim().toLowerCase())
+          .filter(Boolean);
+        return optionValues.includes(raw);
+      });
+      return match ? match.value as TradeTokenPresetKey : null;
+    },
+    [tradeComposerModel.tradeTokenOptions]
+  );
+  const resolveTradeAgentTokenFromSelection = useCallback(
+    (selection: TradeTokenPresetKey | null): ResolvedTradeToken | null =>
+      selection
+        ? resolveSelectedTradeToken({
+            customAddress: isWalletAddress(selection) ? selection : undefined,
+            privateRewardTokenDecimals,
+            privateRewardTokenSymbol,
+            rewardTokenDecimals,
+            rewardTokenSymbol,
+            selection
+          })
+        : null,
+    [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]
+  );
+  const resolveTradeAgentPromptQuoteContext = useCallback(
+    async (prompt: string) => {
+      const knownSymbols = tradeComposerModel.tradeTokenOptions
+        .map((option) => option.symbol)
+        .filter((symbol): symbol is string => Boolean(symbol));
+      const [firstSymbol, secondSymbol] = getTradeAgentPromptTokenMentions(prompt, knownSymbols);
+      if (!firstSymbol || !secondSymbol) {
+        return null;
+      }
+
+      const lowerPrompt = prompt.toLowerCase();
+      const buyIndex = lowerPrompt.indexOf('buy');
+      const sellIndex = lowerPrompt.indexOf('sell');
+      const inputMode: OtcSwapInputMode =
+        sellIndex !== -1 && (buyIndex === -1 || sellIndex < buyIndex) ? 'sell' : 'buy';
+      const sellSelection = resolveTradeAgentTokenSelection(inputMode === 'sell' ? firstSymbol : secondSymbol);
+      const buySelection = resolveTradeAgentTokenSelection(inputMode === 'sell' ? secondSymbol : firstSymbol);
+      const sellToken = resolveTradeAgentTokenFromSelection(sellSelection);
+      const buyToken = resolveTradeAgentTokenFromSelection(buySelection);
+      if (!sellToken || !buyToken || getOtcSwapAssetKey(sellToken) === getOtcSwapAssetKey(buyToken)) {
+        return null;
+      }
+
+      const quote = quoteBestSingleOtcSwap({
+        includePrivateOtcQuotes: true,
+        inputAmountWei: 0n,
+        inputMode,
+        trades: publicOpenTrades,
+        sellToken,
+        buyToken
+      }).best;
+      const displayBaseToken = inputMode === 'buy' ? buyToken : sellToken;
+      const displayQuoteToken = inputMode === 'buy' ? sellToken : buyToken;
+      const priceDisplay = resolveOtcSwapPriceRatioDisplay(quote, inputMode);
+      const carbonReference = await fetchCarbonPairReference({
+        baseAsset: displayBaseToken,
+        quoteAsset: displayQuoteToken
+      });
+      return {
+        context: {
+          ...tradeAgentContext,
+          explicit: null,
+          openedOrder: null,
+          selectedPair: {
+            sellToken: { symbol: sellToken.symbol, kind: sellToken.kind },
+            buyToken: { symbol: buyToken.symbol, kind: buyToken.kind },
+            mode: inputMode,
+            source: 'prompt'
+          },
+          swap: {
+            carbonReference: getCarbonReferenceContext(displayBaseToken, displayQuoteToken, false, carbonReference),
+            chainwhisperPrice: priceDisplay ? formatSwapMarketDirectionLabel(inputMode, priceDisplay) : '--',
+            bestOrder: quote
+              ? {
+                  id: quote.tradeId,
+                  escrowContract: quote.escrowContract,
+                  source: getOtcSwapSourceLabel(quote.sourceType),
+                  availability: formatOtcSwapAvailabilityLabel(quote, inputMode, 0n, 6)
+                }
+              : null
+          }
+        },
+        quote
+      };
+    },
+    [
+      formatSwapMarketDirectionLabel,
+      publicOpenTrades,
+      resolveTradeAgentTokenFromSelection,
+      resolveTradeAgentTokenSelection,
+      tradeAgentContext,
+      tradeComposerModel.tradeTokenOptions
+    ]
+  );
+  const applyTradeAgentAction = useCallback(
+    async (action: TradeAgentResponseAction) => {
+      if (action.type === 'open_order' && action.tradeId) {
+        appendTradeAgentStatusMessage('Order opened.');
+        terminalReturnSurfaceRef.current = 'agent';
+        saveMobileDeskScroll('agent');
+        setEmptyTerminalDrawerOpen(false);
+        openTrade(action.tradeId, action.accessSecret, action.escrowContract);
+        return;
+      }
+
+      if (action.type === 'prefill_swap') {
+        const sellSelection = resolveTradeAgentTokenSelection(action.sellToken);
+        const buySelection = resolveTradeAgentTokenSelection(action.buyToken);
+        if (sellSelection) {
+          setSwapSellTokenSelection(sellSelection);
+        }
+        if (buySelection && buySelection !== sellSelection) {
+          setSwapBuyTokenSelection(buySelection);
+        }
+        const mode = action.inputMode === 'sell' || action.inputMode === 'buy' ? action.inputMode : 'sell';
+        setSwapActionMode(mode);
+        setSwapInputMode(mode);
+        setSwapSellAmountInput(action.sellAmount ?? '');
+        setSwapBuyAmountInput(action.buyAmount ?? '');
+        appendTradeAgentStatusMessage('Draft opened in Swap.');
+        navigateDeskView('/otc');
+        return;
+      }
+
+      if (action.type === 'prefill_limit') {
+        const sellSelection = resolveTradeAgentTokenSelection(action.sellToken);
+        const buySelection = resolveTradeAgentTokenSelection(action.buyToken);
+        startFreshOneOffTrade();
+        if (sellSelection) {
+          setTradeOfferTokenSelection(sellSelection);
+        }
+        if (buySelection && buySelection !== sellSelection) {
+          setTradeRequestTokenSelection(buySelection);
+        }
+        setTradeOfferAmountInput(action.sellAmount ?? '');
+        setTradeRequestAmountInput(action.buyAmount ?? '');
+        setTradePriceInput(action.price ?? '');
+        appendTradeAgentStatusMessage('Draft opened in Limit.');
+        navigateToTradePath(buildCurrentTradeSurfacePath('create', 'limit'));
+        return;
+      }
+
+      if (action.type === 'prefill_counter') {
+        const actionEscrowKey = action.escrowContract?.trim().toLowerCase() ?? '';
+        const parentTrade =
+          [detailTrade, ...publicOpenTrades, ...myTrades].filter((trade): trade is TradeSnapshot => Boolean(trade)).find(
+            (trade) =>
+              (!action.tradeId || trade.tradeId === action.tradeId) &&
+              (!actionEscrowKey || (trade.escrowContract ?? '').toLowerCase() === actionEscrowKey)
+          ) ?? null;
+        if (!parentTrade) {
+          setTradeAgentError('Open the order first, then use this counter draft.');
+          return;
+        }
+        beginCounterTrade(parentTrade);
+        const sellSelection = resolveTradeAgentTokenSelection(action.sellToken);
+        const buySelection = resolveTradeAgentTokenSelection(action.buyToken);
+        if (sellSelection) {
+          setTradeOfferTokenSelection(sellSelection);
+        }
+        if (buySelection && buySelection !== sellSelection) {
+          setTradeRequestTokenSelection(buySelection);
+        }
+        setTradeOfferAmountInput(action.sellAmount ?? '');
+        setTradeRequestAmountInput(action.buyAmount ?? '');
+        appendTradeAgentStatusMessage('Counter draft opened.');
+        return;
+      }
+
+      if (action.message) {
+        await navigator.clipboard?.writeText(action.message).catch(() => {});
+        appendTradeAgentStatusMessage('Draft copied.');
+        setTradeAgentStatus('Draft copied.');
+      }
+    },
+    [
+      appendTradeAgentStatusMessage,
+      beginCounterTrade,
+      buildCurrentTradeSurfacePath,
+      detailTrade,
+      navigateDeskView,
+      navigateToTradePath,
+      myTrades,
+      openTrade,
+      publicOpenTrades,
+      resolveTradeAgentTokenSelection,
+      saveMobileDeskScroll,
+      setTradeOfferAmountInput,
+      setTradeOfferTokenSelection,
+      setTradePriceInput,
+      setTradeRequestAmountInput,
+      setTradeRequestTokenSelection,
+      startFreshOneOffTrade
+    ]
+  );
+  useEffect(() => {
+    if (routeSurfaceView !== 'agent') {
+      return;
+    }
+    let cancelled = false;
+    setTradeAgentFeeLoading(true);
+    fetchTradeAgentFeeQuote(tradeAgentAction)
+      .then((quote) => {
+        if (!cancelled) {
+          setTradeAgentFeeQuote(quote);
+          setTradeAgentError('');
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTradeAgentFeeQuote(null);
+          setTradeAgentError(error instanceof Error ? error.message : 'Trade Agent fee quote is unavailable.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTradeAgentFeeLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routeSurfaceView, tradeAgentAction]);
+  const submitTradeAgentRequest = useCallback(
+    async (event?: FormEvent) => {
+      event?.preventDefault();
+      const prompt = tradeAgentPrompt.trim();
+      if (!prompt) {
+        setTradeAgentError('Enter what you want the Trade Agent to do.');
+        return;
+      }
+      if (!walletAddress) {
+        setTradeAgentError('Connect your ChainWhisper account before using the Trade Agent.');
+        return;
+      }
+
+      setTradeAgentLoading(true);
+      setTradeAgentError('');
+      appendTradeAgentMessage({
+        role: 'user',
+        title: 'You',
+        text: prompt
+      });
+      setTradeAgentStatus('Getting WISP fee quote...');
+      let paymentTxHash = tradeAgentRetryPaymentTxHash;
+      const requestId = tradeAgentRetryPaymentRequestId || crypto.randomUUID();
+      try {
+        const promptQuoteContext =
+          tradeAgentAction === 'find_price' ? await resolveTradeAgentPromptQuoteContext(prompt) : null;
+        const requestContext =
+          promptQuoteContext?.context ??
+          (tradeAgentAction === 'find_price'
+            ? buildPromptOnlyTradeAgentContext(false)
+            : tradeAgentAction === 'draft_limit'
+              ? buildPromptOnlyTradeAgentContext(Boolean(tradeAgentExplicitContext))
+              : tradeAgentContext);
+        const requestQuote = promptQuoteContext?.quote ?? null;
+        const quote = paymentTxHash
+          ? tradeAgentFeeQuote ?? await fetchTradeAgentFeeQuote(tradeAgentAction, requestContext, prompt)
+          : await fetchTradeAgentFeeQuote(tradeAgentAction, requestContext, prompt);
+        setTradeAgentFeeQuote(quote);
+        const signer = await getTradeSigner(false);
+        if (paymentTxHash) {
+          setTradeAgentStatus('Retrying with the previous WISP payment...');
+        } else {
+          const feeAmountWei = BigInt(quote.feeAmountWei);
+          setTradeAgentStatus(`Paying ${formatTokenAmount(feeAmountWei, quote.feeTokenDecimals, 4)} WISP...`);
+          paymentTxHash = await transferWalletFundAsset({
+            amountWei: feeAmountWei,
+            asset: {
+              kind: 'erc20',
+              tokenAddress: quote.feeTokenAddress,
+              symbol: 'WISP',
+              decimals: quote.feeTokenDecimals
+            },
+            signer,
+            toAddress: quote.feeRecipient
+          });
+          setTradeAgentRetryPaymentTxHash(paymentTxHash);
+          setTradeAgentRetryPaymentRequestId(requestId);
+          writeTradeAgentRetryPayment({ action: tradeAgentAction, prompt, requestId, txHash: paymentTxHash });
+        }
+        setTradeAgentStatus('Asking Trade Agent...');
+        const response = await runTradeAgentRequest({
+          action: tradeAgentAction,
+          context: requestContext,
+          payerAddress: walletAddress,
+          paymentTxHash,
+          prompt,
+          requestId
+        });
+        const actions =
+          tradeAgentAction === 'find_price' && requestQuote
+            ? [
+                {
+                  type: 'open_order' as const,
+                  label: 'Open order',
+                  tradeId: requestQuote.tradeId,
+                  escrowContract: requestQuote.escrowContract
+                }
+              ]
+            : response.actions;
+        appendTradeAgentMessage({
+          role: 'assistant',
+          title: 'Trade Agent',
+          text: response.answer,
+          warnings: response.warnings,
+          actions
+        });
+        setTradeAgentRetryPaymentTxHash('');
+        setTradeAgentRetryPaymentRequestId('');
+        writeTradeAgentRetryPayment(null);
+        setTradeAgentPrompt('');
+        setTradeAgentStatus('Ready.');
+        refreshAllTradingBalances({ reason: 'trade-action', signer, silent: true }).catch(() => {});
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Trade Agent request failed.';
+        setTradeAgentError(message);
+        const retryCopy = paymentTxHash ? 'You can retry without paying again.' : 'Request failed before payment.';
+        setTradeAgentStatus(paymentTxHash ? retryCopy : '');
+        appendTradeAgentMessage({
+          role: 'assistant',
+          title: 'Trade Agent',
+          text: `${message} ${retryCopy}`
+        });
+      } finally {
+        setTradeAgentLoading(false);
+      }
+    },
+    [
+      appendTradeAgentMessage,
+      buildPromptOnlyTradeAgentContext,
+      getTradeSigner,
+      refreshAllTradingBalances,
+      tradeAgentAction,
+      tradeAgentContext,
+      tradeAgentFeeQuote,
+      tradeAgentPrompt,
+      tradeAgentRetryPaymentRequestId,
+      tradeAgentRetryPaymentTxHash,
+      tradeAgentExplicitContext,
+      resolveTradeAgentPromptQuoteContext,
+      walletAddress
+    ]
+  );
+  const getTradeAgentActionButtonLabel = (action: TradeAgentResponseAction): string => {
+    if (action.label) {
+      return action.label;
+    }
+    if (action.type === 'prefill_swap') {
+      return 'Prefill swap';
+    }
+    if (action.type === 'prefill_limit') {
+      return 'Prefill limit';
+    }
+    if (action.type === 'prefill_counter') {
+      return 'Prefill counter';
+    }
+    if (action.type === 'open_order') {
+      return 'Open order';
+    }
+    if (action.type === 'prefill_message') {
+      return 'Copy draft';
+    }
+    return 'Use draft';
+  };
+  const canUseTradeAgentAction = (action: TradeAgentResponseAction): boolean =>
+    action.type === 'prefill_swap' ||
+    action.type === 'prefill_limit' ||
+    action.type === 'prefill_counter' ||
+    action.type === 'open_order' ||
+    Boolean(action.message);
+  const getTradeAgentActionDescription = (action: TradeAgentResponseAction): string => {
+    if (action.type === 'prefill_swap') {
+      return [action.sellAmount, action.sellToken, 'for', action.buyToken].filter(Boolean).join(' ');
+    }
+    if (action.type === 'prefill_limit') {
+      return [action.sellToken, '->', action.buyToken, action.price ? `at ${action.price}` : ''].filter(Boolean).join(' ');
+    }
+    if (action.type === 'prefill_counter') {
+      return [action.sellToken, '->', action.buyToken, action.price ? `at ${action.price}` : ''].filter(Boolean).join(' ');
+    }
+    if (action.type === 'open_order' && action.tradeId) {
+      return `Order #${action.tradeId}`;
+    }
+    if (action.message) {
+      return action.message.length > 84 ? `${action.message.slice(0, 84)}...` : action.message;
+    }
+    return 'Review before using.';
+  };
+  const getTradeAgentActionCta = (action: TradeAgentResponseAction): string =>
+    action.type === 'open_order' ? 'Open' : 'Use';
+  const visibleTradeAgentQuickActions = useMemo(
+    () => TRADE_AGENT_QUICK_ACTIONS.filter((item) => !item.requiresContext || tradeAgentExplicitContext || detailTrade),
+    [detailTrade, tradeAgentExplicitContext]
+  );
+  const updateTradeAgentPrompt = useCallback((value: string) => {
+    if (tradeAgentRetryPaymentTxHash) {
+      setTradeAgentRetryPaymentTxHash('');
+      setTradeAgentRetryPaymentRequestId('');
+      writeTradeAgentRetryPayment(null);
+      setTradeAgentStatus('');
+    }
+    setTradeAgentPrompt(value);
+  }, [tradeAgentRetryPaymentTxHash]);
+  const resolveTradeAgentQuickActionPrompt = useCallback(
+    (item: (typeof TRADE_AGENT_QUICK_ACTIONS)[number]): string => {
+      const sellSymbol = swapSellToken?.symbol;
+      const buySymbol = swapBuyToken?.symbol;
+      if (!sellSymbol || !buySymbol) {
+        return item.prompt;
+      }
+      if (item.action === 'find_price') {
+        const request =
+          swapActionMode === 'buy'
+            ? `buy [amount] ${buySymbol} with ${sellSymbol}`
+            : `sell [amount] ${sellSymbol} for ${buySymbol}`;
+        return `I want to ${request}.`;
+      }
+      if (item.action === 'draft_limit') {
+        return `I want to [buy/sell] [amount] ${sellSymbol} for ${buySymbol} at [price]. Order: [public/unlisted/direct]. Liquidity: [private/visible].`;
+      }
+      return item.prompt;
+    },
+    [swapActionMode, swapBuyToken?.symbol, swapSellToken?.symbol]
+  );
+  const renderTradeAgentPanel = () => (
+    <section className="standalone-trades-section p2p-agent-section p2p-trade-workspace-panel" aria-label="Trade Agent">
+      <div className="p2p-trade-entry-panel p2p-agent-panel">
+        <div className="p2p-agent-hero">
+          <div>
+            <span>Trade Agent</span>
+            <strong>Trading help, not autopilot.</strong>
+          </div>
+          <small>{tradeAgentFeeLoading ? 'Checking WISP fee...' : tradeAgentFeeLabel}</small>
+        </div>
+
+        <div className="p2p-agent-chat-window">
+          <div className="p2p-agent-messages" role="log" aria-live="polite">
+            {tradeAgentMessages.map((message) => {
+              const actions = (message.actions ?? []).filter(canUseTradeAgentAction);
+              return (
+                <div
+                  className={`p2p-agent-message p2p-agent-message-${message.role}${actions.length ? ' p2p-agent-response' : ''}`}
+                  key={message.id}
+                >
+                  <span>{message.title}</span>
+                  <p>{message.text}</p>
+                  {message.warnings?.length ? (
+                    <ul>
+                      {message.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {actions.length ? (
+                    <div className="p2p-agent-response-actions">
+                      {actions.map((action, index) => (
+                        <div className="p2p-agent-action-card" key={`${message.id}:${action.type}:${index}`}>
+                          <div>
+                            <strong>{getTradeAgentActionButtonLabel(action)}</strong>
+                            <small>{getTradeAgentActionDescription(action)}</small>
+                          </div>
+                          <button
+                            type="button"
+                            className="standalone-trade-secondary-btn"
+                            onClick={() => {
+                              applyTradeAgentAction(action).catch((error) => {
+                                setTradeAgentError(error instanceof Error ? error.message : 'Could not use this draft.');
+                              });
+                            }}
+                          >
+                            {getTradeAgentActionCta(action)}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+
+            {tradeAgentLoading ? (
+              <div className="p2p-agent-message p2p-agent-message-assistant">
+                <span>Trade Agent</span>
+                <p>{tradeAgentStatus || 'Working...'}</p>
+              </div>
+            ) : null}
+            <div ref={tradeAgentMessagesEndRef} />
+          </div>
+
+          <div className="p2p-agent-composer">
+            {tradeAgentError ? <p className="error p2p-agent-error">{tradeAgentError}</p> : null}
+            <div className="p2p-agent-quick-actions" aria-label="Trade Agent actions">
+              {visibleTradeAgentQuickActions.map((item) => {
+                const prompt = resolveTradeAgentQuickActionPrompt(item);
+                return (
+                <button
+                  key={`${item.action}:${item.label}`}
+                  type="button"
+                  className={tradeAgentPrompt === prompt ? 'active' : undefined}
+                  onClick={() => {
+                    setTradeAgentAction(item.action);
+                    setTradeAgentRetryPaymentTxHash('');
+                    setTradeAgentRetryPaymentRequestId('');
+                    writeTradeAgentRetryPayment(null);
+                    setTradeAgentStatus('');
+                    setTradeAgentError('');
+                    setTradeAgentPrompt(prompt);
+                  }}
+                >
+                  {item.label}
+                </button>
+                );
+              })}
+            </div>
+
+            <form className="p2p-agent-prompt" onSubmit={submitTradeAgentRequest}>
+            <textarea
+              value={tradeAgentPrompt}
+              onChange={(event) => updateTradeAgentPrompt(event.target.value)}
+              placeholder="Ask about a pair, paste a note, or describe the order you want..."
+              rows={3}
+            />
+            <div className="p2p-agent-submit-row">
+              <span>{tradeAgentStatus || 'Paid from your ChainWhisper account.'}</span>
+              <button
+                type="submit"
+                className="trade-card-action trade-card-action-accept"
+              disabled={tradeAgentLoading || tradeAgentFeeLoading || !tradeAgentPrompt.trim() || !tradeAgentFeeQuote}
+            >
+                {tradeAgentLoading ? 'Working...' : tradeAgentRetryPaymentTxHash ? 'Retry without paying' : 'Pay and send'}
+            </button>
+            </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 
   const renderOtcSwapPanel = () => (
     <section className="standalone-trades-section p2p-swap-section p2p-trade-workspace-panel" aria-label="OTC swap">
@@ -10610,6 +11521,7 @@ export default function P2PTradingPage({
   const isComposerRoute = route.view === 'create' || route.view === 'counter';
   const isCounterRouteWithoutParent = route.view === 'counter' && !counterParentTrade;
   const showSwapSurface = routeSurfaceView === 'swap' && !isComposerRoute;
+  const showAgentSurface = routeSurfaceView === 'agent' && !isComposerRoute;
   const showPublicSurface = routeSurfaceView === 'public' && !isComposerRoute;
   const marketOverviewClassView = routeSurfaceView ?? route.view;
 
@@ -10769,6 +11681,7 @@ export default function P2PTradingPage({
       ) : null}
 
       {showSwapSurface ? renderOtcSwapPanel() : null}
+      {showAgentSurface ? renderTradeAgentPanel() : null}
 
       {showPublicSurface ? (
         <section className="standalone-trades-section p2p-public-trades-section">

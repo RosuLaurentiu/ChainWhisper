@@ -9,6 +9,9 @@ import { resolveTradeOrderSummary, resolveTradePriceRatioDisplay } from '../../.
 type LinkedTradeContextPanelProps = {
   context: LinkedTradeContext;
   currentWalletAddress?: string;
+  negotiating?: boolean;
+  negotiateFeeLabel?: string;
+  onNegotiate?: (context: LinkedTradeContext) => void;
   onCopyShareLink: (value: string) => void;
   onDismiss: () => void;
   onOpenTerminal: (path: string) => void;
@@ -18,6 +21,9 @@ type LinkedTradeContextPanelProps = {
 export default function LinkedTradeContextPanel({
   context,
   currentWalletAddress,
+  negotiating = false,
+  negotiateFeeLabel = 'paid',
+  onNegotiate,
   onCopyShareLink,
   onDismiss,
   onOpenTerminal,
@@ -79,6 +85,11 @@ export default function LinkedTradeContextPanel({
         {ratioDisplay ? <small>Price ratio: {ratioDisplay.label}</small> : null}
       </div>
       <div className="linked-trade-context-actions">
+        {onNegotiate ? (
+          <button type="button" onClick={() => onNegotiate(context)} disabled={negotiating}>
+            {negotiating ? 'Drafting...' : `Negotiate · ${negotiateFeeLabel}`}
+          </button>
+        ) : null}
         <button type="button" onClick={() => onOpenTerminal(context.terminalPath)}>
           Open order
         </button>

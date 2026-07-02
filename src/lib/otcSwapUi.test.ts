@@ -182,11 +182,11 @@ describe('OTC swap action UI model', () => {
     });
   });
 
-  it('allows linked one-off orders to use sell and buy input modes for the same executable side', () => {
+  it('defaults linked one-off orders to their executable sell side', () => {
     const availableModes = getOtcSwapLinkedActionModes({ recurringOrder: null });
 
-    expect(availableModes).toEqual({ sell: true, buy: true });
-    expect(resolveOtcSwapLinkedActionMode('buy', availableModes)).toBe('buy');
+    expect(availableModes).toEqual({ sell: true, buy: false });
+    expect(resolveOtcSwapLinkedActionMode('buy', availableModes)).toBe('sell');
   });
 
   it('limits linked recurring orders to their open sides', () => {

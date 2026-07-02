@@ -37,6 +37,21 @@
   .p2p-swap-review {
     width: 100%;
   }
+
+  .p2p-agent-hero,
+  .p2p-agent-submit-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .p2p-agent-hero small,
+  .p2p-agent-submit-row .trade-card-action {
+    width: 100%;
+  }
+
+  .p2p-agent-message {
+    max-width: 100%;
+  }
 }
 
 @media (max-width: 920px) {
@@ -218,7 +233,7 @@
 
   .app-shell-trades .top-header-nav .p2p-trade-tabs {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     width: 100%;
   }
 
@@ -1630,7 +1645,7 @@
     bottom: 0;
     z-index: 60;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0;
     width: 100vw;
     border-top: 1px solid rgba(121, 95, 184, 0.62);
@@ -5338,7 +5353,7 @@ summary:focus:not(:focus-visible),
     bottom: 0;
     z-index: 80;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0;
     width: 100vw;
     padding: 4px 5px calc(4px + env(safe-area-inset-bottom, 0px));

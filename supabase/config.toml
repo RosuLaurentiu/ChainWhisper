@@ -2,3 +2,6 @@ project_id = "ousgmjyajyorywpqbdkf"
 
 [functions.chat-image-cleanup]
 verify_jwt = false
+
+[functions.trade-agent]
+verify_jwt = false

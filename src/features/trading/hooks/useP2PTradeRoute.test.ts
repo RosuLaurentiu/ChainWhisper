@@ -51,6 +51,7 @@ describe('P2P trade route helpers', () => {
       tradeId: null
     });
     expect(resolveTradeRouteFromParts('/otc/desk')).toMatchObject({ view: 'public', tradeId: null });
+    expect(resolveTradeRouteFromParts('/otc/agent')).toMatchObject({ view: 'agent', tradeId: null });
     expect(resolveTradeRouteFromParts('/otc/orders')).toMatchObject({ view: 'mine', tradeId: null });
     expect(resolveTradeRouteFromParts('/trades')).toMatchObject({ view: 'public', tradeId: null, routeFamily: 'trades' });
     expect(resolveTradeRouteFromParts('/otcdesk')).toMatchObject({ view: 'swap', tradeMode: 'swap', tradeId: null });
@@ -85,6 +86,7 @@ describe('P2P trade route helpers', () => {
 
   it('builds clean OTC Desk app routes while preserving public share links', () => {
     expect(buildTradeRoutePath({ view: 'swap', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc');
+    expect(buildTradeRoutePath({ view: 'agent', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc/agent');
     expect(buildTradeRoutePath({ view: 'public', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe('/otc/desk');
     expect(buildTradeRoutePath({ view: 'create', tradeMode: 'limit', tradeId: null, accessSecret: '', routeFamily: 'desk', routeError: '' })).toBe(
       '/otc/limit'

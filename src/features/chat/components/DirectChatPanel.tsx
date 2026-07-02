@@ -90,6 +90,12 @@ type DirectChatPanelProps = {
   walletAddress: string;
   processingTradeActionId: string;
   onCopyLinkedTradeContextLink: (value: string) => void;
+  draftingTradeMessageId?: string;
+  draftTradeFeeLabel?: string;
+  negotiationFeeLabel?: string;
+  negotiatingLinkedTrade?: boolean;
+  onDraftTradeFromMessage?: (message: ChatMessage) => void;
+  onNegotiateLinkedTrade?: (context: LinkedTradeContext) => void;
   onDismissLinkedTradeContext: () => void;
   onOpenTradeTerminalPath: (path: string) => void;
   onAcceptTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
@@ -171,6 +177,12 @@ function DirectChatPanel({
   walletAddress,
   processingTradeActionId,
   onCopyLinkedTradeContextLink,
+  draftingTradeMessageId = '',
+  draftTradeFeeLabel = 'paid',
+  negotiationFeeLabel = 'paid',
+  negotiatingLinkedTrade = false,
+  onDraftTradeFromMessage,
+  onNegotiateLinkedTrade,
   onDismissLinkedTradeContext,
   onOpenTradeTerminalPath,
   onAcceptTrade,
@@ -303,6 +315,9 @@ function DirectChatPanel({
     <LinkedTradeContextPanel
       context={linkedTradeContext}
       currentWalletAddress={walletAddress}
+      negotiating={negotiatingLinkedTrade}
+      negotiateFeeLabel={negotiationFeeLabel}
+      onNegotiate={onNegotiateLinkedTrade}
       onCopyShareLink={onCopyLinkedTradeContextLink}
       onDismiss={onDismissLinkedTradeContext}
       onOpenTerminal={onOpenTradeTerminalPath}
@@ -402,6 +417,12 @@ function DirectChatPanel({
                 : null;
             const parsedImageTag = parseImageTag(message.text);
             const messageReactions = getReactionsForMessage(message);
+            const canDraftTradeFromMessage = Boolean(
+              onDraftTradeFromMessage &&
+              messageDisplayText.trim() &&
+              !parsedTradeOffer &&
+              !parsedImageTag
+            );
             const reactedEmojiSet = new Set(
               messageReactions.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)
             );
@@ -445,8 +466,17 @@ function DirectChatPanel({
                     sendingReaction={sendingReaction}
                     reactionDisabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
                     reactionTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
+                    draftTradeDisabled={walletPromptSensitiveActionsDisabled || draftingTradeMessageId === message.id}
+                    draftTradeTitle={
+                      walletPromptSensitiveActionsDisabled
+                        ? walletPromptSensitiveActionsTitle
+                        : draftingTradeMessageId === message.id
+                          ? 'Drafting trade...'
+                          : `Draft trade · ${draftTradeFeeLabel}`
+                    }
                     replyDisabled={walletPromptSensitiveActionsDisabled}
                     replyTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'Reply'}
+                    onDraftTradeFromMessage={canDraftTradeFromMessage ? onDraftTradeFromMessage : undefined}
                     onToggleReactionPicker={onToggleReactionPicker}
                     onSendReaction={onSendReaction}
                     onReplyToMessage={onReplyToMessage}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, type KeyboardEvent } from 'react';
-import { MessageCircleReply, SmilePlus } from 'lucide-react';
+import { FilePenLine, MessageCircleReply, SmilePlus } from 'lucide-react';
 import { DEFAULT_REACTION_EMOJIS, type ChatMessage } from '../lib/appShared';
 
 type MessageActionsProps = {
@@ -9,8 +9,11 @@ type MessageActionsProps = {
   sendingReaction: boolean;
   reactionDisabled: boolean;
   reactionTitle: string;
+  draftTradeDisabled?: boolean;
+  draftTradeTitle?: string;
   replyDisabled: boolean;
   replyTitle: string;
+  onDraftTradeFromMessage?: (message: ChatMessage) => void;
   onToggleReactionPicker: (messageId: string) => void;
   onSendReaction: (targetMessage: ChatMessage, emojiInput: string) => Promise<void>;
   onReplyToMessage: (message: ChatMessage) => void;
@@ -23,8 +26,11 @@ export default function MessageActions({
   sendingReaction,
   reactionDisabled,
   reactionTitle,
+  draftTradeDisabled = false,
+  draftTradeTitle = 'Draft trade',
   replyDisabled,
   replyTitle,
+  onDraftTradeFromMessage,
   onToggleReactionPicker,
   onSendReaction,
   onReplyToMessage
@@ -109,6 +115,18 @@ export default function MessageActions({
       >
         <MessageCircleReply aria-hidden="true" size={15} strokeWidth={2.25} />
       </button>
+      {onDraftTradeFromMessage ? (
+        <button
+          type="button"
+          className="message-draft-trade-action"
+          onClick={() => onDraftTradeFromMessage(message)}
+          aria-label="Draft trade from this message"
+          title={draftTradeTitle}
+          disabled={draftTradeDisabled}
+        >
+          <FilePenLine aria-hidden="true" size={15} strokeWidth={2.25} />
+        </button>
+      ) : null}
       {pickerOpen ? (
         <div
           ref={pickerRef}

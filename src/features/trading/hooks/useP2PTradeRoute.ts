@@ -15,10 +15,10 @@ import {
   writeWalletBootstrapActiveRouteState
 } from '../../../lib/walletBootstrapRoute';
 
-export type TradePageView = 'swap' | 'public' | 'create' | 'trade' | 'counter' | 'mine';
+export type TradePageView = 'swap' | 'agent' | 'public' | 'create' | 'trade' | 'counter' | 'mine';
 export type TradeEntryMode = 'swap' | 'limit' | 'recurring';
 export type TradeRouteFamily = 'desk' | 'trades';
-export type TradeSurfaceView = 'swap' | 'public' | 'create' | 'recurring' | 'trade' | 'counter' | 'mine';
+export type TradeSurfaceView = 'swap' | 'agent' | 'public' | 'create' | 'recurring' | 'trade' | 'counter' | 'mine';
 
 export type TradeNavigationOptions = {
   clearPendingTerminalRoute?: boolean;
@@ -53,6 +53,7 @@ type TradeRouteStorage = Pick<Storage, 'getItem' | 'removeItem' | 'setItem'>;
 const PENDING_TRADE_TERMINAL_ROUTE_STORAGE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
 const PENDING_TRADE_TERMINAL_ROUTE_TTL_MS = 10 * 60 * 1000;
 const OTC_DESK_ROUTE = '/otc';
+const OTC_DESK_AGENT_ROUTE = '/otc/agent';
 const OTC_DESK_PUBLIC_ROUTE = '/otc/desk';
 const OTC_DESK_CREATE_ROUTE = '/otc/limit';
 const OTC_DESK_RECURRING_ROUTE = '/otc/recurring';
@@ -81,6 +82,13 @@ const createEmptySwapRoute = (routeFamily: TradeRouteFamily = 'desk'): TradeRout
 });
 const createEmptyPublicRoute = (routeFamily: TradeRouteFamily = 'desk'): TradeRouteState => ({
   view: 'public',
+  tradeId: null,
+  accessSecret: '',
+  routeFamily,
+  routeError: ''
+});
+const createEmptyAgentRoute = (routeFamily: TradeRouteFamily = 'desk'): TradeRouteState => ({
+  view: 'agent',
   tradeId: null,
   accessSecret: '',
   routeFamily,
@@ -341,6 +349,9 @@ export const resolveTradeRouteFromParts = (
   if (lowerPathname === OTC_DESK_ROUTE || lowerPathname === LEGACY_OTC_DESK_ROUTE) {
     const tradeMode = resolveTradeEntryMode(searchValue);
     return tradeMode === 'swap' ? createEmptySwapRoute(routeFamily) : createEmptyComposerRoute(tradeMode, routeFamily);
+  }
+  if (lowerPathname === OTC_DESK_AGENT_ROUTE) {
+    return createEmptyAgentRoute(routeFamily);
   }
   if (lowerPathname === '/trades' || lowerPathname === OTC_DESK_PUBLIC_ROUTE || lowerPathname === LEGACY_OTC_DESK_PUBLIC_ROUTE) {
     return createEmptyPublicRoute(routeFamily);
@@ -624,6 +635,9 @@ export const buildTradeSurfacePath = (
   if (view === 'public') {
     return OTC_DESK_PUBLIC_ROUTE;
   }
+  if (view === 'agent') {
+    return OTC_DESK_AGENT_ROUTE;
+  }
   if (view === 'mine') {
     return OTC_DESK_MY_TRADES_ROUTE;
   }
@@ -646,7 +660,7 @@ export const buildTradeRoutePath = (route: TradeRouteState, routeFamily: TradeRo
   if (route.view === 'create') {
     return buildTradeSurfacePath(route.view, routeFamily, route.tradeMode);
   }
-  if (route.view === 'public' || route.view === 'mine' || route.view === 'counter') {
+  if (route.view === 'agent' || route.view === 'public' || route.view === 'mine' || route.view === 'counter') {
     return buildTradeSurfacePath(route.view, routeFamily);
   }
   if (route.view === 'trade') {
