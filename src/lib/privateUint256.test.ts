@@ -5,6 +5,8 @@ import { encryptPrivateUint256Input } from './privateUint256';
 
 const AES_KEY = '000102030405060708090a0b0c0d0e0f';
 const SIGNATURE = `0x${'11'.repeat(65)}`;
+const toHex = (bytes: Uint8Array): string =>
+  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 
 const createBrowserLikeSigner = (aesKey = AES_KEY) => {
   let signedMessage: Uint8Array | null = null;
@@ -53,6 +55,9 @@ describe('private uint256 input encryption', () => {
     expect(decryptUint256(encrypted.ciphertext, AES_KEY)).toBe(amount);
     expect(encrypted.signature).toBe(SIGNATURE);
     expect(getSignedMessage()?.length).toBe(108);
+    expect(toHex(getSignedMessage() ?? new Uint8Array()).startsWith(
+      '0x1111111111111111111111111111111111111111222222222222222222222222222222222222222212345678'
+    )).toBe(true);
   });
 
   it('encrypts full 256-bit private-token amounts', async () => {

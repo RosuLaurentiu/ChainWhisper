@@ -1,5 +1,4 @@
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
-import { getBytes, hexlify, solidityPacked } from '@coti-io/coti-ethers';
 import {
   decodeUint,
   encodeKey,
@@ -31,12 +30,40 @@ const BLOCK_SIZE_BYTES = 16;
 const UINT256_SIZE_BYTES = 32;
 const MAX_UINT256 = (1n << 256n) - 1n;
 
+const stripHexPrefix = (value: string): string => value.startsWith('0x') ? value.slice(2) : value;
+
+const bytesToHex = (bytes: Uint8Array): string =>
+  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+
+const hexToBytes = (value: string): Uint8Array => {
+  const hex = stripHexPrefix(value);
+  if (hex.length % 2 !== 0) {
+    throw new Error('Invalid hex string.');
+  }
+
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+};
+
+const packPrivateUint256ValidationMessage = (
+  senderAddress: string,
+  contractAddress: string,
+  functionSelector: string,
+  ciphertextBytes: Uint8Array
+): Uint8Array =>
+  hexToBytes(
+    `0x${stripHexPrefix(senderAddress)}${stripHexPrefix(contractAddress)}${stripHexPrefix(functionSelector)}${stripHexPrefix(bytesToHex(ciphertextBytes))}`
+  );
+
 const normalizePrivateUint256Input = (value: itUint256 | PrivateUint256Input): PrivateUint256Input => ({
   ciphertext: {
     ciphertextHigh: BigInt(value.ciphertext.ciphertextHigh),
     ciphertextLow: BigInt(value.ciphertext.ciphertextLow)
   },
-  signature: typeof value.signature === 'string' ? value.signature : hexlify(value.signature)
+  signature: typeof value.signature === 'string' ? value.signature : bytesToHex(value.signature)
 });
 
 const uintToBytes = (value: bigint, byteLength: number): Uint8Array => {
@@ -109,11 +136,13 @@ const encryptWithBrowserSigner = async (
   const ciphertextBytes = buildCiphertextBytes(plaintext, aesKey);
   const ciphertextHigh = decodeUint(ciphertextBytes.slice(0, UINT256_SIZE_BYTES));
   const ciphertextLow = decodeUint(ciphertextBytes.slice(UINT256_SIZE_BYTES));
-  const validationMessage = solidityPacked(
-    ['address', 'address', 'bytes4', 'bytes'],
-    [senderAddress, contractAddress, functionSelector, hexlify(ciphertextBytes)]
+  const validationMessage = packPrivateUint256ValidationMessage(
+    senderAddress,
+    contractAddress,
+    functionSelector,
+    ciphertextBytes
   );
-  const signature = await signer.signMessage(getBytes(validationMessage));
+  const signature = await signer.signMessage(validationMessage);
 
   return {
     ciphertext: {
