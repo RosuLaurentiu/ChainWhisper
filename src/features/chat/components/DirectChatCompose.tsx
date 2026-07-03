@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode, type Ref } from 'react';
-import ChatSendIcon from '../../../components/ChatSendIcon';
-import ChatImageIcon from '../../../components/ChatImageIcon';
-import ImageAttachmentPreview from '../../../components/ImageAttachmentPreview';
+import ChatSendIcon from '../../../shared/components/chat/ChatSendIcon';
+import ChatImageIcon from '../../../shared/components/chat/ChatImageIcon';
+import ImageAttachmentPreview from '../../../shared/components/chat/ImageAttachmentPreview';
 import { TIP_NATIVE_TOKEN_SYMBOL, type TipTokenSelection } from '../../../lib/appShared';
 import { CHAT_IMAGE_FILE_ACCEPT } from '../../../lib/imagePull';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';

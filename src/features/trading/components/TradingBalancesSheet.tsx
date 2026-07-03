@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useModalA11y } from '../../../hooks/useModalA11y';
+import { useModalA11y } from '../../../shared/hooks/useModalA11y';
 import { buildTotalTradingBalanceItems, type TradingBalanceDisplayItem } from '../../../lib/tradingBalances';
 
 type BalanceAccountRole = 'chainwhisper' | 'owner';

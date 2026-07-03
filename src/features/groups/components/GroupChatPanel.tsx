@@ -1,13 +1,13 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useMemo, useRef, type KeyboardEvent, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import GroupChatCompose from './GroupChatCompose';
-import ChatImage from '../../../components/ChatImage';
-import MessageActions from '../../../components/MessageActions';
-import MessageTextWithLinks from '../../../components/MessageTextWithLinks';
+import ChatImage from '../../../shared/components/chat/ChatImage';
+import MessageActions from '../../../shared/components/chat/MessageActions';
+import MessageTextWithLinks from '../../../shared/components/chat/MessageTextWithLinks';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
-import { closeDetailsOnEscape } from '../../../components/a11y';
+import { closeDetailsOnEscape } from '../../../shared/components/a11y';
 import { parseImageTag } from '../../../lib/imagePull';
-import useVirtualizedPrependScrollAnchor from '../../../hooks/useVirtualizedPrependScrollAnchor';
+import useVirtualizedPrependScrollAnchor from '../../../shared/hooks/useVirtualizedPrependScrollAnchor';
 import {
   formatMessageTimestamp,
   getMessageDisplayText,

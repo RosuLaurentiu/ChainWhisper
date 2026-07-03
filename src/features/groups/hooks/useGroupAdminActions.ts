@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
   acceptGroupInviteOnChain,
@@ -209,6 +209,34 @@ export default function useGroupAdminActions({
       walletAddress
     ]
   );
+
+  useEffect(() => {
+    if (
+      activeGroupId === null ||
+      !walletAddress ||
+      !hasAesReady ||
+      !isActiveGroupAdmin ||
+      chainId !== COTI_NETWORK.chainIdDecimal
+    ) {
+      setActiveGroupJoinCodes([]);
+      setLoadingActiveGroupJoinCodes(false);
+      setRevokingGroupJoinCodeHash('');
+      return;
+    }
+
+    loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
+  }, [
+    activeGroupId,
+    activeGroupMeta?.lastBlock,
+    chainId,
+    hasAesReady,
+    isActiveGroupAdmin,
+    loadActiveJoinCodesForGroup,
+    setActiveGroupJoinCodes,
+    setLoadingActiveGroupJoinCodes,
+    setRevokingGroupJoinCodeHash,
+    walletAddress
+  ]);
 
   const revokeJoinCodeForActiveGroup = useCallback(
     async (codeHashInput: string, displayCode?: string) => {
@@ -974,7 +1002,6 @@ export default function useGroupAdminActions({
     inviteMembersToActiveGroup,
     joinGroupWithCode,
     leaveActiveGroup,
-    loadActiveJoinCodesForGroup,
     removeMemberFromActiveGroup,
     renameActiveGroup,
     revokeGeneratedJoinCodeForActiveGroup,

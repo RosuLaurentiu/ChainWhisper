@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { OtcSwapQuoteCandidate } from './otcSwapQuote';
 import {
+  buildOtcSwapActionSummary,
+  compactOtcSwapPriceLabel,
   formatOtcSwapAvailabilityLabel,
   formatOtcSwapFillHistoryNote,
+  formatOtcSwapMarketDirectionLabel,
+  formatOtcSwapPrice,
   getOtcSwapLinkedActionModes,
   resolveOtcSwapLinkedActionMode,
   resolveOtcSwapPriceRatioDisplay,
+  resolveVisibleOtcSwapPriceRatioDisplay,
   resolveSwapLimitPrefill,
   resolveSwapActionModeChange,
   resolveSwapTokenFlip
@@ -221,6 +226,34 @@ describe('OTC swap action UI model', () => {
 
   it('shows private availability as private liquidity', () => {
     expect(formatOtcSwapAvailabilityLabel(quote(), 'buy')).toBe('Private liquidity');
+  });
+
+  it('formats compact swap price and action summary labels', () => {
+    const display = resolveVisibleOtcSwapPriceRatioDisplay(quote(), 'sell', false);
+    expect(display).toBeTruthy();
+    expect(formatOtcSwapMarketDirectionLabel('sell', display!)).toBe('Sell 0.2 p.COTI/p.gCOTI');
+    expect(compactOtcSwapPriceLabel('1.230000 p.COTI/p.gCOTI', 'p.COTI/p.gCOTI')).toBe('1.23');
+    expect(formatOtcSwapPrice(quote(), quote(), display)).toBe('--');
+
+    const selectedQuote = quote();
+    const selectedDisplay = resolveOtcSwapPriceRatioDisplay(selectedQuote, 'sell');
+    expect(formatOtcSwapPrice(selectedQuote, selectedQuote, selectedDisplay)).toBe('0.2 p.COTI/p.gCOTI');
+    expect(
+      buildOtcSwapActionSummary({
+        availabilityLabel: 'Private liquidity',
+        buyToken: selectedQuote.buyToken,
+        priceLabel: '0.2 p.COTI/p.gCOTI',
+        quote: selectedQuote,
+        sellToken: selectedQuote.sellToken,
+        sourceLabel: 'Recurring'
+      })
+    ).toEqual([
+      { label: 'You sell', value: '0 p.gCOTI' },
+      { label: 'You buy', value: '0 p.COTI' },
+      { label: 'Rate', value: '0.2 p.COTI/p.gCOTI' },
+      { label: 'Order', value: 'Recurring #5' },
+      { label: 'Availability', value: 'Private liquidity' }
+    ]);
   });
 
   it('explains private-liquidity partial fills when the reveal shows less than requested', () => {

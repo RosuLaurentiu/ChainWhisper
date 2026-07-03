@@ -6,7 +6,7 @@ import {
   type ActiveGroupJoinCode
 } from '../../../lib/appShared';
 import type { GroupInviteMenuView, GroupJoinCodeMode } from '../groupUiStore';
-import { closeDetailsOnEscape } from '../../../components/a11y';
+import { closeDetailsOnEscape } from '../../../shared/components/a11y';
 
 type SharedGroupInviteToolProps = {
   processingGroupAction: boolean;

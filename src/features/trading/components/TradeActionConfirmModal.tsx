@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { useModalA11y } from '../../../hooks/useModalA11y';
+import { useModalA11y } from '../../../shared/hooks/useModalA11y';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 
 type TradeActionConfirmModalProps = {

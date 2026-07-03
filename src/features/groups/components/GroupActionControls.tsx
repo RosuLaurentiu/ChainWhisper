@@ -1,4 +1,4 @@
-import { closeDetailsOnEscape } from '../../../components/a11y';
+import { closeDetailsOnEscape } from '../../../shared/components/a11y';
 
 type GroupActionControlsProps = {
   isActiveGroupAdmin: boolean;

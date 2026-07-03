@@ -9,7 +9,7 @@ import {
   RECURRING_OTC_CONTRACT_ADDRESS,
   TRADE_ESCROW_CONTRACT_ADDRESS
 } from '../../../lib/appShared';
-import { useModalA11y } from '../../../hooks/useModalA11y';
+import { useModalA11y } from '../../../shared/hooks/useModalA11y';
 
 type TradingContractSourceItem = {
   id: string;

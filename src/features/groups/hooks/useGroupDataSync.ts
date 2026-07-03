@@ -28,6 +28,7 @@ import {
   collectGroupIdsFromLogs,
   collectLatestGroupRemovalEvents,
   mergeGroupSyncOptions,
+  resolveActiveGroupBackfillPlan,
   resolveGroupPrefetchPlan,
   resolveTrackedGroupMessageLoad,
   trackedGroupMessageLoadsMatch,
@@ -67,6 +68,7 @@ type UseGroupDataSyncArgs = {
   fetchOnChainNicknames: (addresses: string[]) => Promise<Map<string, string>>;
   getMemoSigner: () => Promise<MemoSignerBundle>;
   groupInvitesRef: MutableRefObject<GroupInvite[]>;
+  groupDeepBackfillDoneRef: MutableRefObject<Record<string, boolean>>;
   groupMemberLastSyncedBlockRef: MutableRefObject<Record<string, number>>;
   groupMessageLastSyncedBlockRef: MutableRefObject<Record<string, number>>;
   groupOverviewLastSyncedBlockRef: MutableRefObject<Record<string, number>>;
@@ -128,6 +130,7 @@ export default function useGroupDataSync({
   fetchOnChainNicknames,
   getMemoSigner,
   groupInvitesRef,
+  groupDeepBackfillDoneRef,
   groupMemberLastSyncedBlockRef,
   groupMessageLastSyncedBlockRef,
   groupOverviewLastSyncedBlockRef,
@@ -884,6 +887,30 @@ export default function useGroupDataSync({
   useEffect(() => {
     syncGroupDataRef.current = syncGroupData;
   }, [syncGroupData]);
+
+  useEffect(() => {
+    const walletKey = walletAddress.trim().toLowerCase();
+    const backfillPlan = resolveActiveGroupBackfillPlan({
+      activeGroupId,
+      chainId,
+      completedBackfillKeys: groupDeepBackfillDoneRef.current,
+      hasAesReady,
+      requiredChainId: COTI_NETWORK.chainIdDecimal,
+      walletAddress,
+      walletAddressValid: isWalletAddress(walletKey)
+    });
+    if (!backfillPlan) {
+      return;
+    }
+
+    syncGroupDataRef.current(backfillPlan.fastOptions).catch(() => {});
+    if (backfillPlan.deepOptions) {
+      groupDeepBackfillDoneRef.current[backfillPlan.cacheKey] = true;
+      syncGroupDataRef.current(backfillPlan.deepOptions).catch(() => {
+        delete groupDeepBackfillDoneRef.current[backfillPlan.cacheKey];
+      });
+    }
+  }, [activeGroupId, chainId, groupDeepBackfillDoneRef, hasAesReady, syncGroupDataRef, walletAddress]);
 
   const activateGroup = useCallback((groupId: number) => {
     if (!Number.isFinite(groupId) || groupId <= 0) {

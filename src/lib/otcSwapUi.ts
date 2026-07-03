@@ -196,6 +196,95 @@ export const formatOtcSwapAvailabilityLabel = (
     : `Only ${formattedAmount} at this price`;
 };
 
+export const formatOtcSwapQuoteAmount = (
+  amountWei: bigint,
+  token?: Pick<TradeAssetPayload, 'decimals' | 'symbol'> | null,
+  maxDecimals = 8
+): string => token ? `${formatTokenAmount(amountWei, token.decimals, maxDecimals)} ${token.symbol}` : '--';
+
+export const resolveVisibleOtcSwapPriceRatioDisplay = (
+  quote: OtcSwapQuoteCandidate | null | undefined,
+  mode: OtcSwapInputMode,
+  priceDisplayInverted: boolean
+): TradePriceRatioDisplay | null =>
+  quote ? resolveOtcSwapPriceRatioDisplay(quote, mode, priceDisplayInverted) : null;
+
+export const stripOtcSwapPriceBasis = (label: string, basisLabel: string): string => {
+  const suffix = ` ${basisLabel}`;
+  return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+};
+
+export const compactOtcSwapPriceValue = (value: string): string => {
+  const normalized = value.trim();
+  if (!/^\d+\.\d+$/u.test(normalized)) {
+    return normalized;
+  }
+  const [whole, fraction] = normalized.split('.');
+  const compactFraction = fraction.slice(0, 4).replace(/0+$/u, '');
+  return compactFraction ? `${whole}.${compactFraction}` : whole;
+};
+
+export const compactOtcSwapPriceLabel = (label: string, basisLabel: string): string =>
+  compactOtcSwapPriceValue(stripOtcSwapPriceBasis(label, basisLabel));
+
+export const formatOtcSwapMarketDirectionLabel = (
+  mode: OtcSwapInputMode,
+  display: TradePriceRatioDisplay
+): string =>
+  `${mode === 'buy' ? 'Buy' : 'Sell'} ${compactOtcSwapPriceLabel(display.label, display.basisLabel)} ${
+    display.basisLabel
+  }`;
+
+export const formatOtcSwapPrice = (
+  quote: OtcSwapQuoteCandidate | null | undefined,
+  bestQuote: OtcSwapQuoteCandidate | null | undefined,
+  priceRatioDisplay: TradePriceRatioDisplay | null | undefined
+): string => {
+  if (!quote || quote !== bestQuote || !priceRatioDisplay) {
+    return '--';
+  }
+  return `${compactOtcSwapPriceLabel(priceRatioDisplay.label, priceRatioDisplay.basisLabel)} ${
+    priceRatioDisplay.basisLabel
+  }`;
+};
+
+export const buildOtcSwapActionSummary = ({
+  availabilityLabel,
+  buyToken,
+  priceLabel,
+  quote,
+  sellToken,
+  sourceLabel
+}: {
+  availabilityLabel: string;
+  buyToken?: Pick<TradeAssetPayload, 'decimals' | 'symbol'> | null;
+  priceLabel: string;
+  quote: OtcSwapQuoteCandidate;
+  sellToken?: Pick<TradeAssetPayload, 'decimals' | 'symbol'> | null;
+  sourceLabel: string;
+}) => [
+  {
+    label: 'You sell',
+    value: formatOtcSwapQuoteAmount(quote.estimatedSellAmountWei, sellToken, 6)
+  },
+  {
+    label: 'You buy',
+    value: formatOtcSwapQuoteAmount(quote.estimatedBuyAmountWei, buyToken, 6)
+  },
+  {
+    label: 'Rate',
+    value: priceLabel
+  },
+  {
+    label: 'Order',
+    value: `${sourceLabel} #${quote.tradeId}`
+  },
+  {
+    label: 'Availability',
+    value: availabilityLabel
+  }
+];
+
 type OtcSwapFillHistoryAsset = TradeAssetPayload & {
   visible: boolean;
 };

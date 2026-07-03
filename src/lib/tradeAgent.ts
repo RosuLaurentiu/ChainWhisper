@@ -208,6 +208,57 @@ export const normalizeTradeAgentResponse = (value: unknown): TradeAgentResponse 
   return { answer, warnings, actions };
 };
 
+export const getTradeAgentActionButtonLabel = (action: TradeAgentResponseAction): string => {
+  if (action.label) {
+    return action.label;
+  }
+  if (action.type === 'prefill_swap') {
+    return 'Prefill swap';
+  }
+  if (action.type === 'prefill_limit') {
+    return 'Prefill limit';
+  }
+  if (action.type === 'prefill_counter') {
+    return 'Prefill counter';
+  }
+  if (action.type === 'open_order') {
+    return 'Open order';
+  }
+  if (action.type === 'prefill_message') {
+    return 'Copy draft';
+  }
+  return 'Use draft';
+};
+
+export const canUseTradeAgentAction = (action: TradeAgentResponseAction): boolean =>
+  action.type === 'prefill_swap' ||
+  action.type === 'prefill_limit' ||
+  action.type === 'prefill_counter' ||
+  action.type === 'open_order' ||
+  Boolean(action.message);
+
+export const getTradeAgentActionDescription = (action: TradeAgentResponseAction): string => {
+  if (action.type === 'prefill_swap') {
+    return [action.sellAmount, action.sellToken, 'for', action.buyToken].filter(Boolean).join(' ');
+  }
+  if (action.type === 'prefill_limit') {
+    return [action.sellToken, '->', action.buyToken, action.price ? `at ${action.price}` : ''].filter(Boolean).join(' ');
+  }
+  if (action.type === 'prefill_counter') {
+    return [action.sellToken, '->', action.buyToken, action.price ? `at ${action.price}` : ''].filter(Boolean).join(' ');
+  }
+  if (action.type === 'open_order' && action.tradeId) {
+    return `Order #${action.tradeId}`;
+  }
+  if (action.message) {
+    return action.message.length > 84 ? `${action.message.slice(0, 84)}...` : action.message;
+  }
+  return 'Review before using.';
+};
+
+export const getTradeAgentActionCta = (action: TradeAgentResponseAction): string =>
+  action.type === 'open_order' ? 'Open' : 'Use';
+
 const invokeTradeAgentFunction = async <T>(body: Record<string, unknown>): Promise<T> => {
   const { getSupabaseBrowserClient } = await import('./supabaseClient');
   const supabase = getSupabaseBrowserClient();

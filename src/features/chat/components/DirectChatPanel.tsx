@@ -1,14 +1,14 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import DirectChatCompose, { type ChatComposerPromptEstimate } from './DirectChatCompose';
-import ChatImage from '../../../components/ChatImage';
-import MessageActions from '../../../components/MessageActions';
-import MessageTextWithLinks from '../../../components/MessageTextWithLinks';
+import ChatImage from '../../../shared/components/chat/ChatImage';
+import MessageActions from '../../../shared/components/chat/MessageActions';
+import MessageTextWithLinks from '../../../shared/components/chat/MessageTextWithLinks';
 import LinkedTradeContextPanel from '../../trading/components/LinkedTradeContextPanel';
 import TradeOfferCard from '../../trading/components/TradeOfferCard';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
 import { parseImageTag } from '../../../lib/imagePull';
-import useVirtualizedPrependScrollAnchor from '../../../hooks/useVirtualizedPrependScrollAnchor';
+import useVirtualizedPrependScrollAnchor from '../../../shared/hooks/useVirtualizedPrependScrollAnchor';
 import { buildTradeTerminalPath } from '../../trading/hooks/useP2PTradeRoute';
 import {
   buildTradeSnapshotKey,

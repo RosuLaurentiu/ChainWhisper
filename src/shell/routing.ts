@@ -32,6 +32,17 @@ export const getPathForAppPage = (page: AppPage): string => {
   return CANONICAL_APP_PATHS[page] ?? '/';
 };
 
+export const getTitleForAppPage = (page: AppPage): string =>
+  page === 'home'
+    ? 'ChainWhisper'
+    : page === 'chat'
+      ? 'Encrypted Chat | ChainWhisper'
+      : page === 'swap'
+        ? 'WISP Portal | ChainWhisper'
+        : page === 'trades'
+          ? 'OTC Desk | ChainWhisper'
+          : 'Treasury Data | ChainWhisper';
+
 export const resolveNavigationPathFromLocation = (): string => {
   if (typeof window === 'undefined') {
     return '/';

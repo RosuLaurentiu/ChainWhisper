@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getPathForAppPage,
+  getTitleForAppPage,
   resolveAppRouteFromLocation,
   resolveNavigationPathFromLocation,
   stripStaleTradeSearchParams
@@ -47,6 +48,14 @@ describe('app routing', () => {
     expect(getPathForAppPage('swap')).toBe('/portal');
     expect(getPathForAppPage('treasury')).toBe('/treasury');
     expect(getPathForAppPage('trades')).toBe('/otc');
+  });
+
+  it('returns page titles for document title updates', () => {
+    expect(getTitleForAppPage('home')).toBe('ChainWhisper');
+    expect(getTitleForAppPage('chat')).toBe('Encrypted Chat | ChainWhisper');
+    expect(getTitleForAppPage('swap')).toBe('WISP Portal | ChainWhisper');
+    expect(getTitleForAppPage('trades')).toBe('OTC Desk | ChainWhisper');
+    expect(getTitleForAppPage('treasury')).toBe('Treasury Data | ChainWhisper');
   });
 
   it('keeps old trade links while using OTC as the friendly route', () => {

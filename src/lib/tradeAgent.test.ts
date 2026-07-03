@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   TRADE_AGENT_QUICK_ACTIONS,
+  canUseTradeAgentAction,
   consumeTradeAgentDraft,
+  getTradeAgentActionButtonLabel,
+  getTradeAgentActionCta,
+  getTradeAgentActionDescription,
   getTradeAgentPromptTokenMentions,
   normalizeTradeAgentResponse,
   rememberTradeAgentDraft
@@ -80,6 +84,25 @@ describe('tradeAgent', () => {
         'p.USDC.e'
       ])
     ).toEqual(['p.gCOTI', 'p.USDC.e']);
+  });
+
+  it('formats response actions for display', () => {
+    const swapAction = {
+      type: 'prefill_swap' as const,
+      sellAmount: '10',
+      sellToken: 'p.COTI',
+      buyToken: 'p.gCOTI'
+    };
+    const openAction = {
+      type: 'open_order' as const,
+      tradeId: 77
+    };
+
+    expect(getTradeAgentActionButtonLabel(swapAction)).toBe('Prefill swap');
+    expect(getTradeAgentActionDescription(swapAction)).toBe('10 p.COTI for p.gCOTI');
+    expect(canUseTradeAgentAction(swapAction)).toBe(true);
+    expect(getTradeAgentActionCta(openAction)).toBe('Open');
+    expect(getTradeAgentActionDescription({ type: 'prefill_message', message: 'Draft this reply.' })).toBe('Draft this reply.');
   });
 
   it('consumes one-time agent drafts from storage', () => {
