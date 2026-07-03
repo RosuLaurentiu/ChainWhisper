@@ -45,13 +45,6 @@ import {
   invertPriceInput,
   type TradePricingField
 } from '../../../lib/tradePricing';
-import {
-  formatCarbonPairReferenceDisplay,
-  resolveCarbonPricePair,
-  type CarbonPairReference,
-  type CarbonPairReferenceDisplay,
-  type CarbonPriceAsset
-} from '../../../lib/carbonMarketPrice';
 import { ensureProviderOnCotiNetwork } from '../../../lib/walletNetwork';
 import {
   hasSessionAesKey,
@@ -101,7 +94,6 @@ import useTradeDeskSelectionActions from '../hooks/useTradeDeskSelectionActions'
 import useCloseTradeTerminalPanel from '../hooks/useCloseTradeTerminalPanel';
 import useBlockTimestampCache from '../../../shared/hooks/useBlockTimestampCache';
 import { useStoredWalletPreference } from '../../wallet/hooks/useStoredWalletPreference';
-import { resolveTradeOrderSummary } from '../../../lib/tradePerspective';
 import {
   buildWalletReadAccountsKey,
   getWalletOwnerAccount,
@@ -127,7 +119,6 @@ import OtcSwapPanel from './OtcSwapPanel';
 import {
   canEditPublicTrade,
   getSnapshotKey,
-  getTradeDisplayTerms,
   readInitialTradeBrowserWalletId,
   type RecurringTerminalActionSide,
   type TradeDeskSortMode,
@@ -176,8 +167,6 @@ import {
   buildMakerControlsKey,
   mergeOnboardInfoByAddress,
   renderP2PEmptyState,
-  type CarbonPairReferenceState,
-  type CarbonPairRequest,
   type MakerControlsSurface,
   type MyTradeGroupView,
   type P2PTradingPageProps,
@@ -332,7 +321,6 @@ export default function P2PTradingPage({
   const lastAppliedSwapPinnedTradeKeyRef = useRef('');
   const lastSyncedRouteSwapTradeKeyRef = useRef('');
   const [reversedRateTradeIds, setReversedRateTradeIds] = useState<Record<string, boolean>>({});
-  const [carbonPairReferences, setCarbonPairReferences] = useState<Record<string, CarbonPairReferenceState>>({});
   const initialTerminalReturnSurface: TerminalReturnSurface = route.routeFamily === 'trades' ? 'public' : 'swap';
   const terminalReturnSurfaceRef = useRef<TerminalReturnSurface>(initialTerminalReturnSurface);
   const mobileDeskScrollRef = useRef<Record<TerminalReturnSurface, number>>({ swap: 0, agent: 0, public: 0, mine: 0 });
@@ -1802,55 +1790,6 @@ export default function P2PTradingPage({
     onActionNotice: pushActionNotice
   });
 
-  const getCarbonReferenceDisplay = (
-    baseAsset?: CarbonPriceAsset | null,
-    quoteAsset?: CarbonPriceAsset | null,
-    inverted = false
-  ): CarbonPairReferenceDisplay | null => {
-    const pair = resolveCarbonPricePair(baseAsset, quoteAsset);
-    if (!pair) {
-      return null;
-    }
-    return formatCarbonPairReferenceDisplay(carbonPairReferences[pair.pairKey]?.reference, { inverted });
-  };
-  const getCarbonReferenceContext = (
-    baseAsset?: CarbonPriceAsset | null,
-    quoteAsset?: CarbonPriceAsset | null,
-    inverted = false,
-    referenceOverride?: CarbonPairReference | null
-  ) => {
-    const pair = resolveCarbonPricePair(baseAsset, quoteAsset);
-    if (!pair) {
-      return null;
-    }
-    const reference =
-      referenceOverride === undefined ? carbonPairReferences[pair.pairKey]?.reference ?? null : referenceOverride;
-    const display = formatCarbonPairReferenceDisplay(reference, { inverted });
-    return display
-      ? {
-          label: display.label,
-          basisLabel: display.basisLabel,
-          title: display.title,
-          baseSymbol: reference?.baseSymbol ?? pair.base.symbol,
-          quoteSymbol: reference?.quoteSymbol ?? pair.quote.symbol,
-          price: reference?.price ?? null,
-          usedPublicCounterpart: pair.usedPublicCounterpart || Boolean(reference?.usedPublicCounterpart),
-          sourcePair: `${pair.base.sourceSymbol}/${pair.quote.sourceSymbol}`,
-          carbonPair: `${pair.base.symbol}/${pair.quote.symbol}`
-        }
-      : {
-          label: null,
-          basisLabel: null,
-          title: null,
-          baseSymbol: pair.base.symbol,
-          quoteSymbol: pair.quote.symbol,
-          price: null,
-          usedPublicCounterpart: pair.usedPublicCounterpart,
-          sourcePair: `${pair.base.sourceSymbol}/${pair.quote.sourceSymbol}`,
-          carbonPair: `${pair.base.symbol}/${pair.quote.symbol}`
-        };
-  };
-
   const tradeOrderCardProps: TradeOrderCardProps = {
     routeView: route.view,
     walletAddress,
@@ -1887,173 +1826,6 @@ export default function P2PTradingPage({
     scheduleP2PSync,
     walletAddress
   });
-
-  const tradePricePairLabel =
-    tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
-      ? `${tradeComposerModel.selectedTradeRequestToken.symbol}/${tradeComposerModel.selectedTradeOfferToken.symbol}`
-      : 'quote/base';
-  const tradeReversePricePairLabel =
-    tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
-      ? `${tradeComposerModel.selectedTradeOfferToken.symbol}/${tradeComposerModel.selectedTradeRequestToken.symbol}`
-      : 'base/quote';
-  const tradeReversePriceInput = invertPriceInput(tradePriceInput);
-  const tradeComposerCarbonPriceReference = getCarbonReferenceDisplay(
-    tradeComposerModel.selectedTradeOfferToken,
-    tradeComposerModel.selectedTradeRequestToken
-  );
-  const tradeComposerReverseCarbonPriceReference = getCarbonReferenceDisplay(
-    tradeComposerModel.selectedTradeOfferToken,
-    tradeComposerModel.selectedTradeRequestToken,
-    true
-  );
-
-  const composerActionNotice = renderP2PActionNotice('composer');
-
-  const tradeAccessSettings = (
-    <TradeAccessSettings
-      disabled={Boolean(editingTrade || counterParentTrade)}
-      directTradeRecipient={directTradeRecipient}
-      directTradeRecipientIsValid={directTradeRecipientIsValid}
-      directTradeRecipientNormalized={directTradeRecipientNormalized}
-      onDirectTradeRecipientChange={setDirectTradeRecipient}
-      onTradeVisibilityChange={setTradeVisibility}
-      tradeVisibility={tradeVisibility}
-    />
-  );
-
-  const tradeComposer = (
-    <TradeComposerPanel
-      validationDisplayMode="after-interaction"
-      title={
-        editingTrade
-          ? `Edit public offer #${editingTrade.tradeId}`
-          : counterParentTrade
-            ? `Counter offer #${counterParentTrade.tradeId}`
-            : 'Create offer'
-      }
-      metaLabel={
-        editingTrade
-          ? 'Cancel and replace public offer'
-          : counterParentTrade
-          ? `Linked counter to ${shortenAddress(counterParentTrade.maker)}`
-          : tradeVisibility === 'public'
-            ? 'Listed escrow trade'
-            : tradeVisibility === 'direct'
-              ? directTradeRecipientIsValid
-                ? `Direct to ${shortenAddress(directTradeRecipientNormalized)}`
-                : 'Direct wallet offer'
-              : 'Unlisted escrow trade'
-      }
-      escrowContractAddress={tradeFeeEscrowContract}
-      escrowContractLabel={tradeFeeEscrowContractLabel}
-      safetyNote={
-        editingTrade
-          ? 'Editing creates a new public offer and cancels the original in the same transaction.'
-          : counterParentTrade
-          ? 'The counter offer is created as a linked private offer for the original maker.'
-          : 'Escrow settlement and trade terms are stored on-chain.'
-      }
-      sendLabel={editingTrade ? 'Save Edit' : counterParentTrade ? 'Send Counter' : 'Create Offer'}
-      sendingLabel="Creating..."
-      sendTitle={
-        editingTrade
-          ? 'Cancel the old public offer and create the replacement.'
-          : counterParentTrade
-            ? 'Create a linked counter trade on chain.'
-            : 'Create the escrow offer on chain.'
-      }
-      actionNotice={composerActionNotice}
-      feeMode={tradeFeeModeSelection}
-      onFeeModeChange={setTradeFeeModeSelection}
-      feeSummaryLabel={tradeComposerModel.tradeFeeSummaryLabel}
-      feeError={tradeComposerModel.tradeComposerFieldErrors.fee}
-      offerTokenOptions={tradeComposerModel.tradeTokenOptions}
-      requestTokenOptions={tradeComposerModel.tradeTokenOptions}
-      offerTokenSelection={tradeOfferTokenSelection}
-      onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
-      requestTokenSelection={tradeRequestTokenSelection}
-      onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
-      offerAssetError={tradeComposerModel.tradeComposerFieldErrors.offerAsset}
-      requestAssetError={tradeComposerModel.tradeComposerFieldErrors.requestAsset}
-      offerCustomAddress={tradeOfferCustomTokenAddress}
-      onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
-      requestCustomAddress={tradeRequestCustomTokenAddress}
-      onRequestCustomAddressChange={setTradeRequestCustomTokenAddress}
-      offerCustomMetaLabel={tradeComposerModel.tradeOfferCustomMetaLabel}
-      requestCustomMetaLabel={tradeComposerModel.tradeRequestCustomMetaLabel}
-      offerVerifyUrl={tradeComposerModel.tradeOfferVerifyUrl}
-      requestVerifyUrl={tradeComposerModel.tradeRequestVerifyUrl}
-      offerAmountInput={tradeOfferAmountInput}
-      onOfferAmountInputChange={updateTradeOfferAmountInput}
-      requestAmountInput={tradeRequestAmountInput}
-      onRequestAmountInputChange={updateTradeRequestAmountInput}
-      offerAmountLabel={tradeComposerModel.tradeOfferAmountLabel}
-      requestAmountLabel={tradeComposerModel.tradeRequestAmountLabel}
-      offerAmountPlaceholder="0"
-      requestAmountPlaceholder="0"
-      offerAmountError={tradeComposerModel.tradeComposerFieldErrors.offerAmount}
-      requestAmountError={tradeComposerModel.tradeComposerFieldErrors.requestAmount}
-      priceInput={tradePriceInput}
-      onPriceInputChange={updateTradePriceInput}
-      onPriceReverseInputChange={updateTradeReversePriceInput}
-      priceLabel="Price"
-      pricePlaceholder="0"
-      priceReference={tradeComposerCarbonPriceReference}
-      priceReverseInput={tradeReversePriceInput}
-      priceReverseReference={tradeComposerReverseCarbonPriceReference}
-      priceReverseSummaryLabel={tradeReversePricePairLabel}
-      priceSummaryLabel={tradePricePairLabel}
-      priceHelpText=""
-      pricePlacement="top"
-      showPriceRatioPreview
-      canUseMaxOfferAmount={tradeComposerModel.canUseTradeOfferMax}
-      onUseMaxOfferAmount={() => updateTradeOfferAmountInput(tradeComposerModel.tradeOfferMaxInputValue)}
-      offerAmountSummaryLabel={tradeComposerModel.tradeOfferAmountSummaryLabel}
-      requestAmountSummaryLabel={tradeComposerModel.tradeRequestAmountSummaryLabel}
-      offerBalanceSummaryLabel={tradeComposerModel.tradeOfferBalanceSummaryLabel}
-      requestBalanceSummaryLabel={tradeComposerModel.tradeRequestBalanceSummaryLabel}
-      offerBalanceBreakdownLabel={tradeComposerModel.tradeOfferBalanceBreakdownLabel}
-      requestBalanceBreakdownLabel={tradeComposerModel.tradeRequestBalanceBreakdownLabel}
-      pricingSourceFields={tradePricingEditedFields}
-      onSwapSides={() => {
-        const nextOfferToken = tradeRequestTokenSelection;
-        const nextRequestToken = tradeOfferTokenSelection;
-        const nextOfferCustomAddress = tradeRequestCustomTokenAddress;
-        const nextRequestCustomAddress = tradeOfferCustomTokenAddress;
-        const nextOfferAmount = tradeRequestAmountInput;
-        const nextRequestAmount = tradeOfferAmountInput;
-        setTradePriceInput('');
-        setTradePricingEditedFields([]);
-        setTradeOfferTokenSelection(nextOfferToken);
-        setTradeRequestTokenSelection(nextRequestToken);
-        setTradeOfferCustomTokenAddress(nextOfferCustomAddress);
-        setTradeRequestCustomTokenAddress(nextRequestCustomAddress);
-        setTradeOfferAmountInput(nextOfferAmount);
-        setTradeRequestAmountInput(nextRequestAmount);
-      }}
-      swapDisabled={creatingTrade}
-      tradePreviewLabel={tradeComposerModel.tradePreviewLabel}
-      tradeRateLabel={tradeComposerModel.tradeRateLabel}
-      tradeReverseRateLabel={tradeComposerModel.tradeReverseRateLabel}
-      expiresHoursInput={tradeExpiryHoursInput}
-      onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
-      expiresNever={tradeHasNoExpiry}
-      onExpiresNeverChange={setTradeHasNoExpiry}
-      expiryError={tradeComposerModel.tradeComposerFieldErrors.expiry}
-      hidePrivateLiquidity={tradeHidePrivateLiquidity}
-      canHidePrivateLiquidity={tradeComposerModel.canHidePrivateLiquidity}
-      hiddenLiquidityUnavailableMessage={tradeComposerModel.hiddenLiquidityUnavailableMessage}
-      onHidePrivateLiquidityChange={setTradeHidePrivateLiquidity}
-      sending={creatingTrade}
-      canSend={tradeComposerModel.canSendTradeOffer}
-      settingsSlot={tradeAccessSettings}
-      onSendTradeOffer={() => {
-        createTrade().catch(() => {});
-      }}
-      generalError={tradeComposerModel.tradeComposerFieldErrors.general}
-      validationMessage={tradeComposerModel.tradeComposerValidationMessage || undefined}
-    />
-  );
 
   const {
     activeTradeMode,
@@ -2235,60 +2007,18 @@ export default function P2PTradingPage({
     !route.routeError &&
     !detailTradeError;
   const terminalHasTradeContent = !emptyTerminalOpen && Boolean(terminalPanelTrade);
-  const activeCarbonPairRequests = useMemo(() => {
-    const requests: CarbonPairRequest[] = [];
-    const seenPairKeys = new Set<string>();
-    const addPair = (baseAsset?: CarbonPriceAsset | null, quoteAsset?: CarbonPriceAsset | null) => {
-      const pair = resolveCarbonPricePair(baseAsset, quoteAsset);
-      if (!pair || seenPairKeys.has(pair.pairKey) || !baseAsset || !quoteAsset) {
-        return;
-      }
-      seenPairKeys.add(pair.pairKey);
-      requests.push({
-        baseAsset,
-        pairKey: pair.pairKey,
-        quoteAsset
-      });
-    };
-
-    if (route.view === 'create' || route.view === 'counter') {
-      addPair(tradeComposerModel.selectedTradeOfferToken, tradeComposerModel.selectedTradeRequestToken);
-    }
-    if (routeSurfaceView === 'swap' || routeSurfaceView === 'agent') {
-      addPair(swapBuyToken, swapSellToken);
-    }
-
-    if (terminalPanelTrade) {
-      const recurring = terminalPanelTrade.recurringOrder;
-      if (recurring) {
-        addPair(recurring.baseAsset, recurring.quoteAsset);
-      } else {
-        const displayTerms = getTradeDisplayTerms(terminalPanelTrade);
-        const displayTrade = {
-          ...terminalPanelTrade,
-          offer: displayTerms.offer,
-          request: displayTerms.request
-        };
-        const orderSummary = resolveTradeOrderSummary(displayTrade, walletAddress);
-        addPair(orderSummary.primarySide.asset, orderSummary.secondarySide.asset);
-      }
-    }
-
-    return requests;
-  }, [
-    route.view,
+  const {
+    getCarbonReferenceContext,
+    getCarbonReferenceDisplay
+  } = useCarbonPairReferences({
     routeSurfaceView,
+    routeView: route.view,
     swapBuyToken,
     swapSellToken,
     terminalPanelTrade,
-    tradeComposerModel.selectedTradeOfferToken,
-    tradeComposerModel.selectedTradeRequestToken,
+    tradeComposerOfferToken: tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerRequestToken: tradeComposerModel.selectedTradeRequestToken,
     walletAddress
-  ]);
-  useCarbonPairReferences({
-    activeCarbonPairRequests,
-    carbonPairReferences,
-    setCarbonPairReferences
   });
   useEffect(() => {
     const recurring = terminalPanelTrade?.recurringOrder;
@@ -2597,6 +2327,173 @@ export default function P2PTradingPage({
     updateRecurringOrderStatus,
     terminalHistoryConfigParams
   };
+
+  const tradePricePairLabel =
+    tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
+      ? `${tradeComposerModel.selectedTradeRequestToken.symbol}/${tradeComposerModel.selectedTradeOfferToken.symbol}`
+      : 'quote/base';
+  const tradeReversePricePairLabel =
+    tradeComposerModel.selectedTradeOfferToken && tradeComposerModel.selectedTradeRequestToken
+      ? `${tradeComposerModel.selectedTradeOfferToken.symbol}/${tradeComposerModel.selectedTradeRequestToken.symbol}`
+      : 'base/quote';
+  const tradeReversePriceInput = invertPriceInput(tradePriceInput);
+  const tradeComposerCarbonPriceReference = getCarbonReferenceDisplay(
+    tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerModel.selectedTradeRequestToken
+  );
+  const tradeComposerReverseCarbonPriceReference = getCarbonReferenceDisplay(
+    tradeComposerModel.selectedTradeOfferToken,
+    tradeComposerModel.selectedTradeRequestToken,
+    true
+  );
+
+  const composerActionNotice = renderP2PActionNotice('composer');
+
+  const tradeAccessSettings = (
+    <TradeAccessSettings
+      disabled={Boolean(editingTrade || counterParentTrade)}
+      directTradeRecipient={directTradeRecipient}
+      directTradeRecipientIsValid={directTradeRecipientIsValid}
+      directTradeRecipientNormalized={directTradeRecipientNormalized}
+      onDirectTradeRecipientChange={setDirectTradeRecipient}
+      onTradeVisibilityChange={setTradeVisibility}
+      tradeVisibility={tradeVisibility}
+    />
+  );
+
+  const tradeComposer = (
+    <TradeComposerPanel
+      validationDisplayMode="after-interaction"
+      title={
+        editingTrade
+          ? `Edit public offer #${editingTrade.tradeId}`
+          : counterParentTrade
+            ? `Counter offer #${counterParentTrade.tradeId}`
+            : 'Create offer'
+      }
+      metaLabel={
+        editingTrade
+          ? 'Cancel and replace public offer'
+          : counterParentTrade
+          ? `Linked counter to ${shortenAddress(counterParentTrade.maker)}`
+          : tradeVisibility === 'public'
+            ? 'Listed escrow trade'
+            : tradeVisibility === 'direct'
+              ? directTradeRecipientIsValid
+                ? `Direct to ${shortenAddress(directTradeRecipientNormalized)}`
+                : 'Direct wallet offer'
+              : 'Unlisted escrow trade'
+      }
+      escrowContractAddress={tradeFeeEscrowContract}
+      escrowContractLabel={tradeFeeEscrowContractLabel}
+      safetyNote={
+        editingTrade
+          ? 'Editing creates a new public offer and cancels the original in the same transaction.'
+          : counterParentTrade
+          ? 'The counter offer is created as a linked private offer for the original maker.'
+          : 'Escrow settlement and trade terms are stored on-chain.'
+      }
+      sendLabel={editingTrade ? 'Save Edit' : counterParentTrade ? 'Send Counter' : 'Create Offer'}
+      sendingLabel="Creating..."
+      sendTitle={
+        editingTrade
+          ? 'Cancel the old public offer and create the replacement.'
+          : counterParentTrade
+            ? 'Create a linked counter trade on chain.'
+            : 'Create the escrow offer on chain.'
+      }
+      actionNotice={composerActionNotice}
+      feeMode={tradeFeeModeSelection}
+      onFeeModeChange={setTradeFeeModeSelection}
+      feeSummaryLabel={tradeComposerModel.tradeFeeSummaryLabel}
+      feeError={tradeComposerModel.tradeComposerFieldErrors.fee}
+      offerTokenOptions={tradeComposerModel.tradeTokenOptions}
+      requestTokenOptions={tradeComposerModel.tradeTokenOptions}
+      offerTokenSelection={tradeOfferTokenSelection}
+      onOfferTokenSelectionChange={(value) => setTradeOfferTokenSelection(value as TradeTokenPresetKey)}
+      requestTokenSelection={tradeRequestTokenSelection}
+      onRequestTokenSelectionChange={(value) => setTradeRequestTokenSelection(value as TradeTokenPresetKey)}
+      offerAssetError={tradeComposerModel.tradeComposerFieldErrors.offerAsset}
+      requestAssetError={tradeComposerModel.tradeComposerFieldErrors.requestAsset}
+      offerCustomAddress={tradeOfferCustomTokenAddress}
+      onOfferCustomAddressChange={setTradeOfferCustomTokenAddress}
+      requestCustomAddress={tradeRequestCustomTokenAddress}
+      onRequestCustomAddressChange={setTradeRequestCustomTokenAddress}
+      offerCustomMetaLabel={tradeComposerModel.tradeOfferCustomMetaLabel}
+      requestCustomMetaLabel={tradeComposerModel.tradeRequestCustomMetaLabel}
+      offerVerifyUrl={tradeComposerModel.tradeOfferVerifyUrl}
+      requestVerifyUrl={tradeComposerModel.tradeRequestVerifyUrl}
+      offerAmountInput={tradeOfferAmountInput}
+      onOfferAmountInputChange={updateTradeOfferAmountInput}
+      requestAmountInput={tradeRequestAmountInput}
+      onRequestAmountInputChange={updateTradeRequestAmountInput}
+      offerAmountLabel={tradeComposerModel.tradeOfferAmountLabel}
+      requestAmountLabel={tradeComposerModel.tradeRequestAmountLabel}
+      offerAmountPlaceholder="0"
+      requestAmountPlaceholder="0"
+      offerAmountError={tradeComposerModel.tradeComposerFieldErrors.offerAmount}
+      requestAmountError={tradeComposerModel.tradeComposerFieldErrors.requestAmount}
+      priceInput={tradePriceInput}
+      onPriceInputChange={updateTradePriceInput}
+      onPriceReverseInputChange={updateTradeReversePriceInput}
+      priceLabel="Price"
+      pricePlaceholder="0"
+      priceReference={tradeComposerCarbonPriceReference}
+      priceReverseInput={tradeReversePriceInput}
+      priceReverseReference={tradeComposerReverseCarbonPriceReference}
+      priceReverseSummaryLabel={tradeReversePricePairLabel}
+      priceSummaryLabel={tradePricePairLabel}
+      priceHelpText=""
+      pricePlacement="top"
+      showPriceRatioPreview
+      canUseMaxOfferAmount={tradeComposerModel.canUseTradeOfferMax}
+      onUseMaxOfferAmount={() => updateTradeOfferAmountInput(tradeComposerModel.tradeOfferMaxInputValue)}
+      offerAmountSummaryLabel={tradeComposerModel.tradeOfferAmountSummaryLabel}
+      requestAmountSummaryLabel={tradeComposerModel.tradeRequestAmountSummaryLabel}
+      offerBalanceSummaryLabel={tradeComposerModel.tradeOfferBalanceSummaryLabel}
+      requestBalanceSummaryLabel={tradeComposerModel.tradeRequestBalanceSummaryLabel}
+      offerBalanceBreakdownLabel={tradeComposerModel.tradeOfferBalanceBreakdownLabel}
+      requestBalanceBreakdownLabel={tradeComposerModel.tradeRequestBalanceBreakdownLabel}
+      pricingSourceFields={tradePricingEditedFields}
+      onSwapSides={() => {
+        const nextOfferToken = tradeRequestTokenSelection;
+        const nextRequestToken = tradeOfferTokenSelection;
+        const nextOfferCustomAddress = tradeRequestCustomTokenAddress;
+        const nextRequestCustomAddress = tradeOfferCustomTokenAddress;
+        const nextOfferAmount = tradeRequestAmountInput;
+        const nextRequestAmount = tradeOfferAmountInput;
+        setTradePriceInput('');
+        setTradePricingEditedFields([]);
+        setTradeOfferTokenSelection(nextOfferToken);
+        setTradeRequestTokenSelection(nextRequestToken);
+        setTradeOfferCustomTokenAddress(nextOfferCustomAddress);
+        setTradeRequestCustomTokenAddress(nextRequestCustomAddress);
+        setTradeOfferAmountInput(nextOfferAmount);
+        setTradeRequestAmountInput(nextRequestAmount);
+      }}
+      swapDisabled={creatingTrade}
+      tradePreviewLabel={tradeComposerModel.tradePreviewLabel}
+      tradeRateLabel={tradeComposerModel.tradeRateLabel}
+      tradeReverseRateLabel={tradeComposerModel.tradeReverseRateLabel}
+      expiresHoursInput={tradeExpiryHoursInput}
+      onExpiresHoursInputChange={(value) => setTradeExpiryHoursInput(value.replace(/[^0-9]/g, ''))}
+      expiresNever={tradeHasNoExpiry}
+      onExpiresNeverChange={setTradeHasNoExpiry}
+      expiryError={tradeComposerModel.tradeComposerFieldErrors.expiry}
+      hidePrivateLiquidity={tradeHidePrivateLiquidity}
+      canHidePrivateLiquidity={tradeComposerModel.canHidePrivateLiquidity}
+      hiddenLiquidityUnavailableMessage={tradeComposerModel.hiddenLiquidityUnavailableMessage}
+      onHidePrivateLiquidityChange={setTradeHidePrivateLiquidity}
+      sending={creatingTrade}
+      canSend={tradeComposerModel.canSendTradeOffer}
+      settingsSlot={tradeAccessSettings}
+      onSendTradeOffer={() => {
+        createTrade().catch(() => {});
+      }}
+      generalError={tradeComposerModel.tradeComposerFieldErrors.general}
+      validationMessage={tradeComposerModel.tradeComposerValidationMessage || undefined}
+    />
+  );
 
   return (
     <main

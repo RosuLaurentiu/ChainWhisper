@@ -8,7 +8,7 @@ import {
   type TradeAssetPayload,
   type TradeSnapshot
 } from '../../../lib/appShared';
-import type { CarbonPairReference, CarbonPairReferenceDisplay, CarbonPriceAsset } from '../../../lib/carbonMarketPrice';
+import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { LinkedTradeContext } from '../../../lib/linkedTradeContext';
 import type { P2PSyncRequest } from '../../../lib/p2pSyncCoordinator';
 import {
@@ -42,15 +42,6 @@ export type TradeCreateMode = 'one-off' | 'recurring';
 export type TerminalFillInputSide = 'pay' | 'buy';
 export type MakerControlsSurface = 'desk' | 'terminal';
 export type TradeFilterRouteScope = 'desk' | 'mine' | null;
-export type CarbonPairReferenceState = {
-  reference: CarbonPairReference | null;
-  updatedAt: number;
-};
-export type CarbonPairRequest = {
-  baseAsset: CarbonPriceAsset;
-  quoteAsset: CarbonPriceAsset;
-  pairKey: string;
-};
 export type TradeOpenActionCta = { kind: 'direction' | 'cycle' | 'manage' | 'view'; label: string };
 export type TradeOverviewCardOptions = {
   canOpenTerminal?: boolean;
