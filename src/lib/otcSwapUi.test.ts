@@ -256,7 +256,7 @@ describe('OTC swap action UI model', () => {
     ]);
   });
 
-  it('explains private-liquidity partial fills when the reveal shows less than requested', () => {
+  it('omits private-liquidity partial-fill notes when the row already shows amounts', () => {
     expect(
       formatOtcSwapFillHistoryNote(
         {
@@ -288,10 +288,10 @@ describe('OTC swap action UI model', () => {
           }
         }
       )
-    ).toBe('Requested 10 p.USDC.e, filled 6 p.USDC.e. Private liquidity only filled the amount available on this order.');
+    ).toBe('');
   });
 
-  it('explains hidden private-liquidity fills before exact amounts are revealable', () => {
+  it('omits hidden private-liquidity fill notes', () => {
     expect(
       formatOtcSwapFillHistoryNote(
         {
@@ -323,6 +323,6 @@ describe('OTC swap action UI model', () => {
           }
         }
       )
-    ).toBe('Requested 10 p.USDC.e. Private liquidity can fill less than requested; exact fill is shown when revealable.');
+    ).toBe('');
   });
 });

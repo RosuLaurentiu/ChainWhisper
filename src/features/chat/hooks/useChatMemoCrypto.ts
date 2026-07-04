@@ -13,6 +13,7 @@ import {
 } from '../../../lib/appShared';
 import {
   buildWalletAesHealthState,
+  getOrRecoverAesForWallet,
   type WalletAesHealthState
 } from '../../../lib/cotiAesUnlock';
 import { getCotiSnapOwnerAesKeyResult, getCotiSnapOwnerAesStatusMessage } from '../../../lib/cotiSnap';
@@ -146,8 +147,10 @@ export default function useChatMemoCrypto({
 
     let onboardInfo = signer.getUserOnboardInfo();
     if (!onboardInfo?.aesKey) {
-      await signer.generateOrRecoverAes();
-      onboardInfo = signer.getUserOnboardInfo();
+      onboardInfo = await getOrRecoverAesForWallet({
+        signer,
+        walletAddress: signer.address
+      });
     }
 
     if (!onboardInfo?.aesKey) {

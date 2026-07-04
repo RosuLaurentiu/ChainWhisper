@@ -478,12 +478,11 @@ export default function useChatWalletHeaderControl({
     }
 
     if (chatOwnerFirstConnect) {
-      if (chatPreferredBrowserWalletOption) {
-        activateBrowserWalletSession(chatPreferredBrowserWalletOption.id, { preparePrivacy: true }).catch(() => {});
+      if (showMobileBrowserWalletOpenAction) {
+        window.location.href = buildMetaMaskMobileDeepLink();
         return;
       }
-      setChatAppWalletMenuOpen(false);
-      setChatWalletMenuOpen(true);
+      activateBrowserWalletSession(chatPreferredBrowserWalletOption?.id, { preparePrivacy: true }).catch(() => {});
       return;
     }
 
@@ -831,7 +830,13 @@ export default function useChatWalletHeaderControl({
                       className={isCurrentWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
                       onClick={() => {
                         setChatWalletMenuOpen(false);
-                        activateBrowserWalletSession(option.id, { preparePrivacy: true }).catch(() => {});
+                        if (isCurrentWallet && ownerAesReady) {
+                          return;
+                        }
+                        activateBrowserWalletSession(
+                          option.id,
+                          { preparePrivacy: true }
+                        ).catch(() => {});
                       }}
                       disabled={connectingMethod !== null}
                       role="menuitem"

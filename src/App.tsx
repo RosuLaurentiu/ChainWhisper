@@ -525,9 +525,10 @@ export default function App() {
     setWalletAddress,
     signerCacheRef,
     signerProviderCacheRef,
-    walletAddress
+    walletAddress,
+    onboardStatus
   } = useWalletOnboarding({
-    allowPassiveBrowserRestore: allowStartupWalletRestore && walletPreference?.kind === 'browser',
+    allowPassiveBrowserRestore: false,
     clearCachedStateBackupMemo,
     loadMyNicknameFromChainRef,
     resetBurnerSessionRef,
@@ -1729,6 +1730,10 @@ export default function App() {
     uploadingImage,
     walletAddress
   });
+  const sendMessageForSideEffects = useCallback(async (...args: Parameters<typeof sendMessage>) => {
+    await sendMessage(...args);
+  }, [sendMessage]);
+
   const {
     acceptTradeOffer,
     cancelTradeOffer,
@@ -1753,7 +1758,7 @@ export default function App() {
     resolveTradeSnapshotForOffer,
     selectedTradeOfferToken,
     selectedTradeRequestToken,
-    sendMessage,
+    sendMessage: sendMessageForSideEffects,
     sendingRef,
     setCreatingTrade,
     setError,
@@ -1909,19 +1914,20 @@ export default function App() {
   }, [contacts, activeContact, showHiddenContacts]);
 
   useEffect(() => {
+    let nextOnboardStatus = 'Signature required';
     if (!walletAddress) {
-      setOnboardStatus('Not onboarded');
-      return;
+      nextOnboardStatus = 'Not onboarded';
+    } else {
+      const cachedOnboardInfo = sessionOnboardInfo[walletAddress.toLowerCase()];
+      if (cachedOnboardInfo?.aesKey) {
+        nextOnboardStatus = 'Privacy ready';
+      }
     }
 
-    const cachedOnboardInfo = sessionOnboardInfo[walletAddress.toLowerCase()];
-    if (cachedOnboardInfo?.aesKey) {
-      setOnboardStatus('Privacy ready');
-      return;
+    if (onboardStatus !== nextOnboardStatus) {
+      setOnboardStatus(nextOnboardStatus);
     }
-
-    setOnboardStatus('Signature required');
-  }, [walletAddress, sessionOnboardInfo]);
+  }, [onboardStatus, walletAddress, sessionOnboardInfo, setOnboardStatus]);
 
   useEffect(() => {
     if (!isConnected) {
@@ -2621,7 +2627,7 @@ export default function App() {
   } = useDirectChatPanelHandlers({
     browserWalletLiteMode,
     sendDirectImageMessage,
-    sendMessage,
+    sendMessage: sendMessageForSideEffects,
     sendTipToActiveContact,
     setError,
     setReactionPickerMessageId,

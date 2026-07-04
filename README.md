@@ -1,6 +1,6 @@
 # ChainWhisper
 
-ChainWhisper is a browser-based COTI Mainnet app hub for private coordination. It combines a Home launcher, encrypted wallet chat, OTC escrow trading, Whisper Shield private-token swaps, and Treasury Data analytics in one Vite + React + TypeScript project.
+ChainWhisper is a browser-based COTI Mainnet app hub for private coordination. It combines a Home launcher, encrypted wallet chat, OTC escrow trading, the WISP Portal private-token swap page, and Treasury Data analytics in one Vite + React + TypeScript project.
 
 The app uses `@coti-io/coti-ethers`, `viem`, Recharts, Zustand, TanStack Virtual, and Supabase Storage for temporary encrypted chat image blobs.
 
@@ -13,12 +13,12 @@ Current route behavior is intentional and should stay as-is unless a future chan
 - `/` - canonical Home launcher. `/home` is accepted as an alias.
 - `/chat` - ChainWhisper Chat. `/messages` and `/messenger` are accepted aliases.
 - `/otc` and `/otc/...` - canonical OTC trading workspace. `/trades` and `/otcdesk` routes are accepted as legacy aliases.
-- `/shield` - canonical Whisper Shield swap page. `/swap` and `/whisper-shield` are accepted aliases.
+- `/portal` - canonical WISP Portal swap page. `/swap`, `/shield`, and `/whisper-shield` are accepted aliases.
 - `/treasury` - Treasury Data. `/treasury-data` is accepted as an alias.
 
 ### Home (`/`)
 
-The home page launches the app suite and routes in-place to Chat, OTC Trading, Whisper Shield, and Treasury Data so the wallet session can remain available across pages.
+The home page launches the app suite and routes in-place to Chat, OTC Trading, WISP Portal, and Treasury Data so the wallet session can remain available across pages.
 
 Home does not show wallet controls because it is a launcher rather than an interactive contract page.
 
@@ -39,10 +39,11 @@ The chat app is a wallet-native encrypted messenger for COTI.
 
 ### OTC Trading (`/otc`)
 
-The standalone OTC app is an escrow trading workspace backed by COTI contracts. It has three top-level surfaces and one detail surface.
+The standalone OTC app is an escrow trading workspace backed by COTI contracts. It has four top-level surfaces and one detail surface.
 
 - `Trade` at `/otc` is the action surface with `Swap`, `Limit`, and `Recurring` modes.
 - `Desk` at `/otc/desk` browses active public orders with search, filters, refresh, inline order review, and wallet balance context.
+- `Agent` at `/otc/agent` provides paid WISP Trade Agent help for finding prices, drafting orders, explaining orders, and opening safe prefilled actions for review.
 - `Orders` at `/otc/orders` groups received offers, active offers, and history for the connected owner + ChainWhisper account scope.
 - `Order` review lives under `/otc/order...`. Canonical generated links use `/otc/order/link/:code`, `/otc/order/:id`, or `/otc/order/recurring/:id`.
 - Legacy `/trades...`, `/otcdesk...`, and old terminal links still resolve for compatibility, but new app-generated links should use `/otc...`.
@@ -65,9 +66,9 @@ The standalone OTC app is an escrow trading workspace backed by COTI contracts. 
 - The shared top-header wallet control uses the ChainWhisper account for new trade actions by default. Owner-wallet fallback is reserved for funding/recovery and existing owner-targeted actions where the contract requires the owner address.
 - The trading UI can show combined owner + ChainWhisper balances, move missing funds before important trade actions, preserve a small COTI fee reserve, and confirm maker actions with app-styled modals.
 
-### Whisper Shield (`/shield`)
+### WISP Portal (`/portal`)
 
-Whisper Shield is a compact reward-token swap page.
+WISP Portal is a compact reward-token swap page. `/swap`, `/shield`, and `/whisper-shield` remain aliases.
 
 - Swaps reward tokens into private token form and back through the reward swap vault.
 - Uses the same owner-first ChainWhisper account header as Chat and OTC.
@@ -83,39 +84,26 @@ Treasury Data is a read-only analytics dashboard for COTI treasury metrics.
 - Displays timeframe filters, metric switching, chart tooltips, saved snapshot counts, live values, and on-chain references.
 - Does not require wallet interaction.
 
-## Shared Logic
+## Project Structure
 
-App pages should remain visually distinct where workflow density requires it, but shared behavior should live in shared modules.
+The app is organized around feature ownership, with shared code kept small and explicit.
 
-- `src/shell/routing.ts` owns top-level route parsing, canonical paths, aliases, and browser location sync.
-- `src/App.tsx` owns the app shell, shared wallet/account state, top-level page composition, and lazy loading of page apps. In-chat trade actions, group admin actions, account funding, and focused group message sync live in extracted hooks/helpers where practical.
-- `src/lib/appShared.ts` re-exports shared COTI constants, provider loading, wallet helpers, memo encoding, parsers, formatters, and common types from `src/lib/appShared/`.
-- `src/hooks/useWalletOnboarding.ts` manages browser wallet connection, COTI network switching, and owner/privacy onboarding.
-- `src/hooks/useBurnerWallet.ts` manages the ChainWhisper account vault, owner-linked recovery, local PIN fallback, and account switching.
-- `src/hooks/useInChatTradeActions.ts` owns DM trade create, accept, decline, cancel, and counter preparation orchestration.
-- `src/hooks/useGroupAdminActions.ts` owns group create, invite, join-code, join-by-code, remove, rename, leave, handoff, disband, and invite accept/decline actions.
-- `src/lib/groupMessageSync.ts` handles active-group message/member-event sync merging.
-- `src/lib/directConversationSyncHelpers.ts` contains direct-message merge, unread, nickname/contact, and optimistic reconciliation helpers.
-- `src/components/WalletHeaderPanel.tsx` is the shared compact header wallet surface.
-- `src/components/TradeComposerPanel.tsx` is the shared trade creation/editing surface.
-- `src/components/TradeOfferCard.tsx` renders trade links and in-chat trade cards.
-- `src/lib/tradeComposer.ts` derives trade composer state, validation, labels, balances, fees, and private-order availability.
-- `src/lib/tradeActions.ts` submits OTC, private-order, and recurring-order create/fill/control transactions.
-- `src/lib/tradeLinks.ts` encodes and decodes compact order links.
-- `src/lib/tradePerspective.ts` resolves maker/taker/open-trade perspective, buy/sell order semantics, ratio labels, and Orders grouping.
-- `src/lib/p2pTradeView.ts` contains P2P display helpers, search/filter helpers, snapshot keys, explorer links, local trade access-secret cache helpers, and maker private-progress labels.
-- `src/lib/tradeHistory.ts` builds wallet-scoped trade history rows, including private fill receipt rows used by Orders and order review history.
-- `src/lib/otcSwapQuote.ts`, `src/lib/otcSwapUi.ts`, and `src/lib/otcSwapIntent.ts` own Swap candidate selection, side/basis display rules, order handoff, direct execution intent, and local requested-vs-filled notes.
-- `src/lib/cotiSnap.ts` wraps the COTI MetaMask Snap RPC methods used by owner recovery/privacy flows.
-- `src/lib/appWalletRecovery.ts`, `src/lib/burnerWalletVault.ts`, `src/lib/walletAccountScope.ts`, and `src/lib/walletFunds.ts` own recovery payloads, local account vaults, owner + ChainWhisper account read scope, and move/withdraw funding helpers.
-- `src/lib/appHelpers.ts` contains verified ecosystem token presets, message helpers, and shared user-facing error helpers.
-- `src/lib/appChain.ts` reads active Trading V1 trade snapshots, blocks unsupported retired contract links, and normalizes private-token metadata.
-- `src/lib/treasuryData.ts` normalizes live, feed, explorer, and on-chain Treasury Data sources.
-- `src/lib/imagePull.ts` encrypts and decrypts image attachments before Supabase upload/read.
-- `src/hooks/useModalA11y.ts` provides shared modal focus, Escape, and focus-restore behavior.
+- `src/App.tsx` is the top-level composition shell. It still owns shared wallet/chat state, but group sync, direct-message actions, trade actions, account funding, and page rendering have been pulled into feature hooks/components where practical.
+- `src/app/` owns app-shell UI, navigation, route lazy loading, the Home page, notification sound, and app-level helper hooks.
+- `src/features/chat/` owns direct-chat UI state, panels, message actions, sync hooks, tips, reactions, image status, and chat-specific Zustand state.
+- `src/features/groups/` owns group panels, group actions, group sync orchestration, invites, member/admin flows, and group-specific Zustand state.
+- `src/features/trading/` owns the OTC page, Trade/Desk/Agent/Orders surfaces, terminal rendering, Trade Agent panel/session/action hooks, trading balances, swap quote state, recurring order actions, and in-chat trade orchestration.
+- `src/features/wallet/` owns the shared wallet header, ChainWhisper account vault, owner recovery/onboarding, funds modals, wallet readiness, and account transfer flows.
+- `src/features/tokenTools/` owns WISP Portal swap view state/actions and token-tool UI state.
+- `src/features/treasury/` owns Treasury Data UI and data normalization.
+- `src/shared/` owns reusable cross-feature UI, chat rendering pieces, modal/clipboard/virtual-scroll hooks, and small state utilities.
+- `src/shell/` owns route parsing, canonical route aliases, realtime status helpers, and browser-location sync.
+- `src/lib/` owns non-React chain, wallet, trade, parsing, storage, encoding, COTI provider, and contract helpers.
 - `src/styles.css` is the ordered stylesheet import hub. Route/domain CSS lives in `src/styles/`.
 
-See `AGENTS.md` for future-maintenance rules. `APP_IMPROVEMENTS.md` is intentionally cleared and should only contain new active proposals.
+Zustand is used as feature-local UI state, not as a replacement for contract/business logic. Keep money movement, wallet recovery, routing, and chain reads/writes in the shared libs/hooks that already own them.
+
+See `AGENTS.md` for future-maintenance rules. Local proposal and research notes are intentionally ignored.
 
 ## Network And Contracts
 

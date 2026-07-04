@@ -7,10 +7,13 @@ test-results/
 .env
 .env.*
 !.env.example
-AGENTS.md
+TESTING.md
 APP_IMPROVEMENTS.md
 SMART_CONTRACT_IMPROVEMENTS.md
 OTC_SECURITY_PRIVACY_REVIEW.md
+.agents/
+.mcp.json
+skills-lock.json
 supabase/.temp/
 npm-debug.log*
 yarn-debug.log*

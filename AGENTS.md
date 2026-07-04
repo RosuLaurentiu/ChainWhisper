@@ -2,14 +2,14 @@
 
 ## Product Shape
 
-This repository is a Vite + React + TypeScript project for ChainWhisper, a privacy-first blockchain messenger and trading hub built on COTI Mainnet (chain ID `2632500`). The runtime is an app hub where each page behaves like its own app but shares wallet, network, and trade logic.
+This repository is a Vite + React + TypeScript project for ChainWhisper, a privacy-first blockchain messenger and trading hub built on COTI Mainnet (chain ID `2632500`). The runtime is an app hub where each page behaves like its own app but shares wallet, network, trade, and account logic.
 
 Current route behavior is intentional:
 
 - `/` - canonical Home launcher and product overview. `/home` is an alias. No wallet controls shown here.
 - `/chat` - main encrypted messaging app for direct chat and group chat. `/messages` and `/messenger` are aliases.
 - `/otc` and nested `/otc/...` - canonical OTC trading app. `/trades` and `/otcdesk` are legacy aliases that must keep resolving.
-- `/shield` - canonical Whisper Shield private-token swap app. `/swap` and `/whisper-shield` are aliases.
+- `/portal` - canonical WISP Portal private-token swap app. `/swap`, `/shield`, and `/whisper-shield` are aliases.
 - `/treasury` - Treasury Data analytics. `/treasury-data` is an alias. No wallet interaction needed.
 
 ## Navigation Rules
@@ -18,11 +18,11 @@ Current route behavior is intentional:
 - Top-level route ownership lives in `src/shell/routing.ts`; update `src/shell/routing.test.ts` with any route change.
 - Launching apps from Home must navigate in-place with client-side routing. Do not open a new browser tab or trigger a full page reload because wallet session state should remain available across apps.
 - Generate new OTC links under `/otc...`; keep old `/trades...` and `/otcdesk...` routes working as aliases.
-- Internal trade links should preserve app context whenever practical. Avoid changes that unexpectedly disconnect wallets or lose known access-secret context.
+- Internal trade links should preserve app context whenever practical. Trade terminal links opened from WISP Portal may keep that terminal open when moving into OTC Desk; do not make the reverse direction preserve terminal state unless explicitly requested.
 
 ## Wallet Rules
 
-- Chat, P2P Trading, and Whisper Shield use the owner-first ChainWhisper account model: MetaMask/browser wallet is owner login, recovery, funding, and fallback; the ChainWhisper account is the default chat/trading/swap account.
+- Chat, OTC Trading, and WISP Portal use the owner-first ChainWhisper account model: MetaMask/browser wallet is owner login, recovery, funding, and fallback; the ChainWhisper account is the default chat/trading/swap account.
 - Connect/recover the owner-linked ChainWhisper account automatically after owner privacy is available. If no account exists, show create/import/recover setup actions.
 - Home and Treasury are non-interactive pages and must not show wallet controls.
 - Shared rule: if a wallet is already connected when navigating between apps, keep it connected. Do not disconnect or re-prompt.
@@ -63,9 +63,10 @@ Current route behavior is intentional:
 ## OTC Trading App - Feature Summary
 
 - OTC is an order-based trading app, not a pool/router-style DEX. Use Trade, Desk, Orders, Order review, offer, peer, shared link, and settlement language where it reads naturally.
-- Top navigation is `Trade`, `Desk`, `Orders`.
+- Top navigation is `Trade`, `Desk`, `Agent`, `Orders`.
 - `Trade` at `/otc` contains `Swap`, `Limit`, and `Recurring`.
 - `Desk` at `/otc/desk` is for browsing active public offers from anyone.
+- `Agent` at `/otc/agent` is paid WISP Trade Agent help. It may explain orders, find price context, draft limit/counter orders, prefill swap/order forms, and open order links for review. It must not execute trades automatically.
 - `Orders` at `/otc/orders` is for account-owned and received order activity.
 - `Order` review lives under `/otc/order...`. Generate new links under `/otc/order/link/:code`, `/otc/order/:id`, or `/otc/order/recurring/:id`; keep `/trades...` and `/otcdesk...` aliases working.
 - Swap is a best single-order surface. It can execute one selected ChainWhisper order directly, but must never aggregate, route, or average across multiple orders.
@@ -95,10 +96,10 @@ Current route behavior is intentional:
 - Reads smart contract data and live feed data; no write operations.
 - Only improvements warranted here are design/UX, readability, data presentation, performance, or test coverage unless explicitly requested.
 
-## Whisper Shield
+## WISP Portal
 
-- Canonical route: `/shield`.
-- Alias route: `/swap`.
+- Canonical route: `/portal`.
+- Alias routes: `/swap`, `/shield`, `/whisper-shield`.
 - Purpose: swap reward tokens into private token form and back through the reward swap vault.
 - Keep changes scoped. Do not turn this into a separate wallet/session model.
 
@@ -112,34 +113,47 @@ Current route behavior is intentional:
 - Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", "Private liquidity", "Visible amounts", and "Unlisted" consistently across explorer cards, detail cards, and in-chat cards.
 - Wallet/privacy readiness states should be clear enough that users know whether they need to connect owner wallet, unlock privacy, recover/create a ChainWhisper account, move funds, or use an owner-wallet fallback.
 
+## Project Structure
+
+- `src/App.tsx` - top-level composition shell. It still owns shared wallet/chat state, but feature orchestration has been pulled into feature hooks where practical.
+- `src/app/` - app shell UI, Home, header navigation, mobile nav, lazy route loading, app-level hooks, notification sound, and formatting helpers.
+- `src/features/chat/` - direct-chat components, chat UI Zustand store, message sync/actions, reactions, tips, attachments, read state, and direct message send/tip actions.
+- `src/features/groups/` - group chat components, group UI Zustand store, group sync orchestration, group admin actions, invites, member events, and group message sends.
+- `src/features/trading/` - OTC Trading page, Trade/Desk/Agent/Orders surfaces, Trade Agent panel/session/actions, terminal renderers, order cards, swap quote state, balances, recurring order actions, and in-chat trade actions.
+- `src/features/wallet/` - shared wallet header, ChainWhisper account vault, owner onboarding/recovery, account funds modals, readiness, wallet preference, and transfer flows.
+- `src/features/tokenTools/` - WISP Portal swap page, token swap view model/actions, reward-token metrics, and token-tool UI Zustand store.
+- `src/features/treasury/` - Treasury Data page plus live/feed/on-chain data loading and normalization.
+- `src/shared/` - reusable cross-feature UI, chat rendering pieces, modal/clipboard/virtual-scroll hooks, block timestamp cache, and small state utilities.
+- `src/shell/` - top-level route parsing, canonical route paths, aliases, realtime status helpers, and browser-location sync.
+- `src/lib/` - non-React chain, wallet, trade, parsing, storage, encoding, COTI provider, and contract helpers.
+- `src/styles.css` - ordered stylesheet import hub. Route/domain CSS lives in `src/styles/`; preserve import order when moving rules.
+- Ignored local Markdown files, such as `APP_IMPROVEMENTS.md`, are scratchpads. Do not use them as completed-work changelogs.
+
 ## Important Source Map
 
-- `src/App.tsx` - app shell, top-level composition, chat orchestration, shared wallet state for chat, lazy loading of page apps.
-- `src/shell/routing.ts` - top-level route parsing, canonical route paths, aliases, and browser location sync.
-- `src/components/P2PTradingPage.tsx` - standalone OTC trading app. Internal P2P/terminal names still exist, but user-facing language should be Trade, Desk, Orders, and Order.
-- `src/components/TradeComposerPanel.tsx` - shared trade create/edit form.
-- `src/components/TradeOfferCard.tsx` - trade card used for shared links and in-chat rendering.
-- `src/components/TreasuryPage.tsx` - Treasury Data presentation.
-- `src/components/TokenSwapPage.tsx` - Whisper Shield swap presentation.
-- `src/components/MessageTextWithLinks.tsx` and `src/lib/chatLinks.ts` - shared chat link rendering and internal app-link interception.
-- `src/lib/treasuryData.ts` - live/feed/on-chain data loading and normalization.
-- `src/lib/appShared.ts` - re-exports `src/lib/appShared/core.ts` and `src/lib/appShared/parsers.ts`. Shared constants, wallet helpers, parsers, memo encoding, COTI provider loading, and formatting belong there.
-- `src/hooks/useWalletOnboarding.ts` and `src/hooks/useBurnerWallet.ts` - reusable owner wallet, ChainWhisper account, recovery, and onboarding hooks.
+- `src/app/lazyRoutes.tsx` - lazy-loaded page modules and preload hooks for Chat, OTC Trading, WISP Portal, and Treasury.
+- `src/features/trading/components/P2PTradingPage.tsx` - standalone OTC trading app. Internal P2P/terminal names still exist; user-facing language should be Trade, Desk, Agent, Orders, and Order.
+- `src/features/trading/components/TradeAgentPanel.tsx`, `src/features/trading/hooks/useP2PTradeAgentSession.ts`, `src/features/trading/hooks/useP2PTradeAgentActions.ts`, and `src/lib/tradeAgent.ts` - Trade Agent UI, session state, paid action handling, response normalization, fees, and action labels.
+- `src/features/trading/components/TradeComposerPanel.tsx` - shared trade create/edit form.
+- `src/features/trading/components/TradeOfferCard.tsx` - trade card used for shared links and in-chat rendering.
+- `src/features/treasury/components/TreasuryPage.tsx` and `src/features/treasury/treasuryData.ts` - Treasury Data presentation and data normalization.
+- `src/features/tokenTools/components/TokenSwapPage.tsx` - WISP Portal swap presentation.
+- `src/shared/components/chat/MessageTextWithLinks.tsx` and `src/lib/chatLinks.ts` - shared chat link rendering and internal app-link interception.
+- `src/lib/appShared.ts` - compatibility barrel for `src/lib/appShared/core.ts`, `src/lib/appShared/parsers.ts`, and `src/lib/appShared/burnerVault.ts`. Prefer direct imports when touching nearby code.
+- `src/features/wallet/hooks/useWalletOnboarding.ts` and `src/features/wallet/hooks/useBurnerWallet.ts` - reusable owner wallet, ChainWhisper account, recovery, and onboarding hooks.
 - `src/lib/appWalletRecovery.ts`, `src/lib/burnerWalletVault.ts`, `src/lib/walletAccountScope.ts`, and `src/lib/walletFunds.ts` - recovery payloads, local account vaults, owner + ChainWhisper read scope, and move/withdraw funding helpers.
-- `src/hooks/useInChatTradeActions.ts` - DM trade action orchestration for create, accept, decline, cancel, and counter preparation.
-- `src/hooks/useGroupAdminActions.ts` - group create, invite, join-code, join-by-code, remove, rename, leave, handoff, disband, and invite accept/decline flows.
+- `src/features/trading/hooks/useInChatTradeActions.ts` and `src/features/chat/hooks/useDirectMessageActions.ts` - DM trade and direct message/tip action orchestration.
+- `src/features/groups/hooks/useGroupAdminActions.ts` and `src/features/groups/hooks/useGroupDataSync.ts` - group admin actions and group sync orchestration.
 - `src/lib/groupMessageSync.ts` - active-group message and member-event sync helpers.
 - `src/lib/directConversationSyncHelpers.ts` - direct-chat merge, unread, nickname/contact, and optimistic reconciliation helpers.
 - `src/lib/p2pTradeView.ts` - OTC display, search/filter, snapshot-key, explorer-link, local storage, and maker-private-progress helpers.
 - `src/lib/tradeHistory.ts` - wallet-scoped trade history rows, including private fill receipt rows used by Orders and order-review history.
 - `src/lib/otcSwapQuote.ts`, `src/lib/otcSwapUi.ts`, and `src/lib/otcSwapIntent.ts` - Swap quote selection, side/basis UI rules, order-review handoff, direct execution intent, and local requested-vs-filled notes.
 - `src/lib/appHelpers.ts` - verified ecosystem token presets, message helpers, and shared user-facing error helpers.
-- `src/lib/tradeComposer.ts`, `src/lib/tradeActions.ts`, `src/lib/tradeLinks.ts`, `src/lib/tradePerspective.ts`, `src/lib/appChain.ts` - shared trade logic. Extend these before duplicating trade behavior in components.
+- `src/lib/tradeComposer.ts`, `src/lib/tradeActions.ts`, `src/lib/tradeLinks.ts`, `src/lib/tradePerspective.ts`, and `src/lib/appChain.ts` - shared trade logic. Extend these before duplicating trade behavior in components.
 - `src/lib/walletOptions.ts` - browser wallet filtering/detection. Browser wallets are owner/fallback wallets in the normal app model.
-- `src/hooks/useModalA11y.ts` - shared modal focus trap, Escape, and focus-restore behavior.
+- `src/shared/hooks/useModalA11y.ts` - shared modal focus trap, Escape, and focus-restore behavior.
 - Supabase image storage is limited to encrypted chat image attachments: `src/lib/imagePull.ts`, `src/lib/supabaseClient.ts`, and `supabase/`.
-- `src/styles.css` - ordered stylesheet import hub. Route/domain CSS lives in `src/styles/`; preserve import order when moving rules.
-- `APP_IMPROVEMENTS.md` - intentionally clean active-proposal scratchpad. Do not use it as a completed-work changelog.
 
 ## Consistency Rules
 
@@ -147,7 +161,7 @@ Current route behavior is intentional:
 - Wallet controls belong in the universal top header.
 - Keep trade display semantics consistent through `tradePerspective`, `tradeComposer`, `tradeLinks`, `appChain`, and `TradeOfferCard`.
 - All new contract reads should go through `appChain.ts`; all new trade writes should go through `tradeActions.ts`.
-- Each app keeps its own layout and density: chat is a workspace, P2P is an OTC desk, Treasury is analytics, Home is a launcher, Whisper Shield is a compact swap tool.
+- Each app keeps its own layout and density: chat is a workspace, OTC is an order desk, Treasury is analytics, Home is a launcher, and WISP Portal is a compact swap tool.
 - Keep `src/styles.css` as the import hub; add route/domain CSS under `src/styles/` when a split reduces risk.
 - For private orders, never key state only by numeric trade ID. Include the escrow contract address.
 - For private tokens, respect 6-decimal formatting where token metadata resolves that way, and require AES before displaying private balances or maker-only private progress.
@@ -177,4 +191,4 @@ npm run test:chat
 
 Add or update tests for money movement, recovery/encryption, private-balance reads, signer choice, route/link parsing, message encoding, or fixed regressions. For simple styling/copy/layout changes, prefer manual/browser smoke checks unless the UI state protects a critical wallet, recovery, trade, or privacy path.
 
-Local research notes that should not be uploaded belong in ignored Markdown files such as `OTC_SECURITY_PRIVACY_REVIEW.md`.
+Local testing notes, research notes, and proposal drafts that should not be uploaded belong in ignored Markdown files such as `TESTING.md`, `APP_IMPROVEMENTS.md`, or `OTC_SECURITY_PRIVACY_REVIEW.md`.

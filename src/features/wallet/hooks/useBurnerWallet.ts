@@ -18,6 +18,7 @@ import {
   loadBurnerWalletVaultFromOwnerAesStorage,
   loadBurnerWalletVaultFromStorage,
   loadCotiEthersModule,
+  migrateLegacyBurnerWalletVaultStorage,
   mergeOnboardInfo,
   parseBurnerWalletStorageState,
   saveOwnerAesBurnerWalletVault,
@@ -55,6 +56,7 @@ import {
   type AppWalletRecoveryPromptEstimate
 } from '../../../lib/appWalletRecovery';
 import { getCotiSnapOwnerAesKeyResult, getCotiSnapOwnerAesStatusMessage } from '../../../lib/cotiSnap';
+import { getOrRecoverAesForWallet } from '../../../lib/cotiAesUnlock';
 import type { BrowserWalletSession } from './useWalletOnboarding';
 
 type OwnerAesRecoveryMode = 'auto' | 'manual';
@@ -355,6 +357,7 @@ export function useBurnerWallet({
             throw new Error('No ChainWhisper account is saved here yet. Generate or import one first.');
           }
           burnerVault = buildResult.vault;
+          await migrateLegacyBurnerWalletVaultStorage(sessionPin).catch(() => false);
         } else {
           burnerVault = await saveBurnerWalletRecordWithPin(burnerRecord, sessionPin);
         }
@@ -439,12 +442,14 @@ export function useBurnerWallet({
         }
 
         setOnboardStatus('Onboarding...');
-        await withTimeout(
-          burnerWallet.generateOrRecoverAes(),
+        const onboardInfo = await withTimeout(
+          getOrRecoverAesForWallet({
+            signer: burnerWallet,
+            walletAddress: burnerWallet.address
+          }),
           BURNER_ONBOARD_TIMEOUT_MS,
           'Timed out while preparing ChainWhisper account encryption keys. Try again.'
         );
-        const onboardInfo = burnerWallet.getUserOnboardInfo();
 
         if (!onboardInfo?.aesKey) {
           throw new Error('AES key unavailable for ChainWhisper account.');
@@ -604,12 +609,14 @@ export function useBurnerWallet({
         }
 
         setOnboardStatus('Onboarding...');
-        await withTimeout(
-          burnerWallet.generateOrRecoverAes(),
+        const onboardInfo = await withTimeout(
+          getOrRecoverAesForWallet({
+            signer: burnerWallet,
+            walletAddress: burnerWallet.address
+          }),
           BURNER_ONBOARD_TIMEOUT_MS,
           'Timed out while preparing ChainWhisper account encryption keys. Try again.'
         );
-        const onboardInfo = burnerWallet.getUserOnboardInfo();
 
         if (!onboardInfo?.aesKey) {
           throw new Error('AES key unavailable for recovered ChainWhisper account.');

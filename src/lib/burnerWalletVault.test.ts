@@ -4,6 +4,7 @@ import {
   BURNER_WALLET_STORAGE_KEY,
   loadBurnerWalletVaultFromOwnerAesStorage,
   loadBurnerWalletVaultFromStorage,
+  migrateLegacyBurnerWalletVaultStorage,
   parseBurnerWalletStorageState,
   saveEncryptedBurnerWalletVault,
   saveOwnerAesBurnerWalletVault,
@@ -79,6 +80,73 @@ describe('app wallet vault helpers', () => {
     expect(restored.activeWalletId).toBe('wallet-b');
     expect(restored.wallets).toHaveLength(2);
     await expect(loadBurnerWalletVaultFromStorage('54321')).rejects.toThrow();
+  });
+
+  it('migrates legacy plaintext wallet storage to the encrypted vault format', async () => {
+    window.localStorage.setItem(
+      BURNER_WALLET_STORAGE_KEY,
+      JSON.stringify({
+        privateKey: '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        mnemonic: 'legacy mnemonic'
+      })
+    );
+
+    await expect(migrateLegacyBurnerWalletVaultStorage('12345')).resolves.toBe(true);
+
+    expect(parseBurnerWalletStorageState().kind).toBe('encrypted');
+    expect(window.localStorage.getItem(BURNER_WALLET_STORAGE_KEY)).not.toContain('0xcccccccc');
+    const restored = await loadBurnerWalletVaultFromStorage('12345');
+    expect(restored.wallets[0]?.privateKey).toBe(
+      '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    );
+  });
+
+  it('encrypts legacy plaintext storage when the old app-wallet unlock path loads it', async () => {
+    window.localStorage.setItem(
+      BURNER_WALLET_STORAGE_KEY,
+      JSON.stringify({
+        privateKey: '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        mnemonic: 'old path mnemonic'
+      })
+    );
+
+    const restored = await loadBurnerWalletVaultFromStorage('12345');
+
+    expect(restored.wallets[0]?.privateKey).toBe(
+      '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    );
+    expect(parseBurnerWalletStorageState().kind).toBe('encrypted');
+    expect(window.localStorage.getItem(BURNER_WALLET_STORAGE_KEY)).not.toContain('0xdddddddd');
+    await expect(loadBurnerWalletVaultFromStorage('54321')).rejects.toThrow();
+
+    window.localStorage.setItem(
+      BURNER_WALLET_STORAGE_KEY,
+      JSON.stringify({
+        activeWalletId: 'wallet-b',
+        wallets: makeVault().wallets
+      })
+    );
+
+    const restoredVault = await loadBurnerWalletVaultFromStorage('23456');
+
+    expect(restoredVault.activeWalletId).toBe('wallet-b');
+    expect(restoredVault.wallets).toHaveLength(2);
+    expect(parseBurnerWalletStorageState().kind).toBe('encrypted');
+    expect(window.localStorage.getItem(BURNER_WALLET_STORAGE_KEY)).not.toContain('0xbbbbbb');
+  });
+
+  it('does not migrate legacy plaintext storage with a legacy-length PIN', async () => {
+    window.localStorage.setItem(
+      BURNER_WALLET_STORAGE_KEY,
+      JSON.stringify({
+        privateKey: '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+      })
+    );
+
+    await expect(migrateLegacyBurnerWalletVaultStorage('1234')).resolves.toBe(false);
+
+    expect(parseBurnerWalletStorageState().kind).toBe('legacy');
+    expect(window.localStorage.getItem(BURNER_WALLET_STORAGE_KEY)).toContain('0xcccccccc');
   });
 
   it('saves and loads owner-AES local app wallet vaults', async () => {

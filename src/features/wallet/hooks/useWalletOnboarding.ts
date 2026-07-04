@@ -79,6 +79,13 @@ type BrowserWalletActivationOptions = {
   preparePrivacy?: boolean;
 };
 
+const PRIVACY_PROMPT_AFTER_CONNECT_DELAY_MS = 450;
+
+const waitForPrivacyPromptAfterConnect = (): Promise<void> =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, PRIVACY_PROMPT_AFTER_CONNECT_DELAY_MS);
+  });
+
 export type PassiveBrowserWalletRestoreResult = {
   address: string;
   chainId: number | null;
@@ -549,6 +556,14 @@ export function useWalletOnboarding({
     ]
   );
 
+  const onboardAddressAesAfterConnect = useCallback(
+    async (address: string, provider: Eip1193Provider, options?: BrowserWalletActivationOptions): Promise<OnboardInfo> => {
+      await waitForPrivacyPromptAfterConnect();
+      return onboardAddressAes(address, provider, options);
+    },
+    [onboardAddressAes]
+  );
+
   const connectAndOnboard = useCallback(
     async (walletId?: string, options?: BrowserWalletActivationOptions): Promise<OnboardInfo | null> => {
       setError('');
@@ -656,7 +671,7 @@ export function useWalletOnboarding({
           walletLabel
         });
         setStatus(`Connected (${walletLabel})`);
-        const onboardInfo = options?.preparePrivacy ? await onboardAddressAes(selected, activeWalletProvider, options) : null;
+        const onboardInfo = options?.preparePrivacy ? await onboardAddressAesAfterConnect(selected, activeWalletProvider, options) : null;
         schedulePostConnectSync(selected);
         return onboardInfo;
       } catch (connectionError) {
@@ -674,7 +689,7 @@ export function useWalletOnboarding({
     },
     [
       injectedWalletOptions,
-      onboardAddressAes,
+      onboardAddressAesAfterConnect,
       preferredInjectedWalletOption,
       resetBrowserPrivacySessionForWalletChange,
       schedulePostConnectSync,
@@ -746,7 +761,7 @@ export function useWalletOnboarding({
             });
             setStatus(`Connected (${injectedOption.label})`);
             const onboardInfo = options?.preparePrivacy
-              ? await onboardAddressAes(selected, injectedOption.provider, options)
+              ? await onboardAddressAesAfterConnect(selected, injectedOption.provider, options)
               : null;
             schedulePostConnectSync(selected);
             return onboardInfo;
@@ -768,7 +783,7 @@ export function useWalletOnboarding({
           });
           setStatus(`Connected (${mobileSession.walletLabel})`);
           const onboardInfo = options?.preparePrivacy
-            ? await onboardAddressAes(selected, mobileSession.provider, options)
+            ? await onboardAddressAesAfterConnect(selected, mobileSession.provider, options)
             : null;
           schedulePostConnectSync(selected);
           return onboardInfo;
@@ -840,7 +855,7 @@ export function useWalletOnboarding({
         setBrowserWalletSession(nextSession);
         setStatus(`Connected (${activeWalletLabel})`);
         const onboardInfo = options?.preparePrivacy
-          ? await onboardAddressAes(selected, activeWalletProvider, options)
+          ? await onboardAddressAesAfterConnect(selected, activeWalletProvider, options)
           : null;
 
         schedulePostConnectSync(selected);
@@ -856,7 +871,7 @@ export function useWalletOnboarding({
     },
     [
       connectAndOnboard,
-      onboardAddressAes,
+      onboardAddressAesAfterConnect,
       resetBrowserPrivacySessionForWalletChange,
       schedulePostConnectSync,
       setBrowserWalletSession,

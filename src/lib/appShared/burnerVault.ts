@@ -2,6 +2,7 @@ import type { OnboardInfo } from '@coti-io/coti-ethers';
 import {
   BURNER_OWNER_AES_WALLET_STORAGE_SCHEME,
   BURNER_OWNER_AES_WALLET_STORAGE_VERSION,
+  BURNER_PIN_MIN_LENGTH,
   BURNER_PIN_PBKDF2_ITERATIONS,
   BURNER_WALLET_STORAGE_KEY,
   BURNER_WALLET_STORAGE_VERSION,
@@ -468,11 +469,19 @@ export const loadBurnerWalletVaultFromStorage = async (pin: string): Promise<Bur
   }
 
   if (storageState.kind === 'legacy') {
-    return createBurnerWalletVault([storageState.record]);
+    const vault = await createBurnerWalletVault([storageState.record]);
+    if (pin.trim().length >= BURNER_PIN_MIN_LENGTH) {
+      await saveEncryptedBurnerWalletVault(vault, pin.trim());
+    }
+    return vault;
   }
 
   if (storageState.kind === 'legacy-vault') {
-    return createBurnerWalletVault(storageState.record.wallets, storageState.record.activeWalletId);
+    const vault = await createBurnerWalletVault(storageState.record.wallets, storageState.record.activeWalletId);
+    if (pin.trim().length >= BURNER_PIN_MIN_LENGTH) {
+      await saveEncryptedBurnerWalletVault(vault, pin.trim());
+    }
+    return vault;
   }
 
   if (storageState.kind === 'owner-aes') {
@@ -522,6 +531,29 @@ export const saveEncryptedBurnerWalletVault = async (vault: BurnerWalletVault, p
   } catch {
     throw new Error('Failed to persist wallet data in browser storage.');
   }
+};
+
+export const migrateLegacyBurnerWalletVaultStorage = async (pin: string): Promise<boolean> => {
+  const normalizedPin = pin.trim();
+  if (normalizedPin.length < BURNER_PIN_MIN_LENGTH) {
+    return false;
+  }
+
+  const storageState = parseBurnerWalletStorageState();
+  if (storageState.kind === 'legacy') {
+    await saveEncryptedBurnerWalletVault(await createBurnerWalletVault([storageState.record]), normalizedPin);
+    return true;
+  }
+
+  if (storageState.kind === 'legacy-vault') {
+    await saveEncryptedBurnerWalletVault(
+      await createBurnerWalletVault(storageState.record.wallets, storageState.record.activeWalletId),
+      normalizedPin
+    );
+    return true;
+  }
+
+  return false;
 };
 
 export const saveOwnerAesBurnerWalletVault = async (

@@ -328,12 +328,7 @@ export const formatOtcSwapFillHistoryNote = (
       : '';
 
   if (note.privateLiquidity) {
-    if (actualAmount > 0n) {
-      return requestedAmount > actualAmount
-        ? `Requested ${requestedLabel}, filled ${actualLabel}. Private liquidity only filled the amount available on this order.`
-        : `Requested ${requestedLabel}, filled ${actualLabel} from private liquidity.`;
-    }
-    return `Requested ${requestedLabel}. Private liquidity can fill less than requested; exact fill is shown when revealable.`;
+    return '';
   }
 
   if (actualAmount > 0n && requestedAmount > actualAmount) {
