@@ -19,14 +19,12 @@ import { TradeTokenSelect, type TradeComposerTokenOption } from './TradeComposer
 
 type TradeRecurringComposerPanelProps = {
   actionNotice: ReactNode;
-  canRevealEditingRecurringLiquidity: boolean;
   copyWithFeedback: (value: string, key: string) => Promise<void>;
   createRecurringOrder: () => Promise<void>;
   createdRecurringOrderId: number | null;
   createdRecurringOrderLink: string;
   creatingRecurringOrder: boolean;
   editingRecurringOrder: TradeSnapshot | null;
-  editingRecurringTradeKey: string;
   lastCopiedKey: string;
   recurringAddBuyBudgetInput: string;
   recurringAddSellInventoryInput: string;
@@ -45,7 +43,6 @@ type TradeRecurringComposerPanelProps = {
   recurringSellReceiveEditable: boolean;
   recurringSellReceiveInput: string;
   recurringSellReceivePreview: string;
-  revealingPrivateTradeKey: string;
   setRecurringHidePrivateAmounts: (value: boolean) => void;
   setRecurringPriceDisplayInverted: Dispatch<SetStateAction<boolean>>;
   setRecurringRemoveBuyBudgetInput: (value: string) => void;
@@ -70,7 +67,6 @@ type TradeRecurringComposerPanelProps = {
   updateRecurringSellReversePriceInput: (value: string) => void;
   onOfferTokenSelectionChange: (value: TradeTokenPresetKey) => void;
   onRequestTokenSelectionChange: (value: TradeTokenPresetKey) => void;
-  onRevealMakerPrivateProgress: (snapshot: TradeSnapshot) => Promise<unknown>;
   toggleRecurringBuyReceiveEditable: () => void;
   toggleRecurringSellReceiveEditable: () => void;
   onCotiNetwork: boolean;
@@ -83,14 +79,12 @@ const CREATED_RECURRING_ORDER_COPY_KEY = 'created-recurring-order-link';
 
 export default function TradeRecurringComposerPanel({
   actionNotice,
-  canRevealEditingRecurringLiquidity,
   copyWithFeedback,
   createRecurringOrder,
   createdRecurringOrderId,
   createdRecurringOrderLink,
   creatingRecurringOrder,
   editingRecurringOrder,
-  editingRecurringTradeKey,
   lastCopiedKey,
   recurringAddBuyBudgetInput,
   recurringAddSellInventoryInput,
@@ -109,7 +103,6 @@ export default function TradeRecurringComposerPanel({
   recurringSellReceiveEditable,
   recurringSellReceiveInput,
   recurringSellReceivePreview,
-  revealingPrivateTradeKey,
   setRecurringHidePrivateAmounts,
   setRecurringPriceDisplayInverted,
   setRecurringRemoveBuyBudgetInput,
@@ -134,7 +127,6 @@ export default function TradeRecurringComposerPanel({
   updateRecurringSellReversePriceInput,
   onOfferTokenSelectionChange,
   onRequestTokenSelectionChange,
-  onRevealMakerPrivateProgress,
   toggleRecurringBuyReceiveEditable,
   toggleRecurringSellReceiveEditable,
   onCotiNetwork,
@@ -466,16 +458,6 @@ export default function TradeRecurringComposerPanel({
                 <span>Live liquidity</span>
                 <strong>Edit funding without changing this order link.</strong>
               </div>
-              {canRevealEditingRecurringLiquidity ? (
-                <button
-                  type="button"
-                  className="standalone-trade-secondary-btn"
-                  onClick={() => onRevealMakerPrivateProgress(editingRecurringOrder).catch(() => {})}
-                  disabled={revealingPrivateTradeKey === editingRecurringTradeKey}
-                >
-                  {revealingPrivateTradeKey === editingRecurringTradeKey ? 'Revealing...' : 'Reveal Liquidity'}
-                </button>
-              ) : null}
             </div>
             <div className="p2p-recurring-grid p2p-recurring-assets p2p-recurring-add-funds">
               <section className="p2p-recurring-liquidity-edit-card">

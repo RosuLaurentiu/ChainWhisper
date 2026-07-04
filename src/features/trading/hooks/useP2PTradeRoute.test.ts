@@ -153,6 +153,25 @@ describe('P2P trade route helpers', () => {
     });
   });
 
+  it('resolves new compact trade links with fragment secrets', () => {
+    const code = encodeTradeLink(42);
+
+    expect(resolveTradeRouteFromParts(`/trades/l/${code}`, '?escrow=private', `#${ACCESS_SECRET}`)).toMatchObject({
+      view: 'trade',
+      tradeId: 42,
+      escrowContract: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessSecret: ACCESS_SECRET,
+      routeError: ''
+    });
+    expect(resolveTradeRouteFromParts(`/otc/order/link/${code}`, '?escrow=direct', `#${ACCESS_SECRET}`)).toMatchObject({
+      view: 'trade',
+      tradeId: 42,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessSecret: ACCESS_SECRET,
+      routeError: ''
+    });
+  });
+
   it('preserves legacy numeric links and secret hashes', () => {
     expect(resolveTradeRouteFromParts('/trades/77', '', `#${ACCESS_SECRET}`)).toMatchObject({
       view: 'trade',
@@ -180,6 +199,11 @@ describe('P2P trade route helpers', () => {
       escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
       accessSecret: ACCESS_SECRET
     });
+    expect(resolveTradeLinkInput(`http://localhost:5173/trades/l/${encodeTradeLink(9)}?escrow=direct#${ACCESS_SECRET}`)).toEqual({
+      tradeId: 9,
+      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+      accessSecret: ACCESS_SECRET
+    });
     expect(resolveTradeLinkInput('123abc')).toBeNull();
   });
 
@@ -188,7 +212,7 @@ describe('P2P trade route helpers', () => {
       `/otc/order/recurring/7#${ACCESS_SECRET}`
     );
     expect(buildTradeLinkPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
-      `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+      `/otc/order/link/${encodeTradeLink(8)}?escrow=direct#${ACCESS_SECRET}`
     );
   });
 
@@ -200,13 +224,13 @@ describe('P2P trade route helpers', () => {
       `/trades/recurring?order=7#${ACCESS_SECRET}`
     );
     expect(buildTradeTerminalPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
-      `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+      `/otc/order/link/${encodeTradeLink(8)}?escrow=direct#${ACCESS_SECRET}`
     );
     expect(buildTradeTerminalPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS, 'trades')).toBe(
-      `/trades/l/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+      `/trades/l/${encodeTradeLink(8)}?escrow=direct#${ACCESS_SECRET}`
     );
     expect(buildTradeLinkPath(8, ACCESS_SECRET, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS)).toBe(
-      `/otc/order/link/${encodeTradeLink(8, ACCESS_SECRET)}?escrow=direct`
+      `/otc/order/link/${encodeTradeLink(8)}?escrow=direct#${ACCESS_SECRET}`
     );
   });
 

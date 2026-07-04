@@ -589,17 +589,18 @@ export default function useP2PTradeActions({
               accessSecret: accessSecret || undefined
             });
         if (latestSnapshotHiddenLiquidity) {
-          mergeTradeSnapshot({
-            ...latestSnapshot,
-            taker:
-              'fullyFilled' in fillResult &&
-              fillResult.fullyFilled &&
-              latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
-                ? actionWalletAddress
-                : latestSnapshot.taker,
-            status: 'fullyFilled' in fillResult && fillResult.fullyFilled ? 'accepted' : latestSnapshot.status,
-            acceptedTxHash: fillResult.filledTxHash
-          });
+          const privateFillFullyFilled = 'fullyFilled' in fillResult && fillResult.fullyFilled;
+          if (privateFillFullyFilled) {
+            mergeTradeSnapshot({
+              ...latestSnapshot,
+              taker:
+                latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
+                  ? actionWalletAddress
+                  : latestSnapshot.taker,
+              status: 'accepted',
+              acceptedTxHash: fillResult.filledTxHash
+            });
+          }
         } else {
           const remainingAfterFill =
             requestedAmount >= remainingRequestAmount ? 0n : remainingRequestAmount - requestedAmount;
@@ -610,6 +611,8 @@ export default function useP2PTradeActions({
               : (requestedAmount * remainingOfferBeforeFill) / remainingRequestAmount;
           const remainingOfferAfterFill =
             offerAmountOut >= remainingOfferBeforeFill ? 0n : remainingOfferBeforeFill - offerAmountOut;
+          const previousWalletOfferAmount = BigInt(latestSnapshot.walletFillState?.offerAmountReceived ?? '0');
+          const previousWalletRequestAmount = BigInt(latestSnapshot.walletFillState?.requestAmountPaid ?? '0');
           mergeTradeSnapshot({
             ...latestSnapshot,
             status: remainingAfterFill === 0n ? 'accepted' : latestSnapshot.status,
@@ -618,6 +621,10 @@ export default function useP2PTradeActions({
               remainingRequestAmount: remainingAfterFill.toString(),
               filledOfferAmount: (BigInt(latestSnapshot.fillState?.filledOfferAmount ?? '0') + offerAmountOut).toString(),
               filledRequestAmount: (BigInt(latestSnapshot.fillState?.filledRequestAmount ?? '0') + requestedAmount).toString()
+            },
+            walletFillState: {
+              offerAmountReceived: (previousWalletOfferAmount + offerAmountOut).toString(),
+              requestAmountPaid: (previousWalletRequestAmount + requestedAmount).toString()
             }
           });
         }

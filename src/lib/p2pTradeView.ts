@@ -146,7 +146,12 @@ export const shouldRecoverMakerTradePayload = (
     return false;
   }
 
-  return !hasKnownAccessSecret || needsDirectTermHydration;
+  return (
+    !hasKnownAccessSecret ||
+    needsDirectTermHydration ||
+    !hasPositiveAssetAmount(trade.offer) ||
+    !hasPositiveAssetAmount(trade.request)
+  );
 };
 
 export const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
@@ -272,8 +277,13 @@ export const loadStoredTradeAccessSecrets = (): Record<string, string> => {
   }
 };
 
-const isStoredTokenAmount = (value: unknown): value is string =>
-  typeof value === 'string' && /^\d+$/.test(value) && BigInt(value) > 0n;
+const isStoredPrivateTradeLiquidity = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !/^\d+(?::\d+)?$/.test(value)) {
+    return false;
+  }
+  const [offerAmount, requestAmount] = value.split(':');
+  return BigInt(offerAmount ?? '0') > 0n && (requestAmount === undefined || BigInt(requestAmount) > 0n);
+};
 
 const buildPrivateTradeLiquidityStorageKey = (walletKey?: string | null): string => {
   const normalizedWalletKey = walletKey?.trim().toLowerCase() ?? '';
@@ -285,7 +295,7 @@ const buildPrivateTradeLiquidityStorageKey = (walletKey?: string | null): string
 const normalizeStoredPrivateTradeLiquidity = (parsed: Record<string, unknown>): Record<string, string> =>
   Object.fromEntries(
     Object.entries(parsed).filter(
-      ([tradeKey, amount]) => /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeKey) && isStoredTokenAmount(amount)
+      ([tradeKey, amount]) => /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeKey) && isStoredPrivateTradeLiquidity(amount)
     )
   ) as Record<string, string>;
 

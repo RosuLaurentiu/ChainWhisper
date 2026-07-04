@@ -11,6 +11,7 @@ import { ZERO_TRADE_TAKER_ADDRESS } from './tradePerspective';
 const maker = '0x1111111111111111111111111111111111111111';
 const taker = '0x2222222222222222222222222222222222222222';
 const filler = '0x3333333333333333333333333333333333333333';
+const otherFiller = '0x4444444444444444444444444444444444444444';
 
 const asset = (symbol: string, amount = '1000000'): TradeAssetPayload => ({
   kind: symbol.startsWith('p') ? 'private-erc20' : 'erc20',
@@ -34,8 +35,8 @@ const trade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot => ({
 });
 
 describe('buildTradeTransactionHistoryRows', () => {
-  it('builds visible taker buy/sell history with counterparty identity', () => {
-    const [row] = buildTradeTransactionHistoryRows(
+  it('does not synthesize visible taker history from wallet fill state alone', () => {
+    const rows = buildTradeTransactionHistoryRows(
       [
         trade({
           acceptedTxHash: '0xabc',
@@ -43,6 +44,27 @@ describe('buildTradeTransactionHistoryRows', () => {
             offerAmountReceived: '700000',
             requestAmountPaid: '1400000'
           }
+        })
+      ],
+      taker
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it('builds visible taker buy/sell history from partial fill events', () => {
+    const [row] = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          walletFillEvents: [
+            {
+              fillIndex: 1,
+              filler: taker,
+              offerAmount: '700000',
+              requestAmount: '1400000',
+              txHash: '0xabc'
+            }
+          ]
         })
       ],
       taker
@@ -61,6 +83,82 @@ describe('buildTradeTransactionHistoryRows', () => {
     expect(row.sold).toMatchObject({ symbol: 'BBB', amount: '1400000', visible: true });
     expect(row.tokenFlows.map((flow) => `${flow.asset.symbol}:${flow.action}`)).toEqual(['AAA:bought', 'BBB:sold']);
     expect(row.timestamp).toBeUndefined();
+  });
+
+  it('renders public limit order partial fills as separate filler rows', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          status: 'open',
+          walletHasFill: true,
+          walletFillEvents: [
+            {
+              fillIndex: 1,
+              filler,
+              offerAmount: '250000',
+              requestAmount: '500000',
+              txHash: '0xpart1',
+              blockNumber: 10,
+              logIndex: 1
+            },
+            {
+              fillIndex: 2,
+              filler,
+              offerAmount: '100000',
+              requestAmount: '200000',
+              txHash: '0xpart2',
+              blockNumber: 11,
+              logIndex: 2
+            }
+          ]
+        })
+      ],
+      filler
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ role: 'filler', sequence: 2, txHash: '0xpart2' });
+    expect(rows[0].bought).toMatchObject({ symbol: 'AAA', amount: '100000', visible: true });
+    expect(rows[0].sold).toMatchObject({ symbol: 'BBB', amount: '200000', visible: true });
+    expect(rows[1]).toMatchObject({ role: 'filler', sequence: 1, txHash: '0xpart1' });
+  });
+
+  it('renders public limit order partial fills as separate maker rows', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          status: 'open',
+          walletHasFill: true,
+          walletFillEvents: [
+            {
+              fillIndex: 1,
+              filler,
+              offerAmount: '250000',
+              requestAmount: '500000',
+              txHash: '0xmakerpart1',
+              blockNumber: 10
+            },
+            {
+              fillIndex: 2,
+              filler: taker,
+              offerAmount: '100000',
+              requestAmount: '200000',
+              txHash: '0xmakerpart2',
+              blockNumber: 11
+            }
+          ]
+        })
+      ],
+      maker
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ role: 'maker', counterparty: taker, sequence: 2 });
+    expect(rows[0].bought).toMatchObject({ symbol: 'BBB', amount: '200000', visible: true });
+    expect(rows[0].sold).toMatchObject({ symbol: 'AAA', amount: '100000', visible: true });
+    expect(rows[1]).toMatchObject({ role: 'maker', counterparty: filler, sequence: 1 });
   });
 
   it('uses private receipts so makers can see who filled hidden orders after reveal', () => {
@@ -101,7 +199,67 @@ describe('buildTradeTransactionHistoryRows', () => {
     expect(row.timestamp).toBeUndefined();
   });
 
-  it('keeps private recurring history amount-hidden until wallet receipts reveal amounts', () => {
+  it('shows an open private partial fill for the filler wallet', () => {
+    const [row] = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          status: 'open',
+          hiddenLiquidity: true,
+          offer: asset('pAAA'),
+          request: asset('pBBB'),
+          walletHasFill: true,
+          privateFillReceipts: [
+            {
+              fillIndex: 1,
+              filler,
+              offerAmount: '250000',
+              requestAmount: '500000',
+              txHash: '0xpartial'
+            }
+          ]
+        })
+      ],
+      filler
+    );
+
+    expect(row).toMatchObject({
+      role: 'filler',
+      sourceKind: 'private',
+      counterparty: maker,
+      amountVisibility: 'private-revealed',
+      txHash: '0xpartial'
+    });
+    expect(row.bought).toMatchObject({ symbol: 'pAAA', amount: '250000', visible: true });
+    expect(row.sold).toMatchObject({ symbol: 'pBBB', amount: '500000', visible: true });
+  });
+
+  it('does not synthesize private history when only another wallet has a receipt', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          hiddenLiquidity: true,
+          offer: asset('pAAA'),
+          request: asset('pBBB'),
+          privateFillReceipts: [
+            {
+              fillIndex: 1,
+              filler: otherFiller,
+              offerAmount: '250000',
+              requestAmount: '500000',
+              txHash: '0xother'
+            }
+          ],
+          acceptedTxHash: '0xaccepted'
+        })
+      ],
+      taker
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it('keeps private recurring receipt history amount-hidden until wallet receipts reveal amounts', () => {
     const [row] = buildTradeTransactionHistoryRows(
       [
         trade({
@@ -146,8 +304,110 @@ describe('buildTradeTransactionHistoryRows', () => {
     });
     expect(row.bought.visible).toBe(false);
     expect(row.sold.visible).toBe(false);
-    expect(row.tokenFlows.map((flow) => `${flow.asset.symbol}:${flow.action}`)).toEqual(['pAAA:bought', 'BBB:sold']);
+    expect(row.tokenFlows.map((flow) => `${flow.asset.symbol}:${flow.action}`)).toEqual(['pAAA:sold', 'BBB:bought']);
     expect(row.timestamp).toBeUndefined();
+  });
+
+  it('uses recurring terms for private execution logs with hidden event amounts', () => {
+    const [row] = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 8,
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          recurringOrder: {
+            orderId: 8,
+            selectedSide: 'sell',
+            mode: 'hybrid-private',
+            recurringStatus: 'active',
+            baseAsset: asset('HOTDOG'),
+            quoteAsset: asset('pWISP'),
+            buyTerms: { baseAmount: '1000000', quoteAmount: '125000' },
+            sellTerms: { baseAmount: '1000000', quoteAmount: '100000' },
+            publicBaseInventory: '0',
+            publicQuoteInventory: '0',
+            buySideOpen: true,
+            sellSideOpen: true,
+            hasPrivateBaseInventory: true,
+            hasPrivateQuoteInventory: true,
+            executionCount: 1,
+            publicExecutions: [
+              {
+                fillIndex: 1,
+                side: 'sell',
+                filler,
+                txHash: '0xprivate-public-log',
+                blockNumber: 789
+              }
+            ]
+          }
+        })
+      ],
+      filler
+    );
+
+    expect(row).toMatchObject({
+      role: 'filler',
+      sourceKind: 'recurring',
+      counterparty: maker,
+      amountVisibility: 'private-revealed',
+      txHash: '0xprivate-public-log',
+      blockNumber: 789,
+      sequence: 1
+    });
+    expect(row.bought).toMatchObject({ symbol: 'pWISP', amount: '100000', visible: true });
+    expect(row.sold).toMatchObject({ symbol: 'HOTDOG', amount: '1000000', visible: true });
+  });
+
+  it('dedupes recurring public execution fallbacks when private receipts reveal the same fill', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 9,
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          recurringOrder: {
+            orderId: 9,
+            selectedSide: 'sell',
+            mode: 'hybrid-private',
+            recurringStatus: 'active',
+            baseAsset: asset('HOTDOG'),
+            quoteAsset: asset('pWISP'),
+            buyTerms: { baseAmount: '1000000', quoteAmount: '125000' },
+            sellTerms: { baseAmount: '1000000', quoteAmount: '100000' },
+            publicBaseInventory: '0',
+            publicQuoteInventory: '0',
+            buySideOpen: true,
+            sellSideOpen: true,
+            hasPrivateBaseInventory: true,
+            hasPrivateQuoteInventory: true,
+            executionCount: 1,
+            publicExecutions: [
+              {
+                fillIndex: 1,
+                side: 'sell',
+                filler,
+                txHash: '0xpublic-log'
+              }
+            ],
+            privateExecutions: [
+              {
+                fillIndex: 1,
+                side: 'sell',
+                filler,
+                baseAmount: '2000000',
+                quoteAmount: '200000',
+                txHash: '0xprivate-receipt'
+              }
+            ]
+          }
+        })
+      ],
+      filler
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].txHash).toBe('0xprivate-receipt');
+    expect(rows[0].bought).toMatchObject({ symbol: 'pWISP', amount: '200000', visible: true });
+    expect(rows[0].sold).toMatchObject({ symbol: 'HOTDOG', amount: '2000000', visible: true });
   });
 
   it('shows wallet-filtered public recurring executions even while the order stays active', () => {
@@ -176,7 +436,7 @@ describe('buildTradeTransactionHistoryRows', () => {
             publicExecutions: [
               {
                 fillIndex: 1,
-                side: 'buy',
+                side: 'sell',
                 filler,
                 baseAmount: '3000000',
                 quoteAmount: '6000000',
@@ -204,8 +464,174 @@ describe('buildTradeTransactionHistoryRows', () => {
     expect(row.timestamp).toBeUndefined();
   });
 
-  it('keeps wallet fill history visible while a public offer remains active', () => {
-    const [row] = buildTradeTransactionHistoryRows(
+  it('shows all public recurring execution rows to the maker', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 11,
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          status: 'open',
+          recurringOrder: {
+            orderId: 11,
+            selectedSide: 'sell',
+            mode: 'public',
+            recurringStatus: 'active',
+            baseAsset: asset('AAA'),
+            quoteAsset: asset('BBB'),
+            buyTerms: { baseAmount: '1000000', quoteAmount: '2000000' },
+            sellTerms: { baseAmount: '1000000', quoteAmount: '2500000' },
+            publicBaseInventory: '10000000',
+            publicQuoteInventory: '20000000',
+            buySideOpen: true,
+            sellSideOpen: true,
+            hasPrivateBaseInventory: false,
+            hasPrivateQuoteInventory: false,
+            executionCount: 2,
+            publicExecutions: [
+              {
+                fillIndex: 1,
+                side: 'sell',
+                filler,
+                baseAmount: '1000000',
+                quoteAmount: '2500000',
+                txHash: '0xmaker-first',
+                blockNumber: 10
+              },
+              {
+                fillIndex: 2,
+                side: 'buy',
+                filler: otherFiller,
+                baseAmount: '1000000',
+                quoteAmount: '2000000',
+                txHash: '0xmaker-second',
+                blockNumber: 11
+              }
+            ]
+          }
+        })
+      ],
+      maker
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.txHash)).toEqual(['0xmaker-second', '0xmaker-first']);
+    expect(rows.map((row) => row.role)).toEqual(['maker', 'maker']);
+    expect(rows.map((row) => row.counterparty)).toEqual([otherFiller, filler]);
+  });
+
+  it('overlays private recurring receipts without dropping public-only rows', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 12,
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          recurringOrder: {
+            orderId: 12,
+            selectedSide: 'sell',
+            mode: 'hybrid-private',
+            recurringStatus: 'active',
+            baseAsset: asset('HOTDOG'),
+            quoteAsset: asset('pWISP'),
+            buyTerms: { baseAmount: '1000000', quoteAmount: '125000' },
+            sellTerms: { baseAmount: '1000000', quoteAmount: '100000' },
+            publicBaseInventory: '0',
+            publicQuoteInventory: '0',
+            buySideOpen: true,
+            sellSideOpen: true,
+            hasPrivateBaseInventory: true,
+            hasPrivateQuoteInventory: true,
+            executionCount: 2,
+            publicExecutions: [
+              {
+                fillIndex: 1,
+                side: 'sell',
+                filler,
+                txHash: '0xpublic-overlaid'
+              },
+              {
+                fillIndex: 2,
+                side: 'buy',
+                filler: otherFiller,
+                txHash: '0xpublic-only'
+              }
+            ],
+            privateExecutions: [
+              {
+                fillIndex: 1,
+                side: 'sell',
+                filler,
+                baseAmount: '2000000',
+                quoteAmount: '200000',
+                txHash: '0xprivate-overlay'
+              }
+            ]
+          }
+        })
+      ],
+      maker
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sequence: 1, txHash: '0xprivate-overlay' }),
+        expect.objectContaining({ sequence: 2, txHash: '0xpublic-only' })
+      ])
+    );
+    expect(rows.find((row) => row.sequence === 1)?.bought).toMatchObject({ amount: '2000000', visible: true });
+    expect(rows.find((row) => row.sequence === 2)?.amountVisibility).toBe('private-revealed');
+  });
+
+  it('filters unscoped private recurring execution fallback rows to the current wallet', () => {
+    const rows = buildTradeTransactionHistoryRows(
+      [
+        trade({
+          tradeId: 10,
+          taker: ZERO_TRADE_TAKER_ADDRESS,
+          recurringOrder: {
+            orderId: 10,
+            selectedSide: 'sell',
+            mode: 'hybrid-private',
+            recurringStatus: 'active',
+            baseAsset: asset('HOTDOG'),
+            quoteAsset: asset('pWISP'),
+            buyTerms: { baseAmount: '1000000', quoteAmount: '125000' },
+            sellTerms: { baseAmount: '1000000', quoteAmount: '100000' },
+            publicBaseInventory: '0',
+            publicQuoteInventory: '0',
+            buySideOpen: true,
+            sellSideOpen: true,
+            hasPrivateBaseInventory: true,
+            hasPrivateQuoteInventory: true,
+            executionCount: 2,
+            publicExecutions: [
+              {
+                fillIndex: 1,
+                side: 'sell',
+                filler,
+                txHash: '0xmine'
+              },
+              {
+                fillIndex: 2,
+                side: 'sell',
+                filler: otherFiller,
+                txHash: '0xother'
+              }
+            ]
+          }
+        })
+      ],
+      filler
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ txHash: '0xmine', sequence: 1 });
+    expect(rows[0].bought).toMatchObject({ symbol: 'pWISP', amount: '100000', visible: true });
+    expect(rows[0].sold).toMatchObject({ symbol: 'HOTDOG', amount: '1000000', visible: true });
+  });
+
+  it('does not synthesize wallet fill history while a public offer remains active', () => {
+    const rows = buildTradeTransactionHistoryRows(
       [
         trade({
           taker: ZERO_TRADE_TAKER_ADDRESS,
@@ -226,14 +652,7 @@ describe('buildTradeTransactionHistoryRows', () => {
       filler
     );
 
-    expect(row).toMatchObject({
-      role: 'filler',
-      sourceKind: 'standard',
-      counterparty: maker,
-      amountVisibility: 'public'
-    });
-    expect(row.bought).toMatchObject({ symbol: 'AAA', amount: '250000', visible: true });
-    expect(row.sold).toMatchObject({ symbol: 'BBB', amount: '500000', visible: true });
+    expect(rows).toEqual([]);
   });
 
   it('does not render zero-amount parent closure rows as fills', () => {
@@ -257,11 +676,10 @@ describe('buildTradeTransactionHistoryRows', () => {
     expect(rows).toEqual([]);
   });
 
-  it('still uses original offer terms for accepted fills when no fill-state detail is indexed', () => {
-    const [row] = buildTradeTransactionHistoryRows([trade({ fillState: undefined })], maker);
+  it('does not synthesize accepted standard fills when no event row is indexed', () => {
+    const rows = buildTradeTransactionHistoryRows([trade({ fillState: undefined })], maker);
 
-    expect(row.bought).toMatchObject({ symbol: 'BBB', amount: '1000000', visible: true });
-    expect(row.sold).toMatchObject({ symbol: 'AAA', amount: '1000000', visible: true });
+    expect(rows).toEqual([]);
   });
 
   it('keeps accepted Direct counters in history even before private terms are revealed', () => {

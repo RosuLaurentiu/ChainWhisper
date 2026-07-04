@@ -235,8 +235,27 @@ describe('p2pTradeView helpers', () => {
     };
 
     expect(shouldRecoverMakerTradePayload(directCounter, maker, true)).toBe(true);
+    expect(shouldRecoverMakerTradePayload({ ...directCounter, hasAccessHash: false }, maker, false)).toBe(true);
     expect(shouldRecoverMakerTradePayload(hydratedDirectCounter, maker, true)).toBe(false);
     expect(shouldRecoverMakerTradePayload(directCounter, directCounter.taker, true)).toBe(false);
+  });
+
+  it('still recovers hidden maker payloads when known link secrets do not include private terms', () => {
+    const maker = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const hiddenTrade = baseTrade({
+      hiddenLiquidity: true,
+      maker,
+      hasAccessHash: true,
+      offer: token('pWISP', '10000000'),
+      request: token('pCOTI', '0')
+    });
+    const hydratedHiddenTrade = {
+      ...hiddenTrade,
+      request: token('pCOTI', '5000000')
+    };
+
+    expect(shouldRecoverMakerTradePayload(hiddenTrade, maker, true)).toBe(true);
+    expect(shouldRecoverMakerTradePayload(hydratedHiddenTrade, maker, true)).toBe(false);
   });
 
   it('matches search by trade identity and token fields', () => {
@@ -295,8 +314,9 @@ describe('p2pTradeView helpers', () => {
     }));
     storePrivateTradeLiquidity(
       {
-        '0x1111111111111111111111111111111111111111:7': '123',
+        '0x1111111111111111111111111111111111111111:7': '123:456',
         '0x1111111111111111111111111111111111111111:8': '0',
+        '0x1111111111111111111111111111111111111111:9': '123:0',
         bad: '456'
       },
       '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -311,7 +331,7 @@ describe('p2pTradeView helpers', () => {
     });
     expect(storage.has('coti-trade-access-secrets-v1')).toBe(false);
     expect(loadStoredPrivateTradeLiquidity('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toEqual({
-      '0x1111111111111111111111111111111111111111:7': '123'
+      '0x1111111111111111111111111111111111111111:7': '123:456'
     });
     expect(storage.has('coti-private-trade-liquidity-v1')).toBe(false);
     expect(loadStoredPrivateTradeLiquidity('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')).toEqual({});

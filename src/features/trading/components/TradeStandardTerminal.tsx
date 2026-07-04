@@ -61,6 +61,7 @@ import {
   quoteRequestAmountForOfferAmount,
   renderCarbonPriceReference,
   resolveRevealedHistoryAssetForSide,
+  resolveVisibleHiddenTermAmounts,
   withProgressPaymentFallback,
   type TerminalFillInputSide,
   type TerminalHistoryPanelConfig
@@ -76,7 +77,6 @@ type TradeStandardTerminalProps = {
   walletKey: string;
   onCotiNetwork: boolean;
   lastCopiedKey: string;
-  revealingPrivateTradeKey: string;
   reversedRateTradeIds: Record<string, boolean>;
   expandedMakerControls: Record<string, boolean>;
   terminalFillInputSide: TerminalFillInputSide;
@@ -107,7 +107,6 @@ type TradeStandardTerminalProps = {
   renderTradeConversationButton: (snapshot: TradeSnapshot, shareUrl?: string, accessSecret?: string) => ReactNode;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   resolveTerminalAssetBalanceLabel: (asset: TradeAssetPayload, maximumFractionDigits?: number) => string;
-  revealMakerPrivateProgress: (snapshot: TradeSnapshot, forceReveal?: boolean) => Promise<unknown>;
   toggleMakerControls: (surface: 'terminal', tradeKey: string) => void;
   toggleTradeRateDirection: (tradeId: number, escrowContract?: string) => void;
 };
@@ -119,7 +118,6 @@ export default function TradeStandardTerminal({
   walletKey,
   onCotiNetwork,
   lastCopiedKey,
-  revealingPrivateTradeKey,
   reversedRateTradeIds,
   expandedMakerControls,
   terminalFillInputSide,
@@ -146,7 +144,6 @@ export default function TradeStandardTerminal({
   renderTradeConversationButton,
   resolveKnownTradeAccessSecret,
   resolveTerminalAssetBalanceLabel,
-  revealMakerPrivateProgress,
   toggleMakerControls,
   toggleTradeRateDirection
 }: TradeStandardTerminalProps) {
@@ -175,35 +172,26 @@ export default function TradeStandardTerminal({
     routeView !== 'public' &&
     (perspective.isParticipant || hasRevealedWalletHiddenTerms);
   const hiddenInitialOfferAmount = parseTokenAmountString(snapshot.makerPrivateProgress?.initialOfferAmount);
+  const hiddenRemainingOfferAmount = parseTokenAmountString(snapshot.makerPrivateProgress?.remainingOfferAmount);
   const hiddenOfferUnitAmount = parseTokenAmountString(snapshot.offer.amount);
   const hiddenRequestUnitAmount = parseTokenAmountString(snapshot.request.amount);
-  const hiddenInitialRequestAmount = quoteRequestAmountForOfferAmount(
-    hiddenInitialOfferAmount,
-    hiddenOfferUnitAmount,
-    hiddenRequestUnitAmount
-  );
-  const canShowParticipantHiddenSize = canShowParticipantHiddenTerms && hiddenInitialOfferAmount > 0n;
+  const visibleHiddenTermAmounts = resolveVisibleHiddenTermAmounts({
+    initialOfferAmount: hiddenInitialOfferAmount,
+    remainingOfferAmount: hiddenRemainingOfferAmount,
+    offerUnitAmount: hiddenOfferUnitAmount,
+    requestUnitAmount: hiddenRequestUnitAmount
+  });
+  const canShowParticipantHiddenSize = canShowParticipantHiddenTerms && Boolean(visibleHiddenTermAmounts);
   const getHiddenParticipantTermAsset = (
     asset: TradeAssetPayload,
     role: 'offer' | 'payment'
   ): TradeAssetPayload => {
-    if (!canShowParticipantHiddenSize) {
+    if (!visibleHiddenTermAmounts || !canShowParticipantHiddenSize) {
       return asset;
     }
-    const amount = role === 'offer' ? hiddenInitialOfferAmount : hiddenInitialRequestAmount;
+    const amount = role === 'offer' ? visibleHiddenTermAmounts.offerAmount : visibleHiddenTermAmounts.requestAmount;
     return amount > 0n ? { ...asset, amount: amount.toString() } : asset;
   };
-  const hasWalletScopedHistory = Boolean(
-    walletKey && (snapshot.walletHasFill || walletHistoryRows.length > 0)
-  );
-  const canRevealDirectTerms = Boolean(
-    isDirectPrivateTerms &&
-    !directTermsHydrated &&
-    walletKey &&
-    ([snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(walletKey) ||
-      hasWalletScopedHistory ||
-      canUseWalletAuthorityForDirectAccess(snapshot, walletKey))
-  );
   const counterUnavailableReason = getCounterOfferUnavailableReason(snapshot, walletKey);
   const canCounter = canCreateCounterOffer(snapshot, walletKey);
   const showCounterUnavailable =
@@ -219,7 +207,8 @@ export default function TradeStandardTerminal({
     !isHiddenLiquidityTerms && !(isDirectPrivateTerms && !directTermsHydrated)
       ? getVisibleOfferLiquiditySummary(snapshot)
       : null;
-  const revealedWalletProgressSummary = getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
+  const revealedWalletProgressSummary =
+    snapshot.status === 'open' ? null : getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
   const knownTermProgressSummary =
     (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
       ? getKnownTermProgressSummary(
@@ -286,7 +275,6 @@ export default function TradeStandardTerminal({
     : '';
   const fallbackCompletionSummary = terminalOrderProgressSummary ? null : completionSummary;
   const visibleCompletionSummary = fallbackCompletionSummary as NonNullable<typeof fallbackCompletionSummary>;
-  const revealProcessing = revealingPrivateTradeKey === tradeKey;
   const makerControlsExpanded = Boolean(expandedMakerControls[buildMakerControlsKey('terminal', tradeKey)]);
   const accessSecret = resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract);
   const shareUrl =
@@ -308,10 +296,17 @@ export default function TradeStandardTerminal({
   const hasExpiry = snapshot.expiresAt > 0;
   const expiryParts = formatTradeExpiryParts(snapshot.expiresAt);
   const expiryCountdown = snapshot.status === 'open' && hasExpiry ? formatExpiryCountdown(snapshot.expiresAt) : null;
+  const canUseRevealedHistoryTerms = snapshot.status !== 'open';
   const terminalPriceLeftAsset =
-    isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, leftSide) ?? leftSide.asset : leftSide.asset;
+    isHiddenLiquidityTerms
+      ? (canUseRevealedHistoryTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, leftSide) : null) ??
+        (canShowParticipantHiddenSize ? getHiddenParticipantTermAsset(leftSide.asset, leftSide.role) : leftSide.asset)
+      : leftSide.asset;
   const terminalPriceRightAsset =
-    isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, rightSide) ?? rightSide.asset : rightSide.asset;
+    isHiddenLiquidityTerms
+      ? (canUseRevealedHistoryTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, rightSide) : null) ??
+        (canShowParticipantHiddenSize ? getHiddenParticipantTermAsset(rightSide.asset, rightSide.role) : rightSide.asset)
+      : rightSide.asset;
   const priceRatioDisplay = resolveTradePriceRatioDisplay({
     baseAsset: terminalPriceLeftAsset,
     quoteAsset: terminalPriceRightAsset,
@@ -341,7 +336,9 @@ export default function TradeStandardTerminal({
     priceRatioDisplay?.isReversed ?? false
   );
   const resolveHistoryTermAsset = (side: typeof leftSide | typeof rightSide) =>
-    isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side) : null;
+    isHiddenLiquidityTerms && canUseRevealedHistoryTerms
+      ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side)
+      : null;
   const formatTerminalTerm = (side: typeof leftSide | typeof rightSide): string => {
     const historyAsset = resolveHistoryTermAsset(side);
     if (historyAsset) {
@@ -398,7 +395,6 @@ export default function TradeStandardTerminal({
     canActAsTaker &&
     !perspective.isMaker &&
     !snapshot.counterParentTradeId &&
-    !canRevealDirectTerms &&
     fillOfferUnitAmount > 0n &&
     fillRequestUnitAmount > 0n
   );
@@ -581,22 +577,6 @@ export default function TradeStandardTerminal({
             </div>
           ) : null}
 
-          {canRevealDirectTerms ? (
-            <div className="p2p-terminal-reveal">
-              <div>
-                <span>Private terms</span>
-                <p>Reveal the exact Direct OTC terms shared with this wallet.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => revealMakerPrivateProgress(snapshot).catch(() => {})}
-                disabled={revealProcessing}
-              >
-                {revealProcessing ? 'Revealing...' : 'Reveal terms'}
-              </button>
-            </div>
-          ) : null}
-
           <div className="p2p-terminal-token-actions" aria-label="Token explorer links">
             <span>Verify tokens</span>
             <div>
@@ -764,47 +744,35 @@ export default function TradeStandardTerminal({
             </div>
           ) : snapshot.status === 'open' && canActAsTaker ? (
             <div className="p2p-terminal-action-stack">
-              {canRevealDirectTerms ? <p>Reveal the shared terms before accepting.</p> : null}
-              {canRevealDirectTerms ? (
-                <button
-                  type="button"
-                  className="trade-card-action trade-card-action-counter"
-                  onClick={() => revealMakerPrivateProgress(snapshot).catch(() => {})}
-                  disabled={revealProcessing}
-                >
-                  {revealProcessing ? 'Revealing...' : 'Reveal terms'}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
-                    processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
-                  }`}
-                  onClick={() => acceptTrade(snapshot).catch(() => {})}
-                  disabled={processingTradeActionId === tradeKey || !walletKey || !onCotiNetwork}
-                  title={
-                    processingTradeActionId === tradeKey
-                      ? 'Confirming on-chain...'
-                      : !walletKey
-                        ? 'Connect wallet first.'
-                        : !onCotiNetwork
-                          ? 'Switch to COTI Mainnet first.'
-                          : snapshot.counterParentTradeId
-                            ? 'Close the parent first, accept this counter, then close sibling counters.'
-                            : undefined
-                  }
-                >
-                  {processingTradeActionId === tradeKey
-                    ? 'Processing...'
+              <button
+                type="button"
+                className={`trade-card-action trade-card-action-accept p2p-terminal-primary-action${
+                  processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
+                }`}
+                onClick={() => acceptTrade(snapshot).catch(() => {})}
+                disabled={processingTradeActionId === tradeKey || !walletKey || !onCotiNetwork}
+                title={
+                  processingTradeActionId === tradeKey
+                    ? 'Confirming on-chain...'
                     : !walletKey
-                      ? 'Connect wallet to buy'
+                      ? 'Connect wallet first.'
                       : !onCotiNetwork
-                        ? 'Switch network'
+                        ? 'Switch to COTI Mainnet first.'
                         : snapshot.counterParentTradeId
-                          ? 'Close parent & accept'
-                          : `Buy ${displayTrade.offer.symbol}`}
-                </button>
-              )}
+                          ? 'Close the parent first, accept this counter, then close sibling counters.'
+                          : undefined
+                }
+              >
+                {processingTradeActionId === tradeKey
+                  ? 'Processing...'
+                  : !walletKey
+                    ? 'Connect wallet to buy'
+                    : !onCotiNetwork
+                      ? 'Switch network'
+                      : snapshot.counterParentTradeId
+                        ? 'Close parent & accept'
+                        : `Buy ${displayTrade.offer.symbol}`}
+              </button>
               {!isHiddenLiquidityTerms && snapshot.counterParentTradeId && perspective.isTaker && (
                 <button
                   type="button"

@@ -16,13 +16,11 @@ export type TradeOrderCardProps = {
   walletReadAccounts: WalletReadAccount[];
   reversedRateTradeIds: Record<string, boolean>;
   lastCopiedKey: string;
-  revealingPrivateTradeKey: string;
   openTradeSnapshot: (trade: TradeSnapshot) => void;
   toggleTradeRateDirection: (tradeId: number, escrowContract?: string) => void;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
-  revealMakerPrivateProgress: (trade: TradeSnapshot, forceReveal?: boolean) => Promise<unknown>;
 };
 
 type TradeOverviewCardProps = TradeOrderCardProps & {
@@ -39,13 +37,11 @@ export function TradeOverviewCard({
   walletReadAccounts,
   reversedRateTradeIds,
   lastCopiedKey,
-  revealingPrivateTradeKey,
   openTradeSnapshot,
   toggleTradeRateDirection,
   resolveKnownTradeAccessSecret,
   buildTradeShareUrl,
-  copyWithFeedback,
-  revealMakerPrivateProgress
+  copyWithFeedback
 }: TradeOverviewCardProps) {
   if (trade.recurringOrder) {
     return (
@@ -73,13 +69,11 @@ export function TradeOverviewCard({
       walletReadAccounts={walletReadAccounts}
       reversedRateTradeIds={reversedRateTradeIds}
       lastCopiedKey={lastCopiedKey}
-      revealingPrivateTradeKey={revealingPrivateTradeKey}
       openTradeSnapshot={openTradeSnapshot}
       toggleTradeRateDirection={toggleTradeRateDirection}
       resolveKnownTradeAccessSecret={resolveKnownTradeAccessSecret}
       buildTradeShareUrl={buildTradeShareUrl}
       copyWithFeedback={copyWithFeedback}
-      revealMakerPrivateProgress={revealMakerPrivateProgress}
     />
   );
 }

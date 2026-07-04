@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import {
   formatExpiryCountdown,
   formatMessageTimestamp,
-  formatTokenAmount,
   formatTradeAssetDisplayText,
   shortenAddress,
   type TradeAssetPayload,
@@ -53,10 +52,10 @@ import {
   getTradeSideProgressVerb,
   getVisibleOfferLiquiditySummary,
   parseTokenAmountString,
-  quoteRequestAmountForOfferAmount,
   renderDeskPriceLabel,
   renderOpenActionCtaContent,
   resolveRevealedHistoryAssetForSide,
+  resolveVisibleHiddenTermAmounts,
   withProgressPaymentFallback,
   type TradeOverviewCardOptions
 } from './P2PTradingPage.helpers';
@@ -70,13 +69,11 @@ type TradeStandardOrderCardProps = {
   walletReadAccounts: WalletReadAccount[];
   reversedRateTradeIds: Record<string, boolean>;
   lastCopiedKey: string;
-  revealingPrivateTradeKey: string;
   openTradeSnapshot: (trade: TradeSnapshot) => void;
   toggleTradeRateDirection: (tradeId: number, escrowContract?: string) => void;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
-  revealMakerPrivateProgress: (trade: TradeSnapshot, forceReveal?: boolean) => Promise<unknown>;
 };
 
 export default function TradeStandardOrderCard({
@@ -88,13 +85,11 @@ export default function TradeStandardOrderCard({
   walletReadAccounts,
   reversedRateTradeIds,
   lastCopiedKey,
-  revealingPrivateTradeKey,
   openTradeSnapshot,
   toggleTradeRateDirection,
   resolveKnownTradeAccessSecret,
   buildTradeShareUrl,
-  copyWithFeedback,
-  revealMakerPrivateProgress
+  copyWithFeedback
 }: TradeStandardOrderCardProps): ReactNode {
   const tradeKey = getSnapshotKey(trade);
   const canOpenTerminal = options.canOpenTerminal ?? true;
@@ -139,22 +134,24 @@ export default function TradeStandardOrderCard({
     routeView !== 'public' &&
     (perspective.isParticipant || hasRevealedWalletHiddenTerms);
   const hiddenInitialOfferAmount = parseTokenAmountString(trade.makerPrivateProgress?.initialOfferAmount);
+  const hiddenRemainingOfferAmount = parseTokenAmountString(trade.makerPrivateProgress?.remainingOfferAmount);
   const hiddenOfferUnitAmount = parseTokenAmountString(trade.offer.amount);
   const hiddenRequestUnitAmount = parseTokenAmountString(trade.request.amount);
-  const hiddenInitialRequestAmount = quoteRequestAmountForOfferAmount(
-    hiddenInitialOfferAmount,
-    hiddenOfferUnitAmount,
-    hiddenRequestUnitAmount
-  );
-  const canShowParticipantHiddenSize = canShowParticipantHiddenTerms && hiddenInitialOfferAmount > 0n;
+  const visibleHiddenTermAmounts = resolveVisibleHiddenTermAmounts({
+    initialOfferAmount: hiddenInitialOfferAmount,
+    remainingOfferAmount: hiddenRemainingOfferAmount,
+    offerUnitAmount: hiddenOfferUnitAmount,
+    requestUnitAmount: hiddenRequestUnitAmount
+  });
+  const canShowParticipantHiddenSize = canShowParticipantHiddenTerms && Boolean(visibleHiddenTermAmounts);
   const getHiddenParticipantTermAsset = (
     asset: TradeAssetPayload,
     role: 'offer' | 'payment'
   ): TradeAssetPayload => {
-    if (!canShowParticipantHiddenSize) {
+    if (!visibleHiddenTermAmounts || !canShowParticipantHiddenSize) {
       return asset;
     }
-    const amount = role === 'offer' ? hiddenInitialOfferAmount : hiddenInitialRequestAmount;
+    const amount = role === 'offer' ? visibleHiddenTermAmounts.offerAmount : visibleHiddenTermAmounts.requestAmount;
     return amount > 0n ? { ...asset, amount: amount.toString() } : asset;
   };
   const makerPrivateProgressSummary =
@@ -163,7 +160,8 @@ export default function TradeStandardOrderCard({
     !isHiddenLiquidityTerms && !(isDirectPrivateTerms && !directTermsHydrated)
       ? getVisibleOfferLiquiditySummary(trade)
       : null;
-  const revealedWalletProgressSummary = getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
+  const revealedWalletProgressSummary =
+    trade.status === 'open' ? null : getRevealedHistoryProgressSummary(revealedWalletHistoryRow, leftSide, rightSide);
   const knownTermProgressSummary =
     (!isHiddenLiquidityTerms || canShowParticipantHiddenSize) && !(isDirectPrivateTerms && !directTermsHydrated)
       ? getKnownTermProgressSummary(
@@ -231,18 +229,6 @@ export default function TradeStandardOrderCard({
       )
     : '';
   const fallbackCompletionSummary = orderLiquiditySummary ? null : completionSummary;
-  const hasWalletScopedHistory = Boolean(
-    walletKey && (trade.walletHasFill || walletHistoryRows.length > 0)
-  );
-  const canRevealDirectTerms = Boolean(
-    routeView !== 'public' &&
-    isDirectPrivateTerms &&
-    !directTermsHydrated &&
-    walletKey &&
-    (perspective.isParticipant ||
-      hasWalletScopedHistory ||
-      canUseWalletAuthorityForDirectAccess(trade, walletKey))
-  );
   const accessSecret = resolveKnownTradeAccessSecret(trade.tradeId, trade.escrowContract);
   const shareUrl =
     trade.isPublic === false &&
@@ -317,10 +303,14 @@ export default function TradeStandardOrderCard({
   const pairTitleFull = `${pairTitleFromSymbol} to ${pairTitleToSymbol}`;
   const leftToneClass = `p2p-offer-term-${leftSide.tone}`;
   const rightToneClass = `p2p-offer-term-${rightSide.tone}`;
+  const canUseRevealedHistoryTerms = trade.status !== 'open';
+  const resolveHiddenPriceAsset = (side: typeof leftSide | typeof rightSide): TradeAssetPayload =>
+    (canUseRevealedHistoryTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side) : null) ??
+    (canShowParticipantHiddenSize ? getHiddenParticipantTermAsset(side.asset, side.role) : side.asset);
   const cardPriceLeftAsset =
-    isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, leftSide) ?? leftSide.asset : leftSide.asset;
+    isHiddenLiquidityTerms ? resolveHiddenPriceAsset(leftSide) : leftSide.asset;
   const cardPriceRightAsset =
-    isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, rightSide) ?? rightSide.asset : rightSide.asset;
+    isHiddenLiquidityTerms ? resolveHiddenPriceAsset(rightSide) : rightSide.asset;
   const priceRatioDisplay = resolveTradePriceRatioDisplay({
     baseAsset: cardPriceLeftAsset,
     quoteAsset: cardPriceRightAsset,
@@ -346,23 +336,18 @@ export default function TradeStandardOrderCard({
         )
       : '';
   const showPriceSummary = Boolean(tradeRateText);
-  const formatCompactVisibleTermText = (asset: TradeAssetPayload): string => {
-    try {
-      return `${formatTokenAmount(BigInt(asset.amount), asset.decimals, 2)} ${asset.symbol}`;
-    } catch {
-      return `0 ${asset.symbol}`;
-    }
-  };
   const resolveHistoryTermAsset = (side: typeof leftSide | typeof rightSide) =>
-    isHiddenLiquidityTerms ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side) : null;
+    isHiddenLiquidityTerms && canUseRevealedHistoryTerms
+      ? resolveRevealedHistoryAssetForSide(revealedWalletHistoryRow, side)
+      : null;
   const formatVisibleTermText = (side: typeof leftSide | typeof rightSide): string => {
     const historyAsset = resolveHistoryTermAsset(side);
     if (historyAsset) {
-      return formatCompactVisibleTermText(historyAsset);
+      return formatTradeAssetDisplayText(historyAsset);
     }
     return (isHiddenLiquidityTerms && !canShowParticipantHiddenSize) || (isDirectPrivateTerms && !directTermsHydrated)
       ? side.asset.symbol
-      : formatCompactVisibleTermText(
+      : formatTradeAssetDisplayText(
           isHiddenLiquidityTerms ? getHiddenParticipantTermAsset(side.asset, side.role) : side.asset
         );
   };
@@ -638,17 +623,6 @@ export default function TradeStandardOrderCard({
                 {statusLabel} offer #{trade.tradeId}
               </span>
             )}
-            {canRevealDirectTerms ? (
-              <button
-                type="button"
-                className="p2p-offer-counter-btn"
-                onClick={() => revealMakerPrivateProgress(trade).catch(() => {})}
-                disabled={revealingPrivateTradeKey === tradeKey}
-                title="Reveal this Direct OTC offer with wallet privacy"
-              >
-                {revealingPrivateTradeKey === tradeKey ? 'Revealing...' : 'Reveal terms'}
-              </button>
-            ) : null}
             {!hideShareAction && shareUrl ? (
               <button
                 type="button"
@@ -683,17 +657,6 @@ export default function TradeStandardOrderCard({
                 aria-label={OPEN_TERMINAL_LABEL}
               >
                 {renderOpenActionCtaContent(openTradeActionCta)}
-              </button>
-            ) : null}
-            {canRevealDirectTerms ? (
-              <button
-                type="button"
-                className="p2p-offer-counter-btn"
-                onClick={() => revealMakerPrivateProgress(trade).catch(() => {})}
-                disabled={revealingPrivateTradeKey === tradeKey}
-                title="Reveal this Direct OTC offer with wallet privacy"
-              >
-                {revealingPrivateTradeKey === tradeKey ? 'Revealing...' : 'Reveal terms'}
               </button>
             ) : null}
             {!hideShareAction && shareUrl ? (

@@ -203,9 +203,6 @@ export type TerminalHistoryPanelConfig = {
   count: number;
   emptyCopy: string;
   children?: ReactNode;
-  revealAction?: () => void;
-  revealLabel?: string;
-  revealPending?: boolean;
 };
 
 export const buildMakerControlsKey = (surface: MakerControlsSurface, tradeKey: string): string => `${surface}:${tradeKey}`;
@@ -468,6 +465,22 @@ export const quoteRequestAmountForOfferAmount = (
   }
 
   return (offerAmountOut * requestUnitAmount + offerUnitAmount - 1n) / offerUnitAmount;
+};
+
+export const resolveVisibleHiddenTermAmounts = ({
+  initialOfferAmount,
+  remainingOfferAmount,
+  offerUnitAmount,
+  requestUnitAmount
+}: {
+  initialOfferAmount: bigint;
+  remainingOfferAmount: bigint;
+  offerUnitAmount: bigint;
+  requestUnitAmount: bigint;
+}): { offerAmount: bigint; requestAmount: bigint } | null => {
+  const offerAmount = initialOfferAmount > 0n ? initialOfferAmount : remainingOfferAmount;
+  const requestAmount = quoteRequestAmountForOfferAmount(offerAmount, offerUnitAmount, requestUnitAmount);
+  return offerAmount > 0n && requestAmount > 0n ? { offerAmount, requestAmount } : null;
 };
 
 export const getVisibleOfferLiquiditySummary = (trade: TradeSnapshot): TradeProgressSummary | null => {

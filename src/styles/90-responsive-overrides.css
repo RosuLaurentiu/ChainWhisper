@@ -2719,7 +2719,6 @@
 
   .p2p-terminal-head,
   .p2p-terminal-toolbar,
-  .p2p-terminal-reveal,
   .p2p-terminal-history-empty {
     display: grid;
     align-items: stretch;
@@ -2822,7 +2821,6 @@
   .p2p-terminal-liquidity-grid > div,
   .p2p-terminal-ticket-grid > div,
   .p2p-terminal-progress,
-  .p2p-terminal-reveal,
   .p2p-terminal-related,
   .p2p-terminal-action-state {
     padding: 7px;
@@ -3849,10 +3847,7 @@
 
   .app-shell-trades .standalone-trade-detail-section .trade-card-ratio-card,
   .app-shell-trades .standalone-trade-detail-section .trade-card-asset,
-  .app-shell-trades .p2p-recurring-terminal,
-  .app-shell-trades .p2p-recurring-private-reveal,
-  .app-shell-trades .p2p-recurring-private-history,
-  .app-shell-trades .p2p-recurring-private-history-empty {
+  .app-shell-trades .p2p-recurring-terminal {
     border-radius: 7px;
     padding: 7px;
   }
@@ -4700,26 +4695,12 @@ summary:focus:not(:focus-visible),
   color: #ded7ff;
 }
 
-.app-shell-trades .p2p-order-chip-owner,
-.app-shell-trades .p2p-terminal-reveal,
-.app-shell-trades .p2p-recurring-private-reveal,
-.app-shell-trades .p2p-recurring-private-history,
-.app-shell-trades .p2p-recurring-private-history-empty {
+.app-shell-trades .p2p-order-chip-owner {
   border-color: rgba(80, 0, 133, 0.52);
   background:
     linear-gradient(135deg, rgba(80, 0, 133, 0.18), rgba(139, 92, 246, 0.08)),
     rgba(13, 11, 22, 0.72);
   color: #ead7ff;
-}
-
-.app-shell-trades .p2p-terminal-reveal button,
-.app-shell-trades .p2p-terminal-history-empty button,
-.app-shell-trades .p2p-terminal-history-reveal-btn,
-.app-shell-trades .p2p-recurring-private-reveal button,
-.app-shell-trades .p2p-recurring-private-history-empty button {
-  border-color: rgba(80, 0, 133, 0.66);
-  background: rgba(80, 0, 133, 0.34);
-  color: #f3e8ff;
 }
 
 .app-shell-trades .p2p-offer-status-open,

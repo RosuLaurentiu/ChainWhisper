@@ -425,7 +425,7 @@ export const resolveTradeRouteFromParts = (
       view: 'trade',
       tradeId: decoded.tradeId,
       escrowContract,
-      accessSecret: decoded.accessSecret ?? '',
+      accessSecret: decoded.accessSecret ?? resolveLegacyTradeSecret(searchValue, hashValue),
       routeFamily,
       routeError: ''
     };
@@ -568,14 +568,15 @@ export const buildTradeLinkPath = (tradeId: number, accessSecret?: string, escro
     const secret = normalizeAccessSecret(accessSecret);
     return `${OTC_DESK_TERMINAL_ROUTE}/recurring/${tradeId}${secret ? `#${secret}` : ''}`;
   }
-  const code = encodeTradeLink(tradeId, accessSecret);
+  const code = encodeTradeLink(tradeId);
+  const secret = normalizeAccessSecret(accessSecret);
   const search =
     escrowContract && escrowContract.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
       ? '?escrow=private'
       : escrowContract && escrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
         ? '?escrow=direct'
         : '';
-  return `${OTC_DESK_TERMINAL_ROUTE}/link/${code}${search}`;
+  return `${OTC_DESK_TERMINAL_ROUTE}/link/${code}${search}${secret ? `#${secret}` : ''}`;
 };
 
 export const buildTradeOrderPath = (
@@ -591,7 +592,8 @@ export const buildTradeOrderPath = (
     }
     return `${OTC_DESK_TERMINAL_ROUTE}/recurring/${tradeId}${secret ? `#${secret}` : ''}`;
   }
-  const code = encodeTradeLink(tradeId, accessSecret);
+  const code = encodeTradeLink(tradeId);
+  const secret = normalizeAccessSecret(accessSecret);
   const search =
     escrowContract && escrowContract.toLowerCase() === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
       ? '?escrow=private'
@@ -599,9 +601,9 @@ export const buildTradeOrderPath = (
         ? '?escrow=direct'
         : '';
   if (routeFamily === 'trades') {
-    return `${TRADES_PUBLIC_ROUTE}/l/${code}${search}`;
+    return `${TRADES_PUBLIC_ROUTE}/l/${code}${search}${secret ? `#${secret}` : ''}`;
   }
-  return `${OTC_DESK_TERMINAL_ROUTE}/link/${code}${search}`;
+  return `${OTC_DESK_TERMINAL_ROUTE}/link/${code}${search}${secret ? `#${secret}` : ''}`;
 };
 
 export const buildTradeTerminalPath = buildTradeOrderPath;

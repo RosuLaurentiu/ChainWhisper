@@ -100,6 +100,27 @@ describe('getTradeAccountPerspectiveAddress', () => {
       owner
     );
   });
+
+  it('uses ChainWhisper perspective for filler history snapshots', () => {
+    const scope = buildWalletAccountScope({
+      actionAddress: chainwhisper,
+      actionAesReady: true,
+      ownerAddress: owner,
+      ownerAesReady: true
+    });
+
+    expect(
+      getTradeAccountPerspectiveAddress(
+        trade({
+          accountAddress: chainwhisper,
+          accountRole: 'chainwhisper',
+          accountMatches: [{ address: chainwhisper, role: 'chainwhisper' }],
+          walletHasFill: true
+        }),
+        scope
+      )
+    ).toBe(chainwhisper);
+  });
 });
 
 describe('resolveTradeActionWalletAddress', () => {

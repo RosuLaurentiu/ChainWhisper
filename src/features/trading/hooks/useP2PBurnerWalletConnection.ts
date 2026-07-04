@@ -17,6 +17,7 @@ import {
   saveBurnerWalletRecordWithPin,
   selectBurnerWalletFromVault
 } from '../../../lib/burnerWalletVault';
+import { getOrRecoverAesForWallet } from '../../../lib/cotiAesUnlock';
 import {
   mergeOnboardInfoByAddress,
   type PendingBurnerWalletAction,
@@ -164,7 +165,10 @@ export default function useP2PBurnerWalletConnection({
           }
 
           try {
-            await signer.generateOrRecoverAes();
+            onboardInfo = await getOrRecoverAesForWallet({
+              signer,
+              walletAddress: signer.address
+            });
           } catch (aesError) {
             const message = aesError instanceof Error ? aesError.message : String(aesError);
             if (hasInsufficientFundsError(message)) {
@@ -173,7 +177,6 @@ export default function useP2PBurnerWalletConnection({
             }
             throw aesError;
           }
-          onboardInfo = signer.getUserOnboardInfo();
         }
         if (!onboardInfo?.aesKey) {
           throw new Error('Privacy unlock was not returned for the ChainWhisper account.');

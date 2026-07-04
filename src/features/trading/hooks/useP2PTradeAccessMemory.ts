@@ -61,13 +61,20 @@ export default function useP2PTradeAccessMemory({ walletKey }: UseP2PTradeAccess
     });
   }, []);
 
-  const rememberPrivateTradeLiquidity = useCallback((tradeId: number, escrowContract: string | undefined, amountWei: bigint) => {
-    if (!walletKey || !Number.isSafeInteger(tradeId) || tradeId <= 0 || amountWei <= 0n) {
+  const rememberPrivateTradeLiquidity = useCallback((
+    tradeId: number,
+    escrowContract: string | undefined,
+    offerAmountWei: bigint,
+    requestAmountWei?: bigint
+  ) => {
+    if (!walletKey || !Number.isSafeInteger(tradeId) || tradeId <= 0 || offerAmountWei <= 0n) {
       return;
     }
 
     const key = buildTradeSnapshotKey(tradeId, escrowContract);
-    const amount = amountWei.toString();
+    const amount = requestAmountWei && requestAmountWei > 0n
+      ? `${offerAmountWei.toString()}:${requestAmountWei.toString()}`
+      : offerAmountWei.toString();
     setKnownPrivateLiquidityByTrade((previous) => {
       if (previous[key] === amount) {
         return previous;

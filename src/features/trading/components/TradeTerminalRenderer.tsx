@@ -29,7 +29,6 @@ export type TradeTerminalRendererProps = {
   walletKey: string;
   onCotiNetwork: boolean;
   lastCopiedKey: string;
-  revealingPrivateTradeKey: string;
   reversedRateTradeIds: Record<string, boolean>;
   expandedMakerControls: Record<string, boolean>;
   terminalFillInputSide: TerminalFillInputSide;
@@ -60,7 +59,6 @@ export type TradeTerminalRendererProps = {
   renderTradeConversationButton: (snapshot: TradeSnapshot, shareUrl?: string, accessSecret?: string) => ReactNode;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   resolveTerminalAssetBalanceLabel: (asset: TradeAssetPayload, maximumFractionDigits?: number) => string;
-  revealMakerPrivateProgress: (snapshot: TradeSnapshot, forceReveal?: boolean) => Promise<unknown>;
   toggleMakerControls: (surface: 'terminal', tradeKey: string) => void;
   toggleTradeRateDirection: (tradeId: number, escrowContract?: string) => void;
   recurringTerminalSide: RecurringTerminalActionSide;
@@ -82,7 +80,6 @@ export function TradeTerminalRenderer({
   walletKey,
   onCotiNetwork,
   lastCopiedKey,
-  revealingPrivateTradeKey,
   reversedRateTradeIds,
   expandedMakerControls,
   terminalFillInputSide,
@@ -109,7 +106,6 @@ export function TradeTerminalRenderer({
   renderTradeConversationButton,
   resolveKnownTradeAccessSecret,
   resolveTerminalAssetBalanceLabel,
-  revealMakerPrivateProgress,
   toggleMakerControls,
   toggleTradeRateDirection,
   recurringTerminalSide,
@@ -167,7 +163,6 @@ export function TradeTerminalRenderer({
       walletKey={walletKey}
       onCotiNetwork={onCotiNetwork}
       lastCopiedKey={lastCopiedKey}
-      revealingPrivateTradeKey={revealingPrivateTradeKey}
       reversedRateTradeIds={reversedRateTradeIds}
       expandedMakerControls={expandedMakerControls}
       terminalFillInputSide={terminalFillInputSide}
@@ -195,7 +190,6 @@ export function TradeTerminalRenderer({
       renderTradeConversationButton={renderTradeConversationButton}
       resolveKnownTradeAccessSecret={resolveKnownTradeAccessSecret}
       resolveTerminalAssetBalanceLabel={resolveTerminalAssetBalanceLabel}
-      revealMakerPrivateProgress={revealMakerPrivateProgress}
       toggleMakerControls={toggleMakerControls}
       toggleTradeRateDirection={toggleTradeRateDirection}
     />

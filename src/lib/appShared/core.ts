@@ -523,6 +523,16 @@ export type WalletTradeFillPayload = {
   requestAmountPaid: string;
 };
 
+export type WalletTradeFillEventPayload = {
+  fillIndex: number;
+  filler: string;
+  offerAmount: string;
+  requestAmount: string;
+  txHash?: string;
+  blockNumber?: number;
+  logIndex?: number;
+};
+
 export type DirectTradeTermsMetadataPayload = {
   hasTermsPayload?: boolean;
   hasMakerAccessSecret?: boolean;
@@ -627,6 +637,7 @@ export type TradeSnapshot = {
   replacesTradeId?: number;
   fillState?: TradeFillStatePayload;
   walletFillState?: WalletTradeFillPayload;
+  walletFillEvents?: WalletTradeFillEventPayload[];
   acceptedTxHash?: string;
   hiddenLiquidity?: boolean;
   directTermsMetadata?: DirectTradeTermsMetadataPayload;

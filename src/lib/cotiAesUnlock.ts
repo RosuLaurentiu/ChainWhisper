@@ -86,6 +86,9 @@ const providerIds = new WeakMap<object, number>();
 let nextProviderId = 1;
 const inFlightUnlocks = new Map<string, Promise<PrivacyUnlockResult>>();
 const FALLBACK_AES_SESSION_STORAGE_PREFIX = 'chainwhisper:fallback-aes:v1:';
+const COTI_ONBOARD_CONSOLE_ERROR = 'unable to onboard user.';
+let cotiOnboardConsoleSuppressionDepth = 0;
+let originalCotiOnboardConsoleError: typeof console.error | null = null;
 
 const normalizeWalletKey = (walletAddress: string): string => walletAddress.trim().toLowerCase();
 
@@ -376,6 +379,34 @@ const requireOnboardInfo = (onboardInfo?: OnboardInfo): OnboardInfo => {
 const hasRecoverableOnboardInfo = (onboardInfo?: OnboardInfo): boolean =>
   Boolean(onboardInfo?.txHash && onboardInfo.rsaKey?.privateKey && onboardInfo.rsaKey.publicKey);
 
+const isKnownCotiOnboardConsoleError = (args: unknown[]): boolean =>
+  args.length === 1 &&
+  typeof args[0] === 'string' &&
+  args[0].trim() === COTI_ONBOARD_CONSOLE_ERROR;
+
+const generateOrRecoverAes = async (signer: CotiAesSigner): Promise<void> => {
+  if (cotiOnboardConsoleSuppressionDepth === 0) {
+    originalCotiOnboardConsoleError = console.error;
+    console.error = ((...args: unknown[]) => {
+      if (isKnownCotiOnboardConsoleError(args)) {
+        return;
+      }
+      originalCotiOnboardConsoleError?.(...args);
+    }) as typeof console.error;
+  }
+  cotiOnboardConsoleSuppressionDepth += 1;
+
+  try {
+    await signer.generateOrRecoverAes();
+  } finally {
+    cotiOnboardConsoleSuppressionDepth -= 1;
+    if (cotiOnboardConsoleSuppressionDepth === 0 && originalCotiOnboardConsoleError) {
+      console.error = originalCotiOnboardConsoleError;
+      originalCotiOnboardConsoleError = null;
+    }
+  }
+};
+
 export const clearSignerAesKey = (signer: CotiAesSigner): void => {
   signer.setUserOnboardInfo(clearOnboardInfoAesKey(signer.getUserOnboardInfo()) ?? ({ aesKey: null } as OnboardInfo));
 };
@@ -522,7 +553,11 @@ export const getOrRecoverAesForWalletResult = async ({
   const unlockKey = getCotiAesWalletSessionKey(walletAddress, provider);
   const existingUnlock = inFlightUnlocks.get(unlockKey);
   if (existingUnlock) {
-    return existingUnlock;
+    const existingResult = await existingUnlock;
+    if (existingResult.status === 'ready') {
+      signer.setUserOnboardInfo(existingResult.onboardInfo);
+    }
+    return existingResult;
   }
 
   const unlockPromise = (async () => {
@@ -582,7 +617,7 @@ export const getOrRecoverAesForWalletResult = async ({
     } else if (forceLegacyRefresh) {
       clearSignerAesKey(signer);
     }
-    await signer.generateOrRecoverAes();
+    await generateOrRecoverAes(signer);
     const recoveredOnboardInfo = requireOnboardInfo(signer.getUserOnboardInfo());
     storeFallbackAesSessionOnboardInfo(walletAddress, provider, recoveredOnboardInfo);
     return {

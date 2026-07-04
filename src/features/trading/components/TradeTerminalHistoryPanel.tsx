@@ -204,17 +204,6 @@ export function TradeTerminalHistoryContent({
   config,
   renderActionNotice
 }: TradeTerminalHistoryContentProps) {
-  const revealButton = config.revealAction ? (
-    <button
-      type="button"
-      className="p2p-terminal-history-reveal-btn"
-      onClick={config.revealAction}
-      disabled={config.revealPending}
-    >
-      {config.revealPending ? 'Revealing...' : config.revealLabel ?? 'Reveal history'}
-    </button>
-  ) : null;
-
   return (
     <>
       <div className="p2p-terminal-history-head">
@@ -222,7 +211,6 @@ export function TradeTerminalHistoryContent({
           <span>Your history</span>
           <strong>{config.title}</strong>
         </div>
-        {revealButton}
         <span>{config.count}</span>
       </div>
       {renderActionNotice('history', config.tradeKey)}

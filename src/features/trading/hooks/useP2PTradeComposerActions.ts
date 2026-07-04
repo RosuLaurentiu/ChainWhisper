@@ -174,7 +174,12 @@ type UseP2PTradeComposerActionsArgs = {
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   refreshMyTrades: () => Promise<void>;
   refreshPublicTrades: () => Promise<void>;
-  rememberPrivateTradeLiquidity: (tradeId: number, escrowContract: string | undefined, offerAmountWei: bigint) => void;
+  rememberPrivateTradeLiquidity: (
+    tradeId: number,
+    escrowContract: string | undefined,
+    offerAmountWei: bigint,
+    requestAmountWei?: bigint
+  ) => void;
   rememberTradeAccessSecret: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
@@ -703,7 +708,7 @@ export default function useP2PTradeComposerActions({
             });
       const tradeId = createResult.tradeId;
       if (hiddenLiquidity) {
-        rememberPrivateTradeLiquidity(tradeId, createResult.escrowContract, offerAmount);
+        rememberPrivateTradeLiquidity(tradeId, createResult.escrowContract, offerAmount, requestAmount);
       }
       const createdAt = Math.floor(Date.now() / 1000);
       const counterParentTradeId = isCounterReplacement

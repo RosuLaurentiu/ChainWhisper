@@ -42,8 +42,6 @@ type TradeOfferCardProps = {
   tradeWindowLayout?: boolean;
   onCopyShareLink?: () => void;
   onOpenTerminal?: () => void;
-  onRevealPrivateProgress?: () => void;
-  revealPrivateProgressPending?: boolean;
   showCounterAction?: boolean;
   counterUnavailableReason?: string;
   showEditAction?: boolean;
@@ -267,8 +265,6 @@ export default function TradeOfferCard({
   tradeWindowLayout = false,
   onCopyShareLink,
   onOpenTerminal,
-  onRevealPrivateProgress,
-  revealPrivateProgressPending = false,
   showCounterAction = true,
   counterUnavailableReason,
   showEditAction = false,
@@ -493,29 +489,8 @@ export default function TradeOfferCard({
           }
         })()
       : null;
-  const canRevealMakerPrivateProgress =
-    tradeWindowLayout &&
-    (
-      (hiddenLiquidity && isMaker) ||
-      (directPrivateTerms && !directTermsHydrated && (isMaker || isTaker))
-    ) &&
-    Boolean(onRevealPrivateProgress) &&
-    !makerPrivateProgressSummary;
   const counterParentTradeId = snapshot?.counterParentTradeId ?? offer.parentTradeId;
   const isCounterTrade = Boolean(counterParentTradeId);
-  const revealPanelCopy = directPrivateTerms && !directTermsHydrated
-    ? {
-        heading: 'Private terms',
-        body: 'Reveal the exact Direct OTC terms shared with this wallet.',
-        title: 'Reveal this Direct offer with wallet privacy',
-        button: 'Reveal terms'
-      }
-    : {
-        heading: 'Owner budget',
-        body: 'Reveal remaining hidden liquidity and private fills for this order.',
-        title: 'Reveal this private liquidity order with wallet privacy',
-        button: 'Reveal budget'
-      };
   const canShowPartialFill = Boolean(
     onPartialFill &&
       isOpen &&
@@ -807,22 +782,6 @@ export default function TradeOfferCard({
                 <span style={{ width: `${fillProgressPercent}%` }} />
               </div>
               <small>{fillProgressLabel}</small>
-            </div>
-          ) : null}
-          {canRevealMakerPrivateProgress ? (
-            <div className="trade-card-private-reveal">
-              <div>
-                <span>{revealPanelCopy.heading}</span>
-                <p>{revealPanelCopy.body}</p>
-              </div>
-              <button
-                type="button"
-                onClick={onRevealPrivateProgress}
-                disabled={revealPrivateProgressPending}
-                title={revealPanelCopy.title}
-              >
-                {revealPrivateProgressPending ? 'Revealing...' : revealPanelCopy.button}
-              </button>
             </div>
           ) : null}
           {isOpen && (isTaker || canAcceptOpenTakerTrade) ? (

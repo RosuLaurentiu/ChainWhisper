@@ -143,28 +143,13 @@ export const getTradeAccountPerspectiveAddress = (
 ): string => {
   const actionKey = scope.actionAccount?.key ?? '';
   const ownerKey = scope.ownerAccount?.key ?? '';
-  const makerKey = trade.maker.trim().toLowerCase();
-  const takerKey = trade.taker.trim().toLowerCase();
   const accountAddress = normalizeAddress(trade.accountAddress);
-  const accountKey = accountAddress.toLowerCase();
-  const accountMatches = trade.accountMatches ?? [];
 
-  if (
-    actionKey &&
-    (makerKey === actionKey ||
-      takerKey === actionKey ||
-      (trade.walletHasFill && accountMatches.some((match) => match.address.trim().toLowerCase() === actionKey)))
-  ) {
+  if (actionKey && tradeMatchesAccountKey(trade, actionKey)) {
     return scope.actionAccount?.address ?? accountAddress;
   }
 
-  if (
-    ownerKey &&
-    (makerKey === ownerKey ||
-      takerKey === ownerKey ||
-      accountKey === ownerKey ||
-      accountMatches.some((match) => match.address.trim().toLowerCase() === ownerKey))
-  ) {
+  if (ownerKey && tradeMatchesAccountKey(trade, ownerKey)) {
     return scope.ownerAccount?.address ?? accountAddress;
   }
 

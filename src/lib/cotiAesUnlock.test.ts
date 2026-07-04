@@ -183,6 +183,29 @@ describe('getOrRecoverAesForWallet', () => {
     expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
   });
 
+  it('reuses one in-flight fallback AES request for app wallets without a provider', async () => {
+    const firstSigner = signer();
+    const secondSigner = signer();
+
+    const [first, second] = await Promise.all([
+      getOrRecoverAesForWallet({
+        signer: firstSigner as never,
+        walletAddress
+      }),
+      getOrRecoverAesForWallet({
+        signer: secondSigner as never,
+        walletAddress
+      })
+    ]);
+
+    expect(first).toMatchObject({ aesKey: 'fallback-aes' });
+    expect(second).toMatchObject({ aesKey: 'fallback-aes' });
+    expect(getCotiSnapAesKeyResult).not.toHaveBeenCalled();
+    expect(firstSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    expect(secondSigner.generateOrRecoverAes).not.toHaveBeenCalled();
+    expect(secondSigner.setUserOnboardInfo).toHaveBeenCalledWith({ aesKey: 'fallback-aes' });
+  });
+
   it('stops after Snap returns AES and does not ask for the legacy wallet signature', async () => {
     const activeSigner = signer();
     vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'snap-aes' });
@@ -377,6 +400,27 @@ describe('getOrRecoverAesForWallet', () => {
     });
 
     expect(calls).toEqual(['snap', 'fallback']);
+  });
+
+  it('suppresses the duplicate COTI onboard console line while keeping the thrown error', async () => {
+    const activeSigner = signer();
+    activeSigner.generateOrRecoverAes.mockImplementation(async () => {
+      console.error('unable to onboard user.');
+      throw new Error('unable to onboard user.');
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await expect(
+        getOrRecoverAesForWallet({
+          signer: activeSigner as never,
+          walletAddress
+        })
+      ).rejects.toThrow('unable to onboard user.');
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('can report Snap failure without running the legacy fallback', async () => {

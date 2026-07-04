@@ -25,9 +25,11 @@ import { loadCotiEthersModule } from './appShared';
 import {
   __buildRecurringOrderSnapshotFromViewForTest,
   __getIndexedResultValueForTest,
+  __mapPrivateOrderFilledLogsToReceiptsForTest,
   __mergeWalletTradeSnapshotsForTest,
   __normalizeCurrentPrivateTokenBalanceWeiForTest,
   __resolveDirectTermPayloadSecretCallerForTest,
+  __resolveRecurringContractAddressForTest,
   __resolveRecurringIdsFromPagedResultForTest,
   __selectTradeSnapshotCandidateForTest,
   DEFAULT_TRADING_CONTRACT_ADDRESSES,
@@ -91,6 +93,30 @@ describe('trade escrow contract resolution', () => {
     });
   });
 
+  it('resolves registry-provided active escrow addresses as current contracts', () => {
+    const registryContracts = {
+      standardEscrow: '0x1000000000000000000000000000000000000001',
+      privateEscrow: '0x1000000000000000000000000000000000000002',
+      directEscrow: '0x1000000000000000000000000000000000000003',
+      recurringEscrow: '0x1000000000000000000000000000000000000004',
+      reader: '0x1000000000000000000000000000000000000005',
+      historyReader: '0x1000000000000000000000000000000000000006'
+    };
+
+    expect(resolveTradeEscrowContractConfig(registryContracts.standardEscrow, registryContracts)).toMatchObject({
+      address: registryContracts.standardEscrow,
+      hiddenOnly: false,
+      directVisible: false
+    });
+    expect(resolveTradeEscrowContractConfig(registryContracts.privateEscrow, registryContracts)).toMatchObject({
+      address: registryContracts.privateEscrow,
+      hiddenOnly: true
+    });
+    expect(__resolveRecurringContractAddressForTest(RECURRING_OTC_CONTRACT_ADDRESS, registryContracts)).toBe(
+      registryContracts.recurringEscrow
+    );
+  });
+
   it('uses the default Private OTC create ABI with encrypted private-link terms', async () => {
     const cotiEthers = await loadCotiEthersModule();
     const interfaceInstance = new cotiEthers.Interface(PRIVATE_TRADE_ESCROW_CONTRACT_ABI);
@@ -129,8 +155,9 @@ describe('trade escrow contract resolution', () => {
     const secret = `0x${'34'.repeat(32)}`;
     const path = buildTradeLinkPath(12, secret, DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
 
-    expect(path).toBe(`/otc/order/link/${encodeTradeLink(12, secret)}?escrow=direct`);
-    expect(resolveTradeRouteFromParts(path.split('?')[0], path.slice(path.indexOf('?')))).toMatchObject({
+    expect(path).toBe(`/otc/order/link/${encodeTradeLink(12)}?escrow=direct#${secret}`);
+    const parsedUrl = new URL(path, 'https://chainwhisper.test');
+    expect(resolveTradeRouteFromParts(parsedUrl.pathname, parsedUrl.search, parsedUrl.hash)).toMatchObject({
       tradeId: 12,
       escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
       accessSecret: secret
@@ -511,10 +538,96 @@ describe('trade escrow contract resolution', () => {
     expect(snapshot.recurringOrder?.quoteAsset.symbol).toBe('WISP');
   });
 
+  it('keeps the recurring escrow address that produced the order snapshot', async () => {
+    const contractAddress = '0x1000000000000000000000000000000000000004';
+    const snapshot = await __buildRecurringOrderSnapshotFromViewForTest(
+      1,
+      {
+        order: {
+          maker: '0xbf01185A70CDfEF1858659836D57BFf085ebed55',
+          taker: ZERO_ADDRESS,
+          status: 1,
+          mode: 0,
+          baseAsset: { assetType: 0, token: ZERO_ADDRESS },
+          quoteAsset: { assetType: 1, token: REWARD_TOKEN_ADDRESS },
+          buyTerms: { baseAmount: '1000000000000000000', quoteAmount: '2000000' },
+          sellTerms: { baseAmount: '1000000000000000000', quoteAmount: '2500000' },
+          isPublic: true,
+          accessHash: ZERO_BYTES32,
+          createdAt: 1_714_000_000,
+          executionCount: 2,
+          publicBaseInventory: '3000000000000000000',
+          publicQuoteInventory: '4000000'
+        },
+        buySideOpen: true,
+        sellSideOpen: true,
+        hasPrivateBaseInventory: false,
+        hasPrivateQuoteInventory: false
+      },
+      {
+        contractAddress,
+        rewardTokenSymbol: 'WISP',
+        rewardTokenDecimals: 6,
+        privateRewardTokenSymbol: 'pWISP',
+        privateRewardTokenDecimals: 6
+      }
+    );
+
+    expect(snapshot.escrowContract).toBe(contractAddress);
+  });
+
   it('normalizes recurring paged id reads from contract indexes', () => {
     expect(__resolveRecurringIdsFromPagedResultForTest([[1n, 2n, 0n], 0n])).toEqual([1, 2]);
     expect(__resolveRecurringIdsFromPagedResultForTest([[], 0n])).toEqual([]);
     expect(__resolveRecurringIdsFromPagedResultForTest(null)).toEqual([]);
+  });
+});
+
+describe('private limit fill history fallbacks', () => {
+  it('maps PrivateOrderFilled events to hidden filler history receipts', () => {
+    const filler = '0x3333333333333333333333333333333333333333';
+    const otherFiller = '0x4444444444444444444444444444444444444444';
+
+    const receipts = __mapPrivateOrderFilledLogsToReceiptsForTest(
+      [
+        {
+          args: [8n, otherFiller],
+          blockNumber: 3,
+          index: 0,
+          transactionHash: '0xother'
+        },
+        {
+          args: [8n, filler],
+          blockNumber: 2,
+          index: 4,
+          transactionHash: '0xsecond'
+        },
+        {
+          args: [8n, filler],
+          blockNumber: 1,
+          index: 2,
+          transactionHash: '0xfirst'
+        }
+      ],
+      8,
+      filler,
+      'filler'
+    );
+
+    expect(receipts).toEqual([
+      {
+        fillIndex: 1,
+        filler,
+        blockNumber: 1,
+        txHash: '0xfirst'
+      },
+      {
+        fillIndex: 2,
+        filler,
+        blockNumber: 2,
+        txHash: '0xsecond'
+      }
+    ]);
   });
 });
 
@@ -608,6 +721,43 @@ describe('trade snapshot selection and wallet merge helpers', () => {
         walletHasFill: true
       }
     ]);
+  });
+
+  it('keeps on-chain partial fill event rows when duplicate wallet snapshots merge', () => {
+    const first = snapshot({
+      tradeId: 8,
+      walletHasFill: true,
+      walletFillEvents: [
+        {
+          fillIndex: 1,
+          filler: '0x2222222222222222222222222222222222222222',
+          offerAmount: '100',
+          requestAmount: '200',
+          txHash: '0xfill1',
+          blockNumber: 10,
+          logIndex: 1
+        }
+      ]
+    });
+    const second = snapshot({
+      tradeId: 8,
+      walletFillEvents: [
+        {
+          fillIndex: 2,
+          filler: '0x3333333333333333333333333333333333333333',
+          offerAmount: '300',
+          requestAmount: '600',
+          txHash: '0xfill2',
+          blockNumber: 11,
+          logIndex: 1
+        }
+      ]
+    });
+
+    const [merged] = __mergeWalletTradeSnapshotsForTest([[first], [second]]);
+
+    expect(merged.walletHasFill).toBe(true);
+    expect(merged.walletFillEvents?.map((event) => event.txHash)).toEqual(['0xfill1', '0xfill2']);
   });
 
   it('treats missing Direct asset amount indexes as absent instead of throwing', () => {

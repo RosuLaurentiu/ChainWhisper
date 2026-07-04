@@ -3,10 +3,8 @@ import type { TradeSnapshot } from '../../../lib/appShared';
 import type { OtcSwapFillNote } from '../../../lib/otcSwapIntent';
 import {
   formatTradeContractIdLabel,
-  getMakerPrivateProgressSummary,
   getSnapshotKey,
-  getTradeDisplayTerms,
-  getTradeTermsVisibility
+  getTradeDisplayTerms
 } from '../../../lib/p2pTradeView';
 import {
   buildTradeLifecycleHistoryRows,
@@ -14,6 +12,12 @@ import {
   type TradeTransactionHistoryRow
 } from '../../../lib/tradeHistory';
 import { resolveTradeOrderSummary } from '../../../lib/tradePerspective';
+import {
+  getTradeAccountPerspectiveAddress,
+  getWalletActionAccount,
+  getWalletOwnerAccount,
+  type WalletReadAccount
+} from '../../../lib/walletAccountScope';
 import type { TerminalHistoryPanelConfig } from './P2PTradingPage.helpers';
 import {
   TradeTerminalHistoryRows,
@@ -23,14 +27,12 @@ import {
 
 export type TerminalHistoryConfigParams = {
   walletAddress: string;
-  walletKey: string;
-  revealingPrivateTradeKey: string;
+  walletReadAccounts: WalletReadAccount[];
   historyLifecycleTxHashes: Record<string, string>;
   historyTransactionTxHashes: Record<string, string>;
   historyTransactionTimestamps: Record<string, number>;
   swapFillNotes: OtcSwapFillNote[];
   getTransactionLinkFeedbackProps: GetTransactionLinkFeedbackProps;
-  revealMakerPrivateProgress: (snapshot: TradeSnapshot, forceReveal?: boolean) => Promise<unknown>;
 };
 
 const renderHistoryRows = (
@@ -51,6 +53,58 @@ const renderHistoryRows = (
   />
 );
 
+type TerminalHistoryWalletParams = Pick<TerminalHistoryConfigParams, 'walletAddress' | 'walletReadAccounts'>;
+
+const findReadableMakerAccount = (
+  snapshot: TradeSnapshot,
+  accounts: WalletReadAccount[]
+): WalletReadAccount | null => {
+  const makerKey = snapshot.maker.trim().toLowerCase();
+  return accounts.find((account) => account.key === makerKey) ?? null;
+};
+
+const hasRecurringExecutionsForWallet = (snapshot: TradeSnapshot, walletKey?: string): boolean => {
+  const key = walletKey?.trim().toLowerCase();
+  if (!key || !snapshot.recurringOrder) {
+    return false;
+  }
+  return [
+    ...(snapshot.recurringOrder.privateExecutions ?? []),
+    ...(snapshot.recurringOrder.publicExecutions ?? [])
+  ].some((execution) => execution.filler?.toLowerCase() === key);
+};
+
+export const resolveTerminalHistoryWallet = (
+  snapshot: TradeSnapshot,
+  params: TerminalHistoryWalletParams
+): { walletAddress: string; walletKey: string } => {
+  const actionAccount = getWalletActionAccount(params.walletReadAccounts);
+  const ownerAccount = getWalletOwnerAccount(params.walletReadAccounts);
+  const perspectiveAddress = getTradeAccountPerspectiveAddress(snapshot, { actionAccount, ownerAccount }) || params.walletAddress;
+  const makerAddress = findReadableMakerAccount(snapshot, params.walletReadAccounts)?.address;
+  const recurringFallbackAddress =
+    snapshot.recurringOrder && actionAccount && !hasRecurringExecutionsForWallet(snapshot, actionAccount.key) &&
+    ownerAccount && hasRecurringExecutionsForWallet(snapshot, ownerAccount.key)
+      ? ownerAccount.address
+      : '';
+  const walletAddress =
+    makerAddress
+      ? makerAddress
+      : snapshot.recurringOrder
+        ? recurringFallbackAddress || actionAccount?.address || perspectiveAddress
+      : perspectiveAddress;
+  return {
+    walletAddress,
+    walletKey: walletAddress.trim().toLowerCase()
+  };
+};
+
+export const resolveTerminalHistoryMergeWalletKey = (
+  snapshot: TradeSnapshot,
+  params: TerminalHistoryWalletParams,
+  fallbackWalletKey = ''
+): string => resolveTerminalHistoryWallet(snapshot, params).walletKey || fallbackWalletKey;
+
 export const buildStandardTerminalHistoryConfig = (
   snapshot: TradeSnapshot,
   params: TerminalHistoryConfigParams
@@ -62,28 +116,18 @@ export const buildStandardTerminalHistoryConfig = (
     offer: displayTerms.offer,
     request: displayTerms.request
   };
-  const orderSummary = resolveTradeOrderSummary(displayTrade, params.walletAddress);
+  const historyWallet = resolveTerminalHistoryWallet(snapshot, params);
+  const orderSummary = resolveTradeOrderSummary(displayTrade, historyWallet.walletAddress);
   const perspective = orderSummary.perspective;
-  const isHiddenLiquidityTerms = getTradeTermsVisibility(snapshot) === 'hidden-liquidity';
   const privateFillReceiptsForWallet = (snapshot.privateFillReceipts ?? []).filter(
-    (receipt) => perspective.isMaker || receipt.filler?.toLowerCase() === params.walletKey
-  );
-  const makerPrivateProgressSummary = perspective.isMaker ? getMakerPrivateProgressSummary(snapshot) : null;
-  const canRevealMakerPrivateProgress = Boolean(
-    isHiddenLiquidityTerms &&
-    params.walletKey.length > 0 &&
-    (perspective.isMaker
-      ? !makerPrivateProgressSummary || !privateFillReceiptsForWallet.length
-      : !privateFillReceiptsForWallet.length)
+    (receipt) => perspective.isMaker || receipt.filler?.toLowerCase() === historyWallet.walletKey
   );
   const lifecycleRows = buildTradeLifecycleHistoryRows(snapshot);
-  const historyRows = buildTradeTransactionHistoryRows([snapshot], params.walletAddress);
-  const historyEmptyCopy = !params.walletKey
+  const historyRows = buildTradeTransactionHistoryRows([snapshot], historyWallet.walletAddress);
+  const historyEmptyCopy = !historyWallet.walletKey
     ? 'Connect your trading wallet to show your history for this trade.'
-    : canRevealMakerPrivateProgress
-      ? perspective.isMaker
-        ? 'Reveal maker receipts to show your private history for this trade.'
-        : 'Reveal your private fill receipts for this trade.'
+    : privateFillReceiptsForWallet.length
+      ? 'No visible wallet history for this trade yet.'
       : 'No wallet history for this trade yet.';
 
   return {
@@ -91,14 +135,7 @@ export const buildStandardTerminalHistoryConfig = (
     title: formatTradeContractIdLabel(snapshot),
     count: lifecycleRows.length + historyRows.length,
     emptyCopy: historyEmptyCopy,
-    children: renderHistoryRows(lifecycleRows, historyRows, tradeKey, params),
-    revealAction: canRevealMakerPrivateProgress
-      ? () => {
-          params.revealMakerPrivateProgress(snapshot).catch(() => {});
-        }
-      : undefined,
-    revealLabel: perspective.isMaker ? 'Reveal maker history' : 'Reveal your history',
-    revealPending: params.revealingPrivateTradeKey === tradeKey
+    children: renderHistoryRows(lifecycleRows, historyRows, tradeKey, params)
   };
 };
 
@@ -112,48 +149,20 @@ export const buildRecurringTerminalHistoryConfig = (
   }
 
   const tradeKey = getSnapshotKey(snapshot);
-  const isMaker = params.walletKey.length > 0 && snapshot.maker.toLowerCase() === params.walletKey;
-  const baseHidden = recurring.mode !== 'public' && recurring.baseAsset.kind === 'private-erc20';
-  const quoteHidden = recurring.mode !== 'public' && recurring.quoteAsset.kind === 'private-erc20';
-  const privateExecutionsForWallet = (recurring.privateExecutions ?? []).filter(
-    (execution) => isMaker || execution.filler?.toLowerCase() === params.walletKey
-  );
-  const hasPrivateInventoryToReveal =
-    isMaker &&
-    (
-      (baseHidden && recurring.hasPrivateBaseInventory && recurring.makerPrivateInventory?.baseInventory === undefined) ||
-      (quoteHidden && recurring.hasPrivateQuoteInventory && recurring.makerPrivateInventory?.quoteInventory === undefined)
-    );
-  const canRevealRecurringPrivate =
-    params.walletKey.length > 0 &&
-    recurring.mode !== 'public' &&
-    (isMaker
-      ? hasPrivateInventoryToReveal || (!privateExecutionsForWallet.length && recurring.executionCount > 0)
-      : !privateExecutionsForWallet.length && recurring.executionCount > 0);
+  const historyWallet = resolveTerminalHistoryWallet(snapshot, params);
   const lifecycleRows = buildTradeLifecycleHistoryRows(snapshot);
-  const historyRows = buildTradeTransactionHistoryRows([snapshot], params.walletAddress);
+  const historyRows = buildTradeTransactionHistoryRows([snapshot], historyWallet.walletAddress);
   const emptyCopy =
-    !params.walletKey
+    !historyWallet.walletKey
       ? 'Connect your trading wallet to show your history for this order.'
-      : canRevealRecurringPrivate
-        ? isMaker
-          ? 'Reveal this order to show your private maker receipts.'
-          : 'Reveal your wallet receipts to show the private buys and sells you made.'
-        : 'No wallet history for this order yet.';
+      : 'No wallet history for this order yet.';
 
   return {
     tradeKey,
     title: formatTradeContractIdLabel(snapshot),
     count: lifecycleRows.length + historyRows.length,
     emptyCopy,
-    children: renderHistoryRows(lifecycleRows, historyRows, tradeKey, params),
-    revealAction: canRevealRecurringPrivate
-      ? () => {
-          params.revealMakerPrivateProgress(snapshot).catch(() => {});
-        }
-      : undefined,
-    revealLabel: 'Reveal history',
-    revealPending: params.revealingPrivateTradeKey === tradeKey
+    children: renderHistoryRows(lifecycleRows, historyRows, tradeKey, params)
   };
 };
 

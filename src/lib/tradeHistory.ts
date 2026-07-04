@@ -235,28 +235,57 @@ const appendRecurringRows = (
 
   const makerKey = normalizeAddress(trade.maker);
   const isMaker = walletKey === makerKey;
-  const executions = [...(recurring.publicExecutions ?? []), ...(recurring.privateExecutions ?? [])];
+  type RecurringExecution = NonNullable<NonNullable<TradeSnapshot['recurringOrder']>['publicExecutions']>[number];
+  type RecurringHistoryExecution = RecurringExecution & { historySource: 'private' | 'public' };
+  const executionsByFill = new Map<string, RecurringHistoryExecution>();
+  for (const execution of recurring.publicExecutions ?? []) {
+    executionsByFill.set(`${execution.fillIndex}:${normalizeAddress(execution.filler)}`, {
+      ...execution,
+      historySource: 'public'
+    });
+  }
+  for (const execution of recurring.privateExecutions ?? []) {
+    const fillKey = `${execution.fillIndex}:${normalizeAddress(execution.filler)}`;
+    executionsByFill.set(fillKey, {
+      ...executionsByFill.get(fillKey),
+      ...execution,
+      historySource: 'private'
+    });
+  }
+  const executions = Array.from(executionsByFill.values());
 
   for (const execution of executions) {
     const fillerKey = normalizeAddress(execution.filler);
     const isFiller = walletKey === fillerKey;
     if (!isMaker && !isFiller) continue;
 
-    const makerBuysBase = execution.side === 'buy';
-    const walletBuysBase = isMaker ? makerBuysBase : !makerBuysBase;
-    const baseVisible = isPositiveAmount(execution.baseAmount);
-    const quoteVisible = isPositiveAmount(execution.quoteAmount);
+    const fallbackTerms = execution.side === 'buy' ? recurring.buyTerms : recurring.sellTerms;
+    const useTermFallback = recurring.mode !== 'public' && execution.historySource === 'public';
+    const baseAmount = isPositiveAmount(execution.baseAmount)
+      ? execution.baseAmount
+      : useTermFallback
+        ? fallbackTerms.baseAmount
+        : undefined;
+    const quoteAmount = isPositiveAmount(execution.quoteAmount)
+      ? execution.quoteAmount
+      : useTermFallback
+        ? fallbackTerms.quoteAmount
+        : undefined;
+    const fillerBuysBase = execution.side === 'buy';
+    const walletBuysBase = isMaker ? !fillerBuysBase : fillerBuysBase;
+    const baseVisible = isPositiveAmount(baseAmount);
+    const quoteVisible = isPositiveAmount(quoteAmount);
     const amountVisibility: TradeTransactionAmountVisibility =
       recurring.mode === 'public' ? 'public' : baseVisible && quoteVisible ? 'private-revealed' : 'private-hidden';
     const bought = walletBuysBase
-      ? withAmount(recurring.baseAsset, execution.baseAmount, baseVisible)
-      : withAmount(recurring.quoteAsset, execution.quoteAmount, quoteVisible);
+      ? withAmount(recurring.baseAsset, baseAmount, baseVisible)
+      : withAmount(recurring.quoteAsset, quoteAmount, quoteVisible);
     const sold = walletBuysBase
-      ? withAmount(recurring.quoteAsset, execution.quoteAmount, quoteVisible)
-      : withAmount(recurring.baseAsset, execution.baseAmount, baseVisible);
+      ? withAmount(recurring.quoteAsset, quoteAmount, quoteVisible)
+      : withAmount(recurring.baseAsset, baseAmount, baseVisible);
 
     rows.push({
-      key: `${buildTradeSnapshotKey(trade.tradeId, contractAddress)}:recurring:${execution.fillIndex}:${isMaker ? 'maker' : 'filler'}`,
+      key: `${buildTradeSnapshotKey(trade.tradeId, contractAddress)}:recurring:${execution.fillIndex}:${isMaker ? 'maker' : `filler:${fillerKey}`}`,
       contractAddress,
       localId: recurring.orderId,
       role: isMaker ? 'maker' : 'filler',
@@ -307,10 +336,49 @@ export const buildTradeTransactionHistoryRows = (
       sourceKind === 'direct' &&
       trade.status === 'accepted';
 
+    let renderedWalletFillEvents = false;
+    if (sourceKind === 'standard') {
+      for (const event of trade.walletFillEvents ?? []) {
+        const fillerKey = normalizeAddress(event.filler);
+        const isFiller = walletKey === fillerKey;
+        if (!isMaker && !isFiller) continue;
+        renderedWalletFillEvents = true;
+        const offerVisible = isPositiveAmount(event.offerAmount);
+        const requestVisible = isPositiveAmount(event.requestAmount);
+        const bought = isMaker
+          ? withAmount(trade.request, event.requestAmount, requestVisible)
+          : withAmount(trade.offer, event.offerAmount, offerVisible);
+        const sold = isMaker
+          ? withAmount(trade.offer, event.offerAmount, offerVisible)
+          : withAmount(trade.request, event.requestAmount, requestVisible);
+        rows.push({
+          key: `${buildTradeSnapshotKey(trade.tradeId, contractAddress)}:partial:${event.fillIndex}:${fillerKey}:${event.txHash ?? ''}:${event.logIndex ?? ''}`,
+          contractAddress,
+          localId: trade.tradeId,
+          role: isMaker ? 'maker' : isTaker ? 'taker' : 'filler',
+          sourceKind,
+          counterparty: isMaker ? event.filler : trade.maker,
+          bought,
+          sold,
+          tokenFlows: buildTokenFlows([trade.offer, trade.request], bought, sold),
+          amountVisibility: 'public',
+          sequence: event.fillIndex,
+          ...(event.txHash ? { txHash: event.txHash } : {}),
+          ...(event.blockNumber !== undefined ? { blockNumber: event.blockNumber } : {})
+        });
+      }
+    }
+
+    if (renderedWalletFillEvents) {
+      continue;
+    }
+
+    let renderedPrivateReceiptRows = false;
     for (const receipt of trade.privateFillReceipts ?? []) {
       const fillerKey = normalizeAddress(receipt.filler);
       const isFiller = walletKey === fillerKey;
       if (!isMaker && !isFiller) continue;
+      renderedPrivateReceiptRows = true;
       const offerVisible = isPositiveAmount(receipt.offerAmount);
       const requestVisible = isPositiveAmount(receipt.requestAmount);
       const bought = isMaker
@@ -336,7 +404,10 @@ export const buildTradeTransactionHistoryRows = (
       });
     }
 
-    if ((trade.privateFillReceipts ?? []).length > 0) {
+    if (renderedPrivateReceiptRows) {
+      continue;
+    }
+    if (sourceKind !== 'direct') {
       continue;
     }
 

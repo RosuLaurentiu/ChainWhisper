@@ -40,7 +40,8 @@ import {
   type RecurringTradeMode,
   type RecurringTradeStatus,
   type TradeAssetPayload,
-  type TradeSnapshot
+  type TradeSnapshot,
+  type WalletTradeFillEventPayload
 } from './appShared';
 import { resolveTradeAssetTypeValue, resolveTradeSnapshotStatus } from './appHelpers';
 import { applyDirectTradeTermsToSnapshot, applyPrivateLinkTradeTermsToSnapshot, decryptDirectTradeTerms } from './directTradeTerms';
@@ -295,7 +296,10 @@ const isRecurringOrderContractAddress = (
 ): boolean =>
   typeof value === 'string' &&
   isWalletAddress(value) &&
-  value.toLowerCase() === addresses.recurringEscrow.toLowerCase();
+  (
+    value.toLowerCase() === addresses.recurringEscrow.toLowerCase() ||
+    value.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()
+  );
 
 export const isLegacyPrivateOrderEscrowContractAddress = (_value?: string | null): boolean => false;
 
@@ -360,6 +364,11 @@ export const resolveTradeEscrowContractConfig = (
     directVisible: false
   };
 };
+
+const resolveCurrentTradeEscrowContractConfig = async (
+  escrowContract?: string | null
+): Promise<TradeEscrowConfig> =>
+  resolveTradeEscrowContractConfig(escrowContract, await resolveTradingContractAddresses());
 
 export const resolveOtcFeeEscrowContractConfig = (
   escrowContract?: string | null,
@@ -1299,7 +1308,7 @@ export const readPrivateTradeRemainingOfferWei = async ({
 
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const config = resolveTradeEscrowContractConfig(escrowContract);
+  const config = await resolveCurrentTradeEscrowContractConfig(escrowContract);
   if (!config.hiddenOnly) {
     return null;
   }
@@ -1340,12 +1349,29 @@ const decryptRecurringReceiptAmount = async (
   return value === null ? undefined : value.toString();
 };
 
+const resolveRecurringContractAddress = (
+  contractAddress?: string | null,
+  addresses: TradingContractAddresses = DEFAULT_TRADING_CONTRACT_ADDRESSES
+): string => {
+  if (!isWalletAddress(contractAddress ?? '') || contractAddress?.toLowerCase() === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
+    return addresses.recurringEscrow;
+  }
+  return String(contractAddress);
+};
+
+const resolveCurrentRecurringContractAddress = async (contractAddress?: string | null): Promise<string> =>
+  resolveRecurringContractAddress(contractAddress, await resolveTradingContractAddresses());
+
+export const __resolveRecurringContractAddressForTest = resolveRecurringContractAddress;
+
 export const fetchRecurringPrivateFillReceiptsForWallet = async ({
+  contractAddress,
   orderId,
   walletAddress,
   signer,
   fromBlock
 }: {
+  contractAddress?: string;
   orderId: number;
   walletAddress: string;
   signer: Wallet | JsonRpcSigner;
@@ -1357,7 +1383,7 @@ export const fetchRecurringPrivateFillReceiptsForWallet = async ({
 
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const contract = new cotiEthers.Contract(await resolveCurrentRecurringContractAddress(contractAddress), RECURRING_OTC_CONTRACT_ABI, readProvider);
   const safeFromBlock =
     typeof fromBlock === 'number' && Number.isSafeInteger(fromBlock)
       ? Math.max(0, fromBlock)
@@ -1437,10 +1463,12 @@ export const fetchRecurringPrivateFillReceiptsForWallet = async ({
 };
 
 export const fetchRecurringExecutionRowsForWallet = async ({
+  contractAddress,
   orderId,
   walletAddress,
   fromBlock
 }: {
+  contractAddress?: string;
   orderId: number;
   walletAddress?: string;
   fromBlock?: number;
@@ -1450,7 +1478,7 @@ export const fetchRecurringExecutionRowsForWallet = async ({
   }
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const contract = new cotiEthers.Contract(await resolveCurrentRecurringContractAddress(contractAddress), RECURRING_OTC_CONTRACT_ABI, readProvider);
   const safeFromBlock =
     typeof fromBlock === 'number' && Number.isSafeInteger(fromBlock)
       ? Math.max(0, fromBlock)
@@ -1499,11 +1527,13 @@ export const fetchRecurringExecutionRowsForWallet = async ({
 };
 
 export const fetchRecurringPrivateInventorySnapshotsForWallet = async ({
+  contractAddress,
   orderId,
   walletAddress,
   signer,
   fromBlock
 }: {
+  contractAddress?: string;
   orderId: number;
   walletAddress: string;
   signer: Wallet | JsonRpcSigner;
@@ -1515,7 +1545,7 @@ export const fetchRecurringPrivateInventorySnapshotsForWallet = async ({
 
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const contract = new cotiEthers.Contract(await resolveCurrentRecurringContractAddress(contractAddress), RECURRING_OTC_CONTRACT_ABI, readProvider);
   const latestSnapshotRaw = await contract.getRecurringAccountSnapshot(BigInt(orderId), walletAddress);
   const latestInitialized = Boolean(latestSnapshotRaw?.initialized ?? latestSnapshotRaw?.[1]);
   if (latestInitialized) {
@@ -1593,15 +1623,154 @@ export const fetchRecurringPrivateInventorySnapshotsForWallet = async ({
   return filteredSnapshots;
 };
 
+export const fetchTradePartialFillEventsForWallet = async ({
+  tradeId,
+  escrowContract,
+  walletAddress,
+  role,
+  fromBlock
+}: {
+  tradeId: number;
+  escrowContract?: string;
+  walletAddress: string;
+  role: 'maker' | 'filler';
+  fromBlock?: number;
+}): Promise<WalletTradeFillEventPayload[]> => {
+  if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(walletAddress)) {
+    return [];
+  }
+
+  const config = await resolveCurrentTradeEscrowContractConfig(escrowContract);
+  if (config.hiddenOnly || config.directVisible) {
+    return [];
+  }
+
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
+  const safeFromBlock =
+    typeof fromBlock === 'number' && Number.isSafeInteger(fromBlock)
+      ? Math.max(0, fromBlock)
+      : 0;
+  const fillerFilter = role === 'maker' ? null : walletAddress;
+  const logs = await contract.queryFilter(
+    contract.filters.TradePartiallyFilled(BigInt(tradeId), fillerFilter),
+    safeFromBlock,
+    'latest'
+  );
+  const walletKey = walletAddress.toLowerCase();
+
+  return logs
+    .map((log: unknown) => {
+      const eventLog = log as {
+        args?: {
+          tradeId?: unknown;
+          filler?: unknown;
+          requestAmountIn?: unknown;
+          offerAmountOut?: unknown;
+          [key: number]: unknown;
+        };
+        transactionHash?: string;
+        blockNumber?: number;
+        index?: number;
+        logIndex?: number;
+      };
+      const args = eventLog.args;
+      if (!args || toSafeNumber(args.tradeId ?? args[0]) !== tradeId) {
+        return null;
+      }
+      const filler = String(args.filler ?? args[1] ?? '').trim();
+      if (role === 'filler' && filler.toLowerCase() !== walletKey) {
+        return null;
+      }
+      return {
+        filler,
+        offerAmount: toBigintString(args.offerAmountOut ?? args[3]),
+        requestAmount: toBigintString(args.requestAmountIn ?? args[2]),
+        ...(eventLog.transactionHash ? { txHash: eventLog.transactionHash } : {}),
+        ...(typeof eventLog.blockNumber === 'number' ? { blockNumber: eventLog.blockNumber } : {}),
+        ...(typeof eventLog.logIndex === 'number'
+          ? { logIndex: eventLog.logIndex }
+          : typeof eventLog.index === 'number'
+            ? { logIndex: eventLog.index }
+            : {})
+      };
+    })
+    .filter((event): event is Omit<WalletTradeFillEventPayload, 'fillIndex'> => event !== null)
+    .sort((left, right) =>
+      (left.blockNumber ?? 0) - (right.blockNumber ?? 0) ||
+      (left.logIndex ?? 0) - (right.logIndex ?? 0)
+    )
+    .map((event, index) => ({
+      ...event,
+      fillIndex: index + 1
+    }));
+};
+
+const mapPrivateOrderFilledLogsToReceipts = (
+  logs: unknown[],
+  tradeId: number,
+  walletAddress: string,
+  role: 'maker' | 'filler'
+): PrivateTradeFillReceiptPayload[] => {
+  const walletKey = walletAddress.toLowerCase();
+  return logs
+    .map((log: unknown) => {
+      const eventLog = log as {
+        args?: {
+          tradeId?: unknown;
+          filler?: unknown;
+          [key: number]: unknown;
+        };
+        transactionHash?: string;
+        blockNumber?: number;
+        index?: number;
+        logIndex?: number;
+      };
+      const args = eventLog.args;
+      if (!args || toSafeNumber(args.tradeId ?? args[0]) !== tradeId) {
+        return null;
+      }
+      const filler = String(args.filler ?? args[1] ?? '').trim();
+      if (role !== 'maker' && filler.toLowerCase() !== walletKey) {
+        return null;
+      }
+      return {
+        filler,
+        logIndex:
+          typeof eventLog.logIndex === 'number'
+            ? eventLog.logIndex
+            : typeof eventLog.index === 'number'
+              ? eventLog.index
+              : 0,
+        ...(eventLog.transactionHash ? { txHash: eventLog.transactionHash } : {}),
+        ...(typeof eventLog.blockNumber === 'number' ? { blockNumber: eventLog.blockNumber } : {})
+      };
+    })
+    .filter((receipt): receipt is Omit<PrivateTradeFillReceiptPayload, 'fillIndex'> & { logIndex: number } => receipt !== null)
+    .sort((left, right) =>
+      (left.blockNumber ?? 0) - (right.blockNumber ?? 0) ||
+      left.logIndex - right.logIndex
+    )
+    .map(({ logIndex: _logIndex, ...receipt }, index) => ({
+      ...receipt,
+      fillIndex: index + 1
+    }));
+};
+
+export const __mapPrivateOrderFilledLogsToReceiptsForTest = mapPrivateOrderFilledLogsToReceipts;
+
 export const fetchPrivateOrderFillReceiptsForWallet = async ({
   tradeId,
   escrowContract,
+  role = 'filler',
   walletAddress,
   signer,
   fromBlock
 }: {
   tradeId: number;
   escrowContract?: string;
+  role?: 'maker' | 'filler';
   walletAddress: string;
   signer: Wallet | JsonRpcSigner;
   fromBlock?: number;
@@ -1612,7 +1781,7 @@ export const fetchPrivateOrderFillReceiptsForWallet = async ({
 
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const config = resolveTradeEscrowContractConfig(escrowContract);
+  const config = await resolveCurrentTradeEscrowContractConfig(escrowContract);
   if (!config.hiddenOnly) {
     return [];
   }
@@ -1685,6 +1854,15 @@ export const fetchPrivateOrderFillReceiptsForWallet = async ({
   );
   if (logs.length > 0 && !hasDecryptedReceiptValue) {
     throw new Error('Private fill receipts were found, but this wallet AES key could not decrypt them.');
+  }
+  if (filteredReceipts.length === 0) {
+    const filledFilter = role === 'maker' ? null : walletAddress;
+    const filledLogs = await contract.queryFilter(
+      contract.filters.PrivateOrderFilled(BigInt(tradeId), filledFilter),
+      safeFromBlock,
+      'latest'
+    );
+    return mapPrivateOrderFilledLogsToReceipts(filledLogs, tradeId, walletAddress, role);
   }
   return filteredReceipts;
 };
@@ -1819,6 +1997,7 @@ const buildRecurringOrderSnapshotFromView = async (
     rewardTokenDecimals: number;
     privateRewardTokenSymbol: string;
     privateRewardTokenDecimals: number;
+    contractAddress?: string;
   }
 ): Promise<TradeSnapshot> => {
   const view = orderViewRaw as RecurringRawView | null | undefined;
@@ -1885,7 +2064,7 @@ const buildRecurringOrderSnapshotFromView = async (
 
   return {
     tradeId: orderId,
-    escrowContract: RECURRING_OTC_CONTRACT_ADDRESS,
+    escrowContract: resolveRecurringContractAddress(options.contractAddress),
     maker,
     taker,
     offer:
@@ -1943,9 +2122,7 @@ const fetchRecurringOrderSnapshotById = async (
 ): Promise<TradeSnapshot> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contractAddress = isWalletAddress(options.contractAddress ?? '')
-    ? String(options.contractAddress)
-    : RECURRING_OTC_CONTRACT_ADDRESS;
+  const contractAddress = await resolveCurrentRecurringContractAddress(options.contractAddress);
   const contract = new cotiEthers.Contract(contractAddress, RECURRING_OTC_CONTRACT_ABI, readProvider);
   let orderViewRaw: unknown;
   try {
@@ -1957,7 +2134,7 @@ const fetchRecurringOrderSnapshotById = async (
     }
     throw error;
   }
-  return buildRecurringOrderSnapshotFromView(orderId, orderViewRaw, options);
+  return buildRecurringOrderSnapshotFromView(orderId, orderViewRaw, { ...options, contractAddress });
 };
 
 export const __buildRecurringOrderSnapshotFromViewForTest = buildRecurringOrderSnapshotFromView;
@@ -1987,15 +2164,13 @@ const fetchRecurringOrderSnapshotsByIds = async (
 
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  const contractAddress = isWalletAddress(options.contractAddress ?? '')
-    ? String(options.contractAddress)
-    : RECURRING_OTC_CONTRACT_ADDRESS;
+  const contractAddress = await resolveCurrentRecurringContractAddress(options.contractAddress);
   const contract = new cotiEthers.Contract(contractAddress, RECURRING_OTC_CONTRACT_ABI, readProvider);
   const snapshots = await Promise.all(
     orderIds.map(async (orderId) => {
       try {
         const orderView = await contract.getOrderView(orderId);
-        return await buildRecurringOrderSnapshotFromView(orderId, orderView, options);
+        return await buildRecurringOrderSnapshotFromView(orderId, orderView, { ...options, contractAddress });
       } catch {
         return null;
       }
@@ -2010,8 +2185,10 @@ export const fetchTradeAccessMetadataById = async (
 ): Promise<TradeAccessMetadata> => {
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
-  if (isRecurringOrderContractAddress(escrowContract)) {
-    const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, readProvider);
+  const contractAddresses = await resolveTradingContractAddresses();
+  if (isRecurringOrderContractAddress(escrowContract, contractAddresses)) {
+    const contractAddress = resolveRecurringContractAddress(escrowContract, contractAddresses);
+    const contract = new cotiEthers.Contract(contractAddress, RECURRING_OTC_CONTRACT_ABI, readProvider);
     const orderViewRaw = await contract.getOrderView(tradeId);
     const view = orderViewRaw as RecurringRawView | null | undefined;
     const orderRaw = (view?.order ?? view?.[0]) as RecurringRawOrder | null | undefined;
@@ -2049,8 +2226,10 @@ export const recoverTradeAccessPayloadForMaker = async ({
   callerAddress?: string;
 }): Promise<TradeRecoveryPayload> => {
   const cotiEthers = await loadCotiEthersModule();
-  if (isRecurringOrderContractAddress(escrowContract)) {
-    const contract = new cotiEthers.Contract(RECURRING_OTC_CONTRACT_ADDRESS, RECURRING_OTC_CONTRACT_ABI, signer);
+  const contractAddresses = await resolveTradingContractAddresses();
+  if (isRecurringOrderContractAddress(escrowContract, contractAddresses)) {
+    const contractAddress = resolveRecurringContractAddress(escrowContract, contractAddresses);
+    const contract = new cotiEthers.Contract(contractAddress, RECURRING_OTC_CONTRACT_ABI, signer);
     const encryptedPayload = await contract.getRecurringRecoveryNote(tradeId);
     return decryptTradeRecoveryPayloadForSigner(signer, String(encryptedPayload));
   }
@@ -2103,7 +2282,7 @@ const fetchTradeSnapshotByIdFromContract = async (
   if (isRecurringOrderContractAddress(options.escrowContract, contractAddresses)) {
     return fetchRecurringOrderSnapshotById(tradeId, {
       ...options,
-      contractAddress: options.escrowContract ?? contractAddresses.recurringEscrow
+      contractAddress: resolveRecurringContractAddress(options.escrowContract, contractAddresses)
     });
   }
 
@@ -2297,12 +2476,24 @@ const fetchTradeSnapshotByIdFromContract = async (
 
   const callerWalletAddress = isWalletAddress(options.callerAddress ?? '') ? options.callerAddress! : '';
   if (callerWalletAddress && !config.hiddenOnly) {
-    const walletFillState = await readWalletTradeFillState(contract, tradeId, callerWalletAddress);
-    if (walletFillState) {
+    const callerKey = callerWalletAddress.toLowerCase();
+    const isCallerMaker = maker.toLowerCase() === callerKey;
+    const [walletFillState, walletFillEvents] = await Promise.all([
+      readWalletTradeFillState(contract, tradeId, callerWalletAddress),
+      config.directVisible
+        ? Promise.resolve([])
+        : fetchTradePartialFillEventsForWallet({
+            tradeId,
+            escrowContract: config.address,
+            walletAddress: callerWalletAddress,
+            role: isCallerMaker ? 'maker' : 'filler'
+          }).catch(() => [])
+    ]);
+    if (walletFillState || walletFillEvents.length > 0) {
       snapshot = {
         ...snapshot,
-        walletHasFill: true,
-        walletFillState
+        ...(walletFillState ? { walletFillState } : {}),
+        ...(walletFillEvents.length > 0 ? { walletHasFill: true, walletFillEvents } : {})
       };
     }
   }
@@ -2574,6 +2765,27 @@ const fetchWalletHistoryRefsFromReader = async (
 const getWalletTradeSnapshotKey = (snapshot: TradeSnapshot): string =>
   `${(snapshot.escrowContract ?? '').toLowerCase()}:${snapshot.tradeId}`;
 
+const mergeWalletFillEvents = (
+  existing?: WalletTradeFillEventPayload[],
+  incoming?: WalletTradeFillEventPayload[]
+): WalletTradeFillEventPayload[] | undefined => {
+  if (!existing?.length && !incoming?.length) return undefined;
+  const byKey = new Map<string, WalletTradeFillEventPayload>();
+  for (const event of [...(existing ?? []), ...(incoming ?? [])]) {
+    byKey.set(
+      event.txHash
+        ? `${event.txHash.toLowerCase()}:${event.logIndex ?? event.fillIndex}:${event.filler.toLowerCase()}`
+        : `${event.fillIndex}:${event.filler.toLowerCase()}`,
+      event
+    );
+  }
+  return Array.from(byKey.values()).sort((left, right) =>
+    (left.blockNumber ?? 0) - (right.blockNumber ?? 0) ||
+    (left.logIndex ?? 0) - (right.logIndex ?? 0) ||
+    left.fillIndex - right.fillIndex
+  );
+};
+
 export const __mergeWalletTradeSnapshotsForTest = (
   snapshotGroups: TradeSnapshot[][],
   limit = 80
@@ -2592,6 +2804,8 @@ export const __mergeWalletTradeSnapshotsForTest = (
       ...snapshot,
       walletHasFill: Boolean(existing.walletHasFill || snapshot.walletHasFill),
       walletFillState: snapshot.walletFillState ?? existing.walletFillState,
+      walletFillEvents: mergeWalletFillEvents(existing.walletFillEvents, snapshot.walletFillEvents),
+      privateFillReceipts: snapshot.privateFillReceipts ?? existing.privateFillReceipts,
       makerPrivateProgress: snapshot.makerPrivateProgress ?? existing.makerPrivateProgress
     });
   }
@@ -2628,11 +2842,6 @@ export const fetchWalletTradeSnapshots = async (
   const historyRefs = await fetchWalletHistoryRefsFromReader(walletAddress, tradingContracts, safeLimit);
   let historySnapshots: TradeSnapshot[] = [];
   if (historyRefs) {
-    const fillerKeys = new Set(
-      historyRefs
-        .filter((ref) => ref.role === 3)
-        .map((ref) => `${ref.contractAddress.toLowerCase()}:${ref.localId}`)
-    );
     const uniqueRefs = Array.from(
       new Map(historyRefs.map((ref) => [`${ref.contractAddress.toLowerCase()}:${ref.localId}`, ref])).values()
     ).slice(0, safeLimit);
@@ -2647,18 +2856,6 @@ export const fetchWalletTradeSnapshots = async (
           contractAddresses: tradingContracts,
           callerAddress: walletAddress
         })
-          .then(async (snapshot) => {
-            const key = `${ref.contractAddress.toLowerCase()}:${ref.localId}`;
-            if (!fillerKeys.has(key)) return snapshot;
-            const config = ref.kind === 3 ? null : resolveTradeEscrowContractConfig(ref.contractAddress, tradingContracts);
-            if (!config || config.hiddenOnly) return { ...snapshot, walletHasFill: true };
-            const contract = new cotiEthers.Contract(config.address, config.abi, readProvider);
-            return {
-              ...snapshot,
-              walletHasFill: true,
-              walletFillState: await readWalletTradeFillState(contract, ref.localId, walletAddress)
-            };
-          })
           .catch(() => null)
       )
     );
@@ -2674,8 +2871,7 @@ export const fetchWalletTradeSnapshots = async (
         contract.getTradeIdsForFiller?.(walletAddress, 0, safeLimit).catch(() => null)
       ]);
       const fillerIds = resolveIds(fillerIdsRaw);
-      const fillerIdSet = new Set(fillerIds);
-      const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw), ...resolveIds(fillerIdsRaw)]))
+      const tradeIds = Array.from(new Set([...resolveIds(makerIdsRaw), ...resolveIds(takerIdsRaw), ...fillerIds]))
         .sort((left, right) => right - left)
         .slice(0, safeLimit);
       return Promise.all(
@@ -2689,16 +2885,6 @@ export const fetchWalletTradeSnapshots = async (
             contractAddresses: tradingContracts,
             callerAddress: walletAddress
           })
-            .then(async (snapshot) => {
-              if (!fillerIdSet.has(tradeId)) {
-                return snapshot;
-              }
-              return {
-                ...snapshot,
-                walletHasFill: true,
-                ...(config.hiddenOnly ? {} : { walletFillState: await readWalletTradeFillState(contract, tradeId, walletAddress) })
-              };
-            })
             .catch(() => null)
         )
       );
@@ -2711,7 +2897,6 @@ export const fetchWalletTradeSnapshots = async (
         contract.getOrderIdsForFiller(walletAddress, 0, safeLimit).catch(() => null)
       ]);
       const recurringFillerIds = resolveRecurringIdsFromPagedResult(fillerIdsRaw);
-      const recurringFillerIdSet = new Set(recurringFillerIds);
       const orderIds = Array.from(
         new Set([
           ...resolveRecurringIdsFromPagedResult(makerIdsRaw),
@@ -2728,9 +2913,7 @@ export const fetchWalletTradeSnapshots = async (
         privateRewardTokenDecimals: options.privateRewardTokenDecimals,
         contractAddress: tradingContracts.recurringEscrow
       }).catch(() => []);
-      return snapshots.map((snapshot) =>
-        recurringFillerIdSet.has(snapshot.tradeId) ? { ...snapshot, walletHasFill: true } : snapshot
-      );
+      return snapshots;
     })()
   ]);
 

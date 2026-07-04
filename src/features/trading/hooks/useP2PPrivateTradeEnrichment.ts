@@ -8,6 +8,7 @@ import {
   fetchRecurringExecutionRowsForWallet,
   fetchRecurringPrivateFillReceiptsForWallet,
   fetchRecurringPrivateInventorySnapshotsForWallet,
+  fetchTradePartialFillEventsForWallet,
   readPrivateTradeRemainingOfferWei,
   recoverTradeAccessPayloadForMaker,
   revealDirectTradeTermsForWallet,
@@ -27,13 +28,54 @@ import type { TradeSigner } from '../components/P2PTradingPage.helpers';
 type UseP2PPrivateTradeEnrichmentArgs = {
   getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   knownPrivateLiquidityByTrade: Record<string, string>;
-  rememberPrivateTradeLiquidity: (tradeId: number, escrowContract: string | undefined, amountWei: bigint) => void;
+  rememberPrivateTradeLiquidity: (
+    tradeId: number,
+    escrowContract: string | undefined,
+    offerAmountWei: bigint,
+    requestAmountWei?: bigint
+  ) => void;
   rememberTradeAccessSecret: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   walletAddress: string;
   walletHasAes: boolean;
   walletKey: string;
 };
+
+const parseKnownPrivateLiquidity = (value?: string): { offerAmount?: string; requestAmount?: string } => {
+  const match = value?.match(/^(\d+)(?::(\d+))?$/);
+  const offerAmount = match?.[1] ?? '';
+  const requestAmount = match?.[2] ?? '';
+  if (!offerAmount || BigInt(offerAmount) <= 0n) {
+    return {};
+  }
+  return {
+    offerAmount,
+    ...(requestAmount && BigInt(requestAmount) > 0n ? { requestAmount } : {})
+  };
+};
+
+const isDirectVisibleTradeSnapshot = (snapshot: TradeSnapshot): boolean =>
+  Boolean(snapshot.directTermsMetadata);
+
+const shouldFetchPublicFillEventsForWallet = (
+  snapshot: TradeSnapshot,
+  walletKey: string
+): boolean =>
+  Boolean(
+    walletKey &&
+      !snapshot.recurringOrder &&
+      !isDirectVisibleTradeSnapshot(snapshot) &&
+      !isHiddenLiquidityTrade(snapshot)
+  );
+
+const shouldFetchRecurringExecutionRowsForWallet = (
+  snapshot: TradeSnapshot,
+  walletKey: string
+): boolean =>
+  Boolean(walletKey && snapshot.recurringOrder);
+
+export const __shouldFetchPublicFillEventsForWalletForTest = shouldFetchPublicFillEventsForWallet;
+export const __shouldFetchRecurringExecutionRowsForWalletForTest = shouldFetchRecurringExecutionRowsForWallet;
 
 export default function useP2PPrivateTradeEnrichment({
   getTradeSigner,
@@ -74,7 +116,12 @@ export default function useP2PPrivateTradeEnrichment({
       }
       if (recoveryPayload.kind === 'private-order' && recoveryPayload.offer?.amount) {
         try {
-          rememberPrivateTradeLiquidity(snapshot.tradeId, snapshot.escrowContract, BigInt(recoveryPayload.offer.amount));
+          rememberPrivateTradeLiquidity(
+            snapshot.tradeId,
+            snapshot.escrowContract,
+            BigInt(recoveryPayload.offer.amount),
+            recoveryPayload.request?.amount ? BigInt(recoveryPayload.request.amount) : undefined
+          );
         } catch {
         }
       }
@@ -147,13 +194,14 @@ export default function useP2PPrivateTradeEnrichment({
         const recurring = snapshot.recurringOrder;
         const isMaker = snapshot.maker.toLowerCase() === walletKey;
         if (recurring.mode === 'public') {
-          if (recurring.executionCount === 0) {
+          if (!shouldFetchRecurringExecutionRowsForWallet(snapshot, walletKey)) {
             return snapshot;
           }
           const existingPublicExecutions = (recurring.publicExecutions ?? []).filter(
             (execution) => isMaker || execution.filler?.toLowerCase() === walletKey
           );
           const publicExecutions = await fetchRecurringExecutionRowsForWallet({
+            contractAddress: snapshot.escrowContract,
             orderId: recurring.orderId,
             walletAddress: isMaker ? undefined : walletAddress
           }).catch(() => existingPublicExecutions);
@@ -179,16 +227,52 @@ export default function useP2PPrivateTradeEnrichment({
         const revealQuoteInventory =
           recurring.quoteAsset.kind === 'private-erc20' && recurring.hasPrivateQuoteInventory;
 
-        const signer = await getTradeSigner(forceReveal);
+        const fetchPublicExecutions = async () => {
+          return fetchRecurringExecutionRowsForWallet({
+            contractAddress: snapshot.escrowContract,
+            orderId: recurring.orderId,
+            walletAddress: isMaker ? undefined : walletAddress
+          });
+        };
+        const publicExecutionsResult = await Promise.allSettled([fetchPublicExecutions()]).then(([result]) => result);
+        const fetchedPublicExecutions =
+          publicExecutionsResult.status === 'fulfilled'
+            ? publicExecutionsResult.value
+            : [];
+        const existingPublicExecutions = (recurring.publicExecutions ?? []).filter(
+          (execution) => isMaker || execution.filler?.toLowerCase() === walletKey
+        );
+        const publicExecutions =
+          fetchedPublicExecutions.length > 0 || existingPublicExecutions.length === 0
+            ? fetchedPublicExecutions
+            : existingPublicExecutions;
+        let signer: TradeSigner;
+        try {
+          signer = await getTradeSigner(forceReveal);
+        } catch (error) {
+          if (publicExecutions.length > 0) {
+            return {
+              ...snapshot,
+              walletHasFill: Boolean(snapshot.walletHasFill || !isMaker),
+              recurringOrder: {
+                ...recurring,
+                publicExecutions
+              }
+            };
+          }
+          throw error;
+        }
         const [privateInventorySnapshotsResult, privateExecutionsResult] = await Promise.allSettled([
           isMaker
             ? fetchRecurringPrivateInventorySnapshotsForWallet({
+                contractAddress: snapshot.escrowContract,
                 orderId: recurring.orderId,
                 walletAddress,
                 signer
               })
             : Promise.resolve([]),
           fetchRecurringPrivateFillReceiptsForWallet({
+            contractAddress: snapshot.escrowContract,
             orderId: recurring.orderId,
             walletAddress,
             signer
@@ -230,7 +314,8 @@ export default function useP2PPrivateTradeEnrichment({
 
         if (
           privateInventorySnapshotsResult.status === 'rejected' &&
-          privateExecutionsResult.status === 'rejected'
+          privateExecutionsResult.status === 'rejected' &&
+          publicExecutionsResult.status === 'rejected'
         ) {
           throw privateInventorySnapshotsResult.reason instanceof Error
             ? privateInventorySnapshotsResult.reason
@@ -238,7 +323,8 @@ export default function useP2PPrivateTradeEnrichment({
         }
         const hasRevealedPrivateData =
           (isMaker && (fallbackBaseInventory !== undefined || fallbackQuoteInventory !== undefined)) ||
-          privateExecutions.length > 0;
+          privateExecutions.length > 0 ||
+          publicExecutions.length > 0;
         if (!hasRevealedPrivateData) {
           const revealError =
             privateInventorySnapshotsResult.status === 'rejected'
@@ -274,36 +360,56 @@ export default function useP2PPrivateTradeEnrichment({
                   }
                 }
               : {}),
-            privateExecutions
+            privateExecutions,
+            publicExecutions
           }
         };
       }
       let recoveredSnapshot = snapshot;
-      const initialEscrowConfig = resolveTradeEscrowContractConfig(recoveredSnapshot.escrowContract);
-      if (initialEscrowConfig.directVisible) {
-        return enrichDirectVisibleTermsForWallet(recoveredSnapshot, forceReveal);
-      }
-      if (walletKey && snapshot.maker.toLowerCase() === walletKey && snapshot.hasAccessHash) {
+      if (walletKey && snapshot.maker.toLowerCase() === walletKey) {
         try {
           recoveredSnapshot = await recoverMakerTradeAccessSecret(snapshot, forceReveal);
         } catch {
           recoveredSnapshot = snapshot;
         }
       }
-      const escrowConfig = resolveTradeEscrowContractConfig(recoveredSnapshot.escrowContract);
-      if (escrowConfig.directVisible) {
+      const isDirectVisibleRecoveredSnapshot = isDirectVisibleTradeSnapshot(recoveredSnapshot);
+      if (isDirectVisibleRecoveredSnapshot) {
         return enrichDirectVisibleTermsForWallet(recoveredSnapshot, forceReveal);
       }
-      if (!isHiddenLiquidityTrade(recoveredSnapshot) || !walletKey) {
-        return walletKey
-          ? recoveredSnapshot
-          : {
-              ...recoveredSnapshot,
-              makerPrivateProgress: undefined,
-              privateFillReceipts: undefined,
-              walletFillState: undefined,
-              walletHasFill: undefined
-            };
+      if (shouldFetchPublicFillEventsForWallet(recoveredSnapshot, walletKey)) {
+        const isMaker = recoveredSnapshot.maker.toLowerCase() === walletKey;
+        const existingFillEvents = (recoveredSnapshot.walletFillEvents ?? []).filter(
+          (event) => isMaker || event.filler?.toLowerCase() === walletKey
+        );
+        const walletFillEvents = await fetchTradePartialFillEventsForWallet({
+          tradeId: recoveredSnapshot.tradeId,
+          escrowContract: recoveredSnapshot.escrowContract,
+          walletAddress,
+          role: isMaker ? 'maker' : 'filler'
+        }).catch(() => existingFillEvents);
+        const resolvedFillEvents =
+          walletFillEvents.length > 0 || existingFillEvents.length === 0
+            ? walletFillEvents
+            : existingFillEvents;
+        return {
+          ...recoveredSnapshot,
+          walletHasFill: Boolean(recoveredSnapshot.walletHasFill || resolvedFillEvents.length > 0),
+          walletFillEvents: resolvedFillEvents
+        };
+      }
+      if (!isHiddenLiquidityTrade(recoveredSnapshot)) {
+        return recoveredSnapshot;
+      }
+      if (!walletKey) {
+        return {
+          ...recoveredSnapshot,
+          makerPrivateProgress: undefined,
+          privateFillReceipts: undefined,
+          walletFillEvents: undefined,
+          walletFillState: undefined,
+          walletHasFill: undefined
+        };
       }
       if (!forceReveal && !walletHasAes) {
         return {
@@ -321,11 +427,20 @@ export default function useP2PPrivateTradeEnrichment({
           ? trade.privateFillReceipts
           : (trade.privateFillReceipts ?? []).filter((receipt) => receipt.filler?.toLowerCase() === walletKey)
       });
-      if (!forceReveal && !isMaker && !recoveredSnapshot.walletHasFill) {
-        return stripOtherWalletPrivateReveal(recoveredSnapshot);
-      }
       const tradeKey = getSnapshotKey(recoveredSnapshot);
-      const knownInitialAmount = knownPrivateLiquidityByTrade[tradeKey];
+      const knownPrivateLiquidity = parseKnownPrivateLiquidity(knownPrivateLiquidityByTrade[tradeKey]);
+      if (isMaker && (knownPrivateLiquidity.offerAmount || knownPrivateLiquidity.requestAmount)) {
+        recoveredSnapshot = {
+          ...recoveredSnapshot,
+          offer: knownPrivateLiquidity.offerAmount
+            ? { ...recoveredSnapshot.offer, amount: knownPrivateLiquidity.offerAmount }
+            : recoveredSnapshot.offer,
+          request: knownPrivateLiquidity.requestAmount
+            ? { ...recoveredSnapshot.request, amount: knownPrivateLiquidity.requestAmount }
+            : recoveredSnapshot.request
+        };
+      }
+      const knownInitialAmount = knownPrivateLiquidity.offerAmount;
       const signer = await getTradeSigner(forceReveal);
       const [remainingOfferAmountResult, privateFillReceiptsResult] = await Promise.allSettled([
         isMaker
@@ -339,6 +454,7 @@ export default function useP2PPrivateTradeEnrichment({
         fetchPrivateOrderFillReceiptsForWallet({
           tradeId: recoveredSnapshot.tradeId,
           escrowContract: recoveredSnapshot.escrowContract,
+          role: isMaker ? 'maker' : 'filler',
           walletAddress,
           signer
         })
