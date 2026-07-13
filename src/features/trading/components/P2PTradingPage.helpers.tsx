@@ -315,6 +315,7 @@ export const getTradeCounterRelation = (
 export type P2PTradingPageProps = {
   isMobileNav?: boolean;
   sharedWalletSession?: SharedWalletSession;
+  onOpenInternalAppLink?: (href: string) => void;
   onOpenTradeConversation?: (counterpartyAddress: string, context: LinkedTradeContext) => void;
 };
 
@@ -328,6 +329,7 @@ export type TradeAgentChatMessage = {
   role: TradeAgentChatRole;
   title: string;
   text: string;
+  helpTopicId?: string;
   warnings?: string[];
   actions?: TradeAgentResponseAction[];
 };

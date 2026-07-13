@@ -71,6 +71,7 @@ import useTradeTerminalHistoryHydration from '../hooks/useTradeTerminalHistoryHy
 import useTradeDeskLists from '../hooks/useTradeDeskLists';
 import useP2PTradeAgentSession from '../hooks/useP2PTradeAgentSession';
 import useP2PTradeAgentActions from '../hooks/useP2PTradeAgentActions';
+import useP2PAppHelp from '../hooks/useP2PAppHelp';
 import useP2PActionFeedback from '../hooks/useP2PActionFeedback';
 import useP2PTradeAccessMemory from '../hooks/useP2PTradeAccessMemory';
 import useP2PTradeDeskNavigation from '../hooks/useP2PTradeDeskNavigation';
@@ -118,6 +119,7 @@ import {
   getTradeAgentActionCta,
   getTradeAgentActionDescription
 } from '../../../lib/tradeAgent';
+import { getAppHelpTopic } from '../../../lib/appHelp';
 import {
   isWalletTransactionFlowActive,
   recordWalletTransactionFlowStage
@@ -193,6 +195,7 @@ import {
 export default function P2PTradingPage({
   isMobileNav = false,
   sharedWalletSession,
+  onOpenInternalAppLink,
   onOpenTradeConversation
 }: P2PTradingPageProps) {
   const {
@@ -2607,6 +2610,7 @@ export default function P2PTradingPage({
     setTradeAgentExplicitContext,
     setTradeAgentFeeQuote,
     setTradeAgentLoading,
+    setTradeAgentPanelMode,
     setTradeAgentPrompt,
     setTradeAgentRetryPaymentRequestId,
     setTradeAgentRetryPaymentTxHash,
@@ -2620,6 +2624,7 @@ export default function P2PTradingPage({
     tradeAgentLoading,
     tradeAgentMessages,
     tradeAgentMessagesEndRef,
+    tradeAgentPanelMode,
     tradeAgentPrompt,
     tradeAgentRetryPaymentRequestId,
     tradeAgentRetryPaymentTxHash,
@@ -2633,6 +2638,34 @@ export default function P2PTradingPage({
     swapBuyTokenSymbol: swapBuyToken?.symbol,
     swapSellTokenSymbol: swapSellToken?.symbol
   });
+  const currentAppHelpPath = typeof window === 'undefined' ? '/otc/agent' : window.location.pathname;
+  const {
+    appHelpError,
+    appHelpLoading,
+    appHelpMessages,
+    appHelpMessagesEndRef,
+    appHelpPrompt,
+    appHelpQuickQuestions,
+    askAppHelpQuestion,
+    submitAppHelp,
+    updateAppHelpPrompt
+  } = useP2PAppHelp({
+    active: routeSurfaceView === 'agent' && tradeAgentPanelMode === 'help',
+    currentPath: currentAppHelpPath
+  });
+  const openAppHelpTopic = useCallback((topicId: string) => {
+    const topic = getAppHelpTopic(topicId);
+    if (!topic) {
+      return;
+    }
+    if (onOpenInternalAppLink) {
+      onOpenInternalAppLink(topic.route);
+      return;
+    }
+    if (topic.route.startsWith('/otc')) {
+      navigateToTradePath(topic.route);
+    }
+  }, [navigateToTradePath, onOpenInternalAppLink]);
   const {
     applyTradeAgentAction,
     askAgentAboutOrder,
@@ -3004,6 +3037,19 @@ export default function P2PTradingPage({
       ) : null}
       {showAgentSurface ? (
         <TradeAgentPanel
+          mode={tradeAgentPanelMode}
+          onModeChange={setTradeAgentPanelMode}
+          helpMessages={appHelpMessages}
+          helpLoading={appHelpLoading}
+          helpMessagesEndRef={appHelpMessagesEndRef}
+          helpError={appHelpError}
+          helpQuickQuestions={appHelpQuickQuestions}
+          helpPrompt={appHelpPrompt}
+          helpCanSubmit={Boolean(!appHelpLoading && appHelpPrompt.trim())}
+          onAskHelpQuestion={askAppHelpQuestion}
+          onHelpPromptChange={updateAppHelpPrompt}
+          onHelpSubmit={submitAppHelp}
+          onOpenHelpTopic={openAppHelpTopic}
           feeLabel={tradeAgentFeeLabel}
           feeLoading={tradeAgentFeeLoading}
           messages={tradeAgentMessages}

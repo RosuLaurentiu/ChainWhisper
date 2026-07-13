@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { redactTradeAgentSecrets } from '../../supabase/functions/_shared/trade-agent-redaction';
 import {
   TRADE_AGENT_QUICK_ACTIONS,
   canUseTradeAgentAction,
@@ -122,5 +123,30 @@ describe('tradeAgent', () => {
       prompt: 'Explain order #7.'
     });
     expect(consumeTradeAgentDraft(storage)).toBeNull();
+  });
+
+  it('redacts private trade secrets before agent context leaves the app', () => {
+    const secret = `0x${'a'.repeat(64)}`;
+    expect(
+      redactTradeAgentSecrets({
+        linkedTrade: {
+          accessSecret: secret,
+          terminalPath: `/otc/order/link/VAEP${'b'.repeat(43)}?escrow=direct`,
+          tradeId: 7
+        },
+        selectedMessage: {
+          text: `Open https://example.com/trades/l/VAEP${'c'.repeat(43)}?escrow=private or /otc/order/recurring/9#${secret}`
+        }
+      })
+    ).toEqual({
+      linkedTrade: {
+        accessSecret: '[redacted-access-secret]',
+        terminalPath: '/otc/order/link/[redacted-trade-link]?escrow=direct',
+        tradeId: 7
+      },
+      selectedMessage: {
+        text: 'Open https://example.com/trades/l/[redacted-trade-link]?escrow=private or /otc/order/recurring/9#[redacted-access-secret]'
+      }
+    });
   });
 });

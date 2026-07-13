@@ -3079,6 +3079,7 @@ export default function App() {
             <P2PTradingPage
               isMobileNav={isMobileNav}
               sharedWalletSession={sharedTradeWalletSession}
+              onOpenInternalAppLink={navigateToInternalAppLink}
               onOpenTradeConversation={ensureContactAndOpenTradeChat}
             />
           </Suspense>

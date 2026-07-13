@@ -2,11 +2,24 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 import { jsonResponse } from '../_shared/chat-image.ts';
+import { redactTradeAgentSecrets, redactTradeAgentSecretText } from '../_shared/trade-agent-redaction.ts';
+import {
+  APP_HELP_MAX_INPUT_TOKENS,
+  APP_HELP_MAX_QUESTION_CHARS,
+  APP_HELP_OFF_TOPIC_ANSWER,
+  APP_HELP_UNSUPPORTED_ANSWER,
+  matchAppHelpTopics,
+  normalizeAppHelpCurrentPath,
+  resolveLocalAppHelpAnswer,
+  type AppHelpTopic
+} from '../_shared/app-help-knowledge.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? '';
 const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL') ?? 'gpt-5-mini';
+const APP_HELP_MODEL = Deno.env.get('APP_HELP_MODEL') ?? 'gpt-5-nano';
+const APP_HELP_RATE_LIMIT_SECRET = Deno.env.get('APP_HELP_RATE_LIMIT_SECRET') ?? '';
 const UNISWAP_API_KEY = Deno.env.get('UNISWAP_API_KEY') ?? '';
 const COTI_RPC_URL = Deno.env.get('COTI_RPC_URL') ?? '';
 
@@ -20,6 +33,7 @@ const CARBON_WISP_USD_RATE_URL =
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const MAX_PROMPT_CHARS = 4_000;
 const MAX_CONTEXT_CHARS = 14_000;
+const APP_HELP_MAX_OUTPUT_TOKENS = 300;
 const ESTIMATED_RESPONSE_TOKENS = Number(Deno.env.get('TRADE_AGENT_ESTIMATED_RESPONSE_TOKENS') ?? '500');
 const FEE_MARGIN_BPS = Number(Deno.env.get('TRADE_AGENT_FEE_MARGIN_BPS') ?? '15000');
 const MIN_FEE_USD = Number(Deno.env.get('TRADE_AGENT_MIN_FEE_USD') ?? '0.006');
@@ -61,6 +75,13 @@ type RpcReceipt = {
   status?: string;
 };
 
+type AppHelpRateLimitRow = {
+  allowed?: boolean;
+  global_count?: number;
+  reason?: string;
+  user_count?: number;
+};
+
 const buildErrorResponse = (message: string, status = 400): Response =>
   jsonResponse({ error: message }, { status, headers: corsHeaders });
 
@@ -71,6 +92,62 @@ const isRequestId = (value: string): boolean =>
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value);
 const normalizeAddress = (value: string): string => value.trim().toLowerCase();
 const topicForAddress = (address: string): string => `0x${normalizeAddress(address).replace(/^0x/, '').padStart(64, '0')}`;
+
+const getForwardedClientIp = (request: Request): string => {
+  const forwardedFor = request.headers.get('x-forwarded-for') ?? '';
+  const firstAddress = forwardedFor.split(',', 1)[0]?.trim() ?? '';
+  return firstAddress && firstAddress.length <= 128 ? firstAddress : '';
+};
+
+const hashAppHelpClientIp = async (clientIp: string): Promise<string> => {
+  if (!APP_HELP_RATE_LIMIT_SECRET || APP_HELP_RATE_LIMIT_SECRET.length < 32) {
+    throw new Error('App Help rate limiting is not configured.');
+  }
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(APP_HELP_RATE_LIMIT_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(clientIp)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const claimAppHelpQuota = async (request: Request): Promise<Response | null> => {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return buildErrorResponse('App Help rate limiting is unavailable.', 503);
+  }
+  const clientIp = getForwardedClientIp(request);
+  if (!clientIp) {
+    return buildErrorResponse('App Help could not verify this request for rate limiting.', 503);
+  }
+
+  let ipHash: string;
+  try {
+    ipHash = await hashAppHelpClientIp(clientIp);
+  } catch (error) {
+    return buildErrorResponse(error instanceof Error ? error.message : 'App Help rate limiting is unavailable.', 503);
+  }
+
+  const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const { data, error } = await supabaseAdmin.rpc('claim_app_help_request', { p_ip_hash: ipHash });
+  if (error) {
+    return buildErrorResponse('App Help rate limiting is unavailable.', 503);
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as AppHelpRateLimitRow | null;
+  if (!row || typeof row.allowed !== 'boolean') {
+    return buildErrorResponse('App Help rate limiting is unavailable.', 503);
+  }
+  if (row.allowed) {
+    return null;
+  }
+  const message = row.reason === 'global_limit'
+    ? 'App Help has reached its daily AI limit. Common help questions still work for free.'
+    : 'You have reached today\'s AI-assisted App Help limit. Common help questions still work for free.';
+  return buildErrorResponse(message, 429);
+};
 
 const parsePositiveWei = (value: string): bigint | null => {
   if (!/^\d+$/.test(value)) {
@@ -399,6 +476,164 @@ const extractOutputText = (body: Record<string, unknown>): string => {
   return '';
 };
 
+const callAppHelpOpenAI = async ({
+  currentPath,
+  question,
+  topics
+}: {
+  currentPath: string;
+  question: string;
+  topics: AppHelpTopic[];
+}): Promise<{ answer: string; relatedTopicIds: string[]; topicId: string }> => {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OpenAI API key is not configured.');
+  }
+  const topicIds = topics.map((topic) => topic.id);
+  const systemPrompt = [
+    'You are ChainWhisper App Help.',
+    'Answer only from the supplied ChainWhisper help topics; do not use outside knowledge or invent behavior.',
+    'If the supplied topics do not support the question, set supported to false.',
+    'Be direct. Use at most three short sentences and 45 words.',
+    'Do not provide financial advice, create links, request secrets, or claim you can sign or execute actions.',
+    'Return the most relevant supplied topic id and only supplied related topic ids.'
+  ].join(' ');
+  const userContent = JSON.stringify({
+    currentPath,
+    question,
+    topics: topics.map((topic) => ({
+      answer: topic.answer,
+      id: topic.id,
+      title: topic.title
+    }))
+  });
+  const estimatedInputTokens = Math.ceil((systemPrompt.length + userContent.length) / 4) + 50;
+  if (estimatedInputTokens > APP_HELP_MAX_INPUT_TOKENS) {
+    return {
+      answer: APP_HELP_UNSUPPORTED_ANSWER,
+      relatedTopicIds: topicIds.slice(1),
+      topicId: topicIds[0]
+    };
+  }
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${OPENAI_API_KEY}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: APP_HELP_MODEL,
+      store: false,
+      max_output_tokens: APP_HELP_MAX_OUTPUT_TOKENS,
+      reasoning: { effort: 'low' },
+      input: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent }
+      ],
+      text: {
+        verbosity: 'low',
+        format: {
+          type: 'json_schema',
+          name: 'chainwhisper_app_help_response',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['answer', 'topicId', 'relatedTopicIds', 'supported'],
+            properties: {
+              answer: { type: 'string' },
+              topicId: { type: 'string', enum: topicIds },
+              relatedTopicIds: {
+                type: 'array',
+                maxItems: 3,
+                items: { type: 'string', enum: topicIds }
+              },
+              supported: { type: 'boolean' }
+            }
+          }
+        }
+      }
+    })
+  });
+
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !body) {
+    throw new Error('App Help model request failed.');
+  }
+  const output = extractOutputText(body);
+  if (!output) {
+    throw new Error('App Help model returned an empty response.');
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(output) as Record<string, unknown>;
+  } catch {
+    throw new Error('App Help model returned an invalid response.');
+  }
+  const supported = parsed.supported === true;
+  const parsedTopicId = normalizeString(parsed.topicId);
+  const topicId = topicIds.includes(parsedTopicId) ? parsedTopicId : topicIds[0];
+  const relatedTopicIds = Array.isArray(parsed.relatedTopicIds)
+    ? parsed.relatedTopicIds
+        .map(normalizeString)
+        .filter((id, index, items) => topicIds.includes(id) && id !== topicId && items.indexOf(id) === index)
+        .slice(0, 3)
+    : [];
+  const answer = normalizeString(parsed.answer);
+  return {
+    answer: supported && answer ? answer.slice(0, 2_000) : APP_HELP_UNSUPPORTED_ANSWER,
+    relatedTopicIds,
+    topicId
+  };
+};
+
+const handleAppHelpRequest = async (request: Request, body: Record<string, unknown>): Promise<Response> => {
+  const rawQuestion = normalizeString(body.question);
+  if (!rawQuestion) {
+    return buildErrorResponse('App Help question is empty.');
+  }
+  if (rawQuestion.length > APP_HELP_MAX_QUESTION_CHARS) {
+    return buildErrorResponse(`Keep App Help questions under ${APP_HELP_MAX_QUESTION_CHARS} characters.`);
+  }
+  const question = redactTradeAgentSecretText(rawQuestion);
+  const currentPath = normalizeAppHelpCurrentPath(body.currentPath);
+  const localAnswer = resolveLocalAppHelpAnswer(question, currentPath);
+  if (localAnswer) {
+    return jsonResponse(
+      {
+        answer: localAnswer.answer,
+        relatedTopicIds: localAnswer.relatedTopicIds,
+        source: 'local',
+        topicId: localAnswer.topicId
+      },
+      { headers: corsHeaders }
+    );
+  }
+
+  const match = matchAppHelpTopics(question, currentPath);
+  if (!match.topic || match.confidence === 'none') {
+    return jsonResponse(
+      { answer: APP_HELP_OFF_TOPIC_ANSWER, relatedTopicIds: [], source: 'refusal', topicId: null },
+      { headers: corsHeaders }
+    );
+  }
+
+  const rateLimitResponse = await claimAppHelpQuota(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+  const topics = [match.topic, ...match.relatedTopics]
+    .filter((topic, index, items) => items.findIndex((item) => item.id === topic.id) === index)
+    .slice(0, 3);
+  try {
+    const response = await callAppHelpOpenAI({ currentPath, question, topics });
+    return jsonResponse({ ...response, source: 'nano' }, { headers: corsHeaders });
+  } catch {
+    return buildErrorResponse('App Help is unavailable right now. Common help questions still work for free.', 503);
+  }
+};
+
 const callOpenAI = async ({
   action,
   context,
@@ -539,13 +774,17 @@ Deno.serve(async (request) => {
   }
 
   const body = await readJson(request);
+  if (body.kind === 'help') {
+    return handleAppHelpRequest(request, body);
+  }
   const action = normalizeAction(body.action);
   if (!action) {
     return buildErrorResponse('Trade Agent action is not supported.');
   }
 
-  const prompt = normalizeString(body.prompt);
-  const contextText = JSON.stringify(body.context ?? {});
+  const prompt = redactTradeAgentSecretText(normalizeString(body.prompt));
+  const redactedContext = redactTradeAgentSecrets(body.context ?? {});
+  const contextText = JSON.stringify(redactedContext);
   if (prompt.length > MAX_PROMPT_CHARS) {
     return buildErrorResponse('Prompt is too long.');
   }
@@ -658,7 +897,7 @@ Deno.serve(async (request) => {
   }
 
   try {
-    const agentContext = await buildAgentContext(body.context ?? {});
+    const agentContext = await buildAgentContext(redactedContext);
     const deterministicAnswer = action === 'find_price' ? buildFindPriceAnswer(agentContext) : '';
     const { response, usage } = deterministicAnswer
       ? {

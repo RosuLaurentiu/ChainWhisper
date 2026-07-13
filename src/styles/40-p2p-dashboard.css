@@ -454,6 +454,35 @@
   width: min(760px, 100%);
 }
 
+.p2p-agent-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  width: min(340px, 100%);
+  margin-bottom: 10px;
+  padding: 3px;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 9px;
+  background: rgba(8, 8, 15, 0.68);
+}
+
+.p2p-agent-mode-toggle button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.p2p-agent-mode-toggle button.active {
+  background: linear-gradient(180deg, rgba(123, 66, 214, 0.62), rgba(92, 50, 166, 0.52));
+  color: #f6f1ff;
+}
+
 .p2p-agent-hero {
   display: flex;
   align-items: center;
@@ -574,6 +603,19 @@
 .p2p-agent-quick-actions button.active {
   border-color: rgba(167, 139, 250, 0.58);
   background: linear-gradient(180deg, rgba(123, 66, 214, 0.62), rgba(92, 50, 166, 0.52));
+}
+
+.p2p-agent-quick-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.p2p-agent-source-link {
+  justify-self: start;
+  min-height: 30px;
+  margin-top: 10px;
+  padding: 0 12px;
+  font-size: 0.76rem;
 }
 
 .p2p-agent-prompt {

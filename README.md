@@ -43,7 +43,7 @@ The standalone OTC app is an escrow trading workspace backed by COTI contracts. 
 
 - `Trade` at `/otc` is the action surface with `Swap`, `Limit`, and `Recurring` modes.
 - `Desk` at `/otc/desk` browses active public orders with search, filters, refresh, inline order review, and wallet balance context.
-- `Agent` at `/otc/agent` provides paid WISP Trade Agent help for finding prices, drafting orders, explaining orders, and opening safe prefilled actions for review.
+- `Agent` at `/otc/agent` opens in free App Help mode for product questions without a wallet. Its separate paid WISP Trade Agent mode finds prices, drafts or explains orders, and opens safe prefilled actions for review.
 - `Orders` at `/otc/orders` groups received offers, active offers, and history for the connected owner + ChainWhisper account scope.
 - `Order` review lives under `/otc/order...`. Canonical generated links use `/otc/order/link/:code`, `/otc/order/:id`, or `/otc/order/recurring/:id`.
 - Legacy `/trades...`, `/otcdesk...`, and old terminal links still resolve for compatibility, but new app-generated links should use `/otc...`.
@@ -188,6 +188,28 @@ Optional Treasury history variables:
 - `VITE_COTI_RPC_URL`
 - `VITE_COTI_EXPLORER_URL`
 - `VITE_COTI_EXPLORER_API_URL`
+
+## Supabase App Help and Trade Agent
+
+`supabase/functions/trade-agent` serves two isolated request paths:
+
+- `kind: "help"` answers curated, high-confidence product questions locally and refuses unrelated questions without calling OpenAI. Moderate ChainWhisper questions use server-owned help topics with `gpt-5-nano` by default, a 300-token output cap, no tools, and `store: false`.
+- `kind: "quote"` and `kind: "run"` keep the existing paid WISP Trade Agent flow and use `OPENAI_MODEL` (`gpt-5-mini` by default). Paid responses may draft or prefill actions but never execute a trade.
+
+Production Edge Function secrets:
+
+- `OPENAI_API_KEY`
+- `APP_HELP_RATE_LIMIT_SECRET` (a random 32-byte-or-longer secret used only to HMAC client IPs)
+- `APP_HELP_MODEL` (optional, defaults to `gpt-5-nano`)
+- `OPENAI_MODEL` (optional paid-agent override, defaults to `gpt-5-mini`)
+
+`supabase/migrations/20260713103016_app_help_rate_limits.sql` creates an RLS-protected counter table and a service-role-only, atomic `claim_app_help_request` function. AI-assisted help is capped at 10 calls per HMAC-hashed IP per UTC day and 1,000 calls globally per UTC day. Rate-limit errors fail closed before OpenAI; curated local answers remain available.
+
+Deployment outline:
+
+1. Apply the App Help rate-limit migration.
+2. Set the Edge Function secrets above.
+3. Deploy `supabase/functions/trade-agent` with JWT verification disabled as configured in `supabase/config.toml`.
 
 ## Supabase Image Storage
 

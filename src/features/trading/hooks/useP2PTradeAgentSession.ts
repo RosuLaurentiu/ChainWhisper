@@ -31,6 +31,9 @@ export default function useP2PTradeAgentSession({
   swapSellTokenSymbol
 }: UseP2PTradeAgentSessionArgs) {
   const [initialTradeAgentRetryPayment] = useState(() => readTradeAgentRetryPayment());
+  const [tradeAgentPanelMode, setTradeAgentPanelMode] = useState<'help' | 'trade'>(
+    () => initialTradeAgentRetryPayment ? 'trade' : 'help'
+  );
   const [tradeAgentAction, setTradeAgentAction] = useState<TradeAgentActionType>(
     () => initialTradeAgentRetryPayment?.action ?? 'find_price'
   );
@@ -92,7 +95,10 @@ export default function useP2PTradeAgentSession({
     if (routeSurfaceView !== 'agent') {
       return;
     }
-    tradeAgentMessagesEndRef.current?.scrollIntoView({ block: 'end' });
+    const messagesContainer = tradeAgentMessagesEndRef.current?.parentElement;
+    if (messagesContainer) {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
   }, [routeSurfaceView, tradeAgentLoading, tradeAgentMessages, tradeAgentStatus]);
 
   useEffect(() => {
@@ -106,12 +112,13 @@ export default function useP2PTradeAgentSession({
     setTradeAgentAction(draft.action);
     setTradeAgentPrompt(draft.prompt);
     setTradeAgentExplicitContext(draft.context ?? null);
+    setTradeAgentPanelMode('trade');
     setTradeAgentStatus('Draft loaded from chat.');
     appendTradeAgentStatusMessage('Draft loaded from chat.');
   }, [appendTradeAgentStatusMessage, routeSurfaceView]);
 
   useEffect(() => {
-    if (routeSurfaceView !== 'agent') {
+    if (routeSurfaceView !== 'agent' || tradeAgentPanelMode !== 'trade') {
       return;
     }
     let cancelled = false;
@@ -137,7 +144,7 @@ export default function useP2PTradeAgentSession({
     return () => {
       cancelled = true;
     };
-  }, [routeSurfaceView, tradeAgentAction]);
+  }, [routeSurfaceView, tradeAgentAction, tradeAgentPanelMode]);
 
   const visibleTradeAgentQuickActions = useMemo(
     () => TRADE_AGENT_QUICK_ACTIONS.filter((item) => !item.requiresContext || tradeAgentExplicitContext || hasDetailTrade),
@@ -194,6 +201,7 @@ export default function useP2PTradeAgentSession({
     setTradeAgentExplicitContext,
     setTradeAgentFeeQuote,
     setTradeAgentLoading,
+    setTradeAgentPanelMode,
     setTradeAgentPrompt,
     setTradeAgentRetryPaymentRequestId,
     setTradeAgentRetryPaymentTxHash,
@@ -207,6 +215,7 @@ export default function useP2PTradeAgentSession({
     tradeAgentLoading,
     tradeAgentMessages,
     tradeAgentMessagesEndRef,
+    tradeAgentPanelMode,
     tradeAgentPrompt,
     tradeAgentRetryPaymentRequestId,
     tradeAgentRetryPaymentTxHash,
