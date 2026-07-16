@@ -64,6 +64,29 @@ type PromptQuoteContext = {
   quote: OtcSwapQuoteCandidate | null;
 };
 
+export const resolveTradeAgentOpenOrderSnapshot = (
+  action: TradeAgentResponseAction,
+  trades: Array<TradeSnapshot | null>
+): TradeSnapshot | null => {
+  if (action.type !== 'open_order' || !action.tradeId) {
+    return null;
+  }
+
+  const actionEscrowKey = action.escrowContract?.trim().toLowerCase() ?? '';
+  const matchingTrades = trades.filter(
+    (trade): trade is TradeSnapshot =>
+      trade !== null &&
+      trade.tradeId === action.tradeId &&
+      (!actionEscrowKey || (trade.escrowContract ?? '').toLowerCase() === actionEscrowKey)
+  );
+  if (actionEscrowKey) {
+    return matchingTrades[0] ?? null;
+  }
+
+  const contractKeys = new Set(matchingTrades.map((trade) => (trade.escrowContract ?? '').toLowerCase()));
+  return contractKeys.size === 1 ? matchingTrades[0] ?? null : null;
+};
+
 type UseP2PTradeAgentActionsArgs = {
   appendTradeAgentMessage: (message: Omit<TradeAgentChatMessage, 'id'>) => void;
   appendTradeAgentStatusMessage: (text: string) => void;
@@ -82,6 +105,7 @@ type UseP2PTradeAgentActionsArgs = {
   navigateDeskView: (path: '/otc') => void;
   navigateToTradePath: (path: string) => void;
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
+  openTradeSnapshot: (snapshot: TradeSnapshot, accessSecret?: string) => void;
   privateRewardTokenDecimals: number;
   privateRewardTokenSymbol: string;
   publicOpenTrades: TradeSnapshot[];
@@ -144,6 +168,7 @@ export default function useP2PTradeAgentActions({
   navigateDeskView,
   navigateToTradePath,
   openTrade,
+  openTradeSnapshot,
   privateRewardTokenDecimals,
   privateRewardTokenSymbol,
   publicOpenTrades,
@@ -407,6 +432,11 @@ export default function useP2PTradeAgentActions({
     async (action: TradeAgentResponseAction) => {
       if (action.type === 'open_order' && action.tradeId) {
         appendTradeAgentStatusMessage('Order opened.');
+        const cachedOrder = resolveTradeAgentOpenOrderSnapshot(action, [detailTrade, ...publicOpenTrades, ...myTrades]);
+        if (cachedOrder) {
+          openTradeSnapshot(cachedOrder, action.accessSecret);
+          return;
+        }
         terminalReturnSurfaceRef.current = 'agent';
         saveMobileDeskScroll('agent');
         setEmptyTerminalDrawerOpen(false);
@@ -493,6 +523,7 @@ export default function useP2PTradeAgentActions({
       navigateDeskView,
       navigateToTradePath,
       openTrade,
+      openTradeSnapshot,
       publicOpenTrades,
       resolveTradeAgentTokenSelection,
       saveMobileDeskScroll,

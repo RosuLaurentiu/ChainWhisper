@@ -2683,6 +2683,7 @@ export default function P2PTradingPage({
     navigateDeskView,
     navigateToTradePath,
     openTrade,
+    openTradeSnapshot,
     privateRewardTokenDecimals,
     privateRewardTokenSymbol,
     publicOpenTrades,

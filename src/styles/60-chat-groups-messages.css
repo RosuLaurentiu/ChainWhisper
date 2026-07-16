@@ -1910,6 +1910,16 @@
   right: 72px;
 }
 
+.message-draft-trade-action.loading {
+  opacity: 1;
+  pointer-events: none;
+  color: var(--accent);
+}
+
+.message-draft-trade-action.loading svg {
+  animation: coti-spin 0.85s linear infinite;
+}
+
 .message-reply-action svg,
 .message-react-action svg,
 .message-draft-trade-action svg {

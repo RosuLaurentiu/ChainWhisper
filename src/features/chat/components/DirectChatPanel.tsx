@@ -467,6 +467,7 @@ function DirectChatPanel({
                     reactionDisabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
                     reactionTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
                     draftTradeDisabled={walletPromptSensitiveActionsDisabled || draftingTradeMessageId === message.id}
+                    draftTradeLoading={draftingTradeMessageId === message.id}
                     draftTradeTitle={
                       walletPromptSensitiveActionsDisabled
                         ? walletPromptSensitiveActionsTitle

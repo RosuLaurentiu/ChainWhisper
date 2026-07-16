@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, type KeyboardEvent } from 'react';
-import { FilePenLine, MessageCircleReply, SmilePlus } from 'lucide-react';
+import { FilePenLine, LoaderCircle, MessageCircleReply, SmilePlus } from 'lucide-react';
 import { DEFAULT_REACTION_EMOJIS, type ChatMessage } from '../../../lib/appShared';
 
 type MessageActionsProps = {
@@ -10,6 +10,7 @@ type MessageActionsProps = {
   reactionDisabled: boolean;
   reactionTitle: string;
   draftTradeDisabled?: boolean;
+  draftTradeLoading?: boolean;
   draftTradeTitle?: string;
   replyDisabled: boolean;
   replyTitle: string;
@@ -27,6 +28,7 @@ export default function MessageActions({
   reactionDisabled,
   reactionTitle,
   draftTradeDisabled = false,
+  draftTradeLoading = false,
   draftTradeTitle = 'Draft trade',
   replyDisabled,
   replyTitle,
@@ -118,13 +120,18 @@ export default function MessageActions({
       {onDraftTradeFromMessage ? (
         <button
           type="button"
-          className="message-draft-trade-action"
+          className={draftTradeLoading ? 'message-draft-trade-action loading' : 'message-draft-trade-action'}
           onClick={() => onDraftTradeFromMessage(message)}
-          aria-label="Draft trade from this message"
+          aria-busy={draftTradeLoading}
+          aria-label={draftTradeLoading ? 'Drafting trade from this message' : 'Draft trade from this message'}
           title={draftTradeTitle}
           disabled={draftTradeDisabled}
         >
-          <FilePenLine aria-hidden="true" size={15} strokeWidth={2.25} />
+          {draftTradeLoading ? (
+            <LoaderCircle aria-hidden="true" size={15} strokeWidth={2.25} />
+          ) : (
+            <FilePenLine aria-hidden="true" size={15} strokeWidth={2.25} />
+          )}
         </button>
       ) : null}
       {pickerOpen ? (
