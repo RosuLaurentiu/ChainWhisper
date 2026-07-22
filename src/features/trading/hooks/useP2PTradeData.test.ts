@@ -121,6 +121,28 @@ describe('__mergeTradeSnapshotEnrichmentForTest', () => {
     expect(decision).toEqual({ allowed: true });
   });
 
+  it('allows a readable participant account to load a chat-linked unlisted trade', () => {
+    const decision = __resolveTradeDetailAccessDecisionForTest({
+      hashAccessSecret,
+      metadata: { accessHash: routeSecretHash, hasAccessHash: true, isPublic: false },
+      routeAccessSecret: '',
+      snapshot: standardTrade({ accessHash: routeSecretHash, hasAccessHash: true, isPublic: false }),
+      walletKey: otherFiller,
+      walletReadAccounts: [
+        {
+          address: maker,
+          key: maker,
+          role: 'owner',
+          label: 'Owner wallet',
+          canReadPrivate: true,
+          isActionAccount: false
+        }
+      ]
+    });
+
+    expect(decision).toEqual({ allowed: true });
+  });
+
   it('does not treat a syntactic route secret as access without a verifiable hash', () => {
     const decision = __resolveTradeDetailAccessDecisionForTest({
       hashAccessSecret,

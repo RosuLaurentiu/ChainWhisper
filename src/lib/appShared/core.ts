@@ -744,7 +744,6 @@ let cotiEthersModulePromise: Promise<CotiEthersModule> | null = null;
 let cotiWsProviderPromise: Promise<CotiWsProvider> | null = null;
 let cotiHttpProviderPromise: Promise<CotiHttpProvider> | null = null;
 let cotiWsLastHealthyAt = 0;
-let cotiWsBackoffUntil = 0;
 
 export const getCotiWsLastHealthyAt = (): number => cotiWsLastHealthyAt;
 export const markCotiWsHealthyNow = (): void => {
@@ -787,43 +786,23 @@ export const loadCotiHttpProvider = async (): Promise<CotiHttpProvider> => {
 };
 
 export const resetCotiWsProvider = async (): Promise<void> => {
-  if (!cotiWsProviderPromise) {
+  const providerPromise = cotiWsProviderPromise;
+  if (!providerPromise) {
     return;
   }
+  cotiWsProviderPromise = null;
 
   try {
-    const wsProvider = await cotiWsProviderPromise;
+    const wsProvider = await providerPromise;
     const providerWithDestroy = wsProvider as unknown as { destroy?: () => void };
     providerWithDestroy.destroy?.();
   } catch {
-  } finally {
-    cotiWsProviderPromise = null;
   }
 };
 
-export const loadCotiReadProvider = async (preferWebSocket = true): Promise<CotiReadProvider> => {
-  if (preferWebSocket) {
-    const now = Date.now();
-    if (now < cotiWsBackoffUntil) {
-      return loadCotiHttpProvider();
-    }
-
-    try {
-      const wsProvider = await loadCotiWsProvider();
-      if (now - cotiWsLastHealthyAt > WS_HEALTHCHECK_TTL_MS) {
-        await wsProvider.getBlockNumber();
-      }
-      cotiWsLastHealthyAt = Date.now();
-      return wsProvider;
-    } catch {
-      cotiWsLastHealthyAt = 0;
-      cotiWsBackoffUntil = Date.now() + WS_RETRY_COOLDOWN_MS;
-      await resetCotiWsProvider();
-    }
-  }
-
-  return loadCotiHttpProvider();
-};
+export const loadCotiReadProvider = async (_preferWebSocket = true): Promise<CotiReadProvider> =>
+  // Realtime hooks own the shared socket lifecycle; reads must survive socket resets and polling fallback.
+  loadCotiHttpProvider();
 
 const getRememberedInjectedWalletProviderInfo = (
   provider: InjectedEthereumProvider

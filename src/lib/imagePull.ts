@@ -12,6 +12,7 @@ export type ChatImageConversationKind = 'direct' | 'group';
 
 export const MAX_IMAGE_PLAINTEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_IMAGE_ENCRYPTED_BYTES = MAX_IMAGE_PLAINTEXT_BYTES + 64 * 1024;
+export const CHAT_IMAGE_RETENTION_SECONDS = 24 * 60 * 60;
 export const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -55,6 +56,37 @@ export const isChatImageDecryptError = (error: unknown): error is ChatImageDecry
 
 export const isChatImageBlobTooLargeError = (error: unknown): error is ChatImageBlobTooLargeError =>
   error instanceof ChatImageBlobTooLargeError;
+
+export const isPastChatImageRetentionWindow = (
+  timestamp?: number,
+  nowSeconds = Math.floor(Date.now() / 1000)
+): boolean =>
+  typeof timestamp === 'number' &&
+  Number.isFinite(timestamp) &&
+  timestamp > 0 &&
+  nowSeconds - timestamp >= CHAT_IMAGE_RETENTION_SECONDS;
+
+export const isChatImageExpiredResponse = async (response: Response): Promise<boolean> => {
+  if (response.status === 404 || response.status === 410) {
+    return true;
+  }
+  if (response.status !== 400) {
+    return false;
+  }
+
+  try {
+    const payload = (await response.clone().json()) as {
+      error?: unknown;
+      message?: unknown;
+      statusCode?: unknown;
+    };
+    const errorCode = typeof payload.error === 'string' ? payload.error.trim().toLowerCase() : '';
+    const message = typeof payload.message === 'string' ? payload.message.trim().toLowerCase() : '';
+    return Number(payload.statusCode) === 404 || errorCode === 'not_found' || message === 'object not found';
+  } catch {
+    return false;
+  }
+};
 
 export const formatImageFileSize = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -291,7 +323,7 @@ export async function fetchEncryptedBlob(blobId: string, signal?: AbortSignal): 
   const { data } = getSupabaseBrowserClient().storage.from(CHAT_IMAGES_BUCKET).getPublicUrl(blobId);
   const resp = await fetch(data.publicUrl, { signal });
   if (!resp.ok) {
-    if (resp.status === 404 || resp.status === 410) {
+    if (await isChatImageExpiredResponse(resp)) {
       throw new ChatImageExpiredError();
     }
     if (resp.status === 413) {

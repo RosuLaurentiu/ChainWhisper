@@ -4,10 +4,13 @@ import {
   ChatImageDecryptError,
   ChatImageExpiredError,
   MAX_IMAGE_PLAINTEXT_BYTES,
+  CHAT_IMAGE_RETENTION_SECONDS,
   formatImageFileSize,
   getChatImageLoadErrorMessage,
   getImageFileValidationError,
+  isChatImageExpiredResponse,
   isChatImageExpiredError,
+  isPastChatImageRetentionWindow,
   parseImageTag
 } from './imagePull';
 
@@ -45,6 +48,32 @@ describe('isChatImageExpiredError', () => {
   it('recognizes expired image errors', () => {
     expect(isChatImageExpiredError(new ChatImageExpiredError())).toBe(true);
     expect(isChatImageExpiredError(new Error('Blob 404'))).toBe(false);
+  });
+});
+
+describe('chat image retention', () => {
+  it('detects messages at or beyond the 24-hour retention boundary', () => {
+    const now = 2_000_000;
+    expect(isPastChatImageRetentionWindow(now - CHAT_IMAGE_RETENTION_SECONDS, now)).toBe(true);
+    expect(isPastChatImageRetentionWindow(now - CHAT_IMAGE_RETENTION_SECONDS + 1, now)).toBe(false);
+  });
+
+  it('recognizes the legacy Supabase 400 wrapper for a missing object', async () => {
+    const response = new Response(
+      JSON.stringify({ statusCode: '404', error: 'not_found', message: 'Object not found' }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+
+    await expect(isChatImageExpiredResponse(response)).resolves.toBe(true);
+  });
+
+  it('does not classify unrelated bad requests as expired images', async () => {
+    const response = new Response(
+      JSON.stringify({ statusCode: '400', error: 'InvalidKey', message: 'Invalid object key' }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+
+    await expect(isChatImageExpiredResponse(response)).resolves.toBe(false);
   });
 });
 

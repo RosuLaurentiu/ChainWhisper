@@ -3,7 +3,8 @@ import {
   parseImageTag,
   fetchAndDecryptToUrl,
   getChatImageLoadErrorMessage,
-  isChatImageExpiredError
+  isChatImageExpiredError,
+  isPastChatImageRetentionWindow
 } from '../../../lib/imagePull';
 import type { ParsedImageTag } from '../../../lib/imagePull';
 
@@ -11,16 +12,9 @@ type Props = { tag: string; parsed?: ParsedImageTag; messageTimestamp?: number }
 type CachedImage = { url: string; refs: number };
 
 const imageUrlCache = new Map<string, CachedImage>();
-const CHAT_IMAGE_TTL_SECONDS = 24 * 60 * 60;
 
 const createImageCacheKey = (parsed: ParsedImageTag): string =>
   `${parsed.blobId}|${parsed.keyHex}|${parsed.ivHex}|${parsed.mime}`;
-
-const isPastImageRetentionWindow = (timestamp?: number): boolean =>
-  typeof timestamp === 'number' &&
-  Number.isFinite(timestamp) &&
-  timestamp > 0 &&
-  Math.floor(Date.now() / 1000) - timestamp >= CHAT_IMAGE_TTL_SECONDS;
 
 function ChatImage({ tag, parsed, messageTimestamp }: Props) {
   const [url, setUrl] = useState<string | null>(null);
@@ -38,6 +32,13 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
     if (!parsedTag) {
       setError('Invalid image tag');
       setExpired(false);
+      setUrl(null);
+      return;
+    }
+
+    if (isPastChatImageRetentionWindow(messageTimestamp)) {
+      setError(null);
+      setExpired(true);
       setUrl(null);
       return;
     }
@@ -84,7 +85,7 @@ function ChatImage({ tag, parsed, messageTimestamp }: Props) {
         setUrl(objUrl);
       } catch (loadError) {
         if (!mounted || abortController.signal.aborted) return;
-        if (isChatImageExpiredError(loadError) || isPastImageRetentionWindow(messageTimestamp)) {
+        if (isChatImageExpiredError(loadError) || isPastChatImageRetentionWindow(messageTimestamp)) {
           setExpired(true);
           setError(null);
           return;

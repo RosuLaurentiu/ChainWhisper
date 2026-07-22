@@ -186,7 +186,7 @@ export default function TradeAgentPanel({
           </div>
 
           {helpMode ? (
-            <div className="p2p-agent-composer">
+            <div className="p2p-agent-composer p2p-agent-composer-help">
               {helpError ? <p className="error p2p-agent-error">{helpError}</p> : null}
               <div className="p2p-agent-quick-actions" aria-label="Common App Help questions">
                 {helpQuickQuestions.map((item) => (
@@ -209,7 +209,7 @@ export default function TradeAgentPanel({
                   onChange={(event) => onHelpPromptChange(event.target.value)}
                   placeholder="Ask a question about ChainWhisper..."
                   maxLength={APP_HELP_MAX_QUESTION_CHARS}
-                  rows={3}
+                  rows={2}
                 />
                 <div className="p2p-agent-submit-row">
                   <span>{helpPrompt.length}/{APP_HELP_MAX_QUESTION_CHARS} · Common answers stay on this device.</span>
@@ -224,7 +224,7 @@ export default function TradeAgentPanel({
               </form>
             </div>
           ) : (
-            <div className="p2p-agent-composer">
+            <div className="p2p-agent-composer p2p-agent-composer-trade">
               {error ? <p className="error p2p-agent-error">{error}</p> : null}
               <div className="p2p-agent-quick-actions" aria-label="Trade Agent actions">
                 {quickActions.map((item) => {
@@ -247,7 +247,7 @@ export default function TradeAgentPanel({
                   value={prompt}
                   onChange={(event) => onPromptChange(event.target.value)}
                   placeholder="Ask about a pair, paste a note, or describe the order you want..."
-                  rows={3}
+                  rows={2}
                 />
                 <div className="p2p-agent-submit-row">
                   <span>{status || 'Paid from your ChainWhisper account.'}</span>

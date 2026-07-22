@@ -26,6 +26,7 @@ import {
   type WalletTransactionSessionInput
 } from '../../../lib/walletTransactionFlow';
 import { P2P_VISIBLE_SYNC_INTERVAL_MS } from '../components/P2PTradingPage.helpers';
+import { ignoreRealtimeSubscriptionAction } from '../../../shell/realtimeConnection';
 
 type ScheduleP2PSyncInput = {
   domains: P2PSyncDomain[];
@@ -236,6 +237,7 @@ export default function useP2PRealtimeSync({
           contract: { off: (filter: never, listener: () => void) => unknown };
           filter: never;
         }> = [];
+        const subscriptionRegistrations: Array<Promise<unknown>> = [];
         for (const subscription of eventSubscriptions) {
           const contract = new cotiEthers.Contract(subscription.address, subscription.abi, wsProvider);
           for (const eventName of subscription.events) {
@@ -244,24 +246,29 @@ export default function useP2PRealtimeSync({
               continue;
             }
             const filter = filterFactory() as never;
-            contract.on(filter, handleTradeEvent);
+            subscriptionRegistrations.push(contract.on(filter, handleTradeEvent));
             activeSubscriptions.push({
               contract: contract as { off: (filter: never, listener: () => void) => unknown },
               filter
             });
           }
         }
+        await Promise.all(subscriptionRegistrations);
 
         if (cancelled) {
           for (const subscription of activeSubscriptions) {
-            subscription.contract.off(subscription.filter, handleTradeEvent);
+            ignoreRealtimeSubscriptionAction(() =>
+              subscription.contract.off(subscription.filter, handleTradeEvent)
+            );
           }
           return;
         }
 
         unsubscribe = () => {
           for (const subscription of activeSubscriptions) {
-            subscription.contract.off(subscription.filter, handleTradeEvent);
+            ignoreRealtimeSubscriptionAction(() =>
+              subscription.contract.off(subscription.filter, handleTradeEvent)
+            );
           }
         };
         clearPollFallback();

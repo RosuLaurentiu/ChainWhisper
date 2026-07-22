@@ -1,5 +1,12 @@
 export type RealtimeConnectionStatus = 'idle' | 'connected' | 'reconnecting';
 
+export const ignoreRealtimeSubscriptionAction = (action: () => unknown): void => {
+  try {
+    void Promise.resolve(action()).catch(() => {});
+  } catch {
+  }
+};
+
 type WsConnectionTarget = {
   addEventListener?: (event: string, listener: () => void) => void;
   removeEventListener?: (event: string, listener: () => void) => void;

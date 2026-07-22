@@ -386,12 +386,26 @@ const resolveTradeAccessHash = (
   snapshot: TradeSnapshot
 ): string => normalizeAccessHash(metadata?.accessHash) || normalizeAccessHash(snapshot.accessHash);
 
-const isWalletTradeParticipant = (snapshot: TradeSnapshot, walletKey: string): boolean => {
-  const normalizedWalletKey = normalizeWalletKey(walletKey);
-  return (
-    Boolean(normalizedWalletKey) &&
-    [snapshot.maker.toLowerCase(), snapshot.taker.toLowerCase()].includes(normalizedWalletKey)
-  );
+const isWalletTradeParticipant = (
+  snapshot: TradeSnapshot,
+  walletKey: string,
+  walletReadAccounts: WalletReadAccount[] = []
+): boolean => {
+  const readableWalletKeys = new Set<string>();
+  const addWalletKey = (value?: string) => {
+    const normalized = normalizeWalletKey(value);
+    if (normalized) {
+      readableWalletKeys.add(normalized);
+    }
+  };
+
+  addWalletKey(walletKey);
+  for (const account of walletReadAccounts) {
+    addWalletKey(account.key);
+    addWalletKey(account.address);
+  }
+
+  return readableWalletKeys.has(snapshot.maker.toLowerCase()) || readableWalletKeys.has(snapshot.taker.toLowerCase());
 };
 
 const resolveTradeDetailAccessDecision = ({
@@ -399,15 +413,17 @@ const resolveTradeDetailAccessDecision = ({
   metadata,
   routeAccessSecret,
   snapshot,
-  walletKey
+  walletKey,
+  walletReadAccounts = []
 }: {
   hashAccessSecret: (accessSecret: string) => string;
   metadata?: TradeAccessMetadataLike | null;
   routeAccessSecret: string;
   snapshot: TradeSnapshot;
   walletKey: string;
+  walletReadAccounts?: WalletReadAccount[];
 }): TradeDetailAccessDecision => {
-  const isParticipant = isWalletTradeParticipant(snapshot, walletKey);
+  const isParticipant = isWalletTradeParticipant(snapshot, walletKey, walletReadAccounts);
   const isUnlisted = metadata?.isPublic === false || snapshot.isPublic === false;
   if (!isUnlisted || isParticipant) {
     return { allowed: true };
@@ -543,24 +559,32 @@ const detailSnapshotMatchesPendingParticipantRoute = (
   snapshot: TradeSnapshot | null,
   routeTradeId: number | null,
   routeEscrowContract: string | undefined,
-  walletKey: string
+  walletKey: string,
+  walletReadAccounts: WalletReadAccount[] = []
 ): boolean =>
   Boolean(
     snapshot &&
       routeTradeId !== null &&
       snapshot.tradeId === routeTradeId &&
       !routeEscrowContract?.trim() &&
-      isWalletTradeParticipant(snapshot, walletKey)
+      isWalletTradeParticipant(snapshot, walletKey, walletReadAccounts)
   );
 
 const detailSnapshotCanRenderForRoute = (
   snapshot: TradeSnapshot | null,
   routeTradeId: number | null,
   routeEscrowContract: string | undefined,
-  walletKey: string
+  walletKey: string,
+  walletReadAccounts: WalletReadAccount[] = []
 ): boolean =>
   detailSnapshotMatchesRoute(snapshot, routeTradeId, routeEscrowContract) ||
-  detailSnapshotMatchesPendingParticipantRoute(snapshot, routeTradeId, routeEscrowContract, walletKey);
+  detailSnapshotMatchesPendingParticipantRoute(
+    snapshot,
+    routeTradeId,
+    routeEscrowContract,
+    walletKey,
+    walletReadAccounts
+  );
 
 const resolveRenderableDetailTrade = ({
   detailTrade,
@@ -569,7 +593,8 @@ const resolveRenderableDetailTrade = ({
   routeTradeId,
   routeView,
   validatedRouteAccessSecret,
-  walletKey
+  walletKey,
+  walletReadAccounts = []
 }: {
   detailTrade: TradeSnapshot | null;
   routeAccessSecret: string;
@@ -578,10 +603,11 @@ const resolveRenderableDetailTrade = ({
   routeView: TradePageView;
   validatedRouteAccessSecret: string;
   walletKey: string;
+  walletReadAccounts?: WalletReadAccount[];
 }): TradeSnapshot | null => {
   if (
     routeView !== 'trade' ||
-    !detailSnapshotCanRenderForRoute(detailTrade, routeTradeId, routeEscrowContract, walletKey)
+    !detailSnapshotCanRenderForRoute(detailTrade, routeTradeId, routeEscrowContract, walletKey, walletReadAccounts)
   ) {
     return null;
   }
@@ -589,7 +615,7 @@ const resolveRenderableDetailTrade = ({
   const currentRouteAccessSecret = normalizeRouteAccessSecret(routeAccessSecret);
   if (
     validatedRouteAccessSecret === currentRouteAccessSecret ||
-    (detailTrade && isWalletTradeParticipant(detailTrade, walletKey))
+    (detailTrade && isWalletTradeParticipant(detailTrade, walletKey, walletReadAccounts))
   ) {
     return detailTrade;
   }
@@ -654,6 +680,10 @@ export default function useP2PTradeData({
   const latestSyncSessionKeyRef = useRef(syncSessionKey);
   const latestWalletKeyRef = useRef(walletKey);
   const previousWalletKeyRef = useRef(walletKey);
+  const latestEnrichMakerPrivateProgressRef = useRef(enrichMakerPrivateProgress);
+  const walletReadAccountsKey = buildWalletReadAccountsKey(walletReadAccounts, {
+    includePrivateReadState: true
+  });
 
   useEffect(() => {
     detailTradeRef.current = detailTrade;
@@ -674,6 +704,10 @@ export default function useP2PTradeData({
   useEffect(() => {
     latestWalletKeyRef.current = walletKey;
   }, [walletKey]);
+
+  useEffect(() => {
+    latestEnrichMakerPrivateProgressRef.current = enrichMakerPrivateProgress;
+  }, [enrichMakerPrivateProgress]);
 
   useEffect(() => {
     const cached = readP2PTradeDataWarmCache(syncSessionKey);
@@ -699,13 +733,28 @@ export default function useP2PTradeData({
     } else {
       const currentDetailMatchesRoute =
         !normalizeRouteAccessSecret(resolvedRouteAccessSecret) &&
-        detailSnapshotCanRenderForRoute(detailTradeRef.current, routeTradeId, routeEscrowContract, walletKey);
+        detailSnapshotCanRenderForRoute(
+          detailTradeRef.current,
+          routeTradeId,
+          routeEscrowContract,
+          walletKey,
+          walletReadAccounts
+        );
       setDetailTrade(currentDetailMatchesRoute ? detailTradeRef.current : null);
       setValidatedDetailRouteAccessSecret('');
       setDetailTradeError(currentDetailMatchesRoute ? '' : routeError);
     }
     setTradeAccessBlocked(routeMatches ? cached.tradeAccessBlocked : false);
-  }, [resolvedRouteAccessSecret, routeError, routeEscrowContract, routeTradeId, routeView, syncSessionKey, walletKey]);
+  }, [
+    resolvedRouteAccessSecret,
+    routeError,
+    routeEscrowContract,
+    routeTradeId,
+    routeView,
+    syncSessionKey,
+    walletKey,
+    walletReadAccountsKey
+  ]);
 
   useEffect(() => {
     const routeAccessSecret = normalizeRouteAccessSecret(resolvedRouteAccessSecret);
@@ -716,7 +765,8 @@ export default function useP2PTradeData({
       routeTradeId,
       routeView,
       validatedRouteAccessSecret: validatedDetailRouteAccessSecret,
-      walletKey
+      walletKey,
+      walletReadAccounts
     });
     p2pTradeDataWarmCacheBySession.set(syncSessionKey, {
       detailTrade: cachedDetailTrade,
@@ -746,7 +796,8 @@ export default function useP2PTradeData({
     syncSessionKey,
     tradeAccessBlocked,
     validatedDetailRouteAccessSecret,
-    walletKey
+    walletKey,
+    walletReadAccountsKey
   ]);
 
   useEffect(() => {
@@ -1079,9 +1130,9 @@ export default function useP2PTradeData({
     [walletKey]
   );
 
-  const readTradeDetail = useCallback(
+  const readTradeSnapshot = useCallback(
     async (tradeId: number, escrowContract?: string): Promise<TradeSnapshot | null> => {
-      const snapshotRaw = await fetchTradeSnapshotById(tradeId, {
+      return fetchTradeSnapshotById(tradeId, {
         rewardTokenSymbol,
         rewardTokenDecimals,
         privateRewardTokenSymbol,
@@ -1090,10 +1141,8 @@ export default function useP2PTradeData({
         accessSecret: resolvedRouteAccessSecret || undefined,
         callerAddress: walletAddress || undefined
       });
-      return enrichMakerPrivateProgress(snapshotRaw);
     },
     [
-      enrichMakerPrivateProgress,
       privateRewardTokenDecimals,
       privateRewardTokenSymbol,
       rewardTokenDecimals,
@@ -1103,16 +1152,16 @@ export default function useP2PTradeData({
     ]
   );
 
+  const readTradeDetail = useCallback(
+    async (tradeId: number, escrowContract?: string): Promise<TradeSnapshot | null> => {
+      const snapshot = await readTradeSnapshot(tradeId, escrowContract);
+      return snapshot ? latestEnrichMakerPrivateProgressRef.current(snapshot) : null;
+    },
+    [readTradeSnapshot]
+  );
+
   const refreshTradeDetail = useCallback(
     async (tradeId: number, escrowContract?: string, options?: TradeRefreshOptions): Promise<TradeSnapshot | null> => {
-      const currentDetail = detailTradeRef.current;
-      const hasCurrentDetail =
-        Boolean(currentDetail) &&
-        currentDetail?.tradeId === tradeId &&
-        (currentDetail?.escrowContract ?? '').toLowerCase() === (escrowContract ?? '').toLowerCase();
-      if (shouldHoldTradeReadForWalletFlow(Boolean(options?.silent), hasCurrentDetail)) {
-        return detailTradeRef.current;
-      }
       const snapshot = await readTradeDetail(tradeId, escrowContract);
       if (!snapshot) {
         return null;
@@ -1209,12 +1258,10 @@ export default function useP2PTradeData({
         routeTradeId,
         routeView,
         validatedRouteAccessSecret: validatedDetailRouteAccessSecret,
-        walletKey
+        walletKey,
+        walletReadAccounts
       })
     );
-    if (shouldHoldTradeReadForWalletFlow(hasCurrentDetail, hasCurrentDetail)) {
-      return;
-    }
     setLoadingDetailTrade(!hasCurrentDetail);
     if (!hasCurrentDetail) {
       setDetailTradeError('');
@@ -1227,17 +1274,18 @@ export default function useP2PTradeData({
 
     const loadDetail = async () => {
       try {
-        const metadata = await withTimeout(
-          fetchTradeAccessMetadataById(routeTradeId, routeEscrowContract),
-          TRADE_DETAIL_LOAD_TIMEOUT_MS,
-          'Timed out while reading trade access.'
-        ).catch(() => null);
-
-        const snapshot = await withTimeout(
-          refreshTradeDetail(routeTradeId, routeEscrowContract),
-          TRADE_DETAIL_LOAD_TIMEOUT_MS,
-          'Timed out while loading trade.'
-        );
+        const [metadata, snapshot] = await Promise.all([
+          withTimeout(
+            fetchTradeAccessMetadataById(routeTradeId, routeEscrowContract),
+            TRADE_DETAIL_LOAD_TIMEOUT_MS,
+            'Timed out while reading trade access.'
+          ).catch(() => null),
+          withTimeout(
+            readTradeSnapshot(routeTradeId, routeEscrowContract),
+            TRADE_DETAIL_LOAD_TIMEOUT_MS,
+            'Timed out while loading trade.'
+          )
+        ]);
         if (cancelled) {
           return;
         }
@@ -1252,7 +1300,8 @@ export default function useP2PTradeData({
           metadata,
           routeAccessSecret: resolvedRouteAccessSecret,
           snapshot,
-          walletKey
+          walletKey,
+          walletReadAccounts
         });
         if (!accessDecision.allowed) {
           setTradeAccessBlocked(true);
@@ -1267,13 +1316,27 @@ export default function useP2PTradeData({
           setTradeAccessBlocked(false);
           setValidatedDetailRouteAccessSecret(normalizeRouteAccessSecret(resolvedRouteAccessSecret));
           setDetailTrade((current) => mergeTradeSnapshotEnrichment(snapshot, current, walletKey));
+
+          withTimeout(
+            latestEnrichMakerPrivateProgressRef.current(snapshot),
+            TRADE_DETAIL_LOAD_TIMEOUT_MS,
+            'Timed out while reading private trade history.'
+          )
+            .then((enrichedSnapshot) => {
+              if (!cancelled) {
+                setDetailTrade((current) =>
+                  mergeTradeSnapshotEnrichment(enrichedSnapshot, current, walletKey)
+                );
+              }
+            })
+            .catch(() => {});
         }
       } catch (loadError) {
         if (!cancelled && !hasCurrentDetail) {
           setDetailTradeError(loadError instanceof Error ? loadError.message : 'Trade was not found on the escrow contract.');
         }
       } finally {
-        if (!cancelled && !hasCurrentDetail) {
+        if (!cancelled) {
           setLoadingDetailTrade(false);
         }
       }
@@ -1284,14 +1347,15 @@ export default function useP2PTradeData({
       cancelled = true;
     };
   }, [
-    refreshTradeDetail,
+    readTradeSnapshot,
     resolvedRouteAccessSecret,
     routeError,
     routeEscrowContract,
     routeTradeId,
     routeView,
     validatedDetailRouteAccessSecret,
-    walletKey
+    walletKey,
+    walletReadAccountsKey
   ]);
 
   const renderableDetailTrade = resolveRenderableDetailTrade({
@@ -1301,7 +1365,8 @@ export default function useP2PTradeData({
     routeTradeId,
     routeView,
     validatedRouteAccessSecret: validatedDetailRouteAccessSecret,
-    walletKey
+    walletKey,
+    walletReadAccounts
   });
 
   return {

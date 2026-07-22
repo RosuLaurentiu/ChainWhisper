@@ -20,7 +20,11 @@ import {
 } from '../../../lib/appShared';
 import { mergeGroupSyncOptions, resolveRealtimeGroupSyncOptions } from '../../../lib/groupSyncPlan';
 import { isWalletTransactionFlowActive } from '../../../lib/walletTransactionFlow';
-import { attachWsDisconnectListeners, type RealtimeConnectionStatus } from '../../../shell/realtimeConnection';
+import {
+  attachWsDisconnectListeners,
+  ignoreRealtimeSubscriptionAction,
+  type RealtimeConnectionStatus
+} from '../../../shell/realtimeConnection';
 
 type UseGroupRealtimeSyncArgs = {
   activeGroupIdRef: MutableRefObject<number | null>;
@@ -202,57 +206,50 @@ export default function useGroupRealtimeSync({
         const submittedFilter = contract.filters.GroupMessageSubmitted(null, walletAddress);
         const deliveredFilter = contract.filters.GroupMessageDelivered(null, null, walletAddress);
 
-        contract.on(createdFilter, handleOverviewEvent);
-        contract.on(memberAddedFilter, handleOverviewEvent);
-        contract.on(memberRemovedFilter, handleOverviewEvent);
-        contract.on(memberLeftFilter, handleOverviewEvent);
-        contract.on(inviteCreatedFilter, handleOverviewEvent);
-        contract.on(inviteAcceptedFilter, handleOverviewEvent);
-        contract.on(inviteDeclinedFilter, handleOverviewEvent);
-        contract.on(inviteRevokedFilter, handleOverviewEvent);
-        contract.on(joinedWithCodeFilter, handleOverviewEvent);
-        contract.on(joinCodeCreatedFilter, handleOverviewEvent);
-        contract.on(joinCodeRevokedFilter, handleOverviewEvent);
-        contract.on(submittedFilter, handleMessageEvent);
-        contract.on(deliveredFilter, handleMessageEvent);
+        await Promise.all([
+          contract.on(createdFilter, handleOverviewEvent),
+          contract.on(memberAddedFilter, handleOverviewEvent),
+          contract.on(memberRemovedFilter, handleOverviewEvent),
+          contract.on(memberLeftFilter, handleOverviewEvent),
+          contract.on(inviteCreatedFilter, handleOverviewEvent),
+          contract.on(inviteAcceptedFilter, handleOverviewEvent),
+          contract.on(inviteDeclinedFilter, handleOverviewEvent),
+          contract.on(inviteRevokedFilter, handleOverviewEvent),
+          contract.on(joinedWithCodeFilter, handleOverviewEvent),
+          contract.on(joinCodeCreatedFilter, handleOverviewEvent),
+          contract.on(joinCodeRevokedFilter, handleOverviewEvent),
+          contract.on(submittedFilter, handleMessageEvent),
+          contract.on(deliveredFilter, handleMessageEvent)
+        ]);
+        const stopSubscriptions = () => {
+          ignoreRealtimeSubscriptionAction(() => contract.off(createdFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(memberAddedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(memberRemovedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(memberLeftFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(inviteCreatedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(inviteAcceptedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(inviteDeclinedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(inviteRevokedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(joinedWithCodeFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(joinCodeCreatedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(joinCodeRevokedFilter, handleOverviewEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(submittedFilter, handleMessageEvent));
+          ignoreRealtimeSubscriptionAction(() => contract.off(deliveredFilter, handleMessageEvent));
+        };
         unsubscribeWsDisconnect?.();
         unsubscribeWsDisconnect = attachWsDisconnectListeners(wsProvider, handleRealtimeDisconnect);
 
         if (cancelled) {
           unsubscribeWsDisconnect?.();
           unsubscribeWsDisconnect = null;
-          contract.off(createdFilter, handleOverviewEvent);
-          contract.off(memberAddedFilter, handleOverviewEvent);
-          contract.off(memberRemovedFilter, handleOverviewEvent);
-          contract.off(memberLeftFilter, handleOverviewEvent);
-          contract.off(inviteCreatedFilter, handleOverviewEvent);
-          contract.off(inviteAcceptedFilter, handleOverviewEvent);
-          contract.off(inviteDeclinedFilter, handleOverviewEvent);
-          contract.off(inviteRevokedFilter, handleOverviewEvent);
-          contract.off(joinedWithCodeFilter, handleOverviewEvent);
-          contract.off(joinCodeCreatedFilter, handleOverviewEvent);
-          contract.off(joinCodeRevokedFilter, handleOverviewEvent);
-          contract.off(submittedFilter, handleMessageEvent);
-          contract.off(deliveredFilter, handleMessageEvent);
+          stopSubscriptions();
           return;
         }
 
         unsubscribe = () => {
           unsubscribeWsDisconnect?.();
           unsubscribeWsDisconnect = null;
-          contract.off(createdFilter, handleOverviewEvent);
-          contract.off(memberAddedFilter, handleOverviewEvent);
-          contract.off(memberRemovedFilter, handleOverviewEvent);
-          contract.off(memberLeftFilter, handleOverviewEvent);
-          contract.off(inviteCreatedFilter, handleOverviewEvent);
-          contract.off(inviteAcceptedFilter, handleOverviewEvent);
-          contract.off(inviteDeclinedFilter, handleOverviewEvent);
-          contract.off(inviteRevokedFilter, handleOverviewEvent);
-          contract.off(joinedWithCodeFilter, handleOverviewEvent);
-          contract.off(joinCodeCreatedFilter, handleOverviewEvent);
-          contract.off(joinCodeRevokedFilter, handleOverviewEvent);
-          contract.off(submittedFilter, handleMessageEvent);
-          contract.off(deliveredFilter, handleMessageEvent);
+          stopSubscriptions();
         };
         clearPollFallback();
         setGroupRealtimeStatus('connected');

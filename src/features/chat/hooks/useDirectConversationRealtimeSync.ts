@@ -22,7 +22,11 @@ import {
 import { mergeDirectSyncOptions } from '../../../lib/directSyncPlan';
 import type { WalletReadAccount } from '../../../lib/walletAccountScope';
 import { isWalletTransactionFlowActive } from '../../../lib/walletTransactionFlow';
-import { attachWsDisconnectListeners, type RealtimeConnectionStatus } from '../../../shell/realtimeConnection';
+import {
+  attachWsDisconnectListeners,
+  ignoreRealtimeSubscriptionAction,
+  type RealtimeConnectionStatus
+} from '../../../shell/realtimeConnection';
 
 type UseDirectConversationRealtimeSyncArgs = {
   activeContactRef: MutableRefObject<string | null>;
@@ -246,30 +250,30 @@ export default function useDirectConversationRealtimeSync({
           );
         };
 
-        for (const filter of directMessageFilters) {
-          contract.on(filter, handleMessageSubmitted);
-        }
-        contract.on(nicknameFilter, handleNicknameSet);
+        await Promise.all([
+          ...directMessageFilters.map((filter) => contract.on(filter, handleMessageSubmitted)),
+          contract.on(nicknameFilter, handleNicknameSet)
+        ]);
+        const stopSubscriptions = () => {
+          for (const filter of directMessageFilters) {
+            ignoreRealtimeSubscriptionAction(() => contract.off(filter, handleMessageSubmitted));
+          }
+          ignoreRealtimeSubscriptionAction(() => contract.off(nicknameFilter, handleNicknameSet));
+        };
         unsubscribeWsDisconnect?.();
         unsubscribeWsDisconnect = attachWsDisconnectListeners(wsProvider, handleRealtimeDisconnect);
 
         if (cancelled) {
           unsubscribeWsDisconnect?.();
           unsubscribeWsDisconnect = null;
-          for (const filter of directMessageFilters) {
-            contract.off(filter, handleMessageSubmitted);
-          }
-          contract.off(nicknameFilter, handleNicknameSet);
+          stopSubscriptions();
           return;
         }
 
         unsubscribe = () => {
           unsubscribeWsDisconnect?.();
           unsubscribeWsDisconnect = null;
-          for (const filter of directMessageFilters) {
-            contract.off(filter, handleMessageSubmitted);
-          }
-          contract.off(nicknameFilter, handleNicknameSet);
+          stopSubscriptions();
         };
 
         clearPollFallback();
