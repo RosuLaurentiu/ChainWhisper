@@ -118,6 +118,57 @@ export const buildWalletReadAccountsKey = (
     )
     .join('|');
 
+type WalletScopedMessage = {
+  accountAddress?: string;
+  accountRole?: WalletAccountRole;
+  id?: string;
+};
+
+const findReadAccountForMessage = (
+  message: WalletScopedMessage | null | undefined,
+  readAccounts: WalletReadAccount[]
+): WalletReadAccount | null => {
+  const accountKey = normalizeKey(message?.accountAddress);
+  if (!accountKey) {
+    return null;
+  }
+  return readAccounts.find((account) => account.key === accountKey) ?? null;
+};
+
+export const resolveConversationActionAccount = ({
+  fallbackAddress,
+  messages,
+  readAccounts,
+  replyTarget
+}: {
+  fallbackAddress: string;
+  messages: WalletScopedMessage[];
+  readAccounts: WalletReadAccount[];
+  replyTarget?: WalletScopedMessage | null;
+}): WalletReadAccount | null => {
+  const actionAccount = getWalletActionAccount(readAccounts);
+  const ownerAccount = getWalletOwnerAccount(readAccounts);
+  const fallbackKey = normalizeKey(fallbackAddress);
+  const fallbackAccount = readAccounts.find((account) => account.key === fallbackKey) ?? null;
+
+  const replyAccount = findReadAccountForMessage(replyTarget, readAccounts);
+  if (replyAccount) {
+    return replyAccount;
+  }
+
+  const messageAccounts = messages
+    .map((message) => findReadAccountForMessage(message, readAccounts))
+    .filter((account): account is WalletReadAccount => Boolean(account));
+  if (actionAccount && messageAccounts.some((account) => account.key === actionAccount.key)) {
+    return actionAccount;
+  }
+  if (ownerAccount && messageAccounts.length > 0 && messageAccounts.every((account) => account.key === ownerAccount.key)) {
+    return ownerAccount;
+  }
+
+  return actionAccount ?? fallbackAccount ?? ownerAccount;
+};
+
 const tradeMatchesAccountKey = (
   trade: Pick<TradeSnapshot, 'maker' | 'taker' | 'walletHasFill' | 'accountAddress' | 'accountRole' | 'accountMatches'>,
   accountKey: string

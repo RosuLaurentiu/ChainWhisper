@@ -96,7 +96,14 @@ export default function useGroupMessageActions({
       isTargetCurrent: () => activeGroupIdRef.current === targetGroupId,
       kind: 'group',
       missingTargetMessage: 'Select a group first.',
-      sendImageTag: (imageTag) => sendGroupMessage(imageTag, replyTarget),
+      sendImageTag: async (imageTag) => {
+        const txHash = await sendGroupMessage(imageTag, replyTarget);
+        if (!txHash) {
+          throw new Error('Image message transaction was not confirmed.');
+        }
+        return txHash;
+      },
+      senderAddress: walletAddress,
       setError,
       setUploadingImage,
       showImageAttachmentStatus,
@@ -143,6 +150,7 @@ export default function useGroupMessageActions({
     const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
     const localMessageId = `local-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
+    let confirmedTxHash = '';
 
     try {
       setSendingGroupMessage(true);
@@ -208,6 +216,11 @@ export default function useGroupMessageActions({
         if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
           throw new Error('Transaction failed on-chain.');
         }
+        confirmedTxHash =
+          submittedTxHash ||
+          (typeof (receipt as { transactionHash?: unknown }).transactionHash === 'string'
+            ? (receipt as { transactionHash: string }).transactionHash
+            : '');
 
         if (currentWalletKeyRef.current !== requestedWalletKey) {
           return;
@@ -259,6 +272,7 @@ export default function useGroupMessageActions({
     } finally {
       setSendingGroupMessage(false);
     }
+    return confirmedTxHash || undefined;
   };
 
   return {

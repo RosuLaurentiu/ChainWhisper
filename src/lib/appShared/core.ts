@@ -1191,6 +1191,42 @@ export const mergeOnboardInfo = (previous?: OnboardInfo, next?: OnboardInfo): On
   txHash: next?.txHash ?? previous?.txHash
 });
 
+export const bytesEqual = (left?: Uint8Array | null, right?: Uint8Array | null): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
+};
+
+export const onboardInfoEqual = (left?: OnboardInfo, right?: OnboardInfo): boolean =>
+  (left?.aesKey ?? null) === (right?.aesKey ?? null) &&
+  (left?.txHash ?? null) === (right?.txHash ?? null) &&
+  bytesEqual(left?.rsaKey?.publicKey, right?.rsaKey?.publicKey) &&
+  bytesEqual(left?.rsaKey?.privateKey, right?.rsaKey?.privateKey);
+
+export const mergeOnboardInfoByAddress = (
+  previous: Record<string, OnboardInfo>,
+  cacheKey: string,
+  onboardInfo?: OnboardInfo
+): Record<string, OnboardInfo> => {
+  if (!cacheKey || !onboardInfo) {
+    return previous;
+  }
+
+  const merged = mergeOnboardInfo(previous[cacheKey], onboardInfo);
+  if (onboardInfoEqual(previous[cacheKey], merged)) {
+    return previous;
+  }
+
+  return {
+    ...previous,
+    [cacheKey]: merged
+  };
+};
+
 export const encodeMemoPlaintext = (plain: string): string => {
   const bytes = TEXT_ENCODER.encode(plain);
   let binary = '';

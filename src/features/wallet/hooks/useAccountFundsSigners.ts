@@ -5,6 +5,7 @@ import {
   createCotiBrowserProvider,
   isWalletAddress,
   mergeOnboardInfo,
+  mergeOnboardInfoByAddress,
   normalizeChainId,
   type Eip1193Provider,
   type InjectedWalletOption
@@ -121,10 +122,7 @@ export default function useAccountFundsSigners({
 
       const onboardInfo = signer.getUserOnboardInfo();
       if (onboardInfo?.aesKey) {
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
-        }));
+        setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, onboardInfo));
         setWalletAesHealth(normalizedOwnerAddress, buildWalletAesHealthState({
           status: 'ready-unverified',
           walletAddress: normalizedOwnerAddress
@@ -173,10 +171,7 @@ export default function useAccountFundsSigners({
 
       const onboardInfo = signer.getUserOnboardInfo();
       if (onboardInfo?.aesKey) {
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
-        }));
+        setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, onboardInfo));
         setOnboardStatus('Privacy ready');
       }
 

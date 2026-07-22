@@ -98,7 +98,9 @@ import { useInChatTradeStore } from './features/trading/inChatTradeStore';
 import { useTokenToolsStore } from './features/tokenTools/tokenToolsStore';
 import useRewardTokenMetrics from './features/tokenTools/useRewardTokenMetrics';
 import useTokenSwapActions from './features/tokenTools/useTokenSwapActions';
-import useTokenSwapViewModel from './features/tokenTools/useTokenSwapViewModel';
+import useTokenSwapViewModel, { usePrivacyPortalViewModel } from './features/tokenTools/useTokenSwapViewModel';
+import usePrivacyPortal from './features/tokenTools/usePrivacyPortal';
+import { getPrivacyTokenPair, PRIVACY_TOKEN_PAIRS } from './lib/privacyPortal';
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
 import {
   BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI,
@@ -110,6 +112,8 @@ import {
   DEFAULT_NICKNAME_MAX_BYTES,
   FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL,
   FALLBACK_REWARD_TOKEN_DECIMALS,
+  formatCotiAmount,
+  formatTokenAmount,
   getMessageDisplayText,
   GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS,
   GroupInvite,
@@ -261,8 +265,15 @@ export default function App() {
     groupFeeModeSelection,
     swapDirection,
     swapAmountInput,
+    privacyAmountInput,
     swappingTokens,
+    swapActionStage,
     swapStatusMessage,
+    swapTransactionHash,
+    selectedPrivacyPairId,
+    privacyDirection,
+    privacyTokenSearch,
+    privacyRecoveryOpen,
     loadingTopUpQuote,
     loadingRewardBalances,
     setTopUpAmountWei,
@@ -281,11 +292,17 @@ export default function App() {
     setGroupFeeModeSelection,
     setSwapDirection,
     setSwapAmountInput,
+    setPrivacyAmountInput,
+    setSelectedPrivacyPairId,
+    setPrivacyDirection,
+    setPrivacyTokenSearch,
+    setPrivacyRecoveryOpen,
     setLoadingTopUpQuote
   } = useTokenToolsStore();
   const [legacyPrivateRewardTokenBalanceWei, setLegacyPrivateRewardTokenBalanceWei] = useState<bigint | null>(null);
   const [legacyPrivateRewardTokenSymbol, setLegacyPrivateRewardTokenSymbol] = useState(FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL);
   const [legacyPrivateRewardTokenDecimals, setLegacyPrivateRewardTokenDecimals] = useState(FALLBACK_REWARD_TOKEN_DECIMALS);
+  const [privacyPortalAccount, setPrivacyPortalAccount] = useState<'chainwhisper' | 'owner'>('chainwhisper');
   const {
     tradeComposerOpen,
     creatingTrade,
@@ -852,10 +869,12 @@ export default function App() {
   }, [canManageActiveGroupJoinCodes, groupInviteMenuView]);
   const {
     ownerCustomTradeTokenInfoByAddress,
+    ownerLegacyPrivateRewardTokenBalanceWei,
     ownerNativeBalanceWei,
     ownerPrivateRewardBalanceLocked,
     ownerPrivateRewardTokenBalanceWei,
-    ownerRewardTokenBalanceWei
+    ownerRewardTokenBalanceWei,
+    ownerTokenBalancesLoading
   } = useOwnerWalletBalances({
     browserProvider: browserWalletSession?.provider ?? null,
     chainId,
@@ -865,6 +884,35 @@ export default function App() {
     ownerWalletAddress,
     refreshNonce: topUpMetricsNonce
   });
+  const hasChainWhisperWispAccount = Boolean(walletAddress && isWalletAddress(walletAddress));
+  const hasOwnerWispAccount = Boolean(ownerWalletAddress && isWalletAddress(ownerWalletAddress));
+  const showWispPortalAccountTabs =
+    hasChainWhisperWispAccount &&
+    hasOwnerWispAccount &&
+    walletAddress.trim().toLowerCase() !== ownerWalletAddress.trim().toLowerCase();
+
+  useEffect(() => {
+    if (privacyPortalAccount === 'chainwhisper' && !hasChainWhisperWispAccount && hasOwnerWispAccount) {
+      setPrivacyPortalAccount('owner');
+    } else if (privacyPortalAccount === 'owner' && (!hasOwnerWispAccount || hasChainWhisperWispAccount && !showWispPortalAccountTabs)) {
+      setPrivacyPortalAccount('chainwhisper');
+    }
+  }, [hasChainWhisperWispAccount, hasOwnerWispAccount, privacyPortalAccount, showWispPortalAccountTabs]);
+
+  const selectedWispPortalAccount =
+    privacyPortalAccount === 'owner' && hasOwnerWispAccount ? 'owner' : 'chainwhisper';
+  const wispPortalUsesOwner = selectedWispPortalAccount === 'owner';
+  const wispPortalWalletAddress = wispPortalUsesOwner ? ownerWalletAddress : walletAddress;
+  const wispPortalHasAesReady = wispPortalUsesOwner ? ownerAesReady : hasAesReady;
+  const selectedPrivacyPair = getPrivacyTokenPair(selectedPrivacyPairId) ?? PRIVACY_TOKEN_PAIRS[0];
+  const wispPortalLoadingRewardBalances = wispPortalUsesOwner ? ownerTokenBalancesLoading : loadingRewardBalances;
+  const wispPortalRewardTokenBalanceWei = wispPortalUsesOwner ? ownerRewardTokenBalanceWei : rewardTokenBalanceWei;
+  const wispPortalPrivateRewardTokenBalanceWei = wispPortalUsesOwner
+    ? ownerPrivateRewardTokenBalanceWei
+    : privateRewardTokenBalanceWei;
+  const wispPortalLegacyPrivateRewardTokenBalanceWei = wispPortalUsesOwner
+    ? ownerLegacyPrivateRewardTokenBalanceWei
+    : legacyPrivateRewardTokenBalanceWei;
   const hasSavedBurnerWallet = savedBurnerWalletCount > 0;
   const {
     bootstrapOwnerRecoveryOnce,
@@ -900,7 +948,8 @@ export default function App() {
   });
   const {
     activeSwapVaultContractAddress,
-    activeSwapVaultContractUrl,
+    legacySwapVaultContractUrl,
+    wispBridgeContractUrl,
     canLegacyUnshieldTokens,
     canShieldTokens,
     canSwapRewardTokens,
@@ -911,26 +960,25 @@ export default function App() {
     swapInputSymbol,
     swapPrivateRewardTokenBalanceWei,
     swapPrivateRewardTokenDecimals,
-    swapPrivateRewardTokenSymbol,
-    tokenToolsSummary
+    swapPrivateRewardTokenSymbol
   } = useTokenSwapViewModel({
-    hasAesReady,
-    legacyPrivateRewardTokenBalanceWei,
+    hasAesReady: wispPortalHasAesReady,
+    legacyPrivateRewardTokenBalanceWei: wispPortalLegacyPrivateRewardTokenBalanceWei,
     legacyPrivateRewardTokenDecimals,
     legacyPrivateRewardTokenSymbol,
-    loadingRewardBalances,
+    loadingRewardBalances: wispPortalLoadingRewardBalances,
     onCotiNetwork,
-    privateRewardTokenBalanceWei,
+    privateRewardTokenBalanceWei: wispPortalPrivateRewardTokenBalanceWei,
     privateRewardTokenDecimals,
     privateRewardTokenSymbol,
-    rewardTokenBalanceWei,
+    rewardTokenBalanceWei: wispPortalRewardTokenBalanceWei,
     rewardTokenDecimals,
     rewardTokenSymbol,
     setSwapDirection,
     swapAmountInput,
     swapDirection,
     swappingTokens,
-    walletAddress
+    walletAddress: wispPortalWalletAddress
   });
 
   const {
@@ -1256,12 +1304,51 @@ export default function App() {
     walletAddress,
     walletAesHealthByAddress
   });
+  const getWispPortalSwapSigner = useCallback(async () => {
+    if (wispPortalUsesOwner) {
+      const signer = await getOwnerFundsSigner(true);
+      return {
+        signer,
+        cacheKey: ownerWalletAddress.trim().toLowerCase()
+      };
+    }
+
+    return getMemoSigner();
+  }, [getMemoSigner, getOwnerFundsSigner, ownerWalletAddress, wispPortalUsesOwner]);
+  const runWispPortalSwapTransactionFlow = wispPortalUsesOwner
+    ? runOwnerFundsTransactionFlow
+    : runSharedWalletTransactionFlow;
+  const privacyPortal = usePrivacyPortal({
+    amountInput: privacyAmountInput,
+    direction: privacyDirection,
+    enabled: activePage === 'swap' && !privacyRecoveryOpen,
+    getPrivacySigner: getWispPortalSwapSigner,
+    hasAesReady: wispPortalHasAesReady,
+    onCotiNetwork,
+    pair: selectedPrivacyPair,
+    runTransactionFlow: runWispPortalSwapTransactionFlow,
+    setAmountInput: setPrivacyAmountInput,
+    setSessionOnboardInfo,
+    walletAddress: wispPortalWalletAddress
+  });
+  const privacyPortalView = usePrivacyPortalViewModel({
+    actionStage: privacyPortal.actionStage,
+    amountInput: privacyAmountInput,
+    direction: privacyDirection,
+    hasAesReady: wispPortalHasAesReady,
+    loading: privacyPortal.loading,
+    metrics: privacyPortal.metrics,
+    onCotiNetwork,
+    pair: selectedPrivacyPair,
+    quote: privacyPortal.quote,
+    walletAddress: wispPortalWalletAddress
+  });
   const { swapRewardTokens } = useTokenSwapActions({
     activeSwapVaultContractAddress,
     currentSwapDirectionEnabled,
-    getMemoSigner,
+    getSwapSigner: getWispPortalSwapSigner,
     onCotiNetwork,
-    runSharedWalletTransactionFlow,
+    runSwapTransactionFlow: runWispPortalSwapTransactionFlow,
     setError,
     setSessionOnboardInfo,
     setTopUpMetricsNonce,
@@ -1274,8 +1361,65 @@ export default function App() {
     swapPrivateRewardTokenDecimals,
     swapPrivateRewardTokenSymbol,
     swapTokenFeeAmount,
-    walletAddress
+    walletAddress: wispPortalWalletAddress
   });
+  const wispMaxBalanceWei = swapDirection === 'shield'
+    ? wispPortalRewardTokenBalanceWei
+    : swapPrivateRewardTokenBalanceWei;
+  const wispCurrentPrivateTokenSymbol = privateRewardTokenSymbol.replace(/^p\.WISP$/i, 'pWISP');
+  const wispInputBalanceSymbol = swapDirection === 'unshield'
+    ? wispCurrentPrivateTokenSymbol
+    : swapInputSymbol;
+  const wispInputUsesPrivateBalance = swapDirection !== 'shield';
+  const wispInputBalanceLabel = wispInputUsesPrivateBalance && !wispPortalHasAesReady
+    ? 'Locked'
+    : wispMaxBalanceWei === null
+      ? wispPortalLoadingRewardBalances
+        ? 'Loading…'
+        : 'Unavailable'
+      : `${formatTokenAmount(wispMaxBalanceWei, swapInputDecimals, 6)} ${wispInputBalanceSymbol}`;
+  const wispOutputBalanceWei = swapDirection === 'shield'
+    ? wispPortalPrivateRewardTokenBalanceWei
+    : wispPortalRewardTokenBalanceWei;
+  const wispOutputBalanceDecimals = swapDirection === 'shield'
+    ? privateRewardTokenDecimals
+    : rewardTokenDecimals;
+  const wispOutputBalanceSymbol = swapDirection === 'shield'
+    ? wispCurrentPrivateTokenSymbol
+    : rewardTokenSymbol;
+  const wispOutputUsesPrivateBalance = swapDirection === 'shield';
+  const wispOutputBalanceLabel = wispOutputUsesPrivateBalance && !wispPortalHasAesReady
+    ? 'Locked'
+    : wispOutputBalanceWei === null
+      ? wispPortalLoadingRewardBalances
+        ? 'Loading…'
+        : 'Unavailable'
+      : `${formatTokenAmount(wispOutputBalanceWei, wispOutputBalanceDecimals, 6)} ${wispOutputBalanceSymbol}`;
+  const wispMaxDisabled =
+    swappingTokens ||
+    wispPortalLoadingRewardBalances ||
+    wispMaxBalanceWei === null ||
+    (wispInputUsesPrivateBalance && !wispPortalHasAesReady) ||
+    (swapDirection !== 'shield' && shieldVaultTokenBalanceWei === null);
+  const handleWispMaxAmount = useCallback(() => {
+    if (wispMaxBalanceWei === null) {
+      setError('Unable to read the selected WISP balance. Refresh and try again.');
+      return;
+    }
+    const maxAmountWei = swapDirection === 'shield' || shieldVaultTokenBalanceWei === null
+      ? wispMaxBalanceWei
+      : wispMaxBalanceWei < shieldVaultTokenBalanceWei
+        ? wispMaxBalanceWei
+        : shieldVaultTokenBalanceWei;
+    setError('');
+    setSwapAmountInput(formatTokenAmount(maxAmountWei, swapInputDecimals, swapInputDecimals));
+  }, [
+    setSwapAmountInput,
+    shieldVaultTokenBalanceWei,
+    swapDirection,
+    swapInputDecimals,
+    wispMaxBalanceWei
+  ]);
 
   const {
     groupRequiredFeeCacheRef,
@@ -1689,6 +1833,7 @@ export default function App() {
     activeContact,
     activeContactRef,
     activeLinkedTradeContext,
+    activeMessages,
     activeSignerSource,
     browserWalletLiteMode,
     clearImageAttachmentStatus,
@@ -1696,6 +1841,7 @@ export default function App() {
     directMessageMaxLength,
     encodeMemoForActiveSigner,
     getMemoSigner,
+    getMemoSignerForAccount,
     groupTipRecipientAddress,
     messageInput,
     privateRewardTokenBalanceWei,
@@ -1728,7 +1874,8 @@ export default function App() {
     tipNativeBalanceWei,
     tipping,
     uploadingImage,
-    walletAddress
+    walletAddress,
+    walletReadAccounts: readableWalletAccounts
   });
   const sendMessageForSideEffects = useCallback(async (...args: Parameters<typeof sendMessage>) => {
     await sendMessage(...args);
@@ -3094,45 +3241,78 @@ export default function App() {
         {renderAppHeader({
           brandActions: headerHomeAction,
           walletControl: activeAppWalletControl,
-          subtitle: 'WISP Portal',
+          subtitle: 'Privacy Portal',
           showSoundToggle: true
         })}
         {walletSessionModals}
         <AppErrorBoundary>
           <Suspense
             fallback={
-              <RouteLoadingFallback shellClassName="swap-page-shell" label="Loading WISP Portal" />
+              <RouteLoadingFallback shellClassName="swap-page-shell" label="Loading Privacy Portal" />
             }
           >
             <TokenSwapPage
-              tokenToolsSummary={tokenToolsSummary}
-              shieldVaultTokenBalanceWei={shieldVaultTokenBalanceWei}
-              rewardTokenDecimals={rewardTokenDecimals}
-              rewardTokenSymbol={rewardTokenSymbol}
-              privateRewardTokenSymbol={swapPrivateRewardTokenSymbol}
-              swapAmountInput={swapAmountInput}
-              onSwapAmountInputChange={(value) => setSwapAmountInput(sanitizeTokenAmountInput(value))}
-              swappingTokens={swappingTokens}
-              swapInputSymbol={swapInputSymbol}
-              swapDirection={swapDirection}
-              onSwapDirectionChange={setSwapDirection}
-              loadingRewardBalances={loadingRewardBalances}
-              swapFeeWei={swapFeeWei}
-              swapTokenFeeAmount={swapTokenFeeAmount}
-              walletAddress={walletAddress}
+              pairs={PRIVACY_TOKEN_PAIRS}
+              selectedPair={selectedPrivacyPair}
+              onPairChange={setSelectedPrivacyPairId}
+              tokenSearch={privacyTokenSearch}
+              onTokenSearchChange={setPrivacyTokenSearch}
+              privacyDirection={privacyDirection}
+              onPrivacyDirectionChange={setPrivacyDirection}
+              activePortalAccount={selectedWispPortalAccount}
+              showPortalAccountTabs={showWispPortalAccountTabs}
+              onPortalAccountChange={setPrivacyPortalAccount}
+              amountInput={privacyAmountInput}
+              onAmountInputChange={(value) => setPrivacyAmountInput(sanitizeTokenAmountInput(value))}
+              onMaxAmount={() => {
+                privacyPortal.onMaxAmount().catch(() => {});
+              }}
+              metrics={privacyPortal.metrics}
+              quote={privacyPortal.quote}
+              loading={privacyPortal.loading}
+              actionStage={privacyPortal.actionStage}
+              walletAddress={wispPortalWalletAddress}
               onCotiNetwork={onCotiNetwork}
-              hasAesReady={hasAesReady}
-              canShieldTokens={canShieldTokens}
-              canUnshieldTokens={canUnshieldTokens}
-              canLegacyUnshieldTokens={canLegacyUnshieldTokens}
-              currentSwapDirectionEnabled={currentSwapDirectionEnabled}
-              shieldVaultContractUrl={activeSwapVaultContractUrl}
-              onRefreshRewardBalances={() => setTopUpMetricsNonce((previous) => previous + 1)}
-              canSwapRewardTokens={canSwapRewardTokens}
-              swapButtonLabel={swapButtonLabel}
-              onSwapRewardTokens={swapRewardTokens}
-              swapStatusMessage={swapStatusMessage}
-              error={error}
+              hasAesReady={wispPortalHasAesReady}
+              canConvert={privacyPortalView.canConvert}
+              buttonLabel={privacyPortalView.buttonLabel}
+              onConvert={privacyPortal.convert}
+              onRefresh={privacyPortal.refresh}
+              statusMessage={privacyPortal.statusMessage}
+              error={privacyPortal.error}
+              transactionUrl={privacyPortal.transactionUrl}
+              recovery={{
+                open: privacyRecoveryOpen,
+                onOpenChange: setPrivacyRecoveryOpen,
+                amountInput: swapAmountInput,
+                onAmountInputChange: (value) => setSwapAmountInput(sanitizeTokenAmountInput(value)),
+                onMaxAmount: handleWispMaxAmount,
+                maxDisabled: wispMaxDisabled,
+                inputBalanceLabel: wispInputBalanceLabel,
+                outputBalanceLabel: wispOutputBalanceLabel,
+                direction: swapDirection,
+                onDirectionChange: setSwapDirection,
+                canShield: canShieldTokens,
+                canUnshield: canUnshieldTokens,
+                canLegacyUnshield: canLegacyUnshieldTokens,
+                publicSymbol: rewardTokenSymbol,
+                privateSymbol: wispCurrentPrivateTokenSymbol,
+                legacyPrivateSymbol: legacyPrivateRewardTokenSymbol,
+                inputSymbol: swapInputSymbol,
+                feeLabel: swapFeeWei === null ? 'Read at confirmation' : `${formatCotiAmount(swapFeeWei)} COTI`,
+                contractUrl: wispBridgeContractUrl,
+                legacyContractUrl: legacySwapVaultContractUrl,
+                busy: swappingTokens,
+                actionStage: swapActionStage,
+                canSubmit: canSwapRewardTokens,
+                buttonLabel: swapButtonLabel,
+                onSubmit: swapRewardTokens,
+                statusMessage: swapStatusMessage,
+                error,
+                transactionUrl: swapTransactionHash
+                  ? `${COTI_NETWORK.blockExplorerUrl}/tx/${swapTransactionHash}`
+                  : undefined
+              }}
             />
           </Suspense>
         </AppErrorBoundary>

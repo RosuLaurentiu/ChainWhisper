@@ -25,13 +25,13 @@ describe('appHelp knowledge matching', () => {
   });
 
   it('answers curated questions locally without an API request', () => {
-    const resolution = resolveAppHelpOnClient('What does the WISP Portal do?', '/otc/agent');
+    const resolution = resolveAppHelpOnClient('What does the Privacy Portal do?', '/otc/agent');
     expect(resolution.kind).toBe('local');
     if (resolution.kind !== 'local') {
       throw new Error('Expected a local App Help answer');
     }
     expect(resolution.response.source).toBe('local');
-    expect(resolution.response.topicId).toBe('wisp-portal');
+    expect(resolution.response.topicId).toBe('privacy-portal');
   });
 
   it('handles common spelling and natural-language variants locally', () => {

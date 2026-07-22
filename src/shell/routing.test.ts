@@ -53,7 +53,7 @@ describe('app routing', () => {
   it('returns page titles for document title updates', () => {
     expect(getTitleForAppPage('home')).toBe('ChainWhisper');
     expect(getTitleForAppPage('chat')).toBe('Encrypted Chat | ChainWhisper');
-    expect(getTitleForAppPage('swap')).toBe('WISP Portal | ChainWhisper');
+    expect(getTitleForAppPage('swap')).toBe('Privacy Portal | ChainWhisper');
     expect(getTitleForAppPage('trades')).toBe('OTC Desk | ChainWhisper');
     expect(getTitleForAppPage('treasury')).toBe('Treasury Data | ChainWhisper');
   });

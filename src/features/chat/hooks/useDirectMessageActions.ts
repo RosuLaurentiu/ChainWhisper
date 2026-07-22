@@ -38,6 +38,10 @@ import {
   type SyncConversationOptions,
   type TipTokenSelection
 } from '../../../lib/appShared';
+import {
+  resolveConversationActionAccount,
+  type WalletReadAccount
+} from '../../../lib/walletAccountScope';
 
 type StateSetter<T> = (next: T | ((previous: T) => T)) => void;
 
@@ -50,6 +54,7 @@ type UseDirectMessageActionsArgs = {
   activeContact: string | null;
   activeContactRef: MutableRefObject<string | null>;
   activeLinkedTradeContext: LinkedTradeContext | null;
+  activeMessages: ChatMessage[];
   activeSignerSource: SignerSource;
   browserWalletLiteMode: boolean;
   clearImageAttachmentStatus: () => void;
@@ -57,6 +62,7 @@ type UseDirectMessageActionsArgs = {
   directMessageMaxLength: number;
   encodeMemoForActiveSigner: (plain: string) => string;
   getMemoSigner: () => Promise<MemoSignerBundle>;
+  getMemoSignerForAccount: (account: WalletReadAccount) => Promise<MemoSignerBundle>;
   groupTipRecipientAddress: string;
   messageInput: string;
   privateRewardTokenBalanceWei: bigint | null;
@@ -90,12 +96,14 @@ type UseDirectMessageActionsArgs = {
   tipping: boolean;
   uploadingImage: boolean;
   walletAddress: string;
+  walletReadAccounts: WalletReadAccount[];
 };
 
 export default function useDirectMessageActions({
   activeContact,
   activeContactRef,
   activeLinkedTradeContext,
+  activeMessages,
   activeSignerSource,
   browserWalletLiteMode,
   clearImageAttachmentStatus,
@@ -103,6 +111,7 @@ export default function useDirectMessageActions({
   directMessageMaxLength,
   encodeMemoForActiveSigner,
   getMemoSigner,
+  getMemoSignerForAccount,
   groupTipRecipientAddress,
   messageInput,
   privateRewardTokenBalanceWei,
@@ -135,11 +144,21 @@ export default function useDirectMessageActions({
   tipNativeBalanceWei,
   tipping,
   uploadingImage,
-  walletAddress
+  walletAddress,
+  walletReadAccounts
 }: UseDirectMessageActionsArgs) {
+  const resolveSelectedDirectAccount = (replyTarget?: ChatMessage | null) =>
+    resolveConversationActionAccount({
+      fallbackAddress: walletAddress,
+      messages: activeMessages,
+      readAccounts: walletReadAccounts,
+      replyTarget
+    });
+
   const sendDirectImageMessage = async (file: File) => {
     const targetContact = activeContact;
     const replyTarget = browserWalletLiteMode ? null : replyingToMessage;
+    const selectedAccount = resolveSelectedDirectAccount(replyTarget);
     await sendChatImageAttachment({
       clearImageAttachmentStatus,
       failureFallbackMessage: 'Failed to send image.',
@@ -147,7 +166,14 @@ export default function useDirectMessageActions({
       isTargetCurrent: () => activeContactRef.current === targetContact,
       kind: 'direct',
       missingTargetMessage: 'Select a contact first.',
-      sendImageTag: (imageTag) => sendMessage(imageTag, replyTarget),
+      sendImageTag: async (imageTag) => {
+        const txHash = await sendMessage(imageTag, replyTarget);
+        if (!txHash) {
+          throw new Error('Image message transaction was not confirmed.');
+        }
+        return txHash;
+      },
+      senderAddress: selectedAccount?.address ?? walletAddress,
       setError,
       setUploadingImage,
       showImageAttachmentStatus,
@@ -198,6 +224,14 @@ export default function useDirectMessageActions({
     const contactAddress = activeContact;
     const contactKey = contactAddress.toLowerCase();
     const replyTarget = browserWalletLiteMode ? null : overrideReplyTarget ?? replyingToMessage;
+    const selectedAccount = resolveSelectedDirectAccount(replyTarget);
+    if (!selectedAccount?.address) {
+      setError('Connect a wallet first.');
+      return;
+    }
+    const selectedAccountKey = selectedAccount.key || selectedAccount.address.toLowerCase();
+    const selectedEncodeMemo =
+      selectedAccount.role === 'owner' ? encodeCompactMemoPlaintext : encodeMemoForActiveSigner;
     const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
     const linkedTradeReference =
       typeof overrideMessageText === 'undefined' && activeLinkedTradeContext
@@ -212,7 +246,8 @@ export default function useDirectMessageActions({
       false
     );
     const plainTextWithMetadata = buildMessageWithTradeReferencePayload(plainTextWithReply, linkedTradeReference);
-    if (activeSignerSource === 'metamask') {
+    const selectedUsesBrowserPrompt = activeSignerSource === 'metamask' || selectedAccount.role === 'owner';
+    if (selectedUsesBrowserPrompt) {
       const promptEstimate = estimateChatWalletPromptLoad(plainTextWithMetadata, encodeCompactMemoPlaintext);
       if (promptEstimate.likelyMultipart) {
         const estimateSubject = linkedTradeReference
@@ -225,6 +260,7 @@ export default function useDirectMessageActions({
 
     const localMessageId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
+    let confirmedTxHash = '';
 
     try {
       sendingRef.current = true;
@@ -237,6 +273,9 @@ export default function useDirectMessageActions({
             id: localMessageId,
             direction: 'outgoing',
             text: plainText,
+            senderAddress: selectedAccount.address,
+            accountAddress: selectedAccount.address,
+            accountRole: selectedAccount.role,
             replyToMessageId: replyTarget?.id,
             replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
             replyToTxHash: replyTarget?.txHash,
@@ -250,7 +289,10 @@ export default function useDirectMessageActions({
       }));
 
       await runSharedWalletTransactionFlow(async () => {
-      const { signer, cacheKey } = await getMemoSigner();
+      const { signer, cacheKey } =
+        selectedAccountKey === requestedWalletKey
+          ? await getMemoSigner()
+          : await getMemoSignerForAccount(selectedAccount);
       const selector = await resolveSubmitSelector();
       const requiredFee = await resolveRequiredFeeForSend();
       const submittedTx = await submitDirectMemo({
@@ -259,8 +301,8 @@ export default function useDirectMessageActions({
         plainText: plainTextWithMetadata,
         selector,
         requiredFee,
-        encodeMemo: encodeMemoForActiveSigner,
-        allowMultipart: activeSignerSource !== 'metamask'
+        encodeMemo: selectedEncodeMemo,
+        allowMultipart: !selectedUsesBrowserPrompt
       });
       const submittedTxHash = submittedTx.txHash;
       if (currentWalletKeyRef.current !== requestedWalletKey) {
@@ -340,6 +382,11 @@ export default function useDirectMessageActions({
       ) {
         throw new Error('Transaction failed on-chain.');
       }
+      confirmedTxHash =
+        submittedTxHash ||
+        (typeof (receipt as { transactionHash?: unknown }).transactionHash === 'string'
+          ? (receipt as { transactionHash: string }).transactionHash
+          : '');
 
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -369,7 +416,7 @@ export default function useDirectMessageActions({
       }
       setReplyingToMessage(null);
       syncConversationHistory({ background: true, activeContactOnly: true }).catch(() => {});
-      if (activeSignerSource === 'burner') {
+      if (activeSignerSource === 'burner' && selectedAccount.isActionAccount) {
         setTopUpMetricsNonce((previous) => previous + 1);
       }
       });
@@ -394,13 +441,14 @@ export default function useDirectMessageActions({
         )
       }));
 
-      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
+      if (activeSignerSource === 'burner' && selectedAccount.isActionAccount && hasInsufficientFundsError(message)) {
         requestChainWhisperFundingAfterError(message);
       }
     } finally {
       sendingRef.current = false;
       setSending(false);
     }
+    return confirmedTxHash || undefined;
   };
 
   const preflightDirectMessageSend = useCallback(

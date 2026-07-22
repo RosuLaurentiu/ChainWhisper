@@ -247,9 +247,11 @@ export default function TradeRecurringComposerPanel({
               verifyUrl={tradeRequestVerifyUrl}
             />
           </label>
-          {recurringComposerCarbonPriceReference ? (
+          {recurringBaseToken && recurringQuoteToken ? (
             <div className="p2p-recurring-pair-price">
               {renderCarbonPriceReference(recurringComposerCarbonPriceReference, {
+                fallbackLabel: 'Carbon price unavailable',
+                fallbackTitle: 'Flip recurring price ratio',
                 onToggle: () => setRecurringPriceDisplayInverted((value) => !value),
                 pressed: recurringPriceDisplayInverted
               })}

@@ -7,7 +7,7 @@ export const LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS = '0x922B39AC9FD4ccb5E5a9de0694
 export const LEGACY_SWAP_VAULT_CONTRACT_ADDRESS = '0x5C35CD3659991051F4Fb04F2C4120643739b7BdE';
 export const WHISPER_SHIELD_ENABLED = true;
 export const WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED = true;
-export const WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS = '0xbd5392eccAAad850853D3c3654579d4E40E89efc';
+export const WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS = '0x3bCeA2eD4b31107eF877899416dC97213bdc2809';
 export const FALLBACK_REWARD_TOKEN_SYMBOL = 'WISP';
 export const FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL = 'p.WISP';
 export const FALLBACK_REWARD_TOKEN_DECIMALS = 6;
@@ -450,9 +450,31 @@ export const PRIVATE_ERC20_TOKEN_VNEXT_ABI = [
 ] as const;
 
 export const WISP_PRIVACY_BRIDGE_CONTRACT_ABI = [
+  'error InvalidAmount()',
+  'error DepositDisabled()',
+  'error AddressBlacklisted(address account)',
+  'error AmountBelowMinimum(uint256 minimum)',
+  'error AmountAboveMaximum(uint256 maximum)',
+  'error InsufficientFee(uint256 requiredFee,uint256 providedFee)',
+  'error InsufficientReserve(uint256 requested,uint256 available)',
+  'error UnexpectedTransferBalance(uint256 expected,uint256 received)',
+  'error EnforcedPause()',
   'function deposit(uint256 amount) payable',
+  'function deposit(uint256 amount,uint256 cotiOracleTimestamp,uint256 tokenOracleTimestamp) payable',
   'function withdraw(uint256 amount) payable',
+  'function withdraw(uint256 amount,uint256 cotiOracleTimestamp,uint256 tokenOracleTimestamp) payable',
   'function nativeCotiFee() view returns (uint256)',
+  'function token() view returns (address)',
+  'function privateToken() view returns (address)',
+  'function paused() view returns (bool)',
+  'function isDepositEnabled() view returns (bool)',
+  'function minDepositAmount() view returns (uint256)',
+  'function maxDepositAmount() view returns (uint256)',
+  'function minWithdrawAmount() view returns (uint256)',
+  'function maxWithdrawAmount() view returns (uint256)',
+  'function blacklisted(address account) view returns (bool)',
+  'function estimateDepositFee(uint256 tokenAmount) view returns (uint256 fee,uint256 cotiLastUpdated,uint256 tokenLastUpdated,uint256 blockTimestamp)',
+  'function estimateWithdrawFee(uint256 tokenAmount) view returns (uint256 fee,uint256 cotiLastUpdated,uint256 tokenLastUpdated,uint256 blockTimestamp)',
   'function feeRecipient() view returns (address)',
   'function publicReserve() view returns (uint256)'
 ] as const;

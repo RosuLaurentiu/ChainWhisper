@@ -7,6 +7,8 @@ import {
   type SwapDirection,
   type SwapFeeModeSelection
 } from '../../lib/appShared';
+import type { PrivacyDirection } from '../../lib/privacyPortal';
+import type { ChainWhisperWispStage } from '../../lib/wispPrivacyBridge';
 import { resolveStateUpdate, type StateUpdate } from '../../shared/state/storeUtils';
 
 type TokenToolsState = {
@@ -32,8 +34,15 @@ type TokenToolsState = {
   swapFeeModeSelection: SwapFeeModeSelection;
   swapDirection: SwapDirection;
   swapAmountInput: string;
+  privacyAmountInput: string;
   swappingTokens: boolean;
+  swapActionStage: ChainWhisperWispStage | null;
   swapStatusMessage: string;
+  swapTransactionHash: string;
+  selectedPrivacyPairId: string;
+  privacyDirection: PrivacyDirection;
+  privacyTokenSearch: string;
+  privacyRecoveryOpen: boolean;
   loadingTopUpQuote: boolean;
   loadingRewardBalances: boolean;
   setTopUpAmountWei: (next: StateUpdate<bigint | null>) => void;
@@ -58,8 +67,15 @@ type TokenToolsState = {
   setSwapFeeModeSelection: (next: StateUpdate<SwapFeeModeSelection>) => void;
   setSwapDirection: (next: StateUpdate<SwapDirection>) => void;
   setSwapAmountInput: (next: StateUpdate<string>) => void;
+  setPrivacyAmountInput: (next: StateUpdate<string>) => void;
   setSwappingTokens: (next: StateUpdate<boolean>) => void;
+  setSwapActionStage: (next: StateUpdate<ChainWhisperWispStage | null>) => void;
   setSwapStatusMessage: (next: StateUpdate<string>) => void;
+  setSwapTransactionHash: (next: StateUpdate<string>) => void;
+  setSelectedPrivacyPairId: (next: StateUpdate<string>) => void;
+  setPrivacyDirection: (next: StateUpdate<PrivacyDirection>) => void;
+  setPrivacyTokenSearch: (next: StateUpdate<string>) => void;
+  setPrivacyRecoveryOpen: (next: StateUpdate<boolean>) => void;
   setLoadingTopUpQuote: (next: StateUpdate<boolean>) => void;
   setLoadingRewardBalances: (next: StateUpdate<boolean>) => void;
 };
@@ -87,8 +103,15 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   swapFeeModeSelection: 'coti',
   swapDirection: 'shield',
   swapAmountInput: '',
+  privacyAmountInput: '',
   swappingTokens: false,
+  swapActionStage: null,
   swapStatusMessage: '',
+  swapTransactionHash: '',
+  selectedPrivacyPairId: 'coti',
+  privacyDirection: 'public-to-private',
+  privacyTokenSearch: '',
+  privacyRecoveryOpen: false,
   loadingTopUpQuote: false,
   loadingRewardBalances: false,
   setTopUpAmountWei: (next) => set((state) => ({ topUpAmountWei: resolveStateUpdate(next, state.topUpAmountWei) })),
@@ -137,9 +160,29 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   setSwapDirection: (next) => set((state) => ({ swapDirection: resolveStateUpdate(next, state.swapDirection) })),
   setSwapAmountInput: (next) =>
     set((state) => ({ swapAmountInput: resolveStateUpdate(next, state.swapAmountInput) })),
+  setPrivacyAmountInput: (next) =>
+    set((state) => ({ privacyAmountInput: resolveStateUpdate(next, state.privacyAmountInput) })),
   setSwappingTokens: (next) => set((state) => ({ swappingTokens: resolveStateUpdate(next, state.swappingTokens) })),
+  setSwapActionStage: (next) =>
+    set((state) => ({ swapActionStage: resolveStateUpdate(next, state.swapActionStage) })),
   setSwapStatusMessage: (next) =>
     set((state) => ({ swapStatusMessage: resolveStateUpdate(next, state.swapStatusMessage) })),
+  setSwapTransactionHash: (next) =>
+    set((state) => ({ swapTransactionHash: resolveStateUpdate(next, state.swapTransactionHash) })),
+  setSelectedPrivacyPairId: (next) =>
+    set((state) => ({
+      selectedPrivacyPairId: resolveStateUpdate(next, state.selectedPrivacyPairId),
+      privacyAmountInput: ''
+    })),
+  setPrivacyDirection: (next) =>
+    set((state) => ({
+      privacyDirection: resolveStateUpdate(next, state.privacyDirection),
+      privacyAmountInput: ''
+    })),
+  setPrivacyTokenSearch: (next) =>
+    set((state) => ({ privacyTokenSearch: resolveStateUpdate(next, state.privacyTokenSearch) })),
+  setPrivacyRecoveryOpen: (next) =>
+    set((state) => ({ privacyRecoveryOpen: resolveStateUpdate(next, state.privacyRecoveryOpen) })),
   setLoadingTopUpQuote: (next) =>
     set((state) => ({ loadingTopUpQuote: resolveStateUpdate(next, state.loadingTopUpQuote) })),
   setLoadingRewardBalances: (next) =>

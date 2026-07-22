@@ -193,7 +193,7 @@ describe('wallet header labels', () => {
     ).toBe('connect-btn wallet-inline-btn p2p-wallet-address copied');
   });
 
-  it('uses the same blocked-action labels for WISP Portal and wallet panels', () => {
+  it('uses the same blocked-action labels for Privacy Portal and wallet panels', () => {
     expect(resolveWalletBlockedActionLabel({ hasAesReady: false, onCotiNetwork: false, walletAddress: '' })).toBe(
       'Connect wallet'
     );

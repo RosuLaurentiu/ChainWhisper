@@ -1,25 +1,18 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
-  WISP_BRIDGE_PRIVATE_TOKEN_APPROVAL_GAS_LIMIT,
-  WISP_BRIDGE_WRITE_GAS_LIMIT
-} from '../../app/appHelpers';
-import {
-  ERC20_TOKEN_ABI,
   formatCotiAmount,
   formatTokenAmount,
   getProviderErrorMessage,
   isWalletAddress,
   LEGACY_SWAP_VAULT_CONTRACT_ABI,
   loadCotiEthersModule,
-  mergeOnboardInfo,
+  mergeOnboardInfoByAddress,
   parseTokenAmountInput,
-  PRIVATE_ERC20_TOKEN_VNEXT_ABI,
-  PRIVATE_REWARD_TOKEN_ADDRESS,
-  REWARD_TOKEN_ADDRESS,
-  WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
   type SwapDirection
 } from '../../lib/appShared';
+import { executeChainWhisperWispBridgeConversion } from '../../lib/appChain';
+import { normalizePrivacyPortalError } from '../../lib/privacyPortal';
 import { useTokenToolsStore } from './tokenToolsStore';
 
 type MemoSignerBundle = {
@@ -30,9 +23,9 @@ type MemoSignerBundle = {
 type UseTokenSwapActionsArgs = {
   activeSwapVaultContractAddress: string;
   currentSwapDirectionEnabled: boolean;
-  getMemoSigner: () => Promise<MemoSignerBundle>;
+  getSwapSigner: () => Promise<MemoSignerBundle>;
   onCotiNetwork: boolean;
-  runSharedWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
+  runSwapTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setError: Dispatch<SetStateAction<string>>;
   setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
   setTopUpMetricsNonce: Dispatch<SetStateAction<number>>;
@@ -51,9 +44,9 @@ type UseTokenSwapActionsArgs = {
 export default function useTokenSwapActions({
   activeSwapVaultContractAddress,
   currentSwapDirectionEnabled,
-  getMemoSigner,
+  getSwapSigner,
   onCotiNetwork,
-  runSharedWalletTransactionFlow,
+  runSwapTransactionFlow,
   setError,
   setSessionOnboardInfo,
   setTopUpMetricsNonce,
@@ -70,15 +63,19 @@ export default function useTokenSwapActions({
 }: UseTokenSwapActionsArgs) {
   const {
     setSwapAmountInput,
+    setSwapActionStage,
     setSwapFeeWei,
     setSwapStatusMessage,
     setSwapTokenFeeAmount,
+    setSwapTransactionHash,
     setSwappingTokens
   } = useTokenToolsStore();
 
   const swapRewardTokens = useCallback(async () => {
     setError('');
     setSwapStatusMessage('');
+    setSwapActionStage(null);
+    setSwapTransactionHash('');
 
     const requestedWalletAddress = walletAddress.trim();
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
@@ -92,7 +89,7 @@ export default function useTokenSwapActions({
     if (!currentSwapDirectionEnabled || !activeSwapVaultContractAddress) {
       setError(
         swapDirection === 'shield'
-          ? 'WISP Portal deposits are paused.'
+          ? 'New WISP shielding is unavailable.'
           : swapDirection === 'unshield'
             ? 'Current pWISP unshield is paused.'
             : 'Legacy unshield is unavailable.'
@@ -106,6 +103,7 @@ export default function useTokenSwapActions({
       return;
     }
     const isLegacyUnshield = swapDirection === 'legacy-unshield';
+    const isBridgeUnshield = swapDirection === 'unshield';
     if (swapDirection !== 'shield') {
       if (swapPrivateRewardTokenBalanceWei === null) {
         setError(`Unable to read ${swapPrivateRewardTokenSymbol} balance. Wait for balances to load and try again.`);
@@ -125,106 +123,90 @@ export default function useTokenSwapActions({
 
     try {
       setSwappingTokens(true);
-      await runSharedWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        const cotiEthers = await loadCotiEthersModule();
-        const swapContract = new cotiEthers.Contract(
-          activeSwapVaultContractAddress,
-          isLegacyUnshield ? LEGACY_SWAP_VAULT_CONTRACT_ABI : WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
-          signer
-        );
-        const publicTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, signer);
-        const [resolvedSwapFeeWei, resolvedSwapTokenFee] = (await Promise.all([
-          swapFeeWei !== null
-            ? Promise.resolve(swapFeeWei)
-            : isLegacyUnshield
-              ? swapContract.swapFeeWei()
-              : swapContract.nativeCotiFee(),
-          isLegacyUnshield
-            ? swapTokenFeeAmount !== null
-              ? Promise.resolve(swapTokenFeeAmount)
-              : swapContract.getTokenFeeAmount()
-            : Promise.resolve(0n)
-        ])) as [bigint, bigint];
-        setSwapFeeWei(resolvedSwapFeeWei);
-        setSwapTokenFeeAmount(resolvedSwapTokenFee);
+      await runSwapTransactionFlow(async () => {
+        const { signer, cacheKey } = await getSwapSigner();
+        let resolvedSwapFeeWei = 0n;
 
-        if (swapDirection === 'shield') {
-          const allowance = (await publicTokenContract.allowance(
-            requestedWalletAddress,
-            activeSwapVaultContractAddress
-          )) as bigint;
-          if (allowance < amount) {
-            const approveTx = await publicTokenContract.approve(activeSwapVaultContractAddress, amount);
-            await approveTx.wait();
-          }
-          const tx = await swapContract.deposit(amount, {
-            value: resolvedSwapFeeWei,
-            gasLimit: WISP_BRIDGE_WRITE_GAS_LIMIT
+        if (!isLegacyUnshield) {
+          const result = await executeChainWhisperWispBridgeConversion({
+            signer,
+            ownerAddress: requestedWalletAddress,
+            direction: isBridgeUnshield ? 'unshield' : 'shield',
+            amountWei: amount,
+            onProgress: setSwapActionStage
           });
-          await tx.wait();
-        } else if (swapDirection === 'unshield') {
-          const privateTokenContract = new cotiEthers.Contract(
-            PRIVATE_REWARD_TOKEN_ADDRESS,
-            PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+          resolvedSwapFeeWei = result.quote.feeWei;
+          setSwapFeeWei(resolvedSwapFeeWei);
+          setSwapTokenFeeAmount(0n);
+          setSwapTransactionHash(result.transactionHash);
+        } else {
+          setSwapActionStage('validating');
+          const cotiEthers = await loadCotiEthersModule();
+          const swapContract = new cotiEthers.Contract(
+            activeSwapVaultContractAddress,
+            LEGACY_SWAP_VAULT_CONTRACT_ABI,
             signer
           );
-          const approvePrivatePlainAmount = privateTokenContract['approve(address,uint256)'] as (
-            spender: string,
-            amountWei: bigint,
-            overrides?: { gasLimit: bigint }
-          ) => Promise<{ wait: () => Promise<unknown> }>;
-          const resetApprovalTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, 0n, {
-            gasLimit: WISP_BRIDGE_PRIVATE_TOKEN_APPROVAL_GAS_LIMIT
-          });
-          await resetApprovalTx.wait();
-          const approveTx = await approvePrivatePlainAmount(activeSwapVaultContractAddress, amount, {
-            gasLimit: WISP_BRIDGE_PRIVATE_TOKEN_APPROVAL_GAS_LIMIT
-          });
-          await approveTx.wait();
-          const tx = await swapContract.withdraw(amount, {
-            value: resolvedSwapFeeWei,
-            gasLimit: WISP_BRIDGE_WRITE_GAS_LIMIT
-          });
-          await tx.wait();
-        } else {
-          const tx = await swapContract.unshieldWithMode(amount, 1, { value: resolvedSwapFeeWei });
-          await tx.wait();
+          setSwapActionStage('refreshing-quote');
+          const [legacyFeeWei, legacyTokenFee] = (await Promise.all([
+            swapFeeWei !== null ? Promise.resolve(swapFeeWei) : swapContract.swapFeeWei(),
+            swapTokenFeeAmount !== null
+              ? Promise.resolve(swapTokenFeeAmount)
+              : swapContract.getTokenFeeAmount()
+          ])) as [bigint, bigint];
+          resolvedSwapFeeWei = legacyFeeWei;
+          setSwapFeeWei(legacyFeeWei);
+          setSwapTokenFeeAmount(legacyTokenFee);
+          setSwapActionStage('awaiting-conversion');
+          const transaction = await swapContract.unshieldWithMode(amount, 1, { value: legacyFeeWei });
+          setSwapTransactionHash(String(transaction.hash ?? ''));
+          setSwapActionStage('confirming');
+          const receipt = await transaction.wait();
+          if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
+            throw new Error('Legacy pWISP recovery failed on-chain.');
+          }
+          setSwapActionStage('complete');
         }
 
-        const nextOnboardInfo = signer.getUserOnboardInfo();
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-        }));
+        try {
+          const nextOnboardInfo = signer.getUserOnboardInfo();
+          setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, nextOnboardInfo));
+        } catch {
+          // The confirmed receipt remains authoritative if the selected account changes afterward.
+        }
 
         setSwapAmountInput('');
         setTopUpMetricsNonce((previous) => previous + 1);
-        const swapDirectionStatus = swapDirection === 'shield' ? 'Swapped to private token.' : 'Swapped to public token.';
+        const swapDirectionStatus = swapDirection === 'shield' ? 'Moved WISP to pWISP.' : 'Moved pWISP to WISP.';
         const feeStatus =
           resolvedSwapFeeWei > 0n ? ` Fee paid with COTI (${formatCotiAmount(resolvedSwapFeeWei)} COTI).` : '';
-        const legacyStatus = isLegacyUnshield ? ' Legacy route used for old pWISP.' : '';
+        const legacyStatus = isLegacyUnshield ? ' Legacy recovery route used.' : '';
         setSwapStatusMessage(`${swapDirectionStatus}${feeStatus}${legacyStatus}`);
       });
     } catch (swapError) {
-      const message = getProviderErrorMessage(swapError, 'Swap failed.');
+      const message = isLegacyUnshield
+        ? getProviderErrorMessage(swapError, 'Legacy pWISP recovery failed.')
+        : normalizePrivacyPortalError(swapError).message;
       setError(message);
       setSwapStatusMessage('');
+      setSwapActionStage(null);
     } finally {
       setSwappingTokens(false);
     }
   }, [
     activeSwapVaultContractAddress,
     currentSwapDirectionEnabled,
-    getMemoSigner,
+    getSwapSigner,
     onCotiNetwork,
-    runSharedWalletTransactionFlow,
+    runSwapTransactionFlow,
     setError,
     setSessionOnboardInfo,
     setSwapAmountInput,
+    setSwapActionStage,
     setSwapFeeWei,
     setSwapStatusMessage,
     setSwapTokenFeeAmount,
+    setSwapTransactionHash,
     setSwappingTokens,
     setTopUpMetricsNonce,
     swapAmountInput,

@@ -1,7 +1,7 @@
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-chat-image-blob-id, x-chat-image-mime, x-chat-image-plaintext-size, x-chat-image-kind',
+    'authorization, x-client-info, apikey, content-type, x-chat-image-blob-id, x-chat-image-mime, x-chat-image-owner, x-chat-image-plaintext-size, x-chat-image-kind',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 } as const;
 

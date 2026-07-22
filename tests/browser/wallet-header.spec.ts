@@ -11,7 +11,7 @@ test.describe('route wallet header policy', () => {
       await expect(appMenu).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Chat' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'OTC Desk' })).toBeVisible();
-      await expect(appMenu.getByRole('button', { name: 'WISP Portal' })).toBeVisible();
+      await expect(appMenu.getByRole('button', { name: 'Privacy Portal' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Treasury' })).toBeVisible();
       await expect(appMenu.getByRole('button', { name: 'Home' })).toHaveCount(0);
     }
@@ -31,7 +31,7 @@ test.describe('route wallet header policy', () => {
     await expect(page.locator(walletPanel)).toHaveCount(0);
   });
 
-  test('links Home and WISP Portal to the COTI Privacy Portal', async ({ page }) => {
+  test('links Home and Privacy Portal to the official COTI Privacy Portal', async ({ page }) => {
     await page.goto('/');
     const headerPrivacyLink = page.getByRole('link', { name: 'Privacy Portal' });
     await expect(headerPrivacyLink).toBeVisible();
@@ -39,7 +39,7 @@ test.describe('route wallet header policy', () => {
     await expect(headerPrivacyLink).toHaveAttribute('target', '_blank');
 
     await page.goto('/portal');
-    const portalPrivacyButton = page.getByRole('link', { name: 'Open COTI Privacy Portal' });
+    const portalPrivacyButton = page.getByRole('link', { name: /Official COTI contracts/i });
     await expect(portalPrivacyButton).toBeVisible();
     await expect(portalPrivacyButton).toHaveAttribute('href', cotiPrivacyPortalUrl);
     await expect(portalPrivacyButton).toHaveAttribute('target', '_blank');
@@ -55,7 +55,7 @@ test.describe('route wallet header policy', () => {
     await expect(page.locator('.sound-toggle-btn')).toHaveCount(0);
   });
 
-  test('shows Chat and WISP Portal app-wallet controls', async ({ page }) => {
+  test('shows Chat and Privacy Portal app-wallet controls', async ({ page }) => {
     await page.goto('/chat');
     await expect(page.locator(walletPanel)).toBeVisible();
     await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();

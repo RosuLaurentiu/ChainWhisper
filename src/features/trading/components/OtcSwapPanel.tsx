@@ -213,19 +213,15 @@ export default function OtcSwapPanel({
           <div className="p2p-swap-quote-grid" aria-label="Price comparison">
             <div className="p2p-swap-quote-card">
               <span>Carbon reference</span>
-              {carbonReference ? (
-                <button
-                  type="button"
-                  className="p2p-swap-price-toggle"
-                  onClick={onTogglePriceInverted}
-                  aria-pressed={priceDisplayInverted}
-                  title={carbonReference.title}
-                >
-                  {carbonReference.label}
-                </button>
-              ) : (
-                <strong>Carbon price unavailable</strong>
-              )}
+              <button
+                type="button"
+                className="p2p-swap-price-toggle"
+                onClick={onTogglePriceInverted}
+                aria-pressed={priceDisplayInverted}
+                title={carbonReference?.title ?? 'Flip ChainWhisper price ratio'}
+              >
+                {carbonReference?.label ?? 'Carbon price unavailable'}
+              </button>
             </div>
             <div className="p2p-swap-quote-card p2p-swap-quote-card-chainwhisper">
               <span>ChainWhisper</span>

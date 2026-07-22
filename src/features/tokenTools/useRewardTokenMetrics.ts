@@ -17,7 +17,7 @@ import {
   LEGACY_SWAP_VAULT_CONTRACT_ABI,
   loadCotiEthersModule,
   loadCotiReadProvider,
-  mergeOnboardInfo,
+  mergeOnboardInfoByAddress,
   normalizeTokenDecimals,
   PRIVATE_ERC20_TOKEN_VNEXT_ABI,
   PRIVATE_REWARD_TOKEN_ADDRESS,
@@ -33,6 +33,27 @@ type MemoSignerBundle = {
   cacheKey: string;
   signer: Wallet | JsonRpcSigner;
 };
+
+type ContractCall = (...args: unknown[]) => Promise<unknown>;
+type ContractLike = Record<string, unknown>;
+
+async function readWispBridgeFee(contract: ContractLike, withdraw = false): Promise<bigint | null> {
+  const selector = withdraw ? 'estimateWithdrawFee(uint256)' : 'estimateDepositFee(uint256)';
+  const quoteMethod = contract[selector] as ContractCall | undefined;
+  const quote = quoteMethod ? await quoteMethod.call(contract, 1n).catch(() => null) : null;
+  const quotedFee = Array.isArray(quote)
+    ? quote[0]
+    : quote && typeof quote === 'object' && 0 in quote
+      ? (quote as { 0?: unknown })[0]
+      : null;
+  if (typeof quotedFee === 'bigint') {
+    return quotedFee;
+  }
+
+  const nativeFeeMethod = contract.nativeCotiFee as ContractCall | undefined;
+  const fallback = nativeFeeMethod ? await nativeFeeMethod.call(contract).catch(() => null) : null;
+  return typeof fallback === 'bigint' ? fallback : null;
+}
 
 type UseRewardTokenMetricsArgs = {
   activeSwapVaultContractAddress: string;
@@ -104,6 +125,7 @@ export default function useRewardTokenMetrics({
         const readProvider = await loadCotiReadProvider(true);
         const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
         const isLegacyUnshield = swapDirection === 'legacy-unshield';
+        const isBridgeUnshield = swapDirection === 'unshield';
         const swapVaultContract = new cotiEthers.Contract(
           activeSwapVaultContractAddress,
           isLegacyUnshield ? LEGACY_SWAP_VAULT_CONTRACT_ABI : WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
@@ -115,7 +137,7 @@ export default function useRewardTokenMetrics({
             rewardTokenContract.decimals().catch(() => null),
             isLegacyUnshield
               ? swapVaultContract.swapFeeWei().catch(() => null)
-              : swapVaultContract.nativeCotiFee().catch(() => null),
+              : readWispBridgeFee(swapVaultContract as ContractLike, isBridgeUnshield),
             isLegacyUnshield ? swapVaultContract.getTokenFeeAmount().catch(() => null) : Promise.resolve(0n),
             rewardTokenContract.balanceOf(activeSwapVaultContractAddress).catch(() => null)
           ]);
@@ -173,8 +195,6 @@ export default function useRewardTokenMetrics({
       setRewardsCallerAllowed(null);
       setRewardsPublicPerInteractionWei(null);
       setRewardsPublicReserveWei(null);
-      setSwapFeeWei(null);
-      setSwapTokenFeeAmount(null);
       setLoadingRewardBalances(false);
       return;
     }
@@ -193,6 +213,7 @@ export default function useRewardTokenMetrics({
         );
         const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
         const isLegacyUnshield = swapDirection === 'legacy-unshield';
+        const isBridgeUnshield = swapDirection === 'unshield';
         const swapVaultContract =
           currentSwapDirectionEnabled && activeSwapVaultContractAddress
             ? new cotiEthers.Contract(
@@ -231,7 +252,7 @@ export default function useRewardTokenMetrics({
           swapVaultContract
             ? isLegacyUnshield
               ? swapVaultContract.swapFeeWei().catch(() => null)
-              : swapVaultContract.nativeCotiFee().catch(() => null)
+              : readWispBridgeFee(swapVaultContract as ContractLike, isBridgeUnshield)
             : Promise.resolve(null),
           swapVaultContract
             ? isLegacyUnshield
@@ -256,10 +277,7 @@ export default function useRewardTokenMetrics({
             ).catch(() => null);
 
             const nextOnboardInfo = signer.getUserOnboardInfo();
-            setSessionOnboardInfo((previous) => ({
-              ...previous,
-              [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-            }));
+            setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, nextOnboardInfo));
           } catch {
             privateBalanceWei = null;
             legacyPrivateBalanceWei = null;

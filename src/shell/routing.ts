@@ -38,7 +38,7 @@ export const getTitleForAppPage = (page: AppPage): string =>
     : page === 'chat'
       ? 'Encrypted Chat | ChainWhisper'
       : page === 'swap'
-        ? 'WISP Portal | ChainWhisper'
+        ? 'Privacy Portal | ChainWhisper'
         : page === 'trades'
           ? 'OTC Desk | ChainWhisper'
           : 'Treasury Data | ChainWhisper';

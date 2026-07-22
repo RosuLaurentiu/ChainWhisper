@@ -55,22 +55,21 @@ export default function AppHeader({
   const shouldShowSoundToggle = showSoundToggle && typeof onToggleSound === 'function' && typeof soundEnabled === 'boolean';
   const desktopAppNavigationControl = !isMobileNav ? appNavigationControl : null;
   const mobileAppNavigationControl = isMobileNav ? appNavigationControl : null;
-  const hasMobileAppNavigation = Boolean(mobileAppNavigationControl);
   const desktopNavigationControl = !isMobileNav ? navigationControl : null;
   const mobileNavigationControl = isMobileNav ? navigationControl : null;
   const desktopWalletControl = !isMobileNav ? walletControl : null;
   const mobileWalletControl = isMobileNav ? walletControl : null;
-  const mobileAppMenuToggleControl =
-    hasMobileAppNavigation ? (
+  const mobileLinksMenuToggleControl =
+    isMobileNav && hasNavLinks ? (
       <button
         ref={mobileMenuButtonRef}
         type="button"
         className="header-icon-btn top-header-app-menu-toggle"
         aria-expanded={mobileLinksOpen}
-        aria-controls="top-app-navigation-mobile"
+        aria-controls="top-navigation-links-mobile"
         onClick={onToggleMobileLinksOpen}
-        aria-label={mobileLinksOpen ? 'Hide app menu' : 'Show app menu'}
-        title={mobileLinksOpen ? 'Hide app menu' : 'Show app menu'}
+        aria-label={mobileLinksOpen ? 'Close ecosystem links menu' : 'Open ecosystem links menu'}
+        title={mobileLinksOpen ? 'Close ecosystem links menu' : 'Open ecosystem links menu'}
       >
         <svg
           viewBox="0 0 24 24"
@@ -128,10 +127,10 @@ export default function AppHeader({
     </button>
   ) : null;
   const brandActionContent =
-    brandActions || mobileAppMenuToggleControl || soundToggleControl ? (
+    brandActions || mobileLinksMenuToggleControl || soundToggleControl ? (
       <>
         {brandActions}
-        {mobileAppMenuToggleControl}
+        {mobileLinksMenuToggleControl}
         {soundToggleControl}
       </>
     ) : null;
@@ -159,7 +158,7 @@ export default function AppHeader({
   }${mobileWalletControl ? ' top-header-has-mobile-wallet' : ''}`;
 
   useEffect(() => {
-    if (!isMobileNav || (!hasNavLinks && !hasMobileAppNavigation) || !mobileLinksOpen) {
+    if (!isMobileNav || !hasNavLinks || !mobileLinksOpen) {
       return undefined;
     }
 
@@ -175,7 +174,7 @@ export default function AppHeader({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [hasMobileAppNavigation, hasNavLinks, isMobileNav, mobileLinksOpen, onCloseMobileLinks]);
+  }, [hasNavLinks, isMobileNav, mobileLinksOpen, onCloseMobileLinks]);
 
   return (
     <header className={headerClassName} ref={headerRef}>
@@ -205,19 +204,6 @@ export default function AppHeader({
 
           {showRightActions ? <div className="top-header-actions">{headerActions}</div> : null}
 
-          {isMobileNav && hasNavLinks && !hasMobileAppNavigation ? (
-            <button
-              ref={mobileMenuButtonRef}
-              type="button"
-              className="top-header-menu-btn"
-              aria-expanded={mobileLinksOpen}
-              aria-controls="top-navigation-links-mobile"
-              onClick={onToggleMobileLinksOpen}
-              aria-label={mobileLinksOpen ? 'Close ecosystem links menu' : 'Open ecosystem links menu'}
-            >
-              {'\u2630'}
-            </button>
-          ) : null}
         </div>
       </div>
 
@@ -233,11 +219,7 @@ export default function AppHeader({
       ) : null}
 
       {mobileAppNavigationControl ? (
-        <div
-          id="top-app-navigation-mobile"
-          className={mobileLinksOpen ? 'top-header-mobile-app-nav open' : 'top-header-mobile-app-nav'}
-          hidden={!mobileLinksOpen}
-        >
+        <div id="top-app-navigation-mobile" className="top-header-mobile-app-nav">
           {mobileAppNavigationControl}
         </div>
       ) : null}

@@ -7,6 +7,7 @@ import {
   encodeCompactMemoPlaintext,
   encodeMemoPlaintext,
   mergeOnboardInfo,
+  mergeOnboardInfoByAddress,
   parseChatMessagePayload,
   type Eip1193Provider,
   type SignerSource
@@ -121,10 +122,7 @@ export default function useChatMemoCrypto({
         throw new Error('Privacy unlock unavailable. Complete the privacy unlock signature once.');
       }
 
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
-      }));
+      setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, onboardInfo));
       setWalletAesHealth(walletAddress, buildWalletAesHealthState({
         status: 'ready-unverified',
         walletAddress
@@ -157,10 +155,7 @@ export default function useChatMemoCrypto({
       throw new Error('Privacy unlock unavailable in this session. Please sign to enable encryption.');
     }
 
-    setSessionOnboardInfo((previous) => ({
-      ...previous,
-      [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
-    }));
+    setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, onboardInfo));
 
     setOnboardStatus('Privacy ready');
 

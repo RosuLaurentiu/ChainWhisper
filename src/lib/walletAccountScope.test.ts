@@ -3,9 +3,11 @@ import {
   buildWalletAccountScope,
   buildWalletReadAccountsKey,
   getTradeAccountPerspectiveAddress,
+  resolveConversationActionAccount,
   resolveTradeActionWalletAddress
 } from './walletAccountScope';
-import type { TradeSnapshot } from './appShared';
+import { mergeOnboardInfoByAddress, type TradeSnapshot } from './appShared';
+import type { OnboardInfo } from '@coti-io/coti-ethers';
 
 const owner = '0x1111111111111111111111111111111111111111';
 const chainwhisper = '0x2222222222222222222222222222222222222222';
@@ -24,6 +26,32 @@ const trade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot =>
     status: 'open',
     ...overrides
   }) as TradeSnapshot;
+
+describe('mergeOnboardInfoByAddress', () => {
+  it('returns the same state object when onboard info is unchanged', () => {
+    const previous = {
+      [owner]: {
+        aesKey: 'aes',
+        rsaKey: {
+          privateKey: new Uint8Array([1, 2, 3]),
+          publicKey: new Uint8Array([4, 5, 6])
+        },
+        txHash: '0xabc'
+      } as OnboardInfo
+    };
+
+    const next = mergeOnboardInfoByAddress(previous, owner, {
+      aesKey: 'aes',
+      rsaKey: {
+        privateKey: new Uint8Array([1, 2, 3]),
+        publicKey: new Uint8Array([4, 5, 6])
+      },
+      txHash: '0xabc'
+    } as OnboardInfo);
+
+    expect(next).toBe(previous);
+  });
+});
 
 describe('buildWalletAccountScope', () => {
   it('resolves one ChainWhisper action account and one owner read account', () => {
@@ -73,6 +101,60 @@ describe('buildWalletReadAccountsKey', () => {
     expect(buildWalletReadAccountsKey(scope.readAccounts, { includePrivateReadState: true })).toBe(
       `chainwhisper:${chainwhisper}:r|owner:${owner}:l`
     );
+  });
+});
+
+describe('resolveConversationActionAccount', () => {
+  it('keeps new or mixed conversations on the ChainWhisper account', () => {
+    const scope = buildWalletAccountScope({
+      actionAddress: chainwhisper,
+      actionAesReady: true,
+      ownerAddress: owner,
+      ownerAesReady: true
+    });
+
+    expect(
+      resolveConversationActionAccount({
+        fallbackAddress: chainwhisper,
+        messages: [{ accountAddress: owner, accountRole: 'owner' }, { accountAddress: chainwhisper, accountRole: 'chainwhisper' }],
+        readAccounts: scope.readAccounts
+      })?.address
+    ).toBe(chainwhisper);
+  });
+
+  it('uses owner only for owner-scoped incoming chats', () => {
+    const scope = buildWalletAccountScope({
+      actionAddress: chainwhisper,
+      actionAesReady: true,
+      ownerAddress: owner,
+      ownerAesReady: true
+    });
+
+    expect(
+      resolveConversationActionAccount({
+        fallbackAddress: chainwhisper,
+        messages: [{ accountAddress: owner, accountRole: 'owner' }],
+        readAccounts: scope.readAccounts
+      })?.address
+    ).toBe(owner);
+  });
+
+  it('uses the replied-to message account when it is known', () => {
+    const scope = buildWalletAccountScope({
+      actionAddress: chainwhisper,
+      actionAesReady: true,
+      ownerAddress: owner,
+      ownerAesReady: true
+    });
+
+    expect(
+      resolveConversationActionAccount({
+        fallbackAddress: chainwhisper,
+        messages: [{ accountAddress: chainwhisper, accountRole: 'chainwhisper' }],
+        readAccounts: scope.readAccounts,
+        replyTarget: { accountAddress: owner, accountRole: 'owner' }
+      })?.address
+    ).toBe(owner);
   });
 });
 

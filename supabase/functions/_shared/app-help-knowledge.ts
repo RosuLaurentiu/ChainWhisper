@@ -156,15 +156,15 @@ export const APP_HELP_TOPICS: readonly AppHelpTopic[] = [
     keywords: ['wisp', 'fee', 'payment', 'confirmation', 'retry', 'paid', 'trade agent']
   },
   {
-    id: 'wisp-portal',
-    title: 'WISP Portal',
+    id: 'privacy-portal',
+    title: 'Privacy Portal',
     answer:
-      'WISP Portal swaps WISP between public and private forms. It uses the shared wallet and privacy session. Unlock privacy to view or move private WISP.',
+      'Privacy Portal converts seven supported COTI assets between public and private forms through verified official bridges. WISP is also listed as a clearly separated ChainWhisper recovery-only token for current or legacy pWISP withdrawals; new WISP shielding is unavailable.',
     route: '/portal',
-    routeLabel: 'WISP Portal',
-    questions: ['What does the WISP Portal do?'],
-    phrases: ['what does the wisp portal do', 'wisp portal swap', 'shield or unshield wisp', 'private wisp token'],
-    keywords: ['wisp portal', 'portal', 'shield', 'unshield', 'private wisp', 'reward token', 'swap vault']
+    routeLabel: 'Privacy Portal',
+    questions: ['What does the Privacy Portal do?'],
+    phrases: ['what does the privacy portal do', 'privacy portal swap', 'public to private tokens', 'private token bridge', 'wisp recovery'],
+    keywords: ['privacy portal', 'portal', 'private token', 'bridge', 'coti', 'wisp recovery', 'unshield']
   },
   {
     id: 'treasury-data',
@@ -365,7 +365,7 @@ const QUICK_TOPIC_IDS = [
   'privacy-and-recovery',
   'otc-navigation',
   'private-liquidity',
-  'wisp-portal'
+  'privacy-portal'
 ] as const;
 
 export const APP_HELP_QUICK_QUESTIONS = QUICK_TOPIC_IDS.map((topicId) => {

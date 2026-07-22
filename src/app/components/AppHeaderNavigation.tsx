@@ -9,7 +9,7 @@ import type { AppPage } from '../../shell/routing';
 const APP_NAV_ITEMS: Array<{ page: AppPage; label: string; onPrefetch?: () => void }> = [
   { page: 'chat', label: 'Chat', onPrefetch: preloadChatPage },
   { page: 'trades', label: 'OTC Desk', onPrefetch: preloadTradesPage },
-  { page: 'swap', label: 'WISP Portal', onPrefetch: preloadSwapPage },
+  { page: 'swap', label: 'Privacy Portal', onPrefetch: preloadSwapPage },
   { page: 'treasury', label: 'Treasury', onPrefetch: preloadTreasuryPage }
 ];
 

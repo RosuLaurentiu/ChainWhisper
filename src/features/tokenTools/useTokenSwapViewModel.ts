@@ -1,6 +1,17 @@
 import { useEffect, useMemo } from 'react';
 import type { SwapDirection } from '../../lib/appShared';
-import { deriveTokenSwapView } from './tokenSwapView';
+import type {
+  PrivacyDirection,
+  PrivacyPortalConversionStage,
+  PrivacyPortalPairMetrics,
+  PrivacyPortalQuote,
+  PrivacyTokenPair
+} from '../../lib/privacyPortal';
+import {
+  derivePrivacyPortalView,
+  deriveTokenSwapView,
+  resolveTokenSwapDirectionFallback
+} from './tokenSwapView';
 
 type UseTokenSwapViewModelArgs = {
   hasAesReady: boolean;
@@ -82,16 +93,13 @@ export default function useTokenSwapViewModel({
   );
 
   useEffect(() => {
-    if (view.currentSwapDirectionEnabled) {
-      return;
-    }
-    const fallbackSwapDirection = view.canShieldTokens
-      ? 'shield'
-      : view.canUnshieldTokens
-        ? 'unshield'
-        : view.canLegacyUnshieldTokens
-          ? 'legacy-unshield'
-          : swapDirection;
+    const fallbackSwapDirection = resolveTokenSwapDirectionFallback({
+      canLegacyUnshieldTokens: view.canLegacyUnshieldTokens,
+      canShieldTokens: view.canShieldTokens,
+      canUnshieldTokens: view.canUnshieldTokens,
+      currentSwapDirectionEnabled: view.currentSwapDirectionEnabled,
+      swapDirection
+    });
     if (fallbackSwapDirection !== swapDirection) {
       setSwapDirection(fallbackSwapDirection);
     }
@@ -106,3 +114,56 @@ export default function useTokenSwapViewModel({
 
   return view;
 }
+
+type UsePrivacyPortalViewModelArgs = {
+  actionStage: PrivacyPortalConversionStage | null;
+  amountInput: string;
+  direction: PrivacyDirection;
+  hasAesReady: boolean;
+  loading: boolean;
+  metrics: PrivacyPortalPairMetrics | null;
+  onCotiNetwork: boolean;
+  pair: PrivacyTokenPair;
+  quote: PrivacyPortalQuote | null;
+  walletAddress: string;
+};
+
+export const usePrivacyPortalViewModel = ({
+  actionStage,
+  amountInput,
+  direction,
+  hasAesReady,
+  loading,
+  metrics,
+  onCotiNetwork,
+  pair,
+  quote,
+  walletAddress
+}: UsePrivacyPortalViewModelArgs) =>
+  useMemo(
+    () =>
+      derivePrivacyPortalView({
+        actionStage,
+        amountInput,
+        direction,
+        hasAesReady,
+        loading,
+        metrics,
+        onCotiNetwork,
+        pair,
+        quote,
+        walletAddress
+      }),
+    [
+      actionStage,
+      amountInput,
+      direction,
+      hasAesReady,
+      loading,
+      metrics,
+      onCotiNetwork,
+      pair,
+      quote,
+      walletAddress
+    ]
+  );

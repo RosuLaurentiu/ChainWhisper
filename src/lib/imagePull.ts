@@ -22,6 +22,7 @@ export const ALLOWED_IMAGE_MIME_TYPES = new Set([
 export const CHAT_IMAGE_FILE_ACCEPT = Array.from(ALLOWED_IMAGE_MIME_TYPES).join(',');
 
 const CHAT_IMAGES_BUCKET = 'chat-images';
+const WALLET_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 
 type ImageFileLike = Pick<File, 'size' | 'type'>;
 
@@ -194,23 +195,49 @@ async function uploadEncryptedBlob(
   encrypted: ArrayBuffer,
   mime: string,
   sizeBytes: number,
-  kind: ChatImageConversationKind
+  kind: ChatImageConversationKind,
+  ownerAddress: string
 ): Promise<void> {
+  const normalizedOwnerAddress = ownerAddress.trim().toLowerCase();
+  if (!WALLET_ADDRESS_REGEX.test(normalizedOwnerAddress)) {
+    throw new Error('Connect a wallet before sending an image.');
+  }
+
   const { getSupabaseBrowserClient } = await import('./supabaseClient');
   const supabase = getSupabaseBrowserClient();
   const encryptedBlob = new Blob([encrypted], { type: 'application/octet-stream' });
-  const { error } = await supabase.storage.from(CHAT_IMAGES_BUCKET).upload(blobId, encryptedBlob, {
-    cacheControl: '86400',
-    contentType: 'application/octet-stream',
-    upsert: false,
-    metadata: {
-      mime,
-      plaintextSize: String(sizeBytes),
-      conversationKind: kind
+  const { error } = await supabase.functions.invoke('chat-image-upload', {
+    body: encryptedBlob,
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-chat-image-blob-id': blobId,
+      'x-chat-image-kind': kind,
+      'x-chat-image-mime': mime,
+      'x-chat-image-owner': normalizedOwnerAddress,
+      'x-chat-image-plaintext-size': String(sizeBytes)
     }
   });
   if (error) {
     throw new Error(getStorageUploadErrorMessage(error));
+  }
+}
+
+export async function confirmChatImageUpload(blobId: string, txHash: string): Promise<void> {
+  const normalizedBlobId = blobId.trim().toLowerCase();
+  const normalizedTxHash = txHash.trim().toLowerCase();
+  if (!normalizedBlobId || !normalizedTxHash) {
+    throw new Error('Image message transaction is unavailable.');
+  }
+
+  const { getSupabaseBrowserClient } = await import('./supabaseClient');
+  const { error } = await getSupabaseBrowserClient().functions.invoke('chat-image-confirm', {
+    body: {
+      blobId: normalizedBlobId,
+      txHash: normalizedTxHash
+    }
+  });
+  if (error) {
+    throw new Error('Image message was sent, but the server could not confirm image retention.');
   }
 }
 
@@ -250,11 +277,12 @@ async function encryptImageToBlob(file: File): Promise<{ blobId: string; encrypt
 
 export async function createEncryptedImageTagFromFile(
   file: File,
-  kind: ChatImageConversationKind
+  kind: ChatImageConversationKind,
+  ownerAddress: string
 ): Promise<string> {
   const { mime, sizeBytes } = validateImageFile(file);
   const { blobId, encrypted, keyHex, ivHex } = await encryptImageToBlob(file);
-  await uploadEncryptedBlob(blobId, encrypted, mime, sizeBytes, kind);
+  await uploadEncryptedBlob(blobId, encrypted, mime, sizeBytes, kind, ownerAddress);
   return `[img:${blobId}|${keyHex}:${ivHex}|${sizeBytes}|${mime}]`;
 }
 

@@ -478,15 +478,11 @@
   }
 
   .top-header .top-header-mobile-app-nav {
-    display: none;
+    display: block;
     border-top: 1px solid rgba(74, 64, 112, 0.42);
     background: rgba(10, 10, 18, 0.82);
     overflow-x: auto;
     scrollbar-width: none;
-  }
-
-  .top-header .top-header-mobile-app-nav.open {
-    display: block;
   }
 
   .top-header .top-header-mobile-app-nav::-webkit-scrollbar {

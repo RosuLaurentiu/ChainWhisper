@@ -1,5 +1,5 @@
 import type { OnboardInfo } from '@coti-io/coti-ethers';
-import { createElement } from 'react';
+import { createElement, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
@@ -10,6 +10,7 @@ import {
 import { buildWalletAccountScope } from '../../../lib/walletAccountScope';
 import {
   mergeOnboardInfoByAddress,
+  renderCarbonPriceReference,
   resolveVisibleHiddenTermAmounts
 } from './P2PTradingPage.helpers';
 import {
@@ -164,6 +165,28 @@ describe('resolveVisibleHiddenTermAmounts', () => {
         requestUnitAmount: 20n
       })
     ).toEqual({ offerAmount: 10n, requestAmount: 40n });
+  });
+});
+
+describe('renderCarbonPriceReference', () => {
+  it('keeps the price flip control when Carbon has no reference price', () => {
+    const onToggle = () => {};
+    const node = renderCarbonPriceReference(null, {
+      fallbackLabel: 'Carbon price unavailable',
+      fallbackTitle: 'Flip ChainWhisper price ratio',
+      onToggle,
+      pressed: true
+    });
+
+    expect(isValidElement(node)).toBe(true);
+    if (!isValidElement<{ children: string; onClick: () => void; title: string; 'aria-pressed': boolean }>(node)) {
+      throw new Error('Expected a React element');
+    }
+    expect(node.type).toBe('button');
+    expect(node.props.children).toBe('Carbon price unavailable');
+    expect(node.props.title).toBe('Flip ChainWhisper price ratio');
+    expect(node.props.onClick).toBe(onToggle);
+    expect(node.props['aria-pressed']).toBe(true);
   });
 });
 

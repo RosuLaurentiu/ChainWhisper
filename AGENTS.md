@@ -9,7 +9,7 @@ Current route behavior is intentional:
 - `/` - canonical Home launcher and product overview. `/home` is an alias. No wallet controls shown here.
 - `/chat` - main encrypted messaging app for direct chat and group chat. `/messages` and `/messenger` are aliases.
 - `/otc` and nested `/otc/...` - canonical OTC trading app. `/trades` and `/otcdesk` are legacy aliases that must keep resolving.
-- `/portal` - canonical WISP Portal private-token swap app. `/swap`, `/shield`, and `/whisper-shield` are aliases.
+- `/portal` - canonical Privacy Portal app for official COTI public/private token bridges. `/swap`, `/shield`, and `/whisper-shield` are aliases.
 - `/treasury` - Treasury Data analytics. `/treasury-data` is an alias. No wallet interaction needed.
 
 ## Navigation Rules
@@ -18,11 +18,11 @@ Current route behavior is intentional:
 - Top-level route ownership lives in `src/shell/routing.ts`; update `src/shell/routing.test.ts` with any route change.
 - Launching apps from Home must navigate in-place with client-side routing. Do not open a new browser tab or trigger a full page reload because wallet session state should remain available across apps.
 - Generate new OTC links under `/otc...`; keep old `/trades...` and `/otcdesk...` routes working as aliases.
-- Internal trade links should preserve app context whenever practical. Trade terminal links opened from WISP Portal may keep that terminal open when moving into OTC Desk; do not make the reverse direction preserve terminal state unless explicitly requested.
+- Internal trade links should preserve app context whenever practical. Trade terminal links opened from Privacy Portal may keep that terminal open when moving into OTC Desk; do not make the reverse direction preserve terminal state unless explicitly requested.
 
 ## Wallet Rules
 
-- Chat, OTC Trading, and WISP Portal use the owner-first ChainWhisper account model: MetaMask/browser wallet is owner login, recovery, funding, and fallback; the ChainWhisper account is the default chat/trading/swap account.
+- Chat, OTC Trading, and Privacy Portal use the owner-first ChainWhisper account model: MetaMask/browser wallet is owner login, recovery, funding, and fallback; the ChainWhisper account is the default chat/trading/conversion account.
 - Connect/recover the owner-linked ChainWhisper account automatically after owner privacy is available. If no account exists, show create/import/recover setup actions.
 - Home and Treasury are non-interactive pages and must not show wallet controls.
 - Shared rule: if a wallet is already connected when navigating between apps, keep it connected. Do not disconnect or re-prompt.
@@ -96,11 +96,12 @@ Current route behavior is intentional:
 - Reads smart contract data and live feed data; no write operations.
 - Only improvements warranted here are design/UX, readability, data presentation, performance, or test coverage unless explicitly requested.
 
-## WISP Portal
+## Privacy Portal
 
 - Canonical route: `/portal`.
 - Alias routes: `/swap`, `/shield`, `/whisper-shield`.
-- Purpose: swap reward tokens into private token form and back through the reward swap vault.
+- Purpose: convert the seven verified COTI Mainnet token pairs through their official privacy bridges.
+- WISP is the first item in the same unified selector as the official pairs. Its current WISP/pWISP bridge supports both directions and must remain labeled as ChainWhisper-provided rather than an official COTI bridge. Keep the old-pWISP exit collapsed at the bottom as a legacy, unshield-only compatibility option.
 - Keep changes scoped. Do not turn this into a separate wallet/session model.
 
 ## Design Guidelines
@@ -121,7 +122,7 @@ Current route behavior is intentional:
 - `src/features/groups/` - group chat components, group UI Zustand store, group sync orchestration, group admin actions, invites, member events, and group message sends.
 - `src/features/trading/` - OTC Trading page, Trade/Desk/Agent/Orders surfaces, Trade Agent panel/session/actions, terminal renderers, order cards, swap quote state, balances, recurring order actions, and in-chat trade actions.
 - `src/features/wallet/` - shared wallet header, ChainWhisper account vault, owner onboarding/recovery, account funds modals, readiness, wallet preference, and transfer flows.
-- `src/features/tokenTools/` - WISP Portal swap page, token swap view model/actions, reward-token metrics, and token-tool UI Zustand store.
+- `src/features/tokenTools/` - Privacy Portal page/state/actions, WISP recovery view/actions, reward-token metrics, and token-tool UI Zustand store.
 - `src/features/treasury/` - Treasury Data page plus live/feed/on-chain data loading and normalization.
 - `src/shared/` - reusable cross-feature UI, chat rendering pieces, modal/clipboard/virtual-scroll hooks, block timestamp cache, and small state utilities.
 - `src/shell/` - top-level route parsing, canonical route paths, aliases, realtime status helpers, and browser-location sync.
@@ -131,13 +132,13 @@ Current route behavior is intentional:
 
 ## Important Source Map
 
-- `src/app/lazyRoutes.tsx` - lazy-loaded page modules and preload hooks for Chat, OTC Trading, WISP Portal, and Treasury.
+- `src/app/lazyRoutes.tsx` - lazy-loaded page modules and preload hooks for Chat, OTC Trading, Privacy Portal, and Treasury.
 - `src/features/trading/components/P2PTradingPage.tsx` - standalone OTC trading app. Internal P2P/terminal names still exist; user-facing language should be Trade, Desk, Agent, Orders, and Order.
 - `src/features/trading/components/TradeAgentPanel.tsx`, `src/features/trading/hooks/useP2PTradeAgentSession.ts`, `src/features/trading/hooks/useP2PTradeAgentActions.ts`, and `src/lib/tradeAgent.ts` - Trade Agent UI, session state, paid action handling, response normalization, fees, and action labels.
 - `src/features/trading/components/TradeComposerPanel.tsx` - shared trade create/edit form.
 - `src/features/trading/components/TradeOfferCard.tsx` - trade card used for shared links and in-chat rendering.
 - `src/features/treasury/components/TreasuryPage.tsx` and `src/features/treasury/treasuryData.ts` - Treasury Data presentation and data normalization.
-- `src/features/tokenTools/components/TokenSwapPage.tsx` - WISP Portal swap presentation.
+- `src/features/tokenTools/components/TokenSwapPage.tsx` - unified Privacy Portal conversion presentation, including the ChainWhisper WISP pair and collapsed legacy recovery UI.
 - `src/shared/components/chat/MessageTextWithLinks.tsx` and `src/lib/chatLinks.ts` - shared chat link rendering and internal app-link interception.
 - `src/lib/appShared.ts` - compatibility barrel for `src/lib/appShared/core.ts`, `src/lib/appShared/parsers.ts`, and `src/lib/appShared/burnerVault.ts`. Prefer direct imports when touching nearby code.
 - `src/features/wallet/hooks/useWalletOnboarding.ts` and `src/features/wallet/hooks/useBurnerWallet.ts` - reusable owner wallet, ChainWhisper account, recovery, and onboarding hooks.
@@ -161,7 +162,7 @@ Current route behavior is intentional:
 - Wallet controls belong in the universal top header.
 - Keep trade display semantics consistent through `tradePerspective`, `tradeComposer`, `tradeLinks`, `appChain`, and `TradeOfferCard`.
 - All new contract reads should go through `appChain.ts`; all new trade writes should go through `tradeActions.ts`.
-- Each app keeps its own layout and density: chat is a workspace, OTC is an order desk, Treasury is analytics, Home is a launcher, and WISP Portal is a compact swap tool.
+- Each app keeps its own layout and density: chat is a workspace, OTC is an order desk, Treasury is analytics, Home is a launcher, and Privacy Portal is a focused DEX-style conversion tool.
 - Keep `src/styles.css` as the import hub; add route/domain CSS under `src/styles/` when a split reduces risk.
 - For private orders, never key state only by numeric trade ID. Include the escrow contract address.
 - For private tokens, respect 6-decimal formatting where token metadata resolves that way, and require AES before displaying private balances or maker-only private progress.

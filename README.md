@@ -1,6 +1,6 @@
 # ChainWhisper
 
-ChainWhisper is a browser-based COTI Mainnet app hub for private coordination. It combines a Home launcher, encrypted wallet chat, OTC escrow trading, the WISP Portal private-token swap page, and Treasury Data analytics in one Vite + React + TypeScript project.
+ChainWhisper is a browser-based COTI Mainnet app hub for private coordination. It combines a Home launcher, encrypted wallet chat, OTC escrow trading, the Privacy Portal token-conversion page, and Treasury Data analytics in one Vite + React + TypeScript project.
 
 The app uses `@coti-io/coti-ethers`, `viem`, Recharts, Zustand, TanStack Virtual, and Supabase Storage for temporary encrypted chat image blobs.
 
@@ -13,12 +13,12 @@ Current route behavior is intentional and should stay as-is unless a future chan
 - `/` - canonical Home launcher. `/home` is accepted as an alias.
 - `/chat` - ChainWhisper Chat. `/messages` and `/messenger` are accepted aliases.
 - `/otc` and `/otc/...` - canonical OTC trading workspace. `/trades` and `/otcdesk` routes are accepted as legacy aliases.
-- `/portal` - canonical WISP Portal swap page. `/swap`, `/shield`, and `/whisper-shield` are accepted aliases.
+- `/portal` - canonical Privacy Portal conversion page. `/swap`, `/shield`, and `/whisper-shield` are accepted aliases.
 - `/treasury` - Treasury Data. `/treasury-data` is accepted as an alias.
 
 ### Home (`/`)
 
-The home page launches the app suite and routes in-place to Chat, OTC Trading, WISP Portal, and Treasury Data so the wallet session can remain available across pages.
+The home page launches the app suite and routes in-place to Chat, OTC Trading, Privacy Portal, and Treasury Data so the wallet session can remain available across pages.
 
 Home does not show wallet controls because it is a launcher rather than an interactive contract page.
 
@@ -66,11 +66,14 @@ The standalone OTC app is an escrow trading workspace backed by COTI contracts. 
 - The shared top-header wallet control uses the ChainWhisper account for new trade actions by default. Owner-wallet fallback is reserved for funding/recovery and existing owner-targeted actions where the contract requires the owner address.
 - The trading UI can show combined owner + ChainWhisper balances, move missing funds before important trade actions, preserve a small COTI fee reserve, and confirm maker actions with app-styled modals.
 
-### WISP Portal (`/portal`)
+### Privacy Portal (`/portal`)
 
-WISP Portal is a compact reward-token swap page. `/swap`, `/shield`, and `/whisper-shield` remain aliases.
+Privacy Portal is a DEX-style interface for COTI's official public/private token bridges. `/swap`, `/shield`, and `/whisper-shield` remain aliases.
 
-- Swaps reward tokens into private token form and back through the reward swap vault.
+- Converts COTI, WETH, WBTC, USDT, USDC.e, WADA, and gCOTI between public and private form through their verified COTI Mainnet bridges.
+- Reads live bridge status, limits, liquidity, amount-specific fees, and oracle timestamps before every conversion.
+- Lists WISP first in the same asset selector as the seven official pairs. The WISP card supports the current ChainWhisper WISP/pWISP bridge in both directions and clearly identifies it as ChainWhisper-provided rather than an official COTI bridge.
+- Keeps the old-pWISP-to-WISP compatibility exit collapsed at the bottom as a legacy recovery option; that legacy route cannot create private WISP.
 - Uses the same owner-first ChainWhisper account header as Chat and OTC.
 - Keeps account setup, recovery, backup, move/withdraw funds, and advanced owner-wallet fallback actions in the wallet menu.
 
@@ -94,7 +97,7 @@ The app is organized around feature ownership, with shared code kept small and e
 - `src/features/groups/` owns group panels, group actions, group sync orchestration, invites, member/admin flows, and group-specific Zustand state.
 - `src/features/trading/` owns the OTC page, Trade/Desk/Agent/Orders surfaces, terminal rendering, Trade Agent panel/session/action hooks, trading balances, swap quote state, recurring order actions, and in-chat trade orchestration.
 - `src/features/wallet/` owns the shared wallet header, ChainWhisper account vault, owner recovery/onboarding, funds modals, wallet readiness, and account transfer flows.
-- `src/features/tokenTools/` owns WISP Portal swap view state/actions and token-tool UI state.
+- `src/features/tokenTools/` owns Privacy Portal conversion state/actions, WISP recovery, and token-tool UI state.
 - `src/features/treasury/` owns Treasury Data UI and data normalization.
 - `src/shared/` owns reusable cross-feature UI, chat rendering pieces, modal/clipboard/virtual-scroll hooks, and small state utilities.
 - `src/shell/` owns route parsing, canonical route aliases, realtime status helpers, and browser-location sync.
@@ -121,7 +124,7 @@ See `AGENTS.md` for future-maintenance rules. Local proposal and research notes 
 - Reward token: `0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8`.
 - Private reward token: `0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a`.
 - Verified ecosystem token presets live in `src/lib/appHelpers.ts`; they include public token `0xe8C3D2248a578e9E020C2447f8148e606090fbfe` and private token `0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213`.
-- WISP Privacy Bridge: `0xbd5392eccAAad850853D3c3654579d4E40E89efc`.
+- WISP Privacy Bridge: `0x3bCeA2eD4b31107eF877899416dC97213bdc2809`.
 - Legacy reward swap vault: `0x5C35CD3659991051F4Fb04F2C4120643739b7BdE`.
 - Treasury snapshot store default: `0x25975eda0B0Ef3E5D86787Cb89D0A3468C17Bece`.
 
@@ -149,6 +152,7 @@ Other scripts:
 - `npm run test:chat` - run focused chat/parsing/sync tests.
 - `npm run build` - type-check and produce a production build.
 - `npm run test:browser` - run focused Playwright smoke tests for route wallet policy and mobile layout guardrails.
+- `npm run verify:privacy-contracts` - verify the seven checked-in bridge pairs against COTI Mainnet.
 - `npm run preview` - preview the built app.
 
 Before finishing changes, run:
@@ -157,7 +161,19 @@ Before finishing changes, run:
 npm run lint
 npm run test
 npm run build
+npm run test:browser
+npm run verify:privacy-contracts
 ```
+
+### Authorized mainnet smoke checklist
+
+Do not run funded mainnet conversions as part of automated release checks. With explicit authorization and deliberately small amounts, verify each item below for both the default ChainWhisper account and the Owner account:
+
+1. Native round trip: COTI to p.COTI, then p.COTI back to COTI. Confirm the amount-specific fee, reserved gas on Max, both wallet confirmations, final receipt, explorer link, and refreshed public/private balances.
+2. ERC-20 round trip: choose one of WETH, WBTC, USDT, USDC.e, WADA, or gCOTI; convert public to private and back. Confirm exact approval behavior, the fresh post-approval quote, unchanged token output, native COTI fee, final receipt, explorer link, and refreshed balances.
+3. Account isolation: before each round trip, confirm the selected account address and private-balance unlock state. Switch accounts only after the sequence is complete and verify the other account's form, quote, and balances are independent.
+4. WISP round trip: select WISP, confirm its ChainWhisper provenance label, shield a small WISP amount to current pWISP, then unshield it and verify both explorer links.
+5. Legacy isolation: expand the collapsed legacy option at the bottom, confirm it only offers old pWISP to WISP, and verify it is not described as an official COTI bridge.
 
 Run `npm run test:browser` as well for route, wallet-header, layout, or other visible UI changes.
 

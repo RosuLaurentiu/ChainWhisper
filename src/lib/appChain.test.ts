@@ -19,7 +19,8 @@ import {
   RECURRING_OTC_CONTRACT_ADDRESS,
   REWARD_TOKEN_ADDRESS,
   TRADE_ESCROW_CONTRACT_ABI,
-  TRADE_ESCROW_CONTRACT_ADDRESS
+  TRADE_ESCROW_CONTRACT_ADDRESS,
+  WISP_PRIVACY_BRIDGE_CONTRACT_ABI
 } from './appShared/core';
 import { loadCotiEthersModule } from './appShared';
 import {
@@ -355,6 +356,19 @@ describe('trade escrow contract resolution', () => {
     expect(privateTokenInterface.getFunction('transferGT')?.selector).toBeTruthy();
     expect(privateTokenInterface.getFunction('transferFromGT')?.selector).toBeTruthy();
     expect(privateTokenInterface.getFunction('transferAndCall(address,uint256,bytes)')?.selector).toBeTruthy();
+  });
+
+  it('keeps the WISP privacy bridge fixed-fee ABI parseable by coti-ethers', async () => {
+    const cotiEthers = await loadCotiEthersModule();
+    const bridgeInterface = new cotiEthers.Interface(WISP_PRIVACY_BRIDGE_CONTRACT_ABI);
+
+    expect(bridgeInterface.getFunction('deposit(uint256)')?.selector).toBeTruthy();
+    expect(bridgeInterface.getFunction('deposit(uint256,uint256,uint256)')?.selector).toBeTruthy();
+    expect(bridgeInterface.getFunction('withdraw(uint256)')?.selector).toBeTruthy();
+    expect(bridgeInterface.getFunction('withdraw(uint256,uint256,uint256)')?.selector).toBeTruthy();
+    expect(bridgeInterface.getFunction('estimateDepositFee')?.selector).toBeTruthy();
+    expect(bridgeInterface.getFunction('estimateWithdrawFee')?.selector).toBeTruthy();
+    expect(bridgeInterface.getFunction('nativeCotiFee')?.selector).toBeTruthy();
   });
 
   it('blocks private token fills when the wallet balance cannot be decrypted', () => {

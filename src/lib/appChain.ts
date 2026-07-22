@@ -29,6 +29,7 @@ import {
   TIP_NATIVE_TOKEN_SYMBOL,
   TRADE_ESCROW_CONTRACT_ABI,
   TRADE_ESCROW_CONTRACT_ADDRESS,
+  WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
   isWalletAddress,
   loadCotiEthersModule,
   loadCotiReadProvider,
@@ -52,10 +53,55 @@ import {
   type TradeRecoveryPayload
 } from './tradeRecoveryPayload';
 import { normalizeAccessHash } from './tradeLinks';
+import {
+  COTI_PRIVACY_PORTAL_CHAIN_ID,
+  PRIVACY_ERC20_BRIDGE_ABI,
+  PRIVACY_NATIVE_BRIDGE_ABI,
+  applyPrivacyPortalGasMargin,
+  buildPrivacyPortalQuoteKey,
+  buildPrivacyPortalTransactionCall,
+  calculatePrivacyPortalGasReserveWei,
+  getPrivacyTokenPair,
+  getPrivacyPortalAmountIssueMessage,
+  normalizePrivacyPortalError,
+  resolvePrivacyPortalAllowanceRequirement,
+  resolvePrivacyPortalReceiveAmount,
+  selectPrivacyPortalNativeGasProbeAmount,
+  validatePrivacyPortalAmount,
+  type PrivacyDirection,
+  type PrivacyPairVerification,
+  type PrivacyPairVerificationIssue,
+  type PrivacyPortalConversionResult,
+  type PrivacyPortalConversionStage,
+  type PrivacyPortalGasEstimate,
+  type PrivacyPortalLimits,
+  type PrivacyPortalPairMetrics,
+  type PrivacyPortalQuote,
+  type PrivacyTokenPair
+} from './privacyPortal';
+import {
+  CHAINWHISPER_WISP_BRIDGE_PAIR,
+  buildChainWhisperWispCall,
+  buildChainWhisperWispQuoteKey,
+  getChainWhisperWispAmountIssueMessage,
+  getChainWhisperWispStatusIssueMessage,
+  parseChainWhisperWispFeeQuote,
+  resolveChainWhisperWispPublicApprovalAmounts,
+  submitAndConfirmChainWhisperWispConversion,
+  validateChainWhisperWispAmount,
+  validateChainWhisperWispStatus,
+  type ChainWhisperWispConversionResult,
+  type ChainWhisperWispDirection,
+  type ChainWhisperWispQuote,
+  type ChainWhisperWispStage,
+  type ChainWhisperWispVerification,
+  type ChainWhisperWispVerificationIssue
+} from './wispPrivacyBridge';
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const ACCEPTED_TX_LOOKBACK_BLOCKS = 100_000;
 const PRIVATE_TOKEN_WRITE_GAS_LIMIT = 6_000_000n;
+const PRIVATE_TOKEN_EXACT_APPROVAL_GAS_FALLBACK = 12_000_000n;
 
 type PrivateTokenSpendReadinessInput = {
   requiredAmountWei: bigint;
@@ -175,14 +221,30 @@ export type PrivateTokenAllowanceWritePlan =
       method: 'increaseAllowance';
       amountWei: bigint;
       selectorSignature: 'increaseAllowance(address,((uint256,uint256),bytes))';
+    }
+  | {
+      method: 'decreaseAllowance';
+      amountWei: bigint;
+      selectorSignature: 'decreaseAllowance(address,((uint256,uint256),bytes))';
     };
+
+export type PrivateTokenAllowancePolicy = 'maximum' | 'exact';
 
 export const resolvePrivateTokenAllowanceWritePlan = (
   currentAllowanceWei: bigint | null,
-  maxAllowanceWei = PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+  targetAllowanceWei = PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+  policy: PrivateTokenAllowancePolicy = 'maximum'
 ): PrivateTokenAllowanceWritePlan => {
+  if (policy === 'exact' && currentAllowanceWei !== null && currentAllowanceWei > targetAllowanceWei) {
+    return {
+      method: 'decreaseAllowance',
+      amountWei: currentAllowanceWei - targetAllowanceWei,
+      selectorSignature: 'decreaseAllowance(address,((uint256,uint256),bytes))'
+    };
+  }
+
   if (currentAllowanceWei !== null && currentAllowanceWei > 0n) {
-    const addedValue = maxAllowanceWei > currentAllowanceWei ? maxAllowanceWei - currentAllowanceWei : 0n;
+    const addedValue = targetAllowanceWei > currentAllowanceWei ? targetAllowanceWei - currentAllowanceWei : 0n;
     return {
       method: 'increaseAllowance',
       amountWei: addedValue,
@@ -192,7 +254,7 @@ export const resolvePrivateTokenAllowanceWritePlan = (
 
   return {
     method: 'approve',
-    amountWei: maxAllowanceWei,
+    amountWei: targetAllowanceWei,
     selectorSignature: 'approve(address,((uint256,uint256),bytes))'
   };
 };
@@ -2975,11 +3037,13 @@ const approvePrivateTokenSpender = async (
   signer: Wallet | JsonRpcSigner,
   tokenAddress: string,
   spenderAddress: string,
-  currentAllowanceWei: bigint | null = null
+  currentAllowanceWei: bigint | null = null,
+  targetAllowanceWei = PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE,
+  policy: PrivateTokenAllowancePolicy = 'maximum'
 ): Promise<void> => {
   const cotiEthers = await loadCotiEthersModule();
   const privateTokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
-  const writePlan = resolvePrivateTokenAllowanceWritePlan(currentAllowanceWei);
+  const writePlan = resolvePrivateTokenAllowanceWritePlan(currentAllowanceWei, targetAllowanceWei, policy);
   if (writePlan.amountWei <= 0n) {
     return;
   }
@@ -2999,19 +3063,162 @@ const approvePrivateTokenSpender = async (
     tokenKind: 'private-erc20'
   });
   const privateTokenWriteContract = new cotiEthers.Contract(tokenAddress, PRIVATE_ERC20_TOKEN_VNEXT_ABI, signer);
-  const writeFunction = privateTokenWriteContract[writePlan.selectorSignature] as (
-    spender: string,
-    value: unknown,
-    overrides: { gasLimit: bigint }
-  ) => Promise<{ wait: () => Promise<unknown> }>;
+  const writeFunction = privateTokenWriteContract[writePlan.selectorSignature] as {
+    (
+      spender: string,
+      value: unknown,
+      overrides: { gasLimit: bigint }
+    ): Promise<{ wait: () => Promise<unknown> }>;
+    estimateGas: (spender: string, value: unknown) => Promise<bigint>;
+  };
+  let approvalGasLimit = PRIVATE_TOKEN_WRITE_GAS_LIMIT;
+  if (policy === 'exact') {
+    const estimatedGas = await writeFunction.estimateGas(spenderAddress, encryptedApproval).catch(() => null);
+    approvalGasLimit =
+      typeof estimatedGas === 'bigint' && estimatedGas > 0n
+        ? applyPrivacyPortalGasMargin(estimatedGas)
+        : PRIVATE_TOKEN_EXACT_APPROVAL_GAS_FALLBACK;
+    const latestBlock = await signer.provider?.getBlock('latest').catch(() => null) ?? null;
+    if (!latestBlock || approvalGasLimit > latestBlock.gasLimit) {
+      throw new Error('The private token approval gas limit exceeds the current COTI block gas limit.');
+    }
+  }
   const approveTx =
     await writeFunction(spenderAddress, encryptedApproval, {
-      gasLimit: PRIVATE_TOKEN_WRITE_GAS_LIMIT
+      gasLimit: approvalGasLimit
     });
   const approveReceipt = await approveTx.wait();
   if (!approveReceipt || Number((approveReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
     throw new Error('Private token approval failed on-chain.');
   }
+};
+
+export const ensurePrivateTokenExactAllowance = async ({
+  signer,
+  ownerAddress,
+  tokenAddress,
+  spenderAddress,
+  targetAmountWei,
+  tokenSymbol = 'private token',
+  onBeforeApproval
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  tokenAddress: string;
+  spenderAddress: string;
+  targetAmountWei: bigint;
+  tokenSymbol?: string;
+  onBeforeApproval?: () => void;
+}): Promise<boolean> => {
+  if (!isWalletAddress(ownerAddress) || !isWalletAddress(tokenAddress) || !isWalletAddress(spenderAddress)) {
+    throw new Error('The private token approval addresses are invalid.');
+  }
+  if (targetAmountWei <= 0n || targetAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE) {
+    throw new Error('Private token approval amount is outside the supported plaintext range.');
+  }
+
+  await assertPrivacyPortalSignerState(signer, ownerAddress);
+  const encryptionSetupWrote = await ensurePrivateTokenAccountEncryptionAddress({
+    signer,
+    tokenAddress,
+    ownerAddress,
+    tokenSymbol
+  });
+  if (encryptionSetupWrote) {
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+  }
+
+  let currentAllowanceWei = await readPrivateTokenAllowanceWei(
+    tokenAddress,
+    ownerAddress,
+    spenderAddress,
+    signer,
+    true
+  );
+  let allowanceRecoveryWrote = false;
+  let approvalProgressStarted = false;
+  const notifyBeforeApproval = () => {
+    if (!approvalProgressStarted) {
+      approvalProgressStarted = true;
+      onBeforeApproval?.();
+    }
+  };
+  if (currentAllowanceWei === null) {
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    notifyBeforeApproval();
+    const cotiEthers = await loadCotiEthersModule();
+    const privateTokenWriteContract = new cotiEthers.Contract(
+      tokenAddress,
+      PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+      signer
+    );
+    const reencryptAllowance = privateTokenWriteContract['reencryptAllowance(address,bool)'] as {
+      (
+        account: string,
+        isSpender: boolean,
+        overrides: { gasLimit: bigint }
+      ): Promise<{ wait: () => Promise<unknown> }>;
+      estimateGas: (account: string, isSpender: boolean) => Promise<bigint>;
+    };
+    const estimatedGas = await reencryptAllowance.estimateGas(spenderAddress, false).catch(() => null);
+    const reencryptGasLimit =
+      typeof estimatedGas === 'bigint' && estimatedGas > 0n
+        ? applyPrivacyPortalGasMargin(estimatedGas)
+        : PRIVATE_TOKEN_EXACT_APPROVAL_GAS_FALLBACK;
+    const latestBlock = await signer.provider?.getBlock('latest').catch(() => null) ?? null;
+    if (!latestBlock || reencryptGasLimit > latestBlock.gasLimit) {
+      throw new Error('The private token allowance refresh gas limit exceeds the current COTI block gas limit.');
+    }
+    const reencryptReceipt = await (
+      await reencryptAllowance(spenderAddress, false, { gasLimit: reencryptGasLimit })
+    ).wait();
+    assertPrivacyPortalReceipt(reencryptReceipt, 'Private token allowance refresh');
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    allowanceRecoveryWrote = true;
+    currentAllowanceWei = await readPrivateTokenAllowanceWei(
+      tokenAddress,
+      ownerAddress,
+      spenderAddress,
+      signer,
+      true
+    );
+    if (currentAllowanceWei === null) {
+      throw new Error(
+        `The app could not decrypt this wallet's private ${tokenSymbol} allowance after refreshing it. Unlock privacy and try again.`
+      );
+    }
+  }
+  if (currentAllowanceWei === targetAmountWei) {
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    return allowanceRecoveryWrote;
+  }
+
+  await assertPrivacyPortalSignerState(signer, ownerAddress);
+  notifyBeforeApproval();
+  await approvePrivateTokenSpender(
+    signer,
+    tokenAddress,
+    spenderAddress,
+    currentAllowanceWei,
+    targetAmountWei,
+    'exact'
+  );
+  await assertPrivacyPortalSignerState(signer, ownerAddress);
+  const refreshedAllowanceWei = await readPrivateTokenAllowanceWei(
+    tokenAddress,
+    ownerAddress,
+    spenderAddress,
+    signer,
+    true
+  );
+  if (refreshedAllowanceWei === null) {
+    throw new Error('Private token approval could not be confirmed after the approval transaction.');
+  }
+  if (refreshedAllowanceWei !== targetAmountWei) {
+    throw new Error('Private token allowance does not match the requested conversion amount after approval.');
+  }
+  await assertPrivacyPortalSignerState(signer, ownerAddress);
+  return true;
 };
 
 export const readPrivateTokenAccountEncryptionAddress = async (
@@ -3378,5 +3585,1354 @@ export const resolveGroupSubmitGasLimit = async (
     return padded > GROUP_SUBMIT_GAS_LIMIT_MAX ? GROUP_SUBMIT_GAS_LIMIT_MAX : padded;
   } catch {
     return null;
+  }
+};
+
+const toPrivacyPortalBigInt = (value: unknown, fallback = 0n): bigint => {
+  if (typeof value === 'bigint') {
+    return value;
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value)) {
+    return BigInt(value);
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    return BigInt(value);
+  }
+  return fallback;
+};
+
+const isMissingContractCode = (code: unknown): boolean =>
+  typeof code !== 'string' || !/^0x[0-9a-f]+$/i.test(code) || code === '0x' || /^0x0+$/i.test(code);
+
+const addressesMatch = (left: unknown, right: string): boolean =>
+  typeof left === 'string' && left.toLowerCase() === right.toLowerCase();
+
+const privacyPortalVerificationCache = new Map<string, PrivacyPairVerification>();
+
+const buildPrivacyPortalVerificationCacheKey = (pair: PrivacyTokenPair): string =>
+  [
+    pair.chainId,
+    pair.id,
+    pair.bridgeAddress,
+    pair.publicToken.address ?? 'native',
+    pair.privateToken.address,
+    pair.publicToken.decimals,
+    pair.privateToken.decimals
+  ].join(':').toLowerCase();
+
+type PrivacyPortalBridgeReadContract = {
+  minDepositAmount: () => Promise<unknown>;
+  maxDepositAmount: () => Promise<unknown>;
+  minWithdrawAmount: () => Promise<unknown>;
+  maxWithdrawAmount: () => Promise<unknown>;
+  paused: () => Promise<boolean>;
+  isDepositEnabled: () => Promise<boolean>;
+  blacklisted: (account: string) => Promise<boolean>;
+  estimateDepositFee: (amountWei: bigint) => Promise<readonly unknown[]>;
+  estimateWithdrawFee: (amountWei: bigint) => Promise<readonly unknown[]>;
+  getBridgeBalance?: () => Promise<unknown>;
+};
+
+const readPrivacyPortalLimits = async (
+  bridgeContract: PrivacyPortalBridgeReadContract
+): Promise<PrivacyPortalLimits> => {
+  const [minDeposit, maxDeposit, minWithdraw, maxWithdraw] = await Promise.all([
+    bridgeContract.minDepositAmount(),
+    bridgeContract.maxDepositAmount(),
+    bridgeContract.minWithdrawAmount(),
+    bridgeContract.maxWithdrawAmount()
+  ]);
+  return {
+    minDepositWei: toPrivacyPortalBigInt(minDeposit),
+    maxDepositWei: toPrivacyPortalBigInt(maxDeposit),
+    minWithdrawWei: toPrivacyPortalBigInt(minWithdraw),
+    maxWithdrawWei: toPrivacyPortalBigInt(maxWithdraw)
+  };
+};
+
+export const verifyPrivacyPortalPair = async (
+  pair: PrivacyTokenPair
+): Promise<PrivacyPairVerification> => {
+  const cacheKey = buildPrivacyPortalVerificationCacheKey(pair);
+  const cached = privacyPortalVerificationCache.get(cacheKey);
+  if (cached?.status === 'ready') {
+    return cached;
+  }
+  const issues: PrivacyPairVerificationIssue[] = [];
+  let chainId: number | null = null;
+  try {
+    const officialPair = getPrivacyTokenPair(pair.id);
+    if (
+      !officialPair ||
+      officialPair.chainId !== pair.chainId ||
+      officialPair.bridgeKind !== pair.bridgeKind ||
+      !addressesMatch(officialPair.bridgeAddress, pair.bridgeAddress) ||
+      officialPair.publicToken.decimals !== pair.publicToken.decimals ||
+      officialPair.privateToken.decimals !== pair.privateToken.decimals ||
+      (officialPair.publicToken.address === null) !== (pair.publicToken.address === null) ||
+      (officialPair.publicToken.address !== null &&
+        pair.publicToken.address !== null &&
+        !addressesMatch(officialPair.publicToken.address, pair.publicToken.address)) ||
+      !addressesMatch(officialPair.privateToken.address, pair.privateToken.address)
+    ) {
+      issues.push('registry-entry-mismatch');
+    }
+    const [cotiEthers, readProvider] = await Promise.all([
+      loadCotiEthersModule(),
+      loadCotiReadProvider(true)
+    ]);
+    const network = await readProvider.getNetwork();
+    chainId = Number(network.chainId);
+    if (chainId !== pair.chainId || chainId !== COTI_PRIVACY_PORTAL_CHAIN_ID) {
+      issues.push('wrong-chain');
+    }
+
+    const codeReads = [
+      readProvider.getCode(pair.bridgeAddress),
+      readProvider.getCode(pair.privateToken.address),
+      pair.publicToken.address ? readProvider.getCode(pair.publicToken.address) : Promise.resolve('0x01')
+    ] as const;
+    const [bridgeCode, privateCode, publicCode] = await Promise.all(codeReads);
+    if (isMissingContractCode(bridgeCode)) {
+      issues.push('bridge-code-missing');
+    }
+    if (isMissingContractCode(privateCode)) {
+      issues.push('private-token-code-missing');
+    }
+    if (pair.publicToken.address && isMissingContractCode(publicCode)) {
+      issues.push('public-token-code-missing');
+    }
+
+    const bridgeContract = new cotiEthers.Contract(
+      pair.bridgeAddress,
+      pair.bridgeKind === 'native' ? PRIVACY_NATIVE_BRIDGE_ABI : PRIVACY_ERC20_BRIDGE_ABI,
+      readProvider
+    );
+    if (pair.bridgeKind === 'native') {
+      const privateAddress = await bridgeContract.privateCoti();
+      if (!addressesMatch(privateAddress, pair.privateToken.address)) {
+        issues.push('private-token-mismatch');
+      }
+    } else {
+      const [publicAddress, privateAddress] = await Promise.all([
+        bridgeContract.token(),
+        bridgeContract.privateToken()
+      ]);
+      if (!pair.publicToken.address || !addressesMatch(publicAddress, pair.publicToken.address)) {
+        issues.push('public-token-mismatch');
+      }
+      if (!addressesMatch(privateAddress, pair.privateToken.address)) {
+        issues.push('private-token-mismatch');
+      }
+    }
+
+    const privateTokenContract = new cotiEthers.Contract(
+      pair.privateToken.address,
+      PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+      readProvider
+    );
+    const publicDecimalsPromise = pair.publicToken.address
+      ? new cotiEthers.Contract(pair.publicToken.address, ERC20_TOKEN_ABI, readProvider).decimals()
+      : Promise.resolve(pair.publicToken.decimals);
+    const [publicDecimals, privateDecimals] = await Promise.all([
+      publicDecimalsPromise,
+      privateTokenContract.decimals()
+    ]);
+    if (Number(publicDecimals) !== pair.publicToken.decimals) {
+      issues.push('public-decimals-mismatch');
+    }
+    if (Number(privateDecimals) !== pair.privateToken.decimals) {
+      issues.push('private-decimals-mismatch');
+    }
+
+    const verification: PrivacyPairVerification = {
+      pairId: pair.id,
+      chainId,
+      status: issues.length === 0 ? 'ready' : 'mismatch',
+      issues,
+      verifiedAt: Date.now()
+    };
+    if (verification.status === 'ready') {
+      privacyPortalVerificationCache.set(cacheKey, verification);
+    }
+    return verification;
+  } catch {
+    issues.push('verification-read-failed');
+    return {
+      pairId: pair.id,
+      chainId,
+      status: 'unavailable',
+      issues: Array.from(new Set(issues)),
+      verifiedAt: Date.now()
+    };
+  }
+};
+
+export const clearPrivacyPortalVerificationCache = (): void => {
+  privacyPortalVerificationCache.clear();
+};
+
+const requireVerifiedPrivacyPortalPair = async (pair: PrivacyTokenPair): Promise<PrivacyPairVerification> => {
+  const verification = await verifyPrivacyPortalPair(pair);
+  if (verification.status !== 'ready') {
+    const detail = verification.issues.join(', ') || 'verification unavailable';
+    throw new Error(`Official privacy bridge verification failed for ${pair.publicToken.symbol}: ${detail}.`);
+  }
+  return verification;
+};
+
+const readPrivacyPortalBridgeLiquidity = async (
+  pair: PrivacyTokenPair,
+  bridgeContract: PrivacyPortalBridgeReadContract,
+  readProvider: Awaited<ReturnType<typeof loadCotiReadProvider>>,
+  cotiEthers: Awaited<ReturnType<typeof loadCotiEthersModule>>
+): Promise<bigint> => {
+  if (pair.bridgeKind === 'native') {
+    const bridgeBalance = bridgeContract.getBridgeBalance
+      ? await bridgeContract.getBridgeBalance()
+      : await readProvider.getBalance(pair.bridgeAddress);
+    return toPrivacyPortalBigInt(bridgeBalance);
+  }
+  if (!pair.publicToken.address) {
+    throw new Error('The public token address is missing from the official registry.');
+  }
+  const publicTokenContract = new cotiEthers.Contract(pair.publicToken.address, ERC20_TOKEN_ABI, readProvider);
+  return toPrivacyPortalBigInt(await publicTokenContract.balanceOf(pair.bridgeAddress));
+};
+
+export const readPrivacyPortalPairMetrics = async ({
+  pair,
+  ownerAddress,
+  signer
+}: {
+  pair: PrivacyTokenPair;
+  ownerAddress?: string | null;
+  signer?: Wallet | JsonRpcSigner | null;
+}): Promise<PrivacyPortalPairMetrics> => {
+  const account = typeof ownerAddress === 'string' && isWalletAddress(ownerAddress) ? ownerAddress : null;
+  const verification = await requireVerifiedPrivacyPortalPair(pair);
+  const [cotiEthers, readProvider] = await Promise.all([
+    loadCotiEthersModule(),
+    loadCotiReadProvider(true)
+  ]);
+  const bridgeContract = new cotiEthers.Contract(
+    pair.bridgeAddress,
+    pair.bridgeKind === 'native' ? PRIVACY_NATIVE_BRIDGE_ABI : PRIVACY_ERC20_BRIDGE_ABI,
+    readProvider
+  ) as unknown as PrivacyPortalBridgeReadContract;
+  const privateTokenContract = new cotiEthers.Contract(
+    pair.privateToken.address,
+    PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+    readProvider
+  );
+  const publicTokenContract = pair.publicToken.address
+    ? new cotiEthers.Contract(pair.publicToken.address, ERC20_TOKEN_ABI, readProvider)
+    : null;
+
+  const [
+    paused,
+    depositEnabled,
+    blacklisted,
+    limits,
+    bridgeLiquidityWei,
+    nativeCotiBalance,
+    publicBalance,
+    publicAllowance,
+    privatePublicAmountsEnabled
+  ] = await Promise.all([
+    bridgeContract.paused(),
+    bridgeContract.isDepositEnabled(),
+    account ? bridgeContract.blacklisted(account) : Promise.resolve(false),
+    readPrivacyPortalLimits(bridgeContract),
+    readPrivacyPortalBridgeLiquidity(pair, bridgeContract, readProvider, cotiEthers),
+    account ? readProvider.getBalance(account).catch(() => null) : Promise.resolve(null),
+    account
+      ? publicTokenContract
+        ? publicTokenContract.balanceOf(account).catch(() => null)
+        : readProvider.getBalance(account).catch(() => null)
+      : Promise.resolve(null),
+    account && publicTokenContract
+      ? publicTokenContract.allowance(account, pair.bridgeAddress).catch(() => null)
+      : Promise.resolve(null),
+    privateTokenContract.publicAmountsEnabled().catch(() => null)
+  ]);
+
+  const signerMatchesAccount = signer && account
+    ? await Promise.all([
+        signer.getAddress().catch(() => ''),
+        signer.provider?.getNetwork().catch(() => null) ?? Promise.resolve(null)
+      ]).then(
+        ([signerAddress, network]) =>
+          signerAddress.toLowerCase() === account.toLowerCase() &&
+          Number(network?.chainId ?? 0) === COTI_PRIVACY_PORTAL_CHAIN_ID
+      )
+    : false;
+  const [privateBalanceWei, privateAllowanceWei] = signer && account && signerMatchesAccount
+    ? await Promise.all([
+        readCurrentPrivateErc20BalanceWei(pair.privateToken.address, account, signer, true).catch(() => null),
+        readPrivateTokenAllowanceWei(
+          pair.privateToken.address,
+          account,
+          pair.bridgeAddress,
+          signer,
+          true
+        ).catch(() => null)
+      ])
+    : [null, null];
+
+  return {
+    pairId: pair.id,
+    account,
+    publicBalanceWei: publicBalance === null ? null : toPrivacyPortalBigInt(publicBalance),
+    privateBalanceWei,
+    nativeCotiBalanceWei: nativeCotiBalance === null ? null : toPrivacyPortalBigInt(nativeCotiBalance),
+    publicAllowanceWei: publicAllowance === null ? null : toPrivacyPortalBigInt(publicAllowance),
+    privateAllowanceWei,
+    privatePublicAmountsEnabled:
+      typeof privatePublicAmountsEnabled === 'boolean' ? privatePublicAmountsEnabled : null,
+    paused: Boolean(paused),
+    depositEnabled: Boolean(depositEnabled),
+    blacklisted: Boolean(blacklisted),
+    bridgeLiquidityWei,
+    limits,
+    verification,
+    readAt: Date.now()
+  };
+};
+
+export const readPrivacyPortalQuote = async ({
+  pair,
+  direction,
+  amountWei,
+  ownerAddress = ''
+}: {
+  pair: PrivacyTokenPair;
+  direction: PrivacyDirection;
+  amountWei: bigint;
+  ownerAddress?: string | null;
+}): Promise<PrivacyPortalQuote> => {
+  if (amountWei <= 0n) {
+    throw new Error('Enter an amount greater than zero before requesting a privacy quote.');
+  }
+  await requireVerifiedPrivacyPortalPair(pair);
+  const [cotiEthers, readProvider] = await Promise.all([
+    loadCotiEthersModule(),
+    loadCotiReadProvider(true)
+  ]);
+  const bridgeContract = new cotiEthers.Contract(
+    pair.bridgeAddress,
+    pair.bridgeKind === 'native' ? PRIVACY_NATIVE_BRIDGE_ABI : PRIVACY_ERC20_BRIDGE_ABI,
+    readProvider
+  ) as unknown as PrivacyPortalBridgeReadContract;
+  const account = typeof ownerAddress === 'string' && isWalletAddress(ownerAddress) ? ownerAddress : '';
+  const quotePromise = direction === 'public-to-private'
+    ? bridgeContract.estimateDepositFee(amountWei)
+    : bridgeContract.estimateWithdrawFee(amountWei);
+  const [quoteResult, paused, depositEnabled, limits, bridgeLiquidityWei, blacklisted] = await Promise.all([
+    quotePromise,
+    bridgeContract.paused(),
+    bridgeContract.isDepositEnabled(),
+    readPrivacyPortalLimits(bridgeContract),
+    readPrivacyPortalBridgeLiquidity(pair, bridgeContract, readProvider, cotiEthers),
+    account ? bridgeContract.blacklisted(account) : Promise.resolve(false)
+  ]);
+  const feeWei = toPrivacyPortalBigInt(quoteResult?.[0]);
+  const cotiOracleTimestamp = toPrivacyPortalBigInt(quoteResult?.[1]);
+  const tokenOracleTimestamp = pair.bridgeKind === 'native'
+    ? cotiOracleTimestamp
+    : toPrivacyPortalBigInt(quoteResult?.[2]);
+  const blockTimestamp = pair.bridgeKind === 'native'
+    ? toPrivacyPortalBigInt(quoteResult?.[2])
+    : toPrivacyPortalBigInt(quoteResult?.[3]);
+  const minAmountWei = direction === 'public-to-private' ? limits.minDepositWei : limits.minWithdrawWei;
+  const maxAmountWei = direction === 'public-to-private' ? limits.maxDepositWei : limits.maxWithdrawWei;
+  return {
+    quoteKey: buildPrivacyPortalQuoteKey({
+      chainId: pair.chainId,
+      account,
+      pairId: pair.id,
+      direction,
+      amountWei
+    }),
+    chainId: COTI_PRIVACY_PORTAL_CHAIN_ID,
+    pairId: pair.id,
+    direction,
+    account,
+    amountWei,
+    feeWei,
+    receiveAmountWei: resolvePrivacyPortalReceiveAmount(pair, direction, amountWei, feeWei),
+    cotiOracleTimestamp,
+    tokenOracleTimestamp,
+    blockTimestamp,
+    minAmountWei,
+    maxAmountWei,
+    paused: Boolean(paused),
+    depositEnabled: Boolean(depositEnabled),
+    blacklisted: Boolean(blacklisted),
+    bridgeLiquidityWei,
+    gasEstimate: null,
+    gasLimit: null,
+    quotedAt: Date.now()
+  };
+};
+
+const assertPrivacyPortalReceipt = (receipt: unknown, label: string): void => {
+  const status = Number((receipt as { status?: number | bigint } | null)?.status ?? 0);
+  if (!receipt || status !== 1) {
+    throw new Error(`${label} failed on-chain.`);
+  }
+};
+
+const assertPrivacyPortalSignerState = async (
+  signer: Wallet | JsonRpcSigner,
+  expectedAddress: string
+): Promise<void> => {
+  const actualAddress = await signer.getAddress();
+  if (actualAddress.toLowerCase() !== expectedAddress.toLowerCase()) {
+    throw new Error('The active wallet account changed during the privacy conversion.');
+  }
+  const provider = signer.provider;
+  if (!provider) {
+    throw new Error('The selected signer is not connected to a network provider.');
+  }
+  const network = await provider.getNetwork();
+  if (Number(network.chainId) !== COTI_PRIVACY_PORTAL_CHAIN_ID) {
+    throw new Error('Wrong network. Switch to COTI Mainnet and try again.');
+  }
+};
+
+const ensurePrivacyPortalPublicAllowance = async ({
+  signer,
+  ownerAddress,
+  pair,
+  amountWei,
+  onProgress
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  pair: PrivacyTokenPair;
+  amountWei: bigint;
+  onProgress?: (stage: PrivacyPortalConversionStage) => void;
+}): Promise<boolean> => {
+  if (pair.bridgeKind === 'native' || !pair.publicToken.address) {
+    return false;
+  }
+  const cotiEthers = await loadCotiEthersModule();
+  const tokenContract = new cotiEthers.Contract(pair.publicToken.address, ERC20_TOKEN_ABI, signer);
+  const allowanceWei = toPrivacyPortalBigInt(await tokenContract.allowance(ownerAddress, pair.bridgeAddress));
+  if (allowanceWei >= amountWei) {
+    return false;
+  }
+  if (allowanceWei > 0n) {
+    onProgress?.('public-approval-reset');
+    const resetReceipt = await (await tokenContract.approve(pair.bridgeAddress, 0n)).wait();
+    assertPrivacyPortalReceipt(resetReceipt, `${pair.publicToken.symbol} approval reset`);
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+  }
+  onProgress?.('public-approval');
+  const approvalReceipt = await (await tokenContract.approve(pair.bridgeAddress, amountWei)).wait();
+  assertPrivacyPortalReceipt(approvalReceipt, `${pair.publicToken.symbol} approval`);
+  await assertPrivacyPortalSignerState(signer, ownerAddress);
+  const refreshedAllowanceWei = toPrivacyPortalBigInt(
+    await tokenContract.allowance(ownerAddress, pair.bridgeAddress)
+  );
+  if (refreshedAllowanceWei !== amountWei) {
+    throw new Error(`${pair.publicToken.symbol} allowance does not match the requested conversion amount.`);
+  }
+  return true;
+};
+
+const estimatePrivacyPortalConversionGas = async ({
+  bridgeContract,
+  pair,
+  direction,
+  amountWei,
+  quote
+}: {
+  bridgeContract: Record<string, unknown>;
+  pair: PrivacyTokenPair;
+  direction: PrivacyDirection;
+  amountWei: bigint;
+  quote: PrivacyPortalQuote;
+}): Promise<{ gasEstimate: bigint; gasLimit: bigint }> => {
+  const call = buildPrivacyPortalTransactionCall(pair, direction, amountWei, quote);
+  const method = bridgeContract[call.functionSignature] as {
+    estimateGas: (...args: unknown[]) => Promise<bigint>;
+  };
+  const estimate = await method.estimateGas(
+    ...call.args,
+    ...(call.valueWei > 0n ? [{ value: call.valueWei }] : [])
+  );
+  if (typeof estimate !== 'bigint' || estimate <= 0n) {
+    throw new Error('The Privacy Portal transaction gas could not be estimated safely.');
+  }
+  return {
+    gasEstimate: estimate,
+    gasLimit: applyPrivacyPortalGasMargin(estimate)
+  };
+};
+
+export const estimatePrivacyPortalQuoteGas = async ({
+  signer,
+  ownerAddress,
+  pair,
+  direction,
+  amountWei
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  pair: PrivacyTokenPair;
+  direction: PrivacyDirection;
+  amountWei: bigint;
+}): Promise<PrivacyPortalGasEstimate> => {
+  try {
+    if (amountWei <= 0n) {
+      throw new Error('Enter an amount greater than zero before estimating gas.');
+    }
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    const metrics = await readPrivacyPortalPairMetrics({ pair, ownerAddress, signer });
+    if (metrics.paused) {
+      throw new Error('BridgePaused');
+    }
+    if (direction === 'public-to-private' && !metrics.depositEnabled) {
+      throw new Error('DepositDisabled');
+    }
+    if (metrics.blacklisted) {
+      throw new Error('AddressBlacklisted');
+    }
+    if (metrics.nativeCotiBalanceWei === null) {
+      throw new Error('Unable to read the selected account COTI balance before estimating gas.');
+    }
+    if (direction === 'public-to-private' && metrics.publicBalanceWei === null) {
+      throw new Error(`Unable to read the ${pair.publicToken.symbol} balance before estimating gas.`);
+    }
+    if (direction === 'private-to-public' && metrics.privateBalanceWei === null) {
+      throw new Error(`Unable to decrypt the ${pair.privateToken.symbol} balance. Unlock privacy and try again.`);
+    }
+    if (direction === 'private-to-public' && metrics.privatePublicAmountsEnabled === false) {
+      throw new Error('This private token does not currently support bridge public-amount transfers.');
+    }
+
+    const allowanceRequirement = resolvePrivacyPortalAllowanceRequirement({
+      pair,
+      direction,
+      amountWei,
+      publicAllowanceWei: metrics.publicAllowanceWei,
+      privateAllowanceWei: metrics.privateAllowanceWei
+    });
+    if (allowanceRequirement === 'public-allowance-unavailable') {
+      throw new Error(`Unable to read the ${pair.publicToken.symbol} bridge allowance.`);
+    }
+    if (allowanceRequirement === 'public-approval-required') {
+      throw new Error(`Approve ${pair.publicToken.symbol} before estimating conversion gas.`);
+    }
+    if (allowanceRequirement === 'private-allowance-unavailable') {
+      throw new Error(`Unable to decrypt the ${pair.privateToken.symbol} bridge allowance. Unlock privacy and try again.`);
+    }
+    if (allowanceRequirement === 'private-approval-required') {
+      throw new Error(`Approve ${pair.privateToken.symbol} before estimating conversion gas.`);
+    }
+
+    const quote = await readPrivacyPortalQuote({ pair, direction, amountWei, ownerAddress });
+    if (quote.paused || (direction === 'public-to-private' && !quote.depositEnabled) || quote.blacklisted) {
+      throw new Error('The bridge status changed before gas estimation. Refresh and try again.');
+    }
+    const balanceWei = direction === 'public-to-private'
+      ? metrics.publicBalanceWei
+      : metrics.privateBalanceWei;
+    const amountIssues = validatePrivacyPortalAmount({
+      amountWei,
+      minAmountWei: quote.minAmountWei,
+      maxAmountWei: quote.maxAmountWei,
+      balanceWei,
+      bridgeLiquidityWei: quote.bridgeLiquidityWei,
+      direction,
+      feeWei: quote.feeWei,
+      nativeCotiBalanceWei: metrics.nativeCotiBalanceWei,
+      bridgeKind: pair.bridgeKind
+    });
+    if (amountIssues.length > 0) {
+      throw new Error(getPrivacyPortalAmountIssueMessage(amountIssues[0]));
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const bridgeContract = new cotiEthers.Contract(
+      pair.bridgeAddress,
+      pair.bridgeKind === 'native' ? PRIVACY_NATIVE_BRIDGE_ABI : PRIVACY_ERC20_BRIDGE_ABI,
+      signer
+    ) as unknown as Record<string, unknown>;
+    const { gasEstimate, gasLimit } = await estimatePrivacyPortalConversionGas({
+      bridgeContract,
+      pair,
+      direction,
+      amountWei,
+      quote
+    });
+    const provider = signer.provider;
+    if (!provider) {
+      throw new Error('The selected signer is not connected to a network provider.');
+    }
+    const [feeData, latestBlock] = await Promise.all([
+      provider.getFeeData(),
+      provider.getBlock('latest')
+    ]);
+    if (!latestBlock || gasLimit > latestBlock.gasLimit) {
+      throw new Error('The required gas limit exceeds the current COTI block gas limit.');
+    }
+    const gasPriceWei = feeData.maxFeePerGas ?? feeData.gasPrice;
+    if (gasPriceWei === null || gasPriceWei < 0n) {
+      throw new Error('The current COTI gas price is unavailable.');
+    }
+    const gasCostWei = calculatePrivacyPortalGasReserveWei(gasLimit, gasPriceWei);
+    const bridgeValueWei = pair.bridgeKind === 'erc20'
+      ? quote.feeWei
+      : direction === 'public-to-private'
+        ? amountWei
+        : 0n;
+    if (metrics.nativeCotiBalanceWei < bridgeValueWei + gasCostWei) {
+      throw new Error('Insufficient funds for the conversion value, portal fee, and gas.');
+    }
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    return {
+      quote: {
+        ...quote,
+        gasEstimate,
+        gasLimit
+      },
+      gasEstimate,
+      gasLimit,
+      gasPriceWei,
+      gasCostWei,
+      estimatedAt: Date.now()
+    };
+  } catch (error) {
+    throw normalizePrivacyPortalError(error);
+  }
+};
+
+export const estimatePrivacyPortalNativeDepositGasReserveWei = async ({
+  signer,
+  ownerAddress,
+  pair,
+  amountWei
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  pair: PrivacyTokenPair;
+  amountWei: bigint;
+}): Promise<bigint> => {
+  try {
+    if (pair.bridgeKind !== 'native') {
+      throw new Error('Native COTI gas reserve estimation requires the official COTI pair.');
+    }
+    if (amountWei <= 0n) {
+      return 0n;
+    }
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    const provider = signer.provider;
+    if (!provider) {
+      throw new Error('The selected signer is not connected to a network provider.');
+    }
+    const [quote, feeData, latestBlock, nativeBalanceWei] = await Promise.all([
+      readPrivacyPortalQuote({
+        pair,
+        direction: 'public-to-private',
+        amountWei,
+        ownerAddress
+      }),
+      provider.getFeeData(),
+      provider.getBlock('latest'),
+      provider.getBalance(ownerAddress)
+    ]);
+    if (quote.paused || !quote.depositEnabled || quote.blacklisted) {
+      throw new Error('The native COTI privacy bridge is not currently available for this account.');
+    }
+    if (!latestBlock) {
+      throw new Error('The current COTI block gas limit is unavailable.');
+    }
+    const gasPriceWei = feeData.maxFeePerGas ?? feeData.gasPrice;
+    if (gasPriceWei === null || gasPriceWei < 0n) {
+      throw new Error('The current COTI gas price is unavailable.');
+    }
+    if (gasPriceWei === 0n) {
+      await assertPrivacyPortalSignerState(signer, ownerAddress);
+      return 0n;
+    }
+    const cotiEthers = await loadCotiEthersModule();
+    const bridgeContract = new cotiEthers.Contract(
+      pair.bridgeAddress,
+      PRIVACY_NATIVE_BRIDGE_ABI,
+      signer
+    ) as unknown as Record<string, unknown>;
+    let gasLimit: bigint;
+    try {
+      ({ gasLimit } = await estimatePrivacyPortalConversionGas({
+        bridgeContract,
+        pair,
+        direction: 'public-to-private',
+        amountWei,
+        quote
+      }));
+    } catch (estimateError) {
+      const normalizedMessage = normalizePrivacyPortalError(estimateError).message;
+      if (!/not enough coti|insufficient.*(?:fund|balance)|gas.*allowance|exceeds.*balance/i.test(normalizedMessage)) {
+        throw estimateError;
+      }
+      const safeProbeAmountWei = selectPrivacyPortalNativeGasProbeAmount({
+        requestedAmountWei: amountWei,
+        balanceWei: nativeBalanceWei,
+        minAmountWei: quote.minAmountWei,
+        maxAmountWei: quote.maxAmountWei,
+        quotedFeeWei: quote.feeWei,
+        headroomWei: calculatePrivacyPortalGasReserveWei(latestBlock.gasLimit, gasPriceWei)
+      });
+      if (safeProbeAmountWei === null || safeProbeAmountWei === amountWei) {
+        throw estimateError;
+      }
+      const probeQuote = await readPrivacyPortalQuote({
+        pair,
+        direction: 'public-to-private',
+        amountWei: safeProbeAmountWei,
+        ownerAddress
+      });
+      ({ gasLimit } = await estimatePrivacyPortalConversionGas({
+        bridgeContract,
+        pair,
+        direction: 'public-to-private',
+        amountWei: safeProbeAmountWei,
+        quote: probeQuote
+      }));
+    }
+    if (gasLimit > latestBlock.gasLimit) {
+      throw new Error('The required gas limit exceeds the current COTI block gas limit.');
+    }
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    return calculatePrivacyPortalGasReserveWei(gasLimit, gasPriceWei);
+  } catch (error) {
+    throw normalizePrivacyPortalError(error);
+  }
+};
+
+const submitPrivacyPortalConversion = async ({
+  bridgeContract,
+  pair,
+  direction,
+  amountWei,
+  quote,
+  gasLimit
+}: {
+  bridgeContract: Record<string, unknown>;
+  pair: PrivacyTokenPair;
+  direction: PrivacyDirection;
+  amountWei: bigint;
+  quote: PrivacyPortalQuote;
+  gasLimit: bigint;
+}): Promise<{ hash?: string; wait: () => Promise<unknown> }> => {
+  const call = buildPrivacyPortalTransactionCall(pair, direction, amountWei, quote);
+  const method = bridgeContract[call.functionSignature] as (...args: unknown[]) => Promise<{
+    hash?: string;
+    wait: () => Promise<unknown>;
+  }>;
+  return method(...call.args, {
+    ...(call.valueWei > 0n ? { value: call.valueWei } : {}),
+    gasLimit
+  });
+};
+
+export const executePrivacyPortalConversion = async ({
+  signer,
+  ownerAddress,
+  pair,
+  direction,
+  amountWei,
+  onProgress
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  pair: PrivacyTokenPair;
+  direction: PrivacyDirection;
+  amountWei: bigint;
+  onProgress?: (stage: PrivacyPortalConversionStage) => void;
+}): Promise<PrivacyPortalConversionResult> => {
+  try {
+    onProgress?.('validating');
+    if (!isWalletAddress(ownerAddress)) {
+      throw new Error('A valid account is required for a privacy conversion.');
+    }
+    if (amountWei <= 0n) {
+      throw new Error('Enter an amount greater than zero.');
+    }
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    await requireVerifiedPrivacyPortalPair(pair);
+
+    const metrics = await readPrivacyPortalPairMetrics({ pair, ownerAddress, signer });
+    if (metrics.paused) {
+      throw new Error('BridgePaused');
+    }
+    if (direction === 'public-to-private' && !metrics.depositEnabled) {
+      throw new Error('DepositDisabled');
+    }
+    if (metrics.blacklisted) {
+      throw new Error('AddressBlacklisted');
+    }
+    if (metrics.nativeCotiBalanceWei === null) {
+      throw new Error('Unable to read the selected account COTI balance. Refresh before converting.');
+    }
+    if (direction === 'public-to-private' && metrics.publicBalanceWei === null) {
+      throw new Error(`Unable to read the ${pair.publicToken.symbol} balance. Refresh before converting.`);
+    }
+    if (direction === 'private-to-public' && metrics.privateBalanceWei === null) {
+      throw new Error(`Unable to decrypt the ${pair.privateToken.symbol} balance. Unlock privacy and try again.`);
+    }
+    if (direction === 'private-to-public' && metrics.privatePublicAmountsEnabled === false) {
+      throw new Error('This private token does not currently support bridge public-amount transfers.');
+    }
+
+    const initialQuote = await readPrivacyPortalQuote({ pair, direction, amountWei, ownerAddress });
+    const balanceWei = direction === 'public-to-private'
+      ? metrics.publicBalanceWei
+      : metrics.privateBalanceWei;
+    const issues = validatePrivacyPortalAmount({
+      amountWei,
+      minAmountWei: initialQuote.minAmountWei,
+      maxAmountWei: initialQuote.maxAmountWei,
+      balanceWei,
+      bridgeLiquidityWei: initialQuote.bridgeLiquidityWei,
+      direction,
+      feeWei: initialQuote.feeWei,
+      nativeCotiBalanceWei: metrics.nativeCotiBalanceWei,
+      bridgeKind: pair.bridgeKind
+    });
+    if (issues.length > 0) {
+      throw new Error(getPrivacyPortalAmountIssueMessage(issues[0]));
+    }
+
+    if (direction === 'public-to-private') {
+      await ensurePrivacyPortalPublicAllowance({
+        signer,
+        ownerAddress,
+        pair,
+        amountWei,
+        onProgress
+      });
+    } else {
+      await ensurePrivateTokenExactAllowance({
+        signer,
+        ownerAddress,
+        tokenAddress: pair.privateToken.address,
+        spenderAddress: pair.bridgeAddress,
+        targetAmountWei: amountWei,
+        tokenSymbol: pair.privateToken.symbol,
+        onBeforeApproval: () => onProgress?.('private-approval')
+      });
+      await assertPrivacyPortalSignerState(signer, ownerAddress);
+    }
+
+    onProgress?.('refreshing-quote');
+    const quote = await readPrivacyPortalQuote({ pair, direction, amountWei, ownerAddress });
+    if (quote.paused || (direction === 'public-to-private' && !quote.depositEnabled) || quote.blacklisted) {
+      throw new Error('The bridge status changed while preparing the transaction. Refresh and try again.');
+    }
+    const refreshedIssues = validatePrivacyPortalAmount({
+      amountWei,
+      minAmountWei: quote.minAmountWei,
+      maxAmountWei: quote.maxAmountWei,
+      balanceWei,
+      bridgeLiquidityWei: quote.bridgeLiquidityWei,
+      direction,
+      feeWei: quote.feeWei,
+      nativeCotiBalanceWei: metrics.nativeCotiBalanceWei,
+      bridgeKind: pair.bridgeKind
+    });
+    if (refreshedIssues.length > 0) {
+      throw new Error(getPrivacyPortalAmountIssueMessage(refreshedIssues[0]));
+    }
+
+    const cotiEthers = await loadCotiEthersModule();
+    const bridgeContract = new cotiEthers.Contract(
+      pair.bridgeAddress,
+      pair.bridgeKind === 'native' ? PRIVACY_NATIVE_BRIDGE_ABI : PRIVACY_ERC20_BRIDGE_ABI,
+      signer
+    ) as unknown as Record<string, unknown>;
+    const { gasEstimate, gasLimit } = await estimatePrivacyPortalConversionGas({
+      bridgeContract,
+      pair,
+      direction,
+      amountWei,
+      quote
+    });
+    const provider = signer.provider;
+    if (!provider) {
+      throw new Error('The selected signer is not connected to a network provider.');
+    }
+    const [latestBlock, feeData, latestNativeBalance] = await Promise.all([
+      provider.getBlock('latest'),
+      provider.getFeeData(),
+      provider.getBalance(ownerAddress)
+    ]);
+    if (!latestBlock || gasLimit > latestBlock.gasLimit) {
+      throw new Error('The required gas limit exceeds the current COTI block gas limit.');
+    }
+    const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice;
+    if (gasPrice === null || gasPrice < 0n) {
+      throw new Error('The current COTI gas price is unavailable.');
+    }
+    const bridgeValue = pair.bridgeKind === 'erc20'
+      ? quote.feeWei
+      : direction === 'public-to-private'
+        ? amountWei
+        : 0n;
+    if (latestNativeBalance < bridgeValue + gasLimit * gasPrice) {
+      throw new Error('Insufficient funds for the conversion value, portal fee, and gas.');
+    }
+
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    onProgress?.('awaiting-conversion');
+    const transaction = await submitPrivacyPortalConversion({
+      bridgeContract,
+      pair,
+      direction,
+      amountWei,
+      quote,
+      gasLimit
+    });
+    onProgress?.('confirming');
+    const receipt = await transaction.wait();
+    assertPrivacyPortalReceipt(receipt, 'Privacy conversion');
+    onProgress?.('complete');
+    return {
+      transactionHash:
+        transaction.hash ?? String((receipt as { hash?: unknown } | null)?.hash ?? ''),
+      receipt,
+      quote: {
+        ...quote,
+        gasEstimate,
+        gasLimit
+      },
+      gasLimit
+    };
+  } catch (error) {
+    throw normalizePrivacyPortalError(error);
+  }
+};
+
+type ChainWhisperWispBridgeReadContract = {
+  token: () => Promise<string>;
+  privateToken: () => Promise<string>;
+  paused: () => Promise<boolean>;
+  isDepositEnabled: () => Promise<boolean>;
+  minDepositAmount: () => Promise<bigint>;
+  maxDepositAmount: () => Promise<bigint>;
+  minWithdrawAmount: () => Promise<bigint>;
+  maxWithdrawAmount: () => Promise<bigint>;
+  blacklisted: (account: string) => Promise<boolean>;
+  nativeCotiFee: () => Promise<bigint>;
+  publicReserve: () => Promise<bigint>;
+  estimateDepositFee: (amountWei: bigint) => Promise<unknown>;
+  estimateWithdrawFee: (amountWei: bigint) => Promise<unknown>;
+};
+
+type ChainWhisperWispPublicTokenContract = {
+  balanceOf: (account: string) => Promise<unknown>;
+  allowance: (owner: string, spender: string) => Promise<unknown>;
+  approve: (
+    spender: string,
+    amountWei: bigint
+  ) => Promise<{ wait: () => Promise<unknown> }>;
+};
+
+const chainWhisperWispVerificationCache = new Map<string, ChainWhisperWispVerification>();
+
+export const clearChainWhisperWispVerificationCache = (): void => {
+  chainWhisperWispVerificationCache.clear();
+};
+
+export const verifyChainWhisperWispBridge = async (): Promise<ChainWhisperWispVerification> => {
+  const cached = chainWhisperWispVerificationCache.get(CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress.toLowerCase());
+  if (cached?.status === 'ready') {
+    return cached;
+  }
+  const issues: ChainWhisperWispVerificationIssue[] = [];
+  let chainId: number | null = null;
+  try {
+    const [cotiEthers, readProvider] = await Promise.all([
+      loadCotiEthersModule(),
+      loadCotiReadProvider(true)
+    ]);
+    const network = await readProvider.getNetwork();
+    chainId = Number(network.chainId);
+    if (chainId !== CHAINWHISPER_WISP_BRIDGE_PAIR.chainId) {
+      issues.push('wrong-chain');
+    }
+    const [bridgeCode, publicCode, privateCode] = await Promise.all([
+      readProvider.getCode(CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress),
+      readProvider.getCode(CHAINWHISPER_WISP_BRIDGE_PAIR.publicTokenAddress),
+      readProvider.getCode(CHAINWHISPER_WISP_BRIDGE_PAIR.privateTokenAddress)
+    ]);
+    if (isMissingContractCode(bridgeCode)) {
+      issues.push('bridge-code-missing');
+    }
+    if (isMissingContractCode(publicCode)) {
+      issues.push('public-token-code-missing');
+    }
+    if (isMissingContractCode(privateCode)) {
+      issues.push('private-token-code-missing');
+    }
+
+    const bridgeContract = new cotiEthers.Contract(
+      CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress,
+      WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
+      readProvider
+    ) as unknown as ChainWhisperWispBridgeReadContract;
+    const publicTokenContract = new cotiEthers.Contract(
+      CHAINWHISPER_WISP_BRIDGE_PAIR.publicTokenAddress,
+      ERC20_TOKEN_ABI,
+      readProvider
+    );
+    const privateTokenContract = new cotiEthers.Contract(
+      CHAINWHISPER_WISP_BRIDGE_PAIR.privateTokenAddress,
+      PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+      readProvider
+    );
+    const [configuredPublicToken, configuredPrivateToken, publicDecimals, privateDecimals] = await Promise.all([
+      bridgeContract.token(),
+      bridgeContract.privateToken(),
+      publicTokenContract.decimals(),
+      privateTokenContract.decimals()
+    ]);
+    if (!addressesMatch(configuredPublicToken, CHAINWHISPER_WISP_BRIDGE_PAIR.publicTokenAddress)) {
+      issues.push('public-token-mismatch');
+    }
+    if (!addressesMatch(configuredPrivateToken, CHAINWHISPER_WISP_BRIDGE_PAIR.privateTokenAddress)) {
+      issues.push('private-token-mismatch');
+    }
+    if (Number(publicDecimals) !== CHAINWHISPER_WISP_BRIDGE_PAIR.decimals) {
+      issues.push('public-decimals-mismatch');
+    }
+    if (Number(privateDecimals) !== CHAINWHISPER_WISP_BRIDGE_PAIR.decimals) {
+      issues.push('private-decimals-mismatch');
+    }
+
+    const verification: ChainWhisperWispVerification = {
+      status: issues.length === 0 ? 'ready' : 'mismatch',
+      chainId,
+      issues,
+      verifiedAt: Date.now()
+    };
+    if (verification.status === 'ready') {
+      chainWhisperWispVerificationCache.set(
+        CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress.toLowerCase(),
+        verification
+      );
+    }
+    return verification;
+  } catch {
+    issues.push('verification-read-failed');
+    return {
+      status: 'unavailable',
+      chainId,
+      issues: Array.from(new Set(issues)),
+      verifiedAt: Date.now()
+    };
+  }
+};
+
+const requireVerifiedChainWhisperWispBridge = async (): Promise<void> => {
+  const verification = await verifyChainWhisperWispBridge();
+  if (verification.status !== 'ready') {
+    throw new Error(
+      `ChainWhisper WISP bridge verification failed: ${verification.issues.join(', ') || 'unavailable'}.`
+    );
+  }
+};
+
+const assertChainWhisperWispQuoteUsable = (quote: ChainWhisperWispQuote): void => {
+  const issue = validateChainWhisperWispStatus(quote)[0];
+  if (issue) {
+    throw new Error(getChainWhisperWispStatusIssueMessage(issue));
+  }
+};
+
+export const readChainWhisperWispBridgeQuote = async ({
+  ownerAddress,
+  direction,
+  amountWei
+}: {
+  ownerAddress: string;
+  direction: ChainWhisperWispDirection;
+  amountWei: bigint;
+}): Promise<ChainWhisperWispQuote> => {
+  if (!isWalletAddress(ownerAddress)) {
+    throw new Error('A valid account is required for a ChainWhisper WISP quote.');
+  }
+  if (amountWei <= 0n) {
+    throw new Error('Enter a WISP amount greater than zero.');
+  }
+  await requireVerifiedChainWhisperWispBridge();
+  const [cotiEthers, readProvider] = await Promise.all([
+    loadCotiEthersModule(),
+    loadCotiReadProvider(true)
+  ]);
+  const bridgeContract = new cotiEthers.Contract(
+    CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress,
+    WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
+    readProvider
+  ) as unknown as ChainWhisperWispBridgeReadContract;
+  const privateTokenContract = new cotiEthers.Contract(
+    CHAINWHISPER_WISP_BRIDGE_PAIR.privateTokenAddress,
+    PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+    readProvider
+  );
+  const quotePromise = direction === 'shield'
+    ? bridgeContract.estimateDepositFee(amountWei)
+    : bridgeContract.estimateWithdrawFee(amountWei);
+  const [
+    rawFeeQuote,
+    nativeCotiFee,
+    paused,
+    depositEnabled,
+    minDeposit,
+    maxDeposit,
+    minWithdraw,
+    maxWithdraw,
+    blacklisted,
+    publicReserve,
+    privatePublicAmountsEnabled
+  ] = await Promise.all([
+    quotePromise,
+    bridgeContract.nativeCotiFee(),
+    bridgeContract.paused(),
+    bridgeContract.isDepositEnabled(),
+    bridgeContract.minDepositAmount(),
+    bridgeContract.maxDepositAmount(),
+    bridgeContract.minWithdrawAmount(),
+    bridgeContract.maxWithdrawAmount(),
+    bridgeContract.blacklisted(ownerAddress),
+    bridgeContract.publicReserve(),
+    privateTokenContract.publicAmountsEnabled()
+  ]);
+  const parsedQuote = parseChainWhisperWispFeeQuote(rawFeeQuote);
+  if (!parsedQuote) {
+    throw new Error('The ChainWhisper WISP bridge returned an invalid fee quote.');
+  }
+  if (parsedQuote.feeWei !== nativeCotiFee) {
+    throw new Error('The ChainWhisper WISP bridge fee changed while quoting. Refresh and try again.');
+  }
+  const minAmountWei = direction === 'shield' ? minDeposit : minWithdraw;
+  const maxAmountWei = direction === 'shield' ? maxDeposit : maxWithdraw;
+  return {
+    quoteKey: buildChainWhisperWispQuoteKey({ account: ownerAddress, direction, amountWei }),
+    direction,
+    account: ownerAddress,
+    amountWei,
+    ...parsedQuote,
+    minAmountWei,
+    maxAmountWei,
+    publicReserveWei: publicReserve,
+    paused,
+    depositEnabled,
+    privatePublicAmountsEnabled: Boolean(privatePublicAmountsEnabled),
+    blacklisted,
+    quotedAt: Date.now()
+  };
+};
+
+const readChainWhisperWispInputBalance = async ({
+  direction,
+  ownerAddress,
+  signer,
+  publicTokenContract
+}: {
+  direction: ChainWhisperWispDirection;
+  ownerAddress: string;
+  signer: Wallet | JsonRpcSigner;
+  publicTokenContract: Pick<ChainWhisperWispPublicTokenContract, 'balanceOf'>;
+}): Promise<bigint | null> => {
+  if (direction === 'shield') {
+    const value = await publicTokenContract.balanceOf(ownerAddress).catch(() => null);
+    return typeof value === 'bigint' ? value : null;
+  }
+  return readCurrentPrivateErc20BalanceWei(
+    CHAINWHISPER_WISP_BRIDGE_PAIR.privateTokenAddress,
+    ownerAddress,
+    signer,
+    true
+  ).catch(() => null);
+};
+
+export const executeChainWhisperWispBridgeConversion = async ({
+  signer,
+  ownerAddress,
+  direction,
+  amountWei,
+  onProgress
+}: {
+  signer: Wallet | JsonRpcSigner;
+  ownerAddress: string;
+  direction: ChainWhisperWispDirection;
+  amountWei: bigint;
+  onProgress?: (stage: ChainWhisperWispStage) => void;
+}): Promise<ChainWhisperWispConversionResult> => {
+  try {
+    onProgress?.('validating');
+    if (!isWalletAddress(ownerAddress)) {
+      throw new Error('A valid account is required for a ChainWhisper WISP conversion.');
+    }
+    if (amountWei <= 0n) {
+      throw new Error('Enter a WISP amount greater than zero.');
+    }
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    await requireVerifiedChainWhisperWispBridge();
+
+    const cotiEthers = await loadCotiEthersModule();
+    const provider = signer.provider;
+    if (!provider) {
+      throw new Error('The selected signer is not connected to a network provider.');
+    }
+    const publicTokenContract = new cotiEthers.Contract(
+      CHAINWHISPER_WISP_BRIDGE_PAIR.publicTokenAddress,
+      ERC20_TOKEN_ABI,
+      signer
+    ) as unknown as ChainWhisperWispPublicTokenContract;
+    const [initialQuote, initialInputBalanceWei, initialNativeBalanceWei] = await Promise.all([
+      readChainWhisperWispBridgeQuote({ ownerAddress, direction, amountWei }),
+      readChainWhisperWispInputBalance({
+        direction,
+        ownerAddress,
+        signer,
+        publicTokenContract
+      }),
+      provider.getBalance(ownerAddress).catch(() => null)
+    ]);
+    assertChainWhisperWispQuoteUsable(initialQuote);
+    const initialIssues = validateChainWhisperWispAmount({
+      direction,
+      amountWei,
+      minAmountWei: initialQuote.minAmountWei,
+      maxAmountWei: initialQuote.maxAmountWei,
+      balanceWei: initialInputBalanceWei,
+      publicReserveWei: initialQuote.publicReserveWei,
+      nativeBalanceWei: initialNativeBalanceWei,
+      feeWei: initialQuote.feeWei
+    });
+    if (initialIssues.length > 0) {
+      throw new Error(getChainWhisperWispAmountIssueMessage(initialIssues[0]));
+    }
+
+    if (direction === 'shield') {
+      const currentAllowanceRaw = await publicTokenContract.allowance(
+        ownerAddress,
+        CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress
+      );
+      if (typeof currentAllowanceRaw !== 'bigint') {
+        throw new Error('Unable to read the WISP bridge allowance.');
+      }
+      const approvalAmounts = resolveChainWhisperWispPublicApprovalAmounts(currentAllowanceRaw, amountWei);
+      for (const approvalAmount of approvalAmounts) {
+        onProgress?.(approvalAmount === 0n ? 'public-approval-reset' : 'public-approval');
+        const approvalTransaction = await publicTokenContract.approve(
+          CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress,
+          approvalAmount
+        );
+        const approvalReceipt = await approvalTransaction.wait();
+        assertPrivacyPortalReceipt(approvalReceipt, 'WISP approval');
+        await assertPrivacyPortalSignerState(signer, ownerAddress);
+      }
+      if (approvalAmounts.length > 0) {
+        const refreshedAllowanceRaw = await publicTokenContract.allowance(
+          ownerAddress,
+          CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress
+        );
+        if (refreshedAllowanceRaw !== amountWei) {
+          throw new Error('WISP allowance does not match the requested shield amount after approval.');
+        }
+      }
+    } else {
+      await ensurePrivateTokenExactAllowance({
+        signer,
+        ownerAddress,
+        tokenAddress: CHAINWHISPER_WISP_BRIDGE_PAIR.privateTokenAddress,
+        spenderAddress: CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress,
+        targetAmountWei: amountWei,
+        tokenSymbol: CHAINWHISPER_WISP_BRIDGE_PAIR.privateSymbol,
+        onBeforeApproval: () => onProgress?.('private-approval')
+      });
+    }
+
+    onProgress?.('refreshing-quote');
+    await assertPrivacyPortalSignerState(signer, ownerAddress);
+    const [quote, inputBalanceWei, nativeBalanceWei] = await Promise.all([
+      readChainWhisperWispBridgeQuote({ ownerAddress, direction, amountWei }),
+      readChainWhisperWispInputBalance({
+        direction,
+        ownerAddress,
+        signer,
+        publicTokenContract
+      }),
+      provider.getBalance(ownerAddress).catch(() => null)
+    ]);
+    assertChainWhisperWispQuoteUsable(quote);
+    const refreshedIssues = validateChainWhisperWispAmount({
+      direction,
+      amountWei,
+      minAmountWei: quote.minAmountWei,
+      maxAmountWei: quote.maxAmountWei,
+      balanceWei: inputBalanceWei,
+      publicReserveWei: quote.publicReserveWei,
+      nativeBalanceWei,
+      feeWei: quote.feeWei
+    });
+    if (refreshedIssues.length > 0) {
+      throw new Error(getChainWhisperWispAmountIssueMessage(refreshedIssues[0]));
+    }
+
+    const bridgeContract = new cotiEthers.Contract(
+      CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress,
+      WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
+      signer
+    ) as unknown as Record<string, unknown>;
+    const call = buildChainWhisperWispCall(direction, amountWei, quote);
+    const writeMethod = bridgeContract[call.functionSignature] as {
+      (...args: unknown[]): Promise<{ hash?: string; wait: () => Promise<unknown> }>;
+      estimateGas: (...args: unknown[]) => Promise<bigint>;
+    };
+    const gasEstimate = await writeMethod.estimateGas(...call.args, { value: call.valueWei });
+    if (typeof gasEstimate !== 'bigint' || gasEstimate <= 0n) {
+      throw new Error('The ChainWhisper WISP bridge gas could not be estimated safely.');
+    }
+    const gasLimit = applyPrivacyPortalGasMargin(gasEstimate);
+    const [latestBlock, feeData, latestNativeBalanceWei] = await Promise.all([
+      provider.getBlock('latest'),
+      provider.getFeeData(),
+      provider.getBalance(ownerAddress)
+    ]);
+    if (!latestBlock || gasLimit > latestBlock.gasLimit) {
+      throw new Error('The ChainWhisper WISP transaction exceeds the current COTI block gas limit.');
+    }
+    const gasPriceWei = feeData.maxFeePerGas ?? feeData.gasPrice;
+    if (gasPriceWei === null || gasPriceWei < 0n) {
+      throw new Error('The current COTI gas price is unavailable.');
+    }
+    if (latestNativeBalanceWei < quote.feeWei + gasLimit * gasPriceWei) {
+      throw new Error('Insufficient funds for the ChainWhisper bridge fee and gas.');
+    }
+
+    const { transaction, receipt } = await submitAndConfirmChainWhisperWispConversion({
+      assertReady: () => assertPrivacyPortalSignerState(signer, ownerAddress),
+      submit: () => writeMethod(...call.args, {
+        value: call.valueWei,
+        gasLimit
+      }),
+      onProgress
+    });
+    return {
+      transactionHash: transaction.hash ?? String((receipt as { hash?: unknown } | null)?.hash ?? ''),
+      receipt,
+      quote,
+      gasEstimate,
+      gasLimit
+    };
+  } catch (error) {
+    throw normalizePrivacyPortalError(error);
   }
 };

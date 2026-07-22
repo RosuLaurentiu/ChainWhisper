@@ -3,7 +3,9 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 import {
   CHAT_IMAGES_BUCKET,
+  CHAT_IMAGE_UPLOADS_TABLE,
   IMAGE_RETENTION_HOURS,
+  PENDING_IMAGE_RETENTION_MINUTES,
   jsonResponse
 } from '../_shared/chat-image.ts';
 
@@ -23,6 +25,38 @@ const chunkPaths = (paths: string[], size: number): string[][] => {
   return chunks;
 };
 
+const loadExpiredTrackedBlobIds = async (
+  supabaseAdmin: ReturnType<typeof createClient>,
+  pendingCutoffIso: string,
+  confirmedCutoffIso: string
+): Promise<string[]> => {
+  const [pending, confirmed] = await Promise.all([
+    supabaseAdmin
+      .from(CHAT_IMAGE_UPLOADS_TABLE)
+      .select('blob_id')
+      .is('confirmed_at', null)
+      .lte('created_at', pendingCutoffIso)
+      .limit(REMOVE_BATCH_SIZE),
+    supabaseAdmin
+      .from(CHAT_IMAGE_UPLOADS_TABLE)
+      .select('blob_id')
+      .not('confirmed_at', 'is', null)
+      .lte('confirmed_at', confirmedCutoffIso)
+      .limit(REMOVE_BATCH_SIZE)
+  ]);
+
+  if (pending.error) {
+    throw new Error(pending.error.message || 'Failed to list pending image uploads.');
+  }
+  if (confirmed.error) {
+    throw new Error(confirmed.error.message || 'Failed to list confirmed image uploads.');
+  }
+
+  return [...(pending.data ?? []), ...(confirmed.data ?? [])]
+    .map((row) => typeof row.blob_id === 'string' ? row.blob_id : '')
+    .filter(Boolean);
+};
+
 Deno.serve(async (request) => {
   const corsResponse = handleCorsPreflight(request);
   if (corsResponse) {
@@ -38,10 +72,21 @@ Deno.serve(async (request) => {
   }
 
   const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-  const cutoffMs = Date.now() - IMAGE_RETENTION_HOURS * 60 * 60 * 1000;
-  const expiredPaths: string[] = [];
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - IMAGE_RETENTION_HOURS * 60 * 60 * 1000;
+  const pendingCutoffIso = new Date(nowMs - PENDING_IMAGE_RETENTION_MINUTES * 60 * 1000).toISOString();
+  const confirmedCutoffIso = new Date(cutoffMs).toISOString();
+  const expiredPaths = new Set<string>();
   let scannedCount = 0;
   let offset = 0;
+
+  try {
+    for (const blobId of await loadExpiredTrackedBlobIds(supabaseAdmin, pendingCutoffIso, confirmedCutoffIso)) {
+      expiredPaths.add(blobId);
+    }
+  } catch (error) {
+    return buildErrorResponse(error instanceof Error ? error.message : 'Failed to list tracked image uploads.', 500);
+  }
 
   while (true) {
     const { data, error } = await supabaseAdmin.storage.from(CHAT_IMAGES_BUCKET).list('', {
@@ -70,7 +115,7 @@ Deno.serve(async (request) => {
       }
 
       if (createdAtMs <= cutoffMs) {
-        expiredPaths.push(entry.name);
+        expiredPaths.add(entry.name);
       }
     }
 
@@ -81,10 +126,14 @@ Deno.serve(async (request) => {
   }
 
   let deletedCount = 0;
-  for (const batch of chunkPaths(expiredPaths, REMOVE_BATCH_SIZE)) {
+  for (const batch of chunkPaths([...expiredPaths], REMOVE_BATCH_SIZE)) {
     const { error } = await supabaseAdmin.storage.from(CHAT_IMAGES_BUCKET).remove(batch);
     if (error) {
       return buildErrorResponse(error.message || 'Failed to delete expired chat images.', 500);
+    }
+    const { error: deleteRowsError } = await supabaseAdmin.from(CHAT_IMAGE_UPLOADS_TABLE).delete().in('blob_id', batch);
+    if (deleteRowsError) {
+      return buildErrorResponse(deleteRowsError.message || 'Failed to delete expired image upload records.', 500);
     }
     deletedCount += batch.length;
   }
@@ -94,7 +143,8 @@ Deno.serve(async (request) => {
       bucket: CHAT_IMAGES_BUCKET,
       scannedCount,
       deletedCount,
-      cutoffIso: new Date(cutoffMs).toISOString()
+      confirmedCutoffIso,
+      pendingCutoffIso
     },
     { headers: corsHeaders }
   );

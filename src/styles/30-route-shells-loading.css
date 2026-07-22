@@ -116,94 +116,82 @@
 .swap-page-panel {
   min-width: 0;
   width: 100%;
-  max-width: 460px;
+  max-width: 960px;
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .swap-page-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 24px;
 }
 
 .swap-page-heading {
   min-width: 0;
 }
 
-.swap-page-title-row {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
 .swap-page-title {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 1.48rem;
-  line-height: 1;
-  letter-spacing: -0.02em;
+  font-size: clamp(1.85rem, 3vw, 2.2rem);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
 }
 
 .swap-privacy-portal-link {
-  flex: 0 0 auto;
-  max-width: 100%;
-  border: 1px solid rgba(139, 92, 246, 0.42);
-  border-radius: 999px;
-  background: rgba(139, 92, 246, 0.15);
-  color: #f1edff;
-  padding: 8px 11px;
-  font-size: 0.74rem;
-  font-weight: 800;
-  line-height: 1;
-  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 13px;
+  color: #b278ff;
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
   white-space: nowrap;
-  transition:
-    border-color 0.18s ease,
-    background 0.18s ease,
-    color 0.18s ease;
+  transition: color 0.18s ease;
 }
 
 .swap-privacy-portal-link:hover,
 .swap-privacy-portal-link:focus-visible {
-  border-color: rgba(184, 151, 255, 0.74);
-  background: rgba(139, 92, 246, 0.24);
-  color: #ffffff;
+  color: #d4b4ff;
 }
 
 .swap-page-heading p {
-  margin: 7px 0 0;
+  margin: 10px 0 0;
   color: var(--muted);
-  font-size: 0.9rem;
-  line-height: 1.4;
+  font-size: 0.94rem;
+  line-height: 1.5;
 }
 
-.swap-balance-pill {
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: linear-gradient(180deg, #151522, #11111b);
-  padding: 10px 11px;
-}
+@media (max-width: 920px) {
+  .swap-page-panel {
+    max-width: 778px;
+    gap: 14px;
+  }
 
-.swap-balance-pill span {
-  display: block;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
+  .swap-page-hero {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 16px;
+  }
 
-.swap-balance-pill strong {
-  display: block;
-  margin-top: 5px;
-  color: #f1edff;
-  font-size: 0.84rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
+  .swap-page-title {
+    font-size: clamp(1.8rem, 7vw, 2.1rem);
+  }
+
+  .swap-page-heading p {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 0;
+  }
+
+  .swap-privacy-portal-link {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 
