@@ -27,6 +27,27 @@ test.describe('Agent App Help', () => {
     await expect(page.getByRole('textbox', { name: 'Ask the Trade Agent' })).not.toHaveValue(
       /reference-only|do not require|ask for/i
     );
+
+    const compactLayout = await page.locator('.p2p-agent-panel').evaluate((panel) => {
+      const hero = panel.querySelector<HTMLElement>('.p2p-agent-hero');
+      const modeToggle = panel.querySelector<HTMLElement>('.p2p-agent-mode-toggle');
+      const textarea = panel.querySelector<HTMLTextAreaElement>('.p2p-agent-prompt textarea');
+      if (!hero || !modeToggle || !textarea) {
+        return null;
+      }
+      const heroBox = hero.getBoundingClientRect();
+      const panelBox = panel.getBoundingClientRect();
+      const toggleBox = modeToggle.getBoundingClientRect();
+      return {
+        headerTopDelta: Math.abs(heroBox.top - toggleBox.top),
+        panelHeight: panelBox.height,
+        textareaHeight: textarea.getBoundingClientRect().height
+      };
+    });
+    expect(compactLayout).not.toBeNull();
+    expect(compactLayout!.headerTopDelta).toBeLessThanOrEqual(2);
+    expect(compactLayout!.panelHeight).toBeLessThanOrEqual(520);
+    expect(compactLayout!.textareaHeight).toBeLessThanOrEqual(44);
   });
 
   test('keeps App Help usable without horizontal overflow on mobile', async ({ page }) => {
@@ -41,5 +62,90 @@ test.describe('Agent App Help', () => {
     await expect
       .poll(() => page.getByRole('button', { name: 'Start', exact: true }).evaluate((button) => button.getBoundingClientRect().height))
       .toBeGreaterThanOrEqual(44);
+  });
+
+  test('keeps the Trade Agent composer full width beside an order drawer', async ({ page }) => {
+    await page.setViewportSize({ width: 2048, height: 747 });
+    await page.goto('/trades/recurring?order=1');
+
+    const terminal = page.locator('.p2p-terminal-shell-recurring');
+    await expect(terminal).toBeVisible({ timeout: 30_000 });
+    await terminal.getByRole('button', { name: 'Ask Agent' }).click();
+    await expect(page).toHaveURL(/\/otc\/agent$/);
+    await page.goBack();
+
+    const composer = page.locator('.p2p-trading-shell-drawer-open .p2p-agent-composer-trade');
+    await expect(composer).toBeVisible();
+    await expect(page.locator('.p2p-trading-shell-drawer-open .p2p-terminal-shell-recurring')).toBeVisible();
+    await page.getByRole('button', { name: 'Draft a counter' }).click();
+    await expect(page.getByRole('textbox', { name: 'Ask the Trade Agent' })).toHaveValue(
+      'Draft a counter for this order.'
+    );
+
+    const layout = await composer.evaluate((composerElement) => {
+      const actions = composerElement.querySelector<HTMLElement>('.p2p-agent-quick-actions');
+      const prompt = composerElement.querySelector<HTMLElement>('.p2p-agent-prompt');
+      const textarea = prompt?.querySelector<HTMLTextAreaElement>('textarea');
+      const actionButtons = Array.from(actions?.querySelectorAll('button') ?? []);
+      if (!actions || !prompt || !textarea || actionButtons.length === 0) {
+        return null;
+      }
+      const composerBox = composerElement.getBoundingClientRect();
+      const actionsBox = actions.getBoundingClientRect();
+      const promptBox = prompt.getBoundingClientRect();
+      return {
+        actionButtonMinHeight: Math.min(...actionButtons.map((button) => button.getBoundingClientRect().height)),
+        actionsBottom: actionsBox.bottom,
+        actionsFlexWrap: window.getComputedStyle(actions).flexWrap,
+        composerWidth: composerBox.width,
+        hasOverflow: composerElement.scrollWidth > composerElement.clientWidth + 1,
+        height: composerBox.height,
+        promptTop: promptBox.top,
+        promptWidth: promptBox.width,
+        textareaHeight: textarea.getBoundingClientRect().height
+      };
+    });
+
+    expect(layout).not.toBeNull();
+    expect(layout!.actionButtonMinHeight).toBeGreaterThanOrEqual(44);
+    expect(layout!.actionsFlexWrap).toBe('wrap');
+    expect(layout!.promptTop).toBeGreaterThanOrEqual(layout!.actionsBottom);
+    expect(layout!.promptWidth).toBeGreaterThanOrEqual(layout!.composerWidth - 2);
+    expect(layout!.height).toBeLessThanOrEqual(160);
+    expect(layout!.textareaHeight).toBeLessThanOrEqual(44);
+    expect(layout!.hasOverflow).toBe(false);
+
+    const updateLayout = await page
+      .locator('.p2p-agent-message-status')
+      .filter({ hasText: 'Recurring OTC #1 loaded.' })
+      .evaluate((message) => {
+        const label = message.querySelector<HTMLElement>('span');
+        const text = message.querySelector<HTMLElement>('p');
+        if (!label || !text) {
+          return null;
+        }
+        const labelBox = label.getBoundingClientRect();
+        const messageBox = message.getBoundingClientRect();
+        const textBox = text.getBoundingClientRect();
+        return {
+          height: messageBox.height,
+          labelTop: labelBox.top,
+          textTop: textBox.top
+        };
+      });
+    expect(updateLayout).not.toBeNull();
+    expect(updateLayout!.height).toBeLessThanOrEqual(32);
+    expect(Math.abs(updateLayout!.labelTop - updateLayout!.textTop)).toBeLessThanOrEqual(3);
+
+    await expect
+      .poll(() => page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth + 1))
+      .toBe(true);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('.p2p-agent-section')).toBeHidden();
+    await expect(page.locator('.standalone-trade-detail-section')).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth + 1))
+      .toBe(true);
   });
 });

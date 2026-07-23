@@ -710,7 +710,8 @@
 
   .p2p-trading-shell-drawer-open .p2p-public-trades-section,
   .p2p-trading-shell-drawer-open .p2p-my-trades-section,
-  .p2p-trading-shell-drawer-open .p2p-swap-section {
+  .p2p-trading-shell-drawer-open .p2p-swap-section,
+  .p2p-trading-shell-drawer-open .p2p-agent-section {
     display: none;
   }
 

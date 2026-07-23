@@ -248,19 +248,19 @@ export const TRADE_AGENT_QUICK_ACTIONS: TradeAgentQuickAction[] = [
   {
     action: 'explain_order',
     label: 'Explain this order',
-    prompt: 'Explain the loaded order. Keep it short and point out what I should review.',
+    prompt: 'Explain this order.',
     contextRequirement: 'order'
   },
   {
     action: 'draft_counter',
     label: 'Draft a counter',
-    prompt: 'Draft a counter for the loaded order and a concise message I can edit. Do not execute anything.',
+    prompt: 'Draft a counter for this order.',
     contextRequirement: 'order'
   },
   {
     action: 'review_orders',
     label: 'Review my orders',
-    prompt: 'Review my active and recent orders. Flag anything that needs attention and let me open the relevant order.',
+    prompt: 'Review my orders.',
     contextRequirement: 'orders'
   }
 ];
