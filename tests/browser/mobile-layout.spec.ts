@@ -185,6 +185,8 @@ test.describe('mobile layout polish', () => {
     await page.goto('/otc/desk');
     const shell = page.locator('.standalone-trades-shell');
     await expect(shell).toBeVisible();
+    const firstOrder = page.locator('.p2p-public-trade-grid .p2p-offer-open-btn').first();
+    await expect(firstOrder).toBeVisible({ timeout: 30_000 });
     const savedTop = await shell.evaluate((node) => {
       const targetTop = Math.min(260, Math.max(0, node.scrollHeight - node.clientHeight));
       node.scrollTop = targetTop;
@@ -193,8 +195,6 @@ test.describe('mobile layout polish', () => {
     expect(savedTop).toBeGreaterThanOrEqual(24);
 
     const tradeTabs = page.getByRole('navigation', { name: 'OTC Desk views' });
-    const firstOrder = page.locator('.p2p-public-trade-grid .p2p-offer-open-btn').first();
-    await expect(firstOrder).toBeVisible({ timeout: 30_000 });
     await firstOrder.click();
     await expect(page.locator('.standalone-trade-detail-section')).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
