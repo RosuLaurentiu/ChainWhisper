@@ -1,11 +1,40 @@
 import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 
 const walletPanel = '.wallet-header-panel';
 const cotiPrivacyPortalUrl = 'https://privacy.coti.io/';
+const COTI_CHAIN_ID_HEX = '0x282b34';
+const TEST_OWNER = '0x1111111111111111111111111111111111111111';
+
+const installMockOwnerWallet = async (page: Page) => {
+  await page.addInitScript(({ chainId, owner }) => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const provider = {
+      isMetaMask: true,
+      selectedAddress: owner,
+      request: async ({ method }: { method: string }) => {
+        if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [owner];
+        if (method === 'eth_chainId') return chainId;
+        if (method === 'wallet_requestPermissions') return [{ parentCapability: 'eth_accounts', caveats: [] }];
+        if (method === 'wallet_switchEthereumChain' || method === 'wallet_addEthereumChain') return null;
+        return null;
+      },
+      on: (eventName: string, handler: (...args: unknown[]) => void) => {
+        const handlers = listeners.get(eventName) ?? new Set<(...args: unknown[]) => void>();
+        handlers.add(handler);
+        listeners.set(eventName, handlers);
+      },
+      removeListener: (eventName: string, handler: (...args: unknown[]) => void) => {
+        listeners.get(eventName)?.delete(handler);
+      }
+    };
+    Object.defineProperty(window, 'ethereum', { configurable: true, value: provider });
+  }, { chainId: COTI_CHAIN_ID_HEX, owner: TEST_OWNER });
+};
 
 test.describe('route wallet header policy', () => {
   test('shows the shared app menu on every top-level page', async ({ page }) => {
-    for (const route of ['/', '/chat', '/otcdesk', '/trades', '/portal', '/shield', '/treasury']) {
+    for (const route of ['/', '/chat', '/otc', '/otc/desk', '/portal', '/shield', '/treasury']) {
       await page.goto(route);
       const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' }).first();
       await expect(appMenu).toBeVisible();
@@ -46,7 +75,7 @@ test.describe('route wallet header policy', () => {
   });
 
   test('shows notification sound controls on app pages except Home', async ({ page }) => {
-    for (const route of ['/chat', '/otcdesk', '/trades', '/portal', '/shield', '/treasury']) {
+    for (const route of ['/chat', '/otc', '/otc/desk', '/portal', '/shield', '/treasury']) {
       await page.goto(route);
       await expect(page.locator('.sound-toggle-btn')).toBeVisible();
     }
@@ -58,36 +87,48 @@ test.describe('route wallet header policy', () => {
   test('shows Chat and Privacy Portal app-wallet controls', async ({ page }) => {
     await page.goto('/chat');
     await expect(page.locator(walletPanel)).toBeVisible();
-    await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
+    await expect(page.locator('.top-header .wallet-primary-action')).toBeVisible();
 
     await page.goto('/shield');
     await expect(page.locator(walletPanel)).toBeVisible();
-    await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
+    await expect(page.locator('.top-header .wallet-primary-action')).toBeVisible();
 
     await page.goto('/portal');
     await expect(page.locator(walletPanel)).toBeVisible();
-    await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
+    await expect(page.locator('.top-header .wallet-primary-action')).toBeVisible();
 
     await page.goto('/swap');
     await expect(page.locator(walletPanel)).toBeVisible();
-    await expect(page.getByText(/App wallet|No wallet connected/i).first()).toBeVisible();
+    await expect(page.locator('.top-header .wallet-primary-action')).toBeVisible();
   });
 
-  test('opens the app-wallet PIN dialog from every wallet-enabled app shell', async ({ page }) => {
-    for (const route of ['/chat', '/shield', '/otcdesk']) {
+  test('exposes account creation from every wallet-enabled app shell after owner connection', async ({ page }) => {
+    await installMockOwnerWallet(page);
+    await page.goto('/chat');
+    await page.locator('.top-header .wallet-primary-action').click();
+    await expect(
+      page.locator('.top-header').getByRole('button', { name: 'Copy owner wallet address' })
+    ).toBeVisible({ timeout: 30_000 });
+
+    for (const route of ['/chat', '/shield', '/otc']) {
       await page.goto(route);
       const header = page.locator('.top-header');
       await expect(header.locator(walletPanel)).toBeVisible();
+      const connectOwner = header.getByRole('button', {
+        name: 'Connect the owner wallet used for login, funding, and recovery'
+      });
+      if (await connectOwner.count()) {
+        await connectOwner.click();
+        await expect(header.getByRole('button', { name: 'Copy owner wallet address' })).toBeVisible({
+          timeout: 30_000
+        });
+      }
 
       await header.getByRole('button', { name: /^Open Wallet menu$/i }).click();
-      await page.getByRole('menuitem', { name: /^Generate wallet$/i }).click();
-
-      const pinDialog = page.getByRole('dialog', { name: /Set PIN|Unlock Wallet/i });
-      await expect(pinDialog).toBeVisible();
-      await expect(pinDialog.getByLabel('Wallet PIN')).toBeVisible();
-
-      await pinDialog.getByRole('button', { name: /^Cancel$/i }).click();
-      await expect(pinDialog).toHaveCount(0);
+      const createAccount = page.getByRole('menuitem', { name: /^Create account$/i });
+      await expect(createAccount).toBeVisible();
+      await expect(createAccount).toBeEnabled();
+      await header.getByRole('button', { name: /^Close Wallet menu$/i }).click();
     }
   });
 
@@ -99,7 +140,7 @@ test.describe('route wallet header policy', () => {
       );
     });
 
-    await page.goto('/otcdesk');
+    await page.goto('/otc');
 
     const header = page.locator('.top-header');
     await expect(header.locator(walletPanel)).toBeVisible();
@@ -117,7 +158,7 @@ test.describe('route wallet header policy', () => {
   });
 
   test('replaces OTC Desk wallet header state when navigating back to Chat', async ({ page }) => {
-    await page.goto('/otcdesk');
+    await page.goto('/otc');
     await expect(page.locator('.top-header-brand-subtitle', { hasText: /^OTC Desk$/ })).toBeVisible();
     await expect(page.locator(walletPanel)).toBeVisible();
 

@@ -45,7 +45,8 @@
   }
 
   .p2p-agent-hero small,
-  .p2p-agent-submit-row .trade-card-action {
+  .p2p-agent-submit-row .trade-card-action,
+  .p2p-agent-submit-row .p2p-agent-connect-account {
     width: 100%;
   }
 

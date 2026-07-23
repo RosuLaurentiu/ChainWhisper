@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
 const PENDING_TERMINAL_ROUTE_KEY = 'chainwhisper:p2p:pending-terminal-route:v1';
-const CARBON_EXPLORE_PAIR_URL = '**/tools/explore_pair';
+const CARBON_MARKET_RATE_URL = '**/market-rate?**';
+const CARBON_NATIVE_TOKEN_ADDRESS = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const COTI_CHAIN_ID_HEX = '0x282b34';
 const RECURRING_ORDER_ONE_MAKER = '0xbf01185A70CDfEF1858659836D57BFf085ebed55';
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -47,31 +48,12 @@ const installMockTradingWallet = async (page: Page, address: string) => {
 };
 
 const mockCarbonPairReference = async (page: Page, marketPrice: number | null) => {
-  await page.route(CARBON_EXPLORE_PAIR_URL, async (route: Route) => {
-    if (route.request().method() === 'OPTIONS') {
-      await route.fulfill({
-        headers: {
-          'Access-Control-Allow-Headers': 'accept, content-type',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Origin': '*'
-        },
-        status: 204
-      });
-      return;
-    }
-
+  await page.route(CARBON_MARKET_RATE_URL, async (route: Route) => {
+    const address = new URL(route.request().url()).searchParams.get('address')?.toLowerCase();
+    const usd = marketPrice === null ? null : address === CARBON_NATIVE_TOKEN_ADDRESS ? 1 : marketPrice;
     await route.fulfill({
       body: JSON.stringify({
-        active_strategies: marketPrice
-          ? [
-              {
-                buy: { marginal: String(marketPrice) },
-                sell: { marginal: String(marketPrice) }
-              }
-            ]
-          : [],
-        market_price: marketPrice,
-        status: 'ok'
+        data: { USD: usd }
       }),
       headers: {
         'Access-Control-Allow-Origin': '*',
@@ -101,13 +83,31 @@ const selectComposerToken = async (
 };
 
 test.describe('trading V1 routes', () => {
+  test('redirects legacy trading aliases to canonical OTC routes', async ({ page }) => {
+    const cases = [
+      ['/otcdesk', '/otc'],
+      ['/otcdesk/create', '/otc/limit'],
+      ['/otcdesk/mytrades', '/otc/orders'],
+      ['/trades', '/otc/desk'],
+      ['/trades/create', '/otc/limit'],
+      ['/trades/mine', '/otc/orders'],
+      ['/trades/recurring', '/otc/recurring']
+    ] as const;
+
+    for (const [legacyPath, canonicalPath] of cases) {
+      await page.goto(legacyPath);
+      await expect(page).toHaveURL(new RegExp(`${canonicalPath.replaceAll('/', '\\/')}$`));
+    }
+  });
+
   test('uses the recurring read path for recurring links', async ({ page }) => {
     await page.goto('/trades/recurring?order=1');
+    await expect(page).toHaveURL(/\/otc\/order\/recurring\/1$/);
 
     const drawer = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
     await expect(drawer).toBeVisible();
-    await expect(drawer.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
-    await expect(drawer.locator('.p2p-terminal-eyebrow', { hasText: /^Recurring OTC Terminal$/ })).toBeVisible({
+    await expect(drawer.locator('.landing-eyebrow', { hasText: /^Order$/ })).toBeVisible();
+    await expect(drawer.locator('.p2p-terminal-eyebrow', { hasText: /^Recurring OTC order$/ })).toBeVisible({
       timeout: 30_000
     });
     await expect(drawer.locator('.p2p-terminal-shell-recurring')).toBeVisible();
@@ -120,6 +120,7 @@ test.describe('trading V1 routes', () => {
 
   test('keeps recurring order prices stable while mapping the fill action to the filled side', async ({ page }) => {
     await page.goto('/trades/recurring?order=1');
+    await expect(page).toHaveURL(/\/otc\/order\/recurring\/1$/);
 
     const terminal = page.locator('.p2p-terminal-shell-recurring');
     await expect(terminal).toBeVisible({ timeout: 30_000 });
@@ -128,22 +129,23 @@ test.describe('trading V1 routes', () => {
     const orderSellSide = priceDesk.locator('.p2p-recurring-price-sell');
 
     await expect(priceDesk.locator('.p2p-recurring-price-card-head')).toContainText('Price ratio');
-    await expect(orderBuySide).toContainText(/^Sell /i);
-    await expect(orderSellSide).toContainText(/^Buy /i);
-    await expect(orderSellSide).toHaveClass(/is-active/);
+    await expect(orderBuySide).toContainText(/^Buy /i);
+    await expect(orderSellSide).toContainText(/^Sell /i);
+    await expect(orderBuySide).toHaveClass(/is-active/);
     await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You buy .* at/i);
 
     await terminal.locator('.p2p-terminal-tabs').getByRole('tab', { name: 'Sell' }).click();
-    await expect(orderBuySide).toHaveClass(/is-active/);
+    await expect(orderSellSide).toHaveClass(/is-active/);
     await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You sell .* at/i);
   });
 
   test('shows recurring price sides from the maker perspective after wallet connect', async ({ page }) => {
     await installMockTradingWallet(page, RECURRING_ORDER_ONE_MAKER);
     await page.goto('/trades');
+    await expect(page).toHaveURL(/\/otc\/desk$/);
 
     const header = page.locator('.top-header');
-    await header.getByRole('button', { name: /^Connect MetaMask$/ }).click();
+    await header.locator('.wallet-primary-action').click();
 
     const recurringCard = page.locator('.p2p-public-trade-grid .p2p-recurring-order-card').first();
     await expect(recurringCard).toBeVisible({ timeout: 30_000 });
@@ -180,7 +182,7 @@ test.describe('trading V1 routes', () => {
 
     await page.goto('/trades');
 
-    await expect(page).toHaveURL(/\/trades\/recurring\?order=1/);
+    await expect(page).toHaveURL(/\/otc\/order\/recurring\/1$/);
     await expect(page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section')).toBeVisible();
   });
 
@@ -196,7 +198,7 @@ test.describe('trading V1 routes', () => {
       await expect(page).toHaveURL(/\/wallet-connect$/);
       const terminal = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
       await expect(terminal).toBeVisible();
-      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
+      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Order$/ })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -213,7 +215,7 @@ test.describe('trading V1 routes', () => {
       await expect(page).toHaveURL(/\/wallet-connect$/);
       const terminal = page.locator('.p2p-trading-shell-drawer-open .standalone-trade-detail-section');
       await expect(terminal).toBeVisible();
-      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
+      await expect(terminal.locator('.landing-eyebrow', { hasText: /^Order$/ })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -240,7 +242,7 @@ test.describe('trading V1 routes', () => {
     }
   });
 
-  test('manual Desk navigation clears the pending terminal route', async ({ page }) => {
+  test('closing the current Desk terminal clears the pending terminal route', async ({ page }) => {
     await page.goto('/trades/recurring?order=1');
     await page.evaluate((storageKey) => {
       window.sessionStorage.setItem(
@@ -253,73 +255,65 @@ test.describe('trading V1 routes', () => {
       );
     }, PENDING_TERMINAL_ROUTE_KEY);
 
-    await page.getByRole('button', { name: 'Desk', exact: true }).click();
+    const deskButton = page.getByRole('button', { name: 'Desk', exact: true });
+    await deskButton.click();
+    await expect(page.locator('.standalone-trade-detail-section')).toBeVisible();
+    await deskButton.click();
 
-    await expect(page).toHaveURL(/\/otcdesk$/);
+    await expect(page).toHaveURL(/\/otc\/desk$/);
     const pendingRoute = await page.evaluate((storageKey) => window.sessionStorage.getItem(storageKey), PENDING_TERMINAL_ROUTE_KEY);
     expect(pendingRoute).toBeNull();
   });
 
   test('shows the two-sided recurring builder', async ({ page }) => {
-    await page.goto('/trades/create');
-    await page.getByRole('button', { name: /Recurring/ }).click();
+    await page.goto('/otc/limit');
+    await page.getByRole('tab', { name: 'Recurring' }).click();
 
-    await expect(page.getByText('Reusable OTC order')).toBeVisible();
     await expect(page.getByText('Buy side', { exact: true })).toBeVisible();
     await expect(page.getByText('Sell side', { exact: true })).toBeVisible();
     await expect(page.getByText('Buy price', { exact: true })).toBeVisible();
     await expect(page.getByText('Sell price', { exact: true })).toBeVisible();
     await expect(page.getByText('Buy liquidity', { exact: true })).toBeVisible();
     await expect(page.getByText('Sell liquidity', { exact: true })).toBeVisible();
-    await expect(page.locator('.p2p-recurring-side-panel-buy .p2p-recurring-asset-field')).toContainText('Base asset');
-    await expect(page.locator('.p2p-recurring-side-panel-sell .p2p-recurring-asset-field')).toContainText('Quote asset');
-    await expect(page.locator('.p2p-recurring-side-panel-buy .p2p-recurring-asset-field')).toContainText('Balance:');
-    await expect(page.locator('.p2p-recurring-side-panel-sell .p2p-recurring-asset-field')).toContainText('Balance:');
-    await expect(page.locator('.p2p-recurring-side-panel-buy .trade-token-select-state a')).toHaveAttribute(
-      'href',
-      /\/address\//
-    );
+    await expect(page.getByRole('group', { name: 'Recurring OTC order' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Base CA / })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Quote CA / })).toBeVisible();
     await expect(page.locator('.p2p-recurring-side-grid + .trade-compose-privacy-panel')).toContainText('Order privacy');
     await expect(page.locator('.p2p-recurring-action-fee')).toContainText('Fee');
-    await expect(page.getByText('You receive').first()).toBeVisible();
-    await expect(page.getByText('Liquidity stays in this order and cycles between sides.')).toBeVisible();
+    await expect(page.getByText('You buy').first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Swap recurring token sides' })).toHaveCount(1);
   });
 
   test('shows Carbon reference prices in create and terminal surfaces', async ({ page }) => {
     await mockCarbonPairReference(page, 0.000286);
 
-    await page.goto('/trades/create');
-    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
-      'Carbon price 0.000286 COTI/WISP'
-    );
-
-    await selectComposerToken(page, '.trade-compose-section-sell', 'pWISP', 'Private');
+    await page.goto('/otc/limit');
+    await selectComposerToken(page, '.trade-compose-section-sell', 'p.WISP', 'Private');
     await selectComposerToken(page, '.trade-compose-section-buy', 'p.COTI', 'Private');
-    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
+    await expect(page.getByRole('group', { name: 'OTC trade offer' }).locator('.p2p-carbon-price-reference')).toContainText(
       'Carbon price 0.000286 COTI/WISP'
     );
 
     await selectComposerToken(page, '.trade-compose-section-sell', 'gCOTI', 'Public');
     await selectComposerToken(page, '.trade-compose-section-buy', 'COTI', 'Public');
-    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
+    await expect(page.getByRole('group', { name: 'OTC trade offer' }).locator('.p2p-carbon-price-reference')).toContainText(
       'Carbon price 0.000286 COTI/gCOTI'
     );
 
     await selectComposerToken(page, '.trade-compose-section-sell', 'p.gCOTI', 'Private');
     await selectComposerToken(page, '.trade-compose-section-buy', 'p.COTI', 'Private');
-    await expect(page.locator('.trade-compose-inline-price .p2p-carbon-price-reference')).toContainText(
+    await expect(page.getByRole('group', { name: 'OTC trade offer' }).locator('.p2p-carbon-price-reference')).toContainText(
       'Carbon price 0.000286 COTI/gCOTI'
     );
 
-    await page.getByRole('button', { name: /Recurring/ }).click();
-    await expect(page.locator('.p2p-recurring-price-field .p2p-carbon-price-reference').first()).toContainText(
+    await page.getByRole('tab', { name: 'Recurring' }).click();
+    await expect(page.locator('.p2p-recurring-pair-price .p2p-carbon-price-reference').first()).toContainText(
       'Carbon price 0.000286 COTI/gCOTI'
     );
 
-    await page.goto('/trades/3');
-    const standardTerminal = page.locator('.p2p-terminal-shell').filter({ hasText: 'P2P OTC #3' });
-    await expect(standardTerminal.locator('.p2p-carbon-price-reference')).toContainText(
+    await page.goto('/otc/order/recurring/5');
+    const recurringTerminal = page.locator('.p2p-terminal-shell-recurring');
+    await expect(recurringTerminal.locator('.p2p-carbon-price-reference')).toContainText(
       /Carbon price/,
       { timeout: 30_000 }
     );
@@ -329,19 +323,18 @@ test.describe('trading V1 routes', () => {
     await page.setViewportSize({ width: 900, height: 720 });
     await mockCarbonPairReference(page, 3172.212);
 
-    await page.goto('/trades/create');
+    await page.goto('/otc/limit');
     await selectComposerToken(page, '.trade-compose-section-sell', 'COTI', 'Public');
     await selectComposerToken(page, '.trade-compose-section-buy', 'Pengo', 'Public');
 
-    const carbonReference = page.locator('.trade-compose-inline-price .p2p-carbon-price-reference');
+    const activeComposer = page.getByRole('group', { name: 'OTC trade offer' });
+    const carbonReference = activeComposer.locator('.p2p-carbon-price-reference');
     await expect(carbonReference).toContainText('Carbon price');
 
     const bounds = await page.evaluate(() => {
-      const carbon = document.querySelector('.trade-compose-inline-price .p2p-carbon-price-reference');
-      const inlinePrice = carbon?.closest('.trade-compose-inline-price');
-      const sellSection = carbon?.closest('.trade-compose-section-sell');
+      const carbon = document.querySelector('[aria-label="OTC trade offer"] .p2p-carbon-price-reference');
+      const priceArea = carbon?.closest('.trade-compose-limit-price, .trade-compose-inline-price');
       const panel = carbon?.closest('.trade-compose-panel');
-      const privacy = panel?.querySelector('.trade-compose-privacy-panel');
       const readBounds = (element: Element | null | undefined, label: string) => {
         if (!element) {
           throw new Error(`Missing ${label}`);
@@ -349,6 +342,7 @@ test.describe('trading V1 routes', () => {
         const rect = element.getBoundingClientRect();
         return {
           bottom: rect.bottom,
+          left: rect.left,
           right: rect.right,
           top: rect.top
         };
@@ -356,22 +350,23 @@ test.describe('trading V1 routes', () => {
 
       return {
         carbon: readBounds(carbon, 'Carbon price reference'),
-        inlinePrice: readBounds(inlinePrice, 'inline price'),
-        privacy: readBounds(privacy, 'privacy panel'),
-        sellSection: readBounds(sellSection, 'sell section')
+        panel: readBounds(panel, 'composer panel'),
+        priceArea: readBounds(priceArea, 'price area')
       };
     });
 
-    expect(bounds.carbon.bottom).toBeLessThanOrEqual(bounds.sellSection.bottom - 6);
-    expect(bounds.inlinePrice.bottom).toBeLessThanOrEqual(bounds.sellSection.bottom - 6);
-    expect(bounds.carbon.right).toBeLessThanOrEqual(bounds.sellSection.right - 6);
-    expect(bounds.sellSection.bottom).toBeLessThanOrEqual(bounds.privacy.top - 6);
+    expect(bounds.carbon.left).toBeGreaterThanOrEqual(bounds.priceArea.left);
+    expect(bounds.carbon.right).toBeLessThanOrEqual(bounds.priceArea.right);
+    expect(bounds.carbon.top).toBeGreaterThanOrEqual(bounds.priceArea.top);
+    expect(bounds.carbon.bottom).toBeLessThanOrEqual(bounds.priceArea.bottom);
+    expect(bounds.priceArea.right).toBeLessThanOrEqual(bounds.panel.right);
   });
 
   test('hides Carbon reference prices for same-underlying public/private terminal pairs', async ({ page }) => {
     await mockCarbonPairReference(page, 0.000286);
 
     await page.goto('/trades/recurring?order=1');
+    await expect(page).toHaveURL(/\/otc\/order\/recurring\/1$/);
     await expect(page.locator('.p2p-terminal-shell-recurring')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.p2p-terminal-shell-recurring .p2p-carbon-price-reference')).toHaveCount(0);
   });
@@ -379,20 +374,20 @@ test.describe('trading V1 routes', () => {
   test('hides Carbon reference prices when Carbon has no pair data', async ({ page }) => {
     await mockCarbonPairReference(page, null);
 
-    await page.goto('/trades/create');
-    await expect(page.locator('.p2p-carbon-price-reference')).toHaveCount(0);
+    await page.goto('/otc/limit');
+    await expect(page.getByRole('group', { name: 'OTC trade offer' }).locator('.p2p-carbon-price-reference')).toHaveCount(0);
   });
 
   test('calculates recurring receive amounts from price and liquidity', async ({ page }) => {
-    await page.goto('/trades/create');
-    await page.getByRole('button', { name: /Recurring/ }).click();
+    await page.goto('/otc/limit');
+    await page.getByRole('tab', { name: 'Recurring' }).click();
 
     const buySide = page.locator('.p2p-recurring-side-panel-buy');
     await buySide.getByLabel('Buy price').fill('0.0001');
     await buySide.getByLabel('Buy liquidity').fill('0.22');
     await expect(buySide.locator('.p2p-recurring-derived-field input')).toHaveValue('2200');
 
-    await buySide.getByRole('button', { name: 'Edit buy receive' }).click();
+    await buySide.getByRole('button', { name: 'Edit amount bought on buy side' }).click();
     await buySide.locator('.p2p-recurring-derived-field input').fill('1100');
     await expect(buySide.getByLabel('Buy liquidity')).toHaveValue('0.11');
 
@@ -403,8 +398,8 @@ test.describe('trading V1 routes', () => {
   });
 
   test('swaps recurring token sides while preserving price meaning', async ({ page }) => {
-    await page.goto('/trades/create');
-    await page.getByRole('button', { name: /Recurring/ }).click();
+    await page.goto('/otc/limit');
+    await page.getByRole('tab', { name: 'Recurring' }).click();
 
     const builder = page.locator('.p2p-recurring-builder');
     const buySide = builder.locator('.p2p-recurring-side-panel-buy');
@@ -417,11 +412,12 @@ test.describe('trading V1 routes', () => {
     await expect(buySide.locator('.p2p-recurring-derived-field input')).toHaveValue('2200');
     await expect(sellSide.locator('.p2p-recurring-derived-field input')).toHaveValue('0.0025');
 
+    const selectedSymbols = builder.locator('.p2p-recurring-pair-picker .trade-token-select-trigger strong');
+    const symbolsBeforeSwap = await selectedSymbols.allTextContents();
     await builder.getByRole('button', { name: 'Swap recurring token sides' }).click();
 
-    const selectedSymbols = builder.locator('.p2p-recurring-side-grid .trade-token-select-trigger strong');
-    await expect(selectedSymbols.nth(0)).toHaveText('COTI');
-    await expect(selectedSymbols.nth(1)).toHaveText('WISP');
+    await expect(selectedSymbols.nth(0)).toHaveText(symbolsBeforeSwap[1]);
+    await expect(selectedSymbols.nth(1)).toHaveText(symbolsBeforeSwap[0]);
     await expect(buySide.getByLabel('Buy price')).toHaveValue('5000');
     await expect(buySide.getByLabel('Buy liquidity')).toHaveValue('12.5');
     await expect(buySide.locator('.p2p-recurring-derived-field input')).toHaveValue('0.0025');

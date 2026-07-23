@@ -19,6 +19,7 @@ type TradingBalanceDockProps = TradingBalanceListProps & {
 type TradingBalancesSheetProps = TradingBalanceListProps & {
   isOpen: boolean;
   onClose: () => void;
+  onOpenContracts: () => void;
 };
 
 const getBalanceEmptyText = (walletConnected: boolean): string =>
@@ -146,6 +147,7 @@ export default function TradingBalancesSheet({
   balances,
   isOpen,
   onClose,
+  onOpenContracts,
   walletConnected
 }: TradingBalancesSheetProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -175,6 +177,16 @@ export default function TradingBalancesSheet({
           </button>
         </div>
         <TradingBalanceList balances={balances} walletConnected={walletConnected} />
+        <button
+          type="button"
+          className="p2p-balances-sheet-contracts"
+          onClick={() => {
+            onClose();
+            onOpenContracts();
+          }}
+        >
+          Contracts
+        </button>
       </div>
     </div>
   );

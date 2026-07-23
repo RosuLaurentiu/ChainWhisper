@@ -1,6 +1,7 @@
 import type { FormEventHandler, KeyboardEventHandler, Ref } from 'react';
 import { APP_HELP_MAX_QUESTION_CHARS, getAppHelpTopic } from '../../../lib/appHelp';
 import type { TradeAgentQuickAction, TradeAgentResponseAction } from '../../../lib/tradeAgent';
+import type { TradeAgentReadiness } from '../../../lib/tradeAgentReadiness';
 import type { TradeAgentChatMessage } from './P2PTradingPage.helpers';
 
 export type TradeAgentPanelMode = 'help' | 'trade';
@@ -47,10 +48,9 @@ type TradeAgentPanelProps = {
   loading: boolean;
   status: string;
   messagesEndRef: Ref<HTMLDivElement>;
-  error: string;
   quickActions: TradeAgentQuickAction[];
   prompt: string;
-  canSubmitRequest: boolean;
+  readiness: TradeAgentReadiness;
   retryPaymentTxHash: string;
   canUseAction: (action: TradeAgentResponseAction) => boolean;
   getActionButtonLabel: (action: TradeAgentResponseAction) => string;
@@ -60,6 +60,7 @@ type TradeAgentPanelProps = {
   onApplyAction: (action: TradeAgentResponseAction) => Promise<void>;
   onActionError: (message: string) => void;
   onSelectQuickAction: (item: TradeAgentQuickAction, prompt: string) => void;
+  onConnectAccount: () => void;
   onPromptChange: (value: string) => void;
   onSubmit: FormEventHandler<HTMLFormElement>;
 };
@@ -84,10 +85,9 @@ export default function TradeAgentPanel({
   loading,
   status,
   messagesEndRef,
-  error,
   quickActions,
   prompt,
-  canSubmitRequest,
+  readiness,
   retryPaymentTxHash,
   canUseAction,
   getActionButtonLabel,
@@ -97,6 +97,7 @@ export default function TradeAgentPanel({
   onApplyAction,
   onActionError,
   onSelectQuickAction,
+  onConnectAccount,
   onPromptChange,
   onSubmit
 }: TradeAgentPanelProps) {
@@ -320,7 +321,6 @@ export default function TradeAgentPanel({
             </div>
           ) : (
             <div className="p2p-agent-composer p2p-agent-composer-trade">
-              {error ? <p className="error p2p-agent-error" role="alert">{error}</p> : null}
               <div className="p2p-agent-quick-actions" aria-label="Trade Agent actions">
                 {quickActions.map((item) => {
                   const quickPrompt = resolveQuickActionPrompt(item);
@@ -346,17 +346,35 @@ export default function TradeAgentPanel({
                   value={prompt}
                   onChange={(event) => onPromptChange(event.target.value)}
                   placeholder="Ask about a pair, paste a note, or describe the order you want..."
+                  aria-describedby="trade-agent-readiness"
                   rows={2}
                 />
                 <div className="p2p-agent-submit-row">
-                  <span>{status || 'Paid from your ChainWhisper account.'}</span>
-                  <button
-                    type="submit"
-                    className="trade-card-action trade-card-action-accept"
-                    disabled={!canSubmitRequest}
+                  <span
+                    id="trade-agent-readiness"
+                    className={`p2p-agent-readiness p2p-agent-readiness-${readiness.kind}`}
+                    role={readiness.kind === 'error' ? 'alert' : 'status'}
+                    aria-live={readiness.kind === 'error' ? 'assertive' : 'polite'}
                   >
-                    {loading ? 'Working...' : retryPaymentTxHash ? 'Retry without paying' : 'Pay and send'}
-                  </button>
+                    {readiness.message}
+                  </span>
+                  {readiness.kind === 'account-needed' ? (
+                    <button
+                      type="button"
+                      className="standalone-trade-secondary-btn p2p-agent-connect-account"
+                      onClick={onConnectAccount}
+                    >
+                      Connect account
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="trade-card-action trade-card-action-accept"
+                      disabled={!readiness.canSubmit}
+                    >
+                      {loading ? 'Working...' : retryPaymentTxHash ? 'Retry without paying' : 'Pay and send'}
+                    </button>
+                  )}
                 </div>
               </form>
             </div>

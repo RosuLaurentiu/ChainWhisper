@@ -673,6 +673,25 @@ export const buildTradeRoutePath = (route: TradeRouteState, routeFamily: TradeRo
   return buildTradeSurfacePath(route.view, routeFamily);
 };
 
+const canonicalizeLegacyTradeRouteFromLocation = (route: TradeRouteState): TradeRouteState => {
+  if (typeof window === 'undefined' || isWalletBootstrapRoute(window.location.pathname)) {
+    return route;
+  }
+  const pathname = normalizeTradePathname(window.location.pathname).toLowerCase();
+  if (
+    pathname !== '/trades' &&
+    !pathname.startsWith('/trades/') &&
+    pathname !== '/otcdesk' &&
+    !pathname.startsWith('/otcdesk/')
+  ) {
+    return route;
+  }
+
+  const canonicalPath = buildTradeRoutePath(route, 'desk');
+  window.history.replaceState(window.history.state, '', canonicalPath);
+  return resolveTradeRouteFromLocation();
+};
+
 type UseP2PTradeRouteResult = {
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   navigateToTradePath: (path: string, options?: TradeNavigationOptions) => void;
@@ -683,7 +702,9 @@ type UseP2PTradeRouteResult = {
 };
 
 export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
-  const [route, setRoute] = useState<TradeRouteState>(() => restorePendingTradeTerminalRouteFromLocation());
+  const [route, setRoute] = useState<TradeRouteState>(() =>
+    canonicalizeLegacyTradeRouteFromLocation(restorePendingTradeTerminalRouteFromLocation())
+  );
 
   const navigateToTradePath = useCallback((path: string, options?: TradeNavigationOptions) => {
     if (typeof window === 'undefined') {
@@ -707,7 +728,7 @@ export default function useP2PTradeRoute(): UseP2PTradeRouteResult {
 
     if (isWalletBootstrapRoute(window.location.pathname)) {
       writeWalletBootstrapActiveRouteState(nextPath, { replace: Boolean(options?.replace) });
-      setRoute(restorePendingTradeTerminalRouteFromLocation());
+      setRoute(canonicalizeLegacyTradeRouteFromLocation(restorePendingTradeTerminalRouteFromLocation()));
       return;
     }
 

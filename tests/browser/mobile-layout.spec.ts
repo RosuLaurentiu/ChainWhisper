@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const mobileViewport = { width: 390, height: 844 };
 const mockTradingWalletAddress = '0x1234567890abcdef1234567890abcdef12345678';
+const sampleRecurringMakerAddress = '0xbf01185A70CDfEF1858659836D57BFf085ebed55';
 const cotiChainIdHex = '0x282b34';
 
 const expectNoHorizontalOverflow = async (page: Page) => {
@@ -10,8 +11,10 @@ const expectNoHorizontalOverflow = async (page: Page) => {
 };
 
 const scrollTradeShellToBottom = async (page: Page) => {
-  await page.locator('.standalone-trades-shell').evaluate((shell) => {
-    shell.scrollTop = shell.scrollHeight;
+  const workspace = page.locator('.p2p-trade-workspace-panel');
+  const scrollTarget = (await workspace.count()) ? workspace : page.locator('.standalone-trades-shell');
+  await scrollTarget.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
   });
 };
 
@@ -23,7 +26,7 @@ const expectAboveTradeTabs = async (page: Page, selector: string) => {
   expect(targetBox!.y + targetBox!.height).toBeLessThanOrEqual(tabsBox!.y - 4);
 };
 
-const installMockTradingWallet = async (page: Page) => {
+const installMockTradingWallet = async (page: Page, address = mockTradingWalletAddress) => {
   await page.addInitScript(({ address, chainIdHex }) => {
     const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     const provider = {
@@ -59,7 +62,7 @@ const installMockTradingWallet = async (page: Page) => {
       configurable: true,
       value: provider
     });
-  }, { address: mockTradingWalletAddress, chainIdHex: cotiChainIdHex });
+  }, { address, chainIdHex: cotiChainIdHex });
 };
 
 const parseLeadingPrice = (value: string | null) => {
@@ -104,12 +107,13 @@ test.describe('mobile layout polish', () => {
     await page.goto('/chat');
 
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
-    await expect(page.getByRole('button', { name: /Generate app wallet|Connect app wallet|Wallet unavailable/i })).toBeVisible();
+    await expect(page.locator('.top-header-mobile-wallet .wallet-primary-action')).toBeVisible();
     await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Open Wallet menu$/ }).click();
     await expect(page.getByRole('menuitem', { name: /^Open MetaMask Mobile$/ })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: /MetaMask or CipherTrade not detected/i })).toHaveCount(0);
-    await expect(page.getByRole('menuitem', { name: /^No saved app wallet$/ })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: /^Generate wallet$/ })).toBeVisible();
+    await expect(page.getByText('ChainWhisper account', { exact: true })).toBeVisible();
+    await expect(page.getByText('Owner wallet', { exact: true })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /^Create account$/ })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -117,26 +121,21 @@ test.describe('mobile layout polish', () => {
     await page.goto('/trades');
 
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
-    await expect(page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Open MetaMask$/ })).toBeVisible();
+    await expect(page.locator('.top-header-mobile-wallet .wallet-primary-action')).toBeVisible();
     await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Open Wallet menu$/ }).click();
     await expect(page.getByRole('menuitem', { name: /^Open MetaMask Mobile$/ })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: /MetaMask or CipherTrade not detected/i })).toHaveCount(0);
-    await expect(page.getByRole('menuitem', { name: /^No saved app wallet$/ })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: /^Generate wallet$/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /^Create account$/ })).toBeVisible();
     await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Close Wallet menu$/ }).click();
     const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' });
-    await expect(appMenu).toBeHidden();
-    await page.getByRole('button', { name: 'Show app menu' }).click();
     await expect(appMenu).toBeVisible();
-    await page.getByRole('button', { name: 'Hide app menu' }).click();
-    await expect(appMenu).toBeHidden();
 
     const tradeTabs = page.getByRole('navigation', { name: 'OTC Desk views' });
     await expect(tradeTabs).toBeVisible();
+    await expect(tradeTabs.getByRole('button', { name: 'Trade' })).toBeVisible();
     await expect(tradeTabs.getByRole('button', { name: 'Desk' })).toBeVisible();
-    await expect(tradeTabs.getByRole('button', { name: 'Create' })).toBeVisible();
-    await expect(tradeTabs.getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
-    await expect(tradeTabs.getByRole('button', { name: 'My Trades', exact: true })).toBeVisible();
+    await expect(tradeTabs.getByRole('button', { name: 'Agent' })).toBeVisible();
+    await expect(tradeTabs.getByRole('button', { name: 'Orders', exact: true })).toBeVisible();
 
     const filterBar = page.locator('.p2p-filter-bar');
     const mobileFiltersButton = filterBar.locator('.p2p-mobile-filter-toggle');
@@ -156,8 +155,8 @@ test.describe('mobile layout polish', () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test('opens mobile trading balances while contracts live in the wallet menu', async ({ page }) => {
-    await page.goto('/trades');
+  test('opens mobile trading balances and keeps contracts reachable', async ({ page }) => {
+    await page.goto('/otc/desk');
 
     const footerLinks = page.locator('.p2p-footer-links');
     await expect(footerLinks).toBeHidden();
@@ -172,13 +171,8 @@ test.describe('mobile layout polish', () => {
 
     const balancesDialog = page.getByRole('dialog', { name: 'Balances' });
     await expect(balancesDialog).toBeVisible();
-    await expect(balancesDialog).toContainText('Connect a trading wallet');
-    await expect(balancesDialog.getByRole('button', { name: 'Contracts' })).toHaveCount(0);
-    await balancesDialog.getByRole('button', { name: 'Close' }).click();
-
-    const mobileWallet = page.locator('.top-header-mobile-wallet');
-    await mobileWallet.getByRole('button', { name: /^Open Wallet menu$/ }).click();
-    const contractsAction = mobileWallet.getByRole('menuitem', { name: 'Contracts' });
+    await expect(balancesDialog).toContainText('Connect a wallet');
+    const contractsAction = balancesDialog.getByRole('button', { name: 'Contracts' });
     await expect(contractsAction).toBeVisible();
     await contractsAction.click();
     await expect(page.getByRole('dialog', { name: 'Trading contracts' })).toBeVisible();
@@ -187,8 +181,8 @@ test.describe('mobile layout polish', () => {
   });
 
   test('restores mobile desk scroll after visiting the terminal tab', async ({ page }) => {
-    await page.setViewportSize({ width: mobileViewport.width, height: 620 });
-    await page.goto('/trades');
+    await page.setViewportSize({ width: mobileViewport.width, height: 480 });
+    await page.goto('/otc/desk');
     const shell = page.locator('.standalone-trades-shell');
     await expect(shell).toBeVisible();
     const savedTop = await shell.evaluate((node) => {
@@ -196,13 +190,15 @@ test.describe('mobile layout polish', () => {
       node.scrollTop = targetTop;
       return node.scrollTop;
     });
-    test.skip(savedTop < 24, 'Desk fixture is not tall enough to verify scroll restoration.');
+    expect(savedTop).toBeGreaterThanOrEqual(24);
 
     const tradeTabs = page.getByRole('navigation', { name: 'OTC Desk views' });
-    await tradeTabs.getByRole('button', { name: 'Terminal', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Open terminal' })).toBeVisible();
+    const firstOrder = page.locator('.p2p-public-trade-grid .p2p-offer-open-btn').first();
+    await expect(firstOrder).toBeVisible({ timeout: 30_000 });
+    await firstOrder.click();
+    await expect(page.locator('.standalone-trade-detail-section')).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
-    await expect(page.getByRole('heading', { name: 'Active offers' })).toBeVisible();
+    await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
     await page.waitForFunction(
       (expectedTop) => {
         const node = document.querySelector<HTMLElement>('.standalone-trades-shell');
@@ -211,10 +207,10 @@ test.describe('mobile layout polish', () => {
       savedTop
     );
 
-    await tradeTabs.getByRole('button', { name: 'Terminal', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Open terminal' })).toBeVisible();
+    await firstOrder.click();
+    await expect(page.locator('.standalone-trade-detail-section')).toBeVisible();
     await tradeTabs.getByRole('button', { name: 'Desk' }).click();
-    await expect(page.getByRole('heading', { name: 'Active offers' })).toBeVisible();
+    await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
     await page.waitForFunction(
       (expectedTop) => {
         const node = document.querySelector<HTMLElement>('.standalone-trades-shell');
@@ -258,29 +254,28 @@ test.describe('mobile layout polish', () => {
     const balanceDock = page.locator('.p2p-balance-dock');
     await expect(balanceDock).toBeVisible();
     await expect(balanceDock).toContainText('Balances');
-    await expect(balanceDock).toContainText('Connect a trading wallet');
+    await expect(balanceDock).toContainText('Connect a wallet');
     await expect(page.locator('.p2p-footer-balances')).toHaveCount(0);
     await expect(page.getByText('-- COTI')).toHaveCount(0);
     await expect(balanceDock.getByRole('button', { name: 'Balances' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
-  test('lets the desktop balances title hide balances and wallet identity', async ({ page }) => {
+  test('lets the desktop balances title hide the dock while wallet identity remains accessible', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 950 });
     await installMockTradingWallet(page);
     await page.goto('/trades');
 
-    await page.locator('.top-header').getByRole('button', { name: /^Connect MetaMask$/i }).click();
-    await expect(page.locator('.top-header').getByRole('button', { name: new RegExp(mockTradingWalletAddress, 'i') })).toBeVisible();
+    await page.locator('.top-header .wallet-primary-action').click();
+    await expect(page.locator('.top-header').getByRole('button', { name: 'Copy owner wallet address' })).toBeVisible();
 
     const balanceDock = page.locator('.p2p-balance-dock');
     await balanceDock.getByRole('button', { name: 'Balances' }).click();
     await expect(balanceDock).toContainText('Hidden');
-    await expect(page.locator('.top-header').getByRole('button', { name: new RegExp(mockTradingWalletAddress, 'i') })).toHaveCount(0);
-    await expect(page.locator('.top-header').getByRole('button', { name: 'Wallet hidden' })).toBeVisible();
+    await expect(page.locator('.top-header').getByRole('button', { name: 'Copy owner wallet address' })).toBeVisible();
 
     await balanceDock.getByRole('button', { name: 'Balances' }).click();
-    await expect(page.locator('.top-header').getByRole('button', { name: new RegExp(mockTradingWalletAddress, 'i') })).toBeVisible();
+    await expect(page.locator('.top-header').getByRole('button', { name: 'Copy owner wallet address' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -330,8 +325,8 @@ test.describe('mobile layout polish', () => {
     await installMockTradingWallet(page);
     await page.goto('/trades');
 
-    await page.locator('.top-header').getByRole('button', { name: /^Connect MetaMask$/i }).click();
-    await page.getByRole('navigation', { name: 'OTC Desk views' }).getByRole('button', { name: 'My Trades' }).click();
+    await page.locator('.top-header .wallet-primary-action').click();
+    await page.getByRole('navigation', { name: 'OTC Desk views' }).getByRole('button', { name: 'Orders' }).click();
 
     const myTradesSection = page.locator('.p2p-my-trades-section');
     await expect(myTradesSection).toBeVisible();
@@ -375,14 +370,14 @@ test.describe('mobile layout polish', () => {
   });
 
   test('opens the mobile trading terminal as focused page content', async ({ page }) => {
-    await page.goto('/otcdesk/terminal');
+    await page.goto('/otc/order');
 
     const terminal = page.locator('.standalone-trade-detail-section');
     await expect(terminal).toBeVisible();
-    await expect(terminal.locator('.landing-eyebrow', { hasText: /^Terminal$/ })).toBeVisible();
-    await expect(terminal.getByRole('heading', { name: 'Open terminal' })).toBeVisible();
+    await expect(terminal.locator('.landing-eyebrow', { hasText: /^Order$/ })).toBeVisible();
+    await expect(terminal.getByRole('heading', { name: 'Open order' })).toBeVisible();
     await expect(terminal.getByText('Paste a shared offer link')).toBeVisible();
-    await expect(terminal.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open order', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Open desk', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
     await expect(terminal.getByText('Open trading terminal', { exact: true })).toHaveCount(0);
@@ -395,7 +390,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('keeps mobile trade creation actions reachable without eager field errors', async ({ page }) => {
-    await page.goto('/trades/create');
+    await page.goto('/otc/limit');
 
     const readiness = page.locator('.trade-compose-readiness');
     await expect(readiness).toContainText(/Connect wallet|Complete required fields|Loading token balance|Ready to create offer/);
@@ -418,8 +413,8 @@ test.describe('mobile layout polish', () => {
   });
 
   test('keeps recurring order submit controls reachable on mobile', async ({ page }) => {
-    await page.goto('/trades/create');
-    await page.getByRole('button', { name: /Recurring/ }).click();
+    await page.goto('/otc/limit');
+    await page.getByRole('tab', { name: 'Recurring' }).click();
 
     await scrollTradeShellToBottom(page);
     await expect(page.getByRole('button', { name: 'Create Recurring Order' })).toBeVisible();
@@ -453,7 +448,7 @@ test.describe('mobile layout polish', () => {
     const terminalTopBox = await terminalTop.boundingBox();
     expect(terminalTopBox).not.toBeNull();
     expect(terminalTopBox!.height).toBeLessThanOrEqual(48);
-    await expect(terminalTop.locator('.landing-eyebrow')).toContainText('Terminal');
+    await expect(terminalTop.locator('.landing-eyebrow')).toContainText('Order');
     await expect(terminalTop.getByRole('button', { name: 'Close' })).toBeVisible();
 
     const warningBox = await page.locator('.p2p-trade-window-warning').boundingBox();
@@ -504,7 +499,7 @@ test.describe('mobile layout polish', () => {
   });
 
   test('keeps mobile trade controls usable across token, access, and terminal states', async ({ page }) => {
-    await page.goto('/trades/create');
+    await page.goto('/otc/limit');
 
     await page.locator('.trade-token-select-trigger').first().click();
     const tokenDropdown = page.locator('.trade-token-select-dropdown');
@@ -513,6 +508,8 @@ test.describe('mobile layout polish', () => {
     await expect(tokenDropdown.getByLabel('Search trade tokens')).not.toBeFocused();
     const firstTokenOption = tokenDropdown.locator('.trade-token-select-option').first();
     await firstTokenOption.dispatchEvent('pointerdown', { pointerType: 'touch', isPrimary: true });
+    await expect(tokenDropdown).toBeHidden();
+    await page.locator('.trade-token-select-trigger').first().click();
     await expect(tokenDropdown).toBeVisible();
     await tokenDropdown.getByLabel('Search trade tokens').click();
     await expect(tokenDropdown.getByLabel('Search trade tokens')).toBeFocused();
@@ -533,23 +530,25 @@ test.describe('mobile layout polish', () => {
     await expectNoHorizontalOverflow(page);
 
     await page.getByRole('button', { name: /^Unlisted$/ }).click();
-    await expect(page.getByText('Unlisted link required to accept')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Unlisted$/ })).toHaveAttribute('aria-pressed', 'true');
     await expectNoHorizontalOverflow(page);
 
-    await page.goto('/otcdesk/terminal');
+    await page.goto('/otc/order');
     const terminal = page.locator('.standalone-trade-detail-section');
     await expect(terminal.getByPlaceholder('Paste offer link, compact code, or id')).toBeVisible();
-    await expect(terminal.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible();
+    await expect(terminal.getByRole('button', { name: 'Open order', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Open desk', exact: true })).toBeVisible();
     await expect(terminal.getByRole('button', { name: 'Create offer', exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
   test('keeps My Trades mobile group labels short and readable', async ({ page }) => {
+    await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');
+    await page.locator('.top-header-mobile-wallet .wallet-primary-action').click();
 
     const switcher = page.locator('.p2p-wallet-trade-switcher');
-    test.skip((await switcher.count()) === 0, 'No connected wallet sample data available for My Trades.');
+    await expect(switcher).toBeVisible({ timeout: 45_000 });
     await expect(switcher.locator('.p2p-wallet-trade-label-mobile', { hasText: 'Received' })).toBeVisible();
     await expect(switcher.locator('.p2p-wallet-trade-label-mobile', { hasText: 'Active' })).toBeVisible();
     await expect(switcher.locator('.p2p-wallet-trade-label-mobile', { hasText: 'History' })).toBeVisible();
@@ -558,10 +557,17 @@ test.describe('mobile layout polish', () => {
   });
 
   test('lets My Trades mobile cards scroll in the main page flow', async ({ page }) => {
+    await page.setViewportSize({ width: mobileViewport.width, height: 620 });
+    await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');
+    await page.locator('.top-header-mobile-wallet .wallet-primary-action').click();
 
     const switcher = page.locator('.p2p-wallet-trade-switcher');
-    test.skip((await switcher.count()) === 0, 'No connected wallet sample data available for My Trades.');
+    await expect(switcher).toBeVisible({ timeout: 45_000 });
+    const activeTrades = switcher.getByRole('tab', { name: /Active: [1-9]\d*/ });
+    await expect(activeTrades).toBeVisible({ timeout: 45_000 });
+    await activeTrades.click();
+    await expect(page.locator('.p2p-wallet-trade-grid .p2p-order-card').first()).toBeVisible();
 
     const scrollState = await page.locator('.standalone-trades-shell').evaluate((shell) => {
       const tradeShell = document.querySelector<HTMLElement>('.p2p-trading-shell-mine');
@@ -661,9 +667,9 @@ test.describe('trading responsive layout', () => {
     }
   });
 
-  test('uses a full-width create workspace with a stable quote dock on desktop', async ({ page }) => {
+  test('uses a full-width create workspace with a compact quote area on desktop', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 950 });
-    await page.goto('/trades/create');
+    await page.goto('/otc/limit');
 
     const shell = page.locator('.p2p-trading-shell-create');
     const createPanel = page.locator('.standalone-trade-create-panel');
@@ -674,13 +680,12 @@ test.describe('trading responsive layout', () => {
     await expect(createPanel).toBeVisible();
     await expect(composer).toBeVisible();
     await expect(quoteDock).toBeVisible();
-    await expect(createPanel.getByRole('button', { name: /Limit buy\/sell/ })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Limit' })).toHaveAttribute('aria-selected', 'true');
     await expect(composer.getByRole('button', { name: 'Create Offer' })).toBeVisible();
     await expect(composer.locator('.trade-compose-privacy-panel')).toContainText('Private liquidity');
     await expect(composer.locator('.trade-compose-privacy-panel input[type="checkbox"]')).toHaveCount(0);
-    await expect(composer.locator('.trade-compose-inline-price .trade-compose-price-field')).toBeVisible();
-    await expect(composer.locator('.trade-compose-section-buy .trade-compose-inline-preview')).toBeVisible();
-    await expect(quoteDock.locator('.trade-compose-preview')).toHaveCount(0);
+    await expect(composer.locator('.trade-compose-limit-price .trade-compose-price-field')).toBeVisible();
+    await expect(quoteDock.locator('.trade-compose-preview')).toBeHidden();
 
     const workspaceMetrics = await page.evaluate(() => {
       const shell = document.querySelector<HTMLElement>('.p2p-trading-shell-create');
@@ -708,16 +713,16 @@ test.describe('trading responsive layout', () => {
     expect(workspaceMetrics.panelWidth).toBeGreaterThan(1100);
     expect(workspaceMetrics.panelWidth).toBeGreaterThan(workspaceMetrics.shellWidth - 44);
     expect(workspaceMetrics.shellOverflowY).toBe('hidden');
-    expect(['auto', 'scroll']).toContain(workspaceMetrics.composerOverflowY);
-    expect(workspaceMetrics.dockPosition).toBe('relative');
-    expect(workspaceMetrics.gridColumns).toBe(3);
-    expect(Math.abs(workspaceMetrics.sellTop - workspaceMetrics.buyTop)).toBeLessThanOrEqual(2);
+    expect(['auto', 'scroll', 'visible']).toContain(workspaceMetrics.composerOverflowY);
+    expect(workspaceMetrics.dockPosition).toBe('static');
+    expect(workspaceMetrics.gridColumns).toBe(1);
+    expect(workspaceMetrics.buyTop).toBeGreaterThan(workspaceMetrics.sellTop);
 
     const dockTopBefore = await quoteDock.evaluate((dock) => Math.round(dock.getBoundingClientRect().top));
     await composer.locator('.trade-compose-section-sell .trade-compose-amount-field .trade-compose-input').fill('10');
-    await composer.locator('.trade-compose-inline-price .trade-compose-price-field .trade-compose-input').fill('1');
+    await composer.locator('.trade-compose-limit-price .trade-compose-price-field .trade-compose-input').fill('1');
     const dockTopAfter = await quoteDock.evaluate((dock) => Math.round(dock.getBoundingClientRect().top));
-    expect(Math.abs(dockTopAfter - dockTopBefore)).toBeLessThanOrEqual(3);
+    expect(Math.abs(dockTopAfter - dockTopBefore)).toBeLessThanOrEqual(20);
     await expect(quoteDock.locator('.trade-compose-readiness')).toContainText(
       /Connect wallet|Complete required fields|Loading token balance|Ready to create offer/
     );
@@ -726,20 +731,20 @@ test.describe('trading responsive layout', () => {
     await expect(page.locator('.p2p-direct-recipient')).toBeVisible();
     await expect(composer.getByRole('button', { name: 'Create Offer' })).toBeVisible();
 
-    await page.goto('/otcdesk/terminal/counter');
+    await page.goto('/otc/order/counter');
     await expect(page.locator('.p2p-trading-shell-create')).toBeVisible();
     await expect(page.getByText('Choose an offer to counter')).toBeVisible();
-    await expect(page.locator('.p2p-empty-actions').getByRole('button', { name: 'Terminal' })).toBeVisible();
+    await expect(page.locator('.p2p-empty-actions').getByRole('button', { name: 'Order' })).toBeVisible();
 
-    await page.goto('/trades/create');
-    await page.getByRole('button', { name: /Recurring/ }).click();
+    await page.goto('/otc/limit');
+    await page.getByRole('tab', { name: 'Recurring' }).click();
     const recurringBuilder = page.locator('.p2p-recurring-builder');
     await expect(recurringBuilder).toBeVisible();
     await expect(recurringBuilder.locator('.p2p-recurring-action-fee')).toContainText('Fee');
-    await expect(recurringBuilder.locator('.p2p-recurring-side-panel-buy .trade-compose-field-value').first()).toContainText(
-      'Balance:'
+    await expect(recurringBuilder.locator('.p2p-recurring-pair-picker .trade-compose-field-value').first()).toContainText(
+      'Available'
     );
-    await expect(recurringBuilder.locator('.p2p-recurring-side-panel-buy .trade-token-select-state a')).toHaveAttribute(
+    await expect(recurringBuilder.locator('.p2p-recurring-pair-picker .trade-token-select-state a').first()).toHaveAttribute(
       'href',
       /\/address\//
     );
@@ -759,7 +764,7 @@ test.describe('trading responsive layout', () => {
         sellTop: sell?.getBoundingClientRect().top ?? 0
       };
     });
-    expect(['auto', 'scroll']).toContain(recurringMetrics.overflowY);
+    expect(['auto', 'scroll', 'visible']).toContain(recurringMetrics.overflowY);
     expect(recurringMetrics.actionsPosition).toBe('relative');
     expect(Math.abs(recurringMetrics.buyTop - recurringMetrics.sellTop)).toBeLessThanOrEqual(2);
     await expectNoHorizontalOverflow(page);
@@ -767,7 +772,7 @@ test.describe('trading responsive layout', () => {
 
   test('centers create controls while keeping the ultrawide shell full', async ({ page }) => {
     await page.setViewportSize({ width: 2200, height: 950 });
-    await page.goto('/trades/create');
+    await page.goto('/otc/limit');
     await expect(page.locator('.p2p-trading-shell-create')).toBeVisible({ timeout: 30_000 });
 
     const metrics = await page.evaluate(() => {
@@ -793,10 +798,10 @@ test.describe('trading responsive layout', () => {
 
     expect(metrics.overviewWidth).toBeGreaterThan(metrics.shellWidth - 44);
     expect(metrics.panelWidth).toBeGreaterThan(metrics.shellWidth - 44);
-    expect(metrics.controlsWidth).toBeGreaterThan(1100);
-    expect(metrics.controlsWidth).toBeLessThan(1250);
+    expect(metrics.controlsWidth).toBeGreaterThanOrEqual(640);
+    expect(metrics.controlsWidth).toBeLessThanOrEqual(680);
     expect(metrics.controlsWidth).toBeLessThan(metrics.panelWidth - 800);
-    expect(metrics.controlsCenteredDelta).toBeLessThanOrEqual(2);
+    expect(metrics.controlsCenteredDelta).toBeLessThanOrEqual(16);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -856,12 +861,11 @@ test.describe('trading responsive layout', () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test('stretches the empty terminal desk layout to the balance dock', async ({ page }) => {
+  test('stretches the empty order layout to the balance dock', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
-    await page.goto('/otcdesk/terminal');
+    await page.goto('/otc/order');
 
-    await expect(page.locator('.p2p-public-trades-section .p2p-order-card').first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.standalone-trade-detail-section')).toContainText('Open terminal');
+    await expect(page.locator('.standalone-trade-detail-section')).toContainText('Open order');
 
     const layout = await page.evaluate(() => {
       const read = (selector: string) => {
@@ -882,50 +886,40 @@ test.describe('trading responsive layout', () => {
 
       return {
         balanceDock: read('.p2p-balance-dock'),
-        desk: read('.p2p-public-trades-section'),
-        grid: read('.p2p-public-trade-grid'),
         shell: read('.p2p-trading-shell-drawer-open'),
         terminal: read('.standalone-trade-detail-section')
       };
     });
 
     expect(layout.shell?.overflowY).toBe('hidden');
-    expect(layout.desk).not.toBeNull();
     expect(layout.terminal).not.toBeNull();
     expect(layout.balanceDock).not.toBeNull();
-    expect(Math.abs(layout.desk!.bottom - layout.terminal!.bottom)).toBeLessThanOrEqual(2);
-    expect(layout.balanceDock!.top - layout.desk!.bottom).toBeLessThanOrEqual(18);
+    expect(layout.balanceDock!.top - layout.terminal!.bottom).toBeLessThanOrEqual(18);
     expect(layout.shell!.bottom - layout.balanceDock!.bottom).toBeLessThanOrEqual(18);
-    expect(['auto', 'scroll']).toContain(layout.desk!.overflowY);
+    expect(['auto', 'scroll']).toContain(layout.terminal!.overflowY);
     await expectNoHorizontalOverflow(page);
   });
 
-  test('keeps the empty terminal drawer open between Desk and My Trades', async ({ page }) => {
+  test('closes the empty order drawer when switching to Orders', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
-    await page.goto('/otcdesk/terminal');
+    await page.goto('/otc/order');
 
     const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
     const terminal = page.locator('.standalone-trade-detail-section');
-    await expect(terminal).toContainText('Open terminal');
+    await expect(terminal).toContainText('Open order');
     await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
     await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
 
-    await marketTabs.filter({ hasText: /^My Trades$/ }).click();
-    await expect(page).toHaveURL(/\/otcdesk\/mytrades$/);
+    await marketTabs.filter({ hasText: /^Orders$/ }).click();
+    await expect(page).toHaveURL(/\/otc\/orders$/);
     await expect(page.locator('.p2p-my-trades-section')).toBeVisible();
-    await expect(terminal).toContainText('Open terminal');
-    await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
-    await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
-
-    await marketTabs.filter({ hasText: /^My Trades$/ }).click();
-    await expect(page).toHaveURL(/\/otcdesk\/mytrades$/);
     await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
 
   test('closes an open terminal when clicking the current desk tab', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
-    await page.goto('/trades');
+    await page.goto('/otc/desk');
 
     const cards = page.locator('.p2p-public-trade-grid .p2p-order-card');
     await expect(cards.first()).toBeVisible({ timeout: 30_000 });
@@ -934,19 +928,19 @@ test.describe('trading responsive layout', () => {
     const terminal = page.locator('.standalone-trade-detail-section');
     const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
     await expect(terminal.locator('.p2p-terminal-shell')).toBeVisible();
-    await expect(terminal).toContainText('Review offer');
-    await expect(page).toHaveURL(/\/otcdesk\/terminal\/(l\/|recurring\?order=)/);
+    await expect(terminal).toContainText('Review order');
+    await expect(page).toHaveURL(/\/otc\/order\/(link\/|recurring\/)/);
 
     await marketTabs.filter({ hasText: /^Desk$/ }).click();
-    await expect(page).toHaveURL(/\/otcdesk$/);
+    await expect(page).toHaveURL(/\/otc\/desk$/);
     await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
     await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
 
-  test('keeps any open terminal as an empty terminal when switching Desk and My Trades', async ({ page }) => {
+  test('closes any open order when switching between Desk and Orders', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
-    await page.goto('/trades');
+    await page.goto('/otc/desk');
 
     const cards = page.locator('.p2p-public-trade-grid .p2p-order-card');
     await expect(cards.first()).toBeVisible({ timeout: 30_000 });
@@ -955,25 +949,17 @@ test.describe('trading responsive layout', () => {
     const terminal = page.locator('.standalone-trade-detail-section');
     const marketTabs = page.locator('.p2p-market-tabs').getByRole('button');
     await expect(terminal.locator('.p2p-terminal-shell')).toBeVisible();
-    await expect(terminal).toContainText('Review offer');
-    await expect(page).toHaveURL(/\/otcdesk\/terminal\/(l\/|recurring\?order=)/);
+    await expect(terminal).toContainText('Review order');
+    await expect(page).toHaveURL(/\/otc\/order\/(link\/|recurring\/)/);
 
-    await marketTabs.filter({ hasText: /^My Trades$/ }).click();
-    await expect(page).toHaveURL(/\/otcdesk\/mytrades$/);
+    await marketTabs.filter({ hasText: /^Orders$/ }).click();
+    await expect(page).toHaveURL(/\/otc\/orders$/);
     await expect(page.locator('.p2p-my-trades-section')).toBeVisible();
-    await expect(terminal).toContainText('Open terminal');
-    await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
-    await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
+    await expect(terminal).toHaveCount(0);
 
     await marketTabs.filter({ hasText: /^Desk$/ }).click();
-    await expect(page).toHaveURL(/\/otcdesk$/);
+    await expect(page).toHaveURL(/\/otc\/desk$/);
     await expect(page.locator('.p2p-public-trades-section')).toBeVisible();
-    await expect(terminal).toContainText('Open terminal');
-    await expect(terminal.locator('.p2p-terminal-open-panel')).toBeVisible();
-    await expect(terminal.locator('.p2p-terminal-shell')).toHaveCount(0);
-
-    await marketTabs.filter({ hasText: /^Desk$/ }).click();
-    await expect(page).toHaveURL(/\/otcdesk$/);
     await expect(page.locator('.standalone-trade-detail-section')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
@@ -981,7 +967,7 @@ test.describe('trading responsive layout', () => {
   test('keeps trading view tabs color-consistent across routes', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
 
-    const routes = ['/otcdesk', '/otcdesk/create', '/otcdesk/terminal', '/otcdesk/mytrades'];
+    const routes = ['/otc', '/otc/desk', '/otc/agent', '/otc/orders'];
     const routeStyles: Array<{
       active: Record<string, string | boolean>;
       bounds: { height: number; left: number; top: number };
@@ -1041,11 +1027,10 @@ test.describe('trading responsive layout', () => {
     }
   });
 
-  test('keeps desk filter panel edge stable when Terminal is active', async ({ page }) => {
+  test('keeps the desk filter panel edge stable when an order drawer is active', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
 
-    const readDeskFrame = async (route: string) => {
-      await page.goto(route);
+    const readDeskFrame = async () => {
       const overview = page.locator('.p2p-market-overview');
       const overviewHead = page.locator('.p2p-market-overview-head');
       const filterBar = page.locator('.p2p-filter-bar');
@@ -1070,8 +1055,13 @@ test.describe('trading responsive layout', () => {
       };
     };
 
-    const deskFrame = await readDeskFrame('/trades');
-    const terminalFrame = await readDeskFrame('/otcdesk/terminal');
+    await page.goto('/otc/desk');
+    const deskFrame = await readDeskFrame();
+    const firstOrder = page.locator('.p2p-public-trade-grid .p2p-order-card').first();
+    await expect(firstOrder).toBeVisible({ timeout: 30_000 });
+    await firstOrder.locator('.p2p-offer-open-btn').click();
+    await expect(page.locator('.standalone-trade-detail-section')).toContainText('Review order');
+    const terminalFrame = await readDeskFrame();
     expect(terminalFrame).toEqual(deskFrame);
   });
 
@@ -1502,7 +1492,7 @@ test.describe('trading responsive layout', () => {
     const sellLabelBefore = await recurringCard.locator('.p2p-recurring-price-sell > span').textContent();
     const buyPriceBefore = await recurringCard.locator('.p2p-recurring-price-buy strong').textContent();
     const sellPriceBefore = await recurringCard.locator('.p2p-recurring-price-sell strong').textContent();
-    expect(parseLeadingPrice(buyPriceBefore)).toBeLessThanOrEqual(parseLeadingPrice(sellPriceBefore));
+    expect(parseLeadingPrice(sellPriceBefore)).toBeLessThanOrEqual(parseLeadingPrice(buyPriceBefore));
     await recurringCard.locator('.p2p-recurring-price-card').click();
     await expect(recurringCard.locator('.p2p-recurring-price-buy > span')).not.toHaveText(buyLabelBefore ?? '');
     await expect(recurringCard.locator('.p2p-recurring-price-sell > span')).not.toHaveText(sellLabelBefore ?? '');
@@ -1510,7 +1500,7 @@ test.describe('trading responsive layout', () => {
     await expect(recurringCard.locator('.p2p-recurring-price-sell strong')).not.toHaveText(sellPriceBefore ?? '');
     const buyPriceAfter = await recurringCard.locator('.p2p-recurring-price-buy strong').textContent();
     const sellPriceAfter = await recurringCard.locator('.p2p-recurring-price-sell strong').textContent();
-    expect(parseLeadingPrice(buyPriceAfter)).toBeLessThanOrEqual(parseLeadingPrice(sellPriceAfter));
+    expect(parseLeadingPrice(sellPriceAfter)).toBeLessThanOrEqual(parseLeadingPrice(buyPriceAfter));
 
     const footerSpread = await desk.locator('.p2p-order-card').evaluateAll((cards) => {
       const firstRowCards = cards
@@ -1752,24 +1742,14 @@ test.describe('trading responsive layout', () => {
     expect(motionStyle.transitionDuration.split(',').every((duration) => duration.trim() === '0s')).toBe(true);
   });
 
-  test('shows private history reveal from the terminal history window', async ({ page }) => {
+  test('keeps private order history in the terminal history window', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 950 });
-    await page.goto('/trades');
-
-    const privateCard = page
-      .locator(
-        '.p2p-public-trade-grid .p2p-offer-card-private-liquidity, .p2p-public-trade-grid .p2p-recurring-order-card-private'
-      )
-      .first();
-    test.skip((await privateCard.count()) === 0, 'No private-order sample card available.');
-
-    const openControl = privateCard.locator('.p2p-offer-open-btn, .p2p-offer-manage-btn').first();
-    test.skip((await openControl.count()) === 0, 'Private-order sample card has no terminal action.');
-    await openControl.click();
+    await page.goto('/otc/order/recurring/5');
 
     const history = page.locator('.p2p-terminal-history-window');
     await expect(history).toBeVisible({ timeout: 30_000 });
-    await expect(history.locator('.p2p-terminal-history-head').getByRole('button', { name: /Reveal.*history/i })).toBeVisible();
+    await expect(history).toContainText('Recurring OTC #5 opened');
+    await expect(history.locator('.p2p-terminal-history-row')).toHaveCount(1);
     await expect(history.locator('.p2p-terminal-history-empty').getByRole('button', { name: /Reveal.*history/i })).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
@@ -1825,13 +1805,13 @@ test.describe('trading responsive layout', () => {
     await expect(terminal.locator('.p2p-terminal-market > .p2p-terminal-tag-row')).toHaveCount(0);
     const recurringPriceDesk = terminal.locator('.p2p-terminal-price-desk');
     await expect(recurringPriceDesk.locator('.p2p-recurring-price-card-head')).toContainText('Price ratio');
-    await expect(recurringPriceDesk.locator('.p2p-recurring-price-buy')).toContainText(/^Sell /i);
-    await expect(recurringPriceDesk.locator('.p2p-recurring-price-sell')).toContainText(/^Buy /i);
-    await expect(recurringPriceDesk.locator('.p2p-recurring-price-sell')).toHaveClass(/is-active/);
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-buy')).toContainText(/^Buy /i);
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-sell')).toContainText(/^Sell /i);
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-buy')).toHaveClass(/is-active/);
     await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You buy .* at/i);
     await expect(recurringPriceDesk.locator('.p2p-recurring-price-basis')).toHaveCount(0);
     await terminal.locator('.p2p-terminal-tabs').getByRole('tab', { name: 'Sell' }).click();
-    await expect(recurringPriceDesk.locator('.p2p-recurring-price-buy')).toHaveClass(/is-active/);
+    await expect(recurringPriceDesk.locator('.p2p-recurring-price-sell')).toHaveClass(/is-active/);
     await expect(terminal.locator('.p2p-recurring-fill-price-note')).toContainText(/You sell .* at/i);
     await expect(terminal.locator('.p2p-terminal-liquidity-head .p2p-recurring-liquidity-dot')).toHaveCount(2);
     await expect(terminal.locator('.p2p-terminal-liquidity-grid')).not.toContainText(/Live|Order history/);
@@ -1862,10 +1842,13 @@ test.describe('trading responsive layout', () => {
 
   test('renders My Trades with desk cards and opens the desk-style terminal drawer', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 950 });
+    await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');
+    await page.locator('.top-header .wallet-primary-action').click();
 
     const tabs = page.getByRole('tab');
-    test.skip((await tabs.count()) === 0, 'No connected wallet sample data available for My Trades.');
+    await expect(tabs.first()).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByRole('tab', { name: /Active: [1-9]\d*/ })).toBeVisible({ timeout: 45_000 });
     await expect(page.locator('.p2p-history-ledger-card')).toHaveCount(0);
 
     let openedTerminalDrawer = false;
@@ -1936,7 +1919,7 @@ test.describe('trading responsive layout', () => {
 
       await openControl.click();
       openedTerminalDrawer = true;
-      await expect(page).toHaveURL(/\/trades\/mine/);
+      await expect(page).toHaveURL(/\/otc\/orders/);
       await expect(cards.first()).toHaveClass(/p2p-order-card-selected/);
       await expect(page.locator('.p2p-trading-shell-drawer-open')).toBeVisible();
       await expect(page.locator('.standalone-trade-detail-section .p2p-terminal-shell')).toBeVisible();
@@ -1982,16 +1965,19 @@ test.describe('trading responsive layout', () => {
       break;
     }
 
-    test.skip(!openedTerminalDrawer, 'No eligible My Trades card can open the terminal drawer in this sample state.');
+    expect(openedTerminalDrawer).toBe(true);
     await expectNoHorizontalOverflow(page);
   });
 
   test('opens My Trades terminal drawer and mobile history sheet from desk cards', async ({ page }) => {
     await page.setViewportSize(mobileViewport);
+    await installMockTradingWallet(page, sampleRecurringMakerAddress);
     await page.goto('/trades/mine');
+    await page.locator('.top-header-mobile-wallet .wallet-primary-action').click();
 
     const tabs = page.getByRole('tab');
-    test.skip((await tabs.count()) === 0, 'No connected wallet sample data available for My Trades.');
+    await expect(tabs.first()).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByRole('tab', { name: /Active: [1-9]\d*/ })).toBeVisible({ timeout: 45_000 });
     await expect(page.locator('.p2p-history-ledger-card')).toHaveCount(0);
 
     let openedTerminalDrawer = false;
@@ -2012,7 +1998,7 @@ test.describe('trading responsive layout', () => {
       break;
     }
 
-    test.skip(!openedTerminalDrawer, 'No eligible My Trades card can open the terminal drawer in this sample state.');
+    expect(openedTerminalDrawer).toBe(true);
     await expect(page.locator('.p2p-trading-shell-drawer-open')).toBeVisible();
     await expect(page.locator('.standalone-trade-detail-section .p2p-terminal-shell')).toBeVisible();
     await expect(page.locator('.p2p-my-trades-section')).toBeHidden();

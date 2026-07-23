@@ -697,6 +697,15 @@
   min-width: 168px;
 }
 
+.p2p-agent-readiness-error {
+  color: var(--error, #f59ab0) !important;
+}
+
+.p2p-agent-connect-account {
+  flex: 0 0 auto;
+  min-height: 44px;
+}
+
 .p2p-agent-error {
   align-items: center;
   display: flex;
@@ -2557,6 +2566,16 @@
   font-weight: 900;
   line-height: 1;
   padding: 8px 12px;
+}
+
+.p2p-balances-sheet-contracts {
+  min-height: 44px;
+  border: 1px solid rgba(95, 76, 148, 0.68);
+  border-radius: 12px;
+  background: rgba(30, 20, 54, 0.82);
+  color: #f6f3ff;
+  font: inherit;
+  font-weight: 700;
 }
 
 .p2p-balances-sheet-card .p2p-balance-groups {

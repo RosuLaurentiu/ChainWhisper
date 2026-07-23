@@ -119,6 +119,7 @@ import {
   getTradeAgentActionCta,
   getTradeAgentActionDescription
 } from '../../../lib/tradeAgent';
+import { resolveTradeAgentReadiness } from '../../../lib/tradeAgentReadiness';
 import { getAppHelpReadinessTopicId, type AppHelpReason } from '../../../lib/appHelpLaunch';
 import {
   isWalletTransactionFlowActive,
@@ -3104,12 +3105,16 @@ export default function P2PTradingPage({
           loading={tradeAgentLoading}
           status={tradeAgentStatus}
           messagesEndRef={tradeAgentMessagesEndRef}
-          error={tradeAgentError}
           quickActions={visibleTradeAgentQuickActions}
           prompt={tradeAgentPrompt}
-          canSubmitRequest={Boolean(
-            !tradeAgentLoading && tradeAgentPrompt.trim()
-          )}
+          readiness={resolveTradeAgentReadiness({
+            error: tradeAgentError,
+            hasAccount: Boolean(walletAddress),
+            loading: tradeAgentLoading,
+            prompt: tradeAgentPrompt,
+            retryPaymentTxHash: tradeAgentRetryPaymentTxHash,
+            status: tradeAgentStatus
+          })}
           retryPaymentTxHash={tradeAgentRetryPaymentTxHash}
           canUseAction={canUseTradeAgentAction}
           getActionButtonLabel={getTradeAgentActionButtonLabel}
@@ -3119,6 +3124,19 @@ export default function P2PTradingPage({
           onApplyAction={applyTradeAgentAction}
           onActionError={setTradeAgentError}
           onSelectQuickAction={selectTradeAgentQuickAction}
+          onConnectAccount={() => {
+            if (!sharedWalletActions) {
+              setTradeAgentError('Open the Wallet menu to connect your ChainWhisper account.');
+              return;
+            }
+            Promise.resolve(sharedWalletActions.connectAppWallet()).catch((connectError) => {
+              setTradeAgentError(
+                connectError instanceof Error
+                  ? connectError.message
+                  : 'Could not open the ChainWhisper account connection.'
+              );
+            });
+          }}
           onPromptChange={updateTradeAgentPrompt}
           onSubmit={submitTradeAgentRequest}
         />
@@ -3392,6 +3410,7 @@ export default function P2PTradingPage({
         balances={visibleTradingBalances}
         isOpen={showMobileBalancesSheet}
         onClose={() => setShowMobileBalancesSheet(false)}
+        onOpenContracts={openTradingContractsModal}
         walletConnected={Boolean(walletAddress)}
       />
       <TradeActionConfirmModal

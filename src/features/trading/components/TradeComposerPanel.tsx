@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import {
   COTI_NETWORK,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -273,10 +274,12 @@ export function TradeTokenSelect({
     return `${option.label} ${option.value}`.toLowerCase().includes(normalizedSearch);
   });
   const selectOption = (option: TradeComposerTokenOption) => {
+    flushSync(() => {
+      setOpen(false);
+      setSearchInput('');
+      setActiveScope(resolveTokenOptionScope(option));
+    });
     onChange(option.value);
-    setOpen(false);
-    setSearchInput('');
-    setActiveScope(resolveTokenOptionScope(option));
   };
 
   useEffect(() => {
@@ -384,8 +387,15 @@ export function TradeTokenSelect({
                     ]
                       .filter(Boolean)
                       .join(' ')}
-                    onClick={() => {
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
                       selectOption(option);
+                    }}
+                    onClick={(event) => {
+                      if (event.detail === 0) {
+                        selectOption(option);
+                      }
                     }}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {

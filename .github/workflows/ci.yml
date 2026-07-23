@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, agent]
   pull_request:
   workflow_dispatch:
 
@@ -28,5 +28,27 @@ jobs:
       - name: Test
         run: npm run test
 
+      - name: Focused Agent tests
+        run: npm run test:agent
+
       - name: Build
         run: npm run build
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Check Trade Agent Edge Function
+        working-directory: supabase/functions/trade-agent
+        run: deno task check
+
+      - name: Test Trade Agent Edge Function
+        working-directory: supabase/functions/trade-agent
+        run: deno task test
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: npm run test:browser

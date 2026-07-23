@@ -20,7 +20,9 @@ test.describe('Agent App Help', () => {
 
     await page.getByRole('tab', { name: 'Trade Agent' }).click();
     await expect(page.getByText('Trading help, not autopilot.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Pay and send' })).toBeDisabled();
+    await expect(page.getByText('Connect your ChainWhisper account to use the Trade Agent.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Connect account' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Pay and send' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Compare price references' }).click();
     await expect(page.getByRole('textbox', { name: 'Ask the Trade Agent' })).toHaveValue(
       /^Compare prices to (buy|sell) /
@@ -28,6 +30,7 @@ test.describe('Agent App Help', () => {
     await expect(page.getByRole('textbox', { name: 'Ask the Trade Agent' })).not.toHaveValue(
       /reference-only|do not require|ask for/i
     );
+    await expect(page.getByRole('button', { name: 'Connect account' })).toBeVisible();
 
     const compactLayout = await page.locator('.p2p-agent-panel').evaluate((panel) => {
       const hero = panel.querySelector<HTMLElement>('.p2p-agent-hero');
@@ -81,6 +84,35 @@ test.describe('Agent App Help', () => {
     await expect
       .poll(() => page.getByRole('button', { name: 'Start', exact: true }).evaluate((button) => button.getBoundingClientRect().height))
       .toBeGreaterThanOrEqual(44);
+  });
+
+  test('keeps critical Agent states free of browser errors and horizontal overflow', async ({ page }) => {
+    const browserErrors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') {
+        browserErrors.push(message.text());
+      }
+    });
+    page.on('pageerror', (error) => {
+      browserErrors.push(error.message);
+    });
+
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.goto('/otc/agent');
+    await expect(page.getByRole('tab', { name: 'App Help' })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('tab', { name: 'Trade Agent' }).click();
+    await expect(page.getByText('Connect your ChainWhisper account to use the Trade Agent.')).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1))
+      .toBe(true);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole('button', { name: 'Connect account' })).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1))
+      .toBe(true);
+
+    expect(browserErrors).toEqual([]);
   });
 
   test('keeps the Trade Agent composer full width beside an order drawer', async ({ page }) => {
