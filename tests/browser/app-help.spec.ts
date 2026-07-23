@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test.describe('Agent App Help', () => {
   test('answers common questions locally and keeps paid trading help separate', async ({ page }) => {
+    await page.setViewportSize({ width: 2048, height: 1200 });
     await page.goto('/otc/agent');
 
     await expect(page.getByRole('tab', { name: 'App Help' })).toHaveAttribute('aria-selected', 'true');
@@ -31,22 +32,40 @@ test.describe('Agent App Help', () => {
     const compactLayout = await page.locator('.p2p-agent-panel').evaluate((panel) => {
       const hero = panel.querySelector<HTMLElement>('.p2p-agent-hero');
       const modeToggle = panel.querySelector<HTMLElement>('.p2p-agent-mode-toggle');
+      const messages = panel.querySelector<HTMLElement>('.p2p-agent-messages');
+      const composer = panel.querySelector<HTMLElement>('.p2p-agent-composer');
       const textarea = panel.querySelector<HTMLTextAreaElement>('.p2p-agent-prompt textarea');
-      if (!hero || !modeToggle || !textarea) {
+      const section = panel.closest<HTMLElement>('.p2p-agent-section');
+      if (!hero || !modeToggle || !messages || !composer || !textarea || !section) {
         return null;
       }
+      const composerBox = composer.getBoundingClientRect();
       const heroBox = hero.getBoundingClientRect();
+      const messagesBox = messages.getBoundingClientRect();
       const panelBox = panel.getBoundingClientRect();
+      const sectionBox = section.getBoundingClientRect();
       const toggleBox = modeToggle.getBoundingClientRect();
       return {
+        composerBottomGap: panelBox.bottom - composerBox.bottom,
+        composerHeight: composerBox.height,
         headerTopDelta: Math.abs(heroBox.top - toggleBox.top),
-        panelHeight: panelBox.height,
+        messagesAboveComposer: composerBox.top - messagesBox.bottom,
+        panelBottomGap: sectionBox.bottom - panelBox.bottom,
+        panelGapDifference: Math.abs(
+          sectionBox.bottom - panelBox.bottom - (panelBox.top - sectionBox.top)
+        ),
+        panelTopGap: panelBox.top - sectionBox.top,
         textareaHeight: textarea.getBoundingClientRect().height
       };
     });
     expect(compactLayout).not.toBeNull();
     expect(compactLayout!.headerTopDelta).toBeLessThanOrEqual(2);
-    expect(compactLayout!.panelHeight).toBeLessThanOrEqual(520);
+    expect(compactLayout!.panelTopGap).toBeLessThanOrEqual(20);
+    expect(compactLayout!.panelBottomGap).toBeLessThanOrEqual(20);
+    expect(compactLayout!.panelGapDifference).toBeLessThanOrEqual(2);
+    expect(compactLayout!.messagesAboveComposer).toBeGreaterThanOrEqual(0);
+    expect(compactLayout!.composerBottomGap).toBeGreaterThanOrEqual(0);
+    expect(compactLayout!.composerHeight).toBeLessThanOrEqual(160);
     expect(compactLayout!.textareaHeight).toBeLessThanOrEqual(44);
   });
 

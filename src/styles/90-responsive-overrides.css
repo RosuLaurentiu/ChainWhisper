@@ -7132,6 +7132,56 @@ summary:focus:not(:focus-visible),
   max-width: 920px;
 }
 
+@media (min-width: 861px) {
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-section {
+    align-content: stretch;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-panel {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-chat-window {
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-messages {
+    min-height: 0;
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (min-width: 861px) and (max-width: 1023px) {
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-panel {
+    display: grid;
+    grid-template-rows: max-content max-content minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-panel {
+    grid-template-rows: max-content minmax(0, 1fr);
+  }
+}
+
 .app-shell-trades .p2p-trading-shell-drawer-open .p2p-agent-panel {
   width: min(100%, 1120px);
   max-width: 1120px;
