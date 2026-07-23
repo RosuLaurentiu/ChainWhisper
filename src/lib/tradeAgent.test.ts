@@ -41,8 +41,9 @@ describe('tradeAgent', () => {
       'Draft a counter',
       'Review my orders'
     ]);
-    expect(TRADE_AGENT_QUICK_ACTIONS[0].prompt).toContain('Do not require an amount');
-    expect(TRADE_AGENT_QUICK_ACTIONS[0].prompt).not.toMatch(/ask (?:me )?for (?:an|the) amount/i);
+    expect(TRADE_AGENT_QUICK_ACTIONS[0].prompt).toBe('Compare token prices.');
+    expect(TRADE_AGENT_QUICK_ACTIONS[1].prompt).toBe('Draft a limit order.');
+    expect(TRADE_AGENT_QUICK_ACTIONS[2].prompt).toBe('Draft a recurring order.');
     expect(TRADE_AGENT_QUICK_ACTIONS[1].prompt).not.toContain('[');
   });
 

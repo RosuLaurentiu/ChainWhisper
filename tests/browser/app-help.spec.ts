@@ -22,10 +22,10 @@ test.describe('Agent App Help', () => {
     await expect(page.getByRole('button', { name: 'Pay and send' })).toBeDisabled();
     await page.getByRole('button', { name: 'Compare price references' }).click();
     await expect(page.getByRole('textbox', { name: 'Ask the Trade Agent' })).toHaveValue(
-      /do not require an amount/i
+      /^Compare prices to (buy|sell) /
     );
     await expect(page.getByRole('textbox', { name: 'Ask the Trade Agent' })).not.toHaveValue(
-      /ask for the amount/i
+      /reference-only|do not require|ask for/i
     );
   });
 

@@ -252,13 +252,17 @@ export default function useP2PTradeAgentSession({
         return item.prompt;
       }
       if (item.action === 'find_price') {
-        return `Compare current price references for ${swapSellTokenSymbol} and ${swapBuyTokenSymbol} for a ${swapActionMode} request. Keep reference-only venues separate and do not require an amount.`;
+        return swapActionMode === 'sell'
+          ? `Compare prices to sell ${swapSellTokenSymbol} for ${swapBuyTokenSymbol}.`
+          : `Compare prices to buy ${swapBuyTokenSymbol} with ${swapSellTokenSymbol}.`;
       }
       if (item.action === 'draft_limit') {
-        return `Help me draft a limit order for ${swapSellTokenSymbol} and ${swapBuyTokenSymbol}. Ask for any missing side, amount, price, access, or amount-visibility details.`;
+        return swapActionMode === 'sell'
+          ? `Draft a limit order to sell ${swapSellTokenSymbol} for ${swapBuyTokenSymbol}.`
+          : `Draft a limit order to buy ${swapBuyTokenSymbol} with ${swapSellTokenSymbol}.`;
       }
       if (item.action === 'draft_recurring') {
-        return `Help me draft a recurring order for ${swapSellTokenSymbol} / ${swapBuyTokenSymbol}. Ask for any missing prices, liquidity, or amount-visibility details.`;
+        return `Draft a recurring order for ${swapSellTokenSymbol} and ${swapBuyTokenSymbol}.`;
       }
       return item.prompt;
     },

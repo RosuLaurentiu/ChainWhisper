@@ -233,19 +233,17 @@ export const TRADE_AGENT_QUICK_ACTIONS: TradeAgentQuickAction[] = [
   {
     action: 'find_price',
     label: 'Compare price references',
-    prompt:
-      'Help me compare current price references. Ask for the pair or side if either is missing. Do not require an amount for a price-only comparison.'
+    prompt: 'Compare token prices.'
   },
   {
     action: 'draft_limit',
     label: 'Draft limit order',
-    prompt: 'Help me draft a limit order. Ask for any missing pair, side, amount, price, access, or amount-visibility details.'
+    prompt: 'Draft a limit order.'
   },
   {
     action: 'draft_recurring',
     label: 'Draft recurring order',
-    prompt:
-      'Help me draft a recurring order. Ask for any missing pair, prices, liquidity, or amount-visibility details.'
+    prompt: 'Draft a recurring order.'
   },
   {
     action: 'explain_order',
