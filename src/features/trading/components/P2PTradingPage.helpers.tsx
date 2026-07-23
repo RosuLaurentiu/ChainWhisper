@@ -8,6 +8,8 @@ import {
   type TradeSnapshot
 } from '../../../lib/appShared';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
+import type { AppHelpResponseSource } from '../../../lib/appHelp';
+import type { AppHelpLaunchContext, AppHelpReason } from '../../../lib/appHelpLaunch';
 import type { LinkedTradeContext } from '../../../lib/linkedTradeContext';
 import type { P2PSyncRequest } from '../../../lib/p2pSyncCoordinator';
 import {
@@ -16,7 +18,7 @@ import {
   getRemainingRequestAmount,
   type RecurringTerminalActionSide
 } from '../../../lib/p2pTradeView';
-import type { TradeAgentActionType, TradeAgentResponseAction } from '../../../lib/tradeAgent';
+import type { TradeAgentResponseAction } from '../../../lib/tradeAgent';
 import type { TradeTransactionHistoryRow } from '../../../lib/tradeHistory';
 import type { RecurringPriceDeskDisplay } from '../../../lib/tradePerspective';
 import type { TradePricingField } from '../../../lib/tradePricing';
@@ -315,13 +317,14 @@ export const getTradeCounterRelation = (
 export type P2PTradingPageProps = {
   isMobileNav?: boolean;
   sharedWalletSession?: SharedWalletSession;
+  appHelpLaunchContext?: AppHelpLaunchContext | null;
+  onAppHelpLaunchConsumed?: () => void;
+  onOpenAppHelp?: (reason: AppHelpReason) => void;
   onOpenInternalAppLink?: (href: string) => void;
   onOpenTradeConversation?: (counterpartyAddress: string, context: LinkedTradeContext) => void;
 };
 
 export const P2P_VISIBLE_SYNC_INTERVAL_MS = 20_000;
-const TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY = 'chainwhisper:trade-agent-retry-payment';
-const TRADE_AGENT_RETRY_PAYMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const EMPTY_STALE_TOKEN_ADDRESSES: string[] = [];
 export type TradeAgentChatRole = 'assistant' | 'user' | 'status';
 export type TradeAgentChatMessage = {
@@ -330,6 +333,8 @@ export type TradeAgentChatMessage = {
   title: string;
   text: string;
   helpTopicId?: string;
+  helpSource?: AppHelpResponseSource;
+  relatedHelpTopicIds?: string[];
   warnings?: string[];
   actions?: TradeAgentResponseAction[];
 };
@@ -339,73 +344,6 @@ export type QueuedTradeDataRefresh = P2PSyncRequest<TradeSigner>;
 export type RecurringFundingBalanceResult = {
   balanceWei: bigint | null;
   unavailableMessage?: string;
-};
-export type TradeAgentRetryPaymentRecord = {
-  action: TradeAgentActionType;
-  prompt: string;
-  requestId: string;
-  txHash: string;
-};
-const isTradeAgentActionType = (value: unknown): value is TradeAgentActionType =>
-  value === 'explain_order' ||
-  value === 'find_price' ||
-  value === 'draft_counter' ||
-  value === 'draft_limit' ||
-  value === 'chat_to_trade';
-
-export const readTradeAgentRetryPayment = (): TradeAgentRetryPaymentRecord | null => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const record = JSON.parse(raw) as {
-      action?: unknown;
-      createdAt?: unknown;
-      prompt?: unknown;
-      requestId?: unknown;
-      txHash?: unknown;
-    };
-    if (
-      !isTradeAgentActionType(record.action) ||
-      typeof record.prompt !== 'string' ||
-      typeof record.requestId !== 'string' ||
-      typeof record.txHash !== 'string' ||
-      !/^[0-9a-fA-F-]{36}$/.test(record.requestId) ||
-      !/^0x[0-9a-fA-F]{64}$/.test(record.txHash) ||
-      typeof record.createdAt !== 'number' ||
-      Date.now() - record.createdAt > TRADE_AGENT_RETRY_PAYMENT_MAX_AGE_MS
-    ) {
-      window.localStorage.removeItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
-      return null;
-    }
-    return {
-      action: record.action,
-      prompt: record.prompt,
-      requestId: record.requestId,
-      txHash: record.txHash
-    };
-  } catch {
-    window.localStorage.removeItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
-    return null;
-  }
-};
-
-export const writeTradeAgentRetryPayment = (record: TradeAgentRetryPaymentRecord | null) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  if (!record) {
-    window.localStorage.removeItem(TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY);
-    return;
-  }
-  window.localStorage.setItem(
-    TRADE_AGENT_RETRY_PAYMENT_STORAGE_KEY,
-    JSON.stringify({ ...record, createdAt: Date.now() })
-  );
 };
 
 export const decimalScale = (decimals: number): bigint => 10n ** BigInt(Math.max(0, Math.floor(decimals)));

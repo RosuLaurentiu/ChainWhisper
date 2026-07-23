@@ -1,5 +1,5 @@
-import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import 'jsr:@supabase/functions-js@2.110.8/edge-runtime.d.ts';
+import { createClient } from 'npm:@supabase/supabase-js@2.110.8';
 import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 import { jsonResponse } from '../_shared/chat-image.ts';
 import { redactTradeAgentSecrets, redactTradeAgentSecretText } from '../_shared/trade-agent-redaction.ts';
@@ -7,12 +7,45 @@ import {
   APP_HELP_MAX_INPUT_TOKENS,
   APP_HELP_MAX_QUESTION_CHARS,
   APP_HELP_OFF_TOPIC_ANSWER,
+  APP_HELP_SECRET_ANSWER,
   APP_HELP_UNSUPPORTED_ANSWER,
+  buildAppHelpAiResult,
+  containsSensitiveAppHelpMaterial,
+  getAppHelpSurfacePath,
+  getAppHelpTopic,
   matchAppHelpTopics,
-  normalizeAppHelpCurrentPath,
   resolveLocalAppHelpAnswer,
   type AppHelpTopic
 } from '../_shared/app-help-knowledge.ts';
+import {
+  COTI_CHAIN_ID,
+  TRADE_AGENT_PENDING_LEASE_MS,
+  TRADE_AGENT_PROTOCOL,
+  TRADE_AGENT_PROTOCOL_VERSION,
+  TRADE_AGENT_QUOTE_TTL_MS,
+  TRADE_AGENT_RESPONSE_TTL_MS,
+  assertFreshTradeAgentRecoverySignature,
+  buildTradeAgentAuthorizationMessage,
+  buildTradeAgentRecoveryMessage,
+  createTradeAgentQuoteToken,
+  hashTradeAgentRequest,
+  recoverTradeAgentMessageSigner,
+  verifyTradeAgentPaymentReceiptData,
+  verifyTradeAgentQuoteToken,
+  type TradeAgentQuotePayload,
+  type TradeAgentReceipt
+} from './payment-v2.ts';
+import {
+  TRADE_AGENT_RESPONSE_JSON_SCHEMA,
+  normalizeSafeTradeAgentResponse
+} from './trade-agent-response.ts';
+import {
+  findDisallowedTradeAgentContextMaterial,
+  findProhibitedTradeAgentMaterial,
+  getKnownTradeAgentPromptTokens,
+  getSemanticTradeAgentPreflightError,
+  hasUnresolvedTradeAgentPlaceholders
+} from './trade-agent-safety.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -20,6 +53,7 @@ const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? '';
 const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL') ?? 'gpt-5-mini';
 const APP_HELP_MODEL = Deno.env.get('APP_HELP_MODEL') ?? 'gpt-5-nano';
 const APP_HELP_RATE_LIMIT_SECRET = Deno.env.get('APP_HELP_RATE_LIMIT_SECRET') ?? '';
+const TRADE_AGENT_QUOTE_SECRET = Deno.env.get('TRADE_AGENT_QUOTE_SECRET') ?? '';
 const UNISWAP_API_KEY = Deno.env.get('UNISWAP_API_KEY') ?? '';
 const COTI_RPC_URL = Deno.env.get('COTI_RPC_URL') ?? '';
 
@@ -39,7 +73,15 @@ const FEE_MARGIN_BPS = Number(Deno.env.get('TRADE_AGENT_FEE_MARGIN_BPS') ?? '150
 const MIN_FEE_USD = Number(Deno.env.get('TRADE_AGENT_MIN_FEE_USD') ?? '0.006');
 const OPENAI_INPUT_USD_PER_1M = Deno.env.get('TRADE_AGENT_OPENAI_INPUT_USD_PER_1M');
 const OPENAI_OUTPUT_USD_PER_1M = Deno.env.get('TRADE_AGENT_OPENAI_OUTPUT_USD_PER_1M');
-const ACTION_TYPES = new Set(['explain_order', 'find_price', 'draft_counter', 'draft_limit', 'chat_to_trade']);
+const ACTION_TYPES = new Set([
+  'explain_order',
+  'find_price',
+  'draft_counter',
+  'draft_limit',
+  'draft_recurring',
+  'review_orders',
+  'chat_to_trade'
+]);
 const MODEL_PRICING_USD_PER_1M = new Map([
   ['gpt-5.5', { input: 5, output: 30 }],
   ['gpt-5.4', { input: 2.5, output: 15 }],
@@ -64,15 +106,32 @@ const UNISWAP_TOKENS = new Map([
   ['wbtc', { address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals: 8, symbol: 'WBTC' }]
 ]);
 
-type TradeAgentAction = 'explain_order' | 'find_price' | 'draft_counter' | 'draft_limit' | 'chat_to_trade';
+type TradeAgentAction =
+  | 'explain_order'
+  | 'find_price'
+  | 'draft_counter'
+  | 'draft_limit'
+  | 'draft_recurring'
+  | 'review_orders'
+  | 'chat_to_trade';
 
-type RpcReceipt = {
-  logs?: Array<{
-    address?: string;
-    data?: string;
-    topics?: string[];
-  }>;
+type TradeAgentPaymentRow = {
+  action_type?: string;
+  completed_at?: string | null;
+  fee_amount_wei?: string;
+  fee_recipient?: string;
+  fee_token_address?: string;
+  id?: number;
+  payer_address?: string;
+  payment_tx_hash?: string;
+  quote_expires_at?: string | null;
+  quote_issued_at?: string | null;
+  request_hash?: string | null;
+  request_id?: string | null;
+  response_expires_at?: string | null;
+  response_json?: unknown;
   status?: string;
+  updated_at?: string;
 };
 
 type AppHelpRateLimitRow = {
@@ -91,7 +150,6 @@ const isAddress = (value: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(value);
 const isRequestId = (value: string): boolean =>
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value);
 const normalizeAddress = (value: string): string => value.trim().toLowerCase();
-const topicForAddress = (address: string): string => `0x${normalizeAddress(address).replace(/^0x/, '').padStart(64, '0')}`;
 
 const getForwardedClientIp = (request: Request): string => {
   const forwardedFor = request.headers.get('x-forwarded-for') ?? '';
@@ -229,46 +287,41 @@ const sourceLine = (name: string, label?: unknown, fallback?: string): string =>
 
 const buildFindPriceAnswer = (context: unknown): string => {
   const record = context && typeof context === 'object' ? context as Record<string, unknown> : {};
-  const selectedPair = readNestedRecord(record, 'selectedPair');
   const swap = readNestedRecord(record, 'swap');
   const carbonReference = readNestedRecord(swap, 'carbonReference');
   const uniswapReference = readNestedRecord(swap, 'uniswapReference');
   const bestOrder = readNestedRecord(swap, 'bestOrder');
+  const requestedAmount = readNestedRecord(swap, 'requestedAmount');
   if (!swap) {
     return '';
   }
 
-  const mode = normalizeString(selectedPair?.mode) === 'sell' ? 'sell' : 'buy';
   const chainwhisperLabel = normalizeString(swap.chainwhisperPrice);
   const hasChainwhisperOrder = Boolean(bestOrder) && Boolean(chainwhisperLabel) && chainwhisperLabel !== '--';
   const sources = [
-    { name: 'ChainWhisper', price: parseFirstPrice(chainwhisperLabel), label: hasChainwhisperOrder ? chainwhisperLabel : 'no order' },
-    { name: 'Carbon', price: parseFirstPrice(carbonReference?.label), label: carbonReference?.label },
+    { name: 'ChainWhisper', label: hasChainwhisperOrder ? chainwhisperLabel : 'no order' },
+    { name: 'Carbon', label: carbonReference?.label },
     {
       name: 'Uniswap',
-      price: parseFirstPrice(uniswapReference?.label),
       label: normalizeString(uniswapReference?.label) || normalizeString(uniswapReference?.reason) || 'unavailable'
     }
   ];
-  const priced = sources.filter((source) => source.price !== null) as Array<
-    typeof sources[number] & { price: number }
-  >;
-  const best = priced.length
-    ? priced.reduce((winner, source) => mode === 'buy'
-      ? (source.price < winner.price ? source : winner)
-      : (source.price > winner.price ? source : winner))
-    : null;
   const orderId = parseFirstPrice(bestOrder?.id);
   const reviewLine = orderId ? ` Review ChainWhisper order #${orderId}.` : '';
-  const createLine = !orderId ? ' No ChainWhisper order found. Use Draft trade to create a limit order.' : '';
-  const bestLine = best ? ` Best market price: ${best.name}.` : '';
+  const createLine = !orderId ? ' No ChainWhisper order found. Use Draft limit order to create one.' : '';
+  const hasRequestedAmount = Boolean(normalizeString(requestedAmount?.amount));
+  const liquidityLine = hasRequestedAmount
+    ? bestOrder?.rankingEligible === true
+      ? 'The ChainWhisper order covers the requested amount using visible liquidity; external venues remain separate references.'
+      : 'No ChainWhisper order was verified to cover the requested amount; external venues remain separate references.'
+    : 'Price references only; no liquidity ranking or best-execution claim was made.';
   return [
     sourceLine('ChainWhisper', sources[0].label),
     sourceLine('Carbon', sources[1].label),
     sourceLine('Uniswap', sources[2].label),
-    bestLine.trim(),
     reviewLine.trim(),
-    createLine.trim()
+    createLine.trim(),
+    liquidityLine
   ].filter(Boolean).join(' ');
 };
 
@@ -352,15 +405,16 @@ const buildFeeQuote = async (prompt: string, contextText: string) => {
   const marginMultiplier = 1 + Math.max(0, Number.isFinite(FEE_MARGIN_BPS) ? FEE_MARGIN_BPS : 15000) / 10_000;
   const estimatedUsdFee = Math.max(MIN_FEE_USD > 0 ? MIN_FEE_USD : 0, rawApiCostUsd * marginMultiplier);
   const wispUsdPrice = await fetchWispUsdPrice();
-  const feeUnits = Math.ceil((estimatedUsdFee / wispUsdPrice) * 10 ** FEE_TOKEN_DECIMALS);
-  if (!Number.isSafeInteger(feeUnits) || feeUnits <= 0) {
+  const wholeWispFee = Math.ceil(estimatedUsdFee / wispUsdPrice);
+  if (!Number.isSafeInteger(wholeWispFee) || wholeWispFee <= 0) {
     throw new Error('Trade Agent WISP fee could not be calculated.');
   }
+  const feeAmountWei = BigInt(wholeWispFee) * 10n ** BigInt(FEE_TOKEN_DECIMALS);
   return {
     estimatedInputTokens: inputTokens,
     estimatedOutputTokens: outputTokens,
     estimatedUsdFee,
-    feeAmountWei: BigInt(feeUnits),
+    feeAmountWei,
     quoteSource: 'carbon-market-rate',
     wispUsdPrice
   };
@@ -397,12 +451,10 @@ const rpcCall = async <T>(method: string, params: unknown[]): Promise<T | null> 
 };
 
 const verifyPaymentReceipt = async ({
-  feeAmountWei,
-  payerAddress,
+  quote,
   paymentTxHash
 }: {
-  feeAmountWei: bigint;
-  payerAddress: string;
+  quote: TradeAgentQuotePayload;
   paymentTxHash: string;
 }): Promise<void> => {
   const chainId = await rpcCall<string>('eth_chainId', []);
@@ -410,33 +462,28 @@ const verifyPaymentReceipt = async ({
     throw new Error('Payment RPC is not connected to COTI mainnet.');
   }
 
-  const receipt = await rpcCall<RpcReceipt>('eth_getTransactionReceipt', [paymentTxHash]);
-  if (!receipt || receipt.status?.toLowerCase() !== '0x1') {
+  const receipt = await rpcCall<TradeAgentReceipt>('eth_getTransactionReceipt', [paymentTxHash]);
+  if (!receipt || !/^0x[a-fA-F0-9]+$/u.test(receipt.blockNumber ?? '')) {
     throw new Error('WISP payment transaction is not confirmed.');
   }
-
-  const payerTopic = topicForAddress(payerAddress);
-  const recipientTopic = topicForAddress(FEE_RECIPIENT);
-  const validTransfer = (receipt.logs ?? []).some((log) => {
-    const topics = log.topics ?? [];
-    if (
-      normalizeAddress(log.address ?? '') !== normalizeAddress(FEE_TOKEN_ADDRESS) ||
-      topics[0]?.toLowerCase() !== TRANSFER_TOPIC ||
-      topics[1]?.toLowerCase() !== payerTopic ||
-      topics[2]?.toLowerCase() !== recipientTopic
-    ) {
-      return false;
-    }
-    try {
-      return BigInt(log.data ?? '0x0') >= feeAmountWei;
-    } catch {
-      return false;
-    }
-  });
-
-  if (!validTransfer) {
-    throw new Error('Payment transaction did not include the required WISP transfer.');
+  const block = await rpcCall<{ timestamp?: string }>('eth_getBlockByNumber', [receipt.blockNumber, false]);
+  let transactionBlockTimestampSeconds = 0;
+  try {
+    transactionBlockTimestampSeconds = Number(BigInt(block?.timestamp ?? ''));
+  } catch {
+    throw new Error('WISP payment block timestamp is unavailable.');
   }
+  verifyTradeAgentPaymentReceiptData({
+    expiresAt: quote.expiresAt,
+    feeAmountWei: BigInt(quote.feeAmountWei),
+    feeRecipient: quote.feeRecipient,
+    feeTokenAddress: quote.feeTokenAddress,
+    issuedAt: quote.issuedAt,
+    payerAddress: quote.payerAddress,
+    receipt,
+    transactionBlockTimestampSeconds,
+    transferTopic: TRANSFER_TOPIC
+  });
 };
 
 const extractOutputText = (body: Record<string, unknown>): string => {
@@ -484,7 +531,7 @@ const callAppHelpOpenAI = async ({
   currentPath: string;
   question: string;
   topics: AppHelpTopic[];
-}): Promise<{ answer: string; relatedTopicIds: string[]; topicId: string }> => {
+}): Promise<{ answer: string; relatedTopicIds: string[]; supported: boolean; topicId: string }> => {
   if (!OPENAI_API_KEY) {
     throw new Error('OpenAI API key is not configured.');
   }
@@ -502,7 +549,11 @@ const callAppHelpOpenAI = async ({
     question,
     topics: topics.map((topic) => ({
       answer: topic.answer,
+      cautions: topic.cautions,
       id: topic.id,
+      prerequisites: topic.prerequisites,
+      steps: topic.steps,
+      summary: topic.summary,
       title: topic.title
     }))
   });
@@ -511,6 +562,7 @@ const callAppHelpOpenAI = async ({
     return {
       answer: APP_HELP_UNSUPPORTED_ANSWER,
       relatedTopicIds: topicIds.slice(1),
+      supported: false,
       topicId: topicIds[0]
     };
   }
@@ -584,6 +636,7 @@ const callAppHelpOpenAI = async ({
   return {
     answer: supported && answer ? answer.slice(0, 2_000) : APP_HELP_UNSUPPORTED_ANSWER,
     relatedTopicIds,
+    supported: supported && Boolean(answer),
     topicId
   };
 };
@@ -596,8 +649,19 @@ const handleAppHelpRequest = async (request: Request, body: Record<string, unkno
   if (rawQuestion.length > APP_HELP_MAX_QUESTION_CHARS) {
     return buildErrorResponse(`Keep App Help questions under ${APP_HELP_MAX_QUESTION_CHARS} characters.`);
   }
+  if (
+    containsSensitiveAppHelpMaterial(rawQuestion) ||
+    findProhibitedTradeAgentMaterial(rawQuestion) ||
+    findDisallowedTradeAgentContextMaterial({ prompt: rawQuestion })
+  ) {
+    return jsonResponse(
+      { answer: APP_HELP_SECRET_ANSWER, relatedTopicIds: [], source: 'refusal', topicId: null },
+      { headers: corsHeaders }
+    );
+  }
   const question = redactTradeAgentSecretText(rawQuestion);
-  const currentPath = normalizeAppHelpCurrentPath(body.currentPath);
+  const currentPath = getAppHelpSurfacePath(body.surface);
+  const previousTopic = getAppHelpTopic(body.previousTopicId);
   const localAnswer = resolveLocalAppHelpAnswer(question, currentPath);
   if (localAnswer) {
     return jsonResponse(
@@ -623,12 +687,13 @@ const handleAppHelpRequest = async (request: Request, body: Record<string, unkno
   if (rateLimitResponse) {
     return rateLimitResponse;
   }
-  const topics = [match.topic, ...match.relatedTopics]
+  const topics = [match.topic, ...match.relatedTopics, previousTopic]
+    .filter((topic): topic is AppHelpTopic => Boolean(topic))
     .filter((topic, index, items) => items.findIndex((item) => item.id === topic.id) === index)
     .slice(0, 3);
   try {
     const response = await callAppHelpOpenAI({ currentPath, question, topics });
-    return jsonResponse({ ...response, source: 'nano' }, { headers: corsHeaders });
+    return jsonResponse(buildAppHelpAiResult(response), { headers: corsHeaders });
   } catch {
     return buildErrorResponse('App Help is unavailable right now. Common help questions still work for free.', 503);
   }
@@ -649,86 +714,67 @@ const callOpenAI = async ({
 
   const systemPrompt = [
     'You are ChainWhisper Trade Agent.',
-    'Help users compare the best single ChainWhisper order with Carbon and Uniswap when available, draft concise negotiation replies, and draft/prefill trade forms.',
-    'For find_price requests, use the supplied ChainWhisper, Carbon, and Uniswap context together instead of treating them as separate tasks.',
-    'For price favorability, obey the selected side: if the user is buying the displayed base token, lower quote/base is better; if the user is selling the displayed base token, higher quote/base is better.',
-    'If the context lacks enough numeric data to compare favorability, state both prices without saying better, worse, or best value.',
+    'Compare current prices by chain, pair, side, display basis, and freshness; an amount is optional for a price-only comparison.',
+    'Use a supplied amount only when context explicitly marks visible liquidity and executability as verified for that exact amount.',
+    'Only then may you describe that source as executable for the amount; never infer or claim best liquidity.',
+    'Present Carbon, Uniswap, and other reference-only or different-chain data separately and never call one best, better, or worse.',
     'Keep answer text short and precise: maximum two short sentences, no filler, no generic reminders when an action card already exists.',
-    'For draft trade requests, return a prefill action only when side, tokens, amount, and price are clear enough; otherwise ask one short clarifying question and return no actions.',
-    'Never say should buy, should sell, better value, or financial advice; say review the order instead. Never promise private liquidity, never execute or sign transactions, and use one best ChainWhisper order only.',
-    'Hidden intents, solver actions, and private-fee pWISP billing are not available in V1.',
+    'When required draft details, comparison pair, or comparison side are missing, ask one concise follow-up question and return no action. Never require an amount for a price-only comparison.',
+    'Draft Limit, Recurring, counter, selected-chat trade, or message actions only when every required term is explicit.',
+    'For review_orders and open_order actions, use only an exact tradeId and escrowContract pair supplied in context.',
+    'For Direct drafts, never invent or return a recipient; the user selects it locally.',
+    'Never return labels, access secrets, wallet addresses, private links, or hidden liquidity values.',
+    'Never execute, sign, submit, send, or promise an action. The user must review every draft.',
+    'Never provide financial advice or tell the user to buy or sell.',
     'Return concise JSON only.'
   ].join(' ');
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${OPENAI_API_KEY}`,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      store: false,
-      max_output_tokens: 4096,
-      reasoning: { effort: 'low' },
-      input: [
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            action,
-            context,
-            prompt
-          })
-        }
-      ],
-      text: {
-        verbosity: 'low',
-        format: {
-          type: 'json_schema',
-          name: 'chainwhisper_trade_agent_response',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['answer', 'warnings', 'actions'],
-            properties: {
-              answer: { type: 'string' },
-              warnings: {
-                type: 'array',
-                items: { type: 'string' }
-              },
-              actions: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  required: ['type', 'label', 'inputMode', 'sellToken', 'buyToken', 'sellAmount', 'buyAmount', 'price', 'message', 'tradeId', 'accessSecret', 'escrowContract'],
-                  properties: {
-                    type: {
-                      type: 'string',
-                      enum: ['prefill_swap', 'prefill_limit', 'prefill_counter', 'prefill_message', 'open_order']
-                    },
-                    label: { type: ['string', 'null'] },
-                    inputMode: { type: ['string', 'null'], enum: ['sell', 'buy', null] },
-                    sellToken: { type: ['string', 'null'] },
-                    buyToken: { type: ['string', 'null'] },
-                    sellAmount: { type: ['string', 'null'] },
-                    buyAmount: { type: ['string', 'null'] },
-                    price: { type: ['string', 'null'] },
-                    message: { type: ['string', 'null'] },
-                    tradeId: { type: ['number', 'null'] },
-                    accessSecret: { type: ['string', 'null'] },
-                    escrowContract: { type: ['string', 'null'] }
-                  }
-                }
-              }
-            }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000);
+  let response: Response;
+  try {
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${OPENAI_API_KEY}`,
+        'content-type': 'application/json'
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        store: false,
+        max_output_tokens: 4096,
+        reasoning: { effort: 'low' },
+        input: [
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              action,
+              context,
+              prompt
+            })
+          }
+        ],
+        text: {
+          verbosity: 'low',
+          format: {
+            type: 'json_schema',
+            name: 'chainwhisper_trade_agent_response',
+            strict: true,
+            schema: TRADE_AGENT_RESPONSE_JSON_SCHEMA
           }
         }
-      }
-    })
-  });
+      })
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Trade Agent provider timed out.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const body = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok || !body) {
@@ -758,12 +804,624 @@ const callOpenAI = async ({
   }
 
   return {
-    response: parsedResponse,
+    response: normalizeSafeTradeAgentResponse(parsedResponse, context),
     usage: body.usage && typeof body.usage === 'object' ? body.usage as Record<string, unknown> : {}
   };
 };
 
-Deno.serve(async (request) => {
+type TradeAgentDatabase = {
+  public: {
+    CompositeTypes: Record<string, never>;
+    Enums: Record<string, never>;
+    Functions: Record<string, never>;
+    Tables: {
+      trade_agent_payments: {
+        Insert: Record<string, unknown>;
+        Relationships: [];
+        Row: TradeAgentPaymentRow;
+        Update: Record<string, unknown>;
+      };
+    };
+    Views: Record<string, never>;
+  };
+};
+
+type SupabaseAdminClient = ReturnType<typeof createClient<TradeAgentDatabase>>;
+
+const PAYMENT_SELECT = [
+  'action_type',
+  'completed_at',
+  'fee_amount_wei',
+  'fee_recipient',
+  'fee_token_address',
+  'id',
+  'payer_address',
+  'payment_tx_hash',
+  'quote_expires_at',
+  'quote_issued_at',
+  'request_hash',
+  'request_id',
+  'response_expires_at',
+  'response_json',
+  'status',
+  'updated_at'
+].join(',');
+
+const buildFeeResponse = (quotedFee: Awaited<ReturnType<typeof buildFeeQuote>>) => ({
+  estimatedInputTokens: quotedFee.estimatedInputTokens,
+  estimatedOutputTokens: quotedFee.estimatedOutputTokens,
+  estimatedUsdFee: quotedFee.estimatedUsdFee,
+  feeAmountWei: quotedFee.feeAmountWei.toString(),
+  feeRecipient: FEE_RECIPIENT,
+  feeTokenAddress: FEE_TOKEN_ADDRESS,
+  feeTokenDecimals: FEE_TOKEN_DECIMALS,
+  feeTokenSymbol: 'WISP' as const,
+  quoteSource: quotedFee.quoteSource,
+  wispUsdPrice: quotedFee.wispUsdPrice
+});
+
+const hasTrustedOrderIdentity = (value: unknown): boolean => {
+  if (Array.isArray(value)) {
+    return value.some(hasTrustedOrderIdentity);
+  }
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.tradeId === 'number' &&
+    Number.isSafeInteger(record.tradeId) &&
+    record.tradeId > 0 &&
+    isAddress(normalizeString(record.escrowContract))
+  ) {
+    return true;
+  }
+  return Object.values(record).some(hasTrustedOrderIdentity);
+};
+
+const validateTradeAgentInput = ({
+  action,
+  body,
+  requireComplete
+}: {
+  action: TradeAgentAction;
+  body: Record<string, unknown>;
+  requireComplete: boolean;
+}): { context: unknown; contextText: string; prompt: string } => {
+  const rawPrompt = normalizeString(body.prompt);
+  const rawContext = body.context ?? {};
+  const prohibited = findProhibitedTradeAgentMaterial({ context: rawContext, prompt: rawPrompt });
+  if (prohibited) {
+    throw new Error('Remove wallet secrets and private order links before using Trade Agent.');
+  }
+  if (findDisallowedTradeAgentContextMaterial({ context: rawContext, prompt: rawPrompt })) {
+    throw new Error('Remove wallet addresses, balances, receipts, history, and private progress before using Trade Agent.');
+  }
+  if (rawPrompt.length > MAX_PROMPT_CHARS) {
+    throw new Error('Prompt is too long.');
+  }
+  if (requireComplete && !rawPrompt) {
+    throw new Error('Prompt is empty.');
+  }
+  if (requireComplete && hasUnresolvedTradeAgentPlaceholders(rawPrompt)) {
+    throw new Error('Complete every bracketed placeholder before requesting a paid Agent quote.');
+  }
+  const context = redactTradeAgentSecrets(rawContext);
+  const prompt = redactTradeAgentSecretText(rawPrompt);
+  const contextText = JSON.stringify(context);
+  if (contextText.length > MAX_CONTEXT_CHARS) {
+    throw new Error('Trade Agent context is too large.');
+  }
+  if (
+    requireComplete &&
+    (action === 'explain_order' || action === 'draft_counter') &&
+    !hasTrustedOrderIdentity(context)
+  ) {
+    throw new Error('Load a trusted order before using this Agent action.');
+  }
+  if (requireComplete && action === 'review_orders') {
+    const orders = context && typeof context === 'object'
+      ? (context as { orders?: unknown }).orders
+      : null;
+    if (!Array.isArray(orders) || orders.length === 0 || orders.length > 20) {
+      throw new Error('Review orders requires between 1 and 20 safe order summaries.');
+    }
+  }
+  if (requireComplete && action === 'chat_to_trade') {
+    const selectedMessage = context && typeof context === 'object'
+      ? (context as { selectedMessage?: unknown }).selectedMessage
+      : null;
+    if (!selectedMessage || typeof selectedMessage !== 'object') {
+      throw new Error('Select one chat message before asking the Agent to draft a trade.');
+    }
+  }
+  if (requireComplete) {
+    const semanticError = getSemanticTradeAgentPreflightError({ action, context, prompt });
+    if (semanticError) {
+      throw new Error(semanticError);
+    }
+  }
+  return { context, contextText, prompt };
+};
+
+const getPaymentByRequestId = async (
+  supabaseAdmin: SupabaseAdminClient,
+  requestId: string
+): Promise<TradeAgentPaymentRow | null> => {
+  const { data, error } = await supabaseAdmin
+    .from('trade_agent_payments')
+    .select(PAYMENT_SELECT)
+    .eq('request_id', requestId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(error.message || 'Failed to read Trade Agent payment.');
+  }
+  return data as TradeAgentPaymentRow | null;
+};
+
+const getPaymentByTransaction = async (
+  supabaseAdmin: SupabaseAdminClient,
+  paymentTxHash: string
+): Promise<TradeAgentPaymentRow | null> => {
+  const { data, error } = await supabaseAdmin
+    .from('trade_agent_payments')
+    .select(PAYMENT_SELECT)
+    .eq('payment_tx_hash', paymentTxHash)
+    .maybeSingle();
+  if (error) {
+    throw new Error(error.message || 'Failed to read Trade Agent payment.');
+  }
+  return data as TradeAgentPaymentRow | null;
+};
+
+const assertPaymentMatchesQuote = (
+  payment: TradeAgentPaymentRow,
+  quote: TradeAgentQuotePayload,
+  paymentTxHash: string
+): void => {
+  if (
+    payment.request_id !== quote.requestId ||
+    payment.request_hash !== quote.requestHash ||
+    payment.action_type !== quote.action ||
+    normalizeAddress(payment.payer_address ?? '') !== quote.payerAddress ||
+    normalizeAddress(payment.fee_token_address ?? '') !== quote.feeTokenAddress ||
+    normalizeAddress(payment.fee_recipient ?? '') !== quote.feeRecipient ||
+    payment.fee_amount_wei !== quote.feeAmountWei ||
+    normalizeString(payment.payment_tx_hash).toLowerCase() !== paymentTxHash
+  ) {
+    throw new Error('This WISP payment is bound to a different Agent request.');
+  }
+};
+
+const getCompletedPaymentResponse = (
+  payment: TradeAgentPaymentRow,
+  now = Date.now()
+): Record<string, unknown> => {
+  const expiresAt = Date.parse(payment.response_expires_at ?? '');
+  if (!payment.response_json || !Number.isFinite(expiresAt) || expiresAt <= now) {
+    throw new Error('The cached Trade Agent response has expired.');
+  }
+  if (typeof payment.response_json !== 'object' || Array.isArray(payment.response_json)) {
+    throw new Error('The cached Trade Agent response is unavailable.');
+  }
+  return payment.response_json as Record<string, unknown>;
+};
+
+const buildPaymentStateResponse = (
+  payment: TradeAgentPaymentRow,
+  requestId: string,
+  now = Date.now(),
+  allowRetryClaim = false
+): Response | null => {
+  if (payment.status === 'completed') {
+    try {
+      return jsonResponse(
+        { requestId, status: 'completed', response: getCompletedPaymentResponse(payment, now) },
+        { headers: corsHeaders }
+      );
+    } catch (error) {
+      return buildErrorResponse(
+        error instanceof Error ? error.message : 'The cached Trade Agent response is unavailable.',
+        410
+      );
+    }
+  }
+  if (payment.status === 'failed') {
+    return allowRetryClaim
+      ? null
+      : jsonResponse({ requestId, status: 'retryable' }, { headers: corsHeaders });
+  }
+  if (payment.status === 'pending') {
+    const updatedAt = Date.parse(payment.updated_at ?? '');
+    const leaseRemaining = Number.isFinite(updatedAt)
+      ? updatedAt + TRADE_AGENT_PENDING_LEASE_MS - now
+      : 0;
+    if (leaseRemaining > 0) {
+      return jsonResponse(
+        { requestId, status: 'processing', retryAfterMs: Math.max(1_000, Math.ceil(leaseRemaining)) },
+        { status: 202, headers: corsHeaders }
+      );
+    }
+    return null;
+  }
+  throw new Error('Trade Agent payment status is invalid.');
+};
+
+const claimExistingPayment = async (
+  supabaseAdmin: SupabaseAdminClient,
+  payment: TradeAgentPaymentRow,
+  nowIso: string
+): Promise<TradeAgentPaymentRow | null> => {
+  if (!payment.id) {
+    return null;
+  }
+  let query = supabaseAdmin
+    .from('trade_agent_payments')
+    .update({
+      completed_at: null,
+      error_message: null,
+      response_expires_at: null,
+      response_json: null,
+      status: 'pending',
+      updated_at: nowIso
+    })
+    .eq('id', payment.id);
+  if (payment.status === 'failed') {
+    query = query.eq('status', 'failed');
+  } else {
+    query = query
+      .eq('status', 'pending')
+      .lte('updated_at', new Date(Date.parse(nowIso) - TRADE_AGENT_PENDING_LEASE_MS).toISOString());
+  }
+  const { data, error } = await query.select(PAYMENT_SELECT).maybeSingle();
+  if (error) {
+    throw new Error(error.message || 'Failed to reserve Trade Agent payment.');
+  }
+  return data as TradeAgentPaymentRow | null;
+};
+
+const classifyAgentFailure = (error: unknown): string => {
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  if (message.includes('timed out')) {
+    return 'provider_timeout';
+  }
+  if (message.includes('invalid') || message.includes('empty') || message.includes('incomplete')) {
+    return 'invalid_provider_response';
+  }
+  return 'provider_error';
+};
+
+const processClaimedPayment = async ({
+  action,
+  context,
+  payment,
+  prompt,
+  requestId,
+  supabaseAdmin
+}: {
+  action: TradeAgentAction;
+  context: unknown;
+  payment: TradeAgentPaymentRow;
+  prompt: string;
+  requestId: string;
+  supabaseAdmin: SupabaseAdminClient;
+}): Promise<Response> => {
+  if (!payment.id) {
+    return buildErrorResponse('Trade Agent payment reservation is invalid.', 500);
+  }
+  const paymentId = payment.id;
+  try {
+    const builtContext = await buildAgentContext(context);
+    const agentContext = {
+      ...(builtContext && typeof builtContext === 'object'
+        ? builtContext as Record<string, unknown>
+        : {}),
+      requestTokens: getKnownTradeAgentPromptTokens(prompt).map((reference) => ({ reference }))
+    };
+    const deterministicAnswer = action === 'find_price' ? buildFindPriceAnswer(agentContext) : '';
+    const { response, usage } = deterministicAnswer
+      ? {
+          response: normalizeSafeTradeAgentResponse(
+            { answer: deterministicAnswer, warnings: [], actions: [] },
+            agentContext
+          ),
+          usage: {}
+        }
+      : await callOpenAI({ action, context: agentContext, prompt });
+    const completedAt = new Date();
+    const { data, error } = await supabaseAdmin
+      .from('trade_agent_payments')
+      .update({
+        completed_at: completedAt.toISOString(),
+        error_message: null,
+        input_tokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : null,
+        model: deterministicAnswer ? 'deterministic-price-reference-v2' : OPENAI_MODEL,
+        output_tokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
+        response_expires_at: new Date(completedAt.getTime() + TRADE_AGENT_RESPONSE_TTL_MS).toISOString(),
+        response_json: response,
+        status: 'completed',
+        total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
+        updated_at: completedAt.toISOString()
+      })
+      .eq('id', paymentId)
+      .eq('status', 'pending')
+      .select('id')
+      .maybeSingle();
+    if (error || !data) {
+      return buildErrorResponse('Trade Agent response could not be stored for recovery.', 503);
+    }
+    return jsonResponse({ requestId, status: 'completed', response }, { headers: corsHeaders });
+  } catch (error) {
+    await supabaseAdmin
+      .from('trade_agent_payments')
+      .update({
+        completed_at: null,
+        error_message: classifyAgentFailure(error),
+        response_expires_at: null,
+        response_json: null,
+        status: 'failed',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', paymentId)
+      .eq('status', 'pending');
+    return jsonResponse({ requestId, status: 'retryable' }, { headers: corsHeaders });
+  }
+};
+
+const handleTradeAgentEstimate = async (
+  action: TradeAgentAction,
+  body: Record<string, unknown>
+): Promise<Response> => {
+  let input;
+  try {
+    input = validateTradeAgentInput({ action, body, requireComplete: false });
+    const fee = await buildFeeQuote(input.prompt, input.contextText);
+    return jsonResponse(buildFeeResponse(fee), { headers: corsHeaders });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Trade Agent fee estimate is unavailable.';
+    return buildErrorResponse(message, message.toLowerCase().includes('unavailable') ? 503 : 400);
+  }
+};
+
+const handleTradeAgentQuote = async (
+  action: TradeAgentAction,
+  body: Record<string, unknown>
+): Promise<Response> => {
+  if (TRADE_AGENT_QUOTE_SECRET.length < 32) {
+    return buildErrorResponse('Trade Agent quote signing is unavailable.', 503);
+  }
+  const payerAddress = normalizeAddress(normalizeString(body.payerAddress));
+  if (!isAddress(payerAddress)) {
+    return buildErrorResponse('Payer address is invalid.');
+  }
+  try {
+    const input = validateTradeAgentInput({ action, body, requireComplete: true });
+    const fee = await buildFeeQuote(input.prompt, input.contextText);
+    const issuedAtDate = new Date();
+    const quote: TradeAgentQuotePayload = {
+      action,
+      chainId: COTI_CHAIN_ID,
+      domain: TRADE_AGENT_PROTOCOL,
+      expiresAt: new Date(issuedAtDate.getTime() + TRADE_AGENT_QUOTE_TTL_MS).toISOString(),
+      feeAmountWei: fee.feeAmountWei.toString(),
+      feeRecipient: normalizeAddress(FEE_RECIPIENT),
+      feeTokenAddress: normalizeAddress(FEE_TOKEN_ADDRESS),
+      issuedAt: issuedAtDate.toISOString(),
+      payerAddress,
+      requestHash: await hashTradeAgentRequest({
+        action,
+        context: input.context,
+        prompt: input.prompt
+      }),
+      requestId: crypto.randomUUID(),
+      version: TRADE_AGENT_PROTOCOL_VERSION
+    };
+    return jsonResponse(
+      {
+        ...buildFeeResponse(fee),
+        requestId: quote.requestId,
+        requestHash: quote.requestHash,
+        quoteToken: await createTradeAgentQuoteToken(quote, TRADE_AGENT_QUOTE_SECRET),
+        authorizationMessage: buildTradeAgentAuthorizationMessage(quote),
+        issuedAt: quote.issuedAt,
+        expiresAt: quote.expiresAt
+      },
+      { headers: corsHeaders }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Trade Agent quote is unavailable.';
+    return buildErrorResponse(message, message.toLowerCase().includes('unavailable') ? 503 : 400);
+  }
+};
+
+const handleTradeAgentRecovery = async (body: Record<string, unknown>): Promise<Response> => {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return buildErrorResponse('Supabase function secrets are unavailable.', 500);
+  }
+  const requestId = normalizeString(body.requestId).toLowerCase();
+  const payerAddress = normalizeAddress(normalizeString(body.payerAddress));
+  const signedAt = normalizeString(body.signedAt);
+  const signature = normalizeString(body.signature);
+  if (!isRequestId(requestId) || !isAddress(payerAddress)) {
+    return buildErrorResponse('Trade Agent recovery request is invalid.');
+  }
+  try {
+    assertFreshTradeAgentRecoverySignature(signedAt);
+    const message = buildTradeAgentRecoveryMessage({ payerAddress, requestId, signedAt });
+    const signer = await recoverTradeAgentMessageSigner({ message, signature });
+    if (signer !== payerAddress) {
+      return buildErrorResponse('Recovery signature does not match the payment wallet.', 403);
+    }
+    const supabaseAdmin = createClient<TradeAgentDatabase>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false }
+    });
+    const payment = await getPaymentByRequestId(supabaseAdmin, requestId);
+    if (!payment || normalizeAddress(payment.payer_address ?? '') !== payerAddress) {
+      return buildErrorResponse('Trade Agent payment was not found.', 404);
+    }
+    const stateResponse = buildPaymentStateResponse(payment, requestId);
+    return stateResponse ??
+      jsonResponse({ requestId, status: 'retryable' }, { headers: corsHeaders });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Trade Agent recovery failed.';
+    return buildErrorResponse(message, message.includes('expired') ? 410 : 400);
+  }
+};
+
+const handleTradeAgentRun = async (
+  action: TradeAgentAction,
+  body: Record<string, unknown>
+): Promise<Response> => {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return buildErrorResponse('Supabase function secrets are unavailable.', 500);
+  }
+  if (TRADE_AGENT_QUOTE_SECRET.length < 32) {
+    return buildErrorResponse('Trade Agent quote signing is unavailable.', 503);
+  }
+  const quoteToken = normalizeString(body.quoteToken);
+  const payerSignature = normalizeString(body.payerSignature);
+  const paymentTxHash = normalizeString(body.paymentTxHash).toLowerCase();
+  if (!quoteToken || quoteToken.length > 4_096 || !payerSignature || !isHexHash(paymentTxHash)) {
+    return buildErrorResponse('Trade Agent payment authorization is incomplete.');
+  }
+
+  let input: ReturnType<typeof validateTradeAgentInput>;
+  let quote: TradeAgentQuotePayload;
+  try {
+    input = validateTradeAgentInput({ action, body, requireComplete: true });
+    quote = await verifyTradeAgentQuoteToken(quoteToken, TRADE_AGENT_QUOTE_SECRET);
+    const requestHash = await hashTradeAgentRequest({
+      action,
+      context: input.context,
+      prompt: input.prompt
+    });
+    if (
+      quote.action !== action ||
+      quote.requestHash !== requestHash ||
+      quote.feeTokenAddress !== normalizeAddress(FEE_TOKEN_ADDRESS) ||
+      quote.feeRecipient !== normalizeAddress(FEE_RECIPIENT) ||
+      (normalizeString(body.requestId) && normalizeString(body.requestId).toLowerCase() !== quote.requestId) ||
+      (normalizeString(body.requestHash) && normalizeString(body.requestHash).toLowerCase() !== quote.requestHash)
+    ) {
+      return buildErrorResponse('Trade Agent request does not match its signed quote.', 409);
+    }
+    const payerAddress = normalizeAddress(normalizeString(body.payerAddress));
+    if (payerAddress !== quote.payerAddress) {
+      return buildErrorResponse('Trade Agent quote belongs to another wallet.', 403);
+    }
+    const authorizationMessage = buildTradeAgentAuthorizationMessage(quote);
+    const signer = await recoverTradeAgentMessageSigner({
+      message: authorizationMessage,
+      signature: payerSignature
+    });
+    if (signer !== quote.payerAddress) {
+      return buildErrorResponse('Payment authorization signature does not match the payer.', 403);
+    }
+  } catch (error) {
+    return buildErrorResponse(error instanceof Error ? error.message : 'Trade Agent authorization is invalid.');
+  }
+
+  const supabaseAdmin = createClient<TradeAgentDatabase>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false }
+  });
+  try {
+    const [paymentByRequest, paymentByTransaction] = await Promise.all([
+      getPaymentByRequestId(supabaseAdmin, quote.requestId),
+      getPaymentByTransaction(supabaseAdmin, paymentTxHash)
+    ]);
+    if (paymentByRequest && paymentByTransaction && paymentByRequest.id !== paymentByTransaction.id) {
+      return buildErrorResponse('This WISP payment is bound to another Agent request.', 409);
+    }
+    let payment = paymentByRequest ?? paymentByTransaction;
+    if (payment) {
+      try {
+        assertPaymentMatchesQuote(payment, quote, paymentTxHash);
+      } catch {
+        return buildErrorResponse('This WISP payment is bound to a different Agent request.', 409);
+      }
+      const stateResponse = buildPaymentStateResponse(payment, quote.requestId, Date.now(), true);
+      if (stateResponse) {
+        return stateResponse;
+      }
+      try {
+        await verifyPaymentReceipt({ quote, paymentTxHash });
+      } catch (error) {
+        return buildErrorResponse(error instanceof Error ? error.message : 'Payment verification failed.', 402);
+      }
+      const claimed = await claimExistingPayment(supabaseAdmin, payment, new Date().toISOString());
+      if (!claimed) {
+        payment = await getPaymentByRequestId(supabaseAdmin, quote.requestId);
+        if (!payment) {
+          return buildErrorResponse('Trade Agent payment reservation was lost.', 503);
+        }
+        return buildPaymentStateResponse(payment, quote.requestId, Date.now(), true) ??
+          jsonResponse(
+            { requestId: quote.requestId, status: 'processing', retryAfterMs: 2_000 },
+            { status: 202, headers: corsHeaders }
+          );
+      }
+      payment = claimed;
+    } else {
+      try {
+        await verifyPaymentReceipt({ quote, paymentTxHash });
+      } catch (error) {
+        return buildErrorResponse(error instanceof Error ? error.message : 'Payment verification failed.', 402);
+      }
+      const nowIso = new Date().toISOString();
+      const { data, error } = await supabaseAdmin
+        .from('trade_agent_payments')
+        .insert({
+          action_type: action,
+          error_message: null,
+          fee_amount_wei: quote.feeAmountWei,
+          fee_recipient: quote.feeRecipient,
+          fee_token_address: quote.feeTokenAddress,
+          payer_address: quote.payerAddress,
+          payment_tx_hash: paymentTxHash,
+          quote_expires_at: quote.expiresAt,
+          quote_issued_at: quote.issuedAt,
+          request_hash: quote.requestHash,
+          request_id: quote.requestId,
+          status: 'pending',
+          updated_at: nowIso
+        })
+        .select(PAYMENT_SELECT)
+        .single();
+      if (error || !data) {
+        const racedPayment =
+          await getPaymentByRequestId(supabaseAdmin, quote.requestId) ??
+          await getPaymentByTransaction(supabaseAdmin, paymentTxHash);
+        if (!racedPayment) {
+          return buildErrorResponse(error?.message || 'Failed to reserve Trade Agent payment.', 500);
+        }
+        try {
+          assertPaymentMatchesQuote(racedPayment, quote, paymentTxHash);
+        } catch {
+          return buildErrorResponse('This WISP payment is bound to another Agent request.', 409);
+        }
+        return buildPaymentStateResponse(racedPayment, quote.requestId) ??
+          jsonResponse(
+            { requestId: quote.requestId, status: 'processing', retryAfterMs: 2_000 },
+            { status: 202, headers: corsHeaders }
+          );
+      }
+      payment = data as TradeAgentPaymentRow;
+    }
+
+    return processClaimedPayment({
+      action,
+      context: input.context,
+      payment,
+      prompt: input.prompt,
+      requestId: quote.requestId,
+      supabaseAdmin
+    });
+  } catch (error) {
+    return buildErrorResponse(error instanceof Error ? error.message : 'Trade Agent payment failed.', 500);
+  }
+};
+
+export const handleTradeAgentHttpRequest = async (request: Request): Promise<Response> => {
   const corsResponse = handleCorsPreflight(request);
   if (corsResponse) {
     return corsResponse;
@@ -777,152 +1435,25 @@ Deno.serve(async (request) => {
   if (body.kind === 'help') {
     return handleAppHelpRequest(request, body);
   }
+  if (body.kind === 'recover') {
+    return handleTradeAgentRecovery(body);
+  }
   const action = normalizeAction(body.action);
   if (!action) {
     return buildErrorResponse('Trade Agent action is not supported.');
   }
-
-  const prompt = redactTradeAgentSecretText(normalizeString(body.prompt));
-  const redactedContext = redactTradeAgentSecrets(body.context ?? {});
-  const contextText = JSON.stringify(redactedContext);
-  if (prompt.length > MAX_PROMPT_CHARS) {
-    return buildErrorResponse('Prompt is too long.');
+  if (body.kind === 'estimate') {
+    return handleTradeAgentEstimate(action, body);
   }
-  if (contextText.length > MAX_CONTEXT_CHARS) {
-    return buildErrorResponse('Trade Agent context is too large.');
-  }
-
-  let quotedFee;
-  try {
-    quotedFee = await buildFeeQuote(prompt, contextText);
-  } catch (error) {
-    return buildErrorResponse(error instanceof Error ? error.message : 'Trade Agent fee quote is unavailable.', 503);
-  }
-
   if (body.kind === 'quote') {
-    return jsonResponse(
-      {
-        estimatedInputTokens: quotedFee.estimatedInputTokens,
-        estimatedOutputTokens: quotedFee.estimatedOutputTokens,
-        estimatedUsdFee: quotedFee.estimatedUsdFee,
-        feeAmountWei: quotedFee.feeAmountWei.toString(),
-        feeRecipient: FEE_RECIPIENT,
-        feeTokenAddress: FEE_TOKEN_ADDRESS,
-        feeTokenDecimals: FEE_TOKEN_DECIMALS,
-        feeTokenSymbol: 'WISP',
-        quoteSource: quotedFee.quoteSource,
-        wispUsdPrice: quotedFee.wispUsdPrice
-      },
-      { headers: corsHeaders }
-    );
+    return handleTradeAgentQuote(action, body);
   }
+  if (body.kind === 'run') {
+    return handleTradeAgentRun(action, body);
+  }
+  return buildErrorResponse('Trade Agent request kind is not supported.');
+};
 
-  if (body.kind !== 'run') {
-    return buildErrorResponse('Trade Agent request kind is not supported.');
-  }
-
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return buildErrorResponse('Supabase function secrets are unavailable.', 500);
-  }
-
-  const payerAddress = normalizeString(body.payerAddress);
-  const paymentTxHash = normalizeString(body.paymentTxHash).toLowerCase();
-  const requestId = normalizeString(body.requestId);
-  if (!isAddress(payerAddress)) {
-    return buildErrorResponse('Payer address is invalid.');
-  }
-  if (!isHexHash(paymentTxHash)) {
-    return buildErrorResponse('Payment transaction hash is invalid.');
-  }
-  if (requestId && !isRequestId(requestId)) {
-    return buildErrorResponse('Trade Agent request id is invalid.');
-  }
-  if (!prompt || prompt.length > MAX_PROMPT_CHARS) {
-    return buildErrorResponse('Prompt is empty or too long.');
-  }
-  if (contextText.length > MAX_CONTEXT_CHARS) {
-    return buildErrorResponse('Trade Agent context is too large.');
-  }
-
-  const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-  const { data: existingPayment, error: existingError } = await supabaseAdmin
-    .from('trade_agent_payments')
-    .select('fee_amount_wei,payer_address,request_id,status')
-    .eq('payment_tx_hash', paymentTxHash)
-    .maybeSingle();
-  if (existingError) {
-    return buildErrorResponse(existingError.message || 'Failed to check payment replay.', 500);
-  }
-  if (existingPayment) {
-    if (existingPayment.status === 'completed') {
-      return buildErrorResponse('This Trade Agent payment was already used.', 409);
-    }
-    if (existingPayment.status === 'pending') {
-      return buildErrorResponse('This Trade Agent payment is already being processed.', 409);
-    }
-    if (existingPayment.payer_address !== normalizeAddress(payerAddress)) {
-      return buildErrorResponse('This Trade Agent payment belongs to another wallet.', 409);
-    }
-    if (existingPayment.request_id && requestId && existingPayment.request_id !== requestId) {
-      return buildErrorResponse('This Trade Agent payment belongs to another request.', 409);
-    }
-  }
-
-  const retryFeeAmountWei =
-    existingPayment?.status === 'failed' ? parsePositiveWei(String(existingPayment.fee_amount_wei ?? '')) : null;
-  const feeAmountWei = retryFeeAmountWei ?? quotedFee.feeAmountWei;
-  try {
-    await verifyPaymentReceipt({ feeAmountWei, payerAddress, paymentTxHash });
-  } catch (error) {
-    return buildErrorResponse(error instanceof Error ? error.message : 'Payment verification failed.', 402);
-  }
-
-  const paymentRecord = {
-    action_type: action,
-    error_message: null,
-    fee_amount_wei: feeAmountWei.toString(),
-    fee_recipient: FEE_RECIPIENT,
-    fee_token_address: FEE_TOKEN_ADDRESS,
-    payer_address: normalizeAddress(payerAddress),
-    payment_tx_hash: paymentTxHash,
-    request_id: existingPayment?.request_id ?? (requestId || null),
-    status: 'pending',
-    updated_at: new Date().toISOString()
-  };
-  const { error: insertError } = existingPayment
-    ? await supabaseAdmin.from('trade_agent_payments').update(paymentRecord).eq('payment_tx_hash', paymentTxHash)
-    : await supabaseAdmin.from('trade_agent_payments').insert(paymentRecord);
-  if (insertError) {
-    return buildErrorResponse(insertError.message || 'Failed to reserve Trade Agent payment.', 500);
-  }
-
-  try {
-    const agentContext = await buildAgentContext(redactedContext);
-    const deterministicAnswer = action === 'find_price' ? buildFindPriceAnswer(agentContext) : '';
-    const { response, usage } = deterministicAnswer
-      ? {
-          response: { answer: deterministicAnswer, warnings: [], actions: [] },
-          usage: {}
-        }
-      : await callOpenAI({ action, context: agentContext, prompt });
-    await supabaseAdmin
-      .from('trade_agent_payments')
-      .update({
-        input_tokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : null,
-        model: OPENAI_MODEL,
-        output_tokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
-        status: 'completed',
-        total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('payment_tx_hash', paymentTxHash);
-    return jsonResponse(response, { headers: corsHeaders });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Trade Agent failed.';
-    await supabaseAdmin
-      .from('trade_agent_payments')
-      .update({ error_message: message.slice(0, 500), status: 'failed', updated_at: new Date().toISOString() })
-      .eq('payment_tx_hash', paymentTxHash);
-    return buildErrorResponse(message, 500);
-  }
-});
+if (import.meta.main) {
+  Deno.serve(handleTradeAgentHttpRequest);
+}

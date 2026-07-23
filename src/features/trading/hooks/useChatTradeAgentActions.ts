@@ -1,13 +1,29 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
-import { formatTradeAgentFeeLabel } from '../../../app/appHelpers';
 import {
-  fetchTradeAgentFeeQuote,
+  buildTradeAgentChatContext,
+  createTradeAgentPaymentQuote,
+  getTradeAgentPreflightError,
+  isTradeAgentTerminalPaymentError,
+  recoverTradeAgentRequest,
   runTradeAgentRequest,
   type TradeAgentActionType,
+  type TradeAgentKnownToken,
+  type TradeAgentResponse,
   type TradeAgentResponseAction
 } from '../../../lib/tradeAgent';
 import {
+  buildTradeAgentRecoveryMessage,
+  doesTradeAgentPaymentRetryMatch,
+  hashTradeAgentPaymentRequest,
+  orchestrateTradeAgentPayment,
+  readTradeAgentPaymentRetry,
+  type TradeAgentPaymentRequest,
+  type TradeAgentPaymentRetryRecord,
+  type TradeAgentSafeContext
+} from '../../../lib/tradeAgentPayment';
+import {
+  formatTokenAmount,
   getMessageDisplayText,
   getProviderErrorMessage,
   sanitizeTokenAmountInput,
@@ -31,6 +47,21 @@ type RunPaidChatTradeAgentRequestInput = {
   prompt: string;
   workingStatus: string;
 };
+
+export const selectChatTradeAgentRetry = (
+  record: TradeAgentPaymentRetryRecord | null
+): TradeAgentPaymentRetryRecord | null =>
+  record?.context.clientSurface === 'chat' ? record : null;
+
+export const isChatTradeAgentRetryAvailable = (
+  record: TradeAgentPaymentRetryRecord | null,
+  payerAddress: string
+): boolean =>
+  Boolean(
+    record &&
+    payerAddress &&
+    record.payerAddress.toLowerCase() === payerAddress.toLowerCase()
+  );
 
 type UseChatTradeAgentActionsArgs = {
   activeLinkedTradeContext: LinkedTradeContext | null;
@@ -81,39 +112,226 @@ export default function useChatTradeAgentActions({
   tradeTokenOptions,
   walletAddress
 }: UseChatTradeAgentActionsArgs) {
+  const tradeAgentKnownTokens = useMemo<TradeAgentKnownToken[]>(
+    () =>
+      tradeTokenOptions
+        .filter((option) => !option.value.startsWith('custom'))
+        .map((option) => ({
+          reference: option.symbol ?? option.value,
+          aliases: [option.value, option.label]
+        })),
+    [tradeTokenOptions]
+  );
+  const chatTradeAgentRequestInFlightRef = useRef(false);
+  const [pendingChatTradeAgentRetry, setPendingChatTradeAgentRetry] = useState(
+    () => selectChatTradeAgentRetry(readTradeAgentPaymentRetry())
+  );
+  const chatTradeAgentPaidRequestRef = useRef<TradeAgentPaymentRetryRecord | null>(
+    pendingChatTradeAgentRetry
+  );
+  const rememberChatTradeAgentPaidRequest = useCallback(
+    (record: TradeAgentPaymentRetryRecord | null) => {
+      chatTradeAgentPaidRequestRef.current = record;
+      setPendingChatTradeAgentRetry(record);
+    },
+    []
+  );
+
   const runPaidChatTradeAgentRequest = useCallback(
     async ({ action, context, prompt, workingStatus }: RunPaidChatTradeAgentRequestInput) => {
+      const preflightError = getTradeAgentPreflightError({
+        action,
+        context,
+        knownTokens: tradeAgentKnownTokens,
+        prompt
+      });
+      if (preflightError) {
+        throw new Error(preflightError);
+      }
       if (!walletAddress) {
         throw new Error('Connect your ChainWhisper account before using Trade Agent.');
       }
-      setStatus('Getting WISP fee quote...');
-      const quote = await fetchTradeAgentFeeQuote(action);
-      const { signer } = await getMemoSigner();
-      let paymentTxHash = '';
-      setStatus(`Paying ${formatTradeAgentFeeLabel(quote)}...`);
-      await runWalletTransactionFlow(async () => {
-        paymentTxHash = await transferWalletFundAsset({
-          amountWei: BigInt(quote.feeAmountWei),
-          asset: {
-            kind: 'erc20',
-            tokenAddress: quote.feeTokenAddress,
-            symbol: 'WISP',
-            decimals: quote.feeTokenDecimals
+      if (chatTradeAgentRequestInFlightRef.current) {
+        throw new Error('A Trade Agent request is already processing.');
+      }
+
+      chatTradeAgentRequestInFlightRef.current = true;
+      let currentPaymentRequest: TradeAgentPaymentRequest | null = null;
+      try {
+        const paymentRequest: TradeAgentPaymentRequest = {
+          action,
+          context: context as TradeAgentSafeContext,
+          payerAddress: walletAddress,
+          prompt
+        };
+        currentPaymentRequest = paymentRequest;
+        const storedRetry =
+          chatTradeAgentPaidRequestRef.current ?? readTradeAgentPaymentRetry();
+        if (
+          storedRetry?.context.clientSurface === 'chat' &&
+          chatTradeAgentPaidRequestRef.current === null
+        ) {
+          rememberChatTradeAgentPaidRequest(storedRetry);
+        }
+        const expectedRequestHash = await hashTradeAgentPaymentRequest(paymentRequest);
+        const retryingExactRequest = Boolean(
+          storedRetry &&
+          storedRetry.context.clientSurface === 'chat' &&
+          doesTradeAgentPaymentRetryMatch(storedRetry, paymentRequest) &&
+          storedRetry.requestHash === expectedRequestHash
+        );
+        const linkedTrade =
+          context && typeof context === 'object' &&
+          (context as Record<string, unknown>).linkedTrade &&
+          typeof (context as Record<string, unknown>).linkedTrade === 'object'
+            ? (context as Record<string, unknown>).linkedTrade as Record<string, unknown>
+            : null;
+        const trustedOrders =
+          linkedTrade &&
+          typeof linkedTrade.tradeId === 'number' &&
+          Number.isSafeInteger(linkedTrade.tradeId) &&
+          typeof linkedTrade.escrowContract === 'string'
+            ? [{
+                tradeId: linkedTrade.tradeId,
+                escrowContract: linkedTrade.escrowContract
+              }]
+            : [];
+        const normalization = {
+          knownTokens: tradeAgentKnownTokens,
+          trustedOrders
+        };
+        let paymentSigner: Wallet | JsonRpcSigner | null = null;
+        const getPaymentSigner = async (): Promise<Wallet | JsonRpcSigner> => {
+          paymentSigner ??= (await getMemoSigner()).signer;
+          return paymentSigner;
+        };
+        let recoveryChecked = false;
+
+        const result = await orchestrateTradeAgentPayment<TradeAgentResponse>({
+          request: paymentRequest,
+          retryRecord: chatTradeAgentPaidRequestRef.current,
+          onPaidRequest: (record) => {
+            rememberChatTradeAgentPaidRequest(record);
           },
-          signer,
-          toAddress: quote.feeRecipient
+          callbacks: {
+            createQuote: async (request) => {
+              setStatus('Getting the final WISP quote...');
+              return createTradeAgentPaymentQuote(request);
+            },
+            signAuthorization: async ({ authorizationMessage }) => {
+              setStatus('Authorizing this exact request...');
+              return (await getPaymentSigner()).signMessage(authorizationMessage);
+            },
+            transferPayment: async ({ quote }) => {
+              setStatus(
+                `Paying ${formatTokenAmount(BigInt(quote.feeAmountWei), quote.feeTokenDecimals, 4)} WISP...`
+              );
+              let paymentTxHash = '';
+              await runWalletTransactionFlow(async () => {
+                paymentTxHash = await transferWalletFundAsset({
+                  amountWei: BigInt(quote.feeAmountWei),
+                  asset: {
+                    kind: 'erc20',
+                    tokenAddress: quote.feeTokenAddress,
+                    symbol: 'WISP',
+                    decimals: quote.feeTokenDecimals
+                  },
+                  signer: await getPaymentSigner(),
+                  toAddress: quote.feeRecipient
+                });
+              });
+              return paymentTxHash;
+            },
+            runRequest: async (record: TradeAgentPaymentRetryRecord) => {
+              if (retryingExactRequest && !recoveryChecked) {
+                recoveryChecked = true;
+                setStatus('Recovering the previous Agent response...');
+                const signedAt = new Date().toISOString();
+                const signature = await (await getPaymentSigner()).signMessage(
+                  buildTradeAgentRecoveryMessage({
+                    payerAddress: record.payerAddress,
+                    requestId: record.requestId,
+                    signedAt
+                  })
+                );
+                try {
+                  const recovered = await recoverTradeAgentRequest({
+                    normalization,
+                    payerAddress: record.payerAddress,
+                    requestId: record.requestId,
+                    signature,
+                    signedAt
+                  });
+                  if (recovered.status !== 'retryable') {
+                    return recovered;
+                  }
+                } catch {
+                  setStatus('Recovery was unavailable. Retrying the exact paid request...');
+                }
+              }
+              setStatus(retryingExactRequest ? 'Retrying the paid Agent request...' : workingStatus);
+              return runTradeAgentRequest({
+                action: record.action,
+                context: record.context,
+                normalization,
+                payerAddress: record.payerAddress,
+                payerSignature: record.payerSignature,
+                paymentTxHash: record.paymentTxHash,
+                prompt: record.prompt,
+                quoteToken: record.quoteToken,
+                requestHash: record.requestHash,
+                requestId: record.requestId
+              });
+            }
+          }
         });
-      });
-      setStatus(workingStatus);
-      return runTradeAgentRequest({
-        action,
-        context,
-        payerAddress: walletAddress,
-        paymentTxHash,
-        prompt
-      });
+
+        if (result.status === 'processing') {
+          const retryInSeconds = Math.max(1, Math.ceil((result.retryAfterMs ?? 2_000) / 1_000));
+          throw new Error(
+            `Payment confirmed. This Agent request is still processing; retry in about ${retryInSeconds} seconds without paying again.`
+          );
+        }
+        if (result.status === 'retryable') {
+          throw new Error(
+            result.error ||
+            'The provider did not finish this exact request. Retry without paying again.'
+          );
+        }
+        setStatus(workingStatus);
+        rememberChatTradeAgentPaidRequest(null);
+        return result.response;
+      } catch (error) {
+        const paidRequest =
+          chatTradeAgentPaidRequestRef.current ??
+          selectChatTradeAgentRetry(readTradeAgentPaymentRetry());
+        if (paidRequest && chatTradeAgentPaidRequestRef.current === null) {
+          rememberChatTradeAgentPaidRequest(paidRequest);
+        }
+        if (
+          paidRequest &&
+          currentPaymentRequest &&
+          doesTradeAgentPaymentRetryMatch(paidRequest, currentPaymentRequest) &&
+          isTradeAgentTerminalPaymentError(error)
+        ) {
+          const message = error instanceof Error ? error.message : 'The WISP payment could not be verified.';
+          throw new Error(
+            `${message} No additional payment will be requested; keep the payment transaction for manual WISP refund review.`
+          );
+        }
+        throw error;
+      } finally {
+        chatTradeAgentRequestInFlightRef.current = false;
+      }
     },
-    [getMemoSigner, runWalletTransactionFlow, setStatus, walletAddress]
+    [
+      getMemoSigner,
+      rememberChatTradeAgentPaidRequest,
+      runWalletTransactionFlow,
+      setStatus,
+      tradeAgentKnownTokens,
+      walletAddress
+    ]
   );
 
   const resolveChatTradeAgentTokenSelection = useCallback(
@@ -146,17 +364,19 @@ export default function useChatTradeAgentActions({
         return;
       }
 
-      const applyDraftFields = () => {
-        const sellSelection = resolveChatTradeAgentTokenSelection(action.sellToken);
-        const buySelection = resolveChatTradeAgentTokenSelection(action.buyToken);
+      const applyDraftFields = (
+        draft: Extract<TradeAgentResponseAction, { type: 'prefill_counter' | 'prefill_limit' }>
+      ) => {
+        const sellSelection = resolveChatTradeAgentTokenSelection(draft.sellToken);
+        const buySelection = resolveChatTradeAgentTokenSelection(draft.buyToken);
         if (sellSelection) {
           setTradeOfferTokenSelection(sellSelection);
         }
         if (buySelection && buySelection !== sellSelection) {
           setTradeRequestTokenSelection(buySelection);
         }
-        setTradeOfferAmountInput(sanitizeTokenAmountInput(action.sellAmount ?? ''));
-        setTradeRequestAmountInput(sanitizeTokenAmountInput(action.buyAmount ?? ''));
+        setTradeOfferAmountInput(sanitizeTokenAmountInput(draft.sellAmount));
+        setTradeRequestAmountInput(sanitizeTokenAmountInput(draft.buyAmount));
       };
 
       if (action.type === 'prefill_counter') {
@@ -165,7 +385,7 @@ export default function useChatTradeAgentActions({
           return;
         }
         await prepareCounterTrade(activeLinkedTradeContext.previewOffer, sourceMessage);
-        applyDraftFields();
+        applyDraftFields(action);
         return;
       }
 
@@ -175,11 +395,11 @@ export default function useChatTradeAgentActions({
         setReplyingToMessage(sourceMessage);
         setTipComposerOpen(false);
         setTradeComposerOpen(true);
-        applyDraftFields();
+        applyDraftFields(action);
         return;
       }
 
-      if (action.message) {
+      if (action.type === 'prefill_message') {
         handleMessageInputChange(action.message);
       }
     },
@@ -212,22 +432,17 @@ export default function useChatTradeAgentActions({
       try {
         const response = await runPaidChatTradeAgentRequest({
           action: 'draft_counter',
-          context: {
-            linkedTrade: {
-              counterpartyAddress: context.counterpartyAddress,
-              escrowContract: context.escrowContract,
-              previewOffer: context.previewOffer,
-              terminalPath: context.terminalPath,
-              tradeId: context.tradeId
-            }
-          },
+          context: buildTradeAgentChatContext({ linkedTrade: context }),
           prompt: `Draft one concise negotiation message for linked order #${context.tradeId}. Return only a message I can edit and send.`,
           workingStatus: 'Drafting negotiation...'
         });
-        const draft =
-          response.actions.find(
-            (action) => (action.type === 'prefill_message' || action.type === 'prefill_counter') && action.message
-          )?.message ?? response.answer;
+        const draftAction = response.actions.find(
+          (
+            action
+          ): action is Extract<TradeAgentResponseAction, { type: 'prefill_message' | 'prefill_counter' }> =>
+            (action.type === 'prefill_message' || action.type === 'prefill_counter') && Boolean(action.message)
+        );
+        const draft = draftAction?.message ?? response.answer;
         handleMessageInputChange(draft);
         setStatus('Negotiation draft ready.');
       } catch (error) {
@@ -255,26 +470,18 @@ export default function useChatTradeAgentActions({
 
       setDraftingTradeMessageId(message.id);
       try {
+        const safeContext = buildTradeAgentChatContext({
+          linkedTrade: activeLinkedTradeContext,
+          selectedMessage: {
+            direction: message.direction,
+            text: messageText
+          }
+        });
         const response = await runPaidChatTradeAgentRequest({
           action: 'chat_to_trade',
-          context: {
-            linkedTrade: activeLinkedTradeContext
-              ? {
-                  counterpartyAddress: activeLinkedTradeContext.counterpartyAddress,
-                  escrowContract: activeLinkedTradeContext.escrowContract,
-                  previewOffer: activeLinkedTradeContext.previewOffer,
-                  terminalPath: activeLinkedTradeContext.terminalPath,
-                  tradeId: activeLinkedTradeContext.tradeId
-                }
-              : null,
-            selectedMessage: {
-              direction: message.direction,
-              text: messageText,
-              timestamp: message.timestamp
-            }
-          },
+          context: safeContext,
           prompt:
-            `Turn this selected chat message into a ChainWhisper trade draft: "${messageText}". ` +
+            'Turn the explicitly selected chat message into a ChainWhisper trade draft. ' +
             'If it counters the linked order, return a counter draft. Otherwise return a limit-order draft. Do not execute anything.',
           workingStatus: 'Drafting trade...'
         });
@@ -308,6 +515,10 @@ export default function useChatTradeAgentActions({
   );
 
   return {
+    hasPendingChatTradeAgentRetry: isChatTradeAgentRetryAvailable(
+      pendingChatTradeAgentRetry,
+      walletAddress
+    ),
     draftTradeFromChatMessage,
     negotiateLinkedTrade
   };

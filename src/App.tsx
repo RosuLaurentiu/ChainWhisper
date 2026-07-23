@@ -81,6 +81,13 @@ import {
 } from './lib/appHelpers';
 import { type WalletAesHealthState } from './lib/cotiAesUnlock';
 import { COTI_ECOSYSTEM_LINKS } from './lib/ecosystemLinks';
+import {
+  getAppHelpReadinessTopicId,
+  normalizeAppHelpLaunchContext,
+  type AppHelpLaunchContext,
+  type AppHelpOrigin,
+  type AppHelpReason
+} from './lib/appHelpLaunch';
 import type { LinkedTradeContext } from './lib/linkedTradeContext';
 import { isWalletTransactionFlowActive, runWalletTransactionFlow } from './lib/walletTransactionFlow';
 import { getPreferredBrowserWalletId } from './lib/appStorage';
@@ -372,6 +379,7 @@ export default function App() {
     setDirectRealtimeStatus,
     setGroupRealtimeStatus
   } = useAppShellStore();
+  const [appHelpLaunchContext, setAppHelpLaunchContext] = useState<AppHelpLaunchContext | null>(null);
   const activePageWalletPolicy = useMemo(() => getAppWalletPolicy(activePage), [activePage]);
   const allowStartupWalletRestore = activePageWalletPolicy.walletControlKind === 'app';
   const [chatAppWalletMenuOpen, setChatAppWalletMenuOpen] = useState(false);
@@ -2084,7 +2092,52 @@ export default function App() {
 
   const { navigateToInternalAppLink, navigateToPage } = useAppNavigation({ activePage, setActivePage });
 
-  const { draftTradeFromChatMessage, negotiateLinkedTrade } = useChatTradeAgentActions({
+  const openAppHelp = useCallback(
+    ({
+      origin,
+      reason,
+      topicId
+    }: {
+      origin: AppHelpOrigin;
+      reason?: AppHelpReason;
+      topicId?: string;
+    }) => {
+      const normalized = normalizeAppHelpLaunchContext({
+        origin,
+        reason,
+        topicId: topicId || (reason ? getAppHelpReadinessTopicId(reason) : undefined)
+      });
+      if (!normalized) {
+        return;
+      }
+      setAppHelpLaunchContext(normalized);
+      navigateToInternalAppLink('/otc/agent');
+    },
+    [navigateToInternalAppLink]
+  );
+
+  const currentAppHelpOrigin: AppHelpOrigin =
+    activePage === 'trades'
+      ? 'otc'
+      : activePage === 'swap'
+        ? 'portal'
+        : activePage === 'treasury'
+          ? 'treasury'
+          : activePage;
+
+  const openCurrentAppHelp = useCallback(() => {
+    openAppHelp({ origin: currentAppHelpOrigin });
+  }, [currentAppHelpOrigin, openAppHelp]);
+
+  const openGenericErrorHelp = useCallback(() => {
+    openAppHelp({ origin: 'error', reason: 'generic-error' });
+  }, [openAppHelp]);
+
+  const {
+    draftTradeFromChatMessage,
+    hasPendingChatTradeAgentRetry,
+    negotiateLinkedTrade
+  } = useChatTradeAgentActions({
     activeLinkedTradeContext,
     draftingTradeMessageId,
     getMemoSigner,
@@ -2822,6 +2875,7 @@ export default function App() {
       soundEnabled={soundEnabled}
       onToggleMobileLinksOpen={() => setMobileLinksOpen((previous) => !previous)}
       onToggleSound={handleToggleSound}
+      onOpenHelp={openCurrentAppHelp}
       onCloseMobileLinks={() => setMobileLinksOpen(false)}
       debugControl={headerDebugControl}
       links={links}
@@ -2942,12 +2996,31 @@ export default function App() {
           />
 
         <main className="chat-panel">
-          <AppErrorBoundary fallback={<div className="chat-placeholder">Something went wrong. <button type="button" onClick={() => window.location.reload()}>Reload</button></div>}>
+          <AppErrorBoundary
+            fallback={
+              <div className="chat-placeholder" role="alert">
+                <strong>Something went wrong.</strong>
+                <div className="app-error-boundary-actions">
+                  <button type="button" onClick={() => window.location.reload()}>Reload</button>
+                  <button type="button" className="app-help-context-link" onClick={openGenericErrorHelp}>
+                    Get help
+                  </button>
+                </div>
+              </div>
+            }
+          >
           <Suspense fallback={<div className="chat-placeholder">Loading conversation...</div>}>
             {!isConnected ? (
               <div className="chat-placeholder chat-placeholder-state" role="status" aria-live="polite">
                 <strong>Wallet needed</strong>
                 <p>Use the header wallet control to connect or unlock your ChainWhisper account.</p>
+                <button
+                  type="button"
+                  className="app-help-context-link"
+                  onClick={() => openAppHelp({ origin: 'chat', reason: 'wallet-needed' })}
+                >
+                  Get help
+                </button>
               </div>
             ) : activeGroupId !== null ? (
               <GroupChatPanel
@@ -3087,6 +3160,7 @@ export default function App() {
                 draftingTradeMessageId={draftingTradeMessageId}
                 draftTradeFeeLabel={tradeAgentChatFeeLabels.chat_to_trade}
                 negotiationFeeLabel={tradeAgentChatFeeLabels.draft_counter}
+                pendingTradeAgentRetry={hasPendingChatTradeAgentRetry}
                 negotiatingLinkedTrade={
                   activeLinkedTradeContext
                     ? negotiatingLinkedTradeKey ===
@@ -3217,7 +3291,10 @@ export default function App() {
           showSoundToggle: true
         })}
         {walletSessionModals}
-        <AppErrorBoundary>
+        <AppErrorBoundary
+          onOpenHelp={openGenericErrorHelp}
+          resetKey={appHelpLaunchContext ? `${appHelpLaunchContext.origin}:${appHelpLaunchContext.topicId ?? ''}` : ''}
+        >
           <Suspense
             fallback={
               <RouteLoadingFallback shellClassName="standalone-trades-shell" label="Loading OTC Desk" />
@@ -3226,6 +3303,9 @@ export default function App() {
             <P2PTradingPage
               isMobileNav={isMobileNav}
               sharedWalletSession={sharedTradeWalletSession}
+              appHelpLaunchContext={appHelpLaunchContext}
+              onAppHelpLaunchConsumed={() => setAppHelpLaunchContext(null)}
+              onOpenAppHelp={(reason) => openAppHelp({ origin: 'otc', reason })}
               onOpenInternalAppLink={navigateToInternalAppLink}
               onOpenTradeConversation={ensureContactAndOpenTradeChat}
             />
@@ -3245,7 +3325,7 @@ export default function App() {
           showSoundToggle: true
         })}
         {walletSessionModals}
-        <AppErrorBoundary>
+        <AppErrorBoundary onOpenHelp={openGenericErrorHelp}>
           <Suspense
             fallback={
               <RouteLoadingFallback shellClassName="swap-page-shell" label="Loading Privacy Portal" />
@@ -3281,6 +3361,7 @@ export default function App() {
               statusMessage={privacyPortal.statusMessage}
               error={privacyPortal.error}
               transactionUrl={privacyPortal.transactionUrl}
+              onOpenHelp={(reason) => openAppHelp({ origin: 'portal', reason })}
               recovery={{
                 open: privacyRecoveryOpen,
                 onOpenChange: setPrivacyRecoveryOpen,
@@ -3328,7 +3409,7 @@ export default function App() {
           subtitle: 'Treasury',
           showSoundToggle: true
         })}
-        <AppErrorBoundary>
+        <AppErrorBoundary onOpenHelp={openGenericErrorHelp}>
           <Suspense
             fallback={
               <RouteLoadingFallback shellClassName="treasury-shell" label="Loading Treasury Data" variant="treasury" />

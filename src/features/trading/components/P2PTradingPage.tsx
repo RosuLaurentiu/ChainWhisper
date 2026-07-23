@@ -119,7 +119,7 @@ import {
   getTradeAgentActionCta,
   getTradeAgentActionDescription
 } from '../../../lib/tradeAgent';
-import { getAppHelpTopic } from '../../../lib/appHelp';
+import { getAppHelpReadinessTopicId, type AppHelpReason } from '../../../lib/appHelpLaunch';
 import {
   isWalletTransactionFlowActive,
   recordWalletTransactionFlowStage
@@ -195,7 +195,9 @@ import {
 export default function P2PTradingPage({
   isMobileNav = false,
   sharedWalletSession,
-  onOpenInternalAppLink,
+  appHelpLaunchContext,
+  onAppHelpLaunchConsumed,
+  onOpenAppHelp,
   onOpenTradeConversation
 }: P2PTradingPageProps) {
   const {
@@ -2619,20 +2621,18 @@ export default function P2PTradingPage({
     tradeAgentError,
     tradeAgentExplicitContext,
     tradeAgentFeeLabel,
-    tradeAgentFeeLoading,
-    tradeAgentFeeQuote,
     tradeAgentLoading,
     tradeAgentMessages,
     tradeAgentMessagesEndRef,
     tradeAgentPanelMode,
     tradeAgentPrompt,
-    tradeAgentRetryPaymentRequestId,
     tradeAgentRetryPaymentTxHash,
     tradeAgentStatus,
     updateTradeAgentPrompt,
     visibleTradeAgentQuickActions
   } = useP2PTradeAgentSession({
     hasDetailTrade: Boolean(detailTrade),
+    hasReviewOrders: myTrades.length > 0,
     routeSurfaceView,
     swapActionMode,
     swapBuyTokenSymbol: swapBuyToken?.symbol,
@@ -2640,6 +2640,7 @@ export default function P2PTradingPage({
   });
   const currentAppHelpPath = typeof window === 'undefined' ? '/otc/agent' : window.location.pathname;
   const {
+    appHelpCanRetry,
     appHelpError,
     appHelpLoading,
     appHelpMessages,
@@ -2647,25 +2648,33 @@ export default function P2PTradingPage({
     appHelpPrompt,
     appHelpQuickQuestions,
     askAppHelpQuestion,
+    retryAppHelpQuestion,
+    showAppHelpTopic,
     submitAppHelp,
     updateAppHelpPrompt
   } = useP2PAppHelp({
     active: routeSurfaceView === 'agent' && tradeAgentPanelMode === 'help',
     currentPath: currentAppHelpPath
   });
-  const openAppHelpTopic = useCallback((topicId: string) => {
-    const topic = getAppHelpTopic(topicId);
-    if (!topic) {
+  useEffect(() => {
+    if (!appHelpLaunchContext || routeSurfaceView !== 'agent') {
       return;
     }
-    if (onOpenInternalAppLink) {
-      onOpenInternalAppLink(topic.route);
-      return;
+    setTradeAgentPanelMode('help');
+    const launchTopicId =
+      appHelpLaunchContext.topicId ??
+      (appHelpLaunchContext.reason ? getAppHelpReadinessTopicId(appHelpLaunchContext.reason) : '');
+    if (launchTopicId) {
+      showAppHelpTopic(launchTopicId);
     }
-    if (topic.route.startsWith('/otc')) {
-      navigateToTradePath(topic.route);
-    }
-  }, [navigateToTradePath, onOpenInternalAppLink]);
+    onAppHelpLaunchConsumed?.();
+  }, [
+    appHelpLaunchContext,
+    onAppHelpLaunchConsumed,
+    routeSurfaceView,
+    setTradeAgentPanelMode,
+    showAppHelpTopic
+  ]);
   const {
     applyTradeAgentAction,
     askAgentAboutOrder,
@@ -2682,7 +2691,6 @@ export default function P2PTradingPage({
     myTrades,
     navigateDeskView,
     navigateToTradePath,
-    openTrade,
     openTradeSnapshot,
     privateRewardTokenDecimals,
     privateRewardTokenSymbol,
@@ -2706,16 +2714,26 @@ export default function P2PTradingPage({
     setTradeAgentExplicitContext,
     setTradeAgentFeeQuote,
     setTradeAgentLoading,
+    setTradeAgentPanelMode,
     setTradeAgentPrompt,
     setTradeAgentRetryPaymentRequestId,
     setTradeAgentRetryPaymentTxHash,
     setTradeAgentStatus,
     setTradeOfferAmountInput,
     setTradeOfferTokenSelection,
+    setTradeHidePrivateLiquidity,
     setTradePriceInput,
     setTradeRequestAmountInput,
     setTradeRequestTokenSelection,
+    setTradeVisibility,
+    setDirectTradeRecipient,
+    setRecurringAddBuyBudgetInput,
+    setRecurringAddSellInventoryInput,
+    setRecurringBuyPriceInput,
+    setRecurringHidePrivateAmounts,
+    setRecurringSellPriceInput,
     startFreshOneOffTrade,
+    startFreshRecurringOrder,
     swapActionMode,
     swapBuyToken,
     swapCarbonReferenceContext,
@@ -2725,10 +2743,7 @@ export default function P2PTradingPage({
     terminalReturnSurfaceRef,
     tradeAgentAction,
     tradeAgentExplicitContext,
-    tradeAgentFeeQuote,
     tradeAgentPrompt,
-    tradeAgentRetryPaymentRequestId,
-    tradeAgentRetryPaymentTxHash,
     tradeComposerModel,
     walletAddress
   });
@@ -2950,6 +2965,30 @@ export default function P2PTradingPage({
       validationMessage={tradeComposerModel.tradeComposerValidationMessage || undefined}
     />
   );
+  const contextualAppHelpReason = useMemo<AppHelpReason | null>(() => {
+    const readinessError = [walletError, tradeActionError]
+      .map((message) => message.trim())
+      .find((message) => /\b(wallet|network|privacy|unlock|account|balance|fund|gas)\b/iu.test(message));
+    if (!readinessError) {
+      return null;
+    }
+    if (!walletAddress || /\bconnect(?:ed)?\b.*\bwallet\b|\bwallet\b.*\bconnect/iu.test(readinessError)) {
+      return 'wallet-needed';
+    }
+    if (/\bnetwork\b|\bcoti mainnet\b/iu.test(readinessError)) {
+      return 'wrong-network';
+    }
+    if (/\bprivacy\b|\bunlock\b|\baes\b|\bsnap\b/iu.test(readinessError)) {
+      return 'privacy-locked';
+    }
+    if (/\baccount\b/iu.test(readinessError)) {
+      return 'account-needed';
+    }
+    if (/\bbalance\b|\bfund\b|\bgas\b/iu.test(readinessError)) {
+      return 'funds-needed';
+    }
+    return 'generic-error';
+  }, [tradeActionError, walletAddress, walletError]);
 
   return (
     <main
@@ -2994,6 +3033,14 @@ export default function P2PTradingPage({
         onSortModeChange={(value) => setTradeSortMode(value as TradeDeskSortMode)}
         onClearFilters={clearTradeDeskFilters}
       />
+      {onOpenAppHelp && contextualAppHelpReason ? (
+        <div className="p2p-contextual-help">
+          <span>Need help with this readiness step?</span>
+          <button type="button" onClick={() => onOpenAppHelp(contextualAppHelpReason)}>
+            Get help
+          </button>
+        </div>
+      ) : null}
 
       {showSwapSurface ? (
         <OtcSwapPanel
@@ -3047,12 +3094,12 @@ export default function P2PTradingPage({
           helpQuickQuestions={appHelpQuickQuestions}
           helpPrompt={appHelpPrompt}
           helpCanSubmit={Boolean(!appHelpLoading && appHelpPrompt.trim())}
+          helpCanRetry={appHelpCanRetry}
           onAskHelpQuestion={askAppHelpQuestion}
+          onRetryHelpQuestion={retryAppHelpQuestion}
           onHelpPromptChange={updateAppHelpPrompt}
           onHelpSubmit={submitAppHelp}
-          onOpenHelpTopic={openAppHelpTopic}
           feeLabel={tradeAgentFeeLabel}
-          feeLoading={tradeAgentFeeLoading}
           messages={tradeAgentMessages}
           loading={tradeAgentLoading}
           status={tradeAgentStatus}
@@ -3061,7 +3108,7 @@ export default function P2PTradingPage({
           quickActions={visibleTradeAgentQuickActions}
           prompt={tradeAgentPrompt}
           canSubmitRequest={Boolean(
-            !tradeAgentLoading && !tradeAgentFeeLoading && tradeAgentPrompt.trim() && tradeAgentFeeQuote
+            !tradeAgentLoading && tradeAgentPrompt.trim()
           )}
           retryPaymentTxHash={tradeAgentRetryPaymentTxHash}
           canUseAction={canUseTradeAgentAction}

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type FormEvent, type MutableRefObject } from 'react';
+import { useCallback, useMemo, useRef, type FormEvent, type MutableRefObject } from 'react';
 import {
   fetchCarbonPairReference,
   type CarbonPairReference,
@@ -7,6 +7,8 @@ import {
 import {
   formatTokenAmount,
   isWalletAddress,
+  parseTokenAmountInput,
+  TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeSnapshot
 } from '../../../lib/appShared';
 import {
@@ -30,21 +32,38 @@ import {
   resolveVisibleOtcSwapPriceRatioDisplay
 } from '../../../lib/otcSwapUi';
 import {
-  fetchTradeAgentFeeQuote,
+  buildTradeAgentOpenedOrderContext,
+  buildTradeAgentOrderReviewContext,
+  createTradeAgentPaymentQuote,
+  getTradeAgentPreflightError,
   getTradeAgentPromptTokenMentions,
+  isTradeAgentTerminalPaymentError,
+  recoverTradeAgentRequest,
   runTradeAgentRequest,
   type TradeAgentActionType,
   type TradeAgentFeeQuote,
+  type TradeAgentKnownToken,
+  type TradeAgentNormalizationOptions,
+  type TradeAgentResponse,
   type TradeAgentResponseAction
 } from '../../../lib/tradeAgent';
-import { getTradeDisplayTerms } from '../../../lib/p2pTradeView';
+import {
+  buildTradeAgentRecoveryMessage,
+  doesTradeAgentPaymentRetryMatch,
+  hashTradeAgentPaymentRequest,
+  orchestrateTradeAgentPayment,
+  readTradeAgentPaymentRetry,
+  type TradeAgentPaymentRequest,
+  type TradeAgentPaymentRetryRecord,
+  type TradeAgentSafeContext
+} from '../../../lib/tradeAgentPayment';
 import { transferWalletFundAsset } from '../../../lib/walletFunds';
 import type { TradeEntryMode } from './useP2PTradeRoute';
 import {
-  writeTradeAgentRetryPayment,
   type TerminalReturnSurface,
   type TradeAgentChatMessage,
-  type TradeSigner
+  type TradeSigner,
+  type TradeVisibility
 } from '../components/P2PTradingPage.helpers';
 
 type CarbonReferenceContext = {
@@ -64,6 +83,22 @@ type PromptQuoteContext = {
   quote: OtcSwapQuoteCandidate | null;
 };
 
+export const selectBestExecutableTradeAgentQuote = (
+  candidates: Array<OtcSwapQuoteCandidate | null>
+): OtcSwapQuoteCandidate | null =>
+  candidates
+    .filter(
+      (candidate): candidate is OtcSwapQuoteCandidate =>
+        Boolean(candidate?.complete && candidate.availability.kind === 'known')
+    )
+    .sort((left, right) =>
+      left.price === right.price
+        ? left.tradeId - right.tradeId
+        : left.price < right.price
+          ? -1
+          : 1
+    )[0] ?? null;
+
 export const resolveTradeAgentOpenOrderSnapshot = (
   action: TradeAgentResponseAction,
   trades: Array<TradeSnapshot | null>
@@ -73,18 +108,15 @@ export const resolveTradeAgentOpenOrderSnapshot = (
   }
 
   const actionEscrowKey = action.escrowContract?.trim().toLowerCase() ?? '';
-  const matchingTrades = trades.filter(
+  if (!actionEscrowKey) {
+    return null;
+  }
+  return trades.find(
     (trade): trade is TradeSnapshot =>
       trade !== null &&
       trade.tradeId === action.tradeId &&
-      (!actionEscrowKey || (trade.escrowContract ?? '').toLowerCase() === actionEscrowKey)
-  );
-  if (actionEscrowKey) {
-    return matchingTrades[0] ?? null;
-  }
-
-  const contractKeys = new Set(matchingTrades.map((trade) => (trade.escrowContract ?? '').toLowerCase()));
-  return contractKeys.size === 1 ? matchingTrades[0] ?? null : null;
+      (trade.escrowContract ?? TRADE_ESCROW_CONTRACT_ADDRESS).toLowerCase() === actionEscrowKey
+  ) ?? null;
 };
 
 type UseP2PTradeAgentActionsArgs = {
@@ -104,7 +136,6 @@ type UseP2PTradeAgentActionsArgs = {
   myTrades: TradeSnapshot[];
   navigateDeskView: (path: '/otc') => void;
   navigateToTradePath: (path: string) => void;
-  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   openTradeSnapshot: (snapshot: TradeSnapshot, accessSecret?: string) => void;
   privateRewardTokenDecimals: number;
   privateRewardTokenSymbol: string;
@@ -128,16 +159,26 @@ type UseP2PTradeAgentActionsArgs = {
   setTradeAgentExplicitContext: (context: unknown | null) => void;
   setTradeAgentFeeQuote: (quote: TradeAgentFeeQuote | null) => void;
   setTradeAgentLoading: (loading: boolean) => void;
+  setTradeAgentPanelMode: (mode: 'help' | 'trade') => void;
   setTradeAgentPrompt: (prompt: string) => void;
   setTradeAgentRetryPaymentRequestId: (requestId: string) => void;
   setTradeAgentRetryPaymentTxHash: (txHash: string) => void;
   setTradeAgentStatus: (status: string) => void;
   setTradeOfferAmountInput: (value: string) => void;
   setTradeOfferTokenSelection: (value: TradeTokenPresetKey) => void;
+  setTradeHidePrivateLiquidity: (value: boolean) => void;
   setTradePriceInput: (value: string) => void;
   setTradeRequestAmountInput: (value: string) => void;
   setTradeRequestTokenSelection: (value: TradeTokenPresetKey) => void;
+  setTradeVisibility: (value: TradeVisibility) => void;
+  setDirectTradeRecipient: (value: string) => void;
+  setRecurringAddBuyBudgetInput: (value: string) => void;
+  setRecurringAddSellInventoryInput: (value: string) => void;
+  setRecurringBuyPriceInput: (value: string) => void;
+  setRecurringHidePrivateAmounts: (value: boolean) => void;
+  setRecurringSellPriceInput: (value: string) => void;
   startFreshOneOffTrade: () => void;
+  startFreshRecurringOrder: () => void;
   swapActionMode: OtcSwapInputMode;
   swapBuyToken: ResolvedTradeToken | null;
   swapCarbonReferenceContext: CarbonReferenceContext;
@@ -147,10 +188,7 @@ type UseP2PTradeAgentActionsArgs = {
   terminalReturnSurfaceRef: MutableRefObject<TerminalReturnSurface>;
   tradeAgentAction: TradeAgentActionType;
   tradeAgentExplicitContext: unknown | null;
-  tradeAgentFeeQuote: TradeAgentFeeQuote | null;
   tradeAgentPrompt: string;
-  tradeAgentRetryPaymentRequestId: string;
-  tradeAgentRetryPaymentTxHash: string;
   tradeComposerModel: TradeComposerModel;
   walletAddress: string;
 };
@@ -167,7 +205,6 @@ export default function useP2PTradeAgentActions({
   myTrades,
   navigateDeskView,
   navigateToTradePath,
-  openTrade,
   openTradeSnapshot,
   privateRewardTokenDecimals,
   privateRewardTokenSymbol,
@@ -191,16 +228,26 @@ export default function useP2PTradeAgentActions({
   setTradeAgentExplicitContext,
   setTradeAgentFeeQuote,
   setTradeAgentLoading,
+  setTradeAgentPanelMode,
   setTradeAgentPrompt,
   setTradeAgentRetryPaymentRequestId,
   setTradeAgentRetryPaymentTxHash,
   setTradeAgentStatus,
   setTradeOfferAmountInput,
   setTradeOfferTokenSelection,
+  setTradeHidePrivateLiquidity,
   setTradePriceInput,
   setTradeRequestAmountInput,
   setTradeRequestTokenSelection,
+  setTradeVisibility,
+  setDirectTradeRecipient,
+  setRecurringAddBuyBudgetInput,
+  setRecurringAddSellInventoryInput,
+  setRecurringBuyPriceInput,
+  setRecurringHidePrivateAmounts,
+  setRecurringSellPriceInput,
   startFreshOneOffTrade,
+  startFreshRecurringOrder,
   swapActionMode,
   swapBuyToken,
   swapCarbonReferenceContext,
@@ -210,16 +257,15 @@ export default function useP2PTradeAgentActions({
   terminalReturnSurfaceRef,
   tradeAgentAction,
   tradeAgentExplicitContext,
-  tradeAgentFeeQuote,
   tradeAgentPrompt,
-  tradeAgentRetryPaymentRequestId,
-  tradeAgentRetryPaymentTxHash,
   tradeComposerModel,
   walletAddress
 }: UseP2PTradeAgentActionsArgs) {
+  const tradeAgentRequestInFlightRef = useRef(false);
+  const tradeAgentPaidRequestRef = useRef<TradeAgentPaymentRetryRecord | null>(null);
   const tradeAgentContext = useMemo(
     () => ({
-      explicit: tradeAgentExplicitContext,
+      clientSurface: 'otc-agent' as const,
       surface: routeSurfaceView ?? routeView,
       selectedPair: {
         sellToken: swapSellToken ? { symbol: swapSellToken.symbol, kind: swapSellToken.kind } : null,
@@ -243,13 +289,12 @@ export default function useP2PTradeAgentActions({
           : null
       },
       openedOrder: detailTrade
-        ? {
-            id: detailTrade.recurringOrder?.orderId ?? detailTrade.tradeId,
-            source: detailTrade.recurringOrder ? 'Recurring OTC' : 'One-off OTC',
-            status: detailTrade.status,
-            terms: getTradeDisplayTerms(detailTrade)
-          }
-        : null
+        ? buildTradeAgentOpenedOrderContext(detailTrade)
+        : tradeAgentExplicitContext &&
+            typeof tradeAgentExplicitContext === 'object' &&
+            'openedOrder' in tradeAgentExplicitContext
+          ? (tradeAgentExplicitContext as { openedOrder?: unknown }).openedOrder ?? null
+          : null
     }),
     [
       detailTrade,
@@ -267,18 +312,14 @@ export default function useP2PTradeAgentActions({
   );
 
   const buildPromptOnlyTradeAgentContext = useCallback(
-    (includeExplicit = false) => ({
-      explicit: includeExplicit ? tradeAgentExplicitContext : null,
+    () => ({
+      clientSurface: 'otc-agent' as const,
       openedOrder: null,
+      requestCompleteness: 'partial' as const,
       selectedPair: null,
-      surface: routeSurfaceView ?? routeView,
-      swap: {
-        bestOrder: null,
-        carbonReference: null,
-        chainwhisperPrice: null
-      }
+      surface: routeSurfaceView ?? routeView
     }),
-    [routeSurfaceView, routeView, tradeAgentExplicitContext]
+    [routeSurfaceView, routeView]
   );
 
   const askAgentAboutOrder = useCallback(
@@ -289,32 +330,25 @@ export default function useP2PTradeAgentActions({
       saveMobileDeskScroll('agent');
       setEmptyTerminalDrawerOpen(false);
       setSelectedMyTradeDetailKey('');
+      setTradeAgentPanelMode('trade');
       setTradeAgentAction('explain_order');
       setTradeAgentExplicitContext({
-        openedOrder: {
-          escrowContract: snapshot.escrowContract,
-          id,
-          source,
-          status: snapshot.status,
-          terms: getTradeDisplayTerms(snapshot)
-        }
+        openedOrder: buildTradeAgentOpenedOrderContext(snapshot)
       });
       setTradeAgentPrompt(`Explain ${source} #${id}. Keep it short and point out what I should review.`);
       setTradeAgentStatus('Order loaded.');
       appendTradeAgentStatusMessage(`${source} #${id} loaded.`);
-      if (routeView !== 'trade') {
-        openTrade(snapshot.tradeId, undefined, snapshot.escrowContract);
-      }
+      navigateToTradePath('/otc/agent');
     },
     [
       appendTradeAgentStatusMessage,
-      openTrade,
-      routeView,
+      navigateToTradePath,
       saveMobileDeskScroll,
       setEmptyTerminalDrawerOpen,
       setSelectedMyTradeDetailKey,
       setTradeAgentAction,
       setTradeAgentExplicitContext,
+      setTradeAgentPanelMode,
       setTradeAgentPrompt,
       setTradeAgentStatus,
       terminalReturnSurfaceRef
@@ -353,6 +387,37 @@ export default function useP2PTradeAgentActions({
     [privateRewardTokenDecimals, privateRewardTokenSymbol, rewardTokenDecimals, rewardTokenSymbol]
   );
 
+  const tradeAgentKnownTokens = useMemo<TradeAgentKnownToken[]>(
+    () =>
+      tradeComposerModel.tradeTokenOptions.flatMap((option) => {
+        const selection = option.value as TradeTokenPresetKey;
+        const resolved = resolveTradeAgentTokenFromSelection(selection);
+        if (!resolved || option.value.startsWith('custom')) {
+          return [];
+        }
+        return [{
+          reference: resolved.symbol,
+          aliases: [option.value, option.symbol ?? '', option.label].filter(Boolean),
+          decimals: resolved.decimals
+        }];
+      }),
+    [resolveTradeAgentTokenFromSelection, tradeComposerModel.tradeTokenOptions]
+  );
+
+  const trustedTradeAgentOrders = useMemo<TradeAgentNormalizationOptions['trustedOrders']>(
+    () =>
+      [detailTrade, ...publicOpenTrades, ...myTrades].flatMap((trade) => {
+        if (!trade) {
+          return [];
+        }
+        const summary = buildTradeAgentOpenedOrderContext(trade);
+        return summary
+          ? [{ tradeId: summary.tradeId, escrowContract: summary.escrowContract }]
+          : [];
+      }),
+    [detailTrade, myTrades, publicOpenTrades]
+  );
+
   const resolveTradeAgentPromptQuoteContext = useCallback(
     async (prompt: string): Promise<PromptQuoteContext | null> => {
       const knownSymbols = tradeComposerModel.tradeTokenOptions
@@ -366,6 +431,9 @@ export default function useP2PTradeAgentActions({
       const lowerPrompt = prompt.toLowerCase();
       const buyIndex = lowerPrompt.indexOf('buy');
       const sellIndex = lowerPrompt.indexOf('sell');
+      if (buyIndex === -1 && sellIndex === -1) {
+        return null;
+      }
       const inputMode: OtcSwapInputMode =
         sellIndex !== -1 && (buyIndex === -1 || sellIndex < buyIndex) ? 'sell' : 'buy';
       const sellSelection = resolveTradeAgentTokenSelection(inputMode === 'sell' ? firstSymbol : secondSymbol);
@@ -375,18 +443,44 @@ export default function useP2PTradeAgentActions({
       if (!sellToken || !buyToken || getOtcSwapAssetKey(sellToken) === getOtcSwapAssetKey(buyToken)) {
         return null;
       }
+      const requestedAmountInput = prompt.match(/\b(?:buy|sell)\s+(\d+(?:\.\d+)?)/i)?.[1] ?? '';
+      const requestedInputToken = inputMode === 'sell' ? sellToken : buyToken;
+      const requestedAmountWei = requestedAmountInput
+        ? parseTokenAmountInput(requestedAmountInput, requestedInputToken.decimals)
+        : null;
+      const hasRequestedAmount = requestedAmountWei !== null && requestedAmountWei > 0n;
+      const comparisonAmountWei =
+        (hasRequestedAmount ? requestedAmountWei : parseTokenAmountInput('1', requestedInputToken.decimals));
+      if (comparisonAmountWei === null || comparisonAmountWei <= 0n) {
+        return null;
+      }
 
-      const quote = quoteBestSingleOtcSwap({
+      const priceReferenceQuote = quoteBestSingleOtcSwap({
         includePrivateOtcQuotes: true,
-        inputAmountWei: 0n,
+        inputAmountWei: comparisonAmountWei,
         inputMode,
         trades: publicOpenTrades,
         sellToken,
         buyToken
       }).best;
+      const executableQuote = hasRequestedAmount
+        ? selectBestExecutableTradeAgentQuote(
+            publicOpenTrades.map((trade) =>
+              quoteBestSingleOtcSwap({
+                includePrivateOtcQuotes: true,
+                inputAmountWei: comparisonAmountWei,
+                inputMode,
+                trades: [trade],
+                sellToken,
+                buyToken
+              }).best
+            )
+          )
+        : null;
+      const comparisonQuote = executableQuote ?? priceReferenceQuote;
       const displayBaseToken = inputMode === 'buy' ? buyToken : sellToken;
       const displayQuoteToken = inputMode === 'buy' ? sellToken : buyToken;
-      const priceDisplay = resolveVisibleOtcSwapPriceRatioDisplay(quote, inputMode, false);
+      const priceDisplay = resolveVisibleOtcSwapPriceRatioDisplay(comparisonQuote, inputMode, false);
       const carbonReference = await fetchCarbonPairReference({
         baseAsset: displayBaseToken,
         quoteAsset: displayQuoteToken
@@ -403,19 +497,43 @@ export default function useP2PTradeAgentActions({
             source: 'prompt'
           },
           swap: {
-            carbonReference: getCarbonReferenceContext(displayBaseToken, displayQuoteToken, false, carbonReference),
+            carbonReference: {
+              ...getCarbonReferenceContext(displayBaseToken, displayQuoteToken, false, carbonReference),
+              comparisonRole: 'market-reference',
+              rankingEligible: false
+            },
             chainwhisperPrice: priceDisplay ? formatOtcSwapMarketDirectionLabel(inputMode, priceDisplay) : '--',
-            bestOrder: quote
+            bestOrder: comparisonQuote
               ? {
-                  id: quote.tradeId,
-                  escrowContract: quote.escrowContract,
-                  source: getOtcSwapSourceLabel(quote.sourceType),
-                  availability: formatOtcSwapAvailabilityLabel(quote, inputMode, 0n, 6)
+                  id: comparisonQuote.tradeId,
+                  escrowContract: comparisonQuote.escrowContract,
+                  source: getOtcSwapSourceLabel(comparisonQuote.sourceType),
+                  availability: formatOtcSwapAvailabilityLabel(
+                    comparisonQuote,
+                    inputMode,
+                    comparisonAmountWei,
+                    6
+                  ),
+                  comparisonRole: executableQuote
+                    ? 'verified-executable-for-amount'
+                    : 'price-reference',
+                  completeForRequestedAmount: hasRequestedAmount ? Boolean(executableQuote) : null,
+                  rankingEligible: Boolean(executableQuote)
                 }
-              : null
+              : null,
+            requestedAmount: hasRequestedAmount
+              ? {
+                  amount: requestedAmountInput,
+                  mode: inputMode,
+                  symbol: requestedInputToken.symbol
+                }
+              : null,
+            comparisonRule: hasRequestedAmount
+              ? 'Use the supplied amount only for a visible-liquidity executability check. Keep Carbon and Uniswap as separate market references unless their same-chain liquidity is explicitly verified.'
+              : 'Compare current display-basis prices only. No amount was requested, so do not rank liquidity or claim a best executable route. Keep Carbon and Uniswap as separate market references.'
           }
         },
-        quote
+        quote: hasRequestedAmount ? executableQuote : priceReferenceQuote
       };
     },
     [
@@ -431,16 +549,13 @@ export default function useP2PTradeAgentActions({
   const applyTradeAgentAction = useCallback(
     async (action: TradeAgentResponseAction) => {
       if (action.type === 'open_order' && action.tradeId) {
-        appendTradeAgentStatusMessage('Order opened.');
         const cachedOrder = resolveTradeAgentOpenOrderSnapshot(action, [detailTrade, ...publicOpenTrades, ...myTrades]);
-        if (cachedOrder) {
-          openTradeSnapshot(cachedOrder, action.accessSecret);
+        if (!cachedOrder) {
+          setTradeAgentError('That order is no longer available in your trusted order list. Refresh Orders and try again.');
           return;
         }
-        terminalReturnSurfaceRef.current = 'agent';
-        saveMobileDeskScroll('agent');
-        setEmptyTerminalDrawerOpen(false);
-        openTrade(action.tradeId, action.accessSecret, action.escrowContract);
+        appendTradeAgentStatusMessage('Order opened.');
+        openTradeSnapshot(cachedOrder);
         return;
       }
 
@@ -476,8 +591,31 @@ export default function useP2PTradeAgentActions({
         setTradeOfferAmountInput(action.sellAmount ?? '');
         setTradeRequestAmountInput(action.buyAmount ?? '');
         setTradePriceInput(action.price ?? '');
+        setTradeVisibility(action.accessType);
+        setDirectTradeRecipient('');
+        setTradeHidePrivateLiquidity(action.amountVisibility === 'private-hidden');
         appendTradeAgentStatusMessage('Draft opened in Limit.');
         navigateToTradePath(buildCurrentTradeSurfacePath('create', 'limit'));
+        return;
+      }
+
+      if (action.type === 'prefill_recurring') {
+        const baseSelection = resolveTradeAgentTokenSelection(action.baseToken);
+        const quoteSelection = resolveTradeAgentTokenSelection(action.quoteToken);
+        startFreshRecurringOrder();
+        if (baseSelection) {
+          setTradeOfferTokenSelection(baseSelection);
+        }
+        if (quoteSelection && quoteSelection !== baseSelection) {
+          setTradeRequestTokenSelection(quoteSelection);
+        }
+        setRecurringBuyPriceInput(action.buyPrice);
+        setRecurringSellPriceInput(action.sellPrice);
+        setRecurringAddBuyBudgetInput(action.buyLiquidity);
+        setRecurringAddSellInventoryInput(action.sellLiquidity);
+        setRecurringHidePrivateAmounts(action.amountVisibility === 'private-hidden');
+        appendTradeAgentStatusMessage('Draft opened in Recurring.');
+        navigateToTradePath(buildCurrentTradeSurfacePath('create', 'recurring'));
         return;
       }
 
@@ -508,7 +646,7 @@ export default function useP2PTradeAgentActions({
         return;
       }
 
-      if (action.message) {
+      if (action.type === 'prefill_message') {
         await navigator.clipboard?.writeText(action.message).catch(() => {});
         appendTradeAgentStatusMessage('Draft copied.');
         setTradeAgentStatus('Draft copied.');
@@ -522,7 +660,6 @@ export default function useP2PTradeAgentActions({
       myTrades,
       navigateDeskView,
       navigateToTradePath,
-      openTrade,
       openTradeSnapshot,
       publicOpenTrades,
       resolveTradeAgentTokenSelection,
@@ -536,12 +673,21 @@ export default function useP2PTradeAgentActions({
       setSwapSellTokenSelection,
       setTradeAgentError,
       setTradeAgentStatus,
+      setDirectTradeRecipient,
+      setRecurringAddBuyBudgetInput,
+      setRecurringAddSellInventoryInput,
+      setRecurringBuyPriceInput,
+      setRecurringHidePrivateAmounts,
+      setRecurringSellPriceInput,
+      setTradeHidePrivateLiquidity,
       setTradeOfferAmountInput,
       setTradeOfferTokenSelection,
       setTradePriceInput,
       setTradeRequestAmountInput,
       setTradeRequestTokenSelection,
+      setTradeVisibility,
       startFreshOneOffTrade,
+      startFreshRecurringOrder,
       terminalReturnSurfaceRef
     ]
   );
@@ -549,9 +695,39 @@ export default function useP2PTradeAgentActions({
   const submitTradeAgentRequest = useCallback(
     async (event?: FormEvent) => {
       event?.preventDefault();
+      if (tradeAgentRequestInFlightRef.current) {
+        return;
+      }
       const prompt = tradeAgentPrompt.trim();
-      if (!prompt) {
-        setTradeAgentError('Enter what you want the Trade Agent to do.');
+      const storedRetryCandidate =
+        tradeAgentPaidRequestRef.current ?? readTradeAgentPaymentRetry();
+      const exactRetryCandidate =
+        storedRetryCandidate &&
+        storedRetryCandidate.context.clientSurface === 'otc-agent' &&
+        storedRetryCandidate.action === tradeAgentAction &&
+        storedRetryCandidate.prompt === prompt &&
+        (!walletAddress ||
+          storedRetryCandidate.payerAddress.toLowerCase() === walletAddress.toLowerCase())
+          ? storedRetryCandidate
+          : null;
+      const preflightContext =
+        exactRetryCandidate
+          ? exactRetryCandidate.context
+          : tradeAgentAction === 'review_orders'
+          ? buildTradeAgentOrderReviewContext(myTrades)
+          : tradeAgentAction === 'find_price' ||
+              tradeAgentAction === 'draft_limit' ||
+              tradeAgentAction === 'draft_recurring'
+            ? buildPromptOnlyTradeAgentContext()
+            : tradeAgentContext;
+      const preflightError = getTradeAgentPreflightError({
+        action: tradeAgentAction,
+        context: preflightContext,
+        knownTokens: tradeAgentKnownTokens,
+        prompt
+      });
+      if (preflightError) {
+        setTradeAgentError(preflightError);
         return;
       }
       if (!walletAddress) {
@@ -559,67 +735,166 @@ export default function useP2PTradeAgentActions({
         return;
       }
 
+      tradeAgentRequestInFlightRef.current = true;
       setTradeAgentLoading(true);
       setTradeAgentError('');
-      appendTradeAgentMessage({
-        role: 'user',
-        title: 'You',
-        text: prompt
-      });
-      setTradeAgentStatus('Getting WISP fee quote...');
-      let paymentTxHash = tradeAgentRetryPaymentTxHash;
-      const requestId = tradeAgentRetryPaymentRequestId || crypto.randomUUID();
+      let currentPaymentRequest: TradeAgentPaymentRequest | null = null;
       try {
         const promptQuoteContext =
-          tradeAgentAction === 'find_price' ? await resolveTradeAgentPromptQuoteContext(prompt) : null;
+          tradeAgentAction === 'find_price' && !exactRetryCandidate
+            ? await resolveTradeAgentPromptQuoteContext(prompt)
+            : null;
         const requestContext =
-          promptQuoteContext?.context ??
-          (tradeAgentAction === 'find_price'
-            ? buildPromptOnlyTradeAgentContext(false)
-            : tradeAgentAction === 'draft_limit'
-              ? buildPromptOnlyTradeAgentContext(Boolean(tradeAgentExplicitContext))
-              : tradeAgentContext);
+          exactRetryCandidate?.context ?? promptQuoteContext?.context ?? preflightContext;
         const requestQuote = promptQuoteContext?.quote ?? null;
-        const quote = paymentTxHash
-          ? tradeAgentFeeQuote ?? await fetchTradeAgentFeeQuote(tradeAgentAction, requestContext, prompt)
-          : await fetchTradeAgentFeeQuote(tradeAgentAction, requestContext, prompt);
-        setTradeAgentFeeQuote(quote);
-        const signer = await getTradeSigner(false);
-        if (paymentTxHash) {
-          setTradeAgentStatus('Retrying with the previous WISP payment...');
-        } else {
-          const feeAmountWei = BigInt(quote.feeAmountWei);
-          setTradeAgentStatus(`Paying ${formatTokenAmount(feeAmountWei, quote.feeTokenDecimals, 4)} WISP...`);
-          paymentTxHash = await transferWalletFundAsset({
-            amountWei: feeAmountWei,
-            asset: {
-              kind: 'erc20',
-              tokenAddress: quote.feeTokenAddress,
-              symbol: 'WISP',
-              decimals: quote.feeTokenDecimals
-            },
-            signer,
-            toAddress: quote.feeRecipient
-          });
-          setTradeAgentRetryPaymentTxHash(paymentTxHash);
-          setTradeAgentRetryPaymentRequestId(requestId);
-          writeTradeAgentRetryPayment({ action: tradeAgentAction, prompt, requestId, txHash: paymentTxHash });
-        }
-        setTradeAgentStatus('Asking Trade Agent...');
-        const response = await runTradeAgentRequest({
+        const paymentRequest: TradeAgentPaymentRequest = {
           action: tradeAgentAction,
-          context: requestContext,
+          context: requestContext as TradeAgentSafeContext,
           payerAddress: walletAddress,
-          paymentTxHash,
-          prompt,
-          requestId
+          prompt
+        };
+        currentPaymentRequest = paymentRequest;
+        const storedRetry = exactRetryCandidate ?? readTradeAgentPaymentRetry();
+        const expectedRequestHash = await hashTradeAgentPaymentRequest(paymentRequest);
+        const retryingExactRequest = Boolean(
+          storedRetry &&
+          storedRetry.context.clientSurface === 'otc-agent' &&
+          doesTradeAgentPaymentRetryMatch(storedRetry, paymentRequest) &&
+          storedRetry.requestHash === expectedRequestHash
+        );
+        if (retryingExactRequest && storedRetry) {
+          setTradeAgentRetryPaymentTxHash(storedRetry.paymentTxHash);
+          setTradeAgentRetryPaymentRequestId(storedRetry.requestId);
+          appendTradeAgentStatusMessage('Retrying the exact paid request without another WISP transfer.');
+        } else {
+          appendTradeAgentMessage({
+            role: 'user',
+            title: 'You',
+            text: prompt
+          });
+        }
+        const normalization = {
+          knownTokens: tradeAgentKnownTokens,
+          trustedOrders: trustedTradeAgentOrders
+        };
+        let paymentSigner: TradeSigner | null = null;
+        const getPaymentSigner = async (): Promise<TradeSigner> => {
+          paymentSigner ??= await getTradeSigner(false);
+          return paymentSigner;
+        };
+        let recoveryChecked = false;
+        const result = await orchestrateTradeAgentPayment<TradeAgentResponse>({
+          request: paymentRequest,
+          retryRecord: tradeAgentPaidRequestRef.current,
+          onPaidRequest: (record, persistence) => {
+            tradeAgentPaidRequestRef.current = record;
+            setTradeAgentRetryPaymentTxHash(record.paymentTxHash);
+            setTradeAgentRetryPaymentRequestId(record.requestId);
+            if (!persistence.persisted) {
+              setTradeAgentStatus('Payment confirmed. Keep this page open while the request finishes.');
+            }
+          },
+          callbacks: {
+            createQuote: async (request) => {
+              setTradeAgentStatus('Getting the final WISP quote...');
+              const quote = await createTradeAgentPaymentQuote(request);
+              setTradeAgentFeeQuote(quote);
+              return quote;
+            },
+            signAuthorization: async ({ authorizationMessage }) => {
+              setTradeAgentStatus('Authorizing this exact request...');
+              return (await getPaymentSigner()).signMessage(authorizationMessage);
+            },
+            transferPayment: async ({ quote }) => {
+              const feeAmountWei = BigInt(quote.feeAmountWei);
+              setTradeAgentStatus(
+                `Paying ${formatTokenAmount(feeAmountWei, quote.feeTokenDecimals, 4)} WISP...`
+              );
+              return transferWalletFundAsset({
+                amountWei: feeAmountWei,
+                asset: {
+                  kind: 'erc20',
+                  tokenAddress: quote.feeTokenAddress,
+                  symbol: 'WISP',
+                  decimals: quote.feeTokenDecimals
+                },
+                signer: await getPaymentSigner(),
+                toAddress: quote.feeRecipient
+              });
+            },
+            runRequest: async (record: TradeAgentPaymentRetryRecord) => {
+              if (retryingExactRequest && !recoveryChecked) {
+                recoveryChecked = true;
+                setTradeAgentStatus('Recovering the previous Agent response...');
+                const signedAt = new Date().toISOString();
+                const signature = await (await getPaymentSigner()).signMessage(
+                  buildTradeAgentRecoveryMessage({
+                    payerAddress: record.payerAddress,
+                    requestId: record.requestId,
+                    signedAt
+                  })
+                );
+                try {
+                  const recovered = await recoverTradeAgentRequest({
+                    normalization,
+                    payerAddress: record.payerAddress,
+                    requestId: record.requestId,
+                    signature,
+                    signedAt
+                  });
+                  if (recovered.status !== 'retryable') {
+                    return recovered;
+                  }
+                } catch {
+                  setTradeAgentStatus('Recovery was unavailable. Retrying the exact paid request...');
+                }
+              }
+              setTradeAgentStatus(
+                retryingExactRequest
+                  ? 'Retrying with the previous WISP payment...'
+                  : 'Asking Trade Agent...'
+              );
+              return runTradeAgentRequest({
+                action: record.action,
+                context: record.context,
+                normalization,
+                payerAddress: record.payerAddress,
+                payerSignature: record.payerSignature,
+                paymentTxHash: record.paymentTxHash,
+                prompt: record.prompt,
+                quoteToken: record.quoteToken,
+                requestHash: record.requestHash,
+                requestId: record.requestId
+              });
+            }
+          }
         });
+        if (result.status === 'processing') {
+          const retryInSeconds = Math.max(1, Math.ceil((result.retryAfterMs ?? 2_000) / 1_000));
+          const message = `Payment confirmed. This request is still processing; retry in about ${retryInSeconds} seconds without paying again.`;
+          setTradeAgentStatus(message);
+          appendTradeAgentStatusMessage(message);
+          return;
+        }
+        if (result.status === 'retryable') {
+          const message =
+            result.error || 'The provider did not finish this exact request. You can retry without paying again.';
+          setTradeAgentError(message);
+          setTradeAgentStatus('You can retry without paying again.');
+          appendTradeAgentMessage({
+            role: 'assistant',
+            title: 'Trade Agent',
+            text: `${message} You can retry without paying again.`
+          });
+          return;
+        }
+        const response = result.response;
+        tradeAgentPaidRequestRef.current = null;
         const actions =
           tradeAgentAction === 'find_price' && requestQuote
             ? [
                 {
                   type: 'open_order' as const,
-                  label: 'Open order',
                   tradeId: requestQuote.tradeId,
                   escrowContract: requestQuote.escrowContract
                 }
@@ -634,28 +909,44 @@ export default function useP2PTradeAgentActions({
         });
         setTradeAgentRetryPaymentTxHash('');
         setTradeAgentRetryPaymentRequestId('');
-        writeTradeAgentRetryPayment(null);
         setTradeAgentPrompt('');
         setTradeAgentStatus('Ready.');
-        refreshAllTradingBalances({ reason: 'trade-action', signer, silent: true }).catch(() => {});
+        if (paymentSigner) {
+          refreshAllTradingBalances({ reason: 'trade-action', signer: paymentSigner, silent: true }).catch(() => {});
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Trade Agent request failed.';
         setTradeAgentError(message);
-        const retryCopy = paymentTxHash ? 'You can retry without paying again.' : 'Request failed before payment.';
-        setTradeAgentStatus(paymentTxHash ? retryCopy : '');
+        const storedRetry =
+          tradeAgentPaidRequestRef.current ?? readTradeAgentPaymentRetry();
+        const paidRetry = Boolean(
+          storedRetry &&
+          currentPaymentRequest &&
+          doesTradeAgentPaymentRetryMatch(storedRetry, currentPaymentRequest)
+        );
+        const needsManualReview = paidRetry && isTradeAgentTerminalPaymentError(error);
+        const retryCopy = needsManualReview
+          ? 'No additional payment will be requested. Keep the payment transaction for manual WISP refund review.'
+          : paidRetry
+            ? 'You can retry without paying again.'
+            : 'Request failed before payment.';
+        setTradeAgentStatus(paidRetry ? retryCopy : '');
         appendTradeAgentMessage({
           role: 'assistant',
           title: 'Trade Agent',
           text: `${message} ${retryCopy}`
         });
       } finally {
+        tradeAgentRequestInFlightRef.current = false;
         setTradeAgentLoading(false);
       }
     },
     [
       appendTradeAgentMessage,
+      appendTradeAgentStatusMessage,
       buildPromptOnlyTradeAgentContext,
       getTradeSigner,
+      myTrades,
       refreshAllTradingBalances,
       resolveTradeAgentPromptQuoteContext,
       setTradeAgentError,
@@ -667,11 +958,9 @@ export default function useP2PTradeAgentActions({
       setTradeAgentStatus,
       tradeAgentAction,
       tradeAgentContext,
-      tradeAgentExplicitContext,
-      tradeAgentFeeQuote,
+      tradeAgentKnownTokens,
       tradeAgentPrompt,
-      tradeAgentRetryPaymentRequestId,
-      tradeAgentRetryPaymentTxHash,
+      trustedTradeAgentOrders,
       walletAddress
     ]
   );

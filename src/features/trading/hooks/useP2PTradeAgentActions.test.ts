@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { RECURRING_OTC_CONTRACT_ADDRESS, type TradeSnapshot } from '../../../lib/appShared';
-import { resolveTradeAgentOpenOrderSnapshot } from './useP2PTradeAgentActions';
+import type { TradeAgentResponseAction } from '../../../lib/tradeAgent';
+import type { OtcSwapQuoteCandidate } from '../../../lib/otcSwapQuote';
+import {
+  resolveTradeAgentOpenOrderSnapshot,
+  selectBestExecutableTradeAgentQuote
+} from './useP2PTradeAgentActions';
 
 const recurringOrder = {
   tradeId: 5,
@@ -13,7 +18,6 @@ describe('resolveTradeAgentOpenOrderSnapshot', () => {
       resolveTradeAgentOpenOrderSnapshot(
         {
           type: 'open_order',
-          label: 'Open order',
           tradeId: 5,
           escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
         },
@@ -27,7 +31,6 @@ describe('resolveTradeAgentOpenOrderSnapshot', () => {
       resolveTradeAgentOpenOrderSnapshot(
         {
           type: 'open_order',
-          label: 'Open order',
           tradeId: 5,
           escrowContract: RECURRING_OTC_CONTRACT_ADDRESS
         },
@@ -39,9 +42,51 @@ describe('resolveTradeAgentOpenOrderSnapshot', () => {
   it('requires an unambiguous cached contract when the agent omits the escrow', () => {
     expect(
       resolveTradeAgentOpenOrderSnapshot(
-        { type: 'open_order', label: 'Open order', tradeId: 5 },
+        { type: 'open_order', tradeId: 5 } as TradeAgentResponseAction,
         [recurringOrder, { ...recurringOrder, escrowContract: '0x1111111111111111111111111111111111111111' }]
       )
+    ).toBeNull();
+  });
+});
+
+describe('selectBestExecutableTradeAgentQuote', () => {
+  const candidate = (
+    tradeId: number,
+    price: bigint,
+    complete: boolean,
+    availability: 'known' | 'terminal' = 'known'
+  ) => ({
+    tradeId,
+    price,
+    complete,
+    availability:
+      availability === 'known'
+        ? { kind: 'known', maxBuyAmountWei: 100n, maxSellAmountWei: 100n }
+        : { kind: 'terminal' }
+  }) as OtcSwapQuoteCandidate;
+
+  it('uses amount only to choose the best visibly executable price', () => {
+    const incompleteCheapest = candidate(1, 1n, false);
+    const executableHigherPrice = candidate(2, 3n, true);
+    const executableBestPrice = candidate(3, 2n, true);
+    const privateLiquidity = candidate(4, 1n, true, 'terminal');
+
+    expect(
+      selectBestExecutableTradeAgentQuote([
+        incompleteCheapest,
+        executableHigherPrice,
+        executableBestPrice,
+        privateLiquidity
+      ])
+    ).toBe(executableBestPrice);
+  });
+
+  it('returns no executable claim when visible liquidity cannot cover the amount', () => {
+    expect(
+      selectBestExecutableTradeAgentQuote([
+        candidate(1, 1n, false),
+        candidate(2, 2n, true, 'terminal')
+      ])
     ).toBeNull();
   });
 });

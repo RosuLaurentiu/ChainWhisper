@@ -7324,22 +7324,35 @@ summary:focus:not(:focus-visible),
     gap: 5px;
   }
 
-  .app-shell-trades .p2p-agent-quick-actions {
-    flex-wrap: nowrap;
-    gap: 5px;
-    overflow-x: auto;
-    padding-bottom: 1px;
-    scrollbar-width: none;
+  .app-shell-trades .p2p-agent-composer-help {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: rgba(10, 10, 18, 0.98);
   }
 
-  .app-shell-trades .p2p-agent-quick-actions::-webkit-scrollbar {
-    display: none;
+  .app-shell-trades .p2p-agent-quick-actions {
+    flex-wrap: wrap;
+    gap: 5px;
+    overflow-x: visible;
+    padding-bottom: 1px;
   }
 
   .app-shell-trades .p2p-agent-quick-actions button {
-    flex: 0 0 auto;
-    min-height: 32px;
+    flex: 1 1 140px;
+    min-height: 44px;
     padding: 0 10px;
+    white-space: normal;
+  }
+
+  .app-shell-trades .p2p-agent-composer-help .p2p-agent-quick-actions {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .app-shell-trades .p2p-agent-composer-help .p2p-agent-quick-actions button {
+    flex: 1 1 auto;
+    white-space: normal;
   }
 
   .app-shell-trades .p2p-agent-prompt {
@@ -7360,7 +7373,7 @@ summary:focus:not(:focus-visible),
   .app-shell-trades .p2p-agent-composer-trade .p2p-agent-submit-row .trade-card-action {
     width: auto;
     min-width: 120px;
-    min-height: 34px;
+    min-height: 44px;
   }
 
   .contacts-sidebar {

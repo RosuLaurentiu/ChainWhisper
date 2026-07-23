@@ -4,6 +4,8 @@ import {
   APP_HELP_MAX_QUESTION_CHARS,
   APP_HELP_QUICK_QUESTIONS,
   APP_HELP_TOPICS,
+  buildAppHelpAiResult,
+  containsSensitiveAppHelpMaterial,
   getAppHelpTopic,
   isTrustedAppHelpRoute,
   matchAppHelpTopics,
@@ -19,8 +21,15 @@ describe('appHelp knowledge matching', () => {
       expect(label.trim().split(/\s+/u).length).toBeLessThanOrEqual(4);
       expect(question.trim().split(/\s+/u).length).toBeLessThanOrEqual(7);
     });
-    APP_HELP_TOPICS.forEach(({ answer }) => {
+    APP_HELP_TOPICS.forEach(({ aliases, answer, cautions, prerequisites, relatedTopicIds, steps, summary, surfaceAffinity }) => {
       expect(answer.trim().split(/\s+/u).length).toBeLessThanOrEqual(45);
+      expect(summary.trim()).not.toBe('');
+      expect(aliases.length).toBeGreaterThan(0);
+      expect(Array.isArray(prerequisites)).toBe(true);
+      expect(steps.length).toBeGreaterThan(0);
+      expect(Array.isArray(cautions)).toBe(true);
+      expect(relatedTopicIds.length).toBeGreaterThan(0);
+      expect(surfaceAffinity.length).toBeGreaterThan(0);
     });
   });
 
@@ -43,7 +52,7 @@ describe('appHelp knowledge matching', () => {
   it('uses the current route to rank otherwise ambiguous questions', () => {
     const match = matchAppHelpTopics('How do orders work?', '/otc/orders');
     expect(match.topic?.id).toBe('links-counters-and-settlement');
-    expect(match.confidence).toBe('moderate');
+    expect(match.confidence).toBe('high');
   });
 
   it('sends only moderate, relevant questions to the grounded fallback', () => {
@@ -66,6 +75,44 @@ describe('appHelp knowledge matching', () => {
     expect(resolution.response.topicId).toBeNull();
   });
 
+  it('clarifies ambiguous relevant questions without calling the remote fallback', () => {
+    const resolution = resolveAppHelpOnClient('Help with my balance', '/otc');
+    expect(resolution.kind).toBe('clarification');
+    if (resolution.kind !== 'clarification') {
+      throw new Error('Expected clarification choices');
+    }
+    expect(resolution.topicIds.length).toBeGreaterThan(1);
+    expect(resolution.topicIds.length).toBeLessThanOrEqual(3);
+  });
+
+  it('blocks private material before matching or remote help', () => {
+    const secret = `0x${'a'.repeat(64)}`;
+    const resolution = resolveAppHelpOnClient(`/otc/order/link/PRIVATECODE#${secret}`, '/otc/agent');
+    expect(resolution.kind).toBe('refusal');
+    if (resolution.kind !== 'refusal') {
+      throw new Error('Expected a safety refusal');
+    }
+    expect(resolution.response).toMatchObject({
+      relatedTopicIds: [],
+      source: 'refusal',
+      topicId: null
+    });
+  });
+
+  it('blocks wallet addresses before invoking remote help', () => {
+    const walletAddress = `0x${'a'.repeat(40)}`;
+    const resolution = resolveAppHelpOnClient(`Tell me more about treasury for ${walletAddress}`, '/');
+    expect(resolution.kind).toBe('refusal');
+    if (resolution.kind !== 'refusal') {
+      throw new Error('Expected a client-side privacy refusal');
+    }
+    expect(resolution.response).toMatchObject({
+      relatedTopicIds: [],
+      source: 'refusal',
+      topicId: null
+    });
+  });
+
   it('rejects questions above the client and server character cap', () => {
     const resolution = resolveAppHelpOnClient('x'.repeat(APP_HELP_MAX_QUESTION_CHARS + 1), '/chat');
     expect(resolution).toMatchObject({ kind: 'invalid' });
@@ -73,6 +120,50 @@ describe('appHelp knowledge matching', () => {
 });
 
 describe('appHelp response and route safety', () => {
+  it('converts unsupported or empty grounded output into a refusal without topic suggestions', () => {
+    expect(
+      buildAppHelpAiResult({
+        answer: 'Model answer must not be used.',
+        relatedTopicIds: ['privacy-and-recovery'],
+        supported: false,
+        topicId: 'privacy-portal'
+      })
+    ).toEqual({
+      answer: 'I do not have enough verified ChainWhisper information to answer that.',
+      relatedTopicIds: [],
+      source: 'refusal',
+      topicId: null
+    });
+    expect(
+      buildAppHelpAiResult({
+        answer: '  ',
+        relatedTopicIds: ['privacy-and-recovery'],
+        supported: true,
+        topicId: 'privacy-portal'
+      })
+    ).toMatchObject({
+      relatedTopicIds: [],
+      source: 'refusal',
+      topicId: null
+    });
+  });
+
+  it('keeps supported grounded output AI-assisted with trusted topic metadata', () => {
+    expect(
+      buildAppHelpAiResult({
+        answer: 'Use the Privacy Portal.',
+        relatedTopicIds: ['privacy-and-recovery'],
+        supported: true,
+        topicId: 'privacy-portal'
+      })
+    ).toEqual({
+      answer: 'Use the Privacy Portal.',
+      relatedTopicIds: ['privacy-and-recovery'],
+      source: 'ai',
+      topicId: 'privacy-portal'
+    });
+  });
+
   it('normalizes a grounded response and drops unknown related topics', () => {
     expect(
       normalizeAppHelpResponse({
@@ -84,7 +175,7 @@ describe('appHelp response and route safety', () => {
     ).toEqual({
       answer: 'Use the owner wallet for recovery.',
       relatedTopicIds: ['privacy-and-recovery'],
-      source: 'nano',
+      source: 'ai',
       topicId: 'owner-and-chainwhisper-accounts'
     });
   });
@@ -93,9 +184,25 @@ describe('appHelp response and route safety', () => {
     expect(isTrustedAppHelpRoute('/chat')).toBe(true);
     expect(isTrustedAppHelpRoute('https://example.com')).toBe(false);
     expect(getAppHelpTopic('not-a-topic')).toBeNull();
-    expect(() => normalizeAppHelpResponse({ answer: 'No', source: 'nano', topicId: 'not-a-topic' })).toThrow(
+    expect(() => normalizeAppHelpResponse({ answer: 'No', source: 'ai', topicId: 'not-a-topic' })).toThrow(
       'unknown topic'
     );
+  });
+
+  it('forces refusal metadata to contain no topic suggestions', () => {
+    expect(
+      normalizeAppHelpResponse({
+        answer: 'Do not share that.',
+        relatedTopicIds: ['privacy-and-recovery'],
+        source: 'refusal',
+        topicId: 'privacy-and-recovery'
+      })
+    ).toEqual({
+      answer: 'Do not share that.',
+      relatedTopicIds: [],
+      source: 'refusal',
+      topicId: null
+    });
   });
 
   it('canonicalizes only known current app paths', () => {
@@ -109,5 +216,10 @@ describe('appHelp response and route safety', () => {
     expect(redactTradeAgentSecretText(`Help with /otc/order/link/PRIVATECODE#${secret}`)).toBe(
       'Help with /otc/order/link/[redacted-trade-link]#[redacted-access-secret]'
     );
+  });
+
+  it('allows general safety questions that mention secret concepts without including a secret', () => {
+    expect(containsSensitiveAppHelpMaterial('How are private keys kept separate?')).toBe(false);
+    expect(containsSensitiveAppHelpMaterial('Can App Help see my recovery phrase?')).toBe(false);
   });
 });

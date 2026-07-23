@@ -26,6 +26,7 @@ import {
   type PrivacyPortalQuote,
   type PrivacyTokenPair
 } from '../../../lib/privacyPortal';
+import type { AppHelpReason } from '../../../lib/appHelpLaunch';
 import type { ChainWhisperWispStage } from '../../../lib/wispPrivacyBridge';
 
 export type WispRecoveryView = {
@@ -88,6 +89,7 @@ export type TokenSwapPageProps = {
   error: string;
   transactionUrl?: string;
   recovery?: WispRecoveryView;
+  onOpenHelp?: (reason: AppHelpReason) => void;
 };
 
 const TOKEN_ICON_LABELS: Record<string, string> = {
@@ -277,7 +279,8 @@ function WispConversionCard({
   onCurrentDirectionChange,
   legacyExpanded,
   onLegacyExpandedChange,
-  legacyDisabled
+  legacyDisabled,
+  onOpenHelp
 }: {
   recovery: WispRecoveryView;
   walletAddress: string;
@@ -288,6 +291,7 @@ function WispConversionCard({
   legacyExpanded: boolean;
   onLegacyExpandedChange: (open: boolean) => void;
   legacyDisabled: boolean;
+  onOpenHelp?: (reason: AppHelpReason) => void;
 }) {
   const isLegacyActive = recovery.direction === 'legacy-unshield';
   const isToPrivate = recovery.direction === 'shield';
@@ -310,6 +314,13 @@ function WispConversionCard({
       : !hasAesReady
         ? 'Unlock privacy to view and use pWISP.'
         : `Private balances are available for the ${activePortalAccount === 'owner' ? 'owner wallet' : 'ChainWhisper account'}.`;
+  const readinessHelpReason: AppHelpReason | null = !walletAddress
+    ? 'wallet-needed'
+    : !onCotiNetwork
+      ? 'wrong-network'
+      : !hasAesReady
+        ? 'privacy-locked'
+        : null;
 
   return (
     <div className={`swap-card privacy-wisp-card${isLegacyActive ? ' is-legacy-active' : ''}`}>
@@ -443,6 +454,15 @@ function WispConversionCard({
             <p>{privacyDescription}</p>
           </span>
           {!hasAesReady ? <InfoTip label="Private balances are decrypted locally for the selected account." /> : null}
+          {readinessHelpReason && onOpenHelp ? (
+            <button
+              type="button"
+              className="app-help-context-link"
+              onClick={() => onOpenHelp(readinessHelpReason)}
+            >
+              Get help
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -475,7 +495,16 @@ function WispConversionCard({
           View transaction on COTI Explorer <ExternalLink size={13} aria-hidden="true" />
         </a>
       ) : null}
-      {!isLegacyActive && recovery.error ? <p className="error swap-error">{recovery.error}</p> : null}
+      {!isLegacyActive && recovery.error ? (
+        <div className="swap-error-row">
+          <p className="error swap-error">{recovery.error}</p>
+          {onOpenHelp ? (
+            <button type="button" className="app-help-context-link" onClick={() => onOpenHelp('generic-error')}>
+              Get help
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <LegacyWispRecovery
         recovery={recovery}
@@ -605,7 +634,8 @@ export default function TokenSwapPage({
   statusMessage,
   error,
   transactionUrl,
-  recovery
+  recovery,
+  onOpenHelp
 }: TokenSwapPageProps) {
   const [mobileTokenMenuAnchor, setMobileTokenMenuAnchor] = useState<'summary' | 'chip' | null>(null);
   const [legacyExpanded, setLegacyExpanded] = useState(false);
@@ -680,6 +710,13 @@ export default function TokenSwapPage({
       : !hasAesReady
         ? 'Unlock privacy to view private balances.'
         : `Private balances are available for the ${activePortalAccount === 'owner' ? 'owner wallet' : 'ChainWhisper account'}.`;
+  const readinessHelpReason: AppHelpReason | null = !walletAddress
+    ? 'wallet-needed'
+    : !onCotiNetwork
+      ? 'wrong-network'
+      : !hasAesReady
+        ? 'privacy-locked'
+        : null;
 
   const restoreMobileTokenMenuFocus = (anchor: 'summary' | 'chip' | null) => {
     if (!anchor) {
@@ -903,6 +940,7 @@ export default function TokenSwapPage({
               legacyExpanded={legacyExpanded}
               onLegacyExpandedChange={toggleLegacyRecovery}
               legacyDisabled={actionLocked}
+              onOpenHelp={onOpenHelp}
             />
           ) : (
           <div className="swap-card">
@@ -1061,6 +1099,15 @@ export default function TokenSwapPage({
                   <p>{privacyDescription}</p>
                 </span>
                 {!hasAesReady ? <InfoTip label="Private balances are decrypted locally for the selected account." /> : null}
+                {readinessHelpReason && onOpenHelp ? (
+                  <button
+                    type="button"
+                    className="app-help-context-link"
+                    onClick={() => onOpenHelp(readinessHelpReason)}
+                  >
+                    Get help
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -1091,6 +1138,15 @@ export default function TokenSwapPage({
               <div className="swap-error-row">
                 <p className="error swap-error">{error}</p>
                 <button type="button" onClick={onRefresh} disabled={loading}>Retry</button>
+                {onOpenHelp ? (
+                  <button
+                    type="button"
+                    className="app-help-context-link"
+                    onClick={() => onOpenHelp('generic-error')}
+                  >
+                    Get help
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>

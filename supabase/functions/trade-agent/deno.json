@@ -1,0 +1,7 @@
+{
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "check": "deno check index.ts payment-v2.test.ts trade-agent-response.test.ts trade-agent-safety.test.ts index.test.ts",
+    "test": "deno test --allow-env payment-v2.test.ts trade-agent-response.test.ts trade-agent-safety.test.ts index.test.ts"
+  }
+}

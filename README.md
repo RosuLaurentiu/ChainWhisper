@@ -207,15 +207,21 @@ Optional Treasury history variables:
 
 ## Supabase App Help and Trade Agent
 
-`supabase/functions/trade-agent` serves two isolated request paths:
+`supabase/functions/trade-agent` serves isolated free-help and paid-agent request paths:
 
-- `kind: "help"` answers curated, high-confidence product questions locally and refuses unrelated questions without calling OpenAI. Moderate ChainWhisper questions use server-owned help topics with `gpt-5-nano` by default, a 300-token output cap, no tools, and `store: false`.
-- `kind: "quote"` and `kind: "run"` keep the existing paid WISP Trade Agent flow and use `OPENAI_MODEL` (`gpt-5-mini` by default). Paid responses may draft or prefill actions but never execute a trade.
+- `kind: "help"` answers curated, high-confidence product questions locally and refuses unrelated or sensitive questions without calling OpenAI. Broader ChainWhisper questions use server-owned help topics with `gpt-5-nano` by default, a 300-token output cap, no tools, and `store: false`.
+- `kind: "estimate"` returns the non-binding WISP fee label.
+- `kind: "quote"` validates and hashes the exact safe request, then returns a 15-minute HMAC-authenticated quote and an EIP-191 authorization message.
+- `kind: "run"` verifies the signed quote and exact public WISP transfer. Duplicate requests return the cached validated response or a processing/retryable state instead of charging again.
+- `kind: "recover"` uses a fresh wallet signature to recover a completed, processing, or retryable request after a reload or lost HTTP response.
+
+Paid responses may only prefill, copy, or open trusted local data; they never execute a trade. Raw prompts and contexts are not stored in the payment table.
 
 Production Edge Function secrets:
 
 - `OPENAI_API_KEY`
 - `APP_HELP_RATE_LIMIT_SECRET` (a random 32-byte-or-longer secret used only to HMAC client IPs)
+- `TRADE_AGENT_QUOTE_SECRET` (a separate high-entropy secret of at least 32 characters used only to authenticate paid-agent quotes)
 - `APP_HELP_MODEL` (optional, defaults to `gpt-5-nano`)
 - `OPENAI_MODEL` (optional paid-agent override, defaults to `gpt-5-mini`)
 
@@ -223,22 +229,23 @@ Production Edge Function secrets:
 
 Deployment outline:
 
-1. Apply the App Help rate-limit migration.
+1. Apply the App Help rate-limit migration and the additive Trade Agent payment-v2 migration.
 2. Set the Edge Function secrets above.
-3. Deploy `supabase/functions/trade-agent` with JWT verification disabled as configured in `supabase/config.toml`.
+3. Deploy `supabase/functions/trade-agent` with JWT verification disabled as configured in `supabase/config.toml`. This strict v2 function rejects legacy paid clients before they can receive a final fee quote.
+4. Deploy the matching frontend, then audit legacy `pending` or `failed` rows for manual resolution.
 
 ## Supabase Image Storage
 
 Temporary encrypted image messaging uses Supabase assets included in this repo:
 
-- `supabase/migrations/20260417130500_chat_image_storage.sql` creates the public `chat-images` bucket, sets the encrypted image size limit, adds the browser upload policy, and schedules cleanup every 15 minutes.
+- `supabase/migrations/20260420205439_chat_image_storage.sql` creates the public `chat-images` bucket, sets the encrypted image size limit, adds the browser upload policy, and schedules cleanup every 15 minutes.
 - `supabase/functions/chat-image-cleanup` deletes bucket objects older than 24 hours.
 
 The bucket is public for reads because blobs are encrypted client-side before upload. Decryption material is delivered through the encrypted chat message payload, not through Supabase.
 
 Deployment outline:
 
-1. Apply `supabase/migrations/20260417130500_chat_image_storage.sql`.
+1. Apply `supabase/migrations/20260420205439_chat_image_storage.sql`.
 2. Deploy `supabase/functions/chat-image-cleanup`.
 3. Set `VITE_SUPABASE_PROJECT_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
 

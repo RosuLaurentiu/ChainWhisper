@@ -46,4 +46,23 @@ describe('AppHeader mobile navigation', () => {
     expect(markup).not.toContain('ecosystem links menu');
     expect(markup).toContain('id="top-app-navigation-mobile"');
   });
+
+  it('renders the shared App Help utility action on mobile', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav
+        onToggleMobileLinksOpen={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        onOpenHelp={vi.fn()}
+      />
+    );
+
+    expect(markup).toContain('aria-label="Open App Help"');
+    expect(markup).toContain('title="Open App Help"');
+    expect(markup).toMatch(
+      /class="top-header-brand-actions"[\s\S]*class="header-icon-btn top-header-help-btn"/
+    );
+  });
 });

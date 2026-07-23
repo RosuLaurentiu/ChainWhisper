@@ -41,6 +41,36 @@
   height: 18px;
 }
 
+.top-header-help-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.app-help-context-link {
+  min-height: 44px;
+  border: 1px solid rgba(139, 92, 246, 0.48);
+  border-radius: 9px;
+  padding: 8px 12px;
+  background: rgba(139, 92, 246, 0.1);
+  color: #eee9ff;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.app-help-context-link:hover {
+  border-color: rgba(139, 92, 246, 0.82);
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.app-error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 .landing-shell,
 .treasury-shell {
   width: 100%;

@@ -93,6 +93,7 @@ type DirectChatPanelProps = {
   draftingTradeMessageId?: string;
   draftTradeFeeLabel?: string;
   negotiationFeeLabel?: string;
+  pendingTradeAgentRetry?: boolean;
   negotiatingLinkedTrade?: boolean;
   onDraftTradeFromMessage?: (message: ChatMessage) => void;
   onNegotiateLinkedTrade?: (context: LinkedTradeContext) => void;
@@ -180,6 +181,7 @@ function DirectChatPanel({
   draftingTradeMessageId = '',
   draftTradeFeeLabel = 'paid',
   negotiationFeeLabel = 'paid',
+  pendingTradeAgentRetry = false,
   negotiatingLinkedTrade = false,
   onDraftTradeFromMessage,
   onNegotiateLinkedTrade,
@@ -330,6 +332,16 @@ function DirectChatPanel({
       <div className="chat-header">
         <strong>{isSelfChat ? `${activeContactLabel} (self)` : activeContactLabel}</strong>
         <div className="chat-header-actions">
+          {pendingTradeAgentRetry ? (
+            <span
+              className="chat-header-state"
+              role="status"
+              aria-live="polite"
+              title="Reopen the original message or linked order to retry the paid Agent request without another WISP transfer."
+            >
+              Agent retry ready
+            </span>
+          ) : null}
           {activeConversationMuted || activeConversationHidden ? (
             <span className="chat-header-state">
               {activeConversationMuted ? 'Muted' : null}

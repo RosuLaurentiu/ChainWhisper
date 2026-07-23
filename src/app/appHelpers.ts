@@ -1,13 +1,15 @@
 import type { ChatWalletPromptEstimate } from '../lib/chatWalletPromptEstimate';
 import type { TradeAgentFeeQuote } from '../lib/tradeAgent';
 import {
-  formatTokenAmount,
   PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
   type TradeOfferMessagePayload
 } from '../lib/appShared';
 
 export const formatTradeAgentFeeLabel = (quote: TradeAgentFeeQuote): string =>
-  `${formatTokenAmount(BigInt(quote.feeAmountWei), quote.feeTokenDecimals, 4)} ${quote.feeTokenSymbol}`;
+  `${(
+    (BigInt(quote.feeAmountWei) + 10n ** BigInt(quote.feeTokenDecimals) - 1n) /
+    10n ** BigInt(quote.feeTokenDecimals)
+  ).toString()} ${quote.feeTokenSymbol}`;
 
 export const INITIAL_VISIBLE_THREAD_MESSAGE_COUNT = 160;
 export const VISIBLE_THREAD_MESSAGE_CHUNK = 120;

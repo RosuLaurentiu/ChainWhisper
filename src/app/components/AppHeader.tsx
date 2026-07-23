@@ -13,6 +13,7 @@ type AppHeaderProps = {
   soundEnabled?: boolean;
   onToggleMobileLinksOpen: () => void;
   onToggleSound?: () => void;
+  onOpenHelp?: () => void;
   onCloseMobileLinks: () => void;
   debugControl?: ReactNode;
   links?: readonly AppHeaderLink[];
@@ -39,6 +40,7 @@ export default function AppHeader({
   soundEnabled,
   onToggleMobileLinksOpen,
   onToggleSound,
+  onOpenHelp,
   onCloseMobileLinks,
   debugControl,
   links = [],
@@ -126,17 +128,44 @@ export default function AppHeader({
       )}
     </button>
   ) : null;
+  const helpControl = onOpenHelp ? (
+    <button
+      type="button"
+      className="header-icon-btn top-header-help-btn"
+      onClick={onOpenHelp}
+      aria-label="Open App Help"
+      title="Open App Help"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="18"
+        height="18"
+        aria-hidden="true"
+        focusable="false"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          fill="currentColor"
+          d="M12 2.75A9.25 9.25 0 1 0 21.25 12 9.26 9.26 0 0 0 12 2.75Zm0 16.5A7.25 7.25 0 1 1 19.25 12 7.26 7.26 0 0 1 12 19.25Zm0-4.05a1.15 1.15 0 1 0 1.15 1.15A1.15 1.15 0 0 0 12 15.2Zm.1-8.05a3.28 3.28 0 0 0-3.27 2.65l1.96.39a1.29 1.29 0 0 1 1.31-1.04 1.22 1.22 0 0 1 1.3 1.18c0 .65-.34.95-1.08 1.45-.85.58-1.9 1.3-1.9 3v.25h2v-.25c0-.64.34-.94 1.03-1.42.87-.61 1.95-1.36 1.95-3.03a3.2 3.2 0 0 0-3.3-3.18Z"
+        />
+      </svg>
+    </button>
+  ) : null;
+  const mobileHelpControl = isMobileNav ? helpControl : null;
+  const desktopHelpControl = isMobileNav ? null : helpControl;
   const brandActionContent =
-    brandActions || mobileLinksMenuToggleControl || soundToggleControl ? (
+    brandActions || mobileLinksMenuToggleControl || soundToggleControl || mobileHelpControl ? (
       <>
         {brandActions}
         {mobileLinksMenuToggleControl}
         {soundToggleControl}
+        {mobileHelpControl}
       </>
     ) : null;
   const utilityActions =
-    desktopWalletControl || debugControl ? (
+    desktopHelpControl || desktopWalletControl || debugControl ? (
       <>
+        {desktopHelpControl}
         {desktopWalletControl}
         {debugControl}
       </>

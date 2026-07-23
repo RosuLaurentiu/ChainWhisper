@@ -467,7 +467,7 @@
 }
 
 .p2p-agent-mode-toggle button {
-  min-height: 34px;
+  min-height: 44px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -588,7 +588,7 @@
 
 .p2p-agent-quick-actions button,
 .p2p-agent-submit-row button {
-  min-height: 36px;
+  min-height: 44px;
   border: 1px solid rgba(74, 64, 112, 0.62);
   border-radius: 7px;
   background: rgba(13, 12, 22, 0.92);
@@ -610,12 +610,41 @@
   opacity: 0.55;
 }
 
-.p2p-agent-source-link {
-  justify-self: start;
-  min-height: 30px;
-  margin-top: 10px;
-  padding: 0 12px;
+.p2p-agent-related-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.p2p-agent-related-topics button {
+  min-height: 44px;
+  border: 1px solid rgba(139, 92, 246, 0.42);
+  border-radius: 999px;
+  background: rgba(45, 28, 77, 0.72);
+  color: #eee9ff;
+  cursor: pointer;
+  font: inherit;
   font-size: 0.76rem;
+  font-weight: 850;
+  padding: 6px 12px;
+  white-space: normal;
+}
+
+.p2p-agent-related-topics button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.p2p-agent-help-source {
+  color: #b8afd1;
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.p2p-agent-help-source-refusal {
+  color: #f5c2cf;
 }
 
 .p2p-agent-prompt {
@@ -656,7 +685,23 @@
 }
 
 .p2p-agent-error {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0;
+}
+
+.p2p-agent-error > span {
+  color: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.p2p-agent-error .standalone-trade-secondary-btn {
+  flex: 0 0 auto;
+  min-height: 44px;
 }
 
 .p2p-agent-response {
@@ -701,8 +746,30 @@
 
 .p2p-agent-action-card .standalone-trade-secondary-btn {
   flex: 0 0 auto;
-  min-height: 32px;
+  min-height: 44px;
   padding: 0 14px;
+}
+
+.p2p-contextual-help {
+  align-items: center;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.p2p-contextual-help button {
+  min-height: 44px;
+  border: 1px solid rgba(139, 92, 246, 0.48);
+  border-radius: 7px;
+  background: rgba(20, 15, 34, 0.9);
+  color: #eee9ff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+  padding: 0 12px;
 }
 
 .p2p-terminal-history-note {
@@ -3340,7 +3407,7 @@
 }
 
 .p2p-trading-shell-drawer-open .p2p-agent-quick-actions button {
-  min-height: 32px;
+  min-height: 44px;
   padding: 0 10px;
 }
 
@@ -3365,7 +3432,7 @@
 
 .p2p-trading-shell-drawer-open .p2p-agent-submit-row .trade-card-action {
   min-width: 140px;
-  min-height: 34px;
+  min-height: 44px;
 }
 
 @media (min-width: 1280px) {
