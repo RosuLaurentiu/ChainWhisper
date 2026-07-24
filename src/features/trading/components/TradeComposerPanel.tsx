@@ -1,4 +1,11 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEventHandler,
+  type ReactNode
+} from 'react';
 import { flushSync } from 'react-dom';
 import {
   COTI_NETWORK,
@@ -9,6 +16,7 @@ import {
 } from '../../../lib/appShared';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { TradePricingField } from '../../../lib/tradePricing';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 
 export type TradeComposerTokenOption = {
   value: string;
@@ -281,6 +289,23 @@ export function TradeTokenSelect({
     });
     onChange(option.value);
   };
+  const handleScopeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (
+      !moveFocusWithin(event, {
+        orientation: 'horizontal',
+        selector: '[role="tab"]:not(:disabled)'
+      })
+    ) {
+      return;
+    }
+
+    const nextScope = (
+      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
+    )?.dataset.tokenScope as TradeTokenScope | undefined;
+    if (nextScope && nextScope !== activeScope) {
+      setActiveScope(nextScope);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -348,13 +373,20 @@ export function TradeTokenSelect({
               placeholder={`Search ${activeScope} tokens`}
               aria-label="Search trade tokens"
             />
-            <div className="trade-token-select-tabs" role="tablist" aria-label="Token type">
+            <div
+              className="trade-token-select-tabs"
+              role="tablist"
+              aria-label="Token type"
+              onKeyDown={handleScopeKeyDown}
+            >
               <button
                 type="button"
                 className={activeScope === 'public' ? 'active' : undefined}
                 onClick={() => setActiveScope('public')}
                 role="tab"
                 aria-selected={activeScope === 'public'}
+                tabIndex={activeScope === 'public' ? 0 : -1}
+                data-token-scope="public"
               >
                 Public <span>{publicCount}</span>
               </button>
@@ -364,6 +396,8 @@ export function TradeTokenSelect({
                 onClick={() => setActiveScope('private')}
                 role="tab"
                 aria-selected={activeScope === 'private'}
+                tabIndex={activeScope === 'private' ? 0 : -1}
+                data-token-scope="private"
               >
                 Private <span>{privateCount}</span>
               </button>

@@ -18,6 +18,7 @@ import AppErrorBoundary from './app/components/AppErrorBoundary';
 import AppHeader from './app/components/AppHeader';
 import { AppHeaderHomeButton, AppHeaderNavigation } from './app/components/AppHeaderNavigation';
 import ContactsSidebar from './features/chat/components/ContactsSidebar';
+import ChatReadinessState from './features/chat/components/ChatReadinessState';
 import GroupActionControls from './features/groups/components/GroupActionControls';
 import HomePage from './app/components/HomePage';
 import { ActiveJoinCodeList, GroupInviteMenu } from './features/groups/components/GroupInviteTools';
@@ -94,6 +95,7 @@ import { getPreferredBrowserWalletId } from './lib/appStorage';
 import { deriveTradeComposerModel } from './lib/tradeComposer';
 import { type GroupMessageLoadPhase } from './lib/groupSyncPlan';
 import {
+  resolveRestorableAppWalletId,
   type SharedWalletSession,
   type WalletSessionActions
 } from './lib/walletSession';
@@ -532,7 +534,7 @@ export default function App() {
     connectionMethod,
     currentInjectedWalletOption,
     currentWalletKeyRef,
-    disconnectWallet,
+    disconnectWallet: disconnectWalletSession,
     ensureCotiNetwork,
     getConnectedProvider,
     injectedWalletOptions,
@@ -628,7 +630,6 @@ export default function App() {
     closeBurnerPinModal,
     confirmRecoverySavePrompt,
     checkingOwnerRecovery,
-    deleteActiveRecoveryProfile,
     importBurnerWallet,
     initializingBurner,
     isAppWalletRecoveryConfigured,
@@ -682,6 +683,25 @@ export default function App() {
     walletAddress
   });
   resetBurnerSessionRef.current = resetBurnerSession;
+  const disconnectWallet = useCallback(async () => {
+    const appWalletId = resolveRestorableAppWalletId({
+      activeBurnerWalletId: burnerWalletSelectionValue,
+      activeSignerSource,
+      burnerWallets
+    });
+
+    await disconnectWalletSession();
+
+    if (appWalletId) {
+      await switchActiveBurnerWallet(appWalletId);
+    }
+  }, [
+    activeSignerSource,
+    burnerWalletSelectionValue,
+    burnerWallets,
+    disconnectWalletSession,
+    switchActiveBurnerWallet
+  ]);
 
   useEffect(() => {
     if (preferredBrowserWalletId) {
@@ -2659,7 +2679,6 @@ export default function App() {
     isConnected,
     isMobileLayout: isMobileNav,
     lastCopiedKey,
-    deleteActiveRecoveryProfile,
     linkBurnerRecoveryWithWallet,
     onCotiNetwork,
     openChangeBurnerPin,
@@ -2852,7 +2871,15 @@ export default function App() {
     activePage !== 'home' ? (
       <AppHeaderHomeButton onNavigateHome={() => navigateToPage('home')} />
     ) : null;
-  const appHeaderNavigationControl = <AppHeaderNavigation activePage={activePage} onNavigate={navigateToPage} />;
+  const appHeaderNavigationControl = (
+    <AppHeaderNavigation
+      activePage={activePage}
+      onNavigate={(page) => {
+        setMobileLinksOpen(false);
+        navigateToPage(page);
+      }}
+    />
+  );
   const renderAppHeader = ({
     brandActions,
     debugControl: headerDebugControl,
@@ -2880,6 +2907,7 @@ export default function App() {
       debugControl={headerDebugControl}
       links={links}
       brandActions={brandActions}
+      homeControl={headerHomeAction}
       appNavigationControl={appHeaderNavigationControl}
       walletControl={walletControl}
       subtitle={subtitle}
@@ -2895,13 +2923,7 @@ export default function App() {
       Reconnecting...
     </span>
   ) : null;
-  const chatBrandActions =
-    realtimeConnectionIndicator || headerHomeAction ? (
-      <>
-        {realtimeConnectionIndicator}
-        {headerHomeAction}
-      </>
-    ) : null;
+  const chatBrandActions = realtimeConnectionIndicator;
   const walletSessionModals = (
     <WalletSessionModals
       accountFundsAssets={accountFundsAssets}
@@ -3011,17 +3033,9 @@ export default function App() {
           >
           <Suspense fallback={<div className="chat-placeholder">Loading conversation...</div>}>
             {!isConnected ? (
-              <div className="chat-placeholder chat-placeholder-state" role="status" aria-live="polite">
-                <strong>Wallet needed</strong>
-                <p>Use the header wallet control to connect or unlock your ChainWhisper account.</p>
-                <button
-                  type="button"
-                  className="app-help-context-link"
-                  onClick={() => openAppHelp({ origin: 'chat', reason: 'wallet-needed' })}
-                >
-                  Get help
-                </button>
-              </div>
+              <ChatReadinessState
+                onOpenHelp={() => openAppHelp({ origin: 'chat', reason: 'wallet-needed' })}
+              />
             ) : activeGroupId !== null ? (
               <GroupChatPanel
                 activeGroupId={activeGroupId!}
@@ -3263,7 +3277,7 @@ export default function App() {
 
   if (activePage === 'home') {
     return (
-      <div className="app-shell app-shell-landing">
+      <div className="app-shell app-shell-landing app-shell-home">
         {renderAppHeader({ links: COTI_ECOSYSTEM_LINKS })}
         <HomePage
           onLaunchChat={() => navigateToPage('chat')}
@@ -3285,7 +3299,6 @@ export default function App() {
     return (
       <div className="app-shell app-shell-trades">
         {renderAppHeader({
-          brandActions: headerHomeAction,
           walletControl: activeAppWalletControl,
           subtitle: 'OTC Desk',
           showSoundToggle: true
@@ -3319,7 +3332,6 @@ export default function App() {
     return (
       <div className="app-shell app-shell-swap">
         {renderAppHeader({
-          brandActions: headerHomeAction,
           walletControl: activeAppWalletControl,
           subtitle: 'Privacy Portal',
           showSoundToggle: true
@@ -3405,7 +3417,6 @@ export default function App() {
     return (
       <div className="app-shell app-shell-landing">
         {renderAppHeader({
-          brandActions: headerHomeAction,
           subtitle: 'Treasury',
           showSoundToggle: true
         })}
@@ -3424,7 +3435,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell mobile-view-${activeMobileView}`}>
+    <div className={`app-shell app-shell-chat mobile-view-${activeMobileView}`}>
       {renderAppHeader({
         debugControl,
         brandActions: chatBrandActions,

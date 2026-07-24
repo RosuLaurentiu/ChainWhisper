@@ -135,14 +135,17 @@ export const detectWalletSnapCapability = async (
   provider: Eip1193Provider,
   userAgent = getNavigatorUserAgent()
 ): Promise<WalletSnapCapability> => {
-  if (isMetaMaskMobileContext(provider, userAgent)) {
-    return 'unsupported-mobile';
-  }
-
   try {
     await requestPassiveProviderRpc(provider, { method: 'wallet_getSnaps' });
     return 'supported';
   } catch (error) {
+    // A mobile-looking user agent can come from desktop device emulation while
+    // the injected MetaMask extension still supports Snaps. Let the provider
+    // capability win, and only classify genuine mobile MetaMask after its Snap
+    // RPC probe fails.
+    if (isMetaMaskMobileContext(provider, userAgent)) {
+      return 'unsupported-mobile';
+    }
     return isUnsupportedSnapError(error) || (error as { code?: unknown })?.code === 'CW_TIMEOUT'
       ? 'unsupported'
       : 'unknown';

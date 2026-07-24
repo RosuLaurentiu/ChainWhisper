@@ -105,6 +105,7 @@ export default function TradeAgentPanel({
   const visibleMessages = helpMode ? helpMessages : messages;
   const activeLoading = helpMode ? helpLoading : loading;
   const activeMessagesEndRef = helpMode ? helpMessagesEndRef : messagesEndRef;
+  const compactConversation = visibleMessages.length <= 1 && !activeLoading;
   const handleModeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
     const nextMode = getNextTradeAgentPanelMode(mode, event.key);
     if (!nextMode) {
@@ -162,7 +163,9 @@ export default function TradeAgentPanel({
 
         <div
           id="assistant-mode-panel"
-          className="p2p-agent-chat-window"
+          className={`p2p-agent-chat-window${
+            compactConversation ? ' p2p-agent-chat-window-compact' : ''
+          }`}
           role="tabpanel"
           aria-labelledby={helpMode ? 'assistant-mode-help' : 'assistant-mode-trade'}
         >

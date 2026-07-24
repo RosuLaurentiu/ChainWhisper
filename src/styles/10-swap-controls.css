@@ -594,6 +594,38 @@ button.swap-token-chip {
   cursor: help;
 }
 
+.swap-info-tip:focus-visible {
+  border-color: rgba(196, 181, 253, 0.88);
+  outline: 2px solid rgba(196, 181, 253, 0.88);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.16);
+}
+
+.privacy-balance-state.is-locked,
+.privacy-balance-state.is-unavailable {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.privacy-balance-state.is-locked {
+  border-color: rgba(167, 139, 250, 0.38);
+  background: rgba(124, 58, 237, 0.12);
+  color: #d8c9ff;
+}
+
+.privacy-balance-state.is-unavailable {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(71, 75, 91, 0.12);
+  color: #a8a5b5;
+}
+
 .privacy-quote-table {
   overflow: hidden;
   border: 1px solid rgba(76, 72, 105, 0.42);

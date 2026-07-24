@@ -27,16 +27,16 @@ export default function MobileBottomNav({
           Contacts
         </button>
       ) : null}
-      {isConnected ? (
-        <button
-          type="button"
-          className={activeMobileView === 'chat' ? 'active' : undefined}
-          aria-current={activeMobileView === 'chat' ? 'page' : undefined}
-          onClick={() => onSelectView('chat')}
-        >
-          {chatLabel}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className={activeMobileView === 'chat' ? 'active' : undefined}
+        aria-current={activeMobileView === 'chat' ? 'page' : undefined}
+        data-ready={isConnected ? 'true' : 'false'}
+        title={isConnected ? undefined : 'View connection status'}
+        onClick={() => onSelectView('chat')}
+      >
+        {chatLabel}
+      </button>
     </nav>
   );
 }

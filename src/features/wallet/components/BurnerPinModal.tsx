@@ -63,7 +63,7 @@ export default function BurnerPinModal({
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="burner-pin-title">{title}</h3>
-        {error ? <p className="error">{error}</p> : null}
+        {error ? <p className="error" role="alert">{error}</p> : null}
         <input
           value={burnerPinInput}
           name={burnerPinMode === 'set' ? 'pin-new' : 'pin-unlock'}
@@ -85,7 +85,7 @@ export default function BurnerPinModal({
           </button>
           <button
             type="button"
-            className="connect-btn"
+            className="connect-btn wallet-primary-action"
             onClick={() => {
               onSubmit().catch(() => {});
             }}

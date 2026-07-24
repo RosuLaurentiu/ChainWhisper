@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InjectedWalletOption } from '../../../lib/appShared';
 import { COTI_NETWORK } from '../../../lib/appShared';
 import { resetMetaMaskConnectMobileForTests } from '../../../lib/metamaskConnectMobile';
-import { readPassiveBrowserWalletRestore } from './useWalletOnboarding';
+import {
+  buildOwnerPrivacyUnlockOptions,
+  readPassiveBrowserWalletRestore,
+  resolveOwnerPrivacyOnboardingErrorMessage
+} from './useWalletOnboarding';
 
 const mocks = vi.hoisted(() => ({
   createEVMClient: vi.fn(),
@@ -153,5 +157,42 @@ describe('readPassiveBrowserWalletRestore', () => {
     expect(restore).toBeNull();
     expect(mocks.createEVMClient).not.toHaveBeenCalled();
     expect(methods).toEqual(['eth_accounts']);
+  });
+});
+
+describe('owner privacy onboarding errors', () => {
+  it('turns the opaque zero-balance onboarding failure into a funding action', () => {
+    expect(
+      resolveOwnerPrivacyOnboardingErrorMessage('unable to onboard user.', 0n)
+    ).toBe(
+      'Add a small amount of COTI to this owner wallet for privacy onboarding gas, then tap Unlock privacy.'
+    );
+  });
+
+  it('keeps a funded onboarding failure actionable without exposing the SDK error', () => {
+    expect(
+      resolveOwnerPrivacyOnboardingErrorMessage('unable to onboard user.', 1n)
+    ).toBe(
+      'Privacy onboarding could not be completed. Approve both wallet prompts and make sure this owner wallet has enough COTI for gas.'
+    );
+  });
+
+  it('preserves unrelated wallet errors', () => {
+    expect(
+      resolveOwnerPrivacyOnboardingErrorMessage('The wallet request was rejected.', 0n)
+    ).toBe('The wallet request was rejected.');
+  });
+});
+
+describe('owner privacy unlock policy', () => {
+  it('tries Snap first while keeping automatic COTI onboarding fallback enabled', () => {
+    expect(buildOwnerPrivacyUnlockOptions(false)).toEqual({
+      allowUnrecoverableReset: false,
+      forceFreshAes: false,
+      forceLegacyRefresh: false,
+      forceRefresh: false,
+      preferSnapAes: true
+    });
+    expect(buildOwnerPrivacyUnlockOptions(false)).not.toHaveProperty('requireSnapAes');
   });
 });

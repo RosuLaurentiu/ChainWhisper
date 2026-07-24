@@ -5,6 +5,7 @@ import {
   preloadTreasuryPage
 } from '../lazyRoutes';
 import type { AppPage } from '../../shell/routing';
+import { moveFocusWithin } from '../../shared/components/a11y';
 
 const APP_NAV_ITEMS: Array<{ page: AppPage; label: string; onPrefetch?: () => void }> = [
   { page: 'chat', label: 'Chat', onPrefetch: preloadChatPage },
@@ -20,13 +21,18 @@ type AppHeaderNavigationProps = {
 
 export function AppHeaderNavigation({ activePage, onNavigate }: AppHeaderNavigationProps) {
   return (
-    <nav className="app-header-nav" aria-label="ChainWhisper apps">
-      {APP_NAV_ITEMS.map((item) => (
+    <nav
+      className="app-header-nav"
+      aria-label="ChainWhisper apps"
+      onKeyDown={(event) => moveFocusWithin(event, { orientation: 'horizontal' })}
+    >
+      {APP_NAV_ITEMS.map((item, index) => (
         <button
           key={item.page}
           type="button"
           className={activePage === item.page ? 'active' : undefined}
           aria-current={activePage === item.page ? 'page' : undefined}
+          tabIndex={activePage === item.page || (activePage === 'home' && index === 0) ? 0 : -1}
           onClick={() => onNavigate(item.page)}
           onFocus={item.onPrefetch}
           onMouseEnter={item.onPrefetch}
@@ -46,7 +52,7 @@ export function AppHeaderHomeButton({ onNavigateHome }: AppHeaderHomeButtonProps
   return (
     <button
       type="button"
-      className="header-icon-btn"
+      className="header-icon-btn top-header-home-btn"
       onClick={onNavigateHome}
       aria-label="Back to home"
       title="Back to home"

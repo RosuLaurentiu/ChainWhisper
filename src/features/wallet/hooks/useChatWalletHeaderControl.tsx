@@ -1,12 +1,22 @@
-import { useCallback, useMemo, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction
+} from 'react';
 import type { Wallet } from '@coti-io/coti-ethers';
 import type { AccountFundsDirection } from '../components/AccountFundsModal';
 import AppWalletSwitchButton from '../components/AppWalletSwitchButton';
+import RecoveryTransactionStatus from '../components/RecoveryTransactionStatus';
 import WalletHeaderPanel from '../components/WalletHeaderPanel';
 import {
   getProviderErrorMessage,
   parseBurnerWalletStorageState,
   shortenAddress,
+  COTI_NETWORK,
   type BurnerInitMode,
   type BurnerWalletRecord,
   type Eip1193Provider,
@@ -34,6 +44,7 @@ import {
   type AppWalletStorageKind
 } from '../../../lib/walletSession';
 import type { WalletAesHealthState } from '../../../lib/cotiAesUnlock';
+import { findRecoveryTransactionHash } from '../../../lib/recoveryExplorer';
 import type { BrowserWalletSession } from './useWalletOnboarding';
 
 type BrowserWalletActivationOptions = {
@@ -63,7 +74,6 @@ type UseChatWalletHeaderControlArgs = {
   connectionMethod: 'metamask' | null;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
   currentInjectedWalletOption: InjectedWalletOption | null;
-  deleteActiveRecoveryProfile: () => Promise<boolean> | boolean;
   disconnectWallet: () => Promise<void>;
   ensureCotiNetwork: (provider: Eip1193Provider) => Promise<void>;
   getBurnerWalletDisplayName: (walletRecord: BurnerWalletRecord) => string;
@@ -124,7 +134,6 @@ export default function useChatWalletHeaderControl({
   connectionMethod,
   copyWithFeedback,
   currentInjectedWalletOption,
-  deleteActiveRecoveryProfile,
   disconnectWallet,
   ensureCotiNetwork,
   getBurnerWalletDisplayName,
@@ -540,63 +549,69 @@ export default function useChatWalletHeaderControl({
   const activeRecoveryProfileLinked =
     typeof activeRecoveryProfileId === 'number' && Number.isSafeInteger(activeRecoveryProfileId);
   const activeRecoveryProfileIsDefault = activeRecoveryWalletRecord?.recoveryDefault === true;
-  const getMenuAddressButtonClassName = (copyKey: string): string =>
-    isCopyKeyCopied(copyKey)
-      ? 'p2p-wallet-menu-address-button copied'
-      : 'p2p-wallet-menu-address-button';
-  const chatOwnerStateMain: ReactNode = chatOwnerWalletAddress ? (
-    <button
-      type="button"
-      className={getMenuAddressButtonClassName(chatOwnerWalletCopyKey)}
-      onClick={() => {
-        copyWithFeedback(chatOwnerWalletAddress, chatOwnerWalletCopyKey).catch(() => {});
-      }}
-      title={
-        isCopyKeyCopied(chatOwnerWalletCopyKey)
-          ? 'Owner wallet address copied'
-          : `Copy owner wallet address (${chatOwnerWalletAddress})`
-      }
-      aria-label={
-        isCopyKeyCopied(chatOwnerWalletCopyKey)
-          ? 'Owner wallet address copied'
-          : 'Copy owner wallet address'
-      }
-    >
-      <span className="p2p-wallet-copy-address">{shortenAddress(chatOwnerWalletAddress)}</span>
-      {isCopyKeyCopied(chatOwnerWalletCopyKey) ? (
-        <span className="p2p-sr-only" aria-live="polite">Copied</span>
-      ) : null}
-    </button>
-  ) : (
-    'Not connected'
-  );
+  const activeRecoveryTransactionHash =
+    activeRecoveryWalletRecord?.recoveryTransactionHash?.trim() ?? '';
+  const [resolvedRecoveryTransactionHash, setResolvedRecoveryTransactionHash] = useState('');
+  const [resolvingRecoveryTransaction, setResolvingRecoveryTransaction] = useState(false);
+  const effectiveRecoveryTransactionHash =
+    activeRecoveryTransactionHash || resolvedRecoveryTransactionHash;
+  const activeRecoveryTransactionUrl = effectiveRecoveryTransactionHash
+    ? `${COTI_NETWORK.blockExplorerUrl}/tx/${effectiveRecoveryTransactionHash}`
+    : '';
+
+  useEffect(() => {
+    setResolvedRecoveryTransactionHash('');
+  }, [activeRecoveryProfileId, chatOwnerWalletAddress]);
+
+  useEffect(() => {
+    if (
+      !chatWalletMenuOpen ||
+      activeRecoveryTransactionHash ||
+      !activeRecoveryProfileLinked ||
+      !chatOwnerWalletAddress
+    ) {
+      setResolvingRecoveryTransaction(false);
+      return;
+    }
+
+    const abortController = new AbortController();
+    setResolvingRecoveryTransaction(true);
+    findRecoveryTransactionHash({
+      ownerAddress: chatOwnerWalletAddress,
+      profileId: activeRecoveryProfileId,
+      signal: abortController.signal
+    })
+      .then((transactionHash) => {
+        if (transactionHash) {
+          setResolvedRecoveryTransactionHash(transactionHash);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!abortController.signal.aborted) {
+          setResolvingRecoveryTransaction(false);
+        }
+      });
+
+    return () => {
+      abortController.abort();
+    };
+  }, [
+    activeRecoveryProfileId,
+    activeRecoveryProfileLinked,
+    activeRecoveryTransactionHash,
+    chatOwnerWalletAddress,
+    chatWalletMenuOpen
+  ]);
+  const chatOwnerStateMain = chatOwnerWalletAddress
+    ? shortenAddress(chatOwnerWalletAddress)
+    : 'Not connected';
   const chatOwnerStateDetail = chatOwnerWalletAddress
     ? `${chatWarmBrowserWalletLabel} - ${ownerAesReady ? 'Privacy ready' : 'Privacy locked'}`
     : '';
-  const chatAccountStateMain: ReactNode = chatAccountWalletAddress ? (
-    <button
-      type="button"
-      className={getMenuAddressButtonClassName(chatWalletAddressCopyKey)}
-      onClick={() => {
-        copyWithFeedback(chatAccountWalletAddress, chatWalletAddressCopyKey).catch(() => {});
-      }}
-      title={
-        isCopyKeyCopied(chatWalletAddressCopyKey)
-          ? 'ChainWhisper account address copied'
-          : `Copy ChainWhisper account address (${chatAccountWalletAddress})`
-      }
-      aria-label={
-        isCopyKeyCopied(chatWalletAddressCopyKey)
-          ? 'ChainWhisper account address copied'
-          : 'Copy ChainWhisper account address'
-      }
-    >
-      <span className="p2p-wallet-copy-address">{shortenAddress(chatAccountWalletAddress)}</span>
-      {isCopyKeyCopied(chatWalletAddressCopyKey) ? (
-        <span className="p2p-sr-only" aria-live="polite">Copied</span>
-      ) : null}
-    </button>
-  ) : appWalletSetupStorageKind === 'owner-aes-current-owner'
+  const chatAccountStateMain = chatAccountWalletAddress
+    ? shortenAddress(chatAccountWalletAddress)
+    : appWalletSetupStorageKind === 'owner-aes-current-owner'
       ? 'Saved locally'
       : appWalletSetupStorageKind === 'owner-aes-other-owner'
         ? 'Saved for another owner'
@@ -605,6 +620,41 @@ export default function useChatWalletHeaderControl({
             appWalletSetupStorageKind === 'legacy-vault'
           ? 'PIN-only saved'
       : 'Not set up';
+  const chatAccountWalletRecord =
+    burnerWallets.find(
+      (walletRecord) =>
+        walletRecord.address?.toLowerCase() === chatAccountWalletAddress.toLowerCase()
+    ) ?? burnerWallets[0];
+  const chatAccountWalletSelector =
+    chatAccountWalletRecord?.id ?? chatAccountWalletRecord?.address ?? chatAccountWalletAddress;
+  const canSelectChatAccount =
+    chatWalletIsAppWallet ||
+    Boolean(chatAccountWalletSelector) ||
+    hasSavedBurnerWallet;
+  const canSelectOwnerWallet =
+    chatOwnerWalletDirectActive ||
+    Boolean(browserWalletSession?.walletId || chatPreferredBrowserWalletOption?.id);
+  const selectChatAccount = () => {
+    setChatWalletMenuOpen(false);
+    if (chatWalletIsAppWallet) {
+      return;
+    }
+    if (chatAccountWalletSelector) {
+      Promise.resolve(handleSwitchActiveBurnerWallet(chatAccountWalletSelector)).catch(() => {});
+      return;
+    }
+    beginBurnerPinFlow('stored').catch(() => {});
+  };
+  const selectOwnerWallet = () => {
+    setChatWalletMenuOpen(false);
+    if (chatOwnerWalletDirectActive) {
+      return;
+    }
+    activateBrowserWalletSession(
+      browserWalletSession?.walletId ?? chatPreferredBrowserWalletOption?.id,
+      { preparePrivacy: true }
+    ).catch(() => {});
+  };
   const chatAccountStateDetail = chatAccountWalletAddress
     ? [
         activeRecoveryProfileIsDefault ? 'Default' : 'Active',
@@ -697,16 +747,32 @@ export default function useChatWalletHeaderControl({
                 </div>
               </div>
             ) : null}
-            <div className="p2p-wallet-account-card primary">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={chatWalletIsAppWallet}
+              aria-label={chatWalletIsAppWallet ? 'ChainWhisper account selected' : 'Use ChainWhisper account'}
+              className={`p2p-wallet-account-card wallet-selector${chatWalletIsAppWallet ? ' active' : ''}`}
+              onClick={selectChatAccount}
+              disabled={!canSelectChatAccount || initializingBurner}
+            >
               <small>ChainWhisper account</small>
               <strong>{chatAccountStateMain}</strong>
               {chatAccountStateDetail ? <em>{chatAccountStateDetail}</em> : null}
-            </div>
-            <div className="p2p-wallet-account-card">
+            </button>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={chatOwnerWalletDirectActive}
+              aria-label={chatOwnerWalletDirectActive ? 'Owner wallet selected' : 'Use owner wallet'}
+              className={`p2p-wallet-account-card wallet-selector${chatOwnerWalletDirectActive ? ' active' : ''}`}
+              onClick={selectOwnerWallet}
+              disabled={!canSelectOwnerWallet || connectingMethod !== null}
+            >
               <small>Owner wallet</small>
               <strong>{chatOwnerStateMain}</strong>
               {chatOwnerStateDetail ? <em>{chatOwnerStateDetail}</em> : null}
-            </div>
+            </button>
             {chatWalletIsAppWallet ? (
               <button
                 type="button"
@@ -925,56 +991,29 @@ export default function useChatWalletHeaderControl({
               </button>
             ) : null}
             {chatWalletIsAppWallet && activeRecoveryProfileLinked ? (
-              <button
-                type="button"
-                className="p2p-wallet-action danger"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  Promise.resolve(deleteActiveRecoveryProfile()).catch(() => {});
-                }}
-                disabled={initializingBurner || recoveringAppWallet || !chatOwnerWalletAddress}
-                role="menuitem"
-                title="Remove this account from owner-wallet recovery"
-              >
-                Remove recovery
-              </button>
+              <RecoveryTransactionStatus
+                profileId={activeRecoveryProfileId}
+                resolving={resolvingRecoveryTransaction}
+                transactionUrl={activeRecoveryTransactionUrl || undefined}
+              />
             ) : null}
           </div>
 
-          {appWalletMenuVisibility.showPinOnlyFallback || appWalletMenuVisibility.showOwnerDirectFallback ? (
+          {appWalletMenuVisibility.showPinOnlyFallback ? (
             <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section muted">
               <span>Advanced</span>
-              {appWalletMenuVisibility.showPinOnlyFallback ? (
-                <button
-                  type="button"
-                  className="p2p-wallet-action"
-                  onClick={() => {
-                    setChatWalletMenuOpen(false);
-                    beginBurnerPinFlow('stored').catch(() => {});
-                  }}
-                  disabled={initializingBurner || burnerStorageBlocked}
-                  role="menuitem"
-                >
-                  Use PIN-only account
-                </button>
-              ) : null}
-              {appWalletMenuVisibility.showOwnerDirectFallback ? (
-                <button
-                  type="button"
-                  className={chatOwnerWalletDirectActive ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                  onClick={() => {
-                    setChatWalletMenuOpen(false);
-                    activateBrowserWalletSession(
-                      browserWalletSession?.walletId ?? chatPreferredBrowserWalletOption?.id,
-                      { preparePrivacy: true }
-                    ).catch(() => {});
-                  }}
-                  disabled={connectingMethod !== null}
-                  role="menuitem"
-                >
-                  {chatOwnerWalletDirectActive ? 'Owner wallet active' : 'Use owner wallet'}
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="p2p-wallet-action"
+                onClick={() => {
+                  setChatWalletMenuOpen(false);
+                  beginBurnerPinFlow('stored').catch(() => {});
+                }}
+                disabled={initializingBurner || burnerStorageBlocked}
+                role="menuitem"
+              >
+                Use PIN-only account
+              </button>
             </div>
           ) : null}
 

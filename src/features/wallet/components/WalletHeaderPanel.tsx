@@ -1,6 +1,7 @@
-import { useId, type ReactNode } from 'react';
-import { LockKeyhole, RefreshCw } from 'lucide-react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { LockKeyhole, RefreshCw, Wallet } from 'lucide-react';
 import { resolveWalletStatusTone, type WalletStatusTone } from '../../../lib/walletSession';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 
 type WalletHeaderPanelProps = {
   action?: ReactNode;
@@ -51,6 +52,9 @@ export default function WalletHeaderPanel({
 }: WalletHeaderPanelProps) {
   const resolvedStatusTone = statusTone ?? resolveWalletStatusTone(statusLabel ?? '');
   const menuId = useId();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const hasStatusAction = Boolean(statusActionLabel && onStatusAction);
   const hasStatusText = Boolean(modeLabel || statusLabel);
   const normalizedStatusActionLabel = statusActionLabel?.toLowerCase() ?? '';
@@ -73,13 +77,45 @@ export default function WalletHeaderPanel({
     </>
   );
 
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined;
+    }
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      menuRef.current
+        ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled), button:not(:disabled), a[href]')
+        ?.focus();
+    });
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!panelRef.current?.contains(event.target as Node | null)) {
+        onToggleMenu();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [menuOpen, onToggleMenu]);
+
   return (
     <div
+      ref={panelRef}
       className={busy ? 'p2p-wallet-panel wallet-header-panel is-wallet-busy' : 'p2p-wallet-panel wallet-header-panel'}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && menuOpen) {
           event.preventDefault();
           onToggleMenu();
+          window.requestAnimationFrame(() => triggerRef.current?.focus());
+          return;
+        }
+        if (menuOpen && menuRef.current?.contains(event.target as Node)) {
+          moveFocusWithin(event, {
+            orientation: 'vertical',
+            selector: '[role="menuitem"]:not(:disabled), button:not(:disabled), a[href]'
+          });
         }
       }}
     >
@@ -132,6 +168,7 @@ export default function WalletHeaderPanel({
 
       <div className="p2p-wallet-menu-wrap">
         <button
+          ref={triggerRef}
           type="button"
           className={menuOpen ? 'p2p-wallet-menu-trigger active' : 'p2p-wallet-menu-trigger'}
           onClick={onToggleMenu}
@@ -141,10 +178,11 @@ export default function WalletHeaderPanel({
           aria-controls={menuOpen ? menuId : undefined}
           aria-label={menuOpen ? `Close ${menuLabel} menu` : `Open ${menuLabel} menu`}
         >
-          <span>{menuLabel}</span>
+          <Wallet className="p2p-wallet-menu-icon" size={18} strokeWidth={2} aria-hidden="true" />
+          <span className="p2p-wallet-menu-label">{menuLabel}</span>
         </button>
         {menuOpen ? (
-          <div id={menuId} className="p2p-wallet-menu" role="menu">
+          <div ref={menuRef} id={menuId} className="p2p-wallet-menu" role="menu" aria-label={menuLabel}>
             {menu}
           </div>
         ) : null}

@@ -20,10 +20,12 @@ import {
 import {
   buildWalletAesHealthState,
   clearCotiAesUnlockRequest,
-  clearFallbackAesSessionOnboardInfo
+  clearFallbackAesSessionOnboardInfo,
+  getOrRecoverAesForWalletResult,
+  type PrivacyUnlockResult
 } from '../../../lib/cotiAesUnlock';
 import type { WalletAesHealthState } from '../../../lib/cotiAesUnlock';
-import { getCotiSnapOwnerAesKeyResult, getCotiSnapOwnerAesStatusMessage } from '../../../lib/cotiSnap';
+import { getCotiSnapOwnerAesStatusMessage } from '../../../lib/cotiSnap';
 import {
   logMobileWalletDiagnostic,
   maskWalletForDiagnostics
@@ -79,12 +81,60 @@ type BrowserWalletActivationOptions = {
   preparePrivacy?: boolean;
 };
 
+export const buildOwnerPrivacyUnlockOptions = (refreshMismatch: boolean) => ({
+  allowUnrecoverableReset: refreshMismatch,
+  forceFreshAes: refreshMismatch,
+  forceLegacyRefresh: refreshMismatch,
+  forceRefresh: refreshMismatch,
+  preferSnapAes: true
+});
+
 const PRIVACY_PROMPT_AFTER_CONNECT_DELAY_MS = 450;
 
 const waitForPrivacyPromptAfterConnect = (): Promise<void> =>
   new Promise((resolve) => {
     window.setTimeout(resolve, PRIVACY_PROMPT_AFTER_CONNECT_DELAY_MS);
   });
+
+type PrivacyFallbackReason = Extract<
+  PrivacyUnlockResult,
+  { status: 'fallback-unavailable' }
+>['reason'];
+
+const getPrivacyFallbackUnavailableMessage = (reason: PrivacyFallbackReason): string => {
+  if (reason === 'not-installed') {
+    return getCotiSnapOwnerAesStatusMessage('snap-not-installed');
+  }
+  if (reason === 'missing-aes') {
+    return getCotiSnapOwnerAesStatusMessage('snap-missing-aes');
+  }
+  if (reason === 'unrecoverable') {
+    return 'Privacy recovery data is incomplete. Retry privacy setup to create a fresh owner key.';
+  }
+  if (reason === 'disabled') {
+    return 'Automatic privacy onboarding is unavailable for this wallet.';
+  }
+  return getCotiSnapOwnerAesStatusMessage(reason);
+};
+
+export const resolveOwnerPrivacyOnboardingErrorMessage = (
+  message: string,
+  balanceWei: bigint | null
+): string => {
+  const normalized = message.trim().toLowerCase();
+  const looksLikeOnboardingFundingFailure =
+    normalized.includes('unable to onboard user') ||
+    normalized.includes('insufficient funds') ||
+    normalized.includes('account balance is 0');
+
+  if (!looksLikeOnboardingFundingFailure) {
+    return message || 'Owner privacy onboarding was not completed.';
+  }
+  if (balanceWei !== null && balanceWei <= 0n) {
+    return 'Add a small amount of COTI to this owner wallet for privacy onboarding gas, then tap Unlock privacy.';
+  }
+  return 'Privacy onboarding could not be completed. Approve both wallet prompts and make sure this owner wallet has enough COTI for gas.';
+};
 
 export type PassiveBrowserWalletRestoreResult = {
   address: string;
@@ -520,13 +570,27 @@ export function useWalletOnboarding({
           })
         );
       }
-      const snapAesResult = await getCotiSnapOwnerAesKeyResult(promptProvider, address);
-      if (snapAesResult.status !== 'ready') {
-        throw new Error(getCotiSnapOwnerAesStatusMessage(snapAesResult.status));
+      let unlockResult: PrivacyUnlockResult;
+      try {
+        unlockResult = await getOrRecoverAesForWalletResult({
+          ...buildOwnerPrivacyUnlockOptions(refreshMismatch),
+          provider: promptProvider,
+          signer,
+          walletAddress: address
+        });
+      } catch (privacyError) {
+        const providerMessage = getProviderErrorMessage(
+          privacyError,
+          'Owner privacy onboarding was not completed.'
+        );
+        const ownerBalanceWei = await browserProvider.getBalance(address).catch(() => null);
+        throw new Error(resolveOwnerPrivacyOnboardingErrorMessage(providerMessage, ownerBalanceWei));
+      }
+      if (unlockResult.status !== 'ready') {
+        throw new Error(getPrivacyFallbackUnavailableMessage(unlockResult.reason));
       }
 
-      const onboardInfo = mergeOnboardInfo(signer.getUserOnboardInfo(), { aesKey: snapAesResult.aesKey } as OnboardInfo);
-      signer.setUserOnboardInfo(onboardInfo);
+      const onboardInfo = unlockResult.onboardInfo;
       const aesKey = onboardInfo.aesKey ?? '';
       if (!aesKey) {
         throw new Error('Privacy unlock was not returned during onboarding.');
@@ -562,6 +626,32 @@ export function useWalletOnboarding({
       return onboardAddressAes(address, provider, options);
     },
     [onboardAddressAes]
+  );
+
+  const preparePrivacyAfterConnect = useCallback(
+    async (
+      address: string,
+      provider: Eip1193Provider,
+      options?: BrowserWalletActivationOptions
+    ): Promise<OnboardInfo | null> => {
+      if (!options?.preparePrivacy) {
+        return null;
+      }
+
+      try {
+        return await onboardAddressAesAfterConnect(address, provider, options);
+      } catch (privacyError) {
+        setError(
+          getProviderErrorMessage(
+            privacyError,
+            'Owner privacy onboarding was not completed.'
+          )
+        );
+        setOnboardStatus('Signature required');
+        return null;
+      }
+    },
+    [onboardAddressAesAfterConnect, setError]
   );
 
   const connectAndOnboard = useCallback(
@@ -671,7 +761,7 @@ export function useWalletOnboarding({
           walletLabel
         });
         setStatus(`Connected (${walletLabel})`);
-        const onboardInfo = options?.preparePrivacy ? await onboardAddressAesAfterConnect(selected, activeWalletProvider, options) : null;
+        const onboardInfo = await preparePrivacyAfterConnect(selected, activeWalletProvider, options);
         schedulePostConnectSync(selected);
         return onboardInfo;
       } catch (connectionError) {
@@ -689,8 +779,8 @@ export function useWalletOnboarding({
     },
     [
       injectedWalletOptions,
-      onboardAddressAesAfterConnect,
       preferredInjectedWalletOption,
+      preparePrivacyAfterConnect,
       resetBrowserPrivacySessionForWalletChange,
       schedulePostConnectSync,
       setBrowserWalletSession,
@@ -760,9 +850,7 @@ export function useWalletOnboarding({
               walletLabel: injectedOption.label
             });
             setStatus(`Connected (${injectedOption.label})`);
-            const onboardInfo = options?.preparePrivacy
-              ? await onboardAddressAesAfterConnect(selected, injectedOption.provider, options)
-              : null;
+            const onboardInfo = await preparePrivacyAfterConnect(selected, injectedOption.provider, options);
             schedulePostConnectSync(selected);
             return onboardInfo;
           }
@@ -782,9 +870,7 @@ export function useWalletOnboarding({
             source: 'metamask-connect-mobile'
           });
           setStatus(`Connected (${mobileSession.walletLabel})`);
-          const onboardInfo = options?.preparePrivacy
-            ? await onboardAddressAesAfterConnect(selected, mobileSession.provider, options)
-            : null;
+          const onboardInfo = await preparePrivacyAfterConnect(selected, mobileSession.provider, options);
           schedulePostConnectSync(selected);
           return onboardInfo;
         }
@@ -854,9 +940,7 @@ export function useWalletOnboarding({
         };
         setBrowserWalletSession(nextSession);
         setStatus(`Connected (${activeWalletLabel})`);
-        const onboardInfo = options?.preparePrivacy
-          ? await onboardAddressAesAfterConnect(selected, activeWalletProvider, options)
-          : null;
+        const onboardInfo = await preparePrivacyAfterConnect(selected, activeWalletProvider, options);
 
         schedulePostConnectSync(selected);
         return onboardInfo;
@@ -871,7 +955,7 @@ export function useWalletOnboarding({
     },
     [
       connectAndOnboard,
-      onboardAddressAesAfterConnect,
+      preparePrivacyAfterConnect,
       resetBrowserPrivacySessionForWalletChange,
       schedulePostConnectSync,
       setBrowserWalletSession,
@@ -884,7 +968,9 @@ export function useWalletOnboarding({
     setError('');
     setConnectingWalletLabel('');
 
-    resetBurnerSessionRef.current();
+    if (activeSignerSourceRef.current !== 'metamask') {
+      resetBurnerSessionRef.current();
+    }
 
     const provider = getConnectedProvider();
 

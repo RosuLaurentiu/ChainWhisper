@@ -11,6 +11,7 @@ import {
   resolveOwnerLocalAccountAutoConnectAttemptKey,
   resolveOwnerRecoveryAutoConnectAttemptKey,
   resolveOwnerRecoveryWalletState,
+  resolveRestorableAppWalletId,
   resolveWalletConnectionPrimaryAction,
   resolveWalletBlockedActionLabel,
   resolveWalletHeaderActionVisibility,
@@ -24,6 +25,48 @@ import {
   resolveWalletReadiness,
   type SharedWalletSession
 } from './walletSession';
+
+describe('resolveRestorableAppWalletId', () => {
+  const loadedWallets = [
+    {
+      id: 'app-wallet-1',
+      address: '0x0000000000000000000000000000000000000001',
+      privateKey: 'loaded-private-key'
+    },
+    {
+      id: 'app-wallet-2',
+      address: '0x0000000000000000000000000000000000000002',
+      privateKey: 'another-loaded-private-key'
+    }
+  ];
+
+  it('returns the previously active loaded app wallet after owner disconnect', () => {
+    expect(
+      resolveRestorableAppWalletId({
+        activeBurnerWalletId: 'app-wallet-2',
+        activeSignerSource: 'metamask',
+        burnerWallets: loadedWallets
+      })
+    ).toBe('app-wallet-2');
+  });
+
+  it('does not restore when disconnecting the app wallet itself or when its key is locked', () => {
+    expect(
+      resolveRestorableAppWalletId({
+        activeBurnerWalletId: 'app-wallet-1',
+        activeSignerSource: 'burner',
+        burnerWallets: loadedWallets
+      })
+    ).toBe('');
+    expect(
+      resolveRestorableAppWalletId({
+        activeBurnerWalletId: 'app-wallet-1',
+        activeSignerSource: 'metamask',
+        burnerWallets: loadedWallets.map((walletRecord) => ({ ...walletRecord, privateKey: '' }))
+      })
+    ).toBe('');
+  });
+});
 
 describe('resolveWalletReadiness', () => {
   it('standardizes disconnected, wrong-network, locked, and ready states', () => {

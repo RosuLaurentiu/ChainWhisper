@@ -1,3 +1,5 @@
+import type { KeyboardEventHandler } from 'react';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 import type { TradeEntryMode } from '../hooks/useP2PTradeRoute';
 
 type DeskNavigationPath = '/otc' | '/otc/agent' | '/otc/desk' | '/otc/orders';
@@ -68,8 +70,31 @@ export function TradeEntryModeTabs({
   activeTradeMode,
   onOpenTradeEntryMode
 }: TradeEntryModeTabsProps) {
+  const handleModeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (
+      !moveFocusWithin(event, {
+        orientation: 'horizontal',
+        selector: '[role="tab"]:not(:disabled)'
+      })
+    ) {
+      return;
+    }
+
+    const nextMode = (
+      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
+    )?.dataset.tradeMode as TradeEntryMode | undefined;
+    if (nextMode && nextMode !== activeTradeMode) {
+      onOpenTradeEntryMode(nextMode);
+    }
+  };
+
   return (
-    <div className="p2p-trade-mode-tabs" role="tablist" aria-label="Trade mode">
+    <div
+      className="p2p-trade-mode-tabs"
+      role="tablist"
+      aria-label="Trade mode"
+      onKeyDown={handleModeKeyDown}
+    >
       {tradeEntryModes.map(([mode, label]) => (
         <button
           key={mode}
@@ -78,6 +103,8 @@ export function TradeEntryModeTabs({
           onClick={() => onOpenTradeEntryMode(mode)}
           role="tab"
           aria-selected={activeTradeMode === mode}
+          tabIndex={activeTradeMode === mode ? 0 : -1}
+          data-trade-mode={mode}
         >
           {label}
         </button>

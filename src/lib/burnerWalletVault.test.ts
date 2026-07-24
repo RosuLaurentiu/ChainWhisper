@@ -151,8 +151,16 @@ describe('app wallet vault helpers', () => {
 
   it('saves and loads owner-AES local app wallet vaults', async () => {
     const ownerAddress = '0x3333333333333333333333333333333333333333';
+    const recoveryTransactionHash = `0x${'1'.repeat(64)}`;
+    const vault = makeVault();
+    vault.wallets[1] = {
+      ...vault.wallets[1],
+      recoveryProfileId: 2,
+      recoveryProfileVersion: '1',
+      recoveryTransactionHash
+    };
 
-    await saveOwnerAesBurnerWalletVault(makeVault(), ownerAddress, 'owner-aes-key');
+    await saveOwnerAesBurnerWalletVault(vault, ownerAddress, 'owner-aes-key');
 
     const storageState = parseBurnerWalletStorageState();
     expect(storageState.kind).toBe('owner-aes');
@@ -161,6 +169,7 @@ describe('app wallet vault helpers', () => {
     const restored = await loadBurnerWalletVaultFromOwnerAesStorage(ownerAddress, 'owner-aes-key');
     expect(restored.activeWalletId).toBe('wallet-b');
     expect(restored.wallets[1]?.privateKey).toBe('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+    expect(restored.wallets[1]?.recoveryTransactionHash).toBe(recoveryTransactionHash);
     await expect(loadBurnerWalletVaultFromOwnerAesStorage(ownerAddress, 'wrong-key')).rejects.toThrow();
     await expect(
       loadBurnerWalletVaultFromOwnerAesStorage('0x4444444444444444444444444444444444444444', 'owner-aes-key')

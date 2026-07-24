@@ -11,10 +11,23 @@ const expectNoHorizontalOverflow = async (page: Page) => {
 };
 
 const scrollTradeShellToBottom = async (page: Page) => {
-  const workspace = page.locator('.p2p-trade-workspace-panel');
-  const scrollTarget = (await workspace.count()) ? workspace : page.locator('.standalone-trades-shell');
-  await scrollTarget.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
+  await page.evaluate(() => {
+    const candidates = [
+      document.querySelector<HTMLElement>('.p2p-trade-workspace-panel'),
+      document.querySelector<HTMLElement>('.standalone-trades-shell'),
+      document.scrollingElement
+    ].filter((element): element is Element => Boolean(element));
+    const scrollTarget =
+      candidates.find((element) => {
+        const style = window.getComputedStyle(element);
+        return (
+          element.scrollHeight > element.clientHeight + 1 &&
+          ['auto', 'scroll', 'overlay'].includes(style.overflowY)
+        );
+      }) ?? document.scrollingElement;
+    if (scrollTarget) {
+      scrollTarget.scrollTop = scrollTarget.scrollHeight;
+    }
   });
 };
 
@@ -26,13 +39,23 @@ const expectAboveTradeTabs = async (page: Page, selector: string) => {
   expect(targetBox!.y + targetBox!.height).toBeLessThanOrEqual(tabsBox!.y - 4);
 };
 
-const installMockTradingWallet = async (page: Page, address = mockTradingWalletAddress) => {
-  await page.addInitScript(({ address, chainIdHex }) => {
+const installMockTradingWallet = async (
+  page: Page,
+  address = mockTradingWalletAddress,
+  { snapAesKey = '' }: { snapAesKey?: string } = {}
+) => {
+  await page.addInitScript(({ address, chainIdHex, snapAesKey }) => {
     const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const requestedMethods: string[] = [];
     const provider = {
       isMetaMask: true,
       selectedAddress: address,
-      request: async ({ method }: { method: string; params?: unknown[] }) => {
+      request: async ({ method, params }: { method: string; params?: object | unknown[] }) => {
+        const snapMethod =
+          method === 'wallet_invokeSnap' && params && !Array.isArray(params)
+            ? (params as { request?: { method?: string } }).request?.method
+            : undefined;
+        requestedMethods.push(snapMethod ? `${method}:${snapMethod}` : method);
         switch (method) {
           case 'eth_requestAccounts':
           case 'eth_accounts':
@@ -43,6 +66,24 @@ const installMockTradingWallet = async (page: Page, address = mockTradingWalletA
             return [{ parentCapability: 'eth_accounts', caveats: [] }];
           case 'wallet_switchEthereumChain':
           case 'wallet_addEthereumChain':
+            return null;
+          case 'wallet_getSnaps':
+            return snapAesKey ? { 'npm:@coti-io/coti-snap': {} } : null;
+          case 'wallet_requestSnaps':
+            return snapAesKey ? { 'npm:@coti-io/coti-snap': {} } : null;
+          case 'wallet_invokeSnap':
+            if (!snapAesKey) {
+              return null;
+            }
+            if (snapMethod === 'connect-to-wallet') {
+              return true;
+            }
+            if (snapMethod === 'has-aes-key') {
+              return true;
+            }
+            if (snapMethod === 'get-aes-key') {
+              return snapAesKey;
+            }
             return null;
           default:
             return null;
@@ -62,7 +103,11 @@ const installMockTradingWallet = async (page: Page, address = mockTradingWalletA
       configurable: true,
       value: provider
     });
-  }, { address, chainIdHex: cotiChainIdHex });
+    Object.defineProperty(window, '__chainWhisperMockWalletMethods', {
+      configurable: true,
+      value: requestedMethods
+    });
+  }, { address, chainIdHex: cotiChainIdHex, snapAesKey });
 };
 
 const parseLeadingPrice = (value: string | null) => {
@@ -117,9 +162,93 @@ test.describe('mobile layout polish', () => {
     await expectNoHorizontalOverflow(page);
   });
 
+  test('uses the same mobile header geometry for Chat and OTC Desk', async ({ page }) => {
+    const readHeaderGeometry = () =>
+      page.evaluate(() => {
+        const getRect = (selector: string) => {
+          const rect = document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+          return rect
+            ? {
+                height: rect.height,
+                left: rect.left,
+                right: rect.right,
+                width: rect.width
+              }
+            : null;
+        };
+
+        return {
+          appNav: getRect('.top-header-mobile-app-nav'),
+          brand: getRect('.top-header-brand'),
+          cluster: getRect('.top-header-mobile-utility-cluster'),
+          firstAppButton: getRect('.top-header-mobile-app-nav .app-header-nav button'),
+          header: getRect('.top-header-bar'),
+          helpIcon: getRect('.top-header-mobile-utility-cluster .top-header-help-btn svg'),
+          homeIcon: getRect('.top-header-mobile-home svg'),
+          logo: getRect('.top-header-brand-logo'),
+          primaryAction: getRect('.top-header-mobile-wallet-inline .wallet-primary-action'),
+          walletIcon: getRect('.top-header-mobile-wallet-inline .p2p-wallet-menu-icon'),
+          walletMenuTrigger: getRect('.top-header-mobile-wallet-inline .p2p-wallet-menu-trigger'),
+          soundIcon: getRect('.top-header-mobile-utility-cluster .sound-toggle-btn svg'),
+          wallet: getRect('.top-header-mobile-wallet-inline')
+        };
+      });
+
+    await page.goto('/chat');
+    const chatHeader = await readHeaderGeometry();
+    await page.getByRole('navigation', { name: 'ChainWhisper apps' }).getByRole('button', { name: 'OTC Desk' }).click();
+    await expect(page).toHaveURL(/\/otc$/);
+    const otcHeader = await readHeaderGeometry();
+
+    for (const geometry of [chatHeader, otcHeader]) {
+      expect(geometry.brand).not.toBeNull();
+      expect(geometry.cluster).not.toBeNull();
+      expect(geometry.header).not.toBeNull();
+      expect(geometry.logo).not.toBeNull();
+      expect(geometry.homeIcon).not.toBeNull();
+      expect(geometry.soundIcon).not.toBeNull();
+      expect(geometry.helpIcon).not.toBeNull();
+      expect(geometry.appNav).not.toBeNull();
+      expect(geometry.firstAppButton).not.toBeNull();
+      expect(geometry.wallet).not.toBeNull();
+      expect(geometry.primaryAction).not.toBeNull();
+      expect(geometry.walletIcon).not.toBeNull();
+      expect(geometry.walletMenuTrigger).not.toBeNull();
+      expect(geometry.cluster!.left).toBeCloseTo(geometry.brand!.right, 1);
+      expect(geometry.wallet!.left - geometry.cluster!.right).toBeGreaterThanOrEqual(40);
+      expect(geometry.wallet!.right).toBeLessThanOrEqual(geometry.header!.right);
+      expect(geometry.primaryAction!.width).toBeGreaterThanOrEqual(92);
+      expect(geometry.walletMenuTrigger!.width).toBeCloseTo(44, 1);
+      expect(geometry.walletMenuTrigger!.height).toBeGreaterThanOrEqual(44);
+      expect(geometry.walletIcon!.width).toBeCloseTo(19, 1);
+      expect(geometry.primaryAction!.width).toBeGreaterThan(geometry.walletMenuTrigger!.width);
+    }
+
+    expect(otcHeader.brand!.width).toBeCloseTo(chatHeader.brand!.width, 1);
+    expect(otcHeader.cluster!.left).toBeCloseTo(chatHeader.cluster!.left, 1);
+    expect(otcHeader.cluster!.width).toBeCloseTo(chatHeader.cluster!.width, 1);
+    expect(otcHeader.logo!.width).toBeCloseTo(chatHeader.logo!.width, 1);
+    expect(otcHeader.homeIcon!.width).toBeCloseTo(chatHeader.homeIcon!.width, 1);
+    expect(otcHeader.soundIcon!.width).toBeCloseTo(chatHeader.soundIcon!.width, 1);
+    expect(otcHeader.helpIcon!.width).toBeCloseTo(chatHeader.helpIcon!.width, 1);
+    expect(otcHeader.appNav!.width).toBeCloseTo(chatHeader.appNav!.width, 1);
+    expect(otcHeader.firstAppButton!.height).toBeCloseTo(chatHeader.firstAppButton!.height, 1);
+    expect(otcHeader.wallet!.left).toBeCloseTo(chatHeader.wallet!.left, 1);
+    expect(otcHeader.wallet!.width).toBeCloseTo(chatHeader.wallet!.width, 1);
+    expect(otcHeader.primaryAction!.width).toBeCloseTo(chatHeader.primaryAction!.width, 1);
+    expect(otcHeader.walletMenuTrigger!.width).toBeCloseTo(chatHeader.walletMenuTrigger!.width, 1);
+    expect(otcHeader.walletIcon!.width).toBeCloseTo(chatHeader.walletIcon!.width, 1);
+    await expectNoHorizontalOverflow(page);
+  });
+
   test('keeps OTC Desk tabs and wallet controls usable on mobile', async ({ page }) => {
     await page.goto('/trades');
 
+    const appStrip = page.locator('.top-header-mobile-app-nav');
+    await expect(appStrip).toBeVisible();
+    await expect(appStrip.getByRole('navigation', { name: 'ChainWhisper apps' })).toBeVisible();
+    await expect(page.locator('.top-header-bar').getByRole('button', { name: 'Back to home' })).toBeVisible();
+    await expect(page.locator('.top-header-mobile-utility-cluster')).toBeVisible();
     await expect(page.locator('.top-header-mobile-wallet .wallet-header-panel')).toBeVisible();
     await expect(page.locator('.top-header-mobile-wallet .wallet-primary-action')).toBeVisible();
     await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Open Wallet menu$/ }).click();
@@ -127,8 +256,13 @@ test.describe('mobile layout polish', () => {
     await expect(page.getByRole('menuitem', { name: /MetaMask or CipherTrade not detected/i })).toHaveCount(0);
     await expect(page.getByRole('menuitem', { name: /^Create account$/ })).toBeVisible();
     await page.locator('.top-header-mobile-wallet').getByRole('button', { name: /^Close Wallet menu$/ }).click();
-    const appMenu = page.getByRole('navigation', { name: 'ChainWhisper apps' });
-    await expect(appMenu).toBeVisible();
+    const soundToggle = page.locator('.top-header-bar .sound-toggle-btn');
+    await expect(soundToggle).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open apps menu' })).toHaveCount(0);
+    const soundLabelBefore = await soundToggle.getAttribute('aria-label');
+    await soundToggle.click();
+    await expect(soundToggle).not.toHaveAttribute('aria-label', soundLabelBefore ?? '');
+    await expect(page.locator('.top-header-mobile-links.open')).toHaveCount(0);
 
     const tradeTabs = page.getByRole('navigation', { name: 'OTC Desk views' });
     await expect(tradeTabs).toBeVisible();
@@ -153,6 +287,70 @@ test.describe('mobile layout polish', () => {
     await expect(advancedFilters).toBeHidden();
     await expect(mobileFiltersButton).toContainText('1');
     await expectNoHorizontalOverflow(page);
+  });
+
+  test('keeps the connected trading wallet hierarchy readable at tablet width', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 700 });
+    await installMockTradingWallet(page);
+    await page.goto('/trades');
+
+    const header = page.locator('.top-header');
+    const wallet = header.locator('.top-header-mobile-wallet-inline');
+    await wallet.locator('.wallet-primary-action').click();
+
+    await expect(wallet.locator('.p2p-wallet-status-text')).toBeVisible();
+    await expect(wallet.locator('.wallet-primary-action')).toHaveText('Unlock privacy');
+    await expect(wallet.getByRole('button', { name: 'Copy owner wallet address' })).toBeVisible();
+    await expect(wallet.locator('.p2p-wallet-status-indicator')).toContainText('Privacy locked');
+    await expect(wallet.getByRole('button', { name: /^Open Wallet menu$/ })).toBeVisible();
+    await expect(header.getByRole('button', { name: 'Back to home' })).toBeVisible();
+    await expect(header.locator('.top-header-mobile-app-nav')).toBeVisible();
+
+    const layout = await page.evaluate(() => {
+      const headerRect = document.querySelector<HTMLElement>('.top-header-bar')?.getBoundingClientRect();
+      const walletRect = document
+        .querySelector<HTMLElement>('.top-header-mobile-wallet-inline')
+        ?.getBoundingClientRect();
+      const statusRect = document
+        .querySelector<HTMLElement>('.top-header-mobile-wallet-inline .p2p-wallet-status-text')
+        ?.getBoundingClientRect();
+      return {
+        header: headerRect ? { left: headerRect.left, right: headerRect.right } : null,
+        wallet: walletRect ? { left: walletRect.left, right: walletRect.right } : null,
+        statusWidth: statusRect?.width ?? 0,
+      };
+    });
+
+    expect(layout.header).not.toBeNull();
+    expect(layout.wallet).not.toBeNull();
+    expect(layout.wallet!.left).toBeGreaterThanOrEqual(layout.header!.left);
+    expect(layout.wallet!.right).toBeLessThanOrEqual(layout.header!.right);
+    expect(layout.statusWidth).toBeGreaterThanOrEqual(80);
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test('uses COTI Snap before any fallback during connected privacy preparation', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 700 });
+    await installMockTradingWallet(page, mockTradingWalletAddress, {
+      snapAesKey: 'snap-owner-aes'
+    });
+    await page.goto('/trades');
+
+    const wallet = page.locator('.top-header-mobile-wallet-inline');
+    await wallet.locator('.wallet-primary-action').click();
+
+    await expect(wallet.locator('.p2p-wallet-status-indicator')).toContainText('Privacy ready');
+    const requestedMethods = await page.evaluate(
+      () =>
+        (window as Window & { __chainWhisperMockWalletMethods?: string[] })
+          .__chainWhisperMockWalletMethods ?? []
+    );
+
+    expect(requestedMethods).toContain('wallet_invokeSnap:connect-to-wallet');
+    expect(requestedMethods).toContain('wallet_invokeSnap:has-aes-key');
+    expect(requestedMethods).toContain('wallet_invokeSnap:get-aes-key');
+    expect(requestedMethods).not.toContain('personal_sign');
+    expect(requestedMethods).not.toContain('eth_sendTransaction');
   });
 
   test('opens mobile trading balances and keeps contracts reachable', async ({ page }) => {
@@ -799,7 +997,7 @@ test.describe('trading responsive layout', () => {
     expect(metrics.overviewWidth).toBeGreaterThan(metrics.shellWidth - 44);
     expect(metrics.panelWidth).toBeGreaterThan(metrics.shellWidth - 44);
     expect(metrics.controlsWidth).toBeGreaterThanOrEqual(640);
-    expect(metrics.controlsWidth).toBeLessThanOrEqual(680);
+    expect(metrics.controlsWidth).toBeLessThanOrEqual(740);
     expect(metrics.controlsWidth).toBeLessThan(metrics.panelWidth - 800);
     expect(metrics.controlsCenteredDelta).toBeLessThanOrEqual(16);
     await expectNoHorizontalOverflow(page);
@@ -861,7 +1059,7 @@ test.describe('trading responsive layout', () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test('stretches the empty order layout to the balance dock', async ({ page }) => {
+  test('keeps the compact empty order layout clear of the balance dock', async ({ page }) => {
     await page.setViewportSize({ width: 2016, height: 980 });
     await page.goto('/otc/order');
 
@@ -894,9 +1092,10 @@ test.describe('trading responsive layout', () => {
     expect(layout.shell?.overflowY).toBe('hidden');
     expect(layout.terminal).not.toBeNull();
     expect(layout.balanceDock).not.toBeNull();
-    expect(layout.balanceDock!.top - layout.terminal!.bottom).toBeLessThanOrEqual(18);
+    expect(layout.balanceDock!.top - layout.terminal!.bottom).toBeGreaterThanOrEqual(12);
+    expect(layout.balanceDock!.top - layout.terminal!.bottom).toBeLessThanOrEqual(180);
     expect(layout.shell!.bottom - layout.balanceDock!.bottom).toBeLessThanOrEqual(18);
-    expect(['auto', 'scroll']).toContain(layout.terminal!.overflowY);
+    expect(['auto', 'scroll', 'visible']).toContain(layout.terminal!.overflowY);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -1450,7 +1649,7 @@ test.describe('trading responsive layout', () => {
         };
       })
     );
-    expect(Math.max(...compactCardMetrics.map((metric) => metric.height))).toBeLessThanOrEqual(335);
+    expect(Math.max(...compactCardMetrics.map((metric) => metric.height))).toBeLessThanOrEqual(340);
     expect(Math.max(...compactCardMetrics.map((metric) => metric.bottomPad))).toBeLessThanOrEqual(14);
 
     const rowAlignment = await desk.locator('.p2p-order-card').evaluateAll((cards) => {

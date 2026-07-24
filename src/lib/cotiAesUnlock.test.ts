@@ -256,6 +256,82 @@ describe('getOrRecoverAesForWallet', () => {
     expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
   });
 
+  it('checks Snap before a cached fallback AES key when Snap is preferred', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer('cached-fallback-aes');
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'ready', aesKey: 'snap-aes' });
+
+    await expect(
+      getOrRecoverAesForWalletResult({
+        preferSnapAes: true,
+        provider: activeProvider,
+        requireSnapAes: true,
+        signer: activeSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({
+      status: 'ready',
+      onboardInfo: { aesKey: 'snap-aes' },
+      source: 'snap'
+    });
+
+    expect(getCotiSnapAesKeyResult).toHaveBeenCalledWith(activeProvider, snapContext);
+    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
+  });
+
+  it('reuses the cached fallback only after preferred Snap is unsupported', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer('cached-fallback-aes');
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported' });
+
+    await expect(
+      getOrRecoverAesForWalletResult({
+        preferSnapAes: true,
+        provider: activeProvider,
+        requireSnapAes: true,
+        signer: activeSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({
+      status: 'ready',
+      onboardInfo: { aesKey: 'cached-fallback-aes' },
+      source: 'cache'
+    });
+
+    expect(getCotiSnapAesKeyResult).toHaveBeenCalledWith(activeProvider, snapContext);
+    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
+  });
+
+  it('checks preferred Snap before a stored fallback session AES key', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer();
+    storeFallbackAesSessionOnboardInfo(
+      walletAddress,
+      activeProvider,
+      { aesKey: 'stored-fallback-aes' } as OnboardInfo
+    );
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({
+      status: 'ready',
+      aesKey: 'snap-aes'
+    });
+
+    await expect(
+      getOrRecoverAesForWalletResult({
+        preferSnapAes: true,
+        provider: activeProvider,
+        signer: activeSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({
+      status: 'ready',
+      onboardInfo: { aesKey: 'snap-aes' },
+      source: 'snap'
+    });
+
+    expect(getCotiSnapAesKeyResult).toHaveBeenCalledWith(activeProvider, snapContext);
+    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
+  });
+
   it('falls back to signer recovery only when Snap has no AES', async () => {
     const activeProvider = provider();
     const activeSigner = signer();
@@ -380,7 +456,7 @@ describe('getOrRecoverAesForWallet', () => {
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
   });
 
-  it('checks Snap before the fallback AES signature when fallback is needed', async () => {
+  it('checks preferred Snap before the fallback AES signature when Snap has no AES', async () => {
     const calls: string[] = [];
     const activeProvider = provider();
     const activeSigner = signer();
@@ -394,12 +470,33 @@ describe('getOrRecoverAesForWallet', () => {
     });
 
     await getOrRecoverAesForWalletResult({
+      preferSnapAes: true,
       provider: activeProvider,
       signer: activeSigner as never,
       walletAddress
     });
 
     expect(calls).toEqual(['snap', 'fallback']);
+  });
+
+  it('stops without opening the fallback signer flow when the Snap request is rejected', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer();
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'rejected' });
+
+    await expect(
+      getOrRecoverAesForWalletResult({
+        preferSnapAes: true,
+        provider: activeProvider,
+        signer: activeSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({
+      status: 'fallback-unavailable',
+      reason: 'rejected'
+    });
+
+    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
   });
 
   it('suppresses the duplicate COTI onboard console line while keeping the thrown error', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -16,6 +16,7 @@ import {
   type TreasuryChartPoint,
   type TreasurySnapshot
 } from '../treasuryData';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 
 const REFRESH_INTERVAL_MS = 60_000;
 const SECONDS_PER_DAY = 86_400;
@@ -106,6 +107,16 @@ type DotProps = {
   color?: string;
   cx?: number;
   cy?: number;
+};
+
+const moveAndActivateTreasuryControl = (event: KeyboardEvent<HTMLDivElement>) => {
+  if (!moveFocusWithin(event, { orientation: 'both' })) {
+    return;
+  }
+  const focusedControl = document.activeElement;
+  if (focusedControl instanceof HTMLButtonElement && event.currentTarget.contains(focusedControl)) {
+    focusedControl.click();
+  }
 };
 
 function formatCompact(value: number, maximumFractionDigits = 0): string {
@@ -697,8 +708,13 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
 
         <div className="treasury-toolbar">
           <div className="treasury-toolbar-group">
-            <span className="treasury-toolbar-label">Metric</span>
-            <div className="treasury-pill-group">
+            <span id="treasury-metric-label" className="treasury-toolbar-label">Metric</span>
+            <div
+              className="treasury-pill-group"
+              role="group"
+              aria-labelledby="treasury-metric-label"
+              onKeyDown={moveAndActivateTreasuryControl}
+            >
               {Object.entries(METRIC_OPTIONS).map(([key, option]) => (
                 <button
                   key={key}
@@ -706,6 +722,8 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
                   className={key === metric ? 'treasury-pill-button active' : 'treasury-pill-button'}
                   onClick={() => setMetric(key as MetricKey)}
                   type="button"
+                  aria-pressed={key === metric}
+                  tabIndex={key === metric ? 0 : -1}
                 >
                   {option.label}
                 </button>
@@ -714,14 +732,21 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
           </div>
 
           <div className="treasury-toolbar-group treasury-toolbar-group-align-end">
-            <span className="treasury-toolbar-label">Window</span>
-            <div className="treasury-pill-group treasury-pill-group-compact">
+            <span id="treasury-window-label" className="treasury-toolbar-label">Window</span>
+            <div
+              className="treasury-pill-group treasury-pill-group-compact"
+              role="group"
+              aria-labelledby="treasury-window-label"
+              onKeyDown={moveAndActivateTreasuryControl}
+            >
               {TIMEFRAME_OPTIONS.map((option) => (
                 <button
                   key={option.key}
                   className={option.key === timeframe ? 'treasury-pill-button active' : 'treasury-pill-button'}
                   onClick={() => setTimeframe(option.key)}
                   type="button"
+                  aria-pressed={option.key === timeframe}
+                  tabIndex={option.key === timeframe ? 0 : -1}
                 >
                   {option.label}
                 </button>
@@ -856,12 +881,21 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
           <div className="treasury-section-head treasury-section-head-compact">
             <div>
               <p className="landing-eyebrow">History</p>
-              <h2 className="treasury-section-title">Recent snapshots</h2>
+              <h2 id="treasury-history-title" className="treasury-section-title">Recent snapshots</h2>
             </div>
             <div className="treasury-chip">{recentRows.length} rows</div>
           </div>
 
-          <div className="treasury-table-wrap">
+          <p id="treasury-table-scroll-hint" className="treasury-table-scroll-hint">
+            Swipe or use the arrow keys to view every column.
+          </p>
+          <div
+            className="treasury-table-wrap"
+            role="region"
+            aria-labelledby="treasury-history-title"
+            aria-describedby="treasury-table-scroll-hint"
+            tabIndex={0}
+          >
             <table className="treasury-table">
               <thead>
                 <tr>

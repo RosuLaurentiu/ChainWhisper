@@ -310,6 +310,63 @@ export function useBurnerWallet({
     [sessionOnboardInfo]
   );
 
+  const persistRecoverySaveMetadata = useCallback(
+    async ({
+      makeDefault,
+      ownerAddress,
+      ownerAesKey,
+      profileId,
+      profileVersion,
+      transactionHash,
+      vault
+    }: {
+      makeDefault: boolean;
+      ownerAddress: string;
+      ownerAesKey: string;
+      profileId: number;
+      profileVersion: string;
+      transactionHash: string;
+      vault: BurnerWalletVault;
+    }) => {
+      const activeWalletRecord =
+        vault.wallets.find((walletRecord) => walletRecord.id === vault.activeWalletId) ?? vault.wallets[0];
+      if (!activeWalletRecord) {
+        return;
+      }
+
+      const nextVault = await createBurnerWalletVault(
+        vault.wallets.map((walletRecord) =>
+          walletRecord.id === activeWalletRecord.id
+            ? {
+                ...walletRecord,
+                recoveryDefault: makeDefault,
+                recoveryProfileId: profileId,
+                recoveryProfileVersion: profileVersion,
+                recoveryTransactionHash: transactionHash
+              }
+            : makeDefault
+              ? { ...walletRecord, recoveryDefault: false }
+              : walletRecord
+        ),
+        vault.activeWalletId
+      );
+      const nextActiveWallet =
+        nextVault.wallets.find((walletRecord) => walletRecord.id === nextVault.activeWalletId) ??
+        nextVault.wallets[0];
+
+      setBurnerWallets(nextVault.wallets);
+      setActiveBurnerWalletId(nextVault.activeWalletId);
+      if (nextActiveWallet) {
+        burnerRecordRef.current = nextActiveWallet;
+      }
+      if (isBurnerStorageAvailable()) {
+        await saveOwnerAesBurnerWalletVault(nextVault, ownerAddress, ownerAesKey);
+        setSavedBurnerWalletCount(nextVault.wallets.length);
+      }
+    },
+    []
+  );
+
   const buildBurnerRecord = useCallback(
     async (
       mode: BurnerInitMode,
@@ -937,11 +994,27 @@ export function useBurnerWallet({
       const saveRecovery = async () => {
         setRecoveringAppWallet(true);
         setStatus('Saving ChainWhisper account recovery...');
-        await saveAppWalletRecoveryProfile({
+        const result = await saveAppWalletRecoveryProfile({
           expectedOwnerAddress: ownerAddress,
           makeDefault: recoverySaveChoice.makeDefault,
           ownerAesKey,
           signer: ownerSigner,
+          vault: recoveryVault
+        });
+        const receipt = result.receipt as { hash?: unknown; transactionHash?: unknown };
+        const transactionHash =
+          typeof receipt.hash === 'string'
+            ? receipt.hash
+            : typeof receipt.transactionHash === 'string'
+              ? receipt.transactionHash
+              : '';
+        await persistRecoverySaveMetadata({
+          makeDefault: result.verifiedProfile.defaultProfile === true,
+          ownerAddress,
+          ownerAesKey,
+          profileId: result.profileId,
+          profileVersion: result.verifiedProfile.version.toString(),
+          transactionHash,
           vault: recoveryVault
         });
         setStatus('ChainWhisper account recovery saved and verified.');
@@ -960,7 +1033,14 @@ export function useBurnerWallet({
         setRecoveringAppWallet(false);
       }
     },
-    [attachActiveBurnerOnboardInfoToVault, requestRecoverySaveConfirmation, runWalletTransactionFlow, setError, setStatus]
+    [
+      attachActiveBurnerOnboardInfoToVault,
+      persistRecoverySaveMetadata,
+      requestRecoverySaveConfirmation,
+      runWalletTransactionFlow,
+      setError,
+      setStatus
+    ]
   );
 
   const initializeOwnerAesBurnerWallet = useCallback(
@@ -1143,11 +1223,27 @@ export function useBurnerWallet({
         setRecoveringAppWallet(true);
         setStatus('Saving ChainWhisper account recovery...');
         const { ownerAddress, ownerAesKey, signer: ownerSigner } = await getOwnerSignerForRecovery();
-        await saveAppWalletRecoveryProfile({
+        const result = await saveAppWalletRecoveryProfile({
           expectedOwnerAddress: ownerAddress,
           makeDefault: recoverySaveChoice.makeDefault,
           ownerAesKey,
           signer: ownerSigner,
+          vault: recoveryVault
+        });
+        const receipt = result.receipt as { hash?: unknown; transactionHash?: unknown };
+        const transactionHash =
+          typeof receipt.hash === 'string'
+            ? receipt.hash
+            : typeof receipt.transactionHash === 'string'
+              ? receipt.transactionHash
+              : '';
+        await persistRecoverySaveMetadata({
+          makeDefault: result.verifiedProfile.defaultProfile === true,
+          ownerAddress,
+          ownerAesKey,
+          profileId: result.profileId,
+          profileVersion: result.verifiedProfile.version.toString(),
+          transactionHash,
           vault: recoveryVault
         });
         setStatus('ChainWhisper account recovery saved and verified.');
@@ -1173,6 +1269,7 @@ export function useBurnerWallet({
       attachActiveBurnerOnboardInfoToVault,
       burnerWallets,
       getOwnerSignerForRecovery,
+      persistRecoverySaveMetadata,
       requestRecoverySaveConfirmation,
       runWalletTransactionFlow,
       setError,
@@ -1836,7 +1933,8 @@ export function useBurnerWallet({
         mnemonic: undefined,
         recoveryDefault: walletRecord.recoveryDefault,
         recoveryProfileId: walletRecord.recoveryProfileId,
-        recoveryProfileVersion: walletRecord.recoveryProfileVersion
+        recoveryProfileVersion: walletRecord.recoveryProfileVersion,
+        recoveryTransactionHash: walletRecord.recoveryTransactionHash
       }))
     );
     setActiveBurnerWalletId('');

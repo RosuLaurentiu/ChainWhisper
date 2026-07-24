@@ -1,4 +1,6 @@
+import type { KeyboardEventHandler } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 import {
   MY_TRADES_EMPTY_PREVIEW_GROUPS,
   renderP2PEmptyState,
@@ -105,15 +107,38 @@ export default function TradeMyTradesSection({
   const emptyLabel = hasActiveDeskFilters
     ? selectedMyTradeGroup.emptySearchMessage
     : selectedMyTradeGroup.emptyTitle;
+  const handleGroupKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (
+      !moveFocusWithin(event, {
+        orientation: 'horizontal',
+        selector: '[role="tab"]:not(:disabled)'
+      })
+    ) {
+      return;
+    }
+
+    const nextGroupId = (
+      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
+    )?.dataset.tradeGroup;
+    const nextGroup = myTradeGroupOptions.find((group) => group.id === nextGroupId);
+    if (nextGroup && nextGroup.id !== selectedMyTradeGroup.id) {
+      onSelectGroup(nextGroup.id);
+    }
+  };
 
   return (
-    <section className="standalone-trades-section p2p-my-trades-section">
-      <div className="standalone-trades-section-head p2p-my-trades-section-head">
-        <div>
-          <p className="landing-eyebrow">OTC Desk</p>
-          <h2>My trades</h2>
-        </div>
-        {walletAddress ? (
+    <section
+      className={`standalone-trades-section p2p-my-trades-section${
+        walletAddress ? '' : ' p2p-my-trades-section-disconnected'
+      }`}
+      aria-label={walletAddress ? 'My trades' : 'Connect your trading wallet'}
+    >
+      {walletAddress ? (
+        <div className="standalone-trades-section-head p2p-my-trades-section-head">
+          <div>
+            <p className="landing-eyebrow">OTC Desk</p>
+            <h2>My trades</h2>
+          </div>
           <button
             type="button"
             className="standalone-trade-secondary-btn p2p-my-trades-refresh-btn"
@@ -122,8 +147,8 @@ export default function TradeMyTradesSection({
           >
             {loadingMyTrades ? 'Refreshing...' : 'Refresh'}
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {!walletAddress ? <DisconnectedMyTradesState /> : null}
       {myTradesError
         ? renderP2PEmptyState(
@@ -143,7 +168,12 @@ export default function TradeMyTradesSection({
         : null}
       {walletAddress && (!myTradesError || myTradesCount > 0) && (!loadingMyTrades || myTradesCount > 0) ? (
         <div className="p2p-wallet-trade-groups">
-          <div className="p2p-wallet-trade-switcher" role="tablist" aria-label="My trade groups">
+          <div
+            className="p2p-wallet-trade-switcher"
+            role="tablist"
+            aria-label="My trade groups"
+            onKeyDown={handleGroupKeyDown}
+          >
             {myTradeGroupOptions.map((group) => (
               <button
                 key={group.id}
@@ -152,6 +182,8 @@ export default function TradeMyTradesSection({
                 onClick={() => onSelectGroup(group.id)}
                 role="tab"
                 aria-selected={group.id === selectedMyTradeGroup.id}
+                tabIndex={group.id === selectedMyTradeGroup.id ? 0 : -1}
+                data-trade-group={group.id}
                 aria-label={`${group.label}: ${group.count}`}
               >
                 <span className="p2p-wallet-trade-tab-text">

@@ -1,4 +1,5 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 
 export type AppWalletSwitchOption = {
   active?: boolean;
@@ -30,18 +31,52 @@ export default function AppWalletSwitchButton({
   title = 'Switch saved app wallet'
 }: AppWalletSwitchButtonProps) {
   const menuId = useId();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined;
+    }
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    });
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node | null)) {
+        onToggleMenu();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [menuOpen, onToggleMenu]);
 
   return (
     <div
+      ref={rootRef}
       className="p2p-app-wallet-switch-menu-wrap"
       onKeyDown={(event) => {
         if (event.key === 'Escape' && menuOpen) {
           event.preventDefault();
           onToggleMenu();
+          window.requestAnimationFrame(() => triggerRef.current?.focus());
+          return;
+        }
+        if (menuOpen && menuRef.current?.contains(event.target as Node)) {
+          moveFocusWithin(event, {
+            orientation: 'vertical',
+            selector: '[role="menuitem"]:not(:disabled)'
+          });
         }
       }}
     >
       <button
+        ref={triggerRef}
         type="button"
         className={menuOpen ? 'p2p-wallet-icon-action app-wallet-switch-button active' : 'p2p-wallet-icon-action app-wallet-switch-button'}
         onClick={onToggleMenu}
@@ -61,7 +96,7 @@ export default function AppWalletSwitchButton({
       </button>
 
       {menuOpen ? (
-        <div id={menuId} className="p2p-app-wallet-switch-menu" role="menu" aria-label={menuLabel}>
+        <div ref={menuRef} id={menuId} className="p2p-app-wallet-switch-menu" role="menu" aria-label={menuLabel}>
           <span>{menuLabel}</span>
           {options.map((option) => (
             <button

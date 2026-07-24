@@ -57,12 +57,17 @@ export default function BurnerImportModal({
           placeholder="Account mnemonic phrase or 0x private key"
           aria-label="Import ChainWhisper account"
         />
-        {error ? <p className="error">{error}</p> : null}
+        {error ? <p className="error" role="alert">{error}</p> : null}
         <div className="modal-actions">
           <button type="button" className="connect-btn" onClick={onClose} disabled={initializingBurner}>
             Cancel
           </button>
-          <button type="button" className="connect-btn" onClick={onImport} disabled={initializingBurner}>
+          <button
+            type="button"
+            className="connect-btn wallet-primary-action"
+            onClick={onImport}
+            disabled={initializingBurner}
+          >
             {initializingBurner ? 'Importing...' : 'Import'}
           </button>
         </div>

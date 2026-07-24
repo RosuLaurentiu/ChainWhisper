@@ -64,6 +64,11 @@ export const createBurnerWalletVault = async (
       recoveryProfileVersion:
         typeof walletRecord.recoveryProfileVersion === 'string' && /^\d+$/.test(walletRecord.recoveryProfileVersion)
           ? walletRecord.recoveryProfileVersion
+          : undefined,
+      recoveryTransactionHash:
+        typeof walletRecord.recoveryTransactionHash === 'string' &&
+        /^0x[a-fA-F0-9]{64}$/.test(walletRecord.recoveryTransactionHash)
+          ? walletRecord.recoveryTransactionHash
           : undefined
     });
   }
@@ -112,7 +117,12 @@ export const upsertBurnerWalletInVault = async (
               recoveryProfileVersion:
                 typeof walletRecord.recoveryProfileVersion === 'string' && /^\d+$/.test(walletRecord.recoveryProfileVersion)
                   ? walletRecord.recoveryProfileVersion
-                  : existingWalletRecord.recoveryProfileVersion
+                  : existingWalletRecord.recoveryProfileVersion,
+              recoveryTransactionHash:
+                typeof walletRecord.recoveryTransactionHash === 'string' &&
+                /^0x[a-fA-F0-9]{64}$/.test(walletRecord.recoveryTransactionHash)
+                  ? walletRecord.recoveryTransactionHash
+                  : existingWalletRecord.recoveryTransactionHash
             }
           : existingWalletRecord
       ),
@@ -141,6 +151,11 @@ export const upsertBurnerWalletInVault = async (
     recoveryProfileVersion:
       typeof walletRecord.recoveryProfileVersion === 'string' && /^\d+$/.test(walletRecord.recoveryProfileVersion)
         ? walletRecord.recoveryProfileVersion
+        : undefined,
+    recoveryTransactionHash:
+      typeof walletRecord.recoveryTransactionHash === 'string' &&
+      /^0x[a-fA-F0-9]{64}$/.test(walletRecord.recoveryTransactionHash)
+        ? walletRecord.recoveryTransactionHash
         : undefined
   };
 

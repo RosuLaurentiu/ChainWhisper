@@ -1,3 +1,6 @@
+import { ArrowRightLeft, ArrowUpRight, Landmark, MessageCircle, ShieldCheck } from 'lucide-react';
+import AppFavicon from '../../assets/favicon.png';
+
 type HomePageProps = {
   onLaunchChat: () => void;
   onOpenSwap: () => void;
@@ -9,13 +12,6 @@ type HomePageProps = {
   onOpenTrades: () => void;
   isConnected: boolean;
 };
-
-const CORE_APPS = [
-  { label: 'Chat', description: 'Private direct and group messaging' },
-  { label: 'OTC Desk', description: 'Peer offers, escrow settlement, and private orders' },
-  { label: 'Privacy Portal', description: 'Official COTI public and private token bridges' },
-  { label: 'Treasury', description: 'Read-only COTI and gCOTI analytics' }
-] as const;
 
 export default function HomePage({
   onLaunchChat,
@@ -66,15 +62,15 @@ export default function HomePage({
           </p>
         </div>
 
-        <aside className="landing-hero-aside landing-core-panel">
-          <span className="landing-highlight-label">Core apps</span>
-          <div className="landing-core-list">
-            {CORE_APPS.map((app) => (
-              <div key={app.label} className="landing-core-row">
-                <strong>{app.label}</strong>
-                <span>{app.description}</span>
-              </div>
-            ))}
+        <aside className="landing-hero-aside landing-brand-panel" aria-hidden="true">
+          <div className="landing-brand-orbit">
+            <span className="landing-brand-orbit-ring landing-brand-orbit-ring-outer" />
+            <span className="landing-brand-orbit-ring landing-brand-orbit-ring-inner" />
+            <span className="landing-brand-orbit-dot landing-brand-orbit-dot-one" />
+            <span className="landing-brand-orbit-dot landing-brand-orbit-dot-two" />
+            <div className="landing-brand-mark">
+              <img src={AppFavicon} alt="" />
+            </div>
           </div>
         </aside>
       </section>
@@ -90,7 +86,12 @@ export default function HomePage({
 
         <div className="landing-module-grid">
           <article className="landing-module-card landing-module-card-primary">
-            <span className="landing-module-kicker">Messaging</span>
+            <div className="landing-module-card-header">
+              <span className="landing-module-icon" aria-hidden="true">
+                <MessageCircle />
+              </span>
+              <span className="landing-module-kicker">Messaging</span>
+            </div>
             <h3>Encrypted Chat</h3>
             <p>Direct messages, group chat, reactions, replies, tips, invites, and private coordination.</p>
             <button
@@ -101,11 +102,17 @@ export default function HomePage({
               onPointerEnter={onPrefetchChat}
             >
               Open Chat
+              <ArrowUpRight aria-hidden="true" />
             </button>
           </article>
 
           <article className="landing-module-card">
-            <span className="landing-module-kicker">Trading</span>
+            <div className="landing-module-card-header">
+              <span className="landing-module-icon" aria-hidden="true">
+                <ArrowRightLeft />
+              </span>
+              <span className="landing-module-kicker">Trading</span>
+            </div>
             <h3>OTC Desk</h3>
             <p>Browse peer offers, create escrow orders, share direct links, and manage private orders.</p>
             <button
@@ -116,11 +123,17 @@ export default function HomePage({
               onPointerEnter={onPrefetchTrades}
             >
               Open OTC Desk
+              <ArrowUpRight aria-hidden="true" />
             </button>
           </article>
 
           <article className="landing-module-card">
-            <span className="landing-module-kicker">Private tokens</span>
+            <div className="landing-module-card-header">
+              <span className="landing-module-icon" aria-hidden="true">
+                <ShieldCheck />
+              </span>
+              <span className="landing-module-kicker">Private tokens</span>
+            </div>
             <h3>Privacy Portal</h3>
             <p>Convert supported COTI tokens between public and private form through official bridges.</p>
             <button
@@ -131,11 +144,17 @@ export default function HomePage({
               onPointerEnter={onPrefetchSwap}
             >
               Open Privacy Portal
+              <ArrowUpRight aria-hidden="true" />
             </button>
           </article>
 
           <article className="landing-module-card">
-            <span className="landing-module-kicker">Analytics</span>
+            <div className="landing-module-card-header">
+              <span className="landing-module-icon" aria-hidden="true">
+                <Landmark />
+              </span>
+              <span className="landing-module-kicker">Analytics</span>
+            </div>
             <h3>Treasury Data</h3>
             <p>Read live treasury metrics, historical snapshots, COTI pool data, and gCOTI context.</p>
             <button
@@ -146,6 +165,7 @@ export default function HomePage({
               onPointerEnter={onPrefetchTreasury}
             >
               Open Treasury
+              <ArrowUpRight aria-hidden="true" />
             </button>
           </article>
         </div>

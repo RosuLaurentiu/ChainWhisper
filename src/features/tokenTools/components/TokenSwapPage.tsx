@@ -28,6 +28,7 @@ import {
 } from '../../../lib/privacyPortal';
 import type { AppHelpReason } from '../../../lib/appHelpLaunch';
 import type { ChainWhisperWispStage } from '../../../lib/wispPrivacyBridge';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 
 export type WispRecoveryView = {
   open: boolean;
@@ -134,6 +135,17 @@ const WISP_ACTION_STAGE_LABELS: Record<ChainWhisperWispStage, string> = {
   complete: 'WISP conversion complete'
 };
 
+const getBalanceStateClassName = (label: string, locked = false): string | undefined => {
+  const normalizedLabel = label.trim().toLowerCase();
+  if (locked || normalizedLabel.includes('locked')) {
+    return 'privacy-balance-state is-locked';
+  }
+  if (normalizedLabel.includes('unavailable')) {
+    return 'privacy-balance-state is-unavailable';
+  }
+  return undefined;
+};
+
 const TokenIcon = ({ pair, privateToken = false }: { pair: PrivacyTokenPair; privateToken?: boolean }) => (
   <span className={`privacy-token-icon privacy-token-icon-${pair.id}${privateToken ? ' is-private' : ''}`} aria-hidden="true">
     <span className="privacy-token-icon-fallback">
@@ -191,6 +203,12 @@ const MobileTokenMenu = ({
     className={`privacy-mobile-token-menu is-${placement}`}
     role="menu"
     aria-label="Select a privacy token"
+    onKeyDown={(event) => {
+      moveFocusWithin(event, {
+        orientation: 'both',
+        selector: '[role="menuitemradio"]:not(:disabled)'
+      });
+    }}
   >
     {onSelectWisp ? (
       <button
@@ -198,6 +216,9 @@ const MobileTokenMenu = ({
         className={`privacy-mobile-wisp-option${wispSelected ? ' active' : ''}`}
         onClick={onSelectWisp}
         disabled={disabled}
+        role="menuitemradio"
+        aria-checked={wispSelected}
+        tabIndex={wispSelected ? 0 : -1}
       >
         <WispIcon />
         <span>
@@ -213,6 +234,9 @@ const MobileTokenMenu = ({
         className={!wispSelected && pair.id === selectedPairId ? 'active' : ''}
         onClick={() => onSelect(pair.id)}
         disabled={disabled}
+        role="menuitemradio"
+        aria-checked={!wispSelected && pair.id === selectedPairId}
+        tabIndex={!wispSelected && pair.id === selectedPairId ? 0 : -1}
       >
         <TokenIcon pair={pair} />
         <span>
@@ -225,7 +249,7 @@ const MobileTokenMenu = ({
 );
 
 const InfoTip = ({ label }: { label: string }) => (
-  <span className="swap-info-tip" title={label} aria-label={label}>
+  <span className="swap-info-tip" title={label} aria-label={label} tabIndex={0}>
     <Info size={12} aria-hidden="true" />
   </span>
 );
@@ -364,7 +388,12 @@ function WispConversionCard({
           <div className="swap-panel-head">
             <span>You pay</span>
             <span>
-              <span className="privacy-wisp-active-balance">Balance: {recovery.inputBalanceLabel}</span>
+              <span className="privacy-wisp-active-balance">
+                Balance:{' '}
+                <span className={getBalanceStateClassName(recovery.inputBalanceLabel)}>
+                  {recovery.inputBalanceLabel}
+                </span>
+              </span>
               <button
                 type="button"
                 onClick={recovery.onMaxAmount}
@@ -405,7 +434,9 @@ function WispConversionCard({
         <div className="swap-asset-panel swap-asset-panel-output">
           <div className="swap-panel-head">
             <span>You receive</span>
-            <span>Balance: {recovery.outputBalanceLabel}</span>
+            <span className={getBalanceStateClassName(recovery.outputBalanceLabel)}>
+              Balance: {recovery.outputBalanceLabel}
+            </span>
           </div>
           <div className="swap-panel-main swap-panel-main-readonly">
             <strong>{recovery.amountInput.trim() || '0.0'}</strong>
@@ -737,7 +768,11 @@ export default function TokenSwapPage({
     if (!mobileTokenMenuAnchor) {
       return;
     }
-    mobileTokenMenuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    mobileTokenMenuRef.current
+      ?.querySelector<HTMLButtonElement>(
+        '[role="menuitemradio"][aria-checked="true"]:not(:disabled), [role="menuitemradio"]:not(:disabled)'
+      )
+      ?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') {
         return;
@@ -987,7 +1022,11 @@ export default function TokenSwapPage({
                 <div className="swap-panel-head">
                   <span>You pay</span>
                   <span>
-                    Balance: {inputBalanceLabel} {inputBalanceLocked ? '' : inputToken.symbol}
+                    Balance:{' '}
+                    <span className={getBalanceStateClassName(inputBalanceLabel, inputBalanceLocked)}>
+                      {inputBalanceLabel}
+                    </span>{' '}
+                    {inputBalanceLocked ? '' : inputToken.symbol}
                     <button type="button" onClick={onMaxAmount} disabled={!walletAddress || inputBalanceLocked || loading}>
                       Max
                     </button>
@@ -1044,7 +1083,10 @@ export default function TokenSwapPage({
                 <div className="swap-panel-head">
                   <span>You receive</span>
                   <span>
-                    {outputToken.kind === 'private-erc20' ? 'Private balance' : 'Balance'}: {outputBalanceLabel}
+                    {outputToken.kind === 'private-erc20' ? 'Private balance' : 'Balance'}:{' '}
+                    <span className={getBalanceStateClassName(outputBalanceLabel, outputBalanceLocked)}>
+                      {outputBalanceLabel}
+                    </span>
                     {outputBalanceLocked ? <InfoTip label="Unlock privacy to view this balance." /> : null}
                   </span>
                 </div>

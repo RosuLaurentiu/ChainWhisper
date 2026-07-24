@@ -55,6 +55,380 @@
   }
 }
 
+/* 2026 refinement: one compact mobile app header and predictable Home grid.
+   These rules replace the older stacked app-navigation and wallet rows while
+   retaining their class names for component and browser-test compatibility. */
+@media (max-width: 920px) {
+  :root {
+    --header-height: 64px;
+  }
+
+  .top-header,
+  .app-shell-landing .top-header {
+    position: relative;
+    z-index: var(--z-header);
+  }
+
+  .top-header .top-header-bar,
+  .top-header.top-header-no-links .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-bar {
+    min-height: var(--header-height);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    background: rgba(10, 11, 19, 0.96);
+  }
+
+  .top-header .top-header-brand,
+  .top-header.top-header-no-links .top-header-brand {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    padding: 8px 6px 8px 12px;
+  }
+
+  .top-header .top-header-brand-main {
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .top-header .top-header-mobile-home {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .top-header .top-header-mobile-utility-cluster {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid rgba(121, 95, 184, 0.48);
+    border-radius: 13px;
+    background: rgba(15, 16, 27, 0.82);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 8px 20px rgba(0, 0, 0, 0.12);
+    padding: 2px;
+  }
+
+  .top-header .top-header-mobile-utility-cluster :is(.header-icon-btn, .sound-toggle-btn) {
+    border-color: transparent;
+    border-radius: 9px;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .top-header
+    .top-header-mobile-utility-cluster
+    :is(.header-icon-btn, .sound-toggle-btn):is(:hover, :focus-visible),
+  .top-header .top-header-mobile-utility-cluster .sound-toggle-btn[aria-pressed='true'] {
+    border-color: transparent;
+    background: rgba(139, 92, 246, 0.16);
+  }
+
+  .top-header .top-header-brand-logo {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+
+  .top-header .top-header-brand-title {
+    max-width: 110px;
+    font-size: 0.9rem;
+  }
+
+  .top-header .top-header-brand-subtitle {
+    max-width: 110px;
+    font-size: 0.7rem;
+  }
+
+  .top-header.top-header-no-links .top-header-right,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-right,
+  .top-header .top-header-right {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 8px 8px 8px 0;
+    background: transparent;
+  }
+
+  .top-header .top-header-actions {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .top-header .top-header-brand-actions,
+  .top-header .top-header-mobile-app-nav {
+    display: none;
+  }
+
+  .top-header .header-icon-btn,
+  .top-header .sound-toggle-btn,
+  .top-header .top-header-help-btn {
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    border-radius: 11px;
+  }
+
+  .top-header .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: auto;
+    min-width: 0;
+    display: block;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel {
+    width: min(142px, 37vw);
+    min-width: 0;
+    min-height: 38px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-status {
+    min-width: 0;
+    display: flex;
+    gap: 4px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-identity {
+    min-width: 0;
+    max-width: none;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-panel .connect-btn,
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-menu-trigger,
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-primary-wrap,
+  .top-header .top-header-mobile-wallet-inline .wallet-primary-action {
+    min-width: 0;
+    min-height: 38px;
+    max-width: none;
+    border-radius: 11px;
+    padding: 7px 9px;
+    font-size: 0.72rem;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-panel .connect-btn small,
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-status-text,
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-status-indicator,
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-icon-action {
+    display: none;
+  }
+
+  .top-header .top-header-mobile-links.open {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 8px;
+    z-index: var(--z-popover);
+    width: min(330px, calc(100vw - 16px));
+    max-height: min(560px, calc(100dvh - var(--header-height) - 24px));
+    display: grid;
+    gap: 10px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    background: rgba(16, 18, 30, 0.985);
+    box-shadow: var(--shadow-overlay);
+    padding: 10px;
+  }
+
+  .top-header-mobile-apps-section,
+  .top-header-mobile-ecosystem-section {
+    display: grid;
+    gap: 7px;
+  }
+
+  .top-header-mobile-menu-label {
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .top-header .top-header-mobile-links .app-header-nav {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    overflow: visible;
+  }
+
+  .top-header .top-header-mobile-links .app-header-nav button {
+    min-height: 44px;
+    justify-content: flex-start;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: rgba(10, 11, 19, 0.64);
+    padding: 0 11px;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+  }
+
+  .top-header .top-header-mobile-links .app-header-nav button::after {
+    inset: 7px auto 7px 0;
+    width: 2px;
+    height: auto;
+    border-radius: 0 2px 2px 0;
+  }
+
+  .top-header .top-header-mobile-links .app-header-nav button.active {
+    border-color: var(--border-emphasis);
+    background: var(--brand-soft);
+    color: var(--text-primary);
+  }
+
+  .top-header-mobile-utility-row {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 0;
+  }
+
+  .top-header-mobile-ecosystem-links {
+    display: grid;
+    gap: 4px;
+  }
+
+  .top-header .top-header-mobile-ecosystem-links a {
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    padding: 0 10px;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    text-align: left;
+  }
+
+  .top-header .top-header-mobile-ecosystem-links a:hover {
+    background: var(--brand-soft);
+    color: var(--text-primary);
+  }
+
+  .app-shell-home .landing-shell {
+    padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
+  }
+
+  .app-shell-home .landing-hero {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    padding: clamp(26px, 7vw, 40px);
+  }
+
+  .app-shell-home .landing-brand-panel {
+    min-height: 220px;
+  }
+
+  .app-shell-home .landing-module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-shell-home .landing-module-card {
+    min-height: 230px;
+  }
+
+  .modal-card {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    border-radius: 16px;
+    padding: 18px;
+  }
+
+  .modal-actions {
+    bottom: -18px;
+    margin: 4px -18px -18px;
+    padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 721px) and (max-width: 920px) {
+  .app-shell-home .landing-module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell-home .landing-title {
+    font-size: clamp(2.25rem, 10.5vw, 3rem);
+  }
+}
+
+@media (max-width: 430px) {
+  .top-header:not(.top-header-has-mobile-wallet) .top-header-brand-title,
+  .top-header:not(.top-header-has-mobile-wallet) .top-header-brand-subtitle {
+    max-width: 132px;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell-home .landing-brand-panel {
+    display: none;
+  }
+
+  .app-shell-home .landing-title {
+    font-size: clamp(2.25rem, 10.5vw, 3rem);
+  }
+
+  .app-shell-home .landing-hero-actions,
+  .app-shell-home .landing-action-btn {
+    width: 100%;
+  }
+
+  .app-shell-home .landing-module-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell-home .landing-module-card {
+    min-height: 210px;
+  }
+}
+
+@media (max-width: 430px) {
+  .top-header .top-header-brand-title,
+  .top-header .top-header-brand-subtitle {
+    max-width: 84px;
+  }
+
+  .top-header:not(.top-header-has-mobile-wallet) .top-header-brand-title,
+  .top-header:not(.top-header-has-mobile-wallet) .top-header-brand-subtitle {
+    max-width: 132px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel {
+    width: min(128px, 34vw);
+  }
+
+  .top-header .header-icon-btn,
+  .top-header .top-header-help-btn {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+}
+
 @media (max-width: 920px) {
   .p2p-trading-shell .standalone-trade-create-panel .trade-compose-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -514,6 +888,11 @@
     height: 100dvh;
     padding-bottom: var(--mobile-nav-reserve);
     overflow: hidden;
+  }
+
+  .app-shell.app-shell-home {
+    width: 100%;
+    max-width: 100%;
   }
 
   .app-shell.app-shell-swap {
@@ -2213,7 +2592,7 @@
   }
 
   .landing-action-btn,
-  .landing-module-cta {
+  .app-shell-home .landing-module-cta {
     width: 100%;
     justify-content: center;
   }
@@ -3275,105 +3654,6 @@
 @media (max-width: 520px) {
   .app-shell-trades {
     --mobile-nav-reserve: 48px;
-  }
-
-  .app-shell-trades .top-header .top-header-brand {
-    gap: 6px;
-    padding: 8px 10px;
-  }
-
-  .app-shell-trades .top-header .top-header-brand-logo {
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
-  }
-
-  .app-shell-trades .top-header .top-header-brand-title {
-    font-size: 0.9rem;
-    line-height: 1;
-  }
-
-  .app-shell-trades .top-header .top-header-brand-subtitle {
-    font-size: 0.62rem;
-    line-height: 1;
-  }
-
-  .app-shell-trades .top-header .top-header-brand-actions {
-    gap: 5px;
-  }
-
-  .app-shell-trades .top-header .header-icon-btn,
-  .app-shell-trades .top-header .sound-toggle-btn,
-  .app-shell-trades .top-header .top-header-menu-btn {
-    width: 30px;
-    height: 30px;
-    border-radius: 7px;
-  }
-
-  .app-shell-trades .top-header .header-icon-btn svg,
-  .app-shell-trades .top-header .sound-toggle-btn svg {
-    width: 16px;
-    height: 16px;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-app-nav .app-header-nav button {
-    min-height: 34px;
-    padding: 0 10px;
-    font-size: 0.74rem;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet {
-    padding: 4px 7px;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .wallet-header-panel {
-    gap: 5px;
-    min-height: 30px;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status {
-    gap: 4px;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-identity {
-    grid-template-columns: minmax(0, 1fr) minmax(52px, max-content);
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status-text {
-    padding-right: 5px;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status-text span {
-    font-size: 0.54rem;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status-indicator,
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-status-button {
-    font-size: 0.66rem;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-panel .connect-btn,
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-menu-trigger {
-    min-height: 28px;
-    padding: 4px 7px;
-    font-size: 0.66rem;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-menu-trigger {
-    min-width: 72px;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-aes-action {
-    min-height: 26px;
-    max-width: min(88px, 23vw);
-    padding: 4px 6px;
-    font-size: 0.6rem;
-  }
-
-  .app-shell-trades .top-header .top-header-mobile-wallet .p2p-wallet-icon-action {
-    width: 26px;
-    min-width: 26px;
-    height: 26px;
   }
 
   .app-shell-trades .standalone-trades-shell {
@@ -7518,5 +7798,435 @@ summary:focus:not(:focus-visible),
   .contacts-sidebar .contacts-list-scroll {
     overflow: visible;
     scrollbar-gutter: auto;
+  }
+}
+
+@media (max-width: 920px) {
+  .top-header.top-header-no-links .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-bar {
+    min-height: 64px;
+    grid-template-columns: minmax(102px, 1fr) auto;
+  }
+
+  .top-header.top-header-has-mobile-home .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-mobile-home .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet.top-header-has-mobile-home .top-header-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-right {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-actions {
+    width: 100%;
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline {
+    justify-self: end;
+  }
+
+  .top-header.top-header-no-links .top-header-brand {
+    min-width: 0;
+    display: flex;
+    grid-template-columns: none;
+    align-items: center;
+    padding: 8px 6px 8px 12px;
+  }
+
+  .top-header.top-header-no-links .top-header-right,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 8px 8px 8px 0;
+    background: transparent;
+  }
+
+  .top-header .header-icon-btn,
+  .top-header .top-header-help-btn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .top-header.top-header-no-links .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: min(142px, 37vw);
+    min-width: 0;
+    display: block;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel {
+    width: min(142px, 37vw);
+    min-width: 0;
+    max-width: min(142px, 37vw);
+    min-height: 44px;
+    height: 44px;
+    grid-template-columns: minmax(0, 64px) 72px;
+    grid-template-areas: "identity menu";
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-status {
+    display: contents;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-identity {
+    grid-area: identity;
+    width: 64px;
+    height: 44px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-primary-wrap {
+    width: 64px;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-status-text,
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-status-actions {
+    display: none;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-menu-wrap {
+    grid-area: menu;
+    width: 72px;
+    height: 44px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-panel {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-panel .connect-btn,
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-menu-trigger,
+  .top-header .top-header-mobile-wallet-inline .wallet-primary-action {
+    min-width: 0;
+    min-height: 44px;
+    height: 44px;
+    border-radius: 11px;
+    padding: 0 8px;
+    font-size: 0.72rem;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-panel .connect-btn {
+    width: 64px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-menu-trigger {
+    width: 72px;
+    min-width: 72px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-panel .connect-btn > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-panel {
+    overflow: hidden;
+  }
+
+  .chat-readiness-state {
+    min-height: 100%;
+    padding: 22px 18px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .chat-readiness-visual {
+    width: min(360px, 92vw);
+  }
+}
+
+@media (max-width: 520px) {
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-brand {
+    width: 48px;
+    padding: 8px 4px 8px 10px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-brand-main {
+    gap: 0;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet .top-header-brand-copy {
+    display: none;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: 146px;
+    max-width: 146px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .wallet-header-panel {
+    width: 146px;
+    max-width: 146px;
+    min-height: 48px;
+    height: 48px;
+    grid-template-columns: minmax(0, 94px) 44px;
+    gap: 2px;
+    border: 1px solid rgba(121, 95, 184, 0.52);
+    border-radius: 13px;
+    background: rgba(15, 16, 27, 0.86);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 8px 20px rgba(0, 0, 0, 0.12);
+    padding: 2px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    :is(.p2p-wallet-identity, .p2p-wallet-primary-wrap, .p2p-wallet-panel .connect-btn) {
+    width: 94px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    :is(.p2p-wallet-menu-wrap, .p2p-wallet-menu-trigger) {
+    width: 44px;
+    min-width: 44px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-trigger {
+    gap: 0;
+    padding: 0;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-label,
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-trigger::after {
+    display: none;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-icon {
+    width: 19px;
+    height: 19px;
+    display: block;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    :is(.p2p-wallet-panel .connect-btn, .wallet-primary-action, .p2p-wallet-menu-trigger) {
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-wrap {
+    position: relative;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-wrap::before {
+    content: '';
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: -2px;
+    width: 1px;
+    background: rgba(121, 95, 184, 0.4);
+    pointer-events: none;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 920px) {
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet.top-header-mobile-wallet-inline {
+    width: auto;
+    min-width: 200px;
+    max-width: min(360px, 48vw);
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .wallet-header-panel {
+    width: auto;
+    min-width: 200px;
+    max-width: min(360px, 48vw);
+    height: auto;
+    grid-template-columns: minmax(0, auto) minmax(82px, auto);
+    grid-template-areas: none;
+    gap: 6px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-status {
+    display: flex;
+    gap: 6px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-identity {
+    grid-area: auto;
+    width: auto;
+    height: auto;
+    grid-template-columns: minmax(112px, auto) minmax(0, max-content);
+    gap: 3px;
+    max-width: min(268px, 34vw);
+    border: 1px solid rgba(121, 95, 184, 0.5);
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(22, 22, 36, 0.92), rgba(12, 12, 21, 0.9));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.045),
+      0 8px 20px rgba(0, 0, 0, 0.14);
+    padding: 2px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-identity.no-status {
+    grid-template-columns: minmax(0, auto);
+    max-width: 148px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-primary-wrap {
+    width: auto;
+    min-width: 0;
+    min-height: 40px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    :is(.p2p-wallet-panel .connect-btn, .wallet-primary-action) {
+    width: auto;
+    min-width: 112px;
+    max-width: 142px;
+    min-height: 40px;
+    height: 40px;
+    border-radius: 10px;
+    padding: 0 11px;
+    font-size: 0.76rem;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-status-text {
+    display: grid;
+    min-width: 88px;
+    gap: 2px;
+    padding: 0 8px 0 4px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-mode-label {
+    font-size: 0.62rem;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    :is(.p2p-wallet-status-indicator, .p2p-wallet-status-button) {
+    display: inline-flex;
+    max-width: 122px;
+    font-size: 0.68rem;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-status-button {
+    min-height: 26px;
+    padding: 4px 7px;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-wrap {
+    grid-area: auto;
+    width: auto;
+    height: auto;
+  }
+
+  .top-header.top-header-has-mobile-home.top-header-has-mobile-wallet
+    .top-header-mobile-wallet-inline
+    .p2p-wallet-menu-trigger {
+    width: auto;
+    min-width: 82px;
+    min-height: 40px;
+    height: 40px;
+    border-radius: 10px;
+    padding: 0 10px;
+    font-size: 0.76rem;
+  }
+}
+
+.modal-backdrop {
+  z-index: var(--z-dialog);
+  padding: 16px;
+  background: rgba(3, 4, 10, 0.8);
+  backdrop-filter: blur(8px);
+}
+
+.modal-card {
+  width: min(560px, 100%);
+  max-height: min(760px, calc(100dvh - 32px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-color: var(--border-default);
+  border-radius: var(--radius-lg);
+  background: rgba(18, 20, 32, 0.98);
+  box-shadow: var(--shadow-overlay);
+  padding: 20px;
+  scrollbar-gutter: stable;
+}
+
+.modal-actions {
+  position: sticky;
+  bottom: -20px;
+  z-index: 1;
+  margin: 4px -20px -20px;
+  border-top: 1px solid var(--border-subtle);
+  background: rgba(18, 20, 32, 0.98);
+  padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 920px) {
+  .modal-card {
+    max-height: calc(100dvh - 24px);
+    padding: 18px;
+  }
+
+  .modal-actions {
+    bottom: -18px;
+    margin: 4px -18px -18px;
+    padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
   }
 }

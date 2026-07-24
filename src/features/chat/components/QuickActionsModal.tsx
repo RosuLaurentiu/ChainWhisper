@@ -1,4 +1,5 @@
 import { useRef, type FormEvent } from 'react';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 import { useModalA11y } from '../../../shared/hooks/useModalA11y';
 import { useChatUiStore } from '../chatUiStore';
 
@@ -68,29 +69,50 @@ export default function QuickActionsModal({
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="quick-actions-title">New</h3>
-        <div className="quick-actions-tabs" role="tablist" aria-label="Quick actions">
+        <div
+          className="quick-actions-tabs"
+          role="tablist"
+          aria-label="Quick actions"
+          onKeyDown={(event) => {
+            if (!moveFocusWithin(event, { orientation: 'horizontal', selector: '[role="tab"]' })) {
+              return;
+            }
+            window.requestAnimationFrame(() => {
+              (document.activeElement as HTMLButtonElement | null)?.click();
+            });
+          }}
+        >
           <button
+            id="quick-actions-contact-tab"
             type="button"
             role="tab"
             aria-selected={quickActionTab === 'contact'}
+            aria-controls="quick-actions-contact-panel"
+            tabIndex={quickActionTab === 'contact' ? 0 : -1}
             className={quickActionTab === 'contact' ? 'active' : undefined}
             onClick={() => setQuickActionTab('contact')}
           >
             Add contact
           </button>
           <button
+            id="quick-actions-create-tab"
             type="button"
             role="tab"
             aria-selected={quickActionTab === 'create-group'}
+            aria-controls="quick-actions-create-panel"
+            tabIndex={quickActionTab === 'create-group' ? 0 : -1}
             className={quickActionTab === 'create-group' ? 'active' : undefined}
             onClick={() => setQuickActionTab('create-group')}
           >
             Create
           </button>
           <button
+            id="quick-actions-join-tab"
             type="button"
             role="tab"
             aria-selected={quickActionTab === 'join-group'}
+            aria-controls="quick-actions-join-panel"
+            tabIndex={quickActionTab === 'join-group' ? 0 : -1}
             className={quickActionTab === 'join-group' ? 'active' : undefined}
             onClick={() => setQuickActionTab('join-group')}
           >
@@ -99,7 +121,13 @@ export default function QuickActionsModal({
         </div>
 
         {quickActionTab === 'contact' ? (
-          <form className="contact-form quick-actions-form" onSubmit={onAddContactSubmit}>
+          <form
+            id="quick-actions-contact-panel"
+            className="contact-form quick-actions-form"
+            role="tabpanel"
+            aria-labelledby="quick-actions-contact-tab"
+            onSubmit={onAddContactSubmit}
+          >
             <input
               value={newContactName}
               onChange={(event) => onNewContactNameChange(event.target.value)}
@@ -118,7 +146,10 @@ export default function QuickActionsModal({
 
         {quickActionTab === 'create-group' ? (
           <form
+            id="quick-actions-create-panel"
             className="contact-form quick-actions-form"
+            role="tabpanel"
+            aria-labelledby="quick-actions-create-tab"
             onSubmit={(event) => {
               event.preventDefault();
               onCreateGroup().catch(() => {});
@@ -136,7 +167,7 @@ export default function QuickActionsModal({
               placeholder="Initial members (comma/space separated)"
               aria-label="Initial group members"
             />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <label className="quick-actions-checkbox-row">
               <input
                 type="checkbox"
                 checked={newGroupIsPrivate}
@@ -152,7 +183,10 @@ export default function QuickActionsModal({
 
         {quickActionTab === 'join-group' ? (
           <form
+            id="quick-actions-join-panel"
             className="contact-form quick-actions-form"
+            role="tabpanel"
+            aria-labelledby="quick-actions-join-tab"
             onSubmit={(event) => {
               event.preventDefault();
               onJoinGroupWithCode().catch(() => {});
@@ -167,13 +201,13 @@ export default function QuickActionsModal({
             <button type="submit" disabled={processingGroupAction || !hasAesReady || !groupJoinCodeInput.trim()}>
               {processingGroupAction ? 'Working...' : 'Join'}
             </button>
-            <div style={{ fontSize: 12, opacity: 0.82 }}>
+            <div className="quick-actions-helper">
               Join codes are now enforced on-chain and can expire.
             </div>
           </form>
         ) : null}
 
-        {error ? <p className="error">{error}</p> : null}
+        {error ? <p className="error" role="alert">{error}</p> : null}
         <div className="modal-actions">
           <button type="button" className="connect-btn" onClick={onClose}>
             Close

@@ -432,6 +432,7 @@ export type BurnerWalletRecord = {
   recoveryDefault?: boolean;
   recoveryProfileId?: number;
   recoveryProfileVersion?: string;
+  recoveryTransactionHash?: string;
 };
 
 export type BurnerWalletVault = {

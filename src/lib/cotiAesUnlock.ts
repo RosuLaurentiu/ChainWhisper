@@ -18,6 +18,7 @@ type UnlockArgs = {
   forceFreshAes?: boolean;
   forceLegacyRefresh?: boolean;
   forceRefresh?: boolean;
+  preferSnapAes?: boolean;
   provider?: Eip1193Provider | null;
   requireSnapAes?: boolean;
   signer: CotiAesSigner;
@@ -521,6 +522,7 @@ export const getOrRecoverAesForWalletResult = async ({
   forceFreshAes = false,
   forceLegacyRefresh = false,
   forceRefresh = false,
+  preferSnapAes = false,
   provider,
   requireSnapAes = false,
   signer,
@@ -531,15 +533,21 @@ export const getOrRecoverAesForWalletResult = async ({
     throw new Error('Connect a wallet before unlocking privacy.');
   }
 
+  const shouldTrySnapBeforeCache = Boolean(preferSnapAes && provider && !forceLegacyRefresh);
   const existingOnboardInfo = signer.getUserOnboardInfo();
-  if (existingOnboardInfo?.aesKey && !forceRefresh && !forceLegacyRefresh) {
+  if (
+    !shouldTrySnapBeforeCache &&
+    existingOnboardInfo?.aesKey &&
+    !forceRefresh &&
+    !forceLegacyRefresh
+  ) {
     return {
       status: 'ready',
       onboardInfo: existingOnboardInfo,
       source: 'cache'
     };
   }
-  if (!forceRefresh && !forceLegacyRefresh) {
+  if (!shouldTrySnapBeforeCache && !forceRefresh && !forceLegacyRefresh) {
     const storedOnboardInfo = hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
     if (storedOnboardInfo?.aesKey) {
       return {
@@ -572,7 +580,11 @@ export const getOrRecoverAesForWalletResult = async ({
           source: 'snap' as const
         };
       }
-      if (snapResult.status === 'wallet-mismatch' || snapResult.status === 'wrong-network') {
+      if (
+        snapResult.status === 'wallet-mismatch' ||
+        snapResult.status === 'wrong-network' ||
+        snapResult.status === 'rejected'
+      ) {
         return {
           status: 'fallback-unavailable' as const,
           reason: snapResult.status
@@ -592,6 +604,25 @@ export const getOrRecoverAesForWalletResult = async ({
         return {
           status: 'fallback-unavailable' as const,
           reason: snapResult.status
+        };
+      }
+    }
+
+    if (shouldTrySnapBeforeCache && !forceRefresh) {
+      const cachedOnboardInfo = signer.getUserOnboardInfo();
+      if (cachedOnboardInfo?.aesKey) {
+        return {
+          status: 'ready' as const,
+          onboardInfo: cachedOnboardInfo,
+          source: 'cache' as const
+        };
+      }
+      const storedOnboardInfo = hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
+      if (storedOnboardInfo?.aesKey) {
+        return {
+          status: 'ready' as const,
+          onboardInfo: storedOnboardInfo,
+          source: 'cache' as const
         };
       }
     }

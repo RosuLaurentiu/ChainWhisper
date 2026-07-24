@@ -85,7 +85,7 @@ describe('detectWalletSnapCapability', () => {
     ).resolves.toBe('unsupported-mobile');
   });
 
-  it('treats MetaMask Mobile as Snap-unsupported before probing Snap RPCs', async () => {
+  it('uses a Snap-capable provider under mobile device emulation', async () => {
     const requestedMethods: string[] = [];
     await expect(
       detectWalletSnapCapability(
@@ -96,9 +96,9 @@ describe('detectWalletSnapCapability', () => {
         }, { isMetaMask: true }),
         'Mozilla/5.0 (Linux; Android 14) Mobile MetaMaskMobile'
       )
-    ).resolves.toBe('unsupported-mobile');
+    ).resolves.toBe('supported');
 
-    expect(requestedMethods).toEqual([]);
+    expect(requestedMethods).toEqual(['wallet_getSnaps']);
   });
 });
 
@@ -327,16 +327,19 @@ describe('getCotiSnapAesKey', () => {
     expect(requestedMethods).not.toContain('wallet_invokeSnap');
   });
 
-  it('skips Snap RPCs on MetaMask Mobile even if Snap discovery would answer', async () => {
+  it('uses Snap under mobile emulation when the provider supports Snap RPCs', async () => {
     const requestedMethods: string[] = [];
 
     await expect(
       getCotiSnapAesKeyResult(
-        providerWithFlags(({ method }) => {
+        providerWithFlags(({ method, params }) => {
           requestedMethods.push(method);
           if (method === 'eth_accounts') return ['0x1111111111111111111111111111111111111111'];
           if (method === 'eth_chainId') return '0x282b34';
           if (method === 'wallet_getSnaps') return { [snapId]: {} };
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'connect-to-wallet') return true;
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'has-aes-key') return true;
+          if (method === 'wallet_invokeSnap' && params?.request?.method === 'get-aes-key') return 'mobile-emulated-aes';
           return null;
         }, { isMetaMask: true }),
         {
@@ -344,9 +347,11 @@ describe('getCotiSnapAesKey', () => {
           walletAddress: '0x1111111111111111111111111111111111111111'
         }
       )
-    ).resolves.toEqual({ status: 'unsupported-mobile' });
+    ).resolves.toEqual({ status: 'ready', aesKey: 'mobile-emulated-aes' });
 
-    expect(requestedMethods).toEqual(['eth_accounts', 'eth_chainId']);
+    expect(requestedMethods).toContain('wallet_getSnaps');
+    expect(requestedMethods).toContain('wallet_invokeSnap');
+    expect(requestedMethods).not.toContain('wallet_requestSnaps');
   });
 });
 

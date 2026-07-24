@@ -21,30 +21,56 @@ const renderMobileHeader = (mobileLinksOpen: boolean, withLinks = true) =>
   );
 
 describe('AppHeader mobile navigation', () => {
-  it('keeps app navigation visible while ecosystem links are closed', () => {
+  it('renders app navigation in a slim strip while the ecosystem menu is closed', () => {
     const markup = renderMobileHeader(false);
 
-    expect(markup).toContain('id="top-app-navigation-mobile"');
     expect(markup).toContain('aria-label="ChainWhisper apps"');
-    expect(markup).not.toMatch(/id="top-app-navigation-mobile"[^>]*hidden/);
+    expect(markup).toMatch(
+      /class="top-header-mobile-app-nav"[\s\S]*aria-label="ChainWhisper apps"/
+    );
     expect(markup).toMatch(/id="top-navigation-links-mobile"[^>]*hidden/);
-    expect(markup).toContain('aria-label="Open ecosystem links menu"');
+    expect(markup).toContain('aria-label="Open apps menu"');
     expect(markup).toContain('aria-controls="top-navigation-links-mobile"');
   });
 
-  it('opens only the ecosystem links menu', () => {
+  it('opens ecosystem destinations without duplicating app navigation', () => {
     const markup = renderMobileHeader(true);
 
     expect(markup).not.toMatch(/id="top-navigation-links-mobile"[^>]*hidden/);
-    expect(markup).not.toMatch(/id="top-app-navigation-mobile"[^>]*hidden/);
-    expect(markup).toContain('aria-label="Close ecosystem links menu"');
+    expect(markup.match(/aria-label="ChainWhisper apps"/g)).toHaveLength(1);
+    expect(markup).toContain('aria-label="COTI ecosystem navigation mobile"');
+    expect(markup).toContain('aria-label="Close apps menu"');
   });
 
-  it('does not show an ecosystem menu button when a page has no links', () => {
+  it('keeps the app strip visible without showing an empty menu', () => {
     const markup = renderMobileHeader(false, false);
 
-    expect(markup).not.toContain('ecosystem links menu');
-    expect(markup).toContain('id="top-app-navigation-mobile"');
+    expect(markup).toContain('aria-label="ChainWhisper apps"');
+    expect(markup).toContain('class="top-header-mobile-app-nav"');
+    expect(markup).not.toContain('aria-label="Open apps menu"');
+    expect(markup).not.toContain('id="top-navigation-links-mobile"');
+    expect(markup).not.toContain('COTI ecosystem navigation mobile');
+  });
+
+  it('renders Home as a primary mobile header action', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav
+        onToggleMobileLinksOpen={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        homeControl={
+          <button type="button" aria-label="Back to home">
+            Home
+          </button>
+        }
+      />
+    );
+
+    expect(markup).toMatch(
+      /class="top-header-mobile-home"[\s\S]*aria-label="Back to home"/
+    );
   });
 
   it('renders the shared App Help utility action on mobile', () => {
@@ -62,7 +88,29 @@ describe('AppHeader mobile navigation', () => {
     expect(markup).toContain('aria-label="Open App Help"');
     expect(markup).toContain('title="Open App Help"');
     expect(markup).toMatch(
-      /class="top-header-brand-actions"[\s\S]*class="header-icon-btn top-header-help-btn"/
+      /class="top-header-actions"[\s\S]*class="header-icon-btn top-header-help-btn"/
     );
+  });
+
+  it('renders a sound-only mobile utility directly instead of opening an empty menu', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav
+        soundEnabled
+        onToggleMobileLinksOpen={vi.fn()}
+        onToggleSound={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        showSoundToggle
+      />
+    );
+
+    expect(markup).toContain('aria-label="Disable notification sound"');
+    expect(markup).toMatch(
+      /class="top-header-actions"[\s\S]*class="top-header-mobile-utility-cluster"[\s\S]*class="sound-toggle-btn"/
+    );
+    expect(markup).not.toContain('aria-label="Open apps menu"');
+    expect(markup).not.toContain('id="top-navigation-links-mobile"');
   });
 });

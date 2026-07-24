@@ -961,6 +961,19 @@
   overflow-x: auto;
   min-width: 0;
   max-width: 100%;
+  border-radius: 10px;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: rgba(139, 92, 246, 0.58) rgba(17, 17, 27, 0.5);
+}
+
+.treasury-table-wrap:focus-visible {
+  outline: 2px solid rgba(196, 181, 253, 0.86);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px rgba(139, 92, 246, 0.14);
+}
+
+.treasury-table-scroll-hint {
+  display: none;
 }
 
 .treasury-table {
@@ -991,5 +1004,124 @@
 .treasury-table a {
   color: #d6c8ff;
   text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .treasury-shell .treasury-hero {
+    gap: 8px;
+    padding: 13px 14px;
+  }
+
+  .treasury-shell .treasury-hero .landing-eyebrow {
+    margin-bottom: 7px;
+  }
+
+  .treasury-shell .treasury-hero .treasury-title {
+    font-size: clamp(1.42rem, 6.2vw, 1.82rem);
+    line-height: 1.08;
+  }
+
+  .treasury-shell .treasury-hero .treasury-description {
+    margin-top: 4px;
+    font-size: 0.88rem;
+    line-height: 1.42;
+  }
+
+  .treasury-shell .treasury-hero .treasury-meta-grid {
+    gap: 6px;
+  }
+
+  .treasury-shell .treasury-hero .treasury-meta-card {
+    min-height: 52px;
+    padding: 9px 10px;
+  }
+
+  .treasury-shell
+    .treasury-performance-panel
+    .treasury-toolbar-group:first-child
+    .treasury-pill-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 6px;
+    overflow: visible;
+    padding: 4px;
+  }
+
+  .treasury-shell
+    .treasury-performance-panel
+    .treasury-toolbar-group:first-child
+    .treasury-pill-button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 9px;
+  }
+
+  .treasury-shell
+    .treasury-performance-panel
+    .treasury-toolbar-group:first-child
+    .treasury-pill-button:nth-child(odd):last-child {
+    grid-column: 1 / -1;
+  }
+
+  .treasury-shell .treasury-performance-panel .treasury-pill-group-compact {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%;
+    gap: 5px;
+    overflow: visible;
+  }
+
+  .treasury-shell .treasury-performance-panel .treasury-pill-group-compact .treasury-pill-button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 6px;
+  }
+
+  .treasury-shell .treasury-table-scroll-hint {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: -2px 0 2px;
+    color: #aaa8bf;
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+
+  .treasury-shell .treasury-table-scroll-hint::before {
+    content: "↔";
+    color: #c4b5fd;
+    font-size: 0.9rem;
+  }
+
+  .treasury-shell .treasury-table-wrap {
+    border: 1px solid rgba(67, 72, 106, 0.54);
+    background: rgba(9, 11, 21, 0.52);
+  }
+
+  .treasury-shell .treasury-table th,
+  .treasury-shell .treasury-table td {
+    padding-inline: 12px;
+    white-space: nowrap;
+  }
+
+  .treasury-shell .treasury-table th:first-child,
+  .treasury-shell .treasury-table td:first-child {
+    position: sticky;
+    left: 0;
+    box-shadow: 10px 0 18px rgba(5, 7, 15, 0.3);
+  }
+
+  .treasury-shell .treasury-table th:first-child {
+    z-index: 2;
+    background: #111424;
+  }
+
+  .treasury-shell .treasury-table td:first-child {
+    z-index: 1;
+    background: #0d101d;
+  }
 }
 

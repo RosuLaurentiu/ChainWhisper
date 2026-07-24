@@ -407,7 +407,7 @@ export default function AccountFundsModal({
           </>
         ) : null}
 
-        {localError ? <p className="modal-error">{localError}</p> : null}
+        {localError ? <p className="modal-error" role="alert">{localError}</p> : null}
 
         <div className="modal-actions">
           <button type="button" className="connect-btn" onClick={onClose} disabled={processing}>

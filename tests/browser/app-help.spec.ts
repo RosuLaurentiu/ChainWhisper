@@ -43,20 +43,21 @@ test.describe('Agent App Help', () => {
         return null;
       }
       const composerBox = composer.getBoundingClientRect();
+      const dock = document.querySelector<HTMLElement>('.p2p-balance-dock');
       const heroBox = hero.getBoundingClientRect();
       const messagesBox = messages.getBoundingClientRect();
       const panelBox = panel.getBoundingClientRect();
       const sectionBox = section.getBoundingClientRect();
       const toggleBox = modeToggle.getBoundingClientRect();
+      const dockBox = dock?.getBoundingClientRect();
       return {
         composerBottomGap: panelBox.bottom - composerBox.bottom,
         composerHeight: composerBox.height,
         headerTopDelta: Math.abs(heroBox.top - toggleBox.top),
         messagesAboveComposer: composerBox.top - messagesBox.bottom,
+        panelHeight: panelBox.height,
         panelBottomGap: sectionBox.bottom - panelBox.bottom,
-        panelGapDifference: Math.abs(
-          sectionBox.bottom - panelBox.bottom - (panelBox.top - sectionBox.top)
-        ),
+        panelToDockGap: dockBox ? dockBox.top - panelBox.bottom : null,
         panelTopGap: panelBox.top - sectionBox.top,
         textareaHeight: textarea.getBoundingClientRect().height
       };
@@ -65,7 +66,10 @@ test.describe('Agent App Help', () => {
     expect(compactLayout!.headerTopDelta).toBeLessThanOrEqual(2);
     expect(compactLayout!.panelTopGap).toBeLessThanOrEqual(20);
     expect(compactLayout!.panelBottomGap).toBeLessThanOrEqual(20);
-    expect(compactLayout!.panelGapDifference).toBeLessThanOrEqual(2);
+    expect(compactLayout!.panelHeight).toBeGreaterThanOrEqual(700);
+    expect(compactLayout!.panelToDockGap).not.toBeNull();
+    expect(compactLayout!.panelToDockGap!).toBeGreaterThanOrEqual(0);
+    expect(compactLayout!.panelToDockGap!).toBeLessThanOrEqual(32);
     expect(compactLayout!.messagesAboveComposer).toBeGreaterThanOrEqual(0);
     expect(compactLayout!.composerBottomGap).toBeGreaterThanOrEqual(0);
     expect(compactLayout!.composerHeight).toBeLessThanOrEqual(160);

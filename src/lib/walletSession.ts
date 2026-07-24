@@ -61,6 +61,26 @@ export type TradingBrowserWalletState = {
   walletAddress: string;
 };
 
+export const resolveRestorableAppWalletId = ({
+  activeBurnerWalletId,
+  activeSignerSource,
+  burnerWallets
+}: {
+  activeBurnerWalletId: string;
+  activeSignerSource: SignerSource;
+  burnerWallets: BurnerWalletRecord[];
+}): string => {
+  if (activeSignerSource !== 'metamask') {
+    return '';
+  }
+
+  const loadedWallets = burnerWallets.filter((walletRecord) => Boolean(walletRecord.privateKey.trim()));
+  const preferredWallet =
+    loadedWallets.find((walletRecord) => walletRecord.id === activeBurnerWalletId) ?? loadedWallets[0];
+
+  return preferredWallet?.id ?? preferredWallet?.address ?? '';
+};
+
 export const resolveTradingBrowserWalletState = ({
   localBrowserProvider,
   localChainId,

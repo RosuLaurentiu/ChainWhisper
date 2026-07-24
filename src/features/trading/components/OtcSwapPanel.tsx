@@ -1,9 +1,10 @@
 import { ArrowRight } from 'lucide-react';
-import type { FormEventHandler, ReactNode } from 'react';
+import type { FormEventHandler, KeyboardEventHandler, ReactNode } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import { getOtcSwapSourceLabel, type OtcSwapInputMode, type OtcSwapQuoteCandidate } from '../../../lib/otcSwapQuote';
 import type { TradeTokenPresetKey } from '../../../lib/appHelpers';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 import { TradeTokenSelect, type TradeComposerTokenOption } from './TradeComposerPanel';
 
 type OtcSwapPanelProps = {
@@ -85,12 +86,35 @@ export default function OtcSwapPanel({
   onOpenCurrentOrder,
   formatAvailability
 }: OtcSwapPanelProps) {
+  const handleActionModeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (
+      !moveFocusWithin(event, {
+        orientation: 'horizontal',
+        selector: '[role="tab"]:not(:disabled)'
+      })
+    ) {
+      return;
+    }
+
+    const nextMode = (
+      event.currentTarget.ownerDocument.activeElement as HTMLElement | null
+    )?.dataset.swapMode as OtcSwapInputMode | undefined;
+    if (nextMode && linkedActionModes[nextMode] && nextMode !== actionMode) {
+      onActionModeChange(nextMode);
+    }
+  };
+
   return (
     <section className="standalone-trades-section p2p-swap-section p2p-trade-workspace-panel" aria-label="OTC swap">
       <div className="p2p-trade-entry-panel">
         {tradeEntryModeTabs}
         <div className="p2p-swap-panel">
-          <div className="p2p-swap-side-switch" role="tablist" aria-label="Swap action">
+          <div
+            className="p2p-swap-side-switch"
+            role="tablist"
+            aria-label="Swap action"
+            onKeyDown={handleActionModeKeyDown}
+          >
             <button
               type="button"
               className={actionMode === 'sell' ? 'active' : undefined}
@@ -101,6 +125,8 @@ export default function OtcSwapPanel({
               }}
               role="tab"
               aria-selected={actionMode === 'sell'}
+              tabIndex={actionMode === 'sell' ? 0 : -1}
+              data-swap-mode="sell"
               disabled={!linkedActionModes.sell}
               title={!linkedActionModes.sell ? 'This linked order cannot be sold into.' : undefined}
             >
@@ -116,6 +142,8 @@ export default function OtcSwapPanel({
               }}
               role="tab"
               aria-selected={actionMode === 'buy'}
+              tabIndex={actionMode === 'buy' ? 0 : -1}
+              data-swap-mode="buy"
               disabled={!linkedActionModes.buy}
               title={!linkedActionModes.buy ? 'This linked order cannot be bought from.' : undefined}
             >

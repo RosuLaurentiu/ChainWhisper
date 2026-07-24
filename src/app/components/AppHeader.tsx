@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode, type Ref } from 'react';
 import AppFavicon from '../../assets/favicon.png';
+import { closeDetailsOnEscape } from '../../shared/components/a11y';
 
 type AppHeaderLink = {
   href: string;
@@ -18,6 +19,7 @@ type AppHeaderProps = {
   debugControl?: ReactNode;
   links?: readonly AppHeaderLink[];
   brandActions?: ReactNode;
+  homeControl?: ReactNode;
   appNavigationControl?: ReactNode;
   navigationControl?: ReactNode;
   walletControl?: ReactNode;
@@ -45,6 +47,7 @@ export default function AppHeader({
   debugControl,
   links = [],
   brandActions,
+  homeControl,
   appNavigationControl,
   navigationControl,
   walletControl,
@@ -53,6 +56,8 @@ export default function AppHeader({
   showSoundToggle = false
 }: AppHeaderProps) {
   const mobileMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const mobileMenuPanelRef = useRef<HTMLDivElement | null>(null);
+  const desktopEcosystemRef = useRef<HTMLDetailsElement | null>(null);
   const hasNavLinks = links.length > 0;
   const shouldShowSoundToggle = showSoundToggle && typeof onToggleSound === 'function' && typeof soundEnabled === 'boolean';
   const desktopAppNavigationControl = !isMobileNav ? appNavigationControl : null;
@@ -61,8 +66,13 @@ export default function AppHeader({
   const mobileNavigationControl = isMobileNav ? navigationControl : null;
   const desktopWalletControl = !isMobileNav ? walletControl : null;
   const mobileWalletControl = isMobileNav ? walletControl : null;
+  const desktopHomeControl = !isMobileNav ? homeControl : null;
+  const mobileHomeControl = isMobileNav ? homeControl : null;
+  const hasMobileMenuContent = Boolean(brandActions || debugControl || hasNavLinks);
+  const showInlineMobileSoundToggle =
+    isMobileNav && shouldShowSoundToggle && !hasMobileMenuContent;
   const mobileLinksMenuToggleControl =
-    isMobileNav && hasNavLinks ? (
+    isMobileNav && hasMobileMenuContent ? (
       <button
         ref={mobileMenuButtonRef}
         type="button"
@@ -70,8 +80,8 @@ export default function AppHeader({
         aria-expanded={mobileLinksOpen}
         aria-controls="top-navigation-links-mobile"
         onClick={onToggleMobileLinksOpen}
-        aria-label={mobileLinksOpen ? 'Close ecosystem links menu' : 'Open ecosystem links menu'}
-        title={mobileLinksOpen ? 'Close ecosystem links menu' : 'Open ecosystem links menu'}
+        aria-label={mobileLinksOpen ? 'Close apps menu' : 'Open apps menu'}
+        title={mobileLinksOpen ? 'Close apps menu' : 'Open apps menu'}
       >
         <svg
           viewBox="0 0 24 24"
@@ -83,7 +93,7 @@ export default function AppHeader({
         >
           <path
             fill="currentColor"
-            d="M4 6.5h16v2H4v-2Zm0 4.5h16v2H4v-2Zm0 4.5h16v2H4v-2Z"
+            d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Zm-8-8v2h2V6H6Zm10 0v2h2V6h-2ZM6 16v2h2v-2H6Zm10 0v2h2v-2h-2Z"
           />
         </svg>
       </button>
@@ -153,16 +163,15 @@ export default function AppHeader({
   ) : null;
   const mobileHelpControl = isMobileNav ? helpControl : null;
   const desktopHelpControl = isMobileNav ? null : helpControl;
-  const brandActionContent =
-    brandActions || mobileLinksMenuToggleControl || soundToggleControl || mobileHelpControl ? (
+  const desktopBrandActionContent =
+    !isMobileNav && (brandActions || desktopHomeControl || soundToggleControl) ? (
       <>
         {brandActions}
-        {mobileLinksMenuToggleControl}
+        {desktopHomeControl}
         {soundToggleControl}
-        {mobileHelpControl}
       </>
     ) : null;
-  const utilityActions =
+  const desktopUtilityActions =
     desktopHelpControl || desktopWalletControl || debugControl ? (
       <>
         {desktopHelpControl}
@@ -170,24 +179,37 @@ export default function AppHeader({
         {debugControl}
       </>
     ) : null;
-  const hasBrandActions = Boolean(brandActionContent);
-  const hasUtilityActions = Boolean(utilityActions);
-  const showBrandActions = !hasNavLinks && hasBrandActions;
-  const showRightActions = hasUtilityActions || (hasNavLinks && hasBrandActions);
-  const headerActions = (
-    <>
-      {hasNavLinks ? brandActionContent : null}
-      {utilityActions}
-    </>
-  );
+  const mobileWalletSlot = mobileWalletControl ? (
+    <div className="top-header-mobile-wallet top-header-mobile-wallet-inline">{mobileWalletControl}</div>
+  ) : null;
+  const mobileUtilityCluster =
+    mobileHomeControl || mobileLinksMenuToggleControl || showInlineMobileSoundToggle || mobileHelpControl ? (
+      <div className="top-header-mobile-utility-cluster">
+        {mobileHomeControl ? <div className="top-header-mobile-home">{mobileHomeControl}</div> : null}
+        {mobileLinksMenuToggleControl}
+        {showInlineMobileSoundToggle ? soundToggleControl : null}
+        {mobileHelpControl}
+      </div>
+    ) : null;
+  const mobileTopActions =
+    mobileUtilityCluster || mobileWalletSlot ? (
+      <>
+        {mobileUtilityCluster}
+        {mobileWalletSlot}
+      </>
+    ) : null;
+  const showBrandActions = Boolean(desktopBrandActionContent);
+  const showRightActions = isMobileNav ? Boolean(mobileTopActions) : Boolean(desktopUtilityActions);
   const headerClassName = `${hasNavLinks ? 'top-header top-header-has-links' : 'top-header top-header-no-links'}${
     desktopWalletControl ? ' top-header-has-wallet' : ''
   }${desktopAppNavigationControl ? ' top-header-has-app-navigation' : ''}${
     desktopNavigationControl ? ' top-header-has-navigation' : ''
-  }${mobileWalletControl ? ' top-header-has-mobile-wallet' : ''}`;
+  }${mobileWalletControl ? ' top-header-has-mobile-wallet' : ''}${
+    mobileHomeControl ? ' top-header-has-mobile-home' : ''
+  }`;
 
   useEffect(() => {
-    if (!isMobileNav || !hasNavLinks || !mobileLinksOpen) {
+    if (!isMobileNav || !hasMobileMenuContent || !mobileLinksOpen) {
       return undefined;
     }
 
@@ -202,8 +224,27 @@ export default function AppHeader({
     };
 
     document.addEventListener('keydown', handleKeyDown);
+    window.requestAnimationFrame(() => {
+      const preferredItem =
+        mobileMenuPanelRef.current?.querySelector<HTMLElement>('[aria-current="page"]') ??
+        mobileMenuPanelRef.current?.querySelector<HTMLElement>('button, a[href]');
+      preferredItem?.focus();
+    });
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [hasNavLinks, isMobileNav, mobileLinksOpen, onCloseMobileLinks]);
+  }, [hasMobileMenuContent, isMobileNav, mobileLinksOpen, onCloseMobileLinks]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const details = desktopEcosystemRef.current;
+      if (!details?.open || details.contains(event.target as Node | null)) {
+        return;
+      }
+      details.open = false;
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, []);
 
   return (
     <header className={headerClassName} ref={headerRef}>
@@ -218,7 +259,7 @@ export default function AppHeader({
               {subtitle ? <span className="top-header-brand-subtitle">{subtitle}</span> : null}
             </div>
           </div>
-          {showBrandActions ? <div className="top-header-brand-actions">{brandActionContent}</div> : null}
+          {showBrandActions ? <div className="top-header-brand-actions">{desktopBrandActionContent}</div> : null}
         </div>
 
         <div className="top-header-right">
@@ -226,33 +267,63 @@ export default function AppHeader({
           {desktopNavigationControl ? <div className="top-header-nav">{desktopNavigationControl}</div> : null}
 
           {!isMobileNav && hasNavLinks ? (
-            <nav className="top-header-links" aria-label="COTI ecosystem navigation">
-              {renderNavLinks(links, onCloseMobileLinks)}
-            </nav>
+            <details
+              ref={desktopEcosystemRef}
+              className="top-header-ecosystem-menu"
+              onKeyDown={closeDetailsOnEscape}
+            >
+              <summary>
+                Ecosystem
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false">
+                  <path fill="currentColor" d="m5.7 7.5 4.3 4.3 4.3-4.3 1.4 1.4-5.7 5.7-5.7-5.7 1.4-1.4Z" />
+                </svg>
+              </summary>
+              <nav className="top-header-links" aria-label="COTI ecosystem navigation">
+                {renderNavLinks(links, () => {
+                  if (desktopEcosystemRef.current) {
+                    desktopEcosystemRef.current.open = false;
+                  }
+                  onCloseMobileLinks();
+                })}
+              </nav>
+            </details>
           ) : null}
 
-          {showRightActions ? <div className="top-header-actions">{headerActions}</div> : null}
-
+          {showRightActions ? (
+            <div className="top-header-actions">{isMobileNav ? mobileTopActions : desktopUtilityActions}</div>
+          ) : null}
         </div>
       </div>
 
-      {isMobileNav && hasNavLinks ? (
-        <nav
-          id="top-navigation-links-mobile"
-          className={mobileLinksOpen ? 'top-header-mobile-links open' : 'top-header-mobile-links'}
-          aria-label="COTI ecosystem navigation mobile"
-          hidden={!mobileLinksOpen}
-        >
-          {renderNavLinks(links, onCloseMobileLinks)}
-        </nav>
+      {mobileAppNavigationControl ? (
+        <div className="top-header-mobile-app-nav">{mobileAppNavigationControl}</div>
       ) : null}
 
-      {mobileAppNavigationControl ? (
-        <div id="top-app-navigation-mobile" className="top-header-mobile-app-nav">
-          {mobileAppNavigationControl}
+      {isMobileNav && hasMobileMenuContent ? (
+        <div
+          ref={mobileMenuPanelRef}
+          id="top-navigation-links-mobile"
+          className={mobileLinksOpen ? 'top-header-mobile-links open' : 'top-header-mobile-links'}
+          hidden={!mobileLinksOpen}
+        >
+          {brandActions || (!showInlineMobileSoundToggle && soundToggleControl) || debugControl ? (
+            <div className="top-header-mobile-utility-row">
+              {brandActions}
+              {!showInlineMobileSoundToggle ? soundToggleControl : null}
+              {debugControl}
+            </div>
+          ) : null}
+          {hasNavLinks ? (
+            <div className="top-header-mobile-ecosystem-section">
+              <span className="top-header-mobile-menu-label">Ecosystem</span>
+              <nav className="top-header-mobile-ecosystem-links" aria-label="COTI ecosystem navigation mobile">
+                {renderNavLinks(links, onCloseMobileLinks)}
+              </nav>
+            </div>
+          ) : null}
         </div>
       ) : null}
-      {mobileWalletControl ? <div className="top-header-mobile-wallet">{mobileWalletControl}</div> : null}
+
       {mobileNavigationControl ? <div className="top-header-mobile-nav">{mobileNavigationControl}</div> : null}
     </header>
   );
