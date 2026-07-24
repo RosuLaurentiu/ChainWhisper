@@ -3288,7 +3288,6 @@ export default function App() {
           onPrefetchTrades={preloadTradesPage}
           onPrefetchTreasury={preloadTreasuryPage}
           onOpenTrades={() => navigateToPage('trades')}
-          isConnected={isConnected}
         />
         {walletSessionModals}
       </div>

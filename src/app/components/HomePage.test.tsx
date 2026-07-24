@@ -10,7 +10,6 @@ describe('HomePage app launcher', () => {
         onOpenSwap={vi.fn()}
         onOpenTreasury={vi.fn()}
         onOpenTrades={vi.fn()}
-        isConnected={false}
       />
     );
 
@@ -20,5 +19,7 @@ describe('HomePage app launcher', () => {
     expect(markup).toContain('OTC Desk');
     expect(markup).toContain('Privacy Portal');
     expect(markup).toContain('Treasury Data');
+    expect(markup).not.toContain('Home stays wallet-light');
+    expect(markup).not.toContain('Each page behaves like its own app');
   });
 });

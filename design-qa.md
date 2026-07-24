@@ -288,3 +288,50 @@ final result: passed
 - TypeScript and the production Vite build passed; Vite emitted the V3 crown-only asset.
 
 final result: passed
+
+---
+
+# Home hero animation and production-copy refinement
+
+## Comparison target
+
+- Source visual truth: `C:\Users\rosu_\AppData\Local\Temp\codex-clipboard-b117f2dd-8a58-4c39-8d38-bbe851b2d169.png` (1273x1089 px).
+- Browser-rendered implementation: `C:\Users\rosu_\.codex\visualizations\2026\07\23\019f8ff0-6ca7-7b32-a9ca-cf9ed35fd3e9\chainwhisper-design-audit\home-animated-orbit-final.png` (1265x712 px).
+- Focused implementation crop: `C:\Users\rosu_\.codex\visualizations\2026\07\23\019f8ff0-6ca7-7b32-a9ca-cf9ed35fd3e9\chainwhisper-design-audit\home-animated-orbit-focused.png` (462x366 px).
+- Combined comparison input: `C:\Users\rosu_\.codex\visualizations\2026\07\23\019f8ff0-6ca7-7b32-a9ca-cf9ed35fd3e9\chainwhisper-design-audit\home-animated-orbit-comparison.png` (1600x840 px).
+- Route and state: `http://127.0.0.1:5173/`, dark theme, disconnected public home page.
+- Browser CSS viewport: 1280x720 at device pixel ratio 1. The focused crop was proportionally normalized beside the source without stretching.
+
+## Comparison evidence
+
+- Full-view evidence: the browser capture shows the animated emblem inside the complete home hero, preserving the existing layout, copy, actions, and navigation.
+- Focused evidence: the combined comparison places the supplied static orbit reference and the implemented hero artwork in one image. Owl geometry, the outer ring, inner ring, rounded-square frame, two violet nodes, and near-black/violet palette remain consistent with the reference.
+- Motion evidence: two browser samples 900ms apart showed both orbit-node transforms change, the emblem translate in 3D, and outer-ring opacity advance.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the hero heading, eyebrow, body copy, actions, and card hierarchy retain their established families, weights, wrapping, and hierarchy.
+- Spacing and layout rhythm: the existing 370px orbit slot and hero grid remain unchanged. The animation uses transforms and opacity only, so it does not cause layout shift.
+- Colors and visual tokens: motion stays within the existing violet accent and near-black surface system. Ring brightening and glow remain deliberately restrained.
+- Image quality and asset fidelity: the checked-in ChainWhisper owl image remains the visible brand asset. No replacement, redraw, or raster degradation was introduced.
+- Copy and content: the internal wallet-readiness note and implementation-oriented section explanation were removed. The hero and app-card descriptions now use concise, customer-facing language while preserving the same product capabilities and terminology.
+
+## Findings and comparison history
+
+1. P2: the reference composition was visually correct but completely static in the implementation. Fixed with independently timed orbit nodes, counter-phased ring breathing, a soft scene aura, and a slow emblem float.
+2. P2: a single shared animation cadence would make the hero feel mechanical. Fixed with different 13s and 17s node paths, 6.6s and 8.4s ring cycles, and a 6.2s owl float.
+3. P2 accessibility risk: infinite decorative motion needs a non-animated path. Fixed by limiting all orbit animation to one near-instant iteration under `prefers-reduced-motion`.
+4. P2: two lines read like internal implementation guidance rather than production product copy. Removed both and tightened the hero and four app-card descriptions.
+5. No actionable P0, P1, or P2 findings remain in the requested home-page scope.
+
+## Interaction and regression checks
+
+- In-app Browser verified the default desktop state, the 820px stacked hero, and the existing 390px mobile state.
+- Desktop, tablet, and mobile checks reported zero horizontal overflow.
+- The existing mobile design still hides the decorative hero panel below 720px.
+- Open Chat, Open OTC Desk, global navigation, and all product behavior remain unchanged.
+- ESLint passed.
+- The focused HomePage test passed.
+- TypeScript and the production Vite build passed.
+
+final result: passed

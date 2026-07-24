@@ -10,7 +10,6 @@ type HomePageProps = {
   onPrefetchTrades?: () => void;
   onPrefetchTreasury?: () => void;
   onOpenTrades: () => void;
-  isConnected: boolean;
 };
 
 export default function HomePage({
@@ -21,8 +20,7 @@ export default function HomePage({
   onPrefetchChat,
   onPrefetchSwap,
   onPrefetchTrades,
-  onPrefetchTreasury,
-  isConnected
+  onPrefetchTreasury
 }: HomePageProps) {
   return (
     <main className="landing-shell">
@@ -31,7 +29,8 @@ export default function HomePage({
           <p className="landing-eyebrow">COTI Mainnet privacy hub</p>
           <h1 className="landing-title">ChainWhisper</h1>
           <p className="landing-description">
-            Private messaging, the OTC Desk, the Privacy Portal, and treasury data in one COTI-native workspace.
+            Private messaging, peer-to-peer trading, token privacy tools, and treasury insights for the COTI
+            ecosystem.
           </p>
 
           <div className="landing-hero-actions">
@@ -54,12 +53,6 @@ export default function HomePage({
               Open OTC Desk
             </button>
           </div>
-
-          <p className="landing-hero-note">
-            {isConnected
-              ? 'Wallet session is already available for app navigation.'
-              : 'Home stays wallet-light. Open chat when you are ready to create or reconnect an app wallet.'}
-          </p>
         </div>
 
         <aside className="landing-hero-aside landing-brand-panel" aria-hidden="true">
@@ -81,7 +74,6 @@ export default function HomePage({
             <p className="landing-eyebrow">Available apps</p>
             <h2 className="landing-section-title">Built around private coordination</h2>
           </div>
-          <p className="landing-section-copy">Each page behaves like its own app while sharing the same COTI context.</p>
         </div>
 
         <div className="landing-module-grid">
@@ -93,7 +85,7 @@ export default function HomePage({
               <span className="landing-module-kicker">Messaging</span>
             </div>
             <h3>Encrypted Chat</h3>
-            <p>Direct messages, group chat, reactions, replies, tips, invites, and private coordination.</p>
+            <p>Private direct messages and group conversations with reactions, replies, tips, and invitations.</p>
             <button
               type="button"
               className="landing-module-cta"
@@ -114,7 +106,7 @@ export default function HomePage({
               <span className="landing-module-kicker">Trading</span>
             </div>
             <h3>OTC Desk</h3>
-            <p>Browse peer offers, create escrow orders, share direct links, and manage private orders.</p>
+            <p>Discover peer offers, create escrow orders, share direct links, and manage private trades.</p>
             <button
               type="button"
               className="landing-module-cta"
@@ -135,7 +127,7 @@ export default function HomePage({
               <span className="landing-module-kicker">Private tokens</span>
             </div>
             <h3>Privacy Portal</h3>
-            <p>Convert supported COTI tokens between public and private form through official bridges.</p>
+            <p>Convert supported COTI tokens between public and private forms through official bridges.</p>
             <button
               type="button"
               className="landing-module-cta"
@@ -156,7 +148,7 @@ export default function HomePage({
               <span className="landing-module-kicker">Analytics</span>
             </div>
             <h3>Treasury Data</h3>
-            <p>Read live treasury metrics, historical snapshots, COTI pool data, and gCOTI context.</p>
+            <p>Explore live treasury metrics, historical snapshots, COTI pool data, and gCOTI insights.</p>
             <button
               type="button"
               className="landing-module-cta"

@@ -294,11 +294,6 @@ body {
   line-height: 1.55;
 }
 
-.app-shell-home .landing-hero-note {
-  color: var(--text-tertiary);
-  font-size: 0.8125rem;
-}
-
 .app-shell-home .landing-action-btn {
   min-height: 48px;
   border-radius: var(--radius-md);
@@ -318,14 +313,19 @@ body {
 .landing-brand-panel {
   min-height: 300px;
   place-items: center;
+  perspective: 900px;
 }
 
 .landing-brand-orbit {
+  --landing-orbit-outer-radius: -43cqw;
+  --landing-orbit-inner-radius: -28cqw;
   position: relative;
   width: min(370px, 100%);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
+  container-type: inline-size;
+  transform: translateZ(0);
 }
 
 .landing-brand-orbit::before {
@@ -335,39 +335,51 @@ body {
   border-radius: 50%;
   background: radial-gradient(circle, rgba(139, 92, 246, 0.16), transparent 66%);
   filter: blur(18px);
+  animation: landing-orbit-aura 6.8s ease-in-out infinite;
 }
 
 .landing-brand-orbit-ring {
   position: absolute;
   border: 1px solid rgba(139, 92, 246, 0.2);
   border-radius: 50%;
+  box-shadow:
+    inset 0 0 30px rgba(139, 92, 246, 0.025),
+    0 0 34px rgba(93, 54, 190, 0.025);
+  will-change: opacity, transform;
 }
 
 .landing-brand-orbit-ring-outer {
   inset: 7%;
+  animation: landing-orbit-ring-outer 8.4s ease-in-out infinite;
 }
 
 .landing-brand-orbit-ring-inner {
   inset: 22%;
+  animation: landing-orbit-ring-inner 6.6s ease-in-out -2.1s infinite;
 }
 
 .landing-brand-orbit-dot {
   position: absolute;
+  top: calc(50% - 3px);
+  left: calc(50% - 3px);
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--brand-strong);
   box-shadow: 0 0 18px rgba(155, 109, 255, 0.72);
+  will-change: opacity, transform;
 }
 
 .landing-brand-orbit-dot-one {
-  top: 6%;
-  left: 49%;
+  animation:
+    landing-orbit-dot-outer 17s linear infinite,
+    landing-orbit-dot-glow 3.8s ease-in-out infinite;
 }
 
 .landing-brand-orbit-dot-two {
-  right: 8%;
-  bottom: 31%;
+  animation:
+    landing-orbit-dot-inner 13s linear -4.4s infinite reverse,
+    landing-orbit-dot-glow 3.2s ease-in-out -1.1s infinite;
 }
 
 .landing-brand-mark {
@@ -383,23 +395,128 @@ body {
     inset 0 0 40px rgba(139, 92, 246, 0.08),
     0 22px 58px rgba(3, 4, 12, 0.5);
   transform: rotate(2deg);
+  animation: landing-brand-float 6.2s ease-in-out infinite;
+  will-change: box-shadow, transform;
 }
 
 .landing-brand-mark img {
   width: 78%;
   height: 78%;
   border-radius: 24%;
+  filter: drop-shadow(0 0 12px rgba(155, 109, 255, 0.18));
   object-fit: cover;
+  animation: landing-brand-image-glow 4.8s ease-in-out -1.3s infinite;
+}
+
+@keyframes landing-orbit-aura {
+  0%,
+  100% {
+    opacity: 0.58;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes landing-orbit-ring-outer {
+  0%,
+  100% {
+    border-color: rgba(139, 92, 246, 0.16);
+    opacity: 0.74;
+    transform: scale(0.985);
+  }
+
+  50% {
+    border-color: rgba(155, 109, 255, 0.29);
+    opacity: 1;
+    transform: scale(1.012);
+  }
+}
+
+@keyframes landing-orbit-ring-inner {
+  0%,
+  100% {
+    border-color: rgba(139, 92, 246, 0.13);
+    opacity: 0.66;
+    transform: scale(1.015);
+  }
+
+  50% {
+    border-color: rgba(155, 109, 255, 0.25);
+    opacity: 0.94;
+    transform: scale(0.985);
+  }
+}
+
+@keyframes landing-orbit-dot-outer {
+  from {
+    transform: rotate(0deg) translateY(var(--landing-orbit-outer-radius)) rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg) translateY(var(--landing-orbit-outer-radius)) rotate(-360deg);
+  }
+}
+
+@keyframes landing-orbit-dot-inner {
+  from {
+    transform: rotate(118deg) translateY(var(--landing-orbit-inner-radius)) rotate(-118deg);
+  }
+
+  to {
+    transform: rotate(478deg) translateY(var(--landing-orbit-inner-radius)) rotate(-478deg);
+  }
+}
+
+@keyframes landing-orbit-dot-glow {
+  0%,
+  100% {
+    opacity: 0.72;
+    box-shadow: 0 0 12px rgba(155, 109, 255, 0.46);
+  }
+
+  50% {
+    opacity: 1;
+    box-shadow:
+      0 0 9px rgba(214, 191, 255, 0.86),
+      0 0 24px rgba(155, 109, 255, 0.68);
+  }
+}
+
+@keyframes landing-brand-float {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 40px rgba(139, 92, 246, 0.08),
+      0 22px 58px rgba(3, 4, 12, 0.5);
+    transform: translate3d(0, 3px, 0) rotate(1.2deg);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 0 48px rgba(139, 92, 246, 0.13),
+      0 30px 70px rgba(35, 18, 82, 0.42);
+    transform: translate3d(0, -5px, 18px) rotate(-1.2deg);
+  }
+}
+
+@keyframes landing-brand-image-glow {
+  0%,
+  100% {
+    filter: brightness(0.98) saturate(0.98) drop-shadow(0 0 10px rgba(155, 109, 255, 0.14));
+  }
+
+  50% {
+    filter: brightness(1.07) saturate(1.08) drop-shadow(0 0 18px rgba(155, 109, 255, 0.32));
+  }
 }
 
 .app-shell-home .landing-section {
   padding: 26px;
   gap: 18px;
-}
-
-.app-shell-home .landing-section-copy {
-  color: var(--text-tertiary);
-  font-size: 0.875rem;
 }
 
 .app-shell-home .landing-module-grid {
@@ -820,6 +937,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .landing-brand-orbit *,
+  .landing-brand-orbit::before,
   .app-shell-home .landing-module-card,
   .app-shell-home .landing-action-btn,
   .app-shell-home .landing-module-cta,
@@ -828,5 +946,6 @@ body {
   .sound-toggle-btn {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

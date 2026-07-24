@@ -167,7 +167,6 @@
 }
 
 .landing-description,
-.landing-section-copy,
 .treasury-description,
 .treasury-section-copy {
   margin: 14px 0 0;
@@ -197,14 +196,6 @@
 .landing-action-btn-main {
   min-width: 220px;
   padding-inline: 20px;
-}
-
-.landing-hero-note {
-  max-width: 44rem;
-  margin: 12px 0 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-  line-height: 1.55;
 }
 
 .landing-action-btn,
