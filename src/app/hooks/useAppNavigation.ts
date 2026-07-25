@@ -89,6 +89,7 @@ export default function useAppNavigation({ activePage, setActivePage }: UseAppNa
 
       window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
       setActivePage(resolveAppRouteFromLocation().page);
+      window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
     },
     [setActivePage]
   );

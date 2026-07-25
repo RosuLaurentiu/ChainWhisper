@@ -7823,7 +7823,7 @@ summary:focus:not(:focus-visible),
     width: 100%;
     flex: 1 1 auto;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 6px;
   }

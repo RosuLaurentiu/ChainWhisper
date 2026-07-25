@@ -82,6 +82,7 @@ describe('AppHeader mobile navigation', () => {
         onToggleMobileLinksOpen={vi.fn()}
         onCloseMobileLinks={vi.fn()}
         onOpenHelp={vi.fn()}
+        walletControl={<button type="button">Wallet</button>}
       />
     );
 
@@ -89,6 +90,27 @@ describe('AppHeader mobile navigation', () => {
     expect(markup).toContain('title="Open App Help"');
     expect(markup).toMatch(
       /class="top-header-actions"[\s\S]*class="header-icon-btn top-header-help-btn"/
+    );
+    expect(markup.indexOf('top-header-mobile-wallet')).toBeLessThan(
+      markup.indexOf('top-header-help-btn')
+    );
+  });
+
+  it('places App Help after the wallet control on desktop', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav={false}
+        onToggleMobileLinksOpen={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        onOpenHelp={vi.fn()}
+        walletControl={<button type="button">Wallet</button>}
+      />
+    );
+
+    expect(markup.indexOf('>Wallet</button>')).toBeLessThan(
+      markup.indexOf('top-header-help-btn')
     );
   });
 

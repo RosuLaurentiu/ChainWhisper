@@ -174,28 +174,28 @@ export default function AppHeader({
   const desktopUtilityActions =
     desktopHelpControl || desktopWalletControl || debugControl ? (
       <>
-        {desktopHelpControl}
         {desktopWalletControl}
         {debugControl}
+        {desktopHelpControl}
       </>
     ) : null;
   const mobileWalletSlot = mobileWalletControl ? (
     <div className="top-header-mobile-wallet top-header-mobile-wallet-inline">{mobileWalletControl}</div>
   ) : null;
   const mobileUtilityCluster =
-    mobileHomeControl || mobileLinksMenuToggleControl || showInlineMobileSoundToggle || mobileHelpControl ? (
+    mobileHomeControl || mobileLinksMenuToggleControl || showInlineMobileSoundToggle ? (
       <div className="top-header-mobile-utility-cluster">
         {mobileHomeControl ? <div className="top-header-mobile-home">{mobileHomeControl}</div> : null}
         {mobileLinksMenuToggleControl}
         {showInlineMobileSoundToggle ? soundToggleControl : null}
-        {mobileHelpControl}
       </div>
     ) : null;
   const mobileTopActions =
-    mobileUtilityCluster || mobileWalletSlot ? (
+    mobileUtilityCluster || mobileWalletSlot || mobileHelpControl ? (
       <>
         {mobileUtilityCluster}
         {mobileWalletSlot}
+        {mobileHelpControl}
       </>
     ) : null;
   const showBrandActions = Boolean(desktopBrandActionContent);
