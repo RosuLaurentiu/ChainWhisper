@@ -183,7 +183,7 @@ test.describe('mobile layout polish', () => {
           cluster: getRect('.top-header-mobile-utility-cluster'),
           firstAppButton: getRect('.top-header-mobile-app-nav .app-header-nav button'),
           header: getRect('.top-header-bar'),
-          helpIcon: getRect('.top-header-mobile-utility-cluster .top-header-help-btn svg'),
+          helpIcon: getRect('.top-header-actions > .top-header-help-btn svg'),
           homeIcon: getRect('.top-header-mobile-home svg'),
           logo: getRect('.top-header-brand-logo'),
           primaryAction: getRect('.top-header-mobile-wallet-inline .wallet-primary-action'),
@@ -222,6 +222,7 @@ test.describe('mobile layout polish', () => {
       expect(geometry.walletMenuTrigger!.height).toBeGreaterThanOrEqual(44);
       expect(geometry.walletIcon!.width).toBeCloseTo(19, 1);
       expect(geometry.primaryAction!.width).toBeGreaterThan(geometry.walletMenuTrigger!.width);
+      expect(geometry.helpIcon!.left).toBeGreaterThan(geometry.wallet!.right);
     }
 
     expect(otcHeader.brand!.width).toBeCloseTo(chatHeader.brand!.width, 1);
