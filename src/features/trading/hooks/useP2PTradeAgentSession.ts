@@ -10,6 +10,7 @@ import {
 import { readTradeAgentPaymentRetry } from '../../../lib/tradeAgentPayment';
 import { formatTradeAgentFeeLabel } from '../../../app/appHelpers';
 import type { OtcSwapInputMode } from '../../../lib/otcSwapQuote';
+import type { TradeAgentPanelMode } from '../components/TradeAgentPanel';
 import { type TradeAgentChatMessage } from '../components/P2PTradingPage.helpers';
 
 const TRADE_AGENT_FEE_DISPLAY_CACHE_KEY = 'chainwhisper:trade-agent-fee-display:v1';
@@ -63,7 +64,7 @@ type UseP2PTradeAgentSessionArgs = {
 
 export const shouldLoadTradeAgentFeeEstimate = (
   routeSurfaceView: string | null,
-  panelMode: 'help' | 'trade'
+  panelMode: TradeAgentPanelMode
 ): boolean => routeSurfaceView === 'agent' && panelMode === 'trade';
 
 export default function useP2PTradeAgentSession({
@@ -78,7 +79,7 @@ export default function useP2PTradeAgentSession({
     const retry = readTradeAgentPaymentRetry();
     return retry?.context.clientSurface === 'otc-agent' ? retry : null;
   });
-  const [tradeAgentPanelMode, setTradeAgentPanelMode] = useState<'help' | 'trade'>('help');
+  const [tradeAgentPanelMode, setTradeAgentPanelMode] = useState<TradeAgentPanelMode>('help');
   const [tradeAgentAction, setTradeAgentAction] = useState<TradeAgentActionType>(
     () => initialTradeAgentRetryPayment?.action ?? 'find_price'
   );

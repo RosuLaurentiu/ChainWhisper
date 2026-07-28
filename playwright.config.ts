@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './tests/browser',
   fullyParallel: true,
+  workers: process.env.CI ? 2 : 4,
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:4174',
@@ -20,4 +21,3 @@ export default defineConfig({
     }
   ]
 });
-

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -19,6 +19,7 @@ import {
 import { moveFocusWithin } from '../../../shared/components/a11y';
 
 const REFRESH_INTERVAL_MS = 60_000;
+const LIVE_HALO_MS = 220;
 const SECONDS_PER_DAY = 86_400;
 const CHART_SURFACE_COLOR = '#0d1020';
 const HORIZONTAL_GRID_STROKE = 'rgba(111, 112, 148, 0.26)';
@@ -33,6 +34,7 @@ const TIMEFRAME_OPTIONS = [
 ] as const;
 
 type TimeframeKey = (typeof TIMEFRAME_OPTIONS)[number]['key'];
+type LiveStatMetric = 'cotiInPool' | 'activeGcoti' | 'maxTotalApy';
 
 const METRIC_OPTIONS = {
   activeGcoti: {
@@ -471,15 +473,19 @@ function TreasuryStatCard({
   label,
   value,
   detail,
-  tone = ''
+  tone = '',
+  liveUpdated = false
 }: {
   label: string;
   value: string;
   detail: string;
   tone?: string;
+  liveUpdated?: boolean;
 }) {
   return (
-    <article className={`treasury-stat-card ${tone}`.trim()}>
+    <article
+      className={`treasury-stat-card ${tone}${liveUpdated ? ' treasury-stat-card-live-update' : ''}`.trim()}
+    >
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{detail}</small>
@@ -555,6 +561,8 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
   const [status, setStatus] = useState<TreasuryStatus>('loading');
   const [error, setError] = useState('');
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [highlightedLiveMetrics, setHighlightedLiveMetrics] = useState<LiveStatMetric[]>([]);
+  const previousLivePointRef = useRef<TreasuryChartPoint | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -611,6 +619,32 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
   );
 
   const liveChartPoint = useMemo(() => (livePoint ? toChartPoint(livePoint, 'Live') : null), [livePoint]);
+
+  useEffect(() => {
+    const previousLivePoint = previousLivePointRef.current;
+    previousLivePointRef.current = liveChartPoint;
+
+    if (!previousLivePoint || !liveChartPoint) {
+      setHighlightedLiveMetrics([]);
+      return;
+    }
+
+    const changedMetrics = (['cotiInPool', 'activeGcoti', 'maxTotalApy'] as const).filter(
+      (key) => !Object.is(previousLivePoint[key], liveChartPoint[key])
+    );
+
+    if (changedMetrics.length === 0) {
+      setHighlightedLiveMetrics([]);
+      return;
+    }
+
+    setHighlightedLiveMetrics(changedMetrics);
+    const clearHighlightTimer = window.setTimeout(() => {
+      setHighlightedLiveMetrics([]);
+    }, LIVE_HALO_MS);
+
+    return () => window.clearTimeout(clearHighlightTimer);
+  }, [liveChartPoint]);
 
   const graphData = useMemo(() => {
     if (!liveChartPoint) {
@@ -687,17 +721,20 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
             value={currentPoint ? formatNumber(currentPoint.cotiInPool) : '--'}
             detail={liveChartPoint ? 'Live treasury feed' : 'Latest saved snapshot'}
             tone="treasury-stat-card-coti"
+            liveUpdated={highlightedLiveMetrics.includes('cotiInPool')}
           />
           <TreasuryStatCard
             label="Current gCOTI"
             value={currentPoint ? formatNumber(currentPoint.activeGcoti) : '--'}
             detail={liveChartPoint ? 'Live treasury feed' : 'Latest saved snapshot'}
             tone="treasury-stat-card-gcoti"
+            liveUpdated={highlightedLiveMetrics.includes('activeGcoti')}
           />
           <TreasuryStatCard
             label="Total APY"
             value={currentPoint ? `${currentPoint.maxTotalApy.toFixed(2)}%` : '--'}
             detail={liveChartPoint ? 'Live treasury feed' : 'Latest saved snapshot'}
+            liveUpdated={highlightedLiveMetrics.includes('maxTotalApy')}
           />
           <TreasuryStatCard
             label="Latest saved"
@@ -776,62 +813,64 @@ export default function TreasuryPage({ isCompactLayout = false }: { isCompactLay
             </div>
           ) : null}
           {status === 'ready' && filteredGraphData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={isCompactLayout ? 320 : 400}>
-              <LineChart data={filteredGraphData} margin={chartMargin}>
-                <CartesianGrid stroke={HORIZONTAL_GRID_STROKE} strokeDasharray="4 8" vertical={false} />
-                <CartesianGrid stroke={VERTICAL_GRID_STROKE} strokeDasharray="3 14" horizontal={false} />
-                <XAxis
-                  type="number"
-                  dataKey="capturedAtUnix"
-                  scale="time"
-                  domain={xAxisDomain}
-                  stroke="#8f84b3"
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => formatAxisDate(Number(value), visibleSpanDays)}
-                  tickCount={isCompactLayout ? 5 : visibleSpanDays <= 45 ? 6 : 5}
-                  minTickGap={isCompactLayout ? 16 : 24}
-                  tickMargin={isCompactLayout ? 10 : 8}
-                  tick={{ fill: '#a89ed0', fontSize: isCompactLayout ? 11 : 13 }}
-                />
-                <YAxis
-                  stroke="#8f84b3"
-                  tickLine={false}
-                  axisLine={false}
-                  domain={yAxisConfig.domain}
-                  ticks={yAxisConfig.ticks}
-                  tickFormatter={(value) => formatMetricAxisValue(Number(value), metric, yAxisConfig.step)}
-                  tickMargin={isCompactLayout ? 4 : 10}
-                  tick={{ fill: '#b7addd', fontSize: isCompactLayout ? 10.5 : 13, fontWeight: 600 }}
-                  width={yAxisWidth}
-                />
-                <Tooltip content={<CustomTooltip />} cursor={<CrosshairCursor yDomain={yAxisConfig.domain} />} />
-                <Line
-                  type="monotone"
-                  dataKey={metric}
-                  dot={false}
-                  activeDot={false}
-                  stroke={metricOption.color}
-                  strokeOpacity={0.18}
-                  strokeWidth={isCompactLayout ? 7 : 8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey={metric}
-                  dot={false}
-                  activeDot={(props: DotProps) => <HoverActiveDot {...props} color={metricOption.color} />}
-                  stroke={metricOption.color}
-                  strokeWidth={isCompactLayout ? 2.4 : 2.9}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ filter: `drop-shadow(0 8px 13px ${metricOption.shadowColor})` }}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <div key={`${metric}:${timeframe}`} className="treasury-chart-content">
+              <ResponsiveContainer width="100%" height={isCompactLayout ? 320 : 400}>
+                <LineChart data={filteredGraphData} margin={chartMargin}>
+                  <CartesianGrid stroke={HORIZONTAL_GRID_STROKE} strokeDasharray="4 8" vertical={false} />
+                  <CartesianGrid stroke={VERTICAL_GRID_STROKE} strokeDasharray="3 14" horizontal={false} />
+                  <XAxis
+                    type="number"
+                    dataKey="capturedAtUnix"
+                    scale="time"
+                    domain={xAxisDomain}
+                    stroke="#8f84b3"
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value) => formatAxisDate(Number(value), visibleSpanDays)}
+                    tickCount={isCompactLayout ? 5 : visibleSpanDays <= 45 ? 6 : 5}
+                    minTickGap={isCompactLayout ? 16 : 24}
+                    tickMargin={isCompactLayout ? 10 : 8}
+                    tick={{ fill: '#a89ed0', fontSize: isCompactLayout ? 11 : 13 }}
+                  />
+                  <YAxis
+                    stroke="#8f84b3"
+                    tickLine={false}
+                    axisLine={false}
+                    domain={yAxisConfig.domain}
+                    ticks={yAxisConfig.ticks}
+                    tickFormatter={(value) => formatMetricAxisValue(Number(value), metric, yAxisConfig.step)}
+                    tickMargin={isCompactLayout ? 4 : 10}
+                    tick={{ fill: '#b7addd', fontSize: isCompactLayout ? 10.5 : 13, fontWeight: 600 }}
+                    width={yAxisWidth}
+                  />
+                  <Tooltip content={<CustomTooltip />} cursor={<CrosshairCursor yDomain={yAxisConfig.domain} />} />
+                  <Line
+                    type="monotone"
+                    dataKey={metric}
+                    dot={false}
+                    activeDot={false}
+                    stroke={metricOption.color}
+                    strokeOpacity={0.18}
+                    strokeWidth={isCompactLayout ? 7 : 8}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey={metric}
+                    dot={false}
+                    activeDot={(props: DotProps) => <HoverActiveDot {...props} color={metricOption.color} />}
+                    stroke={metricOption.color}
+                    strokeWidth={isCompactLayout ? 2.4 : 2.9}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ filter: `drop-shadow(0 8px 13px ${metricOption.shadowColor})` }}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           ) : null}
         </div>
 

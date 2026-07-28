@@ -1,0 +1,965 @@
+/*
+ * ChainWhisper modern effects pass
+ *
+ * This final layer centralizes non-functional motion and tactile feedback.
+ * Keep route, wallet, privacy, trading, and data state changes immediate.
+ */
+
+:root {
+  --motion-press: 80ms;
+  --motion-hover: 150ms;
+  --motion-enter: 180ms;
+  --motion-feedback: 220ms;
+  --ease-tactile: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --scrollbar-thumb: rgba(139, 92, 246, 0.58);
+  --scrollbar-thumb-hover: rgba(167, 139, 250, 0.78);
+  --scrollbar-track: rgba(10, 10, 18, 0.34);
+}
+
+@keyframes cw-route-enter {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cw-panel-enter {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cw-route-chrome-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cw-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cw-dialog-enter {
+  from {
+    opacity: 0;
+    scale: 0.985;
+    translate: 0 6px;
+  }
+
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cw-popover-enter {
+  from {
+    opacity: 0;
+    scale: 0.98;
+    translate: 0 -4px;
+  }
+
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cw-feedback-settle {
+  0% {
+    scale: 0.985;
+  }
+
+  46% {
+    box-shadow:
+      0 0 0 1px rgba(74, 222, 128, 0.72),
+      0 0 20px rgba(34, 197, 94, 0.2);
+    scale: 1.018;
+  }
+
+  100% {
+    scale: 1;
+  }
+}
+
+@keyframes cw-privacy-pay-emphasis {
+  0% {
+    box-shadow: 0 0 0 rgba(139, 92, 246, 0);
+    scale: 0.995;
+  }
+
+  45% {
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.32), 0 12px 30px rgba(91, 33, 182, 0.13);
+    scale: 1.004;
+  }
+
+  100% {
+    box-shadow: 0 0 0 rgba(139, 92, 246, 0);
+    scale: 1;
+  }
+}
+
+@keyframes cw-privacy-receive-emphasis {
+  0% {
+    box-shadow: 0 0 0 rgba(56, 189, 248, 0);
+    scale: 0.995;
+  }
+
+  45% {
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3), 0 12px 30px rgba(14, 165, 233, 0.12);
+    scale: 1.004;
+  }
+
+  100% {
+    box-shadow: 0 0 0 rgba(56, 189, 248, 0);
+    scale: 1;
+  }
+}
+
+@keyframes cw-chart-crossfade {
+  from {
+    opacity: 0.18;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cw-treasury-live-halo {
+  0% {
+    box-shadow: 0 0 0 rgba(var(--treasury-live-halo), 0);
+    scale: 0.998;
+  }
+
+  46% {
+    border-color: rgba(var(--treasury-live-halo), 0.72);
+    box-shadow:
+      0 0 0 1px rgba(var(--treasury-live-halo), 0.34),
+      0 0 24px rgba(var(--treasury-live-halo), 0.16);
+    scale: 1.008;
+  }
+
+  100% {
+    scale: 1;
+  }
+}
+
+@keyframes cw-agent-response-enter {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cw-agent-loading-dots {
+  0% {
+    clip-path: inset(0 100% 0 0);
+  }
+
+  100% {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* Keep one visual scroll language across route and nested scroll owners. */
+:is(html, body, .app-shell, .app-shell *) {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+
+:is(html, body, .app-shell, .app-shell *)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+:is(html, body, .app-shell, .app-shell *)::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+:is(html, body, .app-shell, .app-shell *)::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+:is(html, body, .app-shell, .app-shell *)::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+/* Scrollbars belong to route content, so the shared header stays outside them. */
+.app-shell.app-shell-landing {
+  min-height: 0;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell-landing > .landing-shell {
+  --route-inline-gutter: 56px;
+  min-height: 0;
+  height: 100%;
+  max-width: none;
+  margin-inline: 0;
+  align-content: start;
+  grid-auto-rows: max-content;
+  padding-inline: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-shell > .treasury-shell {
+  --route-inline-gutter: 40px;
+  min-height: 0;
+  height: 100%;
+  max-width: none;
+  margin-inline: 0;
+  align-content: start;
+  grid-auto-rows: max-content;
+  padding-inline: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-shell-landing > .landing-shell > * {
+  width: min(calc(100% - var(--route-inline-gutter)), 1424px);
+  margin-inline: auto;
+}
+
+.app-shell > .treasury-shell > * {
+  width: min(calc(100% - var(--route-inline-gutter)), 1520px);
+  margin-inline: auto;
+}
+
+@media (max-width: 860px) {
+  .app-shell-landing > .landing-shell {
+    --route-inline-gutter: 32px;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell-landing > .landing-shell,
+  .app-shell > .treasury-shell {
+    --route-inline-gutter: 0px;
+  }
+}
+
+:is(html, body, .app-shell, .app-shell *)::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Route content enters; the shared header remains stationary. */
+.app-shell > :is(.standalone-trades-shell, .swap-page-shell, .treasury-shell),
+.app-shell-chat > .app-root {
+  animation: cw-route-chrome-enter var(--motion-enter) var(--ease-enter);
+}
+
+.app-shell-landing > .landing-shell {
+  animation: cw-route-chrome-enter var(--motion-enter) var(--ease-enter);
+}
+
+.app-shell-landing > .landing-shell > *,
+.app-shell > :is(.swap-page-shell, .treasury-shell) > * {
+  animation: cw-route-enter var(--motion-enter) var(--ease-enter);
+}
+
+/* Shared tactile controls */
+button:not(:disabled),
+.top-header-ecosystem-menu > summary,
+.contact-card[role='button'] {
+  transition-duration: var(--motion-hover);
+  transition-timing-function: var(--ease-tactile);
+}
+
+button:not(:disabled):active,
+.top-header-ecosystem-menu > summary:active,
+.contact-card[role='button']:active {
+  filter: brightness(0.97);
+  scale: 0.985;
+  translate: 0 1px;
+  transition-duration: var(--motion-press);
+}
+
+:is(
+  .connect-btn,
+  .wallet-primary-action,
+  .landing-action-btn,
+  .landing-module-cta,
+  .chat-compose-send,
+  .trade-card-action,
+  .standalone-trade-secondary-btn,
+  .p2p-terminal-primary-action
+):not(:disabled):active {
+  box-shadow: 0 2px 8px rgba(2, 3, 10, 0.2) !important;
+}
+
+/* Entry-only overlays and popovers; dismissal remains immediate. */
+.modal-backdrop {
+  animation: cw-backdrop-enter var(--motion-hover) ease-out;
+}
+
+.modal-backdrop > .modal-card,
+.p2p-terminal-history-sheet[role='dialog'] {
+  animation: cw-dialog-enter var(--motion-enter) var(--ease-enter);
+  transform-origin: 50% 35%;
+}
+
+:is(
+  .p2p-wallet-menu,
+  .p2p-app-wallet-switch-menu,
+  .privacy-mobile-token-menu.is-summary,
+  .privacy-mobile-token-menu.is-inline,
+  .message-reaction-picker,
+  .trade-token-select.open > .trade-token-select-dropdown,
+  .group-actions-dropdown[open] .group-actions-menu-panel,
+  .group-invite-menu[open] .group-invite-menu-panel,
+  .group-members-dropdown[open] .group-members-list,
+  .group-mobile-options-panel,
+  .top-header-ecosystem-menu[open] > .top-header-links,
+  .top-header-mobile-links.open:not([hidden])
+) {
+  animation: cw-popover-enter var(--motion-enter) var(--ease-enter);
+  transform-origin: top right;
+}
+
+/* Copy, completion, and success states share one brief settle. */
+:is(
+  button.copied,
+  .contact-copy.copied,
+  .burner-address-btn.copied,
+  .p2p-wallet-mode-copy.copied,
+  .p2p-wallet-menu-address-button.copied,
+  .trade-card-link-button.copied,
+  .p2p-terminal-share.copied,
+  .p2p-offer-share-btn.copied,
+  .privacy-action-progress.is-complete,
+  .p2p-wallet-onboarding-step.complete,
+  .standalone-trade-created,
+  .p2p-action-notice-success
+) {
+  animation: cw-feedback-settle var(--motion-feedback) var(--ease-settle);
+}
+
+/* Home keeps its existing ambient art; only CTA arrows gain travel. */
+.app-shell-home .landing-module-cta svg {
+  transition:
+    translate var(--motion-hover) var(--ease-tactile),
+    scale var(--motion-press) var(--ease-tactile);
+}
+
+.app-shell-home .landing-module-cta:focus-visible svg {
+  translate: 2px -2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .app-shell-home .landing-module-cta:hover svg {
+    translate: 2px -2px;
+  }
+
+  .contact-card[role='button']:hover,
+  .treasury-meta-card-link:hover,
+  .p2p-wallet-account-card:hover {
+    border-color: rgba(167, 139, 250, 0.5);
+    box-shadow: 0 10px 26px rgba(2, 3, 10, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.08);
+    translate: 0 -1px;
+  }
+
+  .app-shell-trades
+    :is(.p2p-public-trade-grid, .p2p-wallet-trade-grid)
+    .p2p-order-card:not(.p2p-order-card-selected):hover {
+    border-color: rgba(167, 139, 250, 0.48) !important;
+    box-shadow:
+      0 18px 38px rgba(2, 3, 10, 0.32),
+      0 0 0 1px rgba(139, 92, 246, 0.12) !important;
+  }
+}
+
+.app-shell-home .landing-module-card:focus-within,
+.contact-card[role='button']:focus-within,
+.treasury-meta-card-link:focus-visible,
+.p2p-wallet-account-card:focus-within {
+  border-color: rgba(196, 181, 253, 0.58);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.14);
+}
+
+.app-shell-trades
+  :is(.p2p-public-trade-grid, .p2p-wallet-trade-grid)
+  .p2p-order-card:not(.p2p-order-card-selected):focus-within {
+  border-color: rgba(196, 181, 253, 0.58) !important;
+  box-shadow:
+    0 16px 34px rgba(2, 3, 10, 0.28),
+    0 0 0 3px rgba(139, 92, 246, 0.13) !important;
+}
+
+:is(
+  .contact-card,
+  .treasury-meta-card-link,
+  .p2p-wallet-account-card,
+  .app-shell-trades .p2p-order-card
+) {
+  transition:
+    translate var(--motion-hover) var(--ease-tactile),
+    border-color var(--motion-hover) ease,
+    background-color var(--motion-hover) ease,
+    box-shadow var(--motion-hover) ease,
+    color var(--motion-hover) ease;
+}
+
+/* OTC surfaces */
+.app-shell-trades
+  .p2p-trading-shell
+  > :is(
+    .p2p-swap-section,
+    .p2p-agent-section,
+    .p2p-public-trades-section,
+    .standalone-trade-create-panel,
+    .p2p-my-trades-section
+  ),
+.app-shell-trades .standalone-trade-create-panel > .trade-compose-panel {
+  animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
+}
+
+@media (max-width: 920px) {
+  .app-shell-trades
+    .p2p-trading-shell
+    > :is(.p2p-public-trades-section, .p2p-my-trades-section) {
+    animation-name: cw-route-chrome-enter;
+  }
+}
+
+.app-shell-trades .p2p-agent-chat-window[aria-labelledby='assistant-mode-help'] {
+  animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
+}
+
+.app-shell-trades .p2p-agent-chat-window[aria-labelledby='assistant-mode-trade'] {
+  animation: cw-route-enter var(--motion-enter) var(--ease-enter);
+}
+
+.app-shell-trades .p2p-filter-bar-open .p2p-advanced-filter-panel {
+  animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
+}
+
+.app-shell-trades :is(.p2p-swap-token-flip, .trade-compose-swap-indicator, .p2p-recurring-cycle-indicator) svg {
+  transition: transform var(--motion-enter) var(--ease-settle);
+}
+
+.app-shell-trades .p2p-swap-token-flip:not(:disabled):active svg {
+  transform: rotate(270deg) scale(0.92);
+}
+
+.app-shell-trades .trade-compose-swap-indicator:not(:disabled):active svg,
+.app-shell-trades .p2p-recurring-cycle-indicator:not(:disabled):active svg {
+  transform: rotate(180deg) scale(0.92);
+}
+
+.app-shell-trades
+  .p2p-agent-messages:not([aria-busy='true'])
+  > .p2p-agent-message-assistant:nth-last-child(2) {
+  animation: cw-agent-response-enter var(--motion-enter) var(--ease-enter);
+}
+
+.app-shell-trades
+  .p2p-agent-messages[aria-busy='true']
+  > .p2p-agent-message-assistant:nth-last-child(2)
+  p::after {
+  content: '';
+  width: 18px;
+  height: 6px;
+  display: inline-block;
+  margin-left: 7px;
+  background:
+    radial-gradient(circle, rgba(216, 180, 254, 0.95) 0 2px, transparent 2.4px) 0 50% / 6px 6px repeat-x;
+  clip-path: inset(0 100% 0 0);
+  vertical-align: 1px;
+  animation: cw-agent-loading-dots 900ms steps(3, end) infinite;
+}
+
+@media (min-width: 921px) {
+  .app-shell-trades .p2p-trading-shell-drawer-open > .standalone-trade-detail-section {
+    animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open > .p2p-terminal-history-window {
+    animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
+  }
+}
+
+@media (max-width: 920px) {
+  .app-shell-trades .p2p-trading-shell-drawer-open > .standalone-trade-detail-section {
+    animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
+  }
+}
+
+/* Privacy Portal */
+.privacy-token-list > button,
+.privacy-mobile-token-menu > button,
+.swap-token-chip,
+.privacy-direction-switch .swap-pill-option {
+  transition:
+    translate var(--motion-hover) var(--ease-tactile),
+    border-color var(--motion-hover) ease,
+    background-color var(--motion-hover) ease,
+    box-shadow var(--motion-hover) ease,
+    color var(--motion-hover) ease;
+}
+
+.swap-card .swap-route-chip svg {
+  transition: transform var(--motion-enter) var(--ease-settle);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:first-child.active) .swap-route-chip svg {
+  transform: rotate(0deg);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:last-child.active) .swap-route-chip svg {
+  transform: rotate(180deg);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:first-child.active)
+  .swap-flow
+  > .swap-asset-panel-output {
+  animation: cw-privacy-receive-emphasis var(--motion-feedback) var(--ease-settle);
+}
+
+.swap-card:has(.privacy-direction-switch > .swap-pill-option:last-child.active)
+  .swap-flow
+  > .swap-asset-panel:first-child {
+  animation: cw-privacy-pay-emphasis var(--motion-feedback) var(--ease-settle);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .privacy-token-list > button:hover,
+  .privacy-mobile-token-menu > button:hover {
+    translate: 0 -1px;
+  }
+}
+
+/* Privacy Portal density: keep the full conversion workspace visible on desktop. */
+@media (min-width: 921px) {
+  .swap-page-shell {
+    padding: 16px 20px 20px;
+  }
+
+  .swap-page-panel {
+    max-width: 1180px;
+    gap: 10px;
+  }
+
+  .swap-page-hero {
+    min-height: 30px;
+    align-items: center;
+  }
+
+  .swap-page-heading p {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+
+  .swap-privacy-portal-link {
+    margin-left: 0;
+  }
+
+  .privacy-portal-workspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  .privacy-token-rail {
+    min-height: 0;
+    padding: 10px 8px;
+  }
+
+  .privacy-token-rail-title {
+    padding: 0 4px 8px;
+  }
+
+  .privacy-token-search {
+    height: 36px;
+  }
+
+  .privacy-token-list {
+    margin-top: 6px;
+  }
+
+  .privacy-token-list > button {
+    min-height: 46px;
+    padding-block: 4px;
+  }
+
+  .privacy-token-list .privacy-token-icon {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+
+  .privacy-token-rail-note {
+    margin: 8px 5px 5px;
+    line-height: 1.3;
+  }
+
+  .swap-card {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .privacy-direction-switch {
+    padding: 3px;
+  }
+
+  .privacy-direction-switch .swap-pill-option {
+    min-height: 42px;
+    padding-block: 8px;
+  }
+
+  .swap-asset-panel {
+    min-height: 112px;
+    padding: 12px 14px;
+  }
+
+  .swap-asset-panel-output {
+    margin-top: 10px;
+  }
+
+  .swap-panel-main {
+    margin-top: 8px;
+  }
+
+  .swap-panel-main input,
+  .swap-panel-main-readonly strong {
+    font-size: clamp(2rem, 4vw, 2.4rem);
+  }
+
+  .swap-token-chip {
+    min-height: 48px;
+  }
+
+  .swap-route-chip {
+    width: 44px;
+    height: 44px;
+    transform: translateY(5px);
+  }
+
+  .privacy-quote-table {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .privacy-quote-table > div {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+
+  .privacy-quote-table > div:nth-child(odd):not(:last-child) {
+    border-right: 1px solid rgba(76, 72, 105, 0.35);
+  }
+
+  .privacy-quote-table > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .privacy-readiness {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    padding: 9px 11px;
+  }
+
+  .privacy-readiness-bridge {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-right: 12px;
+  }
+
+  .privacy-readiness-private {
+    align-items: center;
+    padding-left: 12px;
+  }
+
+  .privacy-readiness-private > svg {
+    margin-top: 0;
+  }
+
+  .privacy-readiness-private > span {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 3px 8px;
+  }
+
+  .privacy-readiness p {
+    margin: 0;
+  }
+
+  .swap-action-btn {
+    min-height: 46px;
+  }
+}
+
+@media (min-width: 1100px) {
+  .swap-flow {
+    grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .swap-asset-panel-output {
+    margin-top: 0;
+  }
+
+  .swap-route-chip {
+    transform: none;
+  }
+
+  .swap-card .swap-route-chip svg {
+    rotate: 90deg;
+  }
+}
+
+/* The same hierarchy on smaller screens, with touch targets kept at 44px or more. */
+@media (max-width: 920px) {
+  .swap-page-panel {
+    gap: 10px;
+  }
+
+  .swap-page-hero {
+    gap: 8px;
+  }
+
+  .swap-page-heading p {
+    gap: 4px 10px;
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+
+  .swap-privacy-portal-link {
+    width: auto;
+  }
+
+  .privacy-mobile-token-picker > button {
+    min-height: 48px;
+    padding: 8px 11px;
+  }
+
+  .swap-card {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .privacy-direction-switch {
+    padding: 3px;
+  }
+
+  .privacy-direction-switch .swap-pill-option {
+    min-height: 44px;
+    padding-block: 8px;
+  }
+
+  .swap-asset-panel {
+    min-height: 108px;
+    padding: 10px 11px;
+  }
+
+  .swap-asset-panel-output {
+    margin-top: 8px;
+    padding-top: 24px;
+  }
+
+  .swap-panel-main {
+    margin-top: 7px;
+  }
+
+  .swap-token-chip {
+    min-height: 48px;
+  }
+
+  .swap-route-chip {
+    width: 46px;
+    height: 46px;
+    transform: translateY(5px);
+  }
+
+  .privacy-quote-table > div {
+    min-height: 34px;
+    padding-block: 6px;
+  }
+
+  .privacy-quote-table {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .privacy-quote-table > div:nth-child(odd):not(:last-child) {
+    border-right: 1px solid rgba(76, 72, 105, 0.35);
+  }
+
+  .privacy-quote-table > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .privacy-readiness {
+    padding: 8px 9px;
+  }
+
+  .privacy-readiness-private {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .privacy-readiness-private > svg {
+    margin-top: 0;
+  }
+
+  .privacy-readiness-private > span {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 2px 7px;
+  }
+
+  .privacy-readiness p {
+    margin: 0;
+    font-size: 0.7rem;
+    line-height: 1.25;
+  }
+
+  .swap-action-btn {
+    min-height: 48px;
+  }
+}
+
+/* Treasury values stay immediate; only their surrounding surfaces respond. */
+.treasury-pill-button {
+  transition:
+    translate var(--motion-press) var(--ease-tactile),
+    scale var(--motion-press) var(--ease-tactile),
+    border-color var(--motion-hover) ease,
+    background-color var(--motion-hover) ease,
+    box-shadow var(--motion-hover) ease,
+    color var(--motion-hover) ease;
+}
+
+.treasury-pill-button.active {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 5px 14px rgba(2, 3, 10, 0.16);
+}
+
+.treasury-chart-content {
+  width: 100%;
+  min-width: 0;
+  animation: cw-chart-crossfade var(--motion-enter) ease-out;
+}
+
+.treasury-stat-card {
+  --treasury-live-halo: 139, 92, 246;
+}
+
+.treasury-stat-card-coti {
+  --treasury-live-halo: 56, 189, 248;
+}
+
+.treasury-stat-card-gcoti {
+  --treasury-live-halo: 52, 211, 153;
+}
+
+.treasury-stat-card-live-update {
+  animation: cw-treasury-live-halo var(--motion-feedback) var(--ease-settle);
+}
+
+/* Chat rows stay static; controls and state colors receive the feedback. */
+.contact-card,
+.message-reaction-chip,
+.message-reply-action,
+.message-react-action,
+.message-draft-trade-action,
+.chat-compose-send,
+.message-delivery,
+.chat-header-sync,
+.chat-message-sync-indicator,
+.group-message-sync-indicator,
+.realtime-status-pill,
+.realtime-status-dot {
+  transition:
+    color var(--motion-hover) ease,
+    border-color var(--motion-hover) ease,
+    background-color var(--motion-hover) ease,
+    box-shadow var(--motion-hover) ease,
+    opacity var(--motion-hover) ease;
+}
+
+.chat-message-sync-indicator,
+.group-message-sync-indicator {
+  animation: cw-panel-enter var(--motion-enter) var(--ease-enter);
+}
+
+/* Central reduced-motion coverage for both new and existing effects. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-press: 0.01ms;
+    --motion-hover: 0.01ms;
+    --motion-enter: 0.01ms;
+    --motion-feedback: 0.01ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .app-shell-trades
+    .p2p-agent-messages[aria-busy='true']
+    > .p2p-agent-message-assistant:nth-last-child(2)
+    p::after {
+    clip-path: none;
+  }
+}

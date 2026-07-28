@@ -2,13 +2,19 @@ import { useEffect, useState } from 'react';
 import { formatTradeAgentFeeLabel } from '../../../app/appHelpers';
 import { fetchTradeAgentFeeEstimate } from '../../../lib/tradeAgent';
 
-export default function useTradeAgentChatFeeLabels() {
+export const shouldLoadTradeAgentChatFeeLabels = (activePage: string): boolean =>
+  activePage === 'chat';
+
+export default function useTradeAgentChatFeeLabels(enabled: boolean) {
   const [labels, setLabels] = useState({
     chat_to_trade: 'paid',
     draft_counter: 'paid'
   });
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     let active = true;
     fetchTradeAgentFeeEstimate('draft_counter')
       .then((quote) => {
@@ -27,7 +33,7 @@ export default function useTradeAgentChatFeeLabels() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [enabled]);
 
   return labels;
 }

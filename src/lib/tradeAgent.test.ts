@@ -276,7 +276,7 @@ describe('tradeAgent', () => {
       createdAt: 1,
       expiresAt: 0,
       status: 'open',
-      isPublic: false,
+      isPublic: true,
       hiddenLiquidity: true,
       makerPrivateProgress: {
         remainingOfferAmount: '999999999999999999',
@@ -304,7 +304,9 @@ describe('tradeAgent', () => {
       createdAt: 1,
       expiresAt: 0,
       status: 'open',
-      isPublic: false,
+      maker: '0x1111111111111111111111111111111111111111',
+      taker: '0x0000000000000000000000000000000000000000',
+      isPublic: true,
       recurringOrder: {
         orderId: 31,
         selectedSide: 'buy',
@@ -326,6 +328,7 @@ describe('tradeAgent', () => {
 
     const summary = buildTradeAgentSafeOrderSummary(privateRecurring);
     expect(summary).toMatchObject({
+      accessType: 'public',
       amountVisibility: 'private-hidden',
       orderType: 'recurring'
     });

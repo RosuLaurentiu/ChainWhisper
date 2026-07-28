@@ -335,3 +335,25 @@ final result: passed
 - TypeScript and the production Vite build passed.
 
 final result: passed
+
+
+---
+
+# Agent Setup design QA
+
+- Reference: `C:\Users\rosu_\AppData\Local\Temp\codex-clipboard-0a82380b-2c2c-4bb5-947d-30075d0eee8e.png`
+- Route: `/otc/agent`, Agent Setup tab
+- Desktop check: 1440 × 950
+- Mobile check: 390 × 844
+
+## Verified
+
+- The primary flow reads in order: install one package, understand the two MCP connections, copy or inspect the setup prompt, then review optional ecosystem tools.
+- `View setup prompt` remains available and expands without forcing the optional references out of the page flow.
+- General COTI MCP, COTI skills, and Carbon MCP remain visible as optional, clearly marked “Not required.”
+- The setup action is free and creates no wallet, Trade Agent quote, signature, payment, or WISP side effect.
+- Three-tab keyboard navigation, labels, focus behavior, and minimum 44 px interactive targets are covered.
+- Content wraps and stacks on mobile with no unexpected horizontal overflow.
+- The production build and full 85-test browser suite report no relevant console or layout errors.
+
+final result: passed

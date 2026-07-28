@@ -146,7 +146,12 @@ export default function App() {
   const [linkedTradeContext, setLinkedTradeContext] = useState<LinkedTradeContext | null>(null);
   const [negotiatingLinkedTradeKey, setNegotiatingLinkedTradeKey] = useState('');
   const [draftingTradeMessageId, setDraftingTradeMessageId] = useState('');
-  const tradeAgentChatFeeLabels = useTradeAgentChatFeeLabels();
+  const shouldLoadTradeAgentChatFees = useAppShellStore(
+    (state) => state.activePage === 'chat'
+  );
+  const tradeAgentChatFeeLabels = useTradeAgentChatFeeLabels(
+    shouldLoadTradeAgentChatFees
+  );
   const [myNickname, setMyNickname] = useState('');
   const [nicknameMaxBytes, setNicknameMaxBytes] = useState(DEFAULT_NICKNAME_MAX_BYTES);
   const [messagesByContact, setMessagesByContact] = useState<Record<string, ChatMessage[]>>({});

@@ -116,7 +116,7 @@ test.describe('route wallet header policy', () => {
     await expect(headerPrivacyLink).toHaveAttribute('target', '_blank');
 
     await page.goto('/portal');
-    const portalPrivacyButton = page.getByRole('link', { name: /Official COTI contracts/i });
+    const portalPrivacyButton = page.getByRole('link', { name: /View official contracts/i });
     await expect(portalPrivacyButton).toBeVisible();
     await expect(portalPrivacyButton).toHaveAttribute('href', cotiPrivacyPortalUrl);
     await expect(portalPrivacyButton).toHaveAttribute('target', '_blank');

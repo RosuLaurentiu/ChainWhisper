@@ -5,9 +5,9 @@ test.describe('Privacy Portal', () => {
     await page.setViewportSize({ width: 1536, height: 1024 });
     await page.goto('/portal');
 
-    await expect(page.getByRole('heading', { name: 'Privacy Portal' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Privacy Portal' })).toBeAttached();
 
-    const rail = page.getByRole('complementary', { name: 'Supported privacy tokens' });
+    const rail = page.getByRole('complementary', { name: 'Supported privacy token pairs' });
     const tokenButtons = rail.locator('.privacy-token-list > button');
     await expect(tokenButtons).toHaveCount(8);
     await expect(tokenButtons.first()).toContainText('WISP');
@@ -29,7 +29,7 @@ test.describe('Privacy Portal', () => {
     await expect(page.locator('.swap-page-panel > .privacy-legacy-recovery')).toHaveCount(0);
     await expect(legacyRecovery).not.toHaveAttribute('open', '');
 
-    await rail.getByRole('button', { name: 'COTI', exact: true }).click();
+    await rail.getByRole('button', { name: 'COTI / p.COTI', exact: true }).click();
     await expect(legacyRecovery).toHaveCount(0);
   });
 
@@ -42,7 +42,7 @@ test.describe('Privacy Portal', () => {
     await expect(picker).toBeVisible();
     await picker.click();
 
-    const menu = page.getByRole('menu', { name: 'Select a privacy token' });
+    const menu = page.getByRole('menu', { name: 'Select a privacy token pair' });
     await expect(menu).toBeVisible();
     await expect(menu.locator('button')).toHaveCount(8);
     await expect(menu.locator('button').first()).toContainText('WISP');
@@ -56,7 +56,7 @@ test.describe('Privacy Portal', () => {
     test(`${route} remains a Privacy Portal alias`, async ({ page }) => {
       await page.goto(route);
       await expect(page).toHaveURL(/\/portal$/);
-      await expect(page.getByRole('heading', { name: 'Privacy Portal' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Privacy Portal' })).toBeAttached();
     });
   }
 });

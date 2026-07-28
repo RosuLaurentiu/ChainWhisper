@@ -65,6 +65,7 @@ import {
   type TradeSigner,
   type TradeVisibility
 } from '../components/P2PTradingPage.helpers';
+import type { TradeAgentPanelMode } from '../components/TradeAgentPanel';
 
 type CarbonReferenceContext = {
   label: string | null;
@@ -159,7 +160,7 @@ type UseP2PTradeAgentActionsArgs = {
   setTradeAgentExplicitContext: (context: unknown | null) => void;
   setTradeAgentFeeQuote: (quote: TradeAgentFeeQuote | null) => void;
   setTradeAgentLoading: (loading: boolean) => void;
-  setTradeAgentPanelMode: (mode: 'help' | 'trade') => void;
+  setTradeAgentPanelMode: (mode: TradeAgentPanelMode) => void;
   setTradeAgentPrompt: (prompt: string) => void;
   setTradeAgentRetryPaymentRequestId: (requestId: string) => void;
   setTradeAgentRetryPaymentTxHash: (txHash: string) => void;

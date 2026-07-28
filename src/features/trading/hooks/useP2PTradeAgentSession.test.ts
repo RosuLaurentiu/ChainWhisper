@@ -11,4 +11,8 @@ describe('shouldLoadTradeAgentFeeEstimate', () => {
     expect(shouldLoadTradeAgentFeeEstimate('public', 'trade')).toBe(false);
     expect(shouldLoadTradeAgentFeeEstimate(null, 'trade')).toBe(false);
   });
+
+  it('keeps Agent Setup free of Trade Agent estimates', () => {
+    expect(shouldLoadTradeAgentFeeEstimate('agent', 'setup')).toBe(false);
+  });
 });

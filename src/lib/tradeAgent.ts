@@ -7,6 +7,7 @@ import {
   type TradeOfferMessagePayload,
   type TradeSnapshot
 } from './appShared';
+import { ZERO_TRADE_TAKER_ADDRESS } from './tradePerspective';
 
 export const TRADE_AGENT_FEE_RECIPIENT = '0xbf01185A70CDfEF1858659836D57BFf085ebed55';
 export const TRADE_AGENT_FEE_TOKEN_ADDRESS = REWARD_TOKEN_ADDRESS;
@@ -629,12 +630,17 @@ export const buildTradeAgentSafeOrderSummary = (
     const buyQuoteAmount = normalizeSafeIntegerAmount(recurring.buyTerms.quoteAmount);
     const sellBaseAmount = normalizeSafeIntegerAmount(recurring.sellTerms.baseAmount);
     const sellQuoteAmount = normalizeSafeIntegerAmount(recurring.sellTerms.quoteAmount);
+    const recurringAccessType: TradeAgentAccessType = snapshot.isPublic
+      ? 'public'
+      : snapshot.taker?.trim().toLowerCase() !== ZERO_TRADE_TAKER_ADDRESS
+        ? 'direct'
+        : 'unlisted';
     return {
       tradeId: recurring.orderId,
       escrowContract,
       orderType: 'recurring',
       status: recurring.recurringStatus,
-      accessType: recurring.mode === 'public' ? 'public' : 'unlisted',
+      accessType: recurringAccessType,
       amountVisibility: recurring.mode === 'public' ? 'visible' : 'private-hidden',
       base: buildSafeAsset(recurring.baseAsset, false),
       quote: buildSafeAsset(recurring.quoteAsset, false),

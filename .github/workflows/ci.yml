@@ -31,6 +31,18 @@ jobs:
       - name: Focused Agent tests
         run: npm run test:agent
 
+      - name: Build ChainWhisper MCP package
+        run: npm run build:mcp
+
+      - name: Test ChainWhisper MCP package
+        run: npm run test:mcp
+
+      - name: Smoke ChainWhisper MCP stdio servers
+        run: npm run smoke:mcp
+
+      - name: Pack, inspect, unpack, and smoke ChainWhisper MCP tarball
+        run: npm run pack:mcp
+
       - name: Build
         run: npm run build
 

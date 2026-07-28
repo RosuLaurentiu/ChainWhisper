@@ -747,10 +747,23 @@ test.describe('mobile layout polish', () => {
     await page.locator('.top-header-mobile-wallet .wallet-primary-action').click();
 
     const switcher = page.locator('.p2p-wallet-trade-switcher');
-    await expect(switcher).toBeVisible({ timeout: 45_000 });
-    await expect(switcher.locator('.p2p-wallet-trade-label-mobile', { hasText: 'Received' })).toBeVisible();
-    await expect(switcher.locator('.p2p-wallet-trade-label-mobile', { hasText: 'Active' })).toBeVisible();
-    await expect(switcher.locator('.p2p-wallet-trade-label-mobile', { hasText: 'History' })).toBeVisible();
+    const mobileLabels = switcher.locator('.p2p-wallet-trade-label-mobile');
+    await expect(mobileLabels).toHaveText(['Received', 'Active', 'History'], {
+      timeout: 45_000
+    });
+    await expect
+      .poll(
+        () =>
+          mobileLabels.evaluateAll((labels) =>
+            labels.map(
+              (label) =>
+                window.getComputedStyle(label).display !== 'none' &&
+                label.getClientRects().length > 0
+            )
+          ),
+        { timeout: 45_000 }
+      )
+      .toEqual([true, true, true]);
     await expect(switcher.locator('.p2p-wallet-trade-label-full').first()).toBeHidden();
     await expectNoHorizontalOverflow(page);
   });

@@ -342,7 +342,7 @@ describe('TokenSwapPage', () => {
     );
 
     expect(officialHtml).toContain('Privacy Portal');
-    expect(officialHtml).toContain('8 supported tokens');
+    expect(officialHtml.match(/COTI \/ p\.COTI/g)?.length).toBeGreaterThanOrEqual(2);
     expect(officialHtml).toContain('Official COTI bridge');
     expect(officialHtml).toContain('Convert to p.COTI');
     expect(officialHtml).toContain('WISP');

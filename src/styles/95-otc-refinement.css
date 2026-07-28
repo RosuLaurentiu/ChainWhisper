@@ -476,6 +476,21 @@
   }
 }
 
+@media (min-width: 861px) {
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-section:has(.p2p-agent-setup-panel) {
+    align-content: start;
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-panel:has(.p2p-agent-setup-panel) {
+    align-self: start;
+    height: auto !important;
+  }
+}
+
 /* Mobile has one route scroll owner; only a populated Agent log scrolls within it. */
 @media (max-width: 920px) {
   .app-shell-trades .p2p-trading-shell .p2p-trade-workspace-panel {

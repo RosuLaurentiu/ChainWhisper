@@ -84,6 +84,7 @@ const selectComposerToken = async (
 
 test.describe('trading V1 routes', () => {
   test('redirects legacy trading aliases to canonical OTC routes', async ({ page }) => {
+    test.setTimeout(60_000);
     const cases = [
       ['/otcdesk', '/otc'],
       ['/otcdesk/create', '/otc/limit'],

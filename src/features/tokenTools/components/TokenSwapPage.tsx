@@ -202,7 +202,7 @@ const MobileTokenMenu = ({
     ref={menuRef}
     className={`privacy-mobile-token-menu is-${placement}`}
     role="menu"
-    aria-label="Select a privacy token"
+    aria-label="Select a privacy token pair"
     onKeyDown={(event) => {
       moveFocusWithin(event, {
         orientation: 'both',
@@ -222,8 +222,7 @@ const MobileTokenMenu = ({
       >
         <WispIcon />
         <span>
-          <strong>WISP</strong>
-          <small>pWISP</small>
+          <strong>WISP / pWISP</strong>
         </span>
       </button>
     ) : null}
@@ -240,8 +239,7 @@ const MobileTokenMenu = ({
       >
         <TokenIcon pair={pair} />
         <span>
-          <strong>{pair.publicToken.symbol}</strong>
-          <small>{pair.privateToken.symbol}</small>
+          <strong>{pair.publicToken.symbol} / {pair.privateToken.symbol}</strong>
         </span>
       </button>
     ))}
@@ -831,16 +829,16 @@ export default function TokenSwapPage({
       <section className="swap-page-panel">
         <div className="swap-page-hero">
           <div className="swap-page-heading">
-            <h1 className="swap-page-title">Privacy Portal</h1>
+            <h1 className="swap-page-title swap-label-sr">Privacy Portal</h1>
             <p>
-              Make supported COTI tokens private. Portal back anytime.{' '}
+              Convert supported COTI tokens between public and private.{' '}
               <a
                 className="swap-privacy-portal-link"
                 href={COTI_PRIVACY_PORTAL_URL}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Official COTI contracts <ExternalLink size={13} aria-hidden="true" />
+                View official contracts <ExternalLink size={13} aria-hidden="true" />
               </a>
             </p>
           </div>
@@ -886,7 +884,11 @@ export default function TokenSwapPage({
           >
             <span>
               {wispSelected ? <WispIcon /> : <TokenIcon pair={selectedPair} />}
-              <strong>{wispSelected ? 'WISP / pWISP' : `${pairs.length + (recovery ? 1 : 0)} supported tokens`}</strong>
+              <strong>
+                {wispSelected
+                  ? 'WISP / pWISP'
+                  : `${selectedPair.publicToken.symbol} / ${selectedPair.privateToken.symbol}`}
+              </strong>
             </span>
             <ChevronRight size={20} aria-hidden="true" />
           </button>
@@ -906,18 +908,18 @@ export default function TokenSwapPage({
         </div>
 
         <div className="privacy-portal-workspace">
-          <aside className="privacy-token-rail" aria-label="Supported privacy tokens">
+          <aside className="privacy-token-rail" aria-label="Supported privacy token pairs">
             <div className="privacy-token-rail-title">
               <span className="privacy-token-rail-mark" aria-hidden="true"><ShieldCheck size={15} /></span>
-              <strong>Supported tokens</strong>
+              <strong>Supported pairs</strong>
             </div>
             <label className="privacy-token-search">
-              <span className="swap-label-sr">Search supported tokens</span>
+              <span className="swap-label-sr">Search supported pairs</span>
               <input
                 type="search"
                 value={tokenSearch}
                 onChange={(event) => onTokenSearchChange(event.target.value)}
-                placeholder="Search token"
+                placeholder="Search pair"
                 disabled={selectionLocked}
               />
               <Search size={16} aria-hidden="true" />
@@ -933,8 +935,7 @@ export default function TokenSwapPage({
                 >
                   <WispIcon />
                   <span>
-                    <strong>WISP</strong>
-                    <small>pWISP</small>
+                    <strong>WISP / pWISP</strong>
                   </span>
                   <ChevronRight size={16} aria-hidden="true" />
                 </button>
@@ -950,13 +951,12 @@ export default function TokenSwapPage({
                 >
                   <TokenIcon pair={pair} />
                   <span>
-                    <strong>{pair.publicToken.symbol}</strong>
-                    <small>{pair.privateToken.symbol}</small>
+                    <strong>{pair.publicToken.symbol} / {pair.privateToken.symbol}</strong>
                   </span>
                   <ChevronRight size={16} aria-hidden="true" />
                 </button>
               ))}
-              {visiblePairs.length === 0 && !wispMatchesSearch ? <p>No supported tokens match.</p> : null}
+              {visiblePairs.length === 0 && !wispMatchesSearch ? <p>No supported pairs match.</p> : null}
             </div>
             <p className="privacy-token-rail-note">Eight supported public/private token pairs.</p>
             <a href={COTI_PRIVACY_PORTAL_URL} target="_blank" rel="noopener noreferrer">

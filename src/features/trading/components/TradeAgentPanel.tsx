@@ -3,8 +3,11 @@ import { APP_HELP_MAX_QUESTION_CHARS, getAppHelpTopic } from '../../../lib/appHe
 import type { TradeAgentQuickAction, TradeAgentResponseAction } from '../../../lib/tradeAgent';
 import type { TradeAgentReadiness } from '../../../lib/tradeAgentReadiness';
 import type { TradeAgentChatMessage } from './P2PTradingPage.helpers';
+import AgentSetupPanel from './AgentSetupPanel';
 
-export type TradeAgentPanelMode = 'help' | 'trade';
+export type TradeAgentPanelMode = 'help' | 'trade' | 'setup';
+
+const TRADE_AGENT_PANEL_MODES: readonly TradeAgentPanelMode[] = ['help', 'trade', 'setup'];
 
 export const getNextTradeAgentPanelMode = (
   currentMode: TradeAgentPanelMode,
@@ -14,10 +17,15 @@ export const getNextTradeAgentPanelMode = (
     return 'help';
   }
   if (key === 'End') {
-    return 'trade';
+    return 'setup';
   }
   if (key === 'ArrowLeft' || key === 'ArrowRight') {
-    return currentMode === 'help' ? 'trade' : 'help';
+    const currentIndex = TRADE_AGENT_PANEL_MODES.indexOf(currentMode);
+    const direction = key === 'ArrowRight' ? 1 : -1;
+    return TRADE_AGENT_PANEL_MODES[
+      (currentIndex + direction + TRADE_AGENT_PANEL_MODES.length) %
+        TRADE_AGENT_PANEL_MODES.length
+    ];
   }
   return null;
 };
@@ -102,10 +110,12 @@ export default function TradeAgentPanel({
   onSubmit
 }: TradeAgentPanelProps) {
   const helpMode = mode === 'help';
+  const tradeMode = mode === 'trade';
+  const setupMode = mode === 'setup';
   const visibleMessages = helpMode ? helpMessages : messages;
   const activeLoading = helpMode ? helpLoading : loading;
   const activeMessagesEndRef = helpMode ? helpMessagesEndRef : messagesEndRef;
-  const compactConversation = visibleMessages.length <= 1 && !activeLoading;
+  const compactConversation = !setupMode && visibleMessages.length <= 1 && !activeLoading;
   const handleModeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
     const nextMode = getNextTradeAgentPanelMode(mode, event.key);
     if (!nextMode) {
@@ -114,7 +124,7 @@ export default function TradeAgentPanel({
     event.preventDefault();
     onModeChange(nextMode);
     event.currentTarget
-      .querySelector<HTMLButtonElement>(nextMode === 'help' ? '#assistant-mode-help' : '#assistant-mode-trade')
+      .querySelector<HTMLButtonElement>(`#assistant-mode-${nextMode}`)
       ?.focus();
   };
 
@@ -143,32 +153,59 @@ export default function TradeAgentPanel({
             id="assistant-mode-trade"
             type="button"
             role="tab"
-            aria-selected={!helpMode}
+            aria-selected={tradeMode}
             aria-controls="assistant-mode-panel"
-            tabIndex={!helpMode ? 0 : -1}
-            className={!helpMode ? 'active' : undefined}
+            tabIndex={tradeMode ? 0 : -1}
+            className={tradeMode ? 'active' : undefined}
             onClick={() => onModeChange('trade')}
           >
             Trade Agent
+          </button>
+          <button
+            id="assistant-mode-setup"
+            type="button"
+            role="tab"
+            aria-selected={setupMode}
+            aria-controls="assistant-mode-panel"
+            tabIndex={setupMode ? 0 : -1}
+            className={setupMode ? 'active' : undefined}
+            onClick={() => onModeChange('setup')}
+          >
+            Agent Setup
           </button>
         </div>
 
         <div className="p2p-agent-hero">
           <div>
-            <span>{helpMode ? 'App Help' : 'Trade Agent'}</span>
-            <strong>{helpMode ? 'Learn how ChainWhisper works.' : 'Trading help, not autopilot.'}</strong>
+            <span>{helpMode ? 'App Help' : tradeMode ? 'Trade Agent' : 'Agent Setup'}</span>
+            <strong>
+              {helpMode
+                ? 'Learn how ChainWhisper works.'
+                : tradeMode
+                  ? 'Trading help, not autopilot.'
+                  : 'Connect your agent to ChainWhisper.'}
+            </strong>
           </div>
-          <small>{helpMode ? 'Free — no wallet required.' : feeLabel}</small>
+          <small>
+            {helpMode
+              ? 'Free — no wallet required.'
+              : tradeMode
+                ? feeLabel
+                : 'Free setup instructions.'}
+          </small>
         </div>
 
-        <div
-          id="assistant-mode-panel"
-          className={`p2p-agent-chat-window${
-            compactConversation ? ' p2p-agent-chat-window-compact' : ''
-          }`}
-          role="tabpanel"
-          aria-labelledby={helpMode ? 'assistant-mode-help' : 'assistant-mode-trade'}
-        >
+        {setupMode ? (
+          <AgentSetupPanel />
+        ) : (
+          <div
+            id="assistant-mode-panel"
+            className={`p2p-agent-chat-window${
+              compactConversation ? ' p2p-agent-chat-window-compact' : ''
+            }`}
+            role="tabpanel"
+            aria-labelledby={helpMode ? 'assistant-mode-help' : 'assistant-mode-trade'}
+          >
           <div
             className="p2p-agent-messages"
             role="log"
@@ -382,7 +419,8 @@ export default function TradeAgentPanel({
               </form>
             </div>
           )}
-        </div>
+          </div>
+        )}
       </div>
     </section>
   );

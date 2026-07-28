@@ -3,17 +3,26 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run src",
-    "test:agent": "vitest run src/lib/appHelp.test.ts src/lib/appHelpLaunch.test.ts src/lib/tradeAgent.test.ts src/lib/tradeAgentPayment.test.ts src/lib/tradeAgentReadiness.test.ts src/app/appHelpers.test.ts src/app/components/AppHeader.test.tsx src/features/trading/components/P2PTradingPage.helpers.test.ts src/features/trading/components/TradeAgentPanel.test.ts src/features/trading/hooks/useP2PTradeAgentActions.test.ts src/features/trading/hooks/useP2PTradeAgentSession.test.ts src/features/trading/hooks/useChatTradeAgentActions.test.ts",
+    "test:agent": "vitest run src/lib/appHelp.test.ts src/lib/appHelpLaunch.test.ts src/lib/tradeAgent.test.ts src/lib/tradeAgentPayment.test.ts src/lib/tradeAgentReadiness.test.ts src/app/appHelpers.test.ts src/app/components/AppHeader.test.tsx src/features/trading/components/AgentSetupPanel.test.tsx src/features/trading/components/P2PTradingPage.helpers.test.ts src/features/trading/components/TradeAgentPanel.test.ts src/features/trading/hooks/useP2PTradeAgentActions.test.ts src/features/trading/hooks/useP2PTradeAgentSession.test.ts src/features/trading/hooks/useTradeAgentChatFeeLabels.test.ts src/features/trading/hooks/useChatTradeAgentActions.test.ts",
     "test:wallet": "vitest run src/lib/walletSession.test.ts src/lib/appWalletRecovery.test.ts src/lib/burnerWalletVault.test.ts src/lib/cotiAesUnlock.test.ts src/lib/cotiSnap.test.ts src/lib/walletAccountScope.test.ts src/lib/walletFunds.test.ts src/lib/walletNetwork.test.ts src/lib/walletOptions.test.ts src/lib/walletBootstrapRoute.test.ts src/lib/walletTransactionFlow.test.ts src/lib/appStorage.test.ts src/features/wallet/accountFundsAssets.test.ts src/features/wallet/hooks/useWalletOnboarding.test.ts src/features/trading/hooks/useP2PTradeSigner.test.ts src/features/tokenTools/tokenSwapView.test.ts src/shell/walletPolicy.test.ts",
     "test:trading": "vitest run src/lib/appChain.test.ts src/lib/carbonMarketPrice.test.ts src/lib/otcOfferNormalization.test.ts src/lib/otcSwapIntent.test.ts src/lib/otcSwapQuote.test.ts src/lib/otcSwapUi.test.ts src/lib/p2pActionNotice.test.ts src/lib/p2pSyncCoordinator.test.ts src/lib/p2pTradeView.test.ts src/lib/privateUint256.test.ts src/lib/tradeActionConfirm.test.ts src/lib/tradeActions.test.ts src/lib/tradeAgent.test.ts src/lib/tradeComposer.test.ts src/lib/tradeCounterSupport.test.ts src/lib/tradeCreationAccess.test.ts src/lib/tradeHistory.test.ts src/lib/tradeLinks.test.ts src/lib/tradePerspective.test.ts src/lib/tradePricing.test.ts src/lib/tradeRecoveryPayload.test.ts src/lib/tradingBalances.test.ts src/features/trading/components/P2PTradingPage.helpers.test.ts src/features/trading/hooks/useCarbonPairReferences.test.ts src/features/trading/hooks/useP2PTradeData.test.ts src/features/trading/hooks/useP2PTradeRoute.test.ts src/features/trading/hooks/useP2PTradeTokenData.test.ts",
     "test:chat": "vitest run src/lib/appHelpers.test.ts src/lib/appLookup.test.ts src/lib/chatGc.test.ts src/lib/chatImageAttachment.test.ts src/lib/chatLinks.test.ts src/lib/chatWalletPromptEstimate.test.ts src/lib/directConversationSyncHelpers.test.ts src/lib/directSyncPlan.test.ts src/lib/directTradeTerms.test.ts src/lib/groupMessageSync.test.ts src/lib/groupSyncPlan.test.ts src/lib/imageAttachmentPreview.test.ts src/lib/imagePull.test.ts src/lib/linkedTradeContext.test.ts src/lib/metamaskConnectMobile.test.ts src/lib/providerErrors.test.ts src/shell/routing.test.ts",
     "test:browser": "playwright test",
+    "build:mcp": "tsc -p packages/chainwhisper-agent-tools/tsconfig.json",
+    "test:mcp": "vitest run packages/chainwhisper-agent-tools/test",
+    "smoke:mcp": "node packages/chainwhisper-agent-tools/scripts/package-smoke.mjs",
+    "smoke:mcp:live": "node packages/chainwhisper-agent-tools/scripts/package-smoke.mjs --live-status",
+    "pack:mcp": "npm run build:mcp && node packages/chainwhisper-agent-tools/scripts/package-tarball-smoke.mjs",
+    "pack:mcp:dry-run": "npm run build:mcp && npm pack --workspace @chainwhisper/agent-tools --dry-run",
     "verify:privacy-contracts": "node scripts/verify-privacy-contracts.mjs"
   },
   "dependencies": {
@@ -27,7 +36,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.15.4",
-    "viem": "^2.48.2",
+    "viem": "2.55.1",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
