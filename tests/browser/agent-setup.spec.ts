@@ -29,7 +29,9 @@ test.describe('ChainWhisper Agent Setup', () => {
     await expect(setupTab).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByText('Connect your agent to ChainWhisper.')).toBeVisible();
     await expect(
-      page.getByText('One package. Two MCP connections. No separate skill required.')
+      page.getByText(
+        'Keep your COTI companion. Add one ChainWhisper package with two local connections.'
+      )
     ).toBeVisible();
 
     await expect(
@@ -39,12 +41,14 @@ test.describe('ChainWhisper Agent Setup', () => {
     ).toBeVisible();
     await expect(page.getByText('ChainWhisper planning')).toBeVisible();
     await expect(page.getByText('Local COTI signing')).toBeVisible();
+    await expect(page.getByText('Compatible COTI companion')).toBeVisible();
+    await expect(page.getByText(/read-only network or status call/)).toBeVisible();
     await expect(page.getByText(/Encrypted private messaging is included/)).toBeVisible();
-    await expect(page.getByText('Optional ecosystem tools')).toBeVisible();
-    await expect(page.getByText('Add broader COTI and market tools')).toBeVisible();
-    await expect(page.getByRole('link', { name: /General COTI MCP/ })).toBeVisible();
-    await expect(page.getByRole('link', { name: /COTI skills/ })).toBeVisible();
+    await expect(page.getByText('Optional market tools')).toBeVisible();
+    await expect(page.getByText('Add unsigned market context')).toBeVisible();
     await expect(page.getByRole('link', { name: /Carbon MCP/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /General COTI MCP/ })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /COTI skills/ })).toHaveCount(0);
     await expect(page.getByText('Connected', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Pay and send' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Connect account' })).toHaveCount(0);
@@ -68,7 +72,9 @@ test.describe('ChainWhisper Agent Setup', () => {
     await page.getByRole('tab', { name: 'Agent Setup' }).click();
 
     await expect(
-      page.getByText('One package. Two MCP connections. No separate skill required.')
+      page.getByText(
+        'Keep your COTI companion. Add one ChainWhisper package with two local connections.'
+      )
     ).toBeVisible();
     await expect
       .poll(() =>

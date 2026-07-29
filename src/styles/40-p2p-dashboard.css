@@ -1099,7 +1099,7 @@
 .p2p-agent-setup-reference-list {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 5px;
   padding: 8px;
 }

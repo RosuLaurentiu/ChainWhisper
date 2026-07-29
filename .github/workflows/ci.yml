@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   app:
-    name: App / Ubuntu / Node 20
+    name: App / Ubuntu / Node 22
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -31,6 +31,15 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: Check ChainWhisper Read API
+        run: npm run check:api
+
+      - name: Bundle ChainWhisper Read API
+        run: npm run check:api:bundle
+
+      - name: Test ChainWhisper Read API
+        run: npm run test:api
 
       - name: Focused Agent tests
         run: npm run test:agent

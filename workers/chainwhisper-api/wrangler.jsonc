@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "chainwhisper-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "chainwhisper.chat/api/v1",
+      "zone_name": "chainwhisper.chat"
+    },
+    {
+      "pattern": "chainwhisper.chat/api/v1/*",
+      "zone_name": "chainwhisper.chat"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "QUOTE_RATE_LIMITER",
+      "namespace_id": "263250001",
+      "simple": {
+        "limit": 12,
+        "period": 60
+      }
+    }
+  ],
+  "vars": {
+    "COTI_RPC_URL": "https://mainnet.coti.io/rpc",
+    "CARBON_API_BASE_URL": "https://api.carbondefi.xyz/v1/coti"
+  }
+}

@@ -9,30 +9,34 @@ import AgentSetupPanel, {
 } from './AgentSetupPanel';
 
 describe('AgentSetupPanel', () => {
-  it('renders one install, two MCP connections, official messaging, and optional references', () => {
+  it('renders the independent COTI companion and two ChainWhisper connections', () => {
     const markup = renderToStaticMarkup(createElement(AgentSetupPanel));
 
-    expect(markup).toContain('One package. Two MCP connections. No separate skill required.');
+    expect(markup).toContain(
+      'Keep your COTI companion. Add one ChainWhisper package with two local connections.'
+    );
     expect(markup).toContain(CHAINWHISPER_AGENT_TOOLS_PACKAGE);
     expect(markup).toContain(CHAINWHISPER_AGENT_TOOLS_REPOSITORY);
     expect(markup).toContain('Review source and security documentation');
     expect(markup).toContain('chainwhisper-mcp');
     expect(markup).toContain('chainwhisper-coti-signer');
+    expect(markup).toContain('Compatible COTI companion');
+    expect(markup).toContain('Required for generic COTI operations');
+    expect(markup).toContain('read-only network or status call');
     expect(markup).toContain('Encrypted private messaging is included');
     expect(markup).toContain('COTI messaging details');
     expect(markup).toContain(
       'https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server'
     );
-    expect(markup).toContain('General COTI MCP');
-    expect(markup).toContain('COTI skills');
     expect(markup).toContain('Carbon MCP');
     expect(markup).toContain('Configuration required');
-    expect(markup).toContain('Optional ecosystem tools');
-    expect(markup).toContain('Add broader COTI and market tools');
+    expect(markup).toContain('Optional market tools');
+    expect(markup).toContain('Add unsigned market context');
     expect(markup).toContain('Not required');
     expect(markup).toContain('Installation becomes available with the beta release');
     expect(markup).toContain('Your Agent Wallet stays local');
     expect(markup).toContain('bounded autonomy');
+    expect(markup).toContain('Never give an MCP tool a private key');
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
       'chainwhisper_open_control_panel'
     );
@@ -44,6 +48,19 @@ describe('AgentSetupPanel', () => {
     );
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).not.toContain(
       'CHAINWHISPER_SIGNER_VAULT_PASSPHRASE'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'read-only network or status tool'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'ChainWhisper never calls the COTI companion'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'Do not register the SDK\'s standalone messaging MCP'
+    );
+    expect(markup).not.toContain('github.com/davibauer/coti-mcp');
+    expect(markup).not.toContain(
+      'github.com/coti-io/coti-sdk-private-messaging/tree/main/skills'
     );
     expect(markup).not.toContain('Connected');
   });

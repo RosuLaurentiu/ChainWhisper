@@ -2,6 +2,8 @@ node_modules/
 dist/
 playwright-report/
 test-results/
+.tmp-dry-run/
+.wrangler/
 .vscode/
 *.tsbuildinfo
 .env
