@@ -1115,7 +1115,7 @@ export default function TradeComposerPanel({
                 className={sendButtonClassName}
                 onClick={handleSendClick}
                 disabled={sendButtonDisabled}
-                aria-disabled={!canSend}
+                aria-disabled={sendButtonDisabled}
                 title={validationMessage || sendTitle}
               >
                 {sending ? sendingLabel : sendLabel}

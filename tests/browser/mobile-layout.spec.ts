@@ -596,7 +596,7 @@ test.describe('mobile layout polish', () => {
 
     const sendAmountError = page.getByText(/Enter a valid .+ amount to send\./);
     await expect(sendAmountError).toHaveCount(0);
-    await page.getByRole('button', { name: 'Create Offer' }).click({ force: true });
+    await page.getByRole('button', { name: 'Create Offer' }).click();
     await expect(sendAmountError).toBeVisible();
 
     await page.locator('.trade-compose-section-sell .trade-compose-amount-field .trade-compose-input').fill('10');
