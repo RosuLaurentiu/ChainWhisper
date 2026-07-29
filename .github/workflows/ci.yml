@@ -6,15 +6,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  verify:
+  app:
+    name: App / Ubuntu / Node 20
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
@@ -31,23 +35,11 @@ jobs:
       - name: Focused Agent tests
         run: npm run test:agent
 
-      - name: Build ChainWhisper MCP package
-        run: npm run build:mcp
-
-      - name: Test ChainWhisper MCP package
-        run: npm run test:mcp
-
-      - name: Smoke ChainWhisper MCP stdio servers
-        run: npm run smoke:mcp
-
-      - name: Pack, inspect, unpack, and smoke ChainWhisper MCP tarball
-        run: npm run pack:mcp
-
       - name: Build
         run: npm run build
 
       - name: Setup Deno
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
 
@@ -64,3 +56,47 @@ jobs:
 
       - name: Browser tests
         run: npm run test:browser
+
+  mcp-package:
+    name: MCP package / ${{ matrix.os-label }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os-label: Ubuntu
+            node: 20
+          - os: ubuntu-latest
+            os-label: Ubuntu
+            node: 22
+          - os: ubuntu-latest
+            os-label: Ubuntu
+            node: 24
+          - os: windows-latest
+            os-label: Windows
+            node: 22
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build ChainWhisper MCP package
+        run: npm run build:mcp
+
+      - name: Test ChainWhisper MCP package
+        run: npm run test:mcp
+
+      - name: Smoke ChainWhisper MCP stdio servers
+        run: node packages/chainwhisper-agent-tools/scripts/package-smoke.mjs
+
+      - name: Install, inspect, and smoke ChainWhisper MCP tarball
+        run: npm run pack:mcp

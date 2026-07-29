@@ -19,4 +19,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+/vite-dev*.log
+/pnpm-lock.yaml
+/pnpm-workspace.yaml
+/packages/chainwhisper-agent-tools/pnpm-lock.yaml
+/packages/chainwhisper-agent-tools/pnpm-workspace.yaml
 .DS_Store
