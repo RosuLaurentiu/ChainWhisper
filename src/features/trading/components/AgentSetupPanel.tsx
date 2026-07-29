@@ -2,8 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 
 export const CHAINWHISPER_AGENT_TOOLS_PACKAGE =
   '@chainwhisper/agent-tools@0.1.0-beta.0';
+export const CHAINWHISPER_AGENT_TOOLS_REPOSITORY =
+  'https://github.com/RosuLaurentiu/ChainWhisper-MCP';
 
 export const CHAINWHISPER_AGENT_SETUP_PROMPT = `Set up ChainWhisper MCP for this agent.
+
+Source and security documentation:
+${CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
 
 1. Install the pinned package:
    npm install --global ${CHAINWHISPER_AGENT_TOOLS_PACKAGE}
@@ -139,6 +144,13 @@ export default function AgentSetupPanel() {
           <small className="p2p-agent-setup-publication-note">
             Pinned beta package. Installation becomes available with the beta release.
           </small>
+          <a
+            href={CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Review source and security documentation
+          </a>
           <button
             type="button"
             className="trade-card-action trade-card-action-accept"

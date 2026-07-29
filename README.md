@@ -44,6 +44,7 @@ The standalone OTC app is an escrow trading workspace backed by COTI contracts. 
 - `Trade` at `/otc` is the action surface with `Swap`, `Limit`, and `Recurring` modes.
 - `Desk` at `/otc/desk` browses active public orders with search, filters, refresh, inline order review, and wallet balance context.
 - `Agent` at `/otc/agent` opens in free App Help mode for product questions without a wallet. Its separate paid WISP Trade Agent mode finds prices, drafts or explains orders, and opens safe prefilled actions for review.
+- Agent Setup installs the external [`@chainwhisper/agent-tools`](https://github.com/RosuLaurentiu/ChainWhisper-MCP) package. Its MCP planner, signer, security policy, and release workflow are maintained in that dedicated repository.
 - `Orders` at `/otc/orders` groups received offers, active offers, and history for the connected owner + ChainWhisper account scope.
 - `Order` review lives under `/otc/order...`. Canonical generated links use `/otc/order/link/:code`, `/otc/order/:id`, or `/otc/order/recurring/:id`.
 - Legacy `/trades...`, `/otcdesk...`, and old terminal links still resolve for compatibility, but new app-generated links should use `/otc...`.

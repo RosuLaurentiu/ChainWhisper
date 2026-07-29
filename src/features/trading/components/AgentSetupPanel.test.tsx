@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import AgentSetupPanel, {
   CHAINWHISPER_AGENT_SETUP_PROMPT,
   CHAINWHISPER_AGENT_TOOLS_PACKAGE,
+  CHAINWHISPER_AGENT_TOOLS_REPOSITORY,
   copyAgentSetupPrompt
 } from './AgentSetupPanel';
 
@@ -13,6 +14,8 @@ describe('AgentSetupPanel', () => {
 
     expect(markup).toContain('One package. Two MCP connections. No separate skill required.');
     expect(markup).toContain(CHAINWHISPER_AGENT_TOOLS_PACKAGE);
+    expect(markup).toContain(CHAINWHISPER_AGENT_TOOLS_REPOSITORY);
+    expect(markup).toContain('Review source and security documentation');
     expect(markup).toContain('chainwhisper-mcp');
     expect(markup).toContain('chainwhisper-coti-signer');
     expect(markup).toContain('Encrypted private messaging is included');
@@ -52,6 +55,9 @@ describe('copyAgentSetupPrompt', () => {
     expect(writeText).toHaveBeenCalledWith(CHAINWHISPER_AGENT_SETUP_PROMPT);
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
       `npm install --global ${CHAINWHISPER_AGENT_TOOLS_PACKAGE}`
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      CHAINWHISPER_AGENT_TOOLS_REPOSITORY
     );
     expect(fallbackCopy).not.toHaveBeenCalled();
   });
