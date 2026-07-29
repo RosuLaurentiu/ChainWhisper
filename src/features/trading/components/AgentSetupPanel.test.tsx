@@ -31,7 +31,20 @@ describe('AgentSetupPanel', () => {
     expect(markup).toContain('Add broader COTI and market tools');
     expect(markup).toContain('Not required');
     expect(markup).toContain('Installation becomes available with the beta release');
-    expect(markup).toContain('Wallet and AES secrets stay local');
+    expect(markup).toContain('Your Agent Wallet stays local');
+    expect(markup).toContain('bounded autonomy');
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'chainwhisper_open_control_panel'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'CHAINWHISPER_SIGNER_ENV_FILE'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).not.toContain(
+      'CHAINWHISPER_SIGNER_AES_KEY'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).not.toContain(
+      'CHAINWHISPER_SIGNER_VAULT_PASSPHRASE'
+    );
     expect(markup).not.toContain('Connected');
   });
 

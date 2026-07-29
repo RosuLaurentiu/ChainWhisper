@@ -15,15 +15,12 @@ ${CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
 2. Register two local stdio MCP connections:
    - chainwhisper: chainwhisper-mcp
    - chainwhisper-coti-signer: chainwhisper-coti-signer
-3. Let the package create its local pairing secret. Configure these signer environment variables outside this chat:
-   - CHAINWHISPER_SIGNER_PRIVATE_KEY
-   - CHAINWHISPER_SIGNER_AES_KEY
-   - CHAINWHISPER_SIGNER_VAULT_PASSPHRASE (at least 16 characters)
-   Optionally set CHAINWHISPER_COTI_RPC_URL and CHAINWHISPER_STATE_DIRECTORY.
-   Never paste private keys, AES keys, mnemonics, passphrases, or access secrets into a prompt.
-4. Keep the planning MCP keyless. The signer adapter is the only process allowed to hold wallet and AES credentials.
-5. Run the read-only chainwhisper_status and chainwhisper_signer_status checks. Do not sign, broadcast, or send a message during setup.
-6. Private negotiation is already integrated into chainwhisper-coti-signer through the official COTI SDK. Do not register the SDK's standalone messaging MCP. For protocol details only, see https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server. Do not run its init or send smoke commands unless the user separately authorizes wallet setup and on-chain writes.
+3. Restart both MCP connections. Run chainwhisper_open_control_panel, then use the local ChainWhisper Agent Control page to import an existing Agent Wallet or create a new one. Wallet credentials and private setup values must never be pasted into a prompt or MCP argument.
+4. The signer creates pairing and encrypted local storage automatically. Optionally select a wallet .env with CHAINWHISPER_SIGNER_ENV_FILE, and optionally set CHAINWHISPER_COTI_RPC_URL or CHAINWHISPER_STATE_DIRECTORY outside chat.
+5. Fund the displayed Agent Wallet, complete COTI privacy onboarding in Agent Control, and choose Manual, Bounded autonomy, or 24-hour Full autonomy. Full autonomy is intended only for a dedicated, minimally funded Agent Wallet.
+6. Keep chainwhisper-mcp keyless. Only chainwhisper-coti-signer may hold wallet credentials, privacy material, policies, and signing authority.
+7. Run the read-only chainwhisper_status, chainwhisper_signer_status, and chainwhisper_autonomy_status checks. Do not sign, broadcast, or send a message during setup.
+8. Private negotiation is already integrated into chainwhisper-coti-signer through the official COTI SDK. Do not register the SDK's standalone messaging MCP. For protocol details only, see https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server.
 
 COTI private agent messaging is already included through the official COTI SDK. No separate ChainWhisper skill or messaging MCP is required.`;
 
@@ -199,7 +196,8 @@ export default function AgentSetupPanel() {
           </article>
           </div>
           <p className="p2p-agent-setup-security">
-            Wallet and AES secrets stay local. Every write requires confirmation.
+            Your Agent Wallet stays local. Choose manual approval, bounded autonomy, or
+            24-hour full autonomy in Agent Control.
           </p>
         </div>
       </section>
