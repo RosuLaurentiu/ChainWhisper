@@ -64,6 +64,66 @@ final result: passed
 
 ---
 
+# Agent Setup workflow and documentation refresh
+
+## Comparison target
+
+- Source visual truth: `C:\Users\rosu_\AppData\Local\Temp\codex-clipboard-75ac6a8c-e466-4c2e-93a6-b86e0b293440.png` (3832x1916 px).
+- Browser-rendered desktop implementation: `C:\Users\rosu_\AppData\Local\Temp\chainwhisper-agent-setup-native.png` (1440x950 px).
+- Browser-rendered mobile implementation: `C:\Users\rosu_\AppData\Local\Temp\chainwhisper-agent-setup-mobile.png` (390x844 px).
+- Combined source/implementation input: `C:\Users\rosu_\.codex\visualizations\2026\07\27\019fa4d0-8f06-71b3-87e4-eca9b80c121f\agent-setup-doc-refresh\agent-setup-source-implementation-comparison.png` (2400x1000 px).
+- Route and state: `http://127.0.0.1:4173/otc/agent`, disconnected dark theme, Agent Setup selected, setup prompt collapsed.
+- Desktop CSS viewport: 1440x950. Mobile CSS viewport: 390x844. The in-app browser reported device pixel ratio 2.75; the combined input preserves each capture's aspect ratio without stretching.
+
+## Comparison evidence
+
+- Full-view evidence: the supplied source establishes the complete existing route composition and the browser DOM verification confirms the same header, OTC navigation, 1120px setup panel, three-tab hierarchy, install/connect cards, secondary disclosure row, and persistent bottom balance bar.
+- Focused visual evidence: the combined comparison makes the unchanged typography, purple/near-black tokens, navigation, tab treatment, lead strip, card radii, and border hierarchy readable. The new Control section intentionally extends the setup content below the source state rather than changing its visual language.
+- Responsive evidence: the mobile browser check measured a 390px document and 390px scroll width, a 327.09px setup panel, one-column Control cards, and a 44px Copy action.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the existing product families, weights, uppercase metadata, compact headings, and muted body-copy hierarchy are preserved. New Control copy follows the same optical weights and line-height system.
+- Spacing and layout rhythm: Install and Connect remain peer cards; the new Control section uses the existing 16px surface padding, tokenized gaps, 16px radius, and divider rhythm. It collapses from four columns to two and then one without horizontal overflow.
+- Colors and visual tokens: no new palette was introduced. The implementation continues to use the OTC raised/subtle surfaces, border tokens, brand purple, and existing primary/secondary/tertiary text colors.
+- Image quality and asset fidelity: Agent Setup adds no new image asset. Existing ChainWhisper logo and route assets remain unchanged and sharp.
+- Copy and content: setup now distinguishes the optional generic COTI companion from ChainWhisper's embedded private negotiation, explains one complete-action approval, and introduces wallet/privacy setup, autonomy, persistent progress, balances, and merged activity without exposing credentials.
+
+## Findings and comparison history
+
+1. P2: the previous setup stopped after installation and connection, so users could not understand the actual post-install experience. Fixed with one compact Control section covering wallet/privacy, one-order approval, autonomy, and persistent progress/history.
+2. P2: the previous companion wording could imply that a COTI skill or standalone messaging MCP was required for negotiation. Fixed across the screen, copied setup prompt, README, and AGENTS guidance by stating that private negotiation is embedded in `chainwhisper-coti-signer`.
+3. P2: the copied prompt still described per-token preparation as the normal private flow. Fixed by documenting one-time onboarding, immediate verified private-balance refresh, and token-specific setup only when a wallet/token mapping requires it.
+4. Post-fix browser evidence shows no actionable P0, P1, or P2 visual issue in the updated scope.
+
+## Interaction and regression checks
+
+- Agent Setup selected correctly from the existing three-tab assistant surface.
+- Copy setup prompt changed to its success state and displayed the expected confirmation message.
+- Desktop and 390px mobile layouts reported zero horizontal overflow.
+- The mobile Copy action remained 44px tall.
+- Browser console contained no error entries.
+- ESLint passed.
+- Vitest passed 81 files and 715 tests for the app.
+- TypeScript and the production Vite build passed.
+- The MCP suite passed 36 files and 432 tests, with 5 intentional skips; MCP ESLint and TypeScript also passed.
+
+## Open questions
+
+- None.
+
+## Implementation checklist
+
+- [x] Clarify that ChainWhisper private negotiation needs no extra COTI skill or messaging MCP.
+- [x] Explain the persistent Agent Control workflow after installation.
+- [x] Document one confirmation per complete manual action and available autonomy modes.
+- [x] Align the app README, APP AGENTS guidance, MCP README, changelog, beta checklist, and security policy.
+- [x] Verify source, tests, build, desktop interaction, mobile layout, and console state.
+
+final result: passed
+
+---
+
 # Chat artwork background-blend refinement
 
 ## Comparison target
@@ -341,19 +401,49 @@ final result: passed
 
 # Agent Setup design QA
 
-- Reference: `C:\Users\rosu_\AppData\Local\Temp\codex-clipboard-0a82380b-2c2c-4bb5-947d-30075d0eee8e.png`
-- Route: `/otc/agent`, Agent Setup tab
-- Desktop check: 1440 × 950
-- Mobile check: 390 × 844
+## Comparison target
 
-## Verified
+- Source visual truth: `C:\Users\rosu_\AppData\Local\Temp\codex-clipboard-76e913a3-c0a5-4d55-b5de-61ffeade066a.png` (3840 × 2160 px).
+- Browser-rendered desktop implementation: `C:\Users\rosu_\.codex\visualizations\2026\07\22\019f8bfc-cf08-7100-9b90-6eae35c579c3\chainwhisper-agent-setup-qa\agent-setup-final-1920x1080.png` (1920 × 1080 px).
+- Browser-rendered mobile implementation:
+  - `C:\Users\rosu_\.codex\visualizations\2026\07\22\019f8bfc-cf08-7100-9b90-6eae35c579c3\chainwhisper-agent-setup-qa\agent-setup-final-mobile-top-390x844.png`.
+  - `C:\Users\rosu_\.codex\visualizations\2026\07\22\019f8bfc-cf08-7100-9b90-6eae35c579c3\chainwhisper-agent-setup-qa\agent-setup-final-mobile-bottom-390x844.png`.
+- Route and state: `/otc/agent`, disconnected dark theme, Agent Setup selected, setup prompt collapsed.
+- Density normalization: the 3840 × 2160 source was downsampled to the 1920 × 1080 CSS viewport. The implementation was captured at 1920 × 1080 with device pixel ratio 1.
 
-- The primary flow reads in order: install one package, understand the two MCP connections, copy or inspect the setup prompt, then review optional ecosystem tools.
-- `View setup prompt` remains available and expands without forcing the optional references out of the page flow.
-- General COTI MCP, COTI skills, and Carbon MCP remain visible as optional, clearly marked “Not required.”
-- The setup action is free and creates no wallet, Trade Agent quote, signature, payment, or WISP side effect.
-- Three-tab keyboard navigation, labels, focus behavior, and minimum 44 px interactive targets are covered.
-- Content wraps and stacks on mobile with no unexpected horizontal overflow.
-- The production build and full 85-test browser suite report no relevant console or layout errors.
+## Comparison evidence
+
+- Full-view comparison: `C:\Users\rosu_\.codex\visualizations\2026\07\22\019f8bfc-cf08-7100-9b90-6eae35c579c3\chainwhisper-agent-setup-qa\agent-setup-comparison-1920x1080.png`.
+- Focused panel comparison: `C:\Users\rosu_\.codex\visualizations\2026\07\22\019f8bfc-cf08-7100-9b90-6eae35c579c3\chainwhisper-agent-setup-qa\agent-setup-focused-comparison.png`.
+- The focused comparison was required because the setup content is too small to judge accurately in the full 1920px route capture.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the established Inter and Space Grotesk system remains unchanged. Setup body copy, MCP labels, metadata, and section headings now use a more legible hierarchy with less pervasive heavy weight.
+- Spacing and layout rhythm: only the Setup state widens to 1120px. Install and Connect are peer surfaces, the introductory summary is a compact strip, and prompt/optional content remains in a quieter secondary row.
+- Colors and visual tokens: the revised layout reuses the OTC surface, border, brand, text, radius, and spacing tokens. No new visual language or unrelated route styling was introduced.
+- Image quality and asset fidelity: no images or icons appear inside the Setup panel. The existing ChainWhisper logo and surrounding route assets remain unchanged.
+- Copy and content: the lead now states “One package. Two ChainWhisper connections.” The independent COTI companion is visually separated from the two ChainWhisper connections, while the setup prompt, safety rules, Carbon MCP reference, fee explanation, and beta availability remain intact.
+
+## Findings and comparison history
+
+1. P2: the source screen constrained dense setup information to a narrow panel and gave install, prerequisites, ChainWhisper connections, safety, and optional tools nearly equal visual weight. Fixed by widening Setup only, increasing small text, and creating a clear primary/secondary hierarchy.
+2. P2: the COTI companion appeared as a third connection beside Plan and Sign, contradicting the “two connections” explanation. Fixed by styling it as the existing tool to keep and adding an explicit divider before the two ChainWhisper connections.
+3. P2: repeated nested borders made the connection and optional-tool sections harder to scan. Fixed with peer cards, divider rows, a restrained safety strip, and a single Carbon reference row.
+4. P2 mobile: a full-width secondary source button could compete with the primary action and the floating wallet control. Fixed by keeping Copy full-width and rendering source/security as a quiet inline link on small screens.
+5. Post-fix desktop and mobile evidence shows no actionable P0, P1, or P2 findings.
+
+## Interaction and regression checks
+
+- Three-tab keyboard behavior and setup selection remain intact.
+- Copy setup prompt, the manual fallback path, prompt disclosure, source link, Carbon link, and mobile reachability remain available.
+- Setup still has no wallet, signature, Trade Agent quote, payment, or WISP side effect.
+- Desktop panel width is 1120px; desktop and mobile report zero horizontal overflow.
+- The mobile Copy action remains exactly 44px tall, and the internal route scroll reaches the prompt, Carbon reference, fee note, and messaging link.
+- Browser console reported no warnings or errors.
+- Focused Agent tests passed: 14 files and 94 tests.
+- Focused Agent Setup browser tests passed: 2 tests.
+- Targeted ESLint passed for every changed TypeScript and browser-test file.
+- TypeScript and the production Vite build passed.
 
 final result: passed

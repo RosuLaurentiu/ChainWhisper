@@ -130,7 +130,11 @@ export default function TradeAgentPanel({
 
   return (
     <section className="standalone-trades-section p2p-agent-section p2p-trade-workspace-panel" aria-label="ChainWhisper Assistant">
-      <div className="p2p-trade-entry-panel p2p-agent-panel">
+      <div
+        className={`p2p-trade-entry-panel p2p-agent-panel${
+          setupMode ? ' p2p-agent-panel-setup' : ''
+        }`}
+      >
         <div
           className="p2p-agent-mode-toggle"
           role="tablist"

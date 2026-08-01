@@ -13,17 +13,27 @@ describe('AgentSetupPanel', () => {
     const markup = renderToStaticMarkup(createElement(AgentSetupPanel));
 
     expect(markup).toContain(
-      'Keep your COTI companion. Add one ChainWhisper package with two local connections.'
+      'One package. Two local connections. Private negotiation included.'
+    );
+    expect(markup).toContain(
+      'A COTI companion stays separate for generic COTI operations.'
     );
     expect(markup).toContain(CHAINWHISPER_AGENT_TOOLS_PACKAGE);
     expect(markup).toContain(CHAINWHISPER_AGENT_TOOLS_REPOSITORY);
-    expect(markup).toContain('Review source and security documentation');
+    expect(markup).toContain('Review source &amp; security');
     expect(markup).toContain('chainwhisper-mcp');
     expect(markup).toContain('chainwhisper-coti-signer');
     expect(markup).toContain('Compatible COTI companion');
-    expect(markup).toContain('Required for generic COTI operations');
-    expect(markup).toContain('read-only network or status call');
-    expect(markup).toContain('Encrypted private messaging is included');
+    expect(markup).toContain('General COTI operations only');
+    expect(markup).toContain(
+      'It is not needed for ChainWhisper private negotiation.'
+    );
+    expect(markup).toContain('complete-action approval');
+    expect(markup).toContain('ChainWhisper adds these two local connections');
+    expect(markup).toContain('One local dashboard from setup to history');
+    expect(markup).toContain('One order approval');
+    expect(markup).toContain('Persistent progress');
+    expect(markup).toContain('wallet-wide ChainWhisper activity');
     expect(markup).toContain('COTI messaging details');
     expect(markup).toContain(
       'https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server'
@@ -35,7 +45,8 @@ describe('AgentSetupPanel', () => {
     expect(markup).toContain('Not required');
     expect(markup).toContain('Installation becomes available with the beta release');
     expect(markup).toContain('Your Agent Wallet stays local');
-    expect(markup).toContain('bounded autonomy');
+    expect(markup).toContain('Bounded autonomy');
+    expect(markup).toContain('Confirm each complete action once');
     expect(markup).toContain('Never give an MCP tool a private key');
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
       'chainwhisper_open_control_panel'
@@ -53,7 +64,16 @@ describe('AgentSetupPanel', () => {
       'read-only network or status tool'
     );
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
-      'ChainWhisper never calls the COTI companion'
+      'It is not required for ChainWhisper private negotiation'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'A manual approval confirms one complete ChainWhisper action'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'No COTI skill or standalone messaging MCP is required'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'ChainWhisper never calls the companion'
     );
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
       'Do not register the SDK\'s standalone messaging MCP'

@@ -1,5 +1,5 @@
-import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import '@supabase/functions-js/edge-runtime.d.ts';
+import { createClient, type SupabaseClient } from 'supabase';
 import { corsHeaders, handleCorsPreflight } from '../_shared/cors.ts';
 import {
   CHAT_IMAGES_BUCKET,
@@ -26,7 +26,7 @@ const chunkPaths = (paths: string[], size: number): string[][] => {
 };
 
 const loadExpiredTrackedBlobIds = async (
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseClient,
   pendingCutoffIso: string,
   confirmedCutoffIso: string
 ): Promise<string[]> => {

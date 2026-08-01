@@ -10,19 +10,20 @@ export const CHAINWHISPER_AGENT_SETUP_PROMPT = `Set up ChainWhisper MCP for this
 Source and security documentation:
 ${CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
 
-1. Verify that this agent has an independent, compatible COTI MCP by calling only its read-only network or status tool. Do not pass the Agent Wallet private key, AES material, mnemonic, passphrase, or any other secret through an MCP tool or prompt. If the installed COTI MCP requires secrets for account setup, keep it read-only or use a different wallet.
+1. If this agent already has an independent, compatible COTI MCP, keep it for generic COTI operations and verify it with only a read-only network or status tool. It is not required for ChainWhisper private negotiation. Do not pass the Agent Wallet private key, AES material, mnemonic, passphrase, or any other secret through an MCP tool or prompt.
 2. Install the pinned ChainWhisper package:
    npm install --global ${CHAINWHISPER_AGENT_TOOLS_PACKAGE}
 3. Register two local stdio MCP connections:
    - chainwhisper: chainwhisper-mcp
    - chainwhisper-coti-signer: chainwhisper-coti-signer
-4. Restart both ChainWhisper MCP connections. Run chainwhisper_open_control_panel, then use the local ChainWhisper Agent Control page to import an existing Agent Wallet or create a new one. Wallet credentials and private setup values must never be pasted into a prompt or MCP argument.
+4. Restart both ChainWhisper MCP connections. Run chainwhisper_open_control_panel. Keep the persistent local Agent Control tab open, then import an existing Agent Wallet or create a new one there. Wallet credentials and private setup values must never be pasted into a prompt or MCP argument.
 5. The signer creates pairing and encrypted local storage automatically. Optionally select a wallet .env with CHAINWHISPER_SIGNER_ENV_FILE, and optionally set CHAINWHISPER_COTI_RPC_URL or CHAINWHISPER_STATE_DIRECTORY outside chat.
-6. Fund the displayed Agent Wallet. When a ChainWhisper action first needs privacy, enable private trading and prepare only the required private token from Agent Control. Choose Manual, Bounded autonomy, or 24-hour Full autonomy. Full autonomy is intended only for a dedicated, minimally funded Agent Wallet.
-7. Keep chainwhisper-mcp keyless. Only chainwhisper-coti-signer may hold wallet credentials, privacy material, policies, and signing authority. ChainWhisper never calls the COTI companion or shares credentials with it.
-8. Run the read-only chainwhisper_status, chainwhisper_signer_status, and chainwhisper_autonomy_status checks. Do not sign, broadcast, or send a message during setup.
-9. Use the COTI companion for generic COTI operations and ChainWhisper for ChainWhisper orders, Privacy Portal actions, and order-linked private negotiation.
-10. Private negotiation is already integrated into chainwhisper-coti-signer through the official COTI SDK. Do not register the SDK's standalone messaging MCP. For protocol details only, see https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server.
+6. Fund the displayed Agent Wallet. Enable private trading once from Agent Control when a ChainWhisper action first needs privacy. After onboarding, the dashboard refreshes every verified private-token balance it can read; token-specific setup is requested only when the wallet or token mapping actually requires it.
+7. Keep chainwhisper-mcp keyless. Only chainwhisper-coti-signer may hold wallet credentials, privacy material, policies, and signing authority. A manual approval confirms one complete ChainWhisper action, even when the signer must submit several exact network transactions.
+8. Choose Manual approval, Bounded autonomy, or 24-hour Full autonomy. Full autonomy is intended only for a dedicated, minimally funded Agent Wallet. Agent Control keeps balances, pending progress, and wallet-wide ChainWhisper activity in the same persistent tab.
+9. Run the read-only chainwhisper_status, chainwhisper_signer_status, and chainwhisper_autonomy_status checks. Do not sign, broadcast, or send a message during setup.
+10. Use an independent COTI companion, when present, for generic COTI operations. Use ChainWhisper for ChainWhisper orders, Privacy Portal actions, and order-linked private negotiation. ChainWhisper never calls the companion or shares credentials with it.
+11. Private negotiation is already integrated into chainwhisper-coti-signer through the official COTI SDK. No COTI skill or standalone messaging MCP is required. Do not register the SDK's standalone messaging MCP. For protocol details only, see https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server.
 
 COTI private agent messaging is already included through the official COTI SDK. No separate ChainWhisper skill or messaging MCP is required.`;
 
@@ -112,9 +113,10 @@ export default function AgentSetupPanel() {
       role="tabpanel"
       aria-labelledby="assistant-mode-setup"
     >
-      <p className="p2p-agent-setup-lead">
-        Keep your COTI companion. Add one ChainWhisper package with two local connections.
-      </p>
+      <div className="p2p-agent-setup-lead">
+        <strong>One package. Two local connections. Private negotiation included.</strong>
+        <span>A COTI companion stays separate for generic COTI operations.</span>
+      </div>
 
       <section className="p2p-agent-setup-core" aria-labelledby="agent-setup-package-title">
         <div className="p2p-agent-setup-install">
@@ -133,23 +135,25 @@ export default function AgentSetupPanel() {
           <small className="p2p-agent-setup-publication-note">
             Pinned beta package. Installation becomes available with the beta release.
           </small>
-          <a
-            href={CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Review source and security documentation
-          </a>
-          <button
-            type="button"
-            className="trade-card-action trade-card-action-accept"
-            onClick={() => {
-              handleCopySetupPrompt().catch(() => {});
-            }}
-            aria-describedby="agent-setup-copy-result"
-          >
-            {copyState === 'copied' ? 'Setup prompt copied' : 'Copy setup prompt'}
-          </button>
+          <div className="p2p-agent-setup-install-actions">
+            <button
+              type="button"
+              className="trade-card-action trade-card-action-accept"
+              onClick={() => {
+                handleCopySetupPrompt().catch(() => {});
+              }}
+              aria-describedby="agent-setup-copy-result"
+            >
+              {copyState === 'copied' ? 'Setup prompt copied' : 'Copy setup prompt'}
+            </button>
+            <a
+              href={CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Review source &amp; security
+            </a>
+          </div>
           <span
             id="agent-setup-copy-result"
             role="status"
@@ -167,39 +171,88 @@ export default function AgentSetupPanel() {
         <div className="p2p-agent-setup-connections">
           <div className="p2p-agent-setup-section-heading">
             <span>02 · Connect</span>
-            <h3>What your agent uses</h3>
+            <h3>Connect the tools</h3>
           </div>
           <div className="p2p-agent-setup-connection-list">
-          <article>
-              <span>Check</span>
+            <article className="p2p-agent-setup-prerequisite">
+              <span>Keep</span>
               <div>
                 <strong>Compatible COTI companion</strong>
                 <code>Independent MCP</code>
-                <p>Required for generic COTI operations. Verify it with a read-only network or status call.</p>
+                <p>
+                  General COTI operations only. It is not needed for ChainWhisper private
+                  negotiation.
+                </p>
               </div>
-          </article>
-          <article>
+            </article>
+            <p className="p2p-agent-setup-connection-caption">
+              ChainWhisper adds these two local connections
+            </p>
+            <article>
               <span>Plan</span>
               <div>
                 <strong>ChainWhisper planning</strong>
                 <code>chainwhisper-mcp</code>
                 <p>Reads, validates, compares, and prepares unsigned transactions. No keys.</p>
               </div>
-          </article>
-          <article>
+            </article>
+            <article>
               <span>Sign</span>
               <div>
                 <strong>Local COTI signing</strong>
                 <code>chainwhisper-coti-signer</code>
-                <p>Confirms and signs locally. Encrypted private messaging is included.</p>
+                <p>
+                  Wallet, privacy, complete-action approval, signing, and private
+                  negotiation.
+                </p>
               </div>
-          </article>
+            </article>
           </div>
-          <p className="p2p-agent-setup-security">
-            Your Agent Wallet stays local. Choose manual approval, bounded autonomy, or
-            24-hour full autonomy in Agent Control. Never give an MCP tool a private key,
-            AES key, mnemonic, or passphrase.
-          </p>
+          <aside className="p2p-agent-setup-security" aria-label="Agent wallet safety">
+            <strong>Your Agent Wallet stays local.</strong>
+            <span>
+              Confirm each complete action once, or approve bounded or 24-hour full
+              autonomy. Never give an MCP tool a private key, AES key, mnemonic, or
+              passphrase.
+            </span>
+          </aside>
+        </div>
+      </section>
+
+      <section className="p2p-agent-setup-flow" aria-labelledby="agent-control-flow-title">
+        <div className="p2p-agent-setup-flow-heading">
+          <span>03 · Control</span>
+          <h3 id="agent-control-flow-title">One local dashboard from setup to history</h3>
+        </div>
+        <div className="p2p-agent-setup-flow-list">
+          <article>
+            <strong>Wallet &amp; privacy</strong>
+            <p>
+              Import or create an Agent Wallet, fund it, and enable private trading once.
+              Readable verified private balances appear in Agent Control.
+            </p>
+          </article>
+          <article>
+            <strong>One order approval</strong>
+            <p>
+              Review the ChainWhisper order card and confirm the complete action once.
+              Network transactions then progress without repeated prompts.
+            </p>
+          </article>
+          <article>
+            <strong>Your automation level</strong>
+            <p>
+              Stay manual, approve explicit bounded limits, or allow the audited economic
+              surface for up to 24 hours.
+            </p>
+          </article>
+          <article>
+            <strong>Persistent progress</strong>
+            <p>
+              The same tab shows balances, pending work, results, and merged local plus
+              wallet-wide ChainWhisper activity.
+            </p>
+          </article>
         </div>
       </section>
 
@@ -222,7 +275,7 @@ export default function AgentSetupPanel() {
             <div>
               <span>Optional market tools</span>
               <h3 id="agent-setup-optional-title">Add unsigned market context</h3>
-              <p>These are separate from the required COTI companion.</p>
+              <p>Optional context only. Private negotiation needs no extra messaging tool.</p>
             </div>
             <span className="p2p-agent-setup-detail-status">Not required</span>
           </div>
@@ -238,8 +291,10 @@ export default function AgentSetupPanel() {
       </div>
 
       <p className="p2p-agent-setup-fees">
-        MCP actions use normal COTI gas and ChainWhisper contract fees—not the in-app
-        Trade Agent WISP fee.{' '}
+        <span>
+          MCP actions use normal COTI gas and ChainWhisper contract fees—not the in-app
+          Trade Agent WISP fee.
+        </span>{' '}
         <a
           href="https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server"
           target="_blank"
@@ -247,7 +302,6 @@ export default function AgentSetupPanel() {
         >
           COTI messaging details
         </a>
-        .
       </p>
     </div>
   );

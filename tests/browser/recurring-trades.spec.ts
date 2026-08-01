@@ -148,7 +148,10 @@ test.describe('trading V1 routes', () => {
     const header = page.locator('.top-header');
     await header.locator('.wallet-primary-action').click();
 
-    const recurringCard = page.locator('.p2p-public-trade-grid .p2p-recurring-order-card').first();
+    const recurringCard = page
+      .locator('.p2p-public-trade-grid .p2p-recurring-order-card')
+      .filter({ has: page.locator('.p2p-order-chip-owner') })
+      .first();
     await expect(recurringCard).toBeVisible({ timeout: 30_000 });
     await expect(recurringCard.locator('.p2p-order-chip-owner')).toContainText('Maker');
     await expect(recurringCard.locator('.p2p-recurring-price-buy')).toContainText(/^Buy /i);

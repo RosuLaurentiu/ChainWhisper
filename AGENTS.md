@@ -67,6 +67,7 @@ Current route behavior is intentional:
 - `Trade` at `/otc` contains `Swap`, `Limit`, and `Recurring`.
 - `Desk` at `/otc/desk` is for browsing active public offers from anyone.
 - `Agent` at `/otc/agent` is paid WISP Trade Agent help. It may explain orders, find price context, draft limit/counter orders, prefill swap/order forms, and open order links for review. It must not execute trades automatically.
+- `Agent Setup` is the free installation guide for the separate `@chainwhisper/agent-tools` package. Keep it visually and behaviorally separate from the paid WISP Trade Agent.
 - `Orders` at `/otc/orders` is for account-owned and received order activity.
 - `Order` review lives under `/otc/order...`. Generate new links under `/otc/order/link/:code`, `/otc/order/:id`, or `/otc/order/recurring/:id`; keep `/trades...` and `/otcdesk...` aliases working.
 - Swap is a best single-order surface. It can execute one selected ChainWhisper order directly, but must never aggregate, route, or average across multiple orders.
@@ -90,6 +91,17 @@ Current route behavior is intentional:
 - Trade IDs are contract-local. Always include the escrow contract in links, keys, fetches, and UI identity. Use `buildTradeSnapshotKey(tradeId, escrowContract)`.
 - Trade cards show offer/request assets, price ratio, expiry countdown with urgency color-coding, status, access type, and relevant maker/taker actions.
 - Order links can be shared publicly.
+
+### External ChainWhisper MCP
+
+- The external MCP repository is `https://github.com/RosuLaurentiu/ChainWhisper-MCP`. The app setup page pins `@chainwhisper/agent-tools@0.1.0-beta.0` and registers `chainwhisper-mcp` plus `chainwhisper-coti-signer`.
+- `chainwhisper-mcp` is keyless planning. `chainwhisper-coti-signer` owns the dedicated Agent Wallet, privacy material, local Agent Control dashboard, policies, complete-action confirmations, signing, broadcast, recovery, and order-linked private negotiation.
+- A COTI skill or standalone private-messaging MCP is not required. The official COTI private-messaging SDK is embedded in the ChainWhisper signer. A separate compatible COTI MCP is independent and useful only for generic COTI operations; ChainWhisper must never call it or receive wallet credentials from it.
+- Agent Control stays local and persistent. It handles existing/new Agent Wallet setup, funding context, one-time privacy onboarding, verified balances, manual confirmation, bounded/full autonomy, progress, and merged wallet activity. It is not a second order-composition or market-discovery app.
+- Manual mode asks for one human confirmation per complete logical ChainWhisper action, not one confirmation per approval/reset/protocol transaction. The signer may submit several exact network transactions after that single authorization.
+- Bounded autonomy is limited by explicit policy terms for up to 30 days. Full audited economic autonomy lasts at most 24 hours. Wallet replacement, privacy/token setup, policy changes, arbitrary calldata/transfers, administration, and secret deletion remain local or forbidden.
+- Keep Agent Setup copy aligned with the MCP README and public tool catalog. Never instruct users to paste private keys, AES/privacy material, mnemonics, passphrases, pairing/session tokens, or access secrets into an agent prompt or MCP argument.
+- The external MCP covers current app economic actions, including best-single-order Swap, one-off Public/Unlisted/Direct orders, visible/private liquidity, lifecycle actions, recurring liquidity, Privacy Portal conversions, private state, and structured order negotiation. It does not replace generic COTI utilities or the in-app paid Trade Agent.
 
 ## Treasury App
 

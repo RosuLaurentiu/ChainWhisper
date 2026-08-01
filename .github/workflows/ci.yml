@@ -52,6 +52,12 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Check Chat Image Edge Functions
+        run: |
+          for function in chat-image-cleanup chat-image-confirm chat-image-upload; do
+            (cd "supabase/functions/$function" && deno task --frozen check)
+          done
+
       - name: Check Trade Agent Edge Function
         working-directory: supabase/functions/trade-agent
         run: deno task check

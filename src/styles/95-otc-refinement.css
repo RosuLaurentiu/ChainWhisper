@@ -436,6 +436,13 @@
   padding: 12px;
 }
 
+.app-shell-trades
+  .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+  .p2p-agent-panel.p2p-agent-panel-setup {
+  width: min(100%, 1120px);
+  max-width: 1120px;
+}
+
 .app-shell-trades .p2p-agent-hero {
   padding: 4px 4px 8px;
 }
@@ -457,6 +464,29 @@
 }
 
 @media (min-width: 921px) {
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-section:has(.p2p-agent-setup-panel) {
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-panel.p2p-agent-panel-setup {
+    align-self: start;
+    height: auto !important;
+  }
+
+  .app-shell-trades
+    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
+    .p2p-agent-setup-panel {
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
   .app-shell-trades .p2p-agent-chat-window-compact {
     grid-template-rows: minmax(0, 1fr) auto !important;
     min-height: 0;
@@ -476,19 +506,9 @@
   }
 }
 
-@media (min-width: 861px) {
-  .app-shell-trades
-    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
-    .p2p-agent-section:has(.p2p-agent-setup-panel) {
-    align-content: start;
-  }
-
-  .app-shell-trades
-    .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
-    .p2p-agent-panel:has(.p2p-agent-setup-panel) {
-    align-self: start;
-    height: auto !important;
-  }
+.app-shell-trades .p2p-agent-setup-prompt pre {
+  max-height: none;
+  overflow: visible;
 }
 
 /* Mobile has one route scroll owner; only a populated Agent log scrolls within it. */
