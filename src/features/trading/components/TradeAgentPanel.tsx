@@ -187,7 +187,7 @@ export default function TradeAgentPanel({
                 ? 'Learn how ChainWhisper works.'
                 : tradeMode
                   ? 'Trading help, not autopilot.'
-                  : 'Connect your agent to ChainWhisper.'}
+                  : 'ChainWhisper MCP setup is coming soon.'}
             </strong>
           </div>
           <small>
@@ -195,7 +195,7 @@ export default function TradeAgentPanel({
               ? 'Free — no wallet required.'
               : tradeMode
                 ? feeLabel
-                : 'Free setup instructions.'}
+                : 'Preview how it works.'}
           </small>
         </div>
 

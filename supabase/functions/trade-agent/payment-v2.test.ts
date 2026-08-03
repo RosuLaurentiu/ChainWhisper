@@ -50,7 +50,7 @@ const assertRejects = async (fn: () => Promise<unknown>, expected: RegExp): Prom
 const payerAccount = privateKeyToAccount(`0x${'11'.repeat(32)}`);
 const quoteSecret = 'quote-secret-used-only-for-deterministic-tests-123456789';
 const feeTokenAddress = '0xb70c55bd0823436f44877dc6a9f46e0c55f2c3a8';
-const feeRecipient = '0xbf01185a70cdfef1858659836d57bff085ebed55';
+const feeRecipient = '0xd5f92b95d6224804fa54bcae2ee73b5a4a2d8bbd';
 
 const makeQuote = async (): Promise<TradeAgentQuotePayload> => ({
   action: 'find_price',

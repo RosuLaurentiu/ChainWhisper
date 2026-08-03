@@ -39,17 +39,24 @@ describe('AgentSetupPanel', () => {
       'https://docs.coti.io/coti-documentation/private-messaging/quickstart#mcp-server'
     );
     expect(markup).toContain('Carbon MCP');
-    expect(markup).toContain('Configuration required');
+    expect(markup).toContain('Coming soon');
     expect(markup).toContain('Optional market tools');
     expect(markup).toContain('Add unsigned market context');
     expect(markup).toContain('Not required');
-    expect(markup).toContain('Installation becomes available with the beta release');
+    expect(markup).toContain('Installation becomes available with the public beta');
+    expect(markup).toContain('Setup coming soon');
+    expect(markup).toContain('Preview setup prompt');
+    expect(markup).toContain('Preview only');
+    expect(markup).toContain('disabled=""');
     expect(markup).toContain('Your Agent Wallet stays local');
     expect(markup).toContain('Bounded autonomy');
     expect(markup).toContain('Confirm each complete action once');
     expect(markup).toContain('Never give an MCP tool a private key');
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
       'chainwhisper_open_control_panel'
+    );
+    expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
+      'Preview only — ChainWhisper MCP setup is coming soon.'
     );
     expect(CHAINWHISPER_AGENT_SETUP_PROMPT).toContain(
       'CHAINWHISPER_SIGNER_ENV_FILE'

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-
 export const CHAINWHISPER_AGENT_TOOLS_PACKAGE =
   '@chainwhisper/agent-tools@0.1.0-beta.0';
 export const CHAINWHISPER_AGENT_TOOLS_REPOSITORY =
   'https://github.com/RosuLaurentiu/ChainWhisper-MCP';
 
-export const CHAINWHISPER_AGENT_SETUP_PROMPT = `Set up ChainWhisper MCP for this agent.
+export const CHAINWHISPER_AGENT_SETUP_PROMPT = `Preview only — ChainWhisper MCP setup is coming soon.
+
+Set up ChainWhisper MCP for this agent.
 
 Source and security documentation:
 ${CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
@@ -81,31 +81,6 @@ const OPTIONAL_MARKET_LINKS = [
 ] as const;
 
 export default function AgentSetupPanel() {
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
-  const resetCopyStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(
-    () => () => {
-      if (resetCopyStateTimeoutRef.current) {
-        clearTimeout(resetCopyStateTimeoutRef.current);
-      }
-    },
-    []
-  );
-
-  const handleCopySetupPrompt = async () => {
-    if (resetCopyStateTimeoutRef.current) {
-      clearTimeout(resetCopyStateTimeoutRef.current);
-    }
-    try {
-      await copyAgentSetupPrompt();
-      setCopyState('copied');
-    } catch {
-      setCopyState('error');
-    }
-    resetCopyStateTimeoutRef.current = setTimeout(() => setCopyState('idle'), 4_000);
-  };
-
   return (
     <div
       id="assistant-mode-panel"
@@ -125,26 +100,24 @@ export default function AgentSetupPanel() {
               <span>01 · Install</span>
               <h3 id="agent-setup-package-title">Add ChainWhisper to your agent</h3>
             </div>
-            <span className="p2p-agent-setup-status">Configuration required</span>
+            <span className="p2p-agent-setup-status">Coming soon</span>
           </div>
           <p>
-            Copy one prompt. Your agent installs the pinned package and registers both
-            connections.
+            Preview the setup flow now. When the beta opens, one prompt will install the
+            pinned package and register both connections.
           </p>
           <code>npm install --global {CHAINWHISPER_AGENT_TOOLS_PACKAGE}</code>
           <small className="p2p-agent-setup-publication-note">
-            Pinned beta package. Installation becomes available with the beta release.
+            Preview command only. Installation becomes available with the public beta.
           </small>
           <div className="p2p-agent-setup-install-actions">
             <button
               type="button"
               className="trade-card-action trade-card-action-accept"
-              onClick={() => {
-                handleCopySetupPrompt().catch(() => {});
-              }}
+              disabled
               aria-describedby="agent-setup-copy-result"
             >
-              {copyState === 'copied' ? 'Setup prompt copied' : 'Copy setup prompt'}
+              Setup coming soon
             </button>
             <a
               href={CHAINWHISPER_AGENT_TOOLS_REPOSITORY}
@@ -158,13 +131,9 @@ export default function AgentSetupPanel() {
             id="agent-setup-copy-result"
             role="status"
             aria-live="polite"
-            className={copyState === 'error' ? 'error' : undefined}
           >
-            {copyState === 'copied'
-              ? 'Paste it into your agent configuration chat.'
-              : copyState === 'error'
-                ? 'Copy failed. Open the prompt below and copy it manually.'
-                : 'Free setup. No wallet connection or WISP payment.'}
+            Free preview. No wallet connection or WISP payment. Review how it works
+            below.
           </span>
         </div>
 
@@ -260,10 +229,10 @@ export default function AgentSetupPanel() {
         <details className="p2p-agent-setup-prompt">
           <summary>
             <span>
-              <strong>View setup prompt</strong>
-              <small>Review exactly what will be copied to your agent.</small>
+              <strong>Preview setup prompt</strong>
+              <small>See what the agent setup will do when the public beta opens.</small>
             </span>
-            <span className="p2p-agent-setup-detail-status">Copyable</span>
+            <span className="p2p-agent-setup-detail-status">Preview only</span>
           </summary>
           <pre>{CHAINWHISPER_AGENT_SETUP_PROMPT}</pre>
         </details>

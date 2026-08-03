@@ -6,7 +6,7 @@ describe('formatTradeAgentFeeLabel', () => {
     expect(
       formatTradeAgentFeeLabel({
         feeAmountWei: '650966400',
-        feeRecipient: '0xbf01185A70CDfEF1858659836D57BFf085ebed55',
+        feeRecipient: '0xD5F92B95D6224804FA54BCAE2Ee73b5A4a2D8BbD',
         feeTokenAddress: '0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8',
         feeTokenDecimals: 6,
         feeTokenSymbol: 'WISP',

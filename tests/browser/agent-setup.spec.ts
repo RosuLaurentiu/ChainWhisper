@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('ChainWhisper Agent Setup', () => {
-  test('uses three keyboard-complete tabs and copies setup without wallet or payment side effects', async ({
+  test('uses three keyboard-complete tabs and previews coming-soon setup without wallet or payment side effects', async ({
     page
   }) => {
     const tradeAgentPaymentRequests: Array<{ body: string | null; url: string }> = [];
@@ -27,7 +27,11 @@ test.describe('ChainWhisper Agent Setup', () => {
     await helpTab.press('End');
     await expect(setupTab).toBeFocused();
     await expect(setupTab).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByText('Connect your agent to ChainWhisper.')).toBeVisible();
+    await expect(
+      page.getByText('ChainWhisper MCP setup is coming soon.', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText('Preview how it works.')).toBeVisible();
+    await expect(page.getByText('Coming soon', { exact: true })).toBeVisible();
     await expect(
       page.getByText('One package. Two local connections. Private negotiation included.')
     ).toBeVisible();
@@ -65,9 +69,10 @@ test.describe('ChainWhisper Agent Setup', () => {
       .evaluate((panel) => panel.getBoundingClientRect().width);
     expect(setupPanelWidth).toBeGreaterThanOrEqual(1000);
 
-    await page.getByRole('button', { name: 'Copy setup prompt' }).click();
-    await expect(page.getByRole('button', { name: 'Setup prompt copied' })).toBeVisible();
-    await expect(page.getByText('Paste it into your agent configuration chat.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Setup coming soon' })).toBeDisabled();
+    await expect(page.getByText('Preview setup prompt')).toBeVisible();
+    await expect(page.getByText('Preview only', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Free preview. No wallet connection or WISP payment/)).toBeVisible();
     expect(tradeAgentPaymentRequests).toEqual([]);
 
     await setupTab.press('ArrowRight');
@@ -96,7 +101,7 @@ test.describe('ChainWhisper Agent Setup', () => {
     await expect
       .poll(() =>
         page
-          .getByRole('button', { name: 'Copy setup prompt' })
+          .getByRole('button', { name: 'Setup coming soon' })
           .evaluate((button) => button.getBoundingClientRect().height)
       )
       .toBeGreaterThanOrEqual(44);

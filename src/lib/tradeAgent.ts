@@ -9,7 +9,7 @@ import {
 } from './appShared';
 import { ZERO_TRADE_TAKER_ADDRESS } from './tradePerspective';
 
-export const TRADE_AGENT_FEE_RECIPIENT = '0xbf01185A70CDfEF1858659836D57BFf085ebed55';
+export const TRADE_AGENT_FEE_RECIPIENT = '0xD5F92B95D6224804FA54BCAE2Ee73b5A4a2D8BbD';
 export const TRADE_AGENT_FEE_TOKEN_ADDRESS = REWARD_TOKEN_ADDRESS;
 const TRADE_AGENT_DRAFT_STORAGE_KEY = 'chainwhisper:trade-agent:draft:v1';
 const TRADE_AGENT_DRAFT_TTL_MS = 10 * 60 * 1000;
