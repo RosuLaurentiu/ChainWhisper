@@ -2744,6 +2744,7 @@ export default function P2PTradingPage({
     terminalReturnSurfaceRef,
     tradeAgentAction,
     tradeAgentExplicitContext,
+    tradeAgentMessages,
     tradeAgentPrompt,
     tradeComposerModel,
     walletAddress

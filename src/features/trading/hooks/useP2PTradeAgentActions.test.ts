@@ -3,9 +3,36 @@ import { RECURRING_OTC_CONTRACT_ADDRESS, type TradeSnapshot } from '../../../lib
 import type { TradeAgentResponseAction } from '../../../lib/tradeAgent';
 import type { OtcSwapQuoteCandidate } from '../../../lib/otcSwapQuote';
 import {
+  readRecurringAgentSpreadPercentage,
+  resolveRecurringAgentPairSymbols,
   resolveTradeAgentOpenOrderSnapshot,
   selectBestExecutableTradeAgentQuote
 } from './useP2PTradeAgentActions';
+
+describe('recurring Agent conversation context', () => {
+  const conversation = [
+    {
+      role: 'user' as const,
+      text: 'Draft a recurring order for p.COTI and p.gCOTI with private liquidity at +/-50% around Carbon.'
+    },
+    {
+      role: 'assistant' as const,
+      text: 'Which token is base and what liquidity should each side use?'
+    }
+  ];
+
+  it('keeps private-token intent while a follow-up supplies the base/quote order', () => {
+    expect(resolveRecurringAgentPairSymbols({
+      conversation,
+      knownSymbols: ['COTI', 'gCOTI', 'p.COTI', 'p.gCOTI'],
+      prompt: '40 gCOTI and 40 COTI, gCOTI/COTI'
+    })).toEqual(['p.gCOTI', 'p.COTI']);
+  });
+
+  it('carries the earlier Carbon spread into the follow-up request', () => {
+    expect(readRecurringAgentSpreadPercentage('40 gCOTI and 40 COTI, gCOTI/COTI', conversation)).toBe(50);
+  });
+});
 
 const recurringOrder = {
   tradeId: 5,

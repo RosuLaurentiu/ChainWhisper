@@ -64,6 +64,46 @@ Deno.test('normalizes valid discriminated recurring and trusted order actions', 
   });
 });
 
+Deno.test('pins recurring pair, visibility, and calculated Carbon spread to trusted context', () => {
+  const result = normalizeSafeTradeAgentResponse({
+    answer: 'Recurring draft ready.',
+    warnings: [],
+    actions: [{
+      type: 'prefill_recurring',
+      baseToken: 'p.gCOTI',
+      quoteToken: 'p.COTI',
+      buyPrice: '99',
+      sellPrice: '100',
+      buyLiquidity: '40',
+      sellLiquidity: '40',
+      amountVisibility: 'visible'
+    }]
+  }, {
+    selectedPair: {
+      baseToken: { symbol: 'p.gCOTI' },
+      quoteToken: { symbol: 'p.COTI' }
+    },
+    recurringDraft: {
+      amountVisibility: 'private-hidden',
+      calculatedPrices: { buyPrice: '0.125', sellPrice: '0.375' }
+    }
+  });
+  assertEquals(result, {
+    answer: 'Recurring draft ready.',
+    warnings: [],
+    actions: [{
+      type: 'prefill_recurring',
+      baseToken: 'p.gCOTI',
+      quoteToken: 'p.COTI',
+      buyPrice: '0.125',
+      sellPrice: '0.375',
+      buyLiquidity: '40',
+      sellLiquidity: '40',
+      amountVisibility: 'private-hidden'
+    }]
+  });
+});
+
 Deno.test('discards unknown tokens, non-positive values, and untrusted order identities', () => {
   const result = normalizeSafeTradeAgentResponse({
     answer: 'No safe action.',

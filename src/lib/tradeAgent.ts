@@ -139,6 +139,57 @@ export type TradeAgentResponse = {
   actions: TradeAgentResponseAction[];
 };
 
+export type TradeAgentConversationTurn = {
+  role: 'assistant' | 'user';
+  text: string;
+};
+
+export const buildTradeAgentConversationTurns = (
+  messages: readonly { id?: string; role: string; text: string }[],
+  limit = 8
+): TradeAgentConversationTurn[] =>
+  messages
+    .filter(
+      (message): message is { id?: string; role: 'assistant' | 'user'; text: string } =>
+        message.id !== 'intro' &&
+        (message.role === 'assistant' || message.role === 'user') &&
+        Boolean(message.text.trim())
+    )
+    .slice(-Math.max(1, limit))
+    .map((message) => ({
+      role: message.role,
+      text: message.text.trim().slice(0, 800)
+    }));
+
+const formatTradeAgentDecimal = (value: number): string => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '';
+  }
+  return Number(value.toPrecision(10)).toString();
+};
+
+export const calculateTradeAgentRecurringReferencePrices = ({
+  marketPrice,
+  percentage
+}: {
+  marketPrice: number;
+  percentage: number;
+}): { buyPrice: string; sellPrice: string } | null => {
+  if (
+    !Number.isFinite(marketPrice) ||
+    marketPrice <= 0 ||
+    !Number.isFinite(percentage) ||
+    percentage <= 0 ||
+    percentage >= 100
+  ) {
+    return null;
+  }
+  const spread = percentage / 100;
+  const buyPrice = formatTradeAgentDecimal(marketPrice * (1 - spread));
+  const sellPrice = formatTradeAgentDecimal(marketPrice * (1 + spread));
+  return buyPrice && sellPrice ? { buyPrice, sellPrice } : null;
+};
+
 export type TradeAgentRunInput = {
   action: TradeAgentActionType;
   context: unknown;

@@ -32,8 +32,10 @@ import {
   resolveVisibleOtcSwapPriceRatioDisplay
 } from '../../../lib/otcSwapUi';
 import {
+  buildTradeAgentConversationTurns,
   buildTradeAgentOpenedOrderContext,
   buildTradeAgentOrderReviewContext,
+  calculateTradeAgentRecurringReferencePrices,
   createTradeAgentPaymentQuote,
   getTradeAgentPreflightError,
   getTradeAgentPromptTokenMentions,
@@ -41,6 +43,7 @@ import {
   recoverTradeAgentRequest,
   runTradeAgentRequest,
   type TradeAgentActionType,
+  type TradeAgentConversationTurn,
   type TradeAgentFeeQuote,
   type TradeAgentKnownToken,
   type TradeAgentNormalizationOptions,
@@ -82,6 +85,55 @@ type CarbonReferenceContext = {
 type PromptQuoteContext = {
   context: unknown;
   quote: OtcSwapQuoteCandidate | null;
+};
+
+const normalizeComparableTokenSymbol = (value: string): string =>
+  value.trim().toLowerCase().replace(/^p\.?/u, '').replace(/[^a-z0-9]/gu, '');
+
+export const resolveRecurringAgentPairSymbols = ({
+  conversation,
+  knownSymbols,
+  prompt
+}: {
+  conversation: readonly TradeAgentConversationTurn[];
+  knownSymbols: string[];
+  prompt: string;
+}): [string, string] | null => {
+  const promptMentions = getTradeAgentPromptTokenMentions(prompt, knownSymbols);
+  const conversationMentions = getTradeAgentPromptTokenMentions(
+    conversation.map((turn) => turn.text).join(' '),
+    knownSymbols
+  );
+  const pair = promptMentions.length >= 2 ? promptMentions.slice(0, 2) : conversationMentions.slice(-2);
+  if (pair.length < 2) {
+    return null;
+  }
+  const withPrivateIntent = pair.map((symbol) => {
+    if (/^p\./iu.test(symbol)) {
+      return symbol;
+    }
+    return conversationMentions.find(
+      (candidate) =>
+        /^p\./iu.test(candidate) &&
+        normalizeComparableTokenSymbol(candidate) === normalizeComparableTokenSymbol(symbol)
+    ) ?? symbol;
+  });
+  return withPrivateIntent[0] === withPrivateIntent[1]
+    ? null
+    : [withPrivateIntent[0], withPrivateIntent[1]];
+};
+
+export const readRecurringAgentSpreadPercentage = (
+  prompt: string,
+  conversation: readonly TradeAgentConversationTurn[]
+): number | null => {
+  const combined = [...conversation.map((turn) => turn.text), prompt].join(' ');
+  const match = combined.match(/(\d+(?:\.\d+)?)\s*%\s*(?:around|from|of)\b/iu);
+  if (!match) {
+    return null;
+  }
+  const percentage = Number(match[1]);
+  return Number.isFinite(percentage) && percentage > 0 && percentage < 100 ? percentage : null;
 };
 
 export const selectBestExecutableTradeAgentQuote = (
@@ -189,6 +241,7 @@ type UseP2PTradeAgentActionsArgs = {
   terminalReturnSurfaceRef: MutableRefObject<TerminalReturnSurface>;
   tradeAgentAction: TradeAgentActionType;
   tradeAgentExplicitContext: unknown | null;
+  tradeAgentMessages: TradeAgentChatMessage[];
   tradeAgentPrompt: string;
   tradeComposerModel: TradeComposerModel;
   walletAddress: string;
@@ -258,12 +311,17 @@ export default function useP2PTradeAgentActions({
   terminalReturnSurfaceRef,
   tradeAgentAction,
   tradeAgentExplicitContext,
+  tradeAgentMessages,
   tradeAgentPrompt,
   tradeComposerModel,
   walletAddress
 }: UseP2PTradeAgentActionsArgs) {
   const tradeAgentRequestInFlightRef = useRef(false);
   const tradeAgentPaidRequestRef = useRef<TradeAgentPaymentRetryRecord | null>(null);
+  const tradeAgentConversation = useMemo(
+    () => buildTradeAgentConversationTurns(tradeAgentMessages),
+    [tradeAgentMessages]
+  );
   const tradeAgentContext = useMemo(
     () => ({
       clientSurface: 'otc-agent' as const,
@@ -315,12 +373,13 @@ export default function useP2PTradeAgentActions({
   const buildPromptOnlyTradeAgentContext = useCallback(
     () => ({
       clientSurface: 'otc-agent' as const,
+      ...(tradeAgentConversation.length > 0 ? { conversation: tradeAgentConversation } : {}),
       openedOrder: null,
       requestCompleteness: 'partial' as const,
       selectedPair: null,
       surface: routeSurfaceView ?? routeView
     }),
-    [routeSurfaceView, routeView]
+    [routeSurfaceView, routeView, tradeAgentConversation]
   );
 
   const askAgentAboutOrder = useCallback(
@@ -547,6 +606,84 @@ export default function useP2PTradeAgentActions({
     ]
   );
 
+  const resolveRecurringTradeAgentContext = useCallback(
+    async (prompt: string): Promise<TradeAgentSafeContext> => {
+      const fallbackContext = buildPromptOnlyTradeAgentContext() as TradeAgentSafeContext;
+      const knownSymbols = tradeComposerModel.tradeTokenOptions
+        .map((option) => option.symbol)
+        .filter((symbol): symbol is string => Boolean(symbol));
+      const pairSymbols = resolveRecurringAgentPairSymbols({
+        conversation: tradeAgentConversation,
+        knownSymbols,
+        prompt
+      });
+      if (!pairSymbols) {
+        return fallbackContext;
+      }
+      const [baseSymbol, quoteSymbol] = pairSymbols;
+      const baseSelection = resolveTradeAgentTokenSelection(baseSymbol);
+      const quoteSelection = resolveTradeAgentTokenSelection(quoteSymbol);
+      const baseToken = resolveTradeAgentTokenFromSelection(baseSelection);
+      const quoteToken = resolveTradeAgentTokenFromSelection(quoteSelection);
+      if (!baseToken || !quoteToken || getOtcSwapAssetKey(baseToken) === getOtcSwapAssetKey(quoteToken)) {
+        return fallbackContext;
+      }
+
+      const carbonReference = await fetchCarbonPairReference({
+        baseAsset: baseToken,
+        quoteAsset: quoteToken
+      });
+      const carbonContext = getCarbonReferenceContext(baseToken, quoteToken, false, carbonReference);
+      const spreadPercentage = readRecurringAgentSpreadPercentage(prompt, tradeAgentConversation);
+      const calculatedPrices =
+        carbonContext?.price && spreadPercentage
+          ? calculateTradeAgentRecurringReferencePrices({
+              marketPrice: carbonContext.price,
+              percentage: spreadPercentage
+            })
+          : null;
+      const conversationText = tradeAgentConversation.map((turn) => turn.text).join(' ');
+      const amountVisibility = /\b(?:private\s+liquidity|private-hidden|hidden\s+liquidity)\b/iu.test(
+        `${conversationText} ${prompt}`
+      )
+        ? 'private-hidden'
+        : null;
+
+      return {
+        ...fallbackContext,
+        selectedPair: {
+          baseToken: { kind: baseToken.kind, symbol: baseToken.symbol },
+          quoteToken: { kind: quoteToken.kind, symbol: quoteToken.symbol },
+          source: 'conversation'
+        },
+        recurringDraft: {
+          amountVisibility,
+          carbonReference: carbonContext,
+          ...(calculatedPrices
+            ? {
+                calculatedPrices: {
+                  ...calculatedPrices,
+                  basisLabel: carbonContext?.basisLabel,
+                  marketPrice: carbonContext?.price,
+                  percentage: spreadPercentage
+                }
+              }
+            : {}),
+          liquidityRule: 'buyLiquidity is quote-token budget; sellLiquidity is base-token inventory',
+          priceRule: 'buy price is lower and sell price is higher in quote/base units'
+        }
+      } as TradeAgentSafeContext;
+    },
+    [
+      buildPromptOnlyTradeAgentContext,
+      getCarbonReferenceContext,
+      resolveTradeAgentTokenFromSelection,
+      resolveTradeAgentTokenSelection,
+      tradeAgentConversation,
+      tradeComposerModel.tradeTokenOptions
+    ]
+  );
+
   const applyTradeAgentAction = useCallback(
     async (action: TradeAgentResponseAction) => {
       if (action.type === 'open_order' && action.tradeId) {
@@ -745,8 +882,12 @@ export default function useP2PTradeAgentActions({
           tradeAgentAction === 'find_price' && !exactRetryCandidate
             ? await resolveTradeAgentPromptQuoteContext(prompt)
             : null;
+        const recurringContext =
+          tradeAgentAction === 'draft_recurring' && !exactRetryCandidate
+            ? await resolveRecurringTradeAgentContext(prompt)
+            : null;
         const requestContext =
-          exactRetryCandidate?.context ?? promptQuoteContext?.context ?? preflightContext;
+          exactRetryCandidate?.context ?? promptQuoteContext?.context ?? recurringContext ?? preflightContext;
         const requestQuote = promptQuoteContext?.quote ?? null;
         const paymentRequest: TradeAgentPaymentRequest = {
           action: tradeAgentAction,
@@ -950,6 +1091,7 @@ export default function useP2PTradeAgentActions({
       myTrades,
       refreshAllTradingBalances,
       resolveTradeAgentPromptQuoteContext,
+      resolveRecurringTradeAgentContext,
       setTradeAgentError,
       setTradeAgentFeeQuote,
       setTradeAgentLoading,

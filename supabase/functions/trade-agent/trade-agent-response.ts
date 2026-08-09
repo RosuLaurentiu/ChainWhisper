@@ -215,6 +215,50 @@ const normalizeAction = (
   return null;
 };
 
+const applyRecurringContextConstraints = (
+  action: Record<string, unknown>,
+  context: unknown,
+  knownTokens: Map<string, string>
+): Record<string, unknown> => {
+  if (action.type !== 'prefill_recurring' || !context || typeof context !== 'object') {
+    return action;
+  }
+  const contextRecord = context as Record<string, unknown>;
+  const selectedPair =
+    contextRecord.selectedPair && typeof contextRecord.selectedPair === 'object'
+      ? contextRecord.selectedPair as Record<string, unknown>
+      : null;
+  const recurringDraft =
+    contextRecord.recurringDraft && typeof contextRecord.recurringDraft === 'object'
+      ? contextRecord.recurringDraft as Record<string, unknown>
+      : null;
+  const calculatedPrices =
+    recurringDraft?.calculatedPrices && typeof recurringDraft.calculatedPrices === 'object'
+      ? recurringDraft.calculatedPrices as Record<string, unknown>
+      : null;
+  const baseTokenRecord =
+    selectedPair?.baseToken && typeof selectedPair.baseToken === 'object'
+      ? selectedPair.baseToken as Record<string, unknown>
+      : null;
+  const quoteTokenRecord =
+    selectedPair?.quoteToken && typeof selectedPair.quoteToken === 'object'
+      ? selectedPair.quoteToken as Record<string, unknown>
+      : null;
+  const baseToken = normalizeTrustedToken(baseTokenRecord?.symbol, knownTokens);
+  const quoteToken = normalizeTrustedToken(quoteTokenRecord?.symbol, knownTokens);
+  const buyPrice = normalizePositiveDecimal(calculatedPrices?.buyPrice);
+  const sellPrice = normalizePositiveDecimal(calculatedPrices?.sellPrice);
+  const amountVisibility = ['visible', 'private-hidden'].includes(String(recurringDraft?.amountVisibility))
+    ? String(recurringDraft?.amountVisibility)
+    : '';
+  return {
+    ...action,
+    ...(baseToken && quoteToken && baseToken !== quoteToken ? { baseToken, quoteToken } : {}),
+    ...(buyPrice && sellPrice ? { buyPrice, sellPrice } : {}),
+    ...(amountVisibility ? { amountVisibility } : {})
+  };
+};
+
 export const normalizeSafeTradeAgentResponse = (value: unknown, context: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object') {
     throw new Error('Trade Agent returned an invalid response.');
@@ -237,6 +281,7 @@ export const normalizeSafeTradeAgentResponse = (value: unknown, context: unknown
     ? record.actions
         .map((action) => normalizeAction(action, knownTokens, trustedOrders))
         .filter((action): action is Record<string, unknown> => Boolean(action))
+        .map((action) => applyRecurringContextConstraints(action, context, knownTokens))
         .slice(0, 5)
     : [];
   return { answer, warnings, actions };
