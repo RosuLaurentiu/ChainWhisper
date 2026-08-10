@@ -436,6 +436,22 @@
   padding: 12px;
 }
 
+.app-shell-trades .p2p-agent-mode-toggle {
+  min-width: 0;
+}
+
+.app-shell-trades .p2p-agent-mode-toggle [role='tab'] {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  height: 44px;
+  padding: 0 6px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
+}
+
 .app-shell-trades
   .p2p-trading-shell:not(.p2p-trading-shell-drawer-open)
   .p2p-agent-panel.p2p-agent-panel-setup {
@@ -536,6 +552,40 @@
   .app-shell-trades .p2p-agent-panel {
     grid-template-rows: auto auto auto;
     height: auto;
+  }
+
+  .app-shell-trades .p2p-agent-composer-help {
+    position: static;
+    bottom: auto;
+    z-index: auto;
+  }
+
+  .app-shell-trades
+    :is(
+      .p2p-agent-chat-window,
+      .p2p-agent-composer,
+      .p2p-agent-prompt,
+      .p2p-agent-submit-row
+    ) {
+    min-width: 0;
+  }
+
+  .app-shell-trades .p2p-agent-composer-trade .p2p-agent-submit-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .app-shell-trades .p2p-agent-composer-trade .p2p-agent-readiness {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .app-shell-trades .p2p-agent-composer-trade .p2p-agent-connect-account {
+    justify-self: end;
+    width: auto;
+    min-width: 120px;
+    max-width: 100%;
   }
 
   .app-shell-trades .p2p-agent-chat-window-compact {
