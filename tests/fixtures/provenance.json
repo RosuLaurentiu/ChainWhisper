@@ -98,5 +98,109 @@
     "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/public-link-counter-2026-10-25/NATIVE_RESULT.json",
     "sourceSha256": "b5db54d849f7e1aaab0effb928e538a005cc890908545235eae3ae3449e13465",
     "fixtureSha256": "9436c0a96a9ff4677d32d9b59c877db4a51df696395f24d0670df70141219e22"
+  },
+  "worker-event-abis.json#ChainWhisperChatV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperChatV2.sol/ChainWhisperChatV2.json",
+    "sourceSha256": "ca30c75c9b0caafc2320cda459e9e43b88c34ed01aeb881e6ebb7926029ff1f0",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperChatV2.sol",
+    "contractSourceSha256": "f7e0b39284fad716919578028a4d40d3f518949edee39bda6be9a89d7cb2c7fe",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperDirectOTCEscrowV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperDirectOTCEscrowV2.sol/ChainWhisperDirectOTCEscrowV2.json",
+    "sourceSha256": "dbe837c9f0700e64b83300bd9acc0ce1e8e34c75bd1d12cc29eed3473b15627b",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperDirectOTCEscrowV2.sol",
+    "contractSourceSha256": "bfc9f6dd87361bdf4fb93a9eae07f580988c647af6b817d0ba76bb4000d1c93a",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperGroupChatV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperGroupChatV2.sol/ChainWhisperGroupChatV2.json",
+    "sourceSha256": "f1be07f3f11f31f7db8d710e2f58b946054480af87909c46b483489507508adf",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperGroupChatV2.sol",
+    "contractSourceSha256": "26b00228ca0610db27b00436a6d5e833f2a3ae15535da74cb28c59746fa18bd9",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperPrivateLiquidityBookV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperPrivateLiquidityBookV2.sol/ChainWhisperPrivateLiquidityBookV2.json",
+    "sourceSha256": "eb0bea3f763d517fad50d899238592e471f319831c9c31866e81ff9a15326e49",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperPrivateLiquidityBookV2.sol",
+    "contractSourceSha256": "a2daaf917d95564046a8671f55bb258fdcb9acbc7b0ac78ca1fd3f5e63cc93f4",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperPrivateLiquidityHiddenIntentModuleV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperPrivateLiquidityHiddenIntentModuleV2.sol/ChainWhisperPrivateLiquidityHiddenIntentModuleV2.json",
+    "sourceSha256": "2184ebd6f06d8f7d33ffd0679b810ba661b77f52371ddef77255bdcfdd5f39cc",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperPrivateLiquidityHiddenIntentModuleV2.sol",
+    "contractSourceSha256": "16f42bfd4cc3f5944fea9026ff87eb2b0bed48692b4f0c4212a2a9f282597c05",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperPrivateLiquidityPositionNFTV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperPrivateLiquidityPositionNFTV2.sol/ChainWhisperPrivateLiquidityPositionNFTV2.json",
+    "sourceSha256": "7e0e44dadfbbae46350d1a513b40d2c618593808dc3a816e714804f94a5f2dbb",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperPrivateLiquidityPositionNFTV2.sol",
+    "contractSourceSha256": "2032abadcc0c39e8bfe9adc7e13ebedde37ab8e93d1463374d1aaac99a19e8d1",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperPrivateOTCEscrowV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperPrivateOTCEscrowV2.sol/ChainWhisperPrivateOTCEscrowV2.json",
+    "sourceSha256": "5618753e4e139dea880bf05b69be64456dedce28944225a430822a8d8a4a2b8c",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperPrivateOTCEscrowV2.sol",
+    "contractSourceSha256": "99100ea87c451c54da6fb7cd6a9745024c1d16c86d79b0c07ef9fbada1535d63",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperPrivateRecurringOTCEscrowV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperPrivateRecurringOTCEscrowV2.sol/ChainWhisperPrivateRecurringOTCEscrowV2.json",
+    "sourceSha256": "88abef8ca0998e3a5d292141f26f799227e88a321a017b5ae196e44bff8a2be0",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperPrivateRecurringOTCEscrowV2.sol",
+    "contractSourceSha256": "7305739376ba558981c5a4601bc73740db1963bae00e519c90b170ddabaadc67",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperRecurringOTCEscrowV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperRecurringOTCEscrowV2.sol/ChainWhisperRecurringOTCEscrowV2.json",
+    "sourceSha256": "fdb097ef9bdc879d9d5b07a0ca3542a9a7694f0ded54f15ce12f70a5c9c50a41",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperRecurringOTCEscrowV2.sol",
+    "contractSourceSha256": "cd9f496974481e78a76919118540f8a31f28eca3a91af66f86a26de27c8a290a",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperStandardOTCEscrowV2": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperStandardOTCEscrowV2.sol/ChainWhisperStandardOTCEscrowV2.json",
+    "sourceSha256": "64cf63c246407efb951b37ced9e28b46102c29089f3a953216c4103557e5838c",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperStandardOTCEscrowV2.sol",
+    "contractSourceSha256": "b73ee66652edec935be9e1285d517b0fee9f7021e34fa52d4c605a1ed44ad122",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperTestPrivateTokenV1": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperTestPrivateTokenV1.sol/ChainWhisperTestPrivateTokenV1.json",
+    "sourceSha256": "0b5f710d802c07976dfa6345a28e489f7a10cc2ff99e5cced1b9128fdbd0f7ed",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperTestPrivateTokenV1.sol",
+    "contractSourceSha256": "d996f0e09ce27b61a070bfb63b183f69c3113037d0f6d45e9730df445a2fc22f",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChainWhisperTestPublicTokenV1": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChainWhisperTestPublicTokenV1.sol/ChainWhisperTestPublicTokenV1.json",
+    "sourceSha256": "edc3c53aaf35ff166fa1db81f429be52aeb5a3e175ec233a258a63f307db58fe",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChainWhisperTestPublicTokenV1.sol",
+    "contractSourceSha256": "f7a45b9298eda6c1d8046a3be40b7882b566f2299ab93f8b3ba640e96e470c89",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
+  },
+  "worker-event-abis.json#ChatReactionsV1": {
+    "source": "ChainWhisper Contracts/artifacts/contracts/editable/ChatReactionsV1.sol/ChatReactionsV1.json",
+    "sourceSha256": "0d432a6ed2b0f5d688dd3babc833c98cc5fd4d90408cf1a5f562a1c5fecee358",
+    "contractSource": "ChainWhisper Contracts/contracts/editable/ChatReactionsV1.sol",
+    "contractSourceSha256": "1dc80713e448ac7941ee23900edbf33f42fd76822aac22a50788d51d64b6513b",
+    "fixture": "worker-event-abis.json",
+    "fixtureSha256": "5bb8b9a60ae2c640d698021acf142045d509e4548b8e29c337512d6affbb788f"
   }
 }

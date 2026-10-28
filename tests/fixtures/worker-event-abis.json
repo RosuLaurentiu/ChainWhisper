@@ -1,0 +1,5319 @@
+{
+  "ChainWhisperChatV2.sol/ChainWhisperChatV2.json": {
+    "contractName": "ChainWhisperChatV2",
+    "sourceName": "contracts/editable/ChainWhisperChatV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "conversationId",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "participantA",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "participantB",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "createdBy",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          }
+        ],
+        "name": "ConversationCreated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "conversationId",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "participant",
+            "type": "address"
+          }
+        ],
+        "name": "ConversationEnvelopeRefreshed",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "conversationId",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "rotatedBy",
+            "type": "address"
+          }
+        ],
+        "name": "ConversationKeyRotated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "feeRecipient",
+            "type": "address"
+          }
+        ],
+        "name": "FeeRecipientSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "messageFee",
+            "type": "uint256"
+          }
+        ],
+        "name": "MessageFeeSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "conversationId",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "sender",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "messageId",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "senderSequence",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes12",
+            "name": "nonce",
+            "type": "bytes12"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes32",
+            "name": "aadHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes",
+            "name": "ciphertext",
+            "type": "bytes"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "valueSent",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "feeTaken",
+            "type": "uint256"
+          }
+        ],
+        "name": "MessagePosted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditWithdrawn",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "user",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "string",
+            "name": "nickname",
+            "type": "string"
+          }
+        ],
+        "name": "NicknameSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "currentOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "pendingOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferStarted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          }
+        ],
+        "name": "Paused",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          }
+        ],
+        "name": "Unpaused",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperDirectOTCEscrowV2.sol/ChainWhisperDirectOTCEscrowV2.json": {
+    "contractName": "ChainWhisperDirectOTCEscrowV2",
+    "sourceName": "contracts/editable/ChainWhisperDirectOTCEscrowV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "tradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "taker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "parentEscrow",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "parentTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "rootTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint8",
+            "name": "counterDepth",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperDirectOTCEscrowV2.AssetType",
+            "name": "offerAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "offerToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperDirectOTCEscrowV2.AssetType",
+            "name": "requestAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "requestToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperDirectOTCEscrowV2.AmountMode",
+            "name": "amountMode",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "publicOfferAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "publicRequestAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          }
+        ],
+        "name": "DirectTradeOpened",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "originalTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "replacementTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "rootTradeId",
+            "type": "uint256"
+          }
+        ],
+        "name": "DirectTradeReplaced",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "tradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "taker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperDirectOTCEscrowV2.TradeStatus",
+            "name": "previousStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperDirectOTCEscrowV2.TradeStatus",
+            "name": "nextStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "relatedTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "changedAt",
+            "type": "uint64"
+          }
+        ],
+        "name": "DirectTradeStatusChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditRecorded",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditWithdrawn",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "PrivateTokenApprovalSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "PublicTokenApprovalSet",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperGroupChatV2.sol/ChainWhisperGroupChatV2.json": {
+    "contractName": "ChainWhisperGroupChatV2",
+    "sourceName": "contracts/editable/ChainWhisperGroupChatV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "metadataVersion",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "editor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes12",
+            "name": "nonce",
+            "type": "bytes12"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes32",
+            "name": "aadHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes",
+            "name": "ciphertext",
+            "type": "bytes"
+          }
+        ],
+        "name": "EncryptedGroupMetadataUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "feeRecipient",
+            "type": "address"
+          }
+        ],
+        "name": "FeeRecipientSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousAdmin",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newAdmin",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "adminRevision",
+            "type": "uint32"
+          }
+        ],
+        "name": "GroupAdminChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          }
+        ],
+        "name": "GroupArchived",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "admin",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "adminRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          }
+        ],
+        "name": "GroupCreated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "rotatedBy",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "firstMessageId",
+            "type": "uint64"
+          }
+        ],
+        "name": "GroupEpochCreated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          }
+        ],
+        "name": "GroupEpochEnvelopeSynchronized",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "inviter",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "generation",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          }
+        ],
+        "name": "GroupInviteAccepted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "inviter",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "generation",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "issuerAdminRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "recipientGeneration",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          }
+        ],
+        "name": "GroupInviteCreated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "generation",
+            "type": "uint64"
+          }
+        ],
+        "name": "GroupInviteDeclined",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "generation",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "revokedBy",
+            "type": "address"
+          }
+        ],
+        "name": "GroupInviteRevoked",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "generation",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "creator",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "proofSigner",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "issuerAdminRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "uses",
+            "type": "uint32"
+          }
+        ],
+        "name": "GroupJoinCodeCreated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "generation",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "revokedBy",
+            "type": "address"
+          }
+        ],
+        "name": "GroupJoinCodeRevoked",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "generation",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          }
+        ],
+        "name": "GroupJoinedWithCode",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "generation",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "firstReadableMessageId",
+            "type": "uint64"
+          }
+        ],
+        "name": "GroupMemberAdded",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "generation",
+            "type": "uint32"
+          }
+        ],
+        "name": "GroupMemberLeft",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "member",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "removedBy",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "generation",
+            "type": "uint32"
+          }
+        ],
+        "name": "GroupMemberRemoved",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint32",
+            "name": "revision",
+            "type": "uint32"
+          }
+        ],
+        "name": "GroupMembershipRevisionAdvanced",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "messageId",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "sender",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "membershipRevision",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "senderSequence",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes12",
+            "name": "nonce",
+            "type": "bytes12"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes32",
+            "name": "aadHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes",
+            "name": "ciphertext",
+            "type": "bytes"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "valueSent",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "feeTaken",
+            "type": "uint256"
+          }
+        ],
+        "name": "GroupMessagePosted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "messageFee",
+            "type": "uint256"
+          }
+        ],
+        "name": "MessageFeeSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditWithdrawn",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "currentOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "pendingOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferStarted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          }
+        ],
+        "name": "Paused",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          }
+        ],
+        "name": "Unpaused",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperPrivateLiquidityBookV2.sol/ChainWhisperPrivateLiquidityBookV2.json": {
+    "contractName": "ChainWhisperPrivateLiquidityBookV2",
+    "sourceName": "contracts/editable/ChainWhisperPrivateLiquidityBookV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "name": "NewActivityPauseSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "sequence",
+            "type": "uint64"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "baseAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "quoteAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateLiquidityOwnerInventorySnapshotUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "positionOwner",
+            "type": "address"
+          }
+        ],
+        "name": "PrivateLiquidityPositionClosed",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "positionOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "baseToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "quoteToken",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateLiquidityBookV2State.SideTerms",
+            "name": "buyTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateLiquidityBookV2State.SideTerms",
+            "name": "sellTerms",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateLiquidityPositionCreated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "swapId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateLiquidityBookV2State.SwapDirection",
+            "name": "direction",
+            "type": "uint8"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "baseAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "quoteAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateLiquidityPositionExecutionReceiptUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "positionOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateLiquidityPositionLiquidityChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "positionOwner",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "resumed",
+            "type": "bool"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateLiquidityPositionPrivacyActivated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "positionOwner",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateLiquidityBookV2State.PositionStatus",
+            "name": "previousStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateLiquidityBookV2State.PositionStatus",
+            "name": "nextStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateLiquidityPositionStatusChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "positionOwner",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateLiquidityBookV2State.SideTerms",
+            "name": "buyTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateLiquidityBookV2State.SideTerms",
+            "name": "sellTerms",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateLiquidityPositionTermsUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "nextOwner",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateLiquidityPositionTransferActivationRequired",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "swapId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "trader",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateLiquidityBookV2State.SwapDirection",
+            "name": "direction",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "candidateCount",
+            "type": "uint256"
+          }
+        ],
+        "name": "PrivateLiquiditySwapExecuted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "swapId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateLiquidityBookV2State.SwapDirection",
+            "name": "direction",
+            "type": "uint8"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "inputAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "outputAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "unusedInputAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateLiquidityTraderSwapReceiptUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "PrivateTokenApprovalSet",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperPrivateLiquidityHiddenIntentModuleV2.sol/ChainWhisperPrivateLiquidityHiddenIntentModuleV2.json": {
+    "contractName": "ChainWhisperPrivateLiquidityHiddenIntentModuleV2",
+    "sourceName": "contracts/editable/ChainWhisperPrivateLiquidityHiddenIntentModuleV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "intentId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "intentOwner",
+            "type": "address"
+          }
+        ],
+        "name": "PrivateLiquidityHiddenIntentCancelled",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "intentId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "settlementId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "intentOwner",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "fillIndex",
+            "type": "uint32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "fullyFilled",
+            "type": "bool"
+          }
+        ],
+        "name": "PrivateLiquidityHiddenIntentExecuted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "intentId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "intentOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          }
+        ],
+        "name": "PrivateLiquidityHiddenIntentExpired",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "intentId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "intentOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "baseToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "quoteToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint32",
+            "name": "cooldownBlocks",
+            "type": "uint32"
+          }
+        ],
+        "name": "PrivateLiquidityHiddenIntentOpened",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "intentId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "sequence",
+            "type": "uint64"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "packedTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "packedBudget",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "lastInputAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "lastOutputAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateLiquidityHiddenIntentOwnerReceiptUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "settlementId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "baseAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "quoteAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateLiquidityHiddenIntentPositionReceiptUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "settlementId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "caller",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "processedIntentCount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "candidateCount",
+            "type": "uint256"
+          }
+        ],
+        "name": "PrivateLiquidityHiddenIntentSettlementProcessed",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "positionId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "sequence",
+            "type": "uint64"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "baseAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "quoteAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateLiquidityOwnerInventorySnapshotUpdated",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperPrivateLiquidityPositionNFTV2.sol/ChainWhisperPrivateLiquidityPositionNFTV2.json": {
+    "contractName": "ChainWhisperPrivateLiquidityPositionNFTV2",
+    "sourceName": "contracts/editable/ChainWhisperPrivateLiquidityPositionNFTV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "approved",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "tokenId",
+            "type": "uint256"
+          }
+        ],
+        "name": "Approval",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "operator",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "ApprovalForAll",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "from",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "tokenId",
+            "type": "uint256"
+          }
+        ],
+        "name": "Transfer",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperPrivateOTCEscrowV2.sol/ChainWhisperPrivateOTCEscrowV2.json": {
+    "contractName": "ChainWhisperPrivateOTCEscrowV2",
+    "sourceName": "contracts/editable/ChainWhisperPrivateOTCEscrowV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditRecorded",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditWithdrawn",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "sequence",
+            "type": "uint64"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "totalOfferAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "totalRequestAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "remainingOfferAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "lastOfferAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "lastRequestAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateOrderAccountSnapshotUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "filler",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateOTCEscrowV2.OrderMode",
+            "name": "mode",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "fillCount",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "publicOfferAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "publicRequestAmount",
+            "type": "uint256"
+          }
+        ],
+        "name": "PrivateOrderFilled",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateOTCEscrowV2.OrderMode",
+            "name": "mode",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateOTCEscrowV2.AssetType",
+            "name": "offerAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "offerToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "publicOfferAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateOTCEscrowV2.AssetType",
+            "name": "requestAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "requestToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "publicRequestAmount",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint128",
+                "name": "offerAmount",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint128",
+                "name": "requestAmount",
+                "type": "uint128"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateOTCEscrowV2.PriceTerms",
+            "name": "priceTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "bool",
+                "name": "partialFillsAllowed",
+                "type": "bool"
+              },
+              {
+                "internalType": "uint16",
+                "name": "minPartialFillBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint8",
+                "name": "maxFills",
+                "type": "uint8"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateOTCEscrowV2.FillPolicy",
+            "name": "fillPolicy",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "rootOrderId",
+            "type": "uint256"
+          }
+        ],
+        "name": "PrivateOrderOpened",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "originalOrderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "replacementOrderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "rootOrderId",
+            "type": "uint256"
+          }
+        ],
+        "name": "PrivateOrderReplaced",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateOTCEscrowV2.OrderStatus",
+            "name": "previousStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateOTCEscrowV2.OrderStatus",
+            "name": "nextStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "relatedOrderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateOrderStatusChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "PrivateTokenApprovalSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "PublicTokenApprovalSet",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperPrivateRecurringOTCEscrowV2.sol/ChainWhisperPrivateRecurringOTCEscrowV2.json": {
+    "contractName": "ChainWhisperPrivateRecurringOTCEscrowV2",
+    "sourceName": "contracts/editable/ChainWhisperPrivateRecurringOTCEscrowV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "filler",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateRecurringOTCEscrowV2.OrderSide",
+            "name": "side",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "executionIndex",
+            "type": "uint64"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "baseAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "quoteAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateRecurringExecutionReceiptUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          }
+        ],
+        "name": "PrivateRecurringInventorySettled",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "sequence",
+            "type": "uint64"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "baseAmount",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "ciphertext",
+                "type": "tuple"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextHigh",
+                    "type": "uint256"
+                  },
+                  {
+                    "internalType": "ctUint128",
+                    "name": "ciphertextLow",
+                    "type": "uint256"
+                  }
+                ],
+                "internalType": "struct ctUint256",
+                "name": "userCiphertext",
+                "type": "tuple"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct utUint256",
+            "name": "quoteAmount",
+            "type": "tuple"
+          }
+        ],
+        "name": "PrivateRecurringMakerInventorySnapshotUpdated",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateRecurringOTCEscrowV2.SideTerms",
+            "name": "buyTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateRecurringOTCEscrowV2.SideTerms",
+            "name": "sellTerms",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "liquidityChanged",
+            "type": "bool"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateRecurringOrderEdited",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "filler",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateRecurringOTCEscrowV2.OrderSide",
+            "name": "side",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "executionIndex",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateRecurringOrderExecuted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "baseToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "quoteToken",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateRecurringOTCEscrowV2.SideTerms",
+            "name": "buyTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperPrivateRecurringOTCEscrowV2.SideTerms",
+            "name": "sellTerms",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateRecurringOrderOpened",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateRecurringOTCEscrowV2.OrderStatus",
+            "name": "previousStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperPrivateRecurringOTCEscrowV2.OrderStatus",
+            "name": "nextStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          }
+        ],
+        "name": "PrivateRecurringOrderStatusChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "PrivateTokenApprovalSet",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperRecurringOTCEscrowV2.sol/ChainWhisperRecurringOTCEscrowV2.json": {
+    "contractName": "ChainWhisperRecurringOTCEscrowV2",
+    "sourceName": "contracts/editable/ChainWhisperRecurringOTCEscrowV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditRecorded",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditWithdrawn",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "baseAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "quoteAmount",
+            "type": "uint256"
+          }
+        ],
+        "name": "RecurringInventorySettled",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperRecurringOTCEscrowV2.SideTerms",
+            "name": "buyTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperRecurringOTCEscrowV2.SideTerms",
+            "name": "sellTerms",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "baseAdded",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "quoteAdded",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "baseRemoved",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "quoteRemoved",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "baseInventory",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "quoteInventory",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          }
+        ],
+        "name": "RecurringOrderEdited",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "filler",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperRecurringOTCEscrowV2.OrderSide",
+            "name": "side",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "executionIndex",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "baseAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "quoteAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "baseInventory",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "quoteInventory",
+            "type": "uint256"
+          }
+        ],
+        "name": "RecurringOrderExecuted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperRecurringOTCEscrowV2.AssetType",
+            "name": "baseAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "baseToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperRecurringOTCEscrowV2.AssetType",
+            "name": "quoteAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "quoteToken",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperRecurringOTCEscrowV2.SideTerms",
+            "name": "buyTerms",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "baseAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "quoteAmount",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperRecurringOTCEscrowV2.SideTerms",
+            "name": "sellTerms",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "baseInventory",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "quoteInventory",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "RecurringOrderOpened",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "orderId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperRecurringOTCEscrowV2.OrderStatus",
+            "name": "previousStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperRecurringOTCEscrowV2.OrderStatus",
+            "name": "nextStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          }
+        ],
+        "name": "RecurringOrderStatusChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "TokenApprovalSet",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperStandardOTCEscrowV2.sol/ChainWhisperStandardOTCEscrowV2.json": {
+    "contractName": "ChainWhisperStandardOTCEscrowV2",
+    "sourceName": "contracts/editable/ChainWhisperStandardOTCEscrowV2.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditRecorded",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "NativeCreditWithdrawn",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "tradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "filler",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "requestAmountIn",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "offerAmountOut",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "remainingOfferAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "remainingRequestAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "nextRevision",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "finalFill",
+            "type": "bool"
+          }
+        ],
+        "name": "StandardTradeFilled",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "tradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "pairKey",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperStandardOTCEscrowV2.AssetType",
+            "name": "offerAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "offerToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "offerAmount",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperStandardOTCEscrowV2.AssetType",
+            "name": "requestAssetType",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "requestToken",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "requestAmount",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "bool",
+                "name": "partialFillsAllowed",
+                "type": "bool"
+              },
+              {
+                "internalType": "uint16",
+                "name": "minPartialFillBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint256",
+                "name": "minRequestAmount",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "maxRequestAmountPerWallet",
+                "type": "uint256"
+              },
+              {
+                "internalType": "bool",
+                "name": "oneFillPerWallet",
+                "type": "bool"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ChainWhisperStandardOTCEscrowV2.FillPolicy",
+            "name": "fillPolicy",
+            "type": "tuple"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "rootTradeId",
+            "type": "uint256"
+          }
+        ],
+        "name": "StandardTradeOpened",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "originalTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "replacementTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "rootTradeId",
+            "type": "uint256"
+          }
+        ],
+        "name": "StandardTradeReplaced",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "tradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "maker",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperStandardOTCEscrowV2.TradeStatus",
+            "name": "previousStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "enum ChainWhisperStandardOTCEscrowV2.TradeStatus",
+            "name": "nextStatus",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "relatedTradeId",
+            "type": "uint256"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint64",
+            "name": "revision",
+            "type": "uint64"
+          }
+        ],
+        "name": "StandardTradeStatusChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "codeHash",
+            "type": "bytes32"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "approved",
+            "type": "bool"
+          }
+        ],
+        "name": "TokenApprovalSet",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperTestPrivateTokenV1.sol/ChainWhisperTestPrivateTokenV1.json": {
+    "contractName": "ChainWhisperTestPrivateTokenV1",
+    "sourceName": "contracts/editable/ChainWhisperTestPrivateTokenV1.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newAddress",
+            "type": "address"
+          }
+        ],
+        "name": "AccountEncryptionAddressSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "spender",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "isSpender",
+            "type": "bool"
+          }
+        ],
+        "name": "AllowanceReencrypted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "spender",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextHigh",
+                "type": "uint256"
+              },
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextLow",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ctUint256",
+            "name": "ownerValue",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextHigh",
+                "type": "uint256"
+              },
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextLow",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ctUint256",
+            "name": "spenderValue",
+            "type": "tuple"
+          }
+        ],
+        "name": "Approval",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          }
+        ],
+        "name": "FaucetClaimed",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferStarted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "enabled",
+            "type": "bool"
+          }
+        ],
+        "name": "PublicAmountsEnabledSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "role",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "previousAdminRole",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "newAdminRole",
+            "type": "bytes32"
+          }
+        ],
+        "name": "RoleAdminChanged",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "role",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "sender",
+            "type": "address"
+          }
+        ],
+        "name": "RoleGranted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "role",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "sender",
+            "type": "address"
+          }
+        ],
+        "name": "RoleRevoked",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "from",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextHigh",
+                "type": "uint256"
+              },
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextLow",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ctUint256",
+            "name": "senderValue",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextHigh",
+                "type": "uint256"
+              },
+              {
+                "internalType": "ctUint128",
+                "name": "ciphertextLow",
+                "type": "uint256"
+              }
+            ],
+            "indexed": false,
+            "internalType": "struct ctUint256",
+            "name": "receiverValue",
+            "type": "tuple"
+          }
+        ],
+        "name": "Transfer",
+        "type": "event"
+      }
+    ]
+  },
+  "ChainWhisperTestPublicTokenV1.sol/ChainWhisperTestPublicTokenV1.json": {
+    "contractName": "ChainWhisperTestPublicTokenV1",
+    "sourceName": "contracts/editable/ChainWhisperTestPublicTokenV1.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "owner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "spender",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "value",
+            "type": "uint256"
+          }
+        ],
+        "name": "Approval",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "account",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          }
+        ],
+        "name": "FaucetClaimed",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferStarted",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "previousOwner",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "newOwner",
+            "type": "address"
+          }
+        ],
+        "name": "OwnershipTransferred",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "from",
+            "type": "address"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "to",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint256",
+            "name": "value",
+            "type": "uint256"
+          }
+        ],
+        "name": "Transfer",
+        "type": "event"
+      }
+    ]
+  },
+  "ChatReactionsV1.sol/ChatReactionsV1.json": {
+    "contractName": "ChatReactionsV1",
+    "sourceName": "contracts/editable/ChatReactionsV1.sol",
+    "abi": [
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "bytes32",
+            "name": "conversationId",
+            "type": "bytes32"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "messageId",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "reactor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint8",
+            "name": "emojiId",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes32",
+            "name": "messageAnchor",
+            "type": "bytes32"
+          }
+        ],
+        "name": "DirectReactionSet",
+        "type": "event"
+      },
+      {
+        "anonymous": false,
+        "inputs": [
+          {
+            "indexed": true,
+            "internalType": "uint256",
+            "name": "groupId",
+            "type": "uint256"
+          },
+          {
+            "indexed": true,
+            "internalType": "uint64",
+            "name": "messageId",
+            "type": "uint64"
+          },
+          {
+            "indexed": true,
+            "internalType": "address",
+            "name": "reactor",
+            "type": "address"
+          },
+          {
+            "indexed": false,
+            "internalType": "uint8",
+            "name": "emojiId",
+            "type": "uint8"
+          },
+          {
+            "indexed": false,
+            "internalType": "bool",
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "indexed": false,
+            "internalType": "bytes32",
+            "name": "messageAnchor",
+            "type": "bytes32"
+          }
+        ],
+        "name": "GroupReactionSet",
+        "type": "event"
+      }
+    ]
+  }
+}

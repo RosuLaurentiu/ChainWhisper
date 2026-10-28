@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import compiledEventArtifacts from '../../../tests/fixtures/worker-event-abis.json';
 import { describe, expect, it } from 'vitest';
 import { TESTNET_COMPONENT_EVENT_POLICIES } from '../src/testnetRegistryV2';
 
@@ -25,22 +24,12 @@ const artifacts = {
   standardOtcV2: 'ChainWhisperStandardOTCEscrowV2.sol/ChainWhisperStandardOTCEscrowV2.json'
 } as const satisfies Record<keyof typeof TESTNET_COMPONENT_EVENT_POLICIES, string>;
 
-const artifactRoot = resolve(
-  process.cwd(),
-  '..',
-  'ChainWhisper Contracts',
-  'artifacts',
-  'contracts',
-  'editable'
-);
 
 describe('V2 Worker event-classification parity', () => {
   it.each(Object.entries(artifacts))(
     'classifies every compiled %s event exactly once',
     (componentKey, artifactPath) => {
-      const artifact = JSON.parse(readFileSync(resolve(artifactRoot, artifactPath), 'utf8')) as {
-        abi: Array<{ type: string; name?: string }>;
-      };
+      const artifact: { abi: Array<{ type: string; name?: string }> } = compiledEventArtifacts[artifactPath];
       const compiled = artifact.abi
         .filter(({ type }) => type === 'event')
         .map(({ name }) => name!)
