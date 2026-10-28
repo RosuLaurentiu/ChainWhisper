@@ -1,4 +1,4 @@
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import type { ReactNode } from 'react';
 import {
   formatTokenAmount,
@@ -12,6 +12,7 @@ import type { AppHelpResponseSource } from '../../../lib/appHelp';
 import type { AppHelpLaunchContext, AppHelpReason } from '../../../lib/appHelpLaunch';
 import type { LinkedTradeContext } from '../../../lib/linkedTradeContext';
 import type { P2PSyncRequest } from '../../../lib/p2pSyncCoordinator';
+import type { LinkTradeV2ReadContext } from './LinkTradeV2Terminal';
 import {
   getRecurringTerminalSideState,
   getRemainingOfferAmount,
@@ -23,6 +24,8 @@ import type { TradeTransactionHistoryRow } from '../../../lib/tradeHistory';
 import type { RecurringPriceDeskDisplay } from '../../../lib/tradePerspective';
 import type { TradePricingField } from '../../../lib/tradePricing';
 import type { SharedWalletSession } from '../../../lib/walletSession';
+import type { ResolvedTradeToken, TradeTokenPresetKey } from '../../../lib/appHelpers';
+import type { TradeComposerModel } from '../../../lib/tradeComposer';
 export { bytesEqual, mergeOnboardInfoByAddress, onboardInfoEqual } from '../../../lib/appShared';
 export const formatCompactTradeTimestamp = (timestamp?: number): string => {
   if (!timestamp || !Number.isFinite(timestamp)) {
@@ -38,7 +41,6 @@ export const formatCompactTradeTimestamp = (timestamp?: number): string => {
 
 export type TradeVisibility = 'public' | 'unlisted' | 'direct';
 export type MyTradeGroupView = 'received' | 'active' | 'history';
-export type PendingBurnerWalletAction = 'connect' | 'generate' | 'import';
 export type P2PEmptyStateTone = 'default' | 'error' | 'loading' | 'locked';
 export type TradeCreateMode = 'one-off' | 'recurring';
 export type TerminalFillInputSide = 'pay' | 'buy';
@@ -207,6 +209,19 @@ export type TerminalHistoryPanelConfig = {
   children?: ReactNode;
 };
 
+export const buildOtcV2DataScopeKey = ({
+  deploymentFingerprint,
+  walletAddress,
+  walletKey
+}: {
+  deploymentFingerprint: string;
+  walletAddress: string;
+  walletKey: string;
+}): string => [
+  deploymentFingerprint.trim().toLowerCase(),
+  walletKey.trim().toLowerCase() || walletAddress.trim().toLowerCase()
+].join(':');
+
 export const buildMakerControlsKey = (surface: MakerControlsSurface, tradeKey: string): string => `${surface}:${tradeKey}`;
 
 export const getRecurringFillSideForDisplayAction = (
@@ -314,9 +329,24 @@ export const getTradeCounterRelation = (
   return null;
 };
 
+export type P2PTradingHeaderContext = Readonly<{
+  baseSelection: TradeTokenPresetKey;
+  quoteSelection: TradeTokenPresetKey;
+  baseToken: ResolvedTradeToken | null;
+  quoteToken: ResolvedTradeToken | null;
+  tokenOptions: Readonly<TradeComposerModel['tradeTokenOptions']>;
+  onTokenSelectionChange: (side: 'buy' | 'sell', key: TradeTokenPresetKey) => void;
+  disabled: boolean;
+  reference: CarbonPairReferenceDisplay | null;
+}>;
+
 export type P2PTradingPageProps = {
+  renderTradingHeader?: (context: P2PTradingHeaderContext) => ReactNode;
   isMobileNav?: boolean;
+  priceDisplayInverted?: boolean;
+  onPriceDisplayInvertedChange?: (inverted: boolean) => void;
   sharedWalletSession?: SharedWalletSession;
+  linkTradeV2ReadContext?: LinkTradeV2ReadContext;
   appHelpLaunchContext?: AppHelpLaunchContext | null;
   onAppHelpLaunchConsumed?: () => void;
   onOpenAppHelp?: (reason: AppHelpReason) => void;
@@ -339,7 +369,7 @@ export type TradeAgentChatMessage = {
   actions?: TradeAgentResponseAction[];
 };
 export type TerminalReturnSurface = 'swap' | 'agent' | 'public' | 'mine';
-export type TradeSigner = JsonRpcSigner | Wallet;
+export type TradeSigner = JsonRpcSigner;
 export type QueuedTradeDataRefresh = P2PSyncRequest<TradeSigner>;
 export type RecurringFundingBalanceResult = {
   balanceWei: bigint | null;

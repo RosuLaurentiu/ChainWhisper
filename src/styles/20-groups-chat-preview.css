@@ -477,9 +477,65 @@
 
 .chat-placeholder-state {
   display: grid;
-  gap: 8px;
+  place-items: center;
   align-content: center;
   min-height: 180px;
+}
+
+.chat-placeholder.chat-placeholder-state {
+  border: 0;
+  background: transparent;
+  padding: 24px;
+}
+
+.chat-placeholder-card {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: min(430px, 100%);
+  border: 1px solid rgba(139, 92, 246, 0.26);
+  border-radius: 14px;
+  background: rgba(15, 16, 27, 0.72);
+  padding: 28px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+}
+
+.chat-placeholder-card > span {
+  color: #a78bfa;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.chat-placeholder-card h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.chat-placeholder-card p {
+  max-width: 330px;
+}
+
+.chat-placeholder-card button {
+  min-width: 132px;
+  margin-top: 6px;
+  border: 1px solid rgba(139, 92, 246, 0.64);
+  border-radius: 9px;
+  background: linear-gradient(135deg, #6d28d9, #8b5cf6);
+  color: #fff;
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.chat-placeholder-card button:hover,
+.chat-placeholder-card button:focus-visible {
+  border-color: #a78bfa;
+  filter: brightness(1.08);
 }
 
 .chat-placeholder-state strong,

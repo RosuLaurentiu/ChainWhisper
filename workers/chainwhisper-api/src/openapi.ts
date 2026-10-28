@@ -27,6 +27,12 @@ export const API_ROUTES = {
     path: `${API_BASE_PATH}/capabilities`,
     summary: 'List API boundaries, verified assets, contracts, and privacy routes'
   },
+  testnetRegistryV2: {
+    id: 'getTestnetRegistryV2',
+    method: 'GET',
+    path: `${API_BASE_PATH}/testnet/registry-v2`,
+    summary: 'Read the complete manifest-attested V2 deployment and public-event policy registry'
+  },
   orders: {
     id: 'listPublicOrders',
     method: 'GET',
@@ -50,6 +56,18 @@ export const API_ROUTES = {
     method: 'POST',
     path: `${API_BASE_PATH}/quote/swap`,
     summary: 'Select one complete visible public ChainWhisper order'
+  },
+  privateLiquidityPair: {
+    id: 'getTestnetPrivateLiquidityPair',
+    method: 'GET',
+    path: `${API_BASE_PATH}/testnet/private-liquidity/pair`,
+    summary: 'Read the complete amount-free Private Liquidity V2 test pair'
+  },
+  privateLiquidityDailyPrices: {
+    id: 'getTestnetPrivateLiquidityDailyPrices',
+    method: 'GET',
+    path: `${API_BASE_PATH}/testnet/private-liquidity/daily-prices`,
+    summary: 'Read bounded public daily marginal-price history from the reviewed analytics store'
   }
 } as const;
 
@@ -143,6 +161,18 @@ export const OPENAPI_DOCUMENT = {
           '400': errorResponse,
           '405': errorResponse,
           '500': errorResponse
+        }
+      }
+    },
+    [relativePath(API_ROUTES.testnetRegistryV2.path)]: {
+      get: {
+        operationId: API_ROUTES.testnetRegistryV2.id,
+        summary: API_ROUTES.testnetRegistryV2.summary,
+        responses: {
+          '200': jsonResponse('Complete verified V2 registry with no event or private data', ref('TestnetRegistryV2')),
+          '400': errorResponse,
+          '405': errorResponse,
+          '503': errorResponse
         }
       }
     },
@@ -251,6 +281,49 @@ export const OPENAPI_DOCUMENT = {
           '409': errorResponse,
           '413': errorResponse,
           '429': errorResponse,
+          '503': errorResponse
+        }
+      }
+    },
+    [relativePath(API_ROUTES.privateLiquidityPair.path)]: {
+      get: {
+        operationId: API_ROUTES.privateLiquidityPair.id,
+        summary: API_ROUTES.privateLiquidityPair.summary,
+        responses: {
+          '200': jsonResponse('Complete amount-free testnet pair snapshot', ref('PrivateLiquidityPair')),
+          '400': errorResponse,
+          '405': errorResponse,
+          '503': errorResponse
+        }
+      }
+    },
+    [relativePath(API_ROUTES.privateLiquidityDailyPrices.path)]: {
+      get: {
+        operationId: API_ROUTES.privateLiquidityDailyPrices.id,
+        summary: API_ROUTES.privateLiquidityDailyPrices.summary,
+        parameters: [
+          {
+            in: 'query',
+            name: 'pairKey',
+            required: true,
+            schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' }
+          },
+          {
+            in: 'query',
+            name: 'start',
+            description: 'Optional zero-based append-only index. Omit to read the latest page.',
+            schema: { type: 'integer', minimum: 0, maximum: 1_000_000_000 }
+          },
+          {
+            in: 'query',
+            name: 'limit',
+            schema: { type: 'integer', minimum: 1, maximum: 366, default: 90 }
+          }
+        ],
+        responses: {
+          '200': jsonResponse('Verified bounded daily marginal-price page', ref('PrivateLiquidityDailyPricePage')),
+          '400': errorResponse,
+          '405': errorResponse,
           '503': errorResponse
         }
       }
@@ -556,6 +629,271 @@ export const OPENAPI_DOCUMENT = {
             }
           },
           observedAt: { type: 'string', format: 'date-time' }
+        }
+      },
+      PrivateLiquidityPair: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'protocol', 'network', 'chainId', 'manifestHash', 'contractAddress',
+          'pairKey', 'baseToken', 'quoteToken', 'atBlock', 'complete',
+          'discoveredPositionCount', 'activeContributorCount', 'positions',
+          'askRoute', 'bidRoute', 'hiddenIntentQueue', 'privacyBoundary'
+        ],
+        properties: {
+          protocol: { const: 'PrivateLiquidityV2' },
+          network: { const: 'COTI Testnet' },
+          chainId: { const: 7_082_400 },
+          manifestHash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+          contractAddress: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+          pairKey: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+          baseToken: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+          quoteToken: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+          atBlock: { type: 'object' },
+          complete: { const: true },
+          discoveredPositionCount: { type: 'integer', minimum: 0, maximum: 4_096 },
+          activeContributorCount: { type: 'integer', minimum: 0, maximum: 8 },
+          positions: {
+            type: 'array',
+            maxItems: 8,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'positionId', 'owner', 'revision', 'createdAt', 'lastActivityBlock',
+                'buyTerms', 'sellTerms', 'buySideAvailable', 'sellSideAvailable'
+              ],
+              properties: {
+                positionId: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                owner: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+                revision: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                createdAt: { type: 'string', pattern: '^(?:0|[1-9][0-9]*)$' },
+                lastActivityBlock: { type: 'string', pattern: '^(?:0|[1-9][0-9]*)$' },
+                buyTerms: { type: 'object' },
+                sellTerms: { type: 'object' },
+                buySideAvailable: { type: 'boolean' },
+                sellSideAvailable: { type: 'boolean' }
+              }
+            }
+          },
+          askRoute: { type: 'object' },
+          bidRoute: { type: 'object' },
+          hiddenIntentQueue: { type: 'object' },
+          privacyBoundary: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['inventory', 'hiddenIntentTerms', 'hiddenIntentSelection'],
+            properties: {
+              inventory: { const: 'not-returned' },
+              hiddenIntentTerms: { const: 'not-returned' },
+              hiddenIntentSelection: { const: 'contract-selected-only' }
+            }
+          }
+        }
+      },
+      PrivateLiquidityDailyPricePage: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'protocol', 'network', 'chainId', 'analyticsManifestHash', 'storeAddress',
+          'sourceBook', 'pairKey', 'atBlock', 'totalCount', 'start', 'nextStart',
+          'completeRange', 'points', 'privacyBoundary'
+        ],
+        properties: {
+          protocol: { const: 'ChainWhisperPrivateLiquidityDailyPriceStoreV1' },
+          network: { const: 'COTI Testnet' },
+          chainId: { const: 7_082_400 },
+          analyticsManifestHash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+          storeAddress: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+          sourceBook: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+          pairKey: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+          atBlock: { type: 'object' },
+          totalCount: { type: 'string', pattern: '^(?:0|[1-9][0-9]*)$' },
+          start: { type: 'string', pattern: '^(?:0|[1-9][0-9]*)$' },
+          nextStart: {
+            anyOf: [
+              { type: 'string', pattern: '^[1-9][0-9]*$' },
+              { type: 'null' }
+            ]
+          },
+          completeRange: { const: true },
+          points: {
+            type: 'array',
+            maxItems: 366,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['day', 'capturedAt', 'direction', 'revision', 'price', 'source'],
+              properties: {
+                day: { type: 'string', pattern: '^(?:0|[1-9][0-9]*)$' },
+                capturedAt: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                direction: { enum: ['base-to-quote', 'quote-to-base'] },
+                revision: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                price: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['baseUnits', 'quoteUnits', 'basis'],
+                  properties: {
+                    baseUnits: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                    quoteUnits: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                    basis: { const: 'quote_per_base' }
+                  }
+                },
+                source: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: [
+                    'blockNumber', 'blockHash', 'transactionHash', 'logIndex',
+                    'swapId', 'positionId'
+                  ],
+                  properties: {
+                    blockNumber: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                    blockHash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+                    transactionHash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+                    logIndex: { type: 'integer', minimum: 0, maximum: 4_294_967_295 },
+                    swapId: { type: 'string', pattern: '^[1-9][0-9]*$' },
+                    positionId: { type: 'string', pattern: '^[1-9][0-9]*$' }
+                  }
+                }
+              }
+            }
+          },
+          privacyBoundary: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['publicFields', 'excluded', 'recorderReplayVerifiedByApi'],
+            properties: {
+              publicFields: {
+                type: 'array',
+                prefixItems: [
+                  { const: 'daily-marginal-price' },
+                  { const: 'utc-day' },
+                  { const: 'source-provenance' }
+                ],
+                minItems: 3,
+                maxItems: 3
+              },
+              excluded: {
+                type: 'array',
+                prefixItems: [
+                  { const: 'liquidity-depth' },
+                  { const: 'inventory' },
+                  { const: 'traded-amounts' },
+                  { const: 'volume' },
+                  { const: 'participants' }
+                ],
+                minItems: 5,
+                maxItems: 5
+              },
+              recorderReplayVerifiedByApi: { const: false }
+            }
+          }
+        }
+      },
+      TestnetRegistryEventPolicy: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'publicIndexable', 'encryptedContentNotReturned',
+          'participantEncryptedNotReturned', 'catalogOnlyNotReturned',
+          'incomingDirectTradeNotification'
+        ],
+        properties: {
+          publicIndexable: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+          encryptedContentNotReturned: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+          participantEncryptedNotReturned: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+          catalogOnlyNotReturned: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+          incomingDirectTradeNotification: { type: 'array', items: { type: 'string' }, uniqueItems: true }
+        }
+      },
+      TestnetRegistryComponent: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'key', 'contract', 'surface', 'address', 'runtimeBytecodeHash',
+          'deploymentBlock', 'events'
+        ],
+        properties: {
+          key: { type: 'string' },
+          contract: { type: 'string' },
+          surface: {
+            enum: [
+              'direct-chat', 'group-chat', 'chat-reactions', 'direct-otc',
+              'standard-otc', 'private-otc', 'recurring-otc',
+              'private-recurring-otc', 'private-liquidity-book',
+              'private-liquidity-hidden-intents', 'private-liquidity-position-nft',
+              'public-test-token', 'private-test-token'
+            ]
+          },
+          address: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+          runtimeBytecodeHash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+          deploymentBlock: { type: 'string', pattern: '^[1-9][0-9]*$' },
+          events: ref('TestnetRegistryEventPolicy')
+        }
+      },
+      TestnetRegistryV2: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'protocol', 'schemaVersion', 'network', 'chainId', 'manifestHash',
+          'owner', 'attestationBlock', 'atBlock', 'complete', 'components',
+          'privacyBoundary', 'notificationPolicy'
+        ],
+        properties: {
+          protocol: { const: 'ChainWhisperTestnetRegistryV2' },
+          schemaVersion: { const: 1 },
+          network: { const: 'COTI Testnet' },
+          chainId: { const: 7_082_400 },
+          manifestHash: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' },
+          owner: { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$' },
+          attestationBlock: { type: 'object' },
+          atBlock: { type: 'object' },
+          complete: { const: true },
+          components: {
+            type: 'array',
+            minItems: 15,
+            maxItems: 15,
+            items: ref('TestnetRegistryComponent')
+          },
+          privacyBoundary: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'eventDataReturned', 'ciphertextReturned', 'privateAmountsReturned',
+              'participantReceiptsReturned', 'hiddenIntentIdentifiersReturned',
+              'walletActivityReturned'
+            ],
+            properties: {
+              eventDataReturned: { const: false },
+              ciphertextReturned: { const: false },
+              privateAmountsReturned: { const: false },
+              participantReceiptsReturned: { const: false },
+              hiddenIntentIdentifiersReturned: { const: false },
+              walletActivityReturned: { const: false }
+            }
+          },
+          notificationPolicy: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['incomingDirectTradesAndCounters', 'otherTradingEvents'],
+            properties: {
+              incomingDirectTradesAndCounters: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'componentKey', 'eventName', 'recipientField',
+                  'counterWhenParentTradeIdNonzero'
+                ],
+                properties: {
+                  componentKey: { const: 'directOtcV2' },
+                  eventName: { const: 'DirectTradeOpened' },
+                  recipientField: { const: 'taker' },
+                  counterWhenParentTradeIdNonzero: { const: true }
+                }
+              },
+              otherTradingEvents: { const: 'none' }
+            }
+          }
         }
       },
       Capabilities: {

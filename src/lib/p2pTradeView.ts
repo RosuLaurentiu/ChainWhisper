@@ -36,6 +36,7 @@ const getTradeLiquidityLabel = (offer: TradeAssetPayload, request: TradeAssetPay
 type TradeContractNamespaceInput = {
   escrowContract?: string | null;
   recurringOrder?: { orderId: number } | null;
+  v2?: Pick<NonNullable<TradeSnapshot['v2']>, 'protocol'> | null;
 };
 
 type TradeContractIdInput = TradeContractNamespaceInput & {
@@ -44,16 +45,19 @@ type TradeContractIdInput = TradeContractNamespaceInput & {
 
 export const getTradeContractNamespaceLabel = (trade: TradeContractNamespaceInput): string => {
   const normalizedContract = trade.escrowContract?.toLowerCase() ?? '';
-  if (trade.recurringOrder || normalizedContract === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()) {
-    return 'Recurring OTC';
+  if (
+    trade.recurringOrder ||
+    normalizedContract === RECURRING_OTC_CONTRACT_ADDRESS.toLowerCase()
+  ) {
+    return 'Recurring P2P';
   }
-  if (normalizedContract === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
-    return 'Private OTC';
+  if (trade.v2?.protocol === 'private-v2' || normalizedContract === PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    return 'Private P2P';
   }
-  if (normalizedContract === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
-    return 'Direct OTC';
+  if (trade.v2?.protocol === 'direct-v2' || normalizedContract === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) {
+    return 'Direct P2P';
   }
-  return 'P2P OTC';
+  return 'One-off P2P';
 };
 
 export const formatTradeContractIdLabel = (trade: TradeContractIdInput): string => {
@@ -100,23 +104,36 @@ export const isDirectWalletTrade = (trade: Pick<TradeSnapshot, 'taker'>): boolea
 
 export type TradeTermsVisibility = 'public' | 'direct-private-terms' | 'hidden-liquidity';
 
-const isDirectEscrowTrade = (trade: Pick<TradeSnapshot, 'escrowContract'>): boolean =>
+type DirectTradeSnapshotIdentity = Pick<
+  TradeSnapshot,
+  'escrowContract' | 'directTermsMetadata' | 'v2'
+>;
+
+export const isDirectTradeSnapshot = (trade: DirectTradeSnapshotIdentity): boolean =>
+  trade.v2?.protocol === 'direct-v2' ||
+  trade.directTermsMetadata !== undefined ||
   trade.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
 export const getTradeTermsVisibility = (
-  trade: Pick<TradeSnapshot, 'escrowContract' | 'hiddenLiquidity' | 'recurringOrder'>
+  trade: Pick<
+    TradeSnapshot,
+    'escrowContract' | 'hiddenLiquidity' | 'recurringOrder' | 'directTermsMetadata' | 'v2'
+  >
 ): TradeTermsVisibility => {
   if (trade.recurringOrder) {
     return trade.recurringOrder.mode === 'public' ? 'public' : 'hidden-liquidity';
   }
-  if (isDirectEscrowTrade(trade)) {
+  if (isDirectTradeSnapshot(trade)) {
     return 'direct-private-terms';
   }
   return trade.hiddenLiquidity ? 'hidden-liquidity' : 'public';
 };
 
 export const isHiddenLiquidityTrade = (
-  trade: Pick<TradeSnapshot, 'escrowContract' | 'hiddenLiquidity' | 'recurringOrder'>
+  trade: Pick<
+    TradeSnapshot,
+    'escrowContract' | 'hiddenLiquidity' | 'recurringOrder' | 'directTermsMetadata' | 'v2'
+  >
 ): boolean => getTradeTermsVisibility(trade) === 'hidden-liquidity';
 
 const hasPositiveAssetAmount = (asset?: Pick<TradeAssetPayload, 'amount'> | null): boolean => {
@@ -125,14 +142,17 @@ const hasPositiveAssetAmount = (asset?: Pick<TradeAssetPayload, 'amount'> | null
 };
 
 export const hasHydratedDirectTradeTerms = (
-  trade: Pick<TradeSnapshot, 'escrowContract' | 'offer' | 'request'>
+  trade: Pick<TradeSnapshot, 'escrowContract' | 'directTermsMetadata' | 'v2' | 'offer' | 'request'>
 ): boolean =>
-  isDirectEscrowTrade(trade) &&
+  isDirectTradeSnapshot(trade) &&
   hasPositiveAssetAmount(trade.offer) &&
   hasPositiveAssetAmount(trade.request);
 
 export const shouldRecoverMakerTradePayload = (
-  trade: Pick<TradeSnapshot, 'escrowContract' | 'maker' | 'hasAccessHash' | 'offer' | 'request'>,
+  trade: Pick<
+    TradeSnapshot,
+    'escrowContract' | 'directTermsMetadata' | 'v2' | 'maker' | 'hasAccessHash' | 'offer' | 'request'
+  >,
   walletKey: string,
   hasKnownAccessSecret: boolean
 ): boolean => {
@@ -141,7 +161,7 @@ export const shouldRecoverMakerTradePayload = (
     return false;
   }
 
-  const needsDirectTermHydration = isDirectEscrowTrade(trade) && !hasHydratedDirectTradeTerms(trade);
+  const needsDirectTermHydration = isDirectTradeSnapshot(trade) && !hasHydratedDirectTradeTerms(trade);
   if (!trade.hasAccessHash && !needsDirectTermHydration) {
     return false;
   }
@@ -186,7 +206,13 @@ export const shouldBlockFillAboveVisibleLiquidity = (trade: TradeSnapshot, reque
 
 export const hasAnyTradeFill = (trade: TradeSnapshot): boolean => {
   if (isHiddenLiquidityTrade(trade)) {
-    return false;
+    const privateFilledOffer = trade.makerPrivateProgress?.filledOfferAmount;
+    if (privateFilledOffer === undefined) return false;
+    try {
+      return BigInt(privateFilledOffer) > 0n;
+    } catch {
+      return false;
+    }
   }
   try {
     return BigInt(trade.fillState?.filledOfferAmount ?? '0') > 0n || BigInt(trade.fillState?.filledRequestAmount ?? '0') > 0n;
@@ -200,7 +226,9 @@ export const canEditPublicTrade = (trade: TradeSnapshot, walletKey: string): boo
     walletKey &&
       trade.status === 'open' &&
       (trade.isPublic === true ||
-        trade.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()) &&
+        trade.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase() ||
+        trade.v2?.protocol === 'direct-v2' ||
+        (trade.v2?.protocol === 'private-v2' && trade.makerPrivateProgress !== undefined)) &&
       trade.maker.toLowerCase() === walletKey &&
       !hasAnyTradeFill(trade)
   );
@@ -277,14 +305,6 @@ export const loadStoredTradeAccessSecrets = (): Record<string, string> => {
   }
 };
 
-const isStoredPrivateTradeLiquidity = (value: unknown): value is string => {
-  if (typeof value !== 'string' || !/^\d+(?::\d+)?$/.test(value)) {
-    return false;
-  }
-  const [offerAmount, requestAmount] = value.split(':');
-  return BigInt(offerAmount ?? '0') > 0n && (requestAmount === undefined || BigInt(requestAmount) > 0n);
-};
-
 const buildPrivateTradeLiquidityStorageKey = (walletKey?: string | null): string => {
   const normalizedWalletKey = walletKey?.trim().toLowerCase() ?? '';
   return normalizedWalletKey
@@ -292,34 +312,35 @@ const buildPrivateTradeLiquidityStorageKey = (walletKey?: string | null): string
     : PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY;
 };
 
-const normalizeStoredPrivateTradeLiquidity = (parsed: Record<string, unknown>): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(parsed).filter(
-      ([tradeKey, amount]) => /^0x[a-fA-F0-9]{40}:\d+$/.test(tradeKey) && isStoredPrivateTradeLiquidity(amount)
-    )
-  ) as Record<string, string>;
-
-export const loadStoredPrivateTradeLiquidity = (walletKey?: string | null): Record<string, string> => {
+const purgeStoredPrivateTradeLiquidity = (walletKey?: string | null): void => {
   if (typeof window === 'undefined') {
-    return {};
+    return;
   }
 
   const normalizedWalletKey = walletKey?.trim().toLowerCase() ?? '';
-  if (!normalizedWalletKey) {
-    return {};
-  }
-
   try {
-    // Older builds stored maker reveal context globally by trade. Drop that cache so a new wallet
-    // never inherits a previous account's private-liquidity reveal.
     window.localStorage.removeItem(PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY);
-    const parsed = JSON.parse(
-      window.localStorage.getItem(buildPrivateTradeLiquidityStorageKey(normalizedWalletKey)) ?? '{}'
-    ) as Record<string, unknown>;
-    return normalizeStoredPrivateTradeLiquidity(parsed);
+    if (normalizedWalletKey) {
+      window.localStorage.removeItem(buildPrivateTradeLiquidityStorageKey(normalizedWalletKey));
+    }
+    if (
+      typeof window.localStorage.length === 'number' &&
+      typeof window.localStorage.key === 'function'
+    ) {
+      for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+        const key = window.localStorage.key(index);
+        if (key?.startsWith(`${PRIVATE_TRADE_LIQUIDITY_STORAGE_KEY}:`)) {
+          window.localStorage.removeItem(key);
+        }
+      }
+    }
   } catch {
-    return {};
   }
+};
+
+export const loadStoredPrivateTradeLiquidity = (walletKey?: string | null): Record<string, string> => {
+  purgeStoredPrivateTradeLiquidity(walletKey);
+  return {};
 };
 
 type MakerPrivateProgressSummary = {
@@ -487,19 +508,8 @@ export const getMakerPrivateProgressSummary = (trade: TradeSnapshot): MakerPriva
 };
 
 export const storePrivateTradeLiquidity = (amountsByTrade: Record<string, string>, walletKey?: string | null): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  const normalizedWalletKey = walletKey?.trim().toLowerCase() ?? '';
-  if (!normalizedWalletKey) {
-    return;
-  }
-
-  window.localStorage.setItem(
-    buildPrivateTradeLiquidityStorageKey(normalizedWalletKey),
-    JSON.stringify(normalizeStoredPrivateTradeLiquidity(amountsByTrade))
-  );
+  void amountsByTrade;
+  purgeStoredPrivateTradeLiquidity(walletKey);
 };
 
 export const storeTradeAccessSecrets = (secrets: Record<string, string>): void => {
@@ -539,7 +549,7 @@ export const formatTradeListTerms = (trade: TradeSnapshot): string => {
   if (trade.recurringOrder) {
     const baseSymbol = trade.recurringOrder.baseAsset.symbol;
     const quoteSymbol = trade.recurringOrder.quoteAsset.symbol;
-    return `Recurring OTC ${baseSymbol}/${quoteSymbol}; sell and buy sides reuse liquidity`;
+    return `Recurring P2P ${baseSymbol}/${quoteSymbol}; sell and buy sides reuse liquidity`;
   }
   const displayTerms = getTradeDisplayTerms(trade);
   const termsVisibility = getTradeTermsVisibility(trade);
@@ -570,7 +580,7 @@ export const buildTransactionExplorerUrl = (txHash?: string): string =>
 
 export const getTradeHistoryKindLabel = (trade: TradeSnapshot): string => {
   if (trade.recurringOrder) {
-    return 'Recurring OTC order';
+    return 'Recurring P2P order';
   }
   if (getTradeTermsVisibility(trade) === 'hidden-liquidity') {
     return getTradeLiquidityLabel(trade.offer, trade.request);

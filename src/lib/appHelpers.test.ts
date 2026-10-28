@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { zlibSync } from 'fflate';
+import { describe, expect, it, vi } from 'vitest';
+import { unzlibBounded } from './appShared/boundedCompression';
 import {
   VERIFIED_ECOSYSTEM_TOKENS,
+  buildChainWhisperTestnetCandidateTradeTokens,
   buildMessageReferenceKeys,
   getOnChainFailureMessage,
   getVerifiedEcosystemToken,
@@ -10,17 +13,28 @@ import {
   resolvePrivateTokenBalancePrivacyAction,
   sanitizeOutgoingMessagePlainText
 } from './appHelpers';
+import type { TestnetCandidateConfig } from './chainWhisperTestnetCandidate';
 import {
   buildMessageWithReactionPayload,
   buildMessageWithReplyPayload,
   buildMessageWithTradeReferencePayload,
+  buildStateBackupText,
+  bytesToBase64,
   decodeMemoPlaintextStrict,
+  decryptMemoWithCellLimit,
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   encodeCompactMemoPlaintext,
   encodeMemoPlaintext,
   LEGACY_TRADE_REFERENCE_METADATA_PREFIX,
+  MAX_CHAT_MEMO_CIPHERTEXT_CELLS,
+  MAX_CHAT_MEMO_PLAINTEXT_BYTES,
+  MAX_MESSAGE_LENGTH,
+  MAX_STATE_BACKUP_PLAINTEXT_BYTES,
   parseChatMessagePayload,
+  parseStateBackupText,
   RECURRING_OTC_CONTRACT_ADDRESS,
+  STATE_BACKUP_COMPRESSED_PREFIX,
+  STATE_BACKUP_PREFIX,
   TRADE_REFERENCE_METADATA_PREFIX
 } from './appShared';
 import { encodeTradeLink } from './tradeLinks';
@@ -138,6 +152,18 @@ describe('message reference helpers', () => {
 });
 
 describe('memo plaintext decoding', () => {
+  it('enforces the decompressed byte limit exactly and rejects malformed streams', () => {
+    const exactPlaintext = new TextEncoder().encode('A'.repeat(4096));
+    const compressed = zlibSync(exactPlaintext, { level: 9 });
+
+    expect(unzlibBounded(compressed, exactPlaintext.length)).toEqual(exactPlaintext);
+    expect(() => unzlibBounded(compressed, exactPlaintext.length - 1)).toThrow(
+      'Compressed payload exceeds the 4095-byte output limit.'
+    );
+    expect(() => unzlibBounded(new Uint8Array([1, 2, 3, 4]), 4096)).toThrow();
+    expect(() => unzlibBounded(compressed.subarray(0, compressed.length - 5), 4096)).toThrow();
+  });
+
   it('accepts encoded ChainWhisper memos', () => {
     const plain = 'hello private chat';
 
@@ -150,12 +176,152 @@ describe('memo plaintext decoding', () => {
     expect(decodeMemoPlaintextStrict(encodeCompactMemoPlaintext(plain))).toBe(plain);
   });
 
+  it('preserves a 2,000-character Unicode message with reply metadata and reactions', () => {
+    const plain = '😀'.repeat(MAX_MESSAGE_LENGTH / 2);
+    expect(plain.length).toBe(MAX_MESSAGE_LENGTH);
+
+    const replyPayload = buildMessageWithReplyPayload(
+      plain,
+      '🔐 encrypted reply',
+      `0x${'12'.repeat(32)}`,
+      12345,
+      7,
+      true
+    );
+    const decodedReply = decodeMemoPlaintextStrict(
+      encodeCompactMemoPlaintext(replyPayload),
+      MAX_CHAT_MEMO_PLAINTEXT_BYTES
+    );
+    expect(decodedReply).not.toBeNull();
+    expect(parseChatMessagePayload(decodedReply ?? '').cleanText).toBe(plain);
+
+    const reactionPayload = buildMessageWithReactionPayload(
+      `0x${'34'.repeat(32)}`,
+      '👍',
+      '',
+      12345,
+      7,
+      true
+    );
+    expect(
+      decodeMemoPlaintextStrict(
+        encodeCompactMemoPlaintext(reactionPayload),
+        MAX_CHAT_MEMO_PLAINTEXT_BYTES
+      )
+    ).toBe(reactionPayload);
+  });
+
+  it('rejects a compressed expansion beyond the chat plaintext limit', () => {
+    const oversizedPlain = 'A'.repeat(MAX_CHAT_MEMO_PLAINTEXT_BYTES * 64);
+    const compressedMemo = encodeCompactMemoPlaintext(oversizedPlain);
+
+    expect(compressedMemo).toMatch(/^\[\[coti-memo-z:v1\]\]/);
+    expect(compressedMemo.length).toBeLessThan(MAX_CHAT_MEMO_PLAINTEXT_BYTES);
+    expect(decodeMemoPlaintextStrict(compressedMemo, MAX_CHAT_MEMO_PLAINTEXT_BYTES)).toBeNull();
+  });
+
+  it('rejects oversized ciphertext before invoking the COTI decryptor', async () => {
+    const decrypt = vi.fn(async () => 'should not decrypt');
+    const oversizedCiphertext = {
+      value: Array.from({ length: MAX_CHAT_MEMO_CIPHERTEXT_CELLS + 1 }, () => 1n)
+    };
+
+    await expect(
+      decryptMemoWithCellLimit(
+        oversizedCiphertext,
+        MAX_CHAT_MEMO_CIPHERTEXT_CELLS,
+        decrypt
+      )
+    ).rejects.toThrow('Encrypted memo exceeds the supported ciphertext size.');
+    expect(decrypt).not.toHaveBeenCalled();
+
+    await expect(
+      decryptMemoWithCellLimit({ value: [1n] }, MAX_CHAT_MEMO_CIPHERTEXT_CELLS, decrypt)
+    ).resolves.toBe('should not decrypt');
+    expect(decrypt).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects wrong-key decoder output with replacement/control characters', () => {
     expect(decodeMemoPlaintextStrict('2&#\uFFFD~kh\u0004random')).toBeNull();
   });
 });
 
+describe('state backup decoding limits', () => {
+  it('round-trips current state backups within the compatibility allowance', () => {
+    const backupText = buildStateBackupText({
+      version: 1,
+      updatedAt: 1234,
+      lastReadAllTs: 1200
+    });
+
+    expect(parseStateBackupText(backupText)).toEqual({
+      version: 1,
+      updatedAt: 1234,
+      lastReadAllTs: 1200
+    });
+  });
+
+  it('rejects a compressed state-backup expansion beyond its explicit limit', () => {
+    const oversizedBackupJson = JSON.stringify({
+      version: 1,
+      updatedAt: 1234,
+      padding: 'A'.repeat(MAX_STATE_BACKUP_PLAINTEXT_BYTES)
+    });
+    const compressed = zlibSync(new TextEncoder().encode(oversizedBackupJson), { level: 9 });
+    const backupText = `${STATE_BACKUP_PREFIX}${STATE_BACKUP_COMPRESSED_PREFIX}${bytesToBase64(compressed)}`;
+
+    expect(backupText.length).toBeLessThan(MAX_CHAT_MEMO_PLAINTEXT_BYTES);
+    expect(parseStateBackupText(backupText)).toBeNull();
+  });
+});
+
 describe('verified ecosystem tokens', () => {
+  it('selects only registered Testnet tokens while retaining old candidate metadata and exact private kinds', async () => {
+    vi.resetModules();
+    const candidate = { status: 'active', components: {
+      publicTestTokenA: { address: `0x${'11'.repeat(20)}` }, publicTestTokenB: { address: `0x${'12'.repeat(20)}` },
+      privateTestTokenA: { address: `0x${'13'.repeat(20)}` }, privateTestTokenB: { address: `0x${'14'.repeat(20)}` }
+    } };
+    vi.doMock('./chainWhisperTestnetCandidate', async importOriginal => ({ ...await importOriginal<typeof import('./chainWhisperTestnetCandidate')>(),
+      CHAINWHISPER_TESTNET_CANDIDATE_CONFIG: candidate }));
+    try {
+      const helpers = await import('./appHelpers');
+      expect(helpers.SELECTABLE_TRADE_TOKENS.map(token => token.symbol)).toEqual(['cwPTA', 'cwPTB', 'BCN', 'HBR', 'EMBR', 'ORBT']);
+      expect(helpers.SELECTABLE_TRADE_TOKENS.filter(token => token.kind === 'private-erc20')).toHaveLength(4);
+      const named = (symbol: string) => helpers.SELECTABLE_TRADE_TOKENS.find(token => token.symbol === symbol)!;
+      expect(helpers.TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS).toEqual({ publicBase: named('cwPTA').address, publicQuote: named('cwPTB').address,
+        privateBase: named('BCN').address, privateQuote: named('HBR').address });
+      for (const token of helpers.TESTNET_CANDIDATE_TOKENS) {
+        expect(helpers.getVerifiedEcosystemToken(token.address)).toMatchObject(token);
+        expect(helpers.resolveTradePresetKind(token.address)).toBe(token.kind);
+        expect(helpers.SELECTABLE_TRADE_TOKENS.some(selected => selected.address === token.address)).toBe(false);
+      }
+      for (const token of helpers.SELECTABLE_TRADE_TOKENS) expect(helpers.resolveTradePresetKind(token.address)).toBe(token.kind);
+      const composer = await import('./tradeComposer');
+      const resolved = composer.resolveSelectedTradeToken({ selection: named('BCN').address, rewardTokenSymbol: 'WISP', rewardTokenDecimals: 18,
+        privateRewardTokenSymbol: 'p.WISP', privateRewardTokenDecimals: 18 });
+      expect(resolved).toMatchObject({ tokenAddress: named('BCN').address, kind: 'private-erc20', decimals: 6, symbol: 'BCN' });
+    } finally { vi.doUnmock('./chainWhisperTestnetCandidate'); vi.resetModules(); }
+  });
+  it('derives the exact public/private test-token catalog from an active unified candidate', () => {
+    const candidate = {
+      status: 'active',
+      components: {
+        publicTestTokenA: { address: '0x0000000000000000000000000000000000000011' },
+        publicTestTokenB: { address: '0x0000000000000000000000000000000000000012' },
+        privateTestTokenA: { address: '0x0000000000000000000000000000000000000013' },
+        privateTestTokenB: { address: '0x0000000000000000000000000000000000000014' }
+      }
+    } as unknown as TestnetCandidateConfig;
+
+    expect(buildChainWhisperTestnetCandidateTradeTokens(candidate)).toEqual([
+      { address: '0x0000000000000000000000000000000000000011', kind: 'erc20', symbol: 'cwTUB' },
+      { address: '0x0000000000000000000000000000000000000012', kind: 'erc20', symbol: 'cwTUQ' },
+      { address: '0x0000000000000000000000000000000000000013', kind: 'private-erc20', symbol: 'cwTPB' },
+      { address: '0x0000000000000000000000000000000000000014', kind: 'private-erc20', symbol: 'cwTPQ' }
+    ]);
+  });
+
   it('includes the official COTI Privacy Portal private tokens', () => {
     const officialPrivateTokens = [
       ['0xD2F2692B83C3ecDF2EAa0f7c2632BBd46Ae1cC91', 'p.COTI'],

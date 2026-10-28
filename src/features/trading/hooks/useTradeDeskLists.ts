@@ -33,6 +33,7 @@ export default function useTradeDeskLists({
   walletAddress,
   walletReadAccounts
 }: UseTradeDeskListsArgs) {
+  const walletScopeKey = walletAddress.trim().toLowerCase();
   const [tradeSearchInput, setTradeSearchInput] = useState('');
   const [tradePairFilter, setTradePairFilter] = useState('all');
   const [tradeTypeFilter, setTradeTypeFilter] = useState<TradeDeskTypeFilter>('all');
@@ -73,14 +74,14 @@ export default function useTradeDeskLists({
       const ownerAccount = getWalletOwnerAccount(walletReadAccounts);
       for (const trade of filteredMyTrades) {
         const perspectiveAddress = getTradeAccountPerspectiveAddress(trade, { actionAccount, ownerAccount });
-        const perTradeGroups = groupWalletTradesByPerspective([trade], perspectiveAddress || walletAddress);
+        const perTradeGroups = groupWalletTradesByPerspective([trade], perspectiveAddress || walletScopeKey);
         grouped.needsAction.push(...perTradeGroups.needsAction);
         grouped.myActiveOffers.push(...perTradeGroups.myActiveOffers);
         grouped.history.push(...perTradeGroups.history);
       }
       return grouped;
     },
-    [filteredMyTrades, walletAddress, walletReadAccounts]
+    [filteredMyTrades, walletReadAccounts, walletScopeKey]
   );
   const receivedOpenTradeOffers = walletTradeGroups.needsAction;
   const myOpenTrades = walletTradeGroups.myActiveOffers;
@@ -108,7 +109,7 @@ export default function useTradeDeskLists({
       count: myOpenTrades.length,
       trades: myOpenTrades,
       emptyTitle: 'No active trades',
-      emptyDescription: 'Create a public, unlisted, or direct offer to start tracking it here.',
+      emptyDescription: 'Create a public or direct offer to start tracking it here.',
       emptySearchTitle: 'No active trades match',
       emptySearchMessage: 'No trades you created match that search.'
     },
@@ -132,7 +133,7 @@ export default function useTradeDeskLists({
     const actionAccount = getWalletActionAccount(walletReadAccounts);
     const ownerAccount = getWalletOwnerAccount(walletReadAccounts);
     const perspectiveWalletAddress =
-      getTradeAccountPerspectiveAddress(trade, { actionAccount, ownerAccount }) || walletAddress;
+      getTradeAccountPerspectiveAddress(trade, { actionAccount, ownerAccount }) || walletScopeKey;
     const perspectiveWalletKey = perspectiveWalletAddress.trim().toLowerCase();
     if (!perspectiveWalletKey) {
       return false;
@@ -147,7 +148,7 @@ export default function useTradeDeskLists({
       return true;
     }
     return false;
-  }, [walletAddress, walletReadAccounts]);
+  }, [walletReadAccounts, walletScopeKey]);
   const selectedMyTradeDetail = useMemo(() => {
     if (!selectedMyTradeDetailKey) {
       return null;

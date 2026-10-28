@@ -1,0 +1,10 @@
+[
+  "function contractVersion() pure returns (string)",
+  "function supportsFeature(bytes32 feature) pure returns (bool)",
+  "function sourceBook() view returns (address)",
+  "function sourceBookRuntimeHash() view returns (bytes32)",
+  "function owner() view returns (address)",
+  "function recorder() view returns (address)",
+  "function dayCount(bytes32 pairKey) view returns (uint256)",
+  "function getSnapshots(bytes32 pairKey,uint256 start,uint256 count) view returns (tuple(uint64 day,uint64 capturedAt,uint64 sourceBlockNumber,uint32 sourceLogIndex,uint8 direction,uint64 revision,uint128 priceBaseAmount,uint128 priceQuoteAmount,uint256 swapId,uint256 positionId,bytes32 sourceBlockHash,bytes32 sourceTransactionHash)[])"
+]

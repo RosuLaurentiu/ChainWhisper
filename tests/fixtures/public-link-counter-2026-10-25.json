@@ -1,0 +1,14 @@
+{
+  "status": "VERIFIED_NATIVE_PUBLIC_LINK_COUNTER_CASE",
+  "chainId": "7082400",
+  "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+  "binding": {
+    "address": "0xe74a14c96217e38735329c0f04392699ad26fe07",
+    "runtimeHash": "0xc179812ed29a2cdd533c3807ef31fac29a7e9fb5c0d398fabc39bdd5ff566bce"
+  },
+  "observed": {
+    "caseRemaining": "0",
+    "tokenEscrowDeltasZero": true,
+    "noPending": true
+  }
+}

@@ -1,4 +1,5 @@
 import { useRef, type FormEvent } from 'react';
+import { GROUP_PRIVATE_TITLE_LABEL } from '../../../lib/appShared';
 import { moveFocusWithin } from '../../../shared/components/a11y';
 import { useModalA11y } from '../../../shared/hooks/useModalA11y';
 import { useChatUiStore } from '../chatUiStore';
@@ -6,8 +7,6 @@ import { useChatUiStore } from '../chatUiStore';
 type QuickActionsModalProps = {
   isOpen: boolean;
   onClose: () => void;
-  newContactName: string;
-  onNewContactNameChange: (value: string) => void;
   newContact: string;
   onNewContactChange: (value: string) => void;
   onAddContactSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -29,8 +28,6 @@ type QuickActionsModalProps = {
 export default function QuickActionsModal({
   isOpen,
   onClose,
-  newContactName,
-  onNewContactNameChange,
   newContact,
   onNewContactChange,
   onAddContactSubmit,
@@ -129,12 +126,6 @@ export default function QuickActionsModal({
             onSubmit={onAddContactSubmit}
           >
             <input
-              value={newContactName}
-              onChange={(event) => onNewContactNameChange(event.target.value)}
-              placeholder="Contact name (optional)"
-              aria-label="Contact name"
-            />
-            <input
               value={newContact}
               onChange={(event) => onNewContactChange(event.target.value)}
               placeholder="0x... wallet address"
@@ -156,10 +147,11 @@ export default function QuickActionsModal({
             }}
           >
             <input
-              value={newGroupTitle}
+              value={newGroupIsPrivate ? GROUP_PRIVATE_TITLE_LABEL : newGroupTitle}
               onChange={(event) => onNewGroupTitleChange(event.target.value)}
-              placeholder="Group title"
-              aria-label="Group title"
+              placeholder={newGroupIsPrivate ? GROUP_PRIVATE_TITLE_LABEL : 'Group title'}
+              aria-label={newGroupIsPrivate ? 'Private group public label' : 'Group title'}
+              disabled={newGroupIsPrivate}
             />
             <input
               value={newGroupMembersInput}
@@ -171,10 +163,19 @@ export default function QuickActionsModal({
               <input
                 type="checkbox"
                 checked={newGroupIsPrivate}
-                onChange={(event) => onNewGroupIsPrivateChange(event.target.checked)}
+                onChange={(event) => {
+                  const isPrivate = event.target.checked;
+                  onNewGroupIsPrivateChange(isPrivate);
+                  if (isPrivate) {
+                    onNewGroupTitleChange('');
+                  }
+                }}
               />
               Private group (only admin can invite)
             </label>
+            {newGroupIsPrivate ? (
+              <small>Private groups use a generic public label. Custom private titles are not stored on-chain.</small>
+            ) : null}
             <button type="submit" disabled={processingGroupAction || !hasAesReady}>
               {processingGroupAction ? 'Creating...' : 'Create'}
             </button>

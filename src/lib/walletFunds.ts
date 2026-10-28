@@ -1,4 +1,4 @@
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import {
   ERC20_TOKEN_ABI,
   PRIVATE_ERC20_TOKEN_VNEXT_ABI,
@@ -10,18 +10,20 @@ import {
   type TradeAssetPayload
 } from './appShared';
 import { encryptPrivateUint256Input } from './privateUint256';
+import { waitForPublicTransactionReceipt } from './publicTransactionReceipt';
 
-type TradeSigner = JsonRpcSigner | Wallet;
+type TradeSigner = JsonRpcSigner;
 
-export type WalletFundAsset = Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'symbol' | 'decimals'>;
+export type WalletFundAsset = Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'symbol' | 'decimals'> & {
+  custom?: boolean;
+};
 
 export type CombinedWalletAssetBalance = {
   asset: WalletFundAsset;
-  chainwhisperBalanceWei: bigint | null;
-  ownerBalanceWei: bigint | null;
+  balanceWei: bigint | null;
   combinedBalanceWei: bigint | null;
-  chainwhisperShortfallWei: bigint | null;
-  ownerPrivacyRequired: boolean;
+  shortfallWei: bigint | null;
+  privacyRequired: boolean;
   availableLabel: string;
   breakdownLabel: string;
   splitLabel: string;
@@ -33,49 +35,14 @@ export type WalletFundingRequirement = {
   reason?: string;
 };
 
-export type WalletFundingResolution =
-  | {
-      status: 'ready';
-      shortfallWei: 0n;
-    }
-  | {
-      status: 'needs-owner-transfer';
-      shortfallWei: bigint;
-    }
-  | {
-      status: 'owner-privacy-required';
-      shortfallWei: bigint;
-    }
-  | {
-      status: 'insufficient';
-      shortfallWei: bigint;
-    }
-  | {
-      status: 'unknown';
-      shortfallWei: null;
-    };
-
-export type WalletCotiFeeReserveResolution =
-  | {
-      status: 'ready';
-      topUpAmountWei: 0n;
-    }
-  | {
-      status: 'top-up';
-      topUpAmountWei: bigint;
-    }
-  | {
-      status: 'owner-insufficient';
-      topUpAmountWei: bigint;
-    }
-  | {
-      status: 'unknown';
-      topUpAmountWei: null;
-    };
-
-export const CHAINWHISPER_COTI_FEE_RESERVE_WEI = 250_000_000_000_000_000n;
-
 const PRIVATE_TOKEN_WRITE_GAS_LIMIT = 6_000_000n;
+
+const assertSuccessfulWalletFundReceipt = (receipt: unknown, label: string): void => {
+  const status = (receipt as { status?: number | bigint } | null)?.status;
+  if (status !== undefined && Number(status) !== 1) {
+    throw new Error(`${label} failed on-chain.`);
+  }
+};
 
 const normalizeBalance = (balanceWei: bigint | null | undefined): bigint | null =>
   typeof balanceWei === 'bigint' ? balanceWei : null;
@@ -87,138 +54,40 @@ export const formatWalletFundAmount = (amountWei: bigint, asset: WalletFundAsset
 
 export const buildCombinedWalletAssetBalance = ({
   asset,
-  chainwhisperBalanceWei,
-  ownerBalanceWei,
-  ownerPrivacyRequired = false,
+  balanceWei,
+  privacyRequired = false,
   requiredAmountWei = 0n
 }: {
   asset: WalletFundAsset;
-  chainwhisperBalanceWei: bigint | null | undefined;
-  ownerBalanceWei: bigint | null | undefined;
-  ownerPrivacyRequired?: boolean;
+  balanceWei: bigint | null | undefined;
+  privacyRequired?: boolean;
   requiredAmountWei?: bigint;
 }): CombinedWalletAssetBalance => {
-  const chainwhisperBalance = normalizeBalance(chainwhisperBalanceWei);
-  const ownerBalance = normalizeBalance(ownerBalanceWei);
-  const combinedBalanceWei =
-    chainwhisperBalance === null && ownerBalance === null
-      ? null
-      : (chainwhisperBalance ?? 0n) + (ownerBalance ?? 0n);
+  const connectedBalance = normalizeBalance(balanceWei);
+  const combinedBalanceWei = connectedBalance;
   const shortfallWei =
-    requiredAmountWei > 0n && chainwhisperBalance !== null && requiredAmountWei > chainwhisperBalance
-      ? requiredAmountWei - chainwhisperBalance
+    requiredAmountWei > 0n && connectedBalance !== null && requiredAmountWei > connectedBalance
+      ? requiredAmountWei - connectedBalance
       : 0n;
   const availableLabel =
     combinedBalanceWei === null
       ? `Available -- ${asset.symbol}`
       : `Available ${formatWalletFundAmount(combinedBalanceWei, asset)}`;
-  const chainwhisperLabel =
-    chainwhisperBalance === null ? `-- ${asset.symbol}` : formatWalletFundAmount(chainwhisperBalance, asset);
-  const ownerLabel =
-    ownerBalance === null
-      ? ownerPrivacyRequired
-        ? 'locked'
-        : `-- ${asset.symbol}`
-      : formatWalletFundAmount(ownerBalance, asset);
+  const connectedWalletLabel = connectedBalance === null
+    ? privacyRequired ? 'privacy locked' : `-- ${asset.symbol}`
+    : formatWalletFundAmount(connectedBalance, asset);
 
   return {
     asset,
-    chainwhisperBalanceWei: chainwhisperBalance,
-    ownerBalanceWei: ownerBalance,
+    balanceWei: connectedBalance,
     combinedBalanceWei,
-    chainwhisperShortfallWei: shortfallWei,
-    ownerPrivacyRequired,
+    shortfallWei,
+    privacyRequired,
     availableLabel,
-    breakdownLabel: `${chainwhisperLabel} in ChainWhisper - ${ownerLabel} in owner wallet`,
-    splitLabel: `${availableLabel} - ${chainwhisperLabel} in ChainWhisper - ${ownerLabel} in owner wallet`
+    breakdownLabel: `${connectedWalletLabel} in connected wallet`,
+    splitLabel: `${availableLabel} - ${connectedWalletLabel} in connected wallet`
   };
 };
-
-export const resolveWalletFundingRequirement = ({
-  chainwhisperBalanceWei,
-  ownerBalanceWei,
-  ownerPrivacyRequired = false,
-  requiredAmountWei
-}: {
-  chainwhisperBalanceWei: bigint | null | undefined;
-  ownerBalanceWei: bigint | null | undefined;
-  ownerPrivacyRequired?: boolean;
-  requiredAmountWei: bigint;
-}): WalletFundingResolution => {
-  if (requiredAmountWei <= 0n) {
-    return { status: 'ready', shortfallWei: 0n };
-  }
-
-  const chainwhisperBalance = normalizeBalance(chainwhisperBalanceWei);
-  if (chainwhisperBalance === null) {
-    return { status: 'unknown', shortfallWei: null };
-  }
-  if (chainwhisperBalance >= requiredAmountWei) {
-    return { status: 'ready', shortfallWei: 0n };
-  }
-
-  const shortfallWei = requiredAmountWei - chainwhisperBalance;
-  if (ownerPrivacyRequired) {
-    return { status: 'owner-privacy-required', shortfallWei };
-  }
-
-  const ownerBalance = normalizeBalance(ownerBalanceWei);
-  if (ownerBalance === null) {
-    return { status: 'unknown', shortfallWei: null };
-  }
-  if (ownerBalance >= shortfallWei) {
-    return { status: 'needs-owner-transfer', shortfallWei };
-  }
-  return { status: 'insufficient', shortfallWei };
-};
-
-export const isNativeCotiFundAsset = (asset: WalletFundAsset): boolean => asset.kind === 'native';
-
-export const resolveCotiFeeReserveFunding = ({
-  chainwhisperBalanceWei,
-  nativeRequiredAmountWei = 0n,
-  ownerBalanceWei,
-  reserveWei = CHAINWHISPER_COTI_FEE_RESERVE_WEI
-}: {
-  chainwhisperBalanceWei: bigint | null | undefined;
-  nativeRequiredAmountWei?: bigint;
-  ownerBalanceWei: bigint | null | undefined;
-  reserveWei?: bigint;
-}): WalletCotiFeeReserveResolution => {
-  if (reserveWei <= 0n) {
-    return { status: 'ready', topUpAmountWei: 0n };
-  }
-
-  const chainwhisperBalance = normalizeBalance(chainwhisperBalanceWei);
-  if (chainwhisperBalance === null) {
-    return { status: 'unknown', topUpAmountWei: null };
-  }
-
-  const desiredBalanceWei = nativeRequiredAmountWei > 0n
-    ? nativeRequiredAmountWei + reserveWei
-    : reserveWei;
-  if (chainwhisperBalance >= desiredBalanceWei) {
-    return { status: 'ready', topUpAmountWei: 0n };
-  }
-
-  const topUpAmountWei = desiredBalanceWei - chainwhisperBalance;
-  const ownerBalance = normalizeBalance(ownerBalanceWei);
-  if (ownerBalance === null) {
-    return { status: 'unknown', topUpAmountWei: null };
-  }
-  if (ownerBalance >= topUpAmountWei) {
-    return { status: 'top-up', topUpAmountWei };
-  }
-  return { status: 'owner-insufficient', topUpAmountWei };
-};
-
-export const estimateWalletFundingPromptCount = (requirements: WalletFundingRequirement[]): number =>
-  requirements.reduce((total, requirement) => {
-    if (requirement.amountWei <= 0n) {
-      return total;
-    }
-    return total + (requirement.asset.kind === 'private-erc20' ? 2 : 1);
-  }, 0);
 
 export const transferWalletFundAsset = async ({
   amountWei,
@@ -240,7 +109,11 @@ export const transferWalletFundAsset = async ({
 
   if (asset.kind === 'native') {
     const tx = await signer.sendTransaction({ to: toAddress, value: amountWei });
-    const receipt = await tx.wait();
+    const receipt = await waitForPublicTransactionReceipt({
+      transactionHash: tx.hash,
+      label: `${asset.symbol} transfer`
+    });
+    assertSuccessfulWalletFundReceipt(receipt, `${asset.symbol} transfer`);
     return tx.hash ?? (receipt as { hash?: string; transactionHash?: string } | null)?.transactionHash ?? '';
   }
 
@@ -265,12 +138,20 @@ export const transferWalletFundAsset = async ({
       overrides: { gasLimit: bigint }
     ) => Promise<{ hash?: string; wait: () => Promise<unknown> }>;
     const tx = await writeFunction(toAddress, encryptedAmount, { gasLimit: PRIVATE_TOKEN_WRITE_GAS_LIMIT });
-    const receipt = await tx.wait();
+    const receipt = await waitForPublicTransactionReceipt({
+      transactionHash: tx.hash,
+      label: `${asset.symbol} transfer`
+    });
+    assertSuccessfulWalletFundReceipt(receipt, `${asset.symbol} transfer`);
     return tx.hash ?? (receipt as { hash?: string; transactionHash?: string } | null)?.transactionHash ?? '';
   }
 
   const tokenContract = new cotiEthers.Contract(tokenAddress, ERC20_TOKEN_ABI, signer);
   const tx = await tokenContract.transfer(toAddress, amountWei);
-  const receipt = await tx.wait();
+  const receipt = await waitForPublicTransactionReceipt({
+    transactionHash: tx.hash,
+    label: `${asset.symbol} transfer`
+  });
+  assertSuccessfulWalletFundReceipt(receipt, `${asset.symbol} transfer`);
   return tx.hash ?? (receipt as { hash?: string; transactionHash?: string } | null)?.transactionHash ?? '';
 };

@@ -53,6 +53,8 @@ const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? '';
 const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL') ?? 'gpt-5-mini';
 const APP_HELP_MODEL = Deno.env.get('APP_HELP_MODEL') ?? 'gpt-5-nano';
 const APP_HELP_RATE_LIMIT_SECRET = Deno.env.get('APP_HELP_RATE_LIMIT_SECRET') ?? '';
+const TRADE_AGENT_RATE_LIMIT_SECRET =
+  Deno.env.get('TRADE_AGENT_RATE_LIMIT_SECRET') ?? APP_HELP_RATE_LIMIT_SECRET;
 const TRADE_AGENT_QUOTE_SECRET = Deno.env.get('TRADE_AGENT_QUOTE_SECRET') ?? '';
 const UNISWAP_API_KEY = Deno.env.get('UNISWAP_API_KEY') ?? '';
 const COTI_RPC_URL = Deno.env.get('COTI_RPC_URL') ?? '';
@@ -68,6 +70,15 @@ const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 const MAX_PROMPT_CHARS = 4_000;
 const MAX_CONTEXT_CHARS = 14_000;
 const APP_HELP_MAX_OUTPUT_TOKENS = 300;
+const TRADE_AGENT_MAX_ATTEMPTS = 3;
+const TRADE_AGENT_RETRY_BASE_MS = 5_000;
+const TRADE_AGENT_UPSTREAM_TIMEOUT_MS = 5_000;
+const CARBON_PRICE_CACHE_TTL_MS = 60_000;
+const CARBON_PRICE_STALE_TTL_MS = 5 * 60_000;
+const RECEIPT_CACHE_TTL_MS = 5 * 60_000;
+const RECEIPT_NEGATIVE_CACHE_TTL_MS = 10_000;
+const MAX_RECEIPT_CACHE_ENTRIES = 256;
+const MAX_RECEIPT_IN_FLIGHT = 16;
 const ESTIMATED_RESPONSE_TOKENS = Number(Deno.env.get('TRADE_AGENT_ESTIMATED_RESPONSE_TOKENS') ?? '500');
 const FEE_MARGIN_BPS = Number(Deno.env.get('TRADE_AGENT_FEE_MARGIN_BPS') ?? '15000');
 const MIN_FEE_USD = Number(Deno.env.get('TRADE_AGENT_MIN_FEE_USD') ?? '0.006');
@@ -117,11 +128,15 @@ type TradeAgentAction =
 
 type TradeAgentPaymentRow = {
   action_type?: string;
+  attempt_count?: number;
+  claim_token?: string | null;
   completed_at?: string | null;
   fee_amount_wei?: string;
   fee_recipient?: string;
   fee_token_address?: string;
   id?: number;
+  lease_expires_at?: string | null;
+  next_attempt_at?: string | null;
   payer_address?: string;
   payment_tx_hash?: string;
   quote_expires_at?: string | null;
@@ -132,6 +147,16 @@ type TradeAgentPaymentRow = {
   response_json?: unknown;
   status?: string;
   updated_at?: string;
+};
+
+type TradeAgentAdmissionKind = 'estimate' | 'quote' | 'recover' | 'run';
+
+type TradeAgentAdmissionRow = {
+  allowed?: boolean;
+  global_count?: number;
+  reason?: string;
+  retry_after_seconds?: number;
+  user_count?: number;
 };
 
 type AppHelpRateLimitRow = {
@@ -151,10 +176,32 @@ const isRequestId = (value: string): boolean =>
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value);
 const normalizeAddress = (value: string): string => value.trim().toLowerCase();
 
-const getForwardedClientIp = (request: Request): string => {
+const isValidForwardedIp = (value: string): boolean => {
+  if (!value || value.length > 45) {
+    return false;
+  }
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(value)) {
+    return value.split('.').every((part) => Number(part) <= 255);
+  }
+  if (!value.includes(':') || !/^[0-9a-f:]+$/iu.test(value)) {
+    return false;
+  }
+  try {
+    return new URL(`http://[${value}]/`).hostname.length > 2;
+  } catch {
+    return false;
+  }
+};
+
+export const getForwardedClientIp = (request: Request): string => {
+  // Per-IP counters provide best-effort fairness and require the deployment
+  // gateway to append or overwrite the final forwarded hop. The atomic global
+  // counters remain the cost-control boundary when that ingress contract is
+  // unavailable or misconfigured.
   const forwardedFor = request.headers.get('x-forwarded-for') ?? '';
-  const firstAddress = forwardedFor.split(',', 1)[0]?.trim() ?? '';
-  return firstAddress && firstAddress.length <= 128 ? firstAddress : '';
+  const addresses = forwardedFor.split(',').map((value) => value.trim()).filter(Boolean);
+  const edgeAddress = addresses.at(-1) ?? '';
+  return isValidForwardedIp(edgeAddress) ? edgeAddress.toLowerCase() : '';
 };
 
 const hashAppHelpClientIp = async (clientIp: string): Promise<string> => {
@@ -207,6 +254,80 @@ const claimAppHelpQuota = async (request: Request): Promise<Response | null> => 
   return buildErrorResponse(message, 429);
 };
 
+const hashTradeAgentClientIp = async (clientIp: string): Promise<string> => {
+  if (!TRADE_AGENT_RATE_LIMIT_SECRET || TRADE_AGENT_RATE_LIMIT_SECRET.length < 32) {
+    throw new Error('Trade Agent admission control is not configured.');
+  }
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(TRADE_AGENT_RATE_LIMIT_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const digest = new Uint8Array(
+    await crypto.subtle.sign('HMAC', key, encoder.encode(`trade-agent:${clientIp}`))
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const claimTradeAgentAdmission = async (
+  request: Request,
+  requestKind: TradeAgentAdmissionKind
+): Promise<Response | null> => {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return buildErrorResponse('Trade Agent admission control is unavailable.', 503);
+  }
+  const clientIp = getForwardedClientIp(request);
+  if (!clientIp) {
+    return buildErrorResponse('Trade Agent could not verify this request for admission control.', 503);
+  }
+
+  let ipHash: string;
+  try {
+    ipHash = await hashTradeAgentClientIp(clientIp);
+  } catch (error) {
+    return buildErrorResponse(
+      error instanceof Error ? error.message : 'Trade Agent admission control is unavailable.',
+      503
+    );
+  }
+
+  const supabaseAdmin = createClient<TradeAgentDatabase>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false }
+  });
+  const { data, error } = await supabaseAdmin.rpc('claim_trade_agent_request', {
+    p_ip_hash: ipHash,
+    p_kind: requestKind
+  });
+  if (error) {
+    return buildErrorResponse('Trade Agent admission control is unavailable.', 503);
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as TradeAgentAdmissionRow | null;
+  if (!row || typeof row.allowed !== 'boolean') {
+    return buildErrorResponse('Trade Agent admission control is unavailable.', 503);
+  }
+  if (row.allowed) {
+    return null;
+  }
+
+  const retryAfterSeconds = Number.isFinite(row.retry_after_seconds)
+    ? Math.max(1, Math.min(3_600, Math.ceil(row.retry_after_seconds ?? 3_600)))
+    : 3_600;
+  return jsonResponse(
+    {
+      error: row.reason === 'global_limit'
+        ? 'Trade Agent is temporarily at capacity. Please try again later.'
+        : 'Too many Trade Agent requests. Please try again later.'
+    },
+    {
+      status: 429,
+      headers: { ...corsHeaders, 'retry-after': String(retryAfterSeconds) }
+    }
+  );
+};
+
 const parsePositiveWei = (value: string): bigint | null => {
   if (!/^\d+$/.test(value)) {
     return null;
@@ -224,6 +345,31 @@ const parsePositiveNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
+const fetchJsonWithTimeout = async <T>(
+  input: string | URL | Request,
+  init: RequestInit = {},
+  timeoutMs = TRADE_AGENT_UPSTREAM_TIMEOUT_MS
+): Promise<{ body: T | null; response: Response }> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const body = await response.json().catch(() => null) as T | null;
+    return { body, response };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+type WispPriceCacheEntry = {
+  expiresAt: number;
+  price: number;
+  staleUntil: number;
+};
+
+let wispPriceCache: WispPriceCacheEntry | null = null;
+let wispPriceInFlight: Promise<number> | null = null;
+
 const resolveOpenAiPricing = () => {
   const inputOverride = parsePositiveNumber(OPENAI_INPUT_USD_PER_1M);
   const outputOverride = parsePositiveNumber(OPENAI_OUTPUT_USD_PER_1M);
@@ -237,16 +383,52 @@ const estimateInputTokens = (prompt: string, contextText: string): number =>
   Math.max(1_000, Math.ceil((prompt.length + contextText.length) / 4) + 500);
 
 const fetchWispUsdPrice = async (): Promise<number> => {
-  const response = await fetch(CARBON_WISP_USD_RATE_URL);
-  const body = await response.json().catch(() => null) as { data?: { USD?: unknown } } | null;
-  if (!response.ok) {
-    throw new Error('WISP price quote is unavailable.');
+  const now = Date.now();
+  if (wispPriceCache && wispPriceCache.expiresAt > now) {
+    return wispPriceCache.price;
   }
-  const price = parsePositiveNumber(body?.data?.USD);
-  if (!price) {
-    throw new Error('WISP price quote is unavailable.');
+  if (wispPriceInFlight) {
+    return wispPriceInFlight;
   }
-  return price;
+
+  const staleCache = wispPriceCache && wispPriceCache.staleUntil > now ? wispPriceCache : null;
+  const request = (async (): Promise<number> => {
+    try {
+      const { body, response } = await fetchJsonWithTimeout<{ data?: { USD?: unknown } }>(
+        CARBON_WISP_USD_RATE_URL
+      );
+      if (!response.ok) {
+        throw new Error('WISP price quote is unavailable.');
+      }
+      const price = parsePositiveNumber(body?.data?.USD);
+      if (!price) {
+        throw new Error('WISP price quote is unavailable.');
+      }
+      const fetchedAt = Date.now();
+      wispPriceCache = {
+        expiresAt: fetchedAt + CARBON_PRICE_CACHE_TTL_MS,
+        price,
+        staleUntil: fetchedAt + CARBON_PRICE_STALE_TTL_MS
+      };
+      return price;
+    } catch (error) {
+      if (staleCache) {
+        return staleCache.price;
+      }
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('WISP price quote timed out.');
+      }
+      throw error;
+    }
+  })();
+  wispPriceInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (wispPriceInFlight === request) {
+      wispPriceInFlight = null;
+    }
+  }
 };
 
 const normalizeTokenSymbol = (value: unknown): string =>
@@ -343,7 +525,9 @@ const fetchUniswapReference = async (context: unknown) => {
   }
 
   try {
-    const response = await fetch('https://trade-api.gateway.uniswap.org/v1/quote', {
+    const { body, response } = await fetchJsonWithTimeout<{ quote?: { output?: { amount?: unknown } } }>(
+      'https://trade-api.gateway.uniswap.org/v1/quote',
+      {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -361,8 +545,8 @@ const fetchUniswapReference = async (context: unknown) => {
         tokenOutChainId: 1,
         type: 'EXACT_INPUT'
       })
-    });
-    const body = await response.json().catch(() => null) as { quote?: { output?: { amount?: unknown } } } | null;
+      }
+    );
     const outputAmount = parsePositiveWei(normalizeString(body?.quote?.output?.amount));
     if (!response.ok || !outputAmount) {
       return { status: 'unavailable', reason: 'Uniswap quote is unavailable for this pair.' };
@@ -438,16 +622,143 @@ const rpcCall = async <T>(method: string, params: unknown[]): Promise<T | null> 
   if (!COTI_RPC_URL) {
     throw new Error('COTI RPC is not configured.');
   }
-  const response = await fetch(COTI_RPC_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
-  });
-  const body = await response.json().catch(() => null) as { error?: { message?: string }; result?: T } | null;
+  const { body, response } = await fetchJsonWithTimeout<{ error?: { message?: string }; result?: T }>(
+    COTI_RPC_URL,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+    }
+  );
   if (!response.ok || body?.error) {
     throw new Error(body?.error?.message || 'COTI RPC request failed.');
   }
   return body?.result ?? null;
+};
+
+type ReceiptBundle = {
+  receipt: TradeAgentReceipt;
+  transactionBlockTimestampSeconds: number;
+};
+
+type ReceiptCacheEntry = {
+  bundle?: ReceiptBundle;
+  error?: string;
+  expiresAt: number;
+};
+
+let cotiChainIdCache: { expiresAt: number; value: string } | null = null;
+let cotiChainIdInFlight: Promise<string> | null = null;
+const receiptCache = new Map<string, ReceiptCacheEntry>();
+const receiptInFlight = new Map<string, Promise<ReceiptBundle>>();
+
+export const resetTradeAgentRuntimeStateForTests = (): void => {
+  wispPriceCache = null;
+  wispPriceInFlight = null;
+  cotiChainIdCache = null;
+  cotiChainIdInFlight = null;
+  receiptCache.clear();
+  receiptInFlight.clear();
+};
+
+const setReceiptCacheEntry = (paymentTxHash: string, entry: ReceiptCacheEntry): void => {
+  receiptCache.delete(paymentTxHash);
+  while (receiptCache.size >= MAX_RECEIPT_CACHE_ENTRIES) {
+    const oldestKey = receiptCache.keys().next().value;
+    if (typeof oldestKey !== 'string') {
+      break;
+    }
+    receiptCache.delete(oldestKey);
+  }
+  receiptCache.set(paymentTxHash, entry);
+};
+
+const getCotiChainId = async (): Promise<string> => {
+  const now = Date.now();
+  if (cotiChainIdCache && cotiChainIdCache.expiresAt > now) {
+    return cotiChainIdCache.value;
+  }
+  if (cotiChainIdInFlight) {
+    return cotiChainIdInFlight;
+  }
+  const request = (async () => {
+    const chainId = await rpcCall<string>('eth_chainId', []);
+    const normalized = (chainId ?? '').toLowerCase();
+    if (!normalized) {
+      throw new Error('Payment RPC chain is unavailable.');
+    }
+    cotiChainIdCache = { expiresAt: Date.now() + RECEIPT_CACHE_TTL_MS, value: normalized };
+    return normalized;
+  })();
+  cotiChainIdInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (cotiChainIdInFlight === request) {
+      cotiChainIdInFlight = null;
+    }
+  }
+};
+
+const getReceiptBundle = async (paymentTxHash: string): Promise<ReceiptBundle> => {
+  const now = Date.now();
+  const cached = receiptCache.get(paymentTxHash);
+  if (cached && cached.expiresAt > now) {
+    if (cached.bundle) {
+      return cached.bundle;
+    }
+    throw new Error(cached.error || 'WISP payment transaction is not confirmed.');
+  }
+  if (cached) {
+    receiptCache.delete(paymentTxHash);
+  }
+  const pending = receiptInFlight.get(paymentTxHash);
+  if (pending) {
+    return pending;
+  }
+  if (receiptInFlight.size >= MAX_RECEIPT_IN_FLIGHT) {
+    throw new Error('Payment verification is temporarily at capacity.');
+  }
+
+  const request = (async (): Promise<ReceiptBundle> => {
+    try {
+      const receipt = await rpcCall<TradeAgentReceipt>('eth_getTransactionReceipt', [paymentTxHash]);
+      if (!receipt || !/^0x[a-fA-F0-9]+$/u.test(receipt.blockNumber ?? '')) {
+        throw new Error('WISP payment transaction is not confirmed.');
+      }
+      const block = await rpcCall<{ timestamp?: string }>('eth_getBlockByNumber', [receipt.blockNumber, false]);
+      let transactionBlockTimestampSeconds = 0;
+      try {
+        transactionBlockTimestampSeconds = Number(BigInt(block?.timestamp ?? ''));
+      } catch {
+        throw new Error('WISP payment block timestamp is unavailable.');
+      }
+      if (!Number.isSafeInteger(transactionBlockTimestampSeconds) || transactionBlockTimestampSeconds <= 0) {
+        throw new Error('WISP payment block timestamp is unavailable.');
+      }
+      const bundle = { receipt, transactionBlockTimestampSeconds };
+      setReceiptCacheEntry(paymentTxHash, {
+        bundle,
+        expiresAt: Date.now() + RECEIPT_CACHE_TTL_MS
+      });
+      return bundle;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'WISP payment verification failed.';
+      setReceiptCacheEntry(paymentTxHash, {
+        error: message,
+        expiresAt: Date.now() + RECEIPT_NEGATIVE_CACHE_TTL_MS
+      });
+      throw error;
+    }
+  })();
+  receiptInFlight.set(paymentTxHash, request);
+  try {
+    return await request;
+  } finally {
+    if (receiptInFlight.get(paymentTxHash) === request) {
+      receiptInFlight.delete(paymentTxHash);
+    }
+  }
 };
 
 const verifyPaymentReceipt = async ({
@@ -457,21 +768,12 @@ const verifyPaymentReceipt = async ({
   quote: TradeAgentQuotePayload;
   paymentTxHash: string;
 }): Promise<void> => {
-  const chainId = await rpcCall<string>('eth_chainId', []);
-  if ((chainId ?? '').toLowerCase() !== COTI_CHAIN_ID_HEX) {
+  const [chainId, bundle] = await Promise.all([
+    getCotiChainId(),
+    getReceiptBundle(paymentTxHash)
+  ]);
+  if (chainId !== COTI_CHAIN_ID_HEX) {
     throw new Error('Payment RPC is not connected to COTI mainnet.');
-  }
-
-  const receipt = await rpcCall<TradeAgentReceipt>('eth_getTransactionReceipt', [paymentTxHash]);
-  if (!receipt || !/^0x[a-fA-F0-9]+$/u.test(receipt.blockNumber ?? '')) {
-    throw new Error('WISP payment transaction is not confirmed.');
-  }
-  const block = await rpcCall<{ timestamp?: string }>('eth_getBlockByNumber', [receipt.blockNumber, false]);
-  let transactionBlockTimestampSeconds = 0;
-  try {
-    transactionBlockTimestampSeconds = Number(BigInt(block?.timestamp ?? ''));
-  } catch {
-    throw new Error('WISP payment block timestamp is unavailable.');
   }
   verifyTradeAgentPaymentReceiptData({
     expiresAt: quote.expiresAt,
@@ -480,8 +782,8 @@ const verifyPaymentReceipt = async ({
     feeTokenAddress: quote.feeTokenAddress,
     issuedAt: quote.issuedAt,
     payerAddress: quote.payerAddress,
-    receipt,
-    transactionBlockTimestampSeconds,
+    receipt: bundle.receipt,
+    transactionBlockTimestampSeconds: bundle.transactionBlockTimestampSeconds,
     transferTopic: TRANSFER_TOPIC
   });
 };
@@ -733,54 +1035,53 @@ const callOpenAI = async ({
     'Return concise JSON only.'
   ].join(' ');
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60_000);
   let response: Response;
+  let body: Record<string, unknown> | null;
   try {
-    response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${OPENAI_API_KEY}`,
-        'content-type': 'application/json'
+    ({ body, response } = await fetchJsonWithTimeout<Record<string, unknown>>(
+      'https://api.openai.com/v1/responses',
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${OPENAI_API_KEY}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          store: false,
+          max_output_tokens: 4096,
+          reasoning: { effort: 'low' },
+          input: [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                action,
+                context,
+                prompt
+              })
+            }
+          ],
+          text: {
+            verbosity: 'low',
+            format: {
+              type: 'json_schema',
+              name: 'chainwhisper_trade_agent_response',
+              strict: true,
+              schema: TRADE_AGENT_RESPONSE_JSON_SCHEMA
+            }
+          }
+        })
       },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        store: false,
-        max_output_tokens: 4096,
-        reasoning: { effort: 'low' },
-        input: [
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              action,
-              context,
-              prompt
-            })
-          }
-        ],
-        text: {
-          verbosity: 'low',
-          format: {
-            type: 'json_schema',
-            name: 'chainwhisper_trade_agent_response',
-            strict: true,
-            schema: TRADE_AGENT_RESPONSE_JSON_SCHEMA
-          }
-        }
-      })
-    });
+      60_000
+    ));
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error('Trade Agent provider timed out.');
     }
     throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
-  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok || !body) {
     const message =
       body && typeof body.error === 'object' && typeof (body.error as { message?: unknown }).message === 'string'
@@ -817,7 +1118,16 @@ type TradeAgentDatabase = {
   public: {
     CompositeTypes: Record<string, never>;
     Enums: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      claim_trade_agent_payment: {
+        Args: { p_claim_token: string; p_payment_id: number };
+        Returns: TradeAgentPaymentRow[];
+      };
+      claim_trade_agent_request: {
+        Args: { p_ip_hash: string; p_kind: string };
+        Returns: TradeAgentAdmissionRow[];
+      };
+    };
     Tables: {
       trade_agent_payments: {
         Insert: Record<string, unknown>;
@@ -834,11 +1144,15 @@ type SupabaseAdminClient = ReturnType<typeof createClient<TradeAgentDatabase>>;
 
 const PAYMENT_SELECT = [
   'action_type',
+  'attempt_count',
+  'claim_token',
   'completed_at',
   'fee_amount_wei',
   'fee_recipient',
   'fee_token_address',
   'id',
+  'lease_expires_at',
+  'next_attempt_at',
   'payer_address',
   'payment_tx_hash',
   'quote_expires_at',
@@ -1011,6 +1325,14 @@ const getCompletedPaymentResponse = (
   return payment.response_json as Record<string, unknown>;
 };
 
+const getPaymentAttemptCount = (payment: TradeAgentPaymentRow): number =>
+  Number.isSafeInteger(payment.attempt_count) && (payment.attempt_count ?? 0) > 0
+    ? payment.attempt_count as number
+    : 1;
+
+const getRetryBackoffMs = (attemptCount: number): number =>
+  Math.min(60_000, TRADE_AGENT_RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1));
+
 const buildPaymentStateResponse = (
   payment: TradeAgentPaymentRow,
   requestId: string,
@@ -1030,14 +1352,32 @@ const buildPaymentStateResponse = (
       );
     }
   }
+  if (payment.status === 'terminal') {
+    return buildErrorResponse('Trade Agent retry limit reached for this payment.', 409);
+  }
   if (payment.status === 'failed') {
+    if (getPaymentAttemptCount(payment) >= TRADE_AGENT_MAX_ATTEMPTS) {
+      return allowRetryClaim
+        ? null
+        : buildErrorResponse('Trade Agent retry limit reached for this payment.', 409);
+    }
+    const nextAttemptAt = Date.parse(payment.next_attempt_at ?? '');
+    if (Number.isFinite(nextAttemptAt) && nextAttemptAt > now) {
+      return jsonResponse(
+        { requestId, status: 'processing', retryAfterMs: Math.max(1_000, Math.ceil(nextAttemptAt - now)) },
+        { status: 202, headers: corsHeaders }
+      );
+    }
     return allowRetryClaim
       ? null
       : jsonResponse({ requestId, status: 'retryable' }, { headers: corsHeaders });
   }
   if (payment.status === 'pending') {
+    const leaseExpiresAt = Date.parse(payment.lease_expires_at ?? '');
     const updatedAt = Date.parse(payment.updated_at ?? '');
-    const leaseRemaining = Number.isFinite(updatedAt)
+    const leaseRemaining = Number.isFinite(leaseExpiresAt)
+      ? leaseExpiresAt - now
+      : Number.isFinite(updatedAt)
       ? updatedAt + TRADE_AGENT_PENDING_LEASE_MS - now
       : 0;
     if (leaseRemaining > 0) {
@@ -1046,6 +1386,11 @@ const buildPaymentStateResponse = (
         { status: 202, headers: corsHeaders }
       );
     }
+    if (getPaymentAttemptCount(payment) >= TRADE_AGENT_MAX_ATTEMPTS) {
+      return allowRetryClaim
+        ? null
+        : buildErrorResponse('Trade Agent retry limit reached for this payment.', 409);
+    }
     return null;
   }
   throw new Error('Trade Agent payment status is invalid.');
@@ -1053,35 +1398,20 @@ const buildPaymentStateResponse = (
 
 const claimExistingPayment = async (
   supabaseAdmin: SupabaseAdminClient,
-  payment: TradeAgentPaymentRow,
-  nowIso: string
+  payment: TradeAgentPaymentRow
 ): Promise<TradeAgentPaymentRow | null> => {
   if (!payment.id) {
     return null;
   }
-  let query = supabaseAdmin
-    .from('trade_agent_payments')
-    .update({
-      completed_at: null,
-      error_message: null,
-      response_expires_at: null,
-      response_json: null,
-      status: 'pending',
-      updated_at: nowIso
-    })
-    .eq('id', payment.id);
-  if (payment.status === 'failed') {
-    query = query.eq('status', 'failed');
-  } else {
-    query = query
-      .eq('status', 'pending')
-      .lte('updated_at', new Date(Date.parse(nowIso) - TRADE_AGENT_PENDING_LEASE_MS).toISOString());
-  }
-  const { data, error } = await query.select(PAYMENT_SELECT).maybeSingle();
+  const { data, error } = await supabaseAdmin.rpc('claim_trade_agent_payment', {
+    p_claim_token: crypto.randomUUID(),
+    p_payment_id: payment.id
+  });
   if (error) {
     throw new Error(error.message || 'Failed to reserve Trade Agent payment.');
   }
-  return data as TradeAgentPaymentRow | null;
+  const row = (Array.isArray(data) ? data[0] : data) as TradeAgentPaymentRow | null;
+  return row ?? null;
 };
 
 const classifyAgentFailure = (error: unknown): string => {
@@ -1114,6 +1444,11 @@ const processClaimedPayment = async ({
     return buildErrorResponse('Trade Agent payment reservation is invalid.', 500);
   }
   const paymentId = payment.id;
+  const claimToken = normalizeString(payment.claim_token);
+  const attemptCount = getPaymentAttemptCount(payment);
+  if (!claimToken || attemptCount > TRADE_AGENT_MAX_ATTEMPTS) {
+    return buildErrorResponse('Trade Agent payment reservation is invalid.', 500);
+  }
   try {
     const builtContext = await buildAgentContext(context);
     const agentContext = {
@@ -1145,10 +1480,15 @@ const processClaimedPayment = async ({
         response_json: response,
         status: 'completed',
         total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
+        claim_token: null,
+        lease_expires_at: null,
+        next_attempt_at: null,
         updated_at: completedAt.toISOString()
       })
       .eq('id', paymentId)
       .eq('status', 'pending')
+      .eq('claim_token', claimToken)
+      .gt('lease_expires_at', completedAt.toISOString())
       .select('id')
       .maybeSingle();
     if (error || !data) {
@@ -1156,18 +1496,45 @@ const processClaimedPayment = async ({
     }
     return jsonResponse({ requestId, status: 'completed', response }, { headers: corsHeaders });
   } catch (error) {
-    await supabaseAdmin
+    const failedAt = new Date();
+    const terminal = attemptCount >= TRADE_AGENT_MAX_ATTEMPTS;
+    const { data: failedPayment, error: updateError } = await supabaseAdmin
       .from('trade_agent_payments')
       .update({
+        claim_token: null,
         completed_at: null,
         error_message: classifyAgentFailure(error),
+        lease_expires_at: null,
+        next_attempt_at: terminal
+          ? null
+          : new Date(failedAt.getTime() + getRetryBackoffMs(attemptCount)).toISOString(),
         response_expires_at: null,
         response_json: null,
-        status: 'failed',
-        updated_at: new Date().toISOString()
+        status: terminal ? 'terminal' : 'failed',
+        updated_at: failedAt.toISOString()
       })
       .eq('id', paymentId)
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .eq('claim_token', claimToken)
+      .gt('lease_expires_at', failedAt.toISOString())
+      .select('id,status')
+      .maybeSingle();
+    if (updateError) {
+      return buildErrorResponse('Trade Agent failure state could not be stored for recovery.', 503);
+    }
+    if (!failedPayment) {
+      const currentPayment = await getPaymentByRequestId(supabaseAdmin, requestId);
+      return currentPayment
+        ? buildPaymentStateResponse(currentPayment, requestId) ??
+          jsonResponse(
+            { requestId, status: 'processing', retryAfterMs: 2_000 },
+            { status: 202, headers: corsHeaders }
+          )
+        : buildErrorResponse('Trade Agent payment reservation was lost.', 503);
+    }
+    if (terminal) {
+      return buildErrorResponse('Trade Agent retry limit reached for this payment.', 409);
+    }
     return jsonResponse({ requestId, status: 'retryable' }, { headers: corsHeaders });
   }
 };
@@ -1347,12 +1714,7 @@ const handleTradeAgentRun = async (
       if (stateResponse) {
         return stateResponse;
       }
-      try {
-        await verifyPaymentReceipt({ quote, paymentTxHash });
-      } catch (error) {
-        return buildErrorResponse(error instanceof Error ? error.message : 'Payment verification failed.', 402);
-      }
-      const claimed = await claimExistingPayment(supabaseAdmin, payment, new Date().toISOString());
+      const claimed = await claimExistingPayment(supabaseAdmin, payment);
       if (!claimed) {
         payment = await getPaymentByRequestId(supabaseAdmin, quote.requestId);
         if (!payment) {
@@ -1372,14 +1734,19 @@ const handleTradeAgentRun = async (
         return buildErrorResponse(error instanceof Error ? error.message : 'Payment verification failed.', 402);
       }
       const nowIso = new Date().toISOString();
+      const claimToken = crypto.randomUUID();
       const { data, error } = await supabaseAdmin
         .from('trade_agent_payments')
         .insert({
           action_type: action,
+          attempt_count: 1,
+          claim_token: claimToken,
           error_message: null,
           fee_amount_wei: quote.feeAmountWei,
           fee_recipient: quote.feeRecipient,
           fee_token_address: quote.feeTokenAddress,
+          lease_expires_at: new Date(Date.parse(nowIso) + TRADE_AGENT_PENDING_LEASE_MS).toISOString(),
+          next_attempt_at: null,
           payer_address: quote.payerAddress,
           payment_tx_hash: paymentTxHash,
           quote_expires_at: quote.expiresAt,
@@ -1438,6 +1805,16 @@ export const handleTradeAgentHttpRequest = async (request: Request): Promise<Res
   const body = await readJson(request);
   if (body.kind === 'help') {
     return handleAppHelpRequest(request, body);
+  }
+  const requestKind =
+    body.kind === 'estimate' || body.kind === 'quote' || body.kind === 'recover' || body.kind === 'run'
+      ? body.kind
+      : null;
+  if (requestKind) {
+    const admissionResponse = await claimTradeAgentAdmission(request, requestKind);
+    if (admissionResponse) {
+      return admissionResponse;
+    }
   }
   if (body.kind === 'recover') {
     return handleTradeAgentRecovery(body);

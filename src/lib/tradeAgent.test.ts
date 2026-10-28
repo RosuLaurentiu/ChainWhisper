@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { redactTradeAgentSecrets } from '../../supabase/functions/_shared/trade-agent-redaction';
 import { TRADE_ESCROW_CONTRACT_ADDRESS, type TradeSnapshot } from './appShared';
+import { encodeTradeLink } from './tradeLinks';
 import {
   TRADE_AGENT_QUICK_ACTIONS,
   buildTradeAgentChatContext,
@@ -34,7 +35,7 @@ const createMemoryStorage = () => {
 describe('tradeAgent', () => {
   it('keeps quick actions distinct and conversational when details are missing', () => {
     expect(TRADE_AGENT_QUICK_ACTIONS.map((action) => action.label)).toEqual([
-      'Compare price references',
+      'Compare prices',
       'Draft limit order',
       'Draft recurring order',
       'Explain this order',
@@ -265,6 +266,50 @@ describe('tradeAgent', () => {
     ).toContain('private keys');
   });
 
+  it('blocks bare wallet credentials and every supported private-link representation', () => {
+    const mnemonic = 'test test test test test test test test test test test junk';
+    const longMnemonic = `${'abandon '.repeat(23)}art`;
+    const unprefixedPrivateKey = '12'.repeat(32);
+    const privateCode = encodeTradeLink(22, `0x${'34'.repeat(32)}`);
+    const privatePath = `/otcdesk/terminal/l/${privateCode}`;
+    const deeplyEncodedPath = Array.from({ length: 4 }).reduce<string>(
+      (value) => encodeURIComponent(value),
+      privatePath
+    );
+    const wrapRedirect = (value: string) => `?p=${encodeURIComponent(value)}`;
+    const sixRedirects = Array.from({ length: 6 }).reduce<string>(
+      (value) => wrapRedirect(value),
+      privatePath
+    );
+    const cases = [
+      mnemonic,
+      longMnemonic,
+      unprefixedPrivateKey,
+      privatePath,
+      encodeURIComponent(privatePath),
+      deeplyEncodedPath,
+      `?p=${encodeURIComponent(privatePath)}`,
+      sixRedirects,
+      `?noise=%ZZ&p=${encodeURIComponent(privatePath)}`,
+      privateCode
+    ];
+
+    cases.forEach((prompt) => {
+      expect(containsTradeAgentSecretText(prompt), prompt).toBe(true);
+      expect(
+        getTradeAgentPreflightError({ action: 'find_price', context: {}, prompt })
+      ).toContain('Remove private keys');
+    });
+  });
+
+  it('preserves ordinary prose and encoded public trade links', () => {
+    const publicCode = encodeTradeLink(22);
+
+    expect(containsTradeAgentSecretText('Compare WISP and COTI before I draft an order.')).toBe(false);
+    expect(containsTradeAgentSecretText(`/otcdesk/terminal/l/${publicCode}`)).toBe(false);
+    expect(containsTradeAgentSecretText(publicCode)).toBe(false);
+  });
+
   it('caps safe order-review summaries at 20 and omits wallet/private inventory data', () => {
     const trades = Array.from({ length: 25 }, (_, index) => ({
       tradeId: index + 1,
@@ -387,7 +432,7 @@ describe('tradeAgent', () => {
       buildTradeAgentChatContext({
         selectedMessage: {
           direction: 'incoming',
-          text: `/otc/order/link/VAEP${'c'.repeat(43)}`
+          text: `/otc/order/link/${encodeTradeLink(9, `0x${'c'.repeat(64)}`)}`
         }
       })
     ).toThrow('Remove private keys');
@@ -397,6 +442,19 @@ describe('tradeAgent', () => {
     expect(() => normalizeTradeAgentResponse({ answer: '', warnings: [], actions: [] })).toThrow(
       'Trade Agent response was empty.'
     );
+  });
+
+  it('rejects secret-bearing response text before it reaches the browser UI', () => {
+    const privateCode = encodeTradeLink(22, `0x${'ab'.repeat(32)}`);
+    const unsafeResponses = [
+      { answer: 'test test test test test test test test test test test junk', warnings: [], actions: [] },
+      { answer: 'Safe summary.', warnings: [`Open ${privateCode}`], actions: [] },
+      { answer: 'cd'.repeat(32), warnings: [], actions: [] }
+    ];
+
+    unsafeResponses.forEach((response) => {
+      expect(() => normalizeTradeAgentResponse(response)).toThrow('unsafe material');
+    });
   });
 
   it('extracts the pair written by the user with private-token shorthand', () => {
@@ -451,15 +509,16 @@ describe('tradeAgent', () => {
 
   it('redacts private trade secrets before agent context leaves the app', () => {
     const secret = `0x${'a'.repeat(64)}`;
+    const privateCode = encodeTradeLink(7, secret);
     expect(
       redactTradeAgentSecrets({
         linkedTrade: {
           accessSecret: secret,
-          terminalPath: `/otc/order/link/VAEP${'b'.repeat(43)}?escrow=direct`,
+          terminalPath: `/otc/order/link/${privateCode}?escrow=direct`,
           tradeId: 7
         },
         selectedMessage: {
-          text: `Open https://example.com/trades/l/VAEP${'c'.repeat(43)}?escrow=private or /otc/order/recurring/9#${secret}`
+          text: `Open https://example.com/otcdesk/terminal/l/${privateCode}?escrow=private or /otc/order/recurring/9#${secret}`
         }
       })
     ).toEqual({
@@ -469,7 +528,7 @@ describe('tradeAgent', () => {
         tradeId: 7
       },
       selectedMessage: {
-        text: 'Open https://example.com/trades/l/[redacted-trade-link]?escrow=private or /otc/order/recurring/9#[redacted-access-secret]'
+        text: 'Open https://example.com/otcdesk/terminal/l/[redacted-trade-link]?escrow=private or /otc/order/recurring/9#[redacted-access-secret]'
       }
     });
   });

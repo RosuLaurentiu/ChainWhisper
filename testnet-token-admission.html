@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>ChainWhisper Testnet Setup</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background:#07060d; color:#f5f3ff; }
+      * { box-sizing:border-box; }
+      body { margin:0; min-height:100vh; background:radial-gradient(circle at 18% 0%,#2a1746 0,transparent 34%),#07060d; }
+      button,a { font:inherit; }
+      button { cursor:pointer; }
+      button:disabled { cursor:not-allowed; opacity:.48; }
+      #testnet-admission-root { width:min(980px,calc(100% - 32px)); margin:0 auto; padding:34px 0 70px; }
+      header { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:22px; }
+      h1 { margin:5px 0 0; font-size:clamp(28px,5vw,46px); letter-spacing:-.04em; }
+      h2 { margin:0 0 16px; font-size:19px; }
+      .eyebrow,.card span { color:#aaa3c7; font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
+      a { color:#d8b4fe; text-decoration:none; }
+      .warning,.card { border:1px solid rgba(167,139,250,.25); border-radius:18px; background:rgba(14,12,24,.88); box-shadow:0 18px 55px rgba(0,0,0,.25); }
+      .warning { padding:18px 20px; margin-bottom:16px; border-color:rgba(245,158,11,.36); background:rgba(58,36,9,.28); }
+      .warning p { margin:7px 0 0; color:#d6d0e5; line-height:1.55; }
+      .card { padding:20px; margin-top:16px; }
+      .connection-card { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+      .connection-card strong { display:block; margin-top:5px; }
+      .wallet-actions { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:10px; }
+      button { border:1px solid #7955ad; border-radius:11px; padding:10px 14px; background:#211632; color:#f5f3ff; }
+      button:hover:not(:disabled) { border-color:#c4a5ef; transform:translateY(-1px); }
+      button.primary { width:100%; margin-top:18px; padding:13px 18px; border-color:#a78bfa; background:linear-gradient(135deg,#7c3aed,#5b21b6); font-weight:700; }
+      button.secondary { background:#13101d; }
+      .progress-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+      .progress-heading strong { display:block; margin-top:2px; font-size:26px; }
+      .progress-track { height:8px; margin:15px 0; overflow:hidden; border-radius:99px; background:#211b2e; }
+      .progress-track i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#8b5cf6,#22c55e); transition:width .25s ease; }
+      .notice { min-height:24px; margin:12px 0; padding:11px 13px; border-radius:10px; background:#17131f; color:#d6d0e5; }
+      .notice.success { background:rgba(22,101,52,.24); color:#bbf7d0; }
+      .notice.error { background:rgba(127,29,29,.3); color:#fecaca; }
+      .next-card { margin-top:16px; padding:17px; border:1px solid rgba(167,139,250,.38); border-radius:14px; background:rgba(76,29,149,.13); }
+      .next-card strong { display:block; margin-top:5px; font-size:18px; }
+      .next-card p { color:#d6d0e5; }
+      code { display:block; overflow-wrap:anywhere; color:#bdb4cf; font-size:12px; }
+      .complete-banner { padding:17px; border-radius:13px; background:rgba(22,101,52,.26); color:#bbf7d0; font-weight:700; }
+      ol { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+      .operation { display:grid; grid-template-columns:34px minmax(0,1fr) auto; align-items:center; gap:12px; padding:11px 12px; border:1px solid rgba(148,163,184,.13); border-radius:11px; color:#8f89a2; }
+      .operation.next { border-color:#8b5cf6; background:rgba(124,58,237,.11); color:#f5f3ff; }
+      .operation.done { color:#86efac; }
+      .operation-index { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:#211a30; }
+      .operation strong,.operation small { display:block; }
+      .operation small { margin-top:3px; color:#8f89a2; }
+      .operation b { font-size:12px; }
+      .muted { color:#8f89a2; }
+      @media (max-width:620px) { #testnet-admission-root{width:min(100% - 20px,980px);padding-top:20px}.connection-card{grid-template-columns:1fr}.wallet-actions{grid-column:1}.progress-heading{align-items:flex-start}.operation{grid-template-columns:32px minmax(0,1fr)}.operation>b{grid-column:2} }
+    </style>
+  </head>
+  <body>
+    <main id="testnet-admission-root"></main>
+    <script type="module" src="/src/testnetTokenAdmissionTool.ts"></script>
+  </body>
+</html>

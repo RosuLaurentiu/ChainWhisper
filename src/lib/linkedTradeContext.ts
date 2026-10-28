@@ -1,4 +1,5 @@
 import { buildTradeTerminalPath, resolveTradeLinkInput } from '../features/trading/hooks/useP2PTradeRoute';
+import { buildLinkTradeV2Path } from './linkTradeV2Links';
 import {
   isWalletAddress,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -102,7 +103,9 @@ export const extractTradeTerminalPathFromMessage = (text: string, currentOrigin?
       continue;
     }
 
-    return buildTradeTerminalPath(tradeLink.tradeId, tradeLink.accessSecret, tradeLink.escrowContract);
+    return tradeLink.linkV2Reference
+      ? buildLinkTradeV2Path(tradeLink.linkV2Reference, tradeLink.accessSecret)
+      : buildTradeTerminalPath(tradeLink.tradeId, tradeLink.accessSecret, tradeLink.escrowContract);
   }
 
   return null;

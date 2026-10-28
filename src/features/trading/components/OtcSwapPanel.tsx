@@ -9,6 +9,7 @@ import { TradeTokenSelect, type TradeComposerTokenOption } from './TradeComposer
 
 type OtcSwapPanelProps = {
   tradeEntryModeTabs: ReactNode;
+  venueTabs: ReactNode;
   actionMode: OtcSwapInputMode;
   linkedActionModes: Record<OtcSwapInputMode, boolean>;
   orderLinkInput: string;
@@ -49,6 +50,7 @@ type OtcSwapPanelProps = {
 
 export default function OtcSwapPanel({
   tradeEntryModeTabs,
+  venueTabs,
   actionMode,
   linkedActionModes,
   orderLinkInput,
@@ -105,10 +107,11 @@ export default function OtcSwapPanel({
   };
 
   return (
-    <section className="standalone-trades-section p2p-swap-section p2p-trade-workspace-panel" aria-label="OTC swap">
+    <section className="standalone-trades-section p2p-swap-section p2p-trade-workspace-panel" aria-label="P2P trade">
       <div className="p2p-trade-entry-panel">
         {tradeEntryModeTabs}
         <div className="p2p-swap-panel">
+          {venueTabs}
           <div
             className="p2p-swap-side-switch"
             role="tablist"

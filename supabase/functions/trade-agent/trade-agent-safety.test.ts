@@ -4,6 +4,7 @@ import {
   getSemanticTradeAgentPreflightError,
   hasUnresolvedTradeAgentPlaceholders
 } from './trade-agent-safety.ts';
+import { redactTradeAgentSecrets } from '../_shared/trade-agent-redaction.ts';
 
 const assert = (condition: unknown, message = 'Assertion failed'): void => {
   if (!condition) {
@@ -11,11 +12,40 @@ const assert = (condition: unknown, message = 'Assertion failed'): void => {
   }
 };
 
+const PRIVATE_LINK_CODE = 'VQEAAAAAABYBI0VniavN7wEjRWeJq83vASNFZ4mrze8BI0VniavN7w';
+
 Deno.test('rejects secrets and private order links before redaction', () => {
   assert(findProhibitedTradeAgentMaterial({ accessSecret: `0x${'12'.repeat(32)}` }) !== null);
-  assert(findProhibitedTradeAgentMaterial('Open /otc/order/link/private-code') !== null);
+  assert(findProhibitedTradeAgentMaterial(`Open /otc/order/link/${PRIVATE_LINK_CODE}`) !== null);
+  assert(findProhibitedTradeAgentMaterial(`/otcdesk/terminal/l/${PRIVATE_LINK_CODE}`) !== null);
+  assert(findProhibitedTradeAgentMaterial(encodeURIComponent(`/otcdesk/terminal/l/${PRIVATE_LINK_CODE}`)) !== null);
+  assert(findProhibitedTradeAgentMaterial(
+    Array.from({ length: 4 }).reduce<string>(
+      (value) => encodeURIComponent(value),
+      `/otcdesk/terminal/l/${PRIVATE_LINK_CODE}`
+    )
+  ) !== null);
+  assert(findProhibitedTradeAgentMaterial(
+    Array.from({ length: 6 }).reduce<string>(
+      (value) => `?p=${encodeURIComponent(value)}`,
+      `/otcdesk/terminal/l/${PRIVATE_LINK_CODE}`
+    )
+  ) !== null);
+  assert(findProhibitedTradeAgentMaterial(
+    `?noise=%ZZ&p=${encodeURIComponent(`/otcdesk/terminal/l/${PRIVATE_LINK_CODE}`)}`
+  ) !== null);
+  assert(findProhibitedTradeAgentMaterial(PRIVATE_LINK_CODE) !== null);
   assert(findProhibitedTradeAgentMaterial(`private key: 0x${'34'.repeat(32)}`) !== null);
+  assert(findProhibitedTradeAgentMaterial('34'.repeat(32)) !== null);
+  assert(findProhibitedTradeAgentMaterial('test test test test test test test test test test test junk') !== null);
+  assert(findProhibitedTradeAgentMaterial(`${'abandon '.repeat(23)}art`) !== null);
   assert(findProhibitedTradeAgentMaterial('Compare WISP with COTI') === null);
+  assert(findProhibitedTradeAgentMaterial('/otcdesk/terminal/l/VgAW') === null);
+  const redacted = redactTradeAgentSecrets({ clientSecret: 'provider-specific-opaque-value' });
+  assert(
+    (redacted as { clientSecret?: unknown }).clientSecret === '[redacted-access-secret]',
+    'Expected provider-specific secret keys to remain redacted.'
+  );
 });
 
 Deno.test('detects unresolved paid-action placeholders', () => {

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } 
 import {
   PRIVATE_REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_ADDRESS,
-  RECURRING_OTC_CONTRACT_ADDRESS,
   TIP_NATIVE_TOKEN_SYMBOL,
   formatCotiAmount,
   formatTokenAmount,
@@ -21,20 +20,23 @@ import {
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
 } from '../../../lib/appHelpers';
-import { readCurrentPrivateErc20BalanceWei } from '../../../lib/appChain';
-import type { P2PActionNoticeAction, P2PActionNoticeInput } from '../../../lib/p2pActionNotice';
+import {
+  getP2PActionFailureStatus,
+  type P2PActionNoticeAction,
+  type P2PActionNoticeInput
+} from '../../../lib/p2pActionNotice';
 import { getSnapshotKey } from '../../../lib/p2pTradeView';
 import {
   isTradeActionConfirmationCancelledError,
   type TradeFundingPreflightInput
 } from '../../../lib/tradeActionConfirm';
 import type { TradeComposerModel } from '../../../lib/tradeComposer';
+import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
 import {
-  createRecurringOrderOnChain,
-  editRecurringOrderOnChain,
-  fillRecurringOrderSideOnChain,
-  updateRecurringOrderStatusOnChain
-} from '../../../lib/tradeActions';
+  buildOtcV2ConditionalApproval,
+  buildOtcV2ConfirmationDetails,
+  resolveRecurringOtcV2ConfirmationCosts
+} from '../../../lib/otcV2Confirmation';
 import {
   formatWalletFundAmount
 } from '../../../lib/walletFunds';
@@ -52,14 +54,13 @@ import {
   parseTokenAmountString,
   resolveRecurringSideTerms,
   type RecurringFundingBalanceResult,
-  type TradeCreateMode,
-  type TradeSigner
+  type TradeCreateMode
 } from '../components/P2PTradingPage.helpers';
 
 type RecurringStatusAction = 'pause' | 'resume' | 'cancel';
 type RecurringCombinedBalance = {
   combinedBalanceWei: bigint | null;
-  ownerPrivacyRequired?: boolean;
+  privacyRequired?: boolean;
 };
 
 type UseP2PRecurringOrderActionsArgs = {
@@ -73,26 +74,23 @@ type UseP2PRecurringOrderActionsArgs = {
   editingRecurringOrder: TradeSnapshot | null;
   editingTrade: TradeSnapshot | null;
   ensureTradeFunding: (input: TradeFundingPreflightInput) => Promise<void>;
-  getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
   nativeBalanceWei: bigint | null;
   navigateToTradePath: (path: string) => void;
   onActionNotice: (notice: P2PActionNoticeInput) => void;
   onCotiNetwork: boolean;
+  otcV2ActionRuntime?: OtcV2ActionRuntime | null;
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   pWispFooterBalanceState: PrivateTokenBalanceState;
   recurringAddBuyBudgetInput: string;
   recurringAddSellInventoryInput: string;
   recurringBuyFillInput: string;
   recurringBuyPriceInput: string;
-  recurringHidePrivateAmounts: boolean;
   recurringRemoveBuyBudgetInput: string;
   recurringRemoveSellInventoryInput: string;
   recurringSellFillInput: string;
   recurringSellPriceInput: string;
-  refreshTradeDataInBackground: (tradeId?: number, escrowContract?: string, signer?: TradeSigner) => void;
+  refreshRecurringV2Trades: () => void;
   rememberTradeTerminalReturn: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
-  resolvedRouteAccessSecret: string;
-  resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
   rewardTokenBalanceWei: bigint | null;
   runTradeWalletPromptFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setCreatedRecurringOrderId: Dispatch<SetStateAction<number | null>>;
@@ -126,6 +124,8 @@ type UseP2PRecurringOrderActionsArgs = {
   setTradeRequestTokenSelection: Dispatch<SetStateAction<TradeTokenPresetKey>>;
   startFreshTrade: () => void;
   tradeComposerModel: TradeComposerModel;
+  tradeExpiryHoursInput: string;
+  tradeHasNoExpiry: boolean;
   tradeRequiredFeeWei: bigint | null;
   walletAddress: string;
 };
@@ -141,26 +141,23 @@ export default function useP2PRecurringOrderActions({
   editingRecurringOrder,
   editingTrade,
   ensureTradeFunding,
-  getTradeSigner,
   nativeBalanceWei,
   navigateToTradePath,
   onActionNotice,
   onCotiNetwork,
+  otcV2ActionRuntime,
   openTrade,
   pWispFooterBalanceState,
   recurringAddBuyBudgetInput,
   recurringAddSellInventoryInput,
   recurringBuyFillInput,
   recurringBuyPriceInput,
-  recurringHidePrivateAmounts,
   recurringRemoveBuyBudgetInput,
   recurringRemoveSellInventoryInput,
   recurringSellFillInput,
   recurringSellPriceInput,
-  refreshTradeDataInBackground,
+  refreshRecurringV2Trades,
   rememberTradeTerminalReturn,
-  resolvedRouteAccessSecret,
-  resolveRequiredFeeForTradeCreate,
   rewardTokenBalanceWei,
   runTradeWalletPromptFlow,
   setCreatedRecurringOrderId,
@@ -194,6 +191,8 @@ export default function useP2PRecurringOrderActions({
   setTradeRequestTokenSelection,
   startFreshTrade,
   tradeComposerModel,
+  tradeExpiryHoursInput,
+  tradeHasNoExpiry,
   tradeRequiredFeeWei,
   walletAddress
 }: UseP2PRecurringOrderActionsArgs) {
@@ -236,22 +235,9 @@ export default function useP2PRecurringOrderActions({
   ]);
 
   const startFreshRecurringOrder = useCallback(() => {
-    setTradeCreateMode('recurring');
-    setEditingRecurringOrder(null);
-    setRecurringBuyPriceInput('');
-    setRecurringSellPriceInput('');
-    clearRecurringInputs();
-    setCreatedRecurringOrderId(null);
-    setCreatedRecurringOrderLink('');
-  }, [
-    clearRecurringInputs,
-    setCreatedRecurringOrderId,
-    setCreatedRecurringOrderLink,
-    setEditingRecurringOrder,
-    setRecurringBuyPriceInput,
-    setRecurringSellPriceInput,
-    setTradeCreateMode
-  ]);
+    startFreshOneOffTrade();
+    setTradeActionError('New recurring orders are no longer available. Create a one-off trade instead.');
+  }, [setTradeActionError, startFreshOneOffTrade]);
 
   const cancelCounterCreate = useCallback(() => {
     clearCounterTrade();
@@ -359,8 +345,8 @@ export default function useP2PRecurringOrderActions({
   );
 
   const clearRecurringEdit = useCallback(() => {
-    startFreshRecurringOrder();
-  }, [startFreshRecurringOrder]);
+    startFreshOneOffTrade();
+  }, [startFreshOneOffTrade]);
 
   useEffect(() => {
     if (editingTrade || counterParentTrade) {
@@ -424,7 +410,7 @@ export default function useP2PRecurringOrderActions({
       if (combinedBalance?.combinedBalanceWei !== null && combinedBalance?.combinedBalanceWei !== undefined) {
         return { balanceWei: combinedBalance.combinedBalanceWei };
       }
-      if (combinedBalance?.ownerPrivacyRequired) {
+      if (combinedBalance?.privacyRequired) {
         return {
           balanceWei: null,
           unavailableMessage: `Unlock owner privacy to include owner ${token.symbol} balance.`
@@ -557,6 +543,11 @@ export default function useP2PRecurringOrderActions({
       setTradeActionError(message);
       onActionNotice({ action, message, status: 'error', surface: 'composer' });
     };
+    // Existing order management must remain available for funded recovery.
+    if (!recurringOrderBeingEdited) {
+      setComposerNoticeError('New recurring orders are no longer available. Create a one-off trade instead.');
+      return;
+    }
     const baseToken = tradeComposerModel.selectedTradeOfferToken;
     const quoteToken = tradeComposerModel.selectedTradeRequestToken;
     if (!walletAddress) {
@@ -597,8 +588,24 @@ export default function useP2PRecurringOrderActions({
         ? 'recurring-liquidity'
         : 'recurring-update'
       : 'create-recurring-order';
-    const hidePrivateRecurringAmounts =
-      recurringHidePrivateAmounts && (baseToken.kind === 'private-erc20' || quoteToken.kind === 'private-erc20');
+    const baseIsPrivate = baseToken.kind === 'private-erc20';
+    const quoteIsPrivate = quoteToken.kind === 'private-erc20';
+    if (!otcV2ActionRuntime?.isCurrent()) {
+      setComposerNoticeError('The verified OTC V2 suite is unavailable in the current wallet session.', recurringNoticeAction);
+      return;
+    }
+    if (recurringOrderBeingEdited && !recurringOrderBeingEdited.v2) {
+      setComposerNoticeError('Legacy recurring orders are read-only. Create a recurring OTC V2 order.', recurringNoticeAction);
+      return;
+    }
+    if (baseIsPrivate !== quoteIsPrivate) {
+      setComposerNoticeError(
+        'OTC V2 recurring orders require either two public assets or two private tokens. Mixed public/private pairs are not supported.',
+        recurringNoticeAction
+      );
+      return;
+    }
+    const v2Protocol = recurringOrderBeingEdited?.v2?.protocol ?? (baseIsPrivate ? 'private-recurring-v2' : 'recurring-v2');
     const buyTerms = resolveRecurringSideTerms({
       baseAmountWei: null,
       quoteAmountWei: null,
@@ -622,6 +629,25 @@ export default function useP2PRecurringOrderActions({
       );
       return;
     }
+    const privateRecurringPricesChanged = Boolean(
+      recurringOrderBeingEdited &&
+      v2Protocol === 'private-recurring-v2' &&
+      (
+        recurringOrderBeingEdited.buyTerms.baseAmount !== buyTerms.baseAmountWei.toString() ||
+        recurringOrderBeingEdited.buyTerms.quoteAmount !== buyTerms.quoteAmountWei.toString() ||
+        recurringOrderBeingEdited.sellTerms.baseAmount !== sellTerms.baseAmountWei.toString() ||
+        recurringOrderBeingEdited.sellTerms.quoteAmount !== sellTerms.quoteAmountWei.toString()
+      )
+    );
+    if (
+      recurringOrderBeingEdited &&
+      v2Protocol === 'private-recurring-v2' &&
+      !privateRecurringPricesChanged &&
+      !liquidityChanged
+    ) {
+      setComposerNoticeError('Change a price or liquidity amount before updating this private recurring order.');
+      return;
+    }
     if (!recurringOrderBeingEdited && addBaseInventoryWei <= 0n && addQuoteInventoryWei <= 0n) {
       setComposerNoticeError('Add buy liquidity, sell liquidity, or both to start the order.', recurringNoticeAction);
       return;
@@ -630,7 +656,7 @@ export default function useP2PRecurringOrderActions({
       addBaseInventoryWei,
       addQuoteInventoryWei,
       baseToken,
-      includeCreateFee: !recurringOrderBeingEdited,
+      includeCreateFee: false,
       quoteToken
     });
     if (fundingValidationMessage) {
@@ -642,10 +668,7 @@ export default function useP2PRecurringOrderActions({
     setCreatingRecurringOrder(true);
     try {
       const actionResult = await runTradeWalletPromptFlow(async () => {
-        const needsAes = baseToken.kind === 'private-erc20' || quoteToken.kind === 'private-erc20';
-        const nativeFeeWei = recurringOrderBeingEdited
-          ? 0n
-          : await resolveRequiredFeeForTradeCreate(RECURRING_OTC_CONTRACT_ADDRESS);
+        const nativeFeeWei = 0n;
         const recurringSummary = [
           {
             label: 'Pair',
@@ -686,9 +709,35 @@ export default function useP2PRecurringOrderActions({
             )
           });
         }
+        const v2Approvals = [
+              buildOtcV2ConditionalApproval({
+                amountWei: addBaseInventoryWei,
+                kind: baseToken.kind === 'native' ? 'none' : baseToken.kind,
+                symbol: baseToken.symbol
+              }),
+              buildOtcV2ConditionalApproval({
+                amountWei: addQuoteInventoryWei,
+                kind: quoteToken.kind === 'native' ? 'none' : quoteToken.kind,
+                symbol: quoteToken.symbol
+              })
+            ].filter((approval): approval is NonNullable<typeof approval> => approval !== null);
+        const v2Costs = resolveRecurringOtcV2ConfirmationCosts({
+              creating: !recurringOrderBeingEdited,
+              liquidityChanged,
+              pricesChanged: privateRecurringPricesChanged,
+              protocol: v2Protocol
+            });
+        const v2Confirmation = buildOtcV2ConfirmationDetails({
+              actionTransactionCount: v2Costs.actionTransactionCount,
+              approvals: v2Approvals,
+              cotiPrivateInputCount: v2Costs.cotiPrivateInputCount,
+              summaryRows: recurringSummary
+            });
         await ensureTradeFunding({
           actionLabel: recurringOrderBeingEdited ? 'update recurring order' : 'create recurring order',
           confirmButtonLabel: recurringOrderBeingEdited ? 'Update order' : 'Create order',
+           confirmMessage: v2Confirmation.confirmMessage,
+           confirmationStats: v2Confirmation.confirmationStats,
           confirmTitle: recurringOrderBeingEdited ? 'Confirm recurring update' : 'Confirm recurring order',
           confirmationPolicy: 'always',
           requirements: [
@@ -712,57 +761,125 @@ export default function useP2PRecurringOrderActions({
               reason: 'trade fee'
             }
           ],
-          tradeSummary: recurringSummary
+          tradeSummary: v2Confirmation.tradeSummary
         });
         onActionNotice({ action: recurringNoticeAction, status: 'pending', surface: 'composer' });
-        const signer = await getTradeSigner(needsAes);
-        const recurringAssetParams = {
-          baseAsset: {
-            kind: baseToken.kind,
-            tokenAddress: baseToken.tokenAddress
-          },
-          quoteAsset: {
-            kind: quoteToken.kind,
-            tokenAddress: quoteToken.tokenAddress
+        let result: { orderId: number; escrowContract: string; txHash?: string };
+        {
+          const deployment = otcV2ActionRuntime.deployments[v2Protocol];
+          const editingIdentity = recurringOrderBeingEdited?.v2;
+          if (editingIdentity && (
+            editingIdentity.protocol !== v2Protocol ||
+            editingIdentity.chainId !== deployment.chainId ||
+            editingIdentity.contractAddress.toLowerCase() !== deployment.contractAddress.toLowerCase() ||
+            editingRecurringOrder?.escrowContract?.toLowerCase() !== deployment.contractAddress.toLowerCase()
+          )) {
+            throw new Error('This recurring order does not match the verified OTC V2 deployment.');
           }
-        };
-        const result = recurringOrderBeingEdited
-          ? await (async () => {
-              const editResult = await editRecurringOrderOnChain({
-                signer,
-                makerAddress: walletAddress,
-                orderId: recurringOrderBeingEdited.orderId,
-                ...recurringAssetParams,
-                buyBaseAmountWei: buyTerms.baseAmountWei,
-                buyQuoteAmountWei: buyTerms.quoteAmountWei,
-                sellBaseAmountWei: sellTerms.baseAmountWei,
-                sellQuoteAmountWei: sellTerms.quoteAmountWei,
-                addBaseInventoryWei,
-                addQuoteInventoryWei,
-                removeBaseInventoryWei,
-                removeQuoteInventoryWei,
-                hidePrivateAmounts: hidePrivateRecurringAmounts
-              });
-              return {
-                orderId: recurringOrderBeingEdited.orderId,
-                escrowContract: editingRecurringOrder?.escrowContract ?? RECURRING_OTC_CONTRACT_ADDRESS,
-                txHash: editResult.txHash
-              };
-            })()
-          : await createRecurringOrderOnChain({
-              signer,
-              makerAddress: walletAddress,
-              ...recurringAssetParams,
-              buyBaseAmountWei: buyTerms.baseAmountWei,
-              buyQuoteAmountWei: buyTerms.quoteAmountWei,
-              sellBaseAmountWei: sellTerms.baseAmountWei,
-              sellQuoteAmountWei: sellTerms.quoteAmountWei,
-              initialBaseInventoryWei: addBaseInventoryWei,
-              initialQuoteInventoryWei: addQuoteInventoryWei,
-              nativeFeeWei,
-              isPublic: true,
-              hidePrivateAmounts: hidePrivateRecurringAmounts
+          const parsedExpiryHours = Number(tradeExpiryHoursInput);
+          if (!tradeHasNoExpiry && (
+            !Number.isFinite(parsedExpiryHours) || parsedExpiryHours <= 0 || parsedExpiryHours > 365 * 24
+          )) {
+            throw new Error('Recurring order expiry must be between 1 hour and 365 days.');
+          }
+          const expiresAt = recurringOrderBeingEdited
+            ? editingRecurringOrder?.expiresAt ?? 0
+            : tradeHasNoExpiry
+              ? 0
+              : Math.floor(Date.now() / 1000) + Math.floor(parsedExpiryHours * 3600);
+          let confirmed: { orderId?: string; transactionHash: string };
+          if (v2Protocol === 'recurring-v2') {
+            const publicAsset = (token: typeof baseToken) => ({
+              assetType: token.kind === 'native' ? 'native' as const : 'erc20' as const,
+              ...(token.kind === 'native' ? {} : { token: token.tokenAddress })
             });
+            confirmed = await otcV2ActionRuntime.recurring(recurringOrderBeingEdited
+              ? {
+                  kind: 'edit',
+                  orderId: recurringOrderBeingEdited.orderId,
+                  expectedRevision: editingIdentity!.revision,
+                  buyTerms: { baseAmount: buyTerms.baseAmountWei, quoteAmount: buyTerms.quoteAmountWei },
+                  sellTerms: { baseAmount: sellTerms.baseAmountWei, quoteAmount: sellTerms.quoteAmountWei },
+                  baseAdded: addBaseInventoryWei,
+                  quoteAdded: addQuoteInventoryWei,
+                  baseRemoved: removeBaseInventoryWei,
+                  quoteRemoved: removeQuoteInventoryWei,
+                  expiresAt
+                }
+              : {
+                  kind: 'create',
+                  baseAsset: publicAsset(baseToken),
+                  quoteAsset: publicAsset(quoteToken),
+                  buyTerms: { baseAmount: buyTerms.baseAmountWei, quoteAmount: buyTerms.quoteAmountWei },
+                  sellTerms: { baseAmount: sellTerms.baseAmountWei, quoteAmount: sellTerms.quoteAmountWei },
+                  initialBaseInventory: addBaseInventoryWei,
+                  initialQuoteInventory: addQuoteInventoryWei,
+                  expiresAt
+                });
+          } else {
+            if (!baseToken.tokenAddress || !quoteToken.tokenAddress) {
+              throw new Error('Private recurring V2 requires two private token addresses.');
+            }
+            if (addBaseInventoryWei > 0n && removeBaseInventoryWei > 0n) {
+              throw new Error('Add or remove base liquidity in one update, not both.');
+            }
+            if (addQuoteInventoryWei > 0n && removeQuoteInventoryWei > 0n) {
+              throw new Error('Add or remove quote liquidity in one update, not both.');
+            }
+            if (!recurringOrderBeingEdited) {
+              confirmed = await otcV2ActionRuntime.privateRecurring({
+                kind: 'create',
+                baseToken: baseToken.tokenAddress,
+                quoteToken: quoteToken.tokenAddress,
+                buyTerms: { baseAmount: buyTerms.baseAmountWei, quoteAmount: buyTerms.quoteAmountWei },
+                sellTerms: { baseAmount: sellTerms.baseAmountWei, quoteAmount: sellTerms.quoteAmountWei },
+                baseInventory: addBaseInventoryWei,
+                quoteInventory: addQuoteInventoryWei,
+                expiresAt
+              });
+            } else {
+              const revision = BigInt(editingIdentity!.revision);
+              let last: { orderId?: string; transactionHash: string } | undefined;
+              if (privateRecurringPricesChanged) {
+                last = await otcV2ActionRuntime.privateRecurring({
+                  kind: 'edit-prices',
+                  orderId: recurringOrderBeingEdited.orderId,
+                  expectedRevision: revision,
+                  buyTerms: { baseAmount: buyTerms.baseAmountWei, quoteAmount: buyTerms.quoteAmountWei },
+                  sellTerms: { baseAmount: sellTerms.baseAmountWei, quoteAmount: sellTerms.quoteAmountWei },
+                  expiresAt
+                });
+              }
+              if (liquidityChanged) {
+                last = await otcV2ActionRuntime.privateRecurring({
+                  kind: 'adjust-liquidity',
+                  orderId: recurringOrderBeingEdited.orderId,
+                  expectedRevision: revision + (privateRecurringPricesChanged ? 1n : 0n),
+                  base: {
+                    direction: removeBaseInventoryWei > 0n ? 'remove' : 'add',
+                    amount: removeBaseInventoryWei > 0n ? removeBaseInventoryWei : addBaseInventoryWei
+                  },
+                  quote: {
+                    direction: removeQuoteInventoryWei > 0n ? 'remove' : 'add',
+                    amount: removeQuoteInventoryWei > 0n ? removeQuoteInventoryWei : addQuoteInventoryWei
+                  }
+                });
+              }
+              if (!last) throw new Error('No private recurring V2 changes were selected.');
+              confirmed = last;
+            }
+          }
+          const confirmedOrderId = confirmed.orderId ?? String(recurringOrderBeingEdited?.orderId ?? '');
+          const numericOrderId = Number(confirmedOrderId);
+          if (!Number.isSafeInteger(numericOrderId) || numericOrderId <= 0) {
+            throw new Error('The confirmed recurring V2 order ID is invalid.');
+          }
+          result = {
+            orderId: numericOrderId,
+            escrowContract: deployment.contractAddress,
+            txHash: confirmed.transactionHash
+          };
+        }
         setCreatedRecurringOrderId(result.orderId);
         const nextLink = buildTradeShareUrl(result.orderId, undefined, result.escrowContract);
         setCreatedRecurringOrderLink(nextLink);
@@ -771,7 +888,7 @@ export default function useP2PRecurringOrderActions({
           clearRecurringInputs();
           openTrade(result.orderId, undefined, result.escrowContract);
         }
-        refreshTradeDataInBackground(result.orderId, result.escrowContract, signer);
+        refreshRecurringV2Trades();
         openTrade(result.orderId, undefined, result.escrowContract);
         return result;
       });
@@ -785,14 +902,19 @@ export default function useP2PRecurringOrderActions({
       if (isTradeActionConfirmationCancelledError(error)) {
         return;
       }
-      const message = error instanceof Error
-        ? error.message
-        : recurringOrderBeingEdited
+      const actionError = getProviderErrorMessage(
+        error,
+        recurringOrderBeingEdited
           ? 'Failed to update recurring order.'
-          : 'Failed to create recurring order.';
-      const actionError = getProviderErrorMessage(error, message);
+          : 'Failed to create recurring order.'
+      );
       setTradeActionError(actionError);
-      onActionNotice({ action: recurringNoticeAction, message: actionError, status: 'error', surface: 'composer' });
+      onActionNotice({
+        action: recurringNoticeAction,
+        message: actionError,
+        status: getP2PActionFailureStatus(actionError),
+        surface: 'composer'
+      });
     } finally {
       setCreatingRecurringOrder(false);
     }
@@ -801,19 +923,17 @@ export default function useP2PRecurringOrderActions({
     clearRecurringInputs,
     editingRecurringOrder,
     ensureTradeFunding,
-    getTradeSigner,
     onActionNotice,
     onCotiNetwork,
     openTrade,
+    otcV2ActionRuntime,
     recurringAddBuyBudgetInput,
     recurringAddSellInventoryInput,
     recurringBuyPriceInput,
-    recurringHidePrivateAmounts,
     recurringRemoveBuyBudgetInput,
     recurringRemoveSellInventoryInput,
     recurringSellPriceInput,
-    refreshTradeDataInBackground,
-    resolveRequiredFeeForTradeCreate,
+    refreshRecurringV2Trades,
     runTradeWalletPromptFlow,
     setCreatedRecurringOrderId,
     setCreatedRecurringOrderLink,
@@ -822,6 +942,8 @@ export default function useP2PRecurringOrderActions({
     setTradeActionError,
     tradeComposerModel.selectedTradeOfferToken,
     tradeComposerModel.selectedTradeRequestToken,
+    tradeExpiryHoursInput,
+    tradeHasNoExpiry,
     validateRecurringFundingBalances,
     walletAddress
   ]);
@@ -835,6 +957,13 @@ export default function useP2PRecurringOrderActions({
     ) => {
       const recurring = snapshot.recurringOrder;
       if (!recurring) {
+        return;
+      }
+      const v2Identity = recurring.v2;
+      if (!v2Identity) {
+        const message = 'Legacy recurring orders are read-only. Create or use a recurring OTC V2 order.';
+        setTradeActionError(message);
+        onActionNotice({ action: 'fill', message, status: 'error', surface: 'terminal', tradeKey: getSnapshotKey(snapshot) });
         return;
       }
       const tradeKey = getSnapshotKey(snapshot);
@@ -877,9 +1006,31 @@ export default function useP2PRecurringOrderActions({
         onActionNotice({ action: 'fill', status: 'pending', surface: 'terminal', tradeKey });
         const actionResult = await runTradeWalletPromptFlow(async () => {
           if (options?.rememberTerminalReturn !== false) {
-            rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+            rememberTradeTerminalReturn(snapshot.tradeId, undefined, snapshot.escrowContract);
           }
-          const needsAes = recurring.mode !== 'public' || inputAsset.kind === 'private-erc20';
+          let canonicalV2OutputAmount: bigint | null = null;
+          if (!otcV2ActionRuntime || !otcV2ActionRuntime.isCurrent()) {
+            throw new Error('This OTC V2 order is unavailable in the current wallet session.');
+          }
+          const deployment = otcV2ActionRuntime.deployments[v2Identity.protocol];
+          if (
+            deployment.chainId !== v2Identity.chainId ||
+            deployment.contractAddress.toLowerCase() !== v2Identity.contractAddress.toLowerCase() ||
+            snapshot.escrowContract?.toLowerCase() !== v2Identity.contractAddress.toLowerCase()
+          ) {
+            throw new Error('This recurring order does not match the verified OTC V2 deployment.');
+          }
+          if (v2Identity.protocol === 'recurring-v2') {
+            const quote = await otcV2ActionRuntime.quoteRecurring(
+              recurring.orderId,
+              side,
+              inputAmountWei
+            );
+            if (quote.revision !== v2Identity.revision) {
+              throw new Error('This recurring quote is stale. Refresh the order and review it again.');
+            }
+            canonicalV2OutputAmount = BigInt(quote.outputAmount);
+          }
           const defaultTradeSummary = [
             {
               label: 'Order',
@@ -892,8 +1043,11 @@ export default function useP2PRecurringOrderActions({
             {
               label: 'You buy',
               value:
-                outputAmountWei > 0n
-                  ? formatWalletFundAmount(outputAmountWei, outputAsset)
+                (canonicalV2OutputAmount ?? outputAmountWei) > 0n
+                  ? `${v2Identity?.protocol === 'private-recurring-v2' ? 'Up to ' : ''}${formatWalletFundAmount(
+                      canonicalV2OutputAmount ?? outputAmountWei,
+                      outputAsset
+                    )}`
                   : `Estimated ${outputAsset.symbol}`
             },
             {
@@ -901,13 +1055,24 @@ export default function useP2PRecurringOrderActions({
               value: side === 'buy' ? 'Sell side' : 'Buy side'
             }
           ];
+          const v2Approval = buildOtcV2ConditionalApproval({
+                amountWei: inputAmountWei,
+                kind: inputAsset.kind === 'native' ? 'none' : inputAsset.kind,
+                symbol: inputAsset.symbol
+              });
+          const v2Confirmation = buildOtcV2ConfirmationDetails({
+                approvals: v2Approval ? [v2Approval] : [],
+                cotiPrivateInputCount: v2Identity.protocol === 'private-recurring-v2' ? 1 : 0,
+                summaryRows: options?.tradeSummary ?? defaultTradeSummary
+              });
           await ensureTradeFunding({
             actionLabel: options?.actionLabel ?? 'fill recurring order',
             confirmButtonLabel: options?.confirmButtonLabel,
-            confirmMessage: options?.confirmMessage,
+            confirmMessage: options?.confirmMessage ?? v2Confirmation.confirmMessage,
+            confirmationStats: v2Confirmation.confirmationStats ?? options?.confirmationStats,
             confirmTitle: options?.confirmTitle,
-            confirmationPolicy: options?.confirmationPolicy,
-            tradeSummary: options?.tradeSummary ?? defaultTradeSummary,
+            confirmationPolicy: 'always',
+            tradeSummary: v2Confirmation.tradeSummary ?? options?.tradeSummary ?? defaultTradeSummary,
             requirements: [
               {
                 asset: inputAsset,
@@ -916,42 +1081,30 @@ export default function useP2PRecurringOrderActions({
               }
             ]
           });
-          const signer = await getTradeSigner(needsAes);
-          if (inputAsset.kind === 'private-erc20' && inputAsset.tokenAddress) {
-            const privateInputBalance = await readCurrentPrivateErc20BalanceWei(
-              inputAsset.tokenAddress,
-              walletAddress,
-              signer
-            ).catch(() => null);
-            if (privateInputBalance === null) {
-              throw new Error(`Unlock privacy and refresh your ${inputAsset.symbol} balance before selling.`);
-            }
-            if (privateInputBalance < inputAmountWei) {
-              throw new Error(
-                `Not enough ${inputAsset.symbol}. Available: ${formatTokenAmount(privateInputBalance, inputAsset.decimals, 6)} ${inputAsset.symbol}.`
-              );
-            }
-          }
-          const fillResult = await fillRecurringOrderSideOnChain({
-            signer,
-            ownerAddress: walletAddress,
-            orderId: recurring.orderId,
-            side,
-            inputAsset,
-            inputAmountWei,
-            hiddenAmounts: recurring.mode !== 'public',
-            accessSecret: resolvedRouteAccessSecret || undefined
-          });
-          if (side === 'buy') {
-            setRecurringBuyFillInput('');
-          } else {
-            setRecurringSellFillInput('');
-          }
+          const confirmed = v2Identity.protocol === 'recurring-v2'
+              ? await otcV2ActionRuntime!.recurring({
+                  kind: 'execute',
+                  orderId: recurring.orderId,
+                  side,
+                  expectedRevision: v2Identity.revision,
+                  maxInputAmount: inputAmountWei,
+                  minOutputAmount: canonicalV2OutputAmount ?? 1n
+                })
+              : await otcV2ActionRuntime!.privateRecurring({
+                  kind: 'execute',
+                  orderId: recurring.orderId,
+                  side,
+                  expectedRevision: v2Identity.revision,
+                  maxInputAmount: inputAmountWei,
+                  minOutputAmount: 1n
+                });
+          if (side === 'buy') setRecurringBuyFillInput('');
+          else setRecurringSellFillInput('');
           if (options?.openAfterAction !== false) {
-            openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
+            openTrade(snapshot.tradeId, undefined, snapshot.escrowContract);
           }
-          refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-          return fillResult;
+          refreshRecurringV2Trades();
+          return { filledTxHash: confirmed.transactionHash };
         });
         onActionNotice({
           action: 'fill',
@@ -982,22 +1135,27 @@ export default function useP2PRecurringOrderActions({
               : 'Recurring order fill failed.';
         const actionError = getOnChainFailureMessage(error, fallbackMessage);
         setTradeActionError(actionError);
-        onActionNotice({ action: 'fill', message: actionError, status: 'error', surface: 'terminal', tradeKey });
+        onActionNotice({
+          action: 'fill',
+          message: actionError,
+          status: getP2PActionFailureStatus(actionError),
+          surface: 'terminal',
+          tradeKey
+        });
       } finally {
         setProcessingRecurringAction('');
       }
     },
     [
       ensureTradeFunding,
-      getTradeSigner,
       onActionNotice,
       onCotiNetwork,
       openTrade,
+      otcV2ActionRuntime,
       recurringBuyFillInput,
       recurringSellFillInput,
-      refreshTradeDataInBackground,
+      refreshRecurringV2Trades,
       rememberTradeTerminalReturn,
-      resolvedRouteAccessSecret,
       runTradeWalletPromptFlow,
       setRecurringBuyFillInput,
       setRecurringSellFillInput,
@@ -1014,6 +1172,13 @@ export default function useP2PRecurringOrderActions({
       }
       const tradeKey = getSnapshotKey(snapshot);
       const noticeAction: P2PActionNoticeAction = action === 'cancel' ? 'recurring-close' : 'recurring-update';
+      if (!recurring.v2) {
+        const message = 'Legacy recurring orders are read-only. Create or use a recurring OTC V2 order.';
+        setTradeActionError(message);
+        onActionNotice({ action: noticeAction, message, status: 'error', surface: 'terminal', tradeKey });
+        return;
+      }
+      const v2Identity = recurring.v2;
       if (!walletAddress) {
         const message = 'Connect a wallet first.';
         setTradeActionError(message);
@@ -1033,16 +1198,51 @@ export default function useP2PRecurringOrderActions({
       try {
         onActionNotice({ action: noticeAction, status: 'pending', surface: 'terminal', tradeKey });
         const actionResult = await runTradeWalletPromptFlow(async () => {
-          rememberTradeTerminalReturn(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
-          const signer = await getTradeSigner(false);
-          const statusResult = await updateRecurringOrderStatusOnChain({
-            signer,
-            orderId: recurring.orderId,
-            action
-          });
-          openTrade(snapshot.tradeId, resolvedRouteAccessSecret || undefined, snapshot.escrowContract);
-          refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-          return statusResult;
+          rememberTradeTerminalReturn(snapshot.tradeId, undefined, snapshot.escrowContract);
+          if (!otcV2ActionRuntime || !otcV2ActionRuntime.isCurrent()) {
+            throw new Error('This OTC V2 order is unavailable in the current wallet session.');
+          }
+          const deployment = otcV2ActionRuntime.deployments[v2Identity.protocol];
+          if (
+            deployment.chainId !== v2Identity.chainId ||
+            deployment.contractAddress.toLowerCase() !== v2Identity.contractAddress.toLowerCase() ||
+            snapshot.escrowContract?.toLowerCase() !== v2Identity.contractAddress.toLowerCase()
+          ) {
+            throw new Error('This recurring order does not match the verified OTC V2 deployment.');
+          }
+          const actionCopy = action === 'cancel'
+              ? { label: 'close recurring order', primary: 'Close order', title: 'Confirm close order' }
+              : action === 'pause'
+                ? { label: 'pause recurring order', primary: 'Pause order', title: 'Confirm pause' }
+                : { label: 'resume recurring order', primary: 'Resume order', title: 'Confirm resume' };
+          const confirmation = buildOtcV2ConfirmationDetails({
+              cotiPrivateInputCount: 0,
+              summaryRows: [{ label: 'Order', value: `#${recurring.orderId}` }]
+            });
+          await ensureTradeFunding({
+              actionLabel: actionCopy.label,
+              confirmButtonLabel: actionCopy.primary,
+              confirmMessage: confirmation.confirmMessage,
+              confirmationPolicy: 'always',
+              confirmationStats: confirmation.confirmationStats,
+              confirmTitle: actionCopy.title,
+              requirements: [],
+              tradeSummary: confirmation.tradeSummary
+            });
+          const confirmed = v2Identity.protocol === 'recurring-v2'
+              ? await otcV2ActionRuntime.recurring({
+                  kind: action,
+                  orderId: recurring.orderId,
+                  expectedRevision: v2Identity.revision
+                })
+              : await otcV2ActionRuntime.privateRecurring({
+                  kind: action,
+                  orderId: recurring.orderId,
+                  expectedRevision: v2Identity.revision
+                });
+          openTrade(snapshot.tradeId, undefined, snapshot.escrowContract);
+          refreshRecurringV2Trades();
+          return { txHash: confirmed.transactionHash };
         });
         onActionNotice({
           action: noticeAction,
@@ -1052,22 +1252,37 @@ export default function useP2PRecurringOrderActions({
           txHash: actionResult.txHash
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Recurring order update failed.';
-        const actionError = getProviderErrorMessage(error, message);
+        if (isTradeActionConfirmationCancelledError(error)) {
+          onActionNotice({
+            action: noticeAction,
+            message: 'Action cancelled',
+            status: 'info',
+            surface: 'terminal',
+            tradeKey
+          });
+          return;
+        }
+        const actionError = getProviderErrorMessage(error, 'Recurring order update failed.');
         setTradeActionError(actionError);
-        onActionNotice({ action: noticeAction, message: actionError, status: 'error', surface: 'terminal', tradeKey });
+        onActionNotice({
+          action: noticeAction,
+          message: actionError,
+          status: getP2PActionFailureStatus(actionError),
+          surface: 'terminal',
+          tradeKey
+        });
       } finally {
         setProcessingRecurringAction('');
       }
     },
     [
-      getTradeSigner,
+      ensureTradeFunding,
       onActionNotice,
       onCotiNetwork,
       openTrade,
-      refreshTradeDataInBackground,
+      otcV2ActionRuntime,
+      refreshRecurringV2Trades,
       rememberTradeTerminalReturn,
-      resolvedRouteAccessSecret,
       runTradeWalletPromptFlow,
       setTradeActionError,
       walletAddress

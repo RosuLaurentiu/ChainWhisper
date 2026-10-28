@@ -1,0 +1,3448 @@
+{
+  "schemaVersion": 1,
+  "manifestRevision": "chainwhisper-successor-coti-testnet-v2",
+  "status": "deployed-seeded-app-integration-pending",
+  "appReady": false,
+  "network": "cotiTestnet",
+  "chainId": "7082400",
+  "releaseIdentityHash": "0xacdcc37fe33d519345b5eca149408b414e48fe38de10ef098de9a62fc939b381",
+  "buildHash": "0x935fefd492a598a1aec7b06566d577ca1eea1ac8292a1da12ed5c63c55400dfd",
+  "deploymentBlockRange": [
+    9315604,
+    9315865
+  ],
+  "deployer": "0xC737b5850e15d03ed09bfAdc8A33062f6073a850",
+  "identityAuthority": "0x23aBDe1d22019D52852D6845c9444326Dde1D99e",
+  "strategyOwner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+  "positionNFT": "0x136099b7e86C2582137d6998733e8b6eb2A54ac6",
+  "globalCore": "0x8209c2E18bA98BC2995d1A6050758B1Cb4515307",
+  "registry": "0xdF91207cfC995d8a01834698EdB4A51799f74054",
+  "routeRegistry": "0xDd7497371cEa60f636fDf31b4A72D0DEA2b7ba64",
+  "contracts": {
+    "token-bcn": {
+      "contractName": "ChainWhisperTestPrivateTokenV1",
+      "address": "0xa29D04e2393cC5a5cd62896bCf9240116cF0BFb0",
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "deploymentTxHash": "0x51d82814eb885afe01efb8b9680afaa82a91294e2ea0a9894768aad3a3feea25",
+      "deploymentBlock": 9315605
+    },
+    "token-hbr": {
+      "contractName": "ChainWhisperTestPrivateTokenV1",
+      "address": "0x059b5C3F7c1B0edD17DD6376AB17D50bCe3c5507",
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "deploymentTxHash": "0x43090df2bdb887c7cfb7b3682d17510e6ebadf7ce2e854fd4d64deeb1e324b2e",
+      "deploymentBlock": 9315607
+    },
+    "token-embr": {
+      "contractName": "ChainWhisperTestPrivateTokenV1",
+      "address": "0x0E43073AECDe5DA8ef4D3ee574059b10F4Df1A4e",
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "deploymentTxHash": "0xc1f0f407286135c14b10e5cd171c4caa0ef926563dc92a7c6db087ddfbff0c19",
+      "deploymentBlock": 9315609
+    },
+    "token-orbt": {
+      "contractName": "ChainWhisperTestPrivateTokenV1",
+      "address": "0xe57B081CD6Ec2CBF9735C3258fdCac7c900eF0A4",
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "deploymentTxHash": "0xb402659447ba94a5afac95c8f2da97e96473a15110f26f650c6a30d72ff42d0e",
+      "deploymentBlock": 9315611
+    },
+    "arbiter-authority": {
+      "contractName": "ChainWhisperUnifiedInventoryPairHostArbiterAuthorityV0",
+      "address": "0xEB2e3cb03a3385E5d9401A05f7a008652461a11f",
+      "runtimeHash": "0xf788ad0c6b3b16f76da7581cbd297ab9daeca5ac90317127fc86eaaaf350038d",
+      "deploymentTxHash": "0x9afb9ec8731dce94fe0a48eaeffed3f557f00f116ed088975c2c04d01651186e",
+      "deploymentBlock": 9315613
+    },
+    "cycle-registry": {
+      "contractName": "ChainWhisperUnifiedInventoryArbiterCycleRegistryV0",
+      "address": "0xdF91207cfC995d8a01834698EdB4A51799f74054",
+      "runtimeHash": "0x5fdd1cf62b90241bd580a8fd7deb2cb09e32d132bdfb0e2188c5c096931b48d1",
+      "deploymentTxHash": "0xa46d5f3ee793dfdb4221df961235202f78f26c6d1bea108558ca68c55fc0518c",
+      "deploymentBlock": 9315614
+    },
+    "global-core": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalLifecycleCoreV0",
+      "address": "0x8209c2E18bA98BC2995d1A6050758B1Cb4515307",
+      "runtimeHash": "0xa7933a1267299d48d35263634f621ffa29e597292194d5c9ab97757995cd0f1c",
+      "deploymentTxHash": "0x5cfc605eb39f50ff1572cfb9c739c72eb65242fef6cbb2565e959d15bda4f71a",
+      "deploymentBlock": 9315615
+    },
+    "c1-scorer": {
+      "contractName": "ChainWhisperUnifiedInventoryArbiterC4ScorerModuleV0",
+      "address": "0xa4162409966BD8BF0ac1A10834dB5abc5aE17D9e",
+      "runtimeHash": "0x1ef7fd45f491b2569afe53b0d0d95680141805021a49be90800571636139d0de",
+      "deploymentTxHash": "0x555c7301092406fa54019c86cfeee1948240342ab1ee0246003ff880bad20c81",
+      "deploymentBlock": 9315618
+    },
+    "c1-tournament": {
+      "contractName": "ChainWhisperUnifiedInventoryArbiterC4TournamentModuleV0",
+      "address": "0x4e3aE254fbB30c3823886846a551faf58081a7C7",
+      "runtimeHash": "0x4e751eecf59d2884497c0c959f10be1a189174115523b8f677a4385c4da4e125",
+      "deploymentTxHash": "0x3c51aaf1086f8146d1eb1a9f57a32afed0eaf618a30659cf0d80330555b39c88",
+      "deploymentBlock": 9315619
+    },
+    "c1-shard": {
+      "contractName": "ChainWhisperUnifiedInventoryPairHostArbiterShardV0",
+      "address": "0xF2Cec77F62081bDC05D73cF17c7a7e0Df722353e",
+      "runtimeHash": "0x96471467d6aed25eaea566fa1ced1c13daff8fda239befe63177f93eb479fac5",
+      "deploymentTxHash": "0xfc848cafd832b2e24e18b5303a426dbfdd977378721768bf52515d240f642aea",
+      "deploymentBlock": 9315620
+    },
+    "p2-route-registry": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateIntentRouteRegistryV0",
+      "address": "0xDd7497371cEa60f636fDf31b4A72D0DEA2b7ba64",
+      "runtimeHash": "0x9ca87b2cd128cddae774a0754da8abec8346ce4cc3bacc5a93c0fbeb5a0ca332",
+      "deploymentTxHash": "0xf7297a87eee26d420964cf893f41f2a6f04356284fc97d15d2c8145c892fcb4b",
+      "deploymentBlock": 9315622
+    },
+    "p2-executor": {
+      "contractName": "ChainWhisperUnifiedInventoryCanonicalP2ExecutorModuleV0",
+      "address": "0xFd0269591Af6f690453789a728DC956dE949729c",
+      "runtimeHash": "0x8e6f743468d3fbb9df4f3ddf6d8e3521dbe670b2a432eaa64bd655d31b1b8dc2",
+      "deploymentTxHash": "0xce27c07f4993a5e89c46bc52586bd9ffa684a2a18672c487a37be1dbf80c14bf",
+      "deploymentBlock": 9315623
+    },
+    "l8-kernel": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8CombinedKernelV0",
+      "address": "0x3F96Dcb238EAc6b35d69928B415389419B78d320",
+      "runtimeHash": "0x46553861992d533c4cf5a90731453cb37f1a25b82357e1ee0ba604f706c01f25",
+      "deploymentTxHash": "0x5a45039d572451319dd0da510c6f74d5848bfeac8d2988f2cd2d09f2ef2c4e58",
+      "deploymentBlock": 9315624
+    },
+    "lifecycle-module": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalLifecycleModuleV0",
+      "address": "0xf9C822dd78eE38935c031ca1C5DdbB18c2149a5a",
+      "runtimeHash": "0xdc526cb87c65870de815cf49fd58eaa7e107907c6931406db2210e473590dce4",
+      "deploymentTxHash": "0x6c75261c75595edaa4730046600d17cd824d75c22d6aae5839cf0db4a264dc84",
+      "deploymentBlock": 9315625
+    },
+    "p2-module": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalPrivateIntentP2ModuleV0",
+      "address": "0x29c4b43eCC17B60aA5feC9365A944D24345eE1Db",
+      "runtimeHash": "0xcaf457f88d8f60f5f0e0a3a53c54e2d717e6565bfb11d7c1d0d241a79947d17e",
+      "deploymentTxHash": "0x268ffc46c9eb09b0701a5eea215d6f0508a6816027aff43caa03ec36e2654429",
+      "deploymentBlock": 9315626
+    },
+    "private-book-module": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalPrivateBookModuleV0",
+      "address": "0x2d1C564F2d5EB4c332e64ED5025B7b7890609eEf",
+      "runtimeHash": "0x1263e46b90a43473d34f170c1edf30386ce3d47f9be7658ee16beff5106bcf65",
+      "deploymentTxHash": "0x4f52659bfa2a6ecdc7335774e322d77cd7b08078893bc4374dda019e04a0990b",
+      "deploymentBlock": 9315627
+    },
+    "range-module": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalPrivateBookRangeModuleV0",
+      "address": "0x84170B398adef66c362E5078dA17CC04A9fC89C4",
+      "runtimeHash": "0x3fc3107c2a0e917fcde5b9b0025f38dc6eef8b11cbd4d837396ff6482145fb39",
+      "deploymentTxHash": "0x12a492f7d95281b07d90f1271d6dd13b8256a5564a37e16f4cd87807c2f6f658",
+      "deploymentBlock": 9315628
+    },
+    "recurring-module": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalPrivateBookRecurringModuleV0",
+      "address": "0x8Efc0de8D9580AE2d8a3C69Fb1D3e4d9F4a649Ac",
+      "runtimeHash": "0x56c3f2a52dbf244cda0dd7911161032c8f9bc404289b66b57ca44050a4a26ea9",
+      "deploymentTxHash": "0xc30c91a62afc30f446dc4d8d548e12187616438744712521490bc08e54ee33cc",
+      "deploymentBlock": 9315629
+    },
+    "aggregate-lifecycle-module": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalPrivateBookAggregateModuleV0",
+      "address": "0x59EC7aa88F10A4f7DaE1D90f3Cd7E8F3486a0e64",
+      "runtimeHash": "0xdca75e53e4b22e62c49573e687780d42719d0fbaaad1cf6562025dbd0348350d",
+      "deploymentTxHash": "0x35f41b0623324a8842bed990d8b7daefbc61255e44e3e80780e58b2580d7af45",
+      "deploymentBlock": 9315630
+    },
+    "work-module": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalPrivateBookWorkModuleV0",
+      "address": "0x8a146BCd91db548F5cC759af8EA6433865e2C021",
+      "runtimeHash": "0x547a3a63719b3dd7b11117182c243deb9cf155fb10794e4cf474392084e271dc",
+      "deploymentTxHash": "0x25144148790067fc54772352a15243f66fb0e7bed73ee075f22e546344934cb4",
+      "deploymentBlock": 9315631
+    },
+    "p2-complete-book-selector": {
+      "contractName": "ChainWhisperUnifiedInventoryCompleteBookP2SelectorV0",
+      "address": "0xd7f794e3f8c4775ACCFEf018A2912d7feADAa66D",
+      "runtimeHash": "0xb242b6e6bb8022be343f8b6e728b42ee46c9dc8c99ef236384520c0002b67943",
+      "deploymentTxHash": "0xd7fde3e43832d355fae646a037d6b802cf60592317532f46cfd7c317a9bc134e",
+      "deploymentBlock": 9315632
+    },
+    "p2-complete-book-frontier-module": {
+      "contractName": "ChainWhisperUnifiedInventoryCompleteBookP2FrontierModuleV0",
+      "address": "0xcaCC92023C1971915C12FD95bF6Aeda269bD78b0",
+      "runtimeHash": "0xca80e15b5436dffcf23a6eacec3eda857859ea0bd0167c07122d582f0c11f4cd",
+      "deploymentTxHash": "0xad0ebe9274f1cf12fcc63e74666fcf8306f6e9c4bad6ab1a383d00e76d1dada0",
+      "deploymentBlock": 9315633
+    },
+    "p2-complete-book-work-module": {
+      "contractName": "ChainWhisperUnifiedInventoryCompleteBookP2WorkModuleV0",
+      "address": "0xa8bbf97e3A6167e1C743b8A26553E1e927071F8C",
+      "runtimeHash": "0x149057e0381dbe5fe0b97a78bb93e81a26e783f879186185f183e515e8a2ee56",
+      "deploymentTxHash": "0xbee06f8b3347ddc8cc7238695054fd3117939edc5eabb530df930a8a5b9e3742",
+      "deploymentBlock": 9315634
+    },
+    "flat-dispatcher": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalFlatDispatcherV0",
+      "address": "0x14654caC5CF76fbE8A8ca8205C2E9cfe0cF69DA3",
+      "runtimeHash": "0x74e6a559af1339486b02b93a4a235cb1da88ccbd84861d0447f7f02b7b6ed893",
+      "deploymentTxHash": "0x70019a1ad56c31e7dd63ae81898c80922d4ad6dd9b4fb8eaa0d4e2fc993672ca",
+      "deploymentBlock": 9315635
+    },
+    "work-authority": {
+      "contractName": "ChainWhisperUnifiedInventoryGlobalPrivateBookWorkAuthorityV0",
+      "address": "0x2902970cc81985E8D07f8f6b79c5c08E88dac7bb",
+      "runtimeHash": "0xd60c2509e90568ec00022d7186ce307bf405ca34da0a54c0f7e27f55c247a8c5",
+      "deploymentTxHash": "0x14ebe80e6d68eeefef2f63e1ecb962e7ef711bfb9d852c93cbb65233a854a163",
+      "deploymentBlock": 9315636
+    },
+    "position-nft": {
+      "contractName": "ChainWhisperUnifiedInventoryPositionNFTV0",
+      "address": "0x136099b7e86C2582137d6998733e8b6eb2A54ac6",
+      "runtimeHash": "0x7f93742d0bdb4631ab7094585beea948e1e418640df6f78d6855385a0def56b1",
+      "deploymentTxHash": "0xe01e4b2ef6624083cc8a0254a9dc6ca888f062919322e5dcbd4469abb273b815",
+      "deploymentBlock": 9315637
+    },
+    "fixed-frontier": {
+      "contractName": "ChainWhisperUnifiedInventoryFixedP2Max2FrontierV0",
+      "address": "0xC2b9f9F329762B18f925E1670f12497A26995540",
+      "runtimeHash": "0xbbc6bb5868fdfcbc8d2ff54ee25c99668dad92b24cf59fe8a1b8dd7d57060eed",
+      "deploymentTxHash": "0x1230b472947245530650f76c68b0ee909eb2e889b31dab5b4794505def726d9b",
+      "deploymentBlock": 9315641
+    },
+    "normalized-frontier": {
+      "contractName": "ChainWhisperUnifiedInventoryNormalizedRangeMax2FrontierV0",
+      "address": "0xFA0aa5B6B96252fC7BB2F5A9c167c644B8BF6422",
+      "runtimeHash": "0x49c4ee25c5a4a6417195dd1ef1ec289049af2ecb2aafe72dbf725704025bb85c",
+      "deploymentTxHash": "0xf8ae2fa3f1c388a9b83e828dbabb7e04eeb4a8964557af668f202661fdf74b23",
+      "deploymentBlock": 9315642
+    },
+    "spb-bcn-hbr-epoch": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EpochCoreV0",
+      "address": "0x977E8861b74b9fD6Ec1a856fB3cA822C349eDC6B",
+      "runtimeHash": "0x53002fe599c133b324e61c277e8111a19d03619f5c889c6088bd9f5736738f18",
+      "deploymentTxHash": "0xc8c2035966d221b68a7b5592fbc8fc6b8e072efe829622aabc079642ab0c8b48",
+      "deploymentBlock": 9315643
+    },
+    "spb-bcn-hbr-aggregate-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0x4D5972818198ffC752C3B17d9811cEDC51DA96A9",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0xfb0bb2a48a826da272311fca1f9e1a26221a1ee82a5c33432d3dfa7a19f0fc37",
+      "deploymentBlock": 9315644
+    },
+    "spb-bcn-hbr-aggregate-adapter": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookAggregateAdapterV0",
+      "address": "0x45E29987B698e7A1497E0D5271C72Bb7840D9593",
+      "runtimeHash": "0x21f932af6f2a2cb0fb8a79573be02d7c8faf0e60d11a72d09a2f5bc3df79eaf9",
+      "deploymentTxHash": "0x73cf678f04cfc0b2cf1031b37ea9712833577fa52f12c4bef70a9c5193f5ade1",
+      "deploymentBlock": 9315645
+    },
+    "spb-bcn-hbr-aggregate-bridge": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8FamilyBridgeV0",
+      "address": "0x93f3340d69b6A0231baa67d603Aa8776D6A510D2",
+      "runtimeHash": "0x23f17796c8ab0c9a594e164d8103792c1c7b1dbafc6d0fb39faf07d702406cf9",
+      "deploymentTxHash": "0x16c97151c1688b5545bfe2f34e561262da4a7bf006d6f0081b49fb966102b13a",
+      "deploymentBlock": 9315646
+    },
+    "spb-bcn-hbr-aggregate-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0xC4e893aC4273fF2886611B38909a14CDcBB8d633",
+      "runtimeHash": "0x18e784eb2ae59f408b7867381dfe8a69eda8e19de5ca2a48e1aac9d303853fb4",
+      "deploymentTxHash": "0xa1ca5e5ae13be7dfce4623350cdf74abe3ee8c97c2ab9a5d53290659f2f5eafb",
+      "deploymentBlock": 9315648
+    },
+    "spb-bcn-hbr-aggregate-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x1c53e7827124e44c1c470d2f53980438630FD975",
+      "runtimeHash": "0xe739c73e82dac29dfb5d64b577da39acd0770d244abdda960a1f46f31a9144c6",
+      "deploymentTxHash": "0x60326996b15e29456d3ce517974b9a6c2310c007acb5343cb34a12f5795dceb3",
+      "deploymentBlock": 9315650
+    },
+    "spb-bcn-hbr-aggregate-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x2A836fbb36718aBc9f9d6dDe5BAbCE00A8Ad939a",
+      "runtimeHash": "0x3a8f059427389c24715e2f4acd0c80378b8dc99b9f38c635270c3cca8145730f",
+      "deploymentTxHash": "0x1cb369f2b99bdcf0f3804fb5c6b27b772b3d0f48773f6aec1c60b122a989814f",
+      "deploymentBlock": 9315651
+    },
+    "spb-bcn-hbr-aggregate-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0x505Fd2bec1bF55f768b594BE83c21067a551Cef8",
+      "runtimeHash": "0xf2058426eb6a8bc2e830db1d7ef16f47f85e8890e038c70e361b68b134ff4ee0",
+      "deploymentTxHash": "0xf00b568f4ec99817b91532ef3f3355b68497a15c35bbec69a5275f3d94c10cbc",
+      "deploymentBlock": 9315652
+    },
+    "spb-bcn-hbr-coordinator": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EconomicCoordinatorV0",
+      "address": "0xaa3d1C8dab4816a96398B0b914cF19d547425349",
+      "runtimeHash": "0xe93a5d597d18d6ecb1a30ee04c62c4f82474f55128cd7d93bb22d13f7d8571b3",
+      "deploymentTxHash": "0x16b7ffeb621a373a91d05018659d90f53158c1d1390b2b4761f85085832681f4",
+      "deploymentBlock": 9315663
+    },
+    "spb-bcn-embr-epoch": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EpochCoreV0",
+      "address": "0x40D838242319B1517445684B70dF30Cf59f3465b",
+      "runtimeHash": "0x53002fe599c133b324e61c277e8111a19d03619f5c889c6088bd9f5736738f18",
+      "deploymentTxHash": "0x862c8829ff118f2009200ccb5049c5d77765780ac93721925f26d79172a22d50",
+      "deploymentBlock": 9315667
+    },
+    "spb-bcn-embr-aggregate-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0x5f96904f55eB707Bb109C33793BdA3d026be62cd",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0x8581a98be53c76c951363ffae8088b8836fddb6b6fb4020eb424f254742b8289",
+      "deploymentBlock": 9315668
+    },
+    "spb-bcn-embr-aggregate-adapter": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookAggregateAdapterV0",
+      "address": "0x8986dA8dbC9e016bb9CF63205fD8D256B6057925",
+      "runtimeHash": "0x36f6f10f4cc0b8d44df70673845ee55a4db38562cad5039e9c37aded33b42536",
+      "deploymentTxHash": "0xce7d9299c0d6df4171dce4519e59b5907eb49ad77ca0fb26abb79a8c854f4265",
+      "deploymentBlock": 9315669
+    },
+    "spb-bcn-embr-aggregate-bridge": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8FamilyBridgeV0",
+      "address": "0xda57634bb9faF11d893D7a63D7f74bB801be799e",
+      "runtimeHash": "0xbfec1f9ded74c1f9a09b6c97b5bba0ae883672bbfa93c02187681f9069a3d8e3",
+      "deploymentTxHash": "0xf1207b2df24570bbe8ca34a2eeeea3516e353f2116353d15453826c871583f65",
+      "deploymentBlock": 9315670
+    },
+    "spb-bcn-embr-aggregate-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0xF9a89B046eC09f5dA07f71D498Bc85C5BD88672A",
+      "runtimeHash": "0x5c8e16087d0e4d43e1ada56a110303a272ea20136330608fed16743169bb8913",
+      "deploymentTxHash": "0x7f89b3a126484d7881d69dc08a8ca5e3b06e2888d0c38c53b5cd6eccebca1499",
+      "deploymentBlock": 9315672
+    },
+    "spb-bcn-embr-aggregate-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0xE52AFDa57A70c43b829a8654a5F6f1D3083b512b",
+      "runtimeHash": "0x5e769c21ea441400c83a949444ac1a36055c777f04969a7ed2214289f31e49e4",
+      "deploymentTxHash": "0x4b018ff9bbfa7154a92eea9b55f8709c7f3607e041a44236a860cec9c76d45eb",
+      "deploymentBlock": 9315674
+    },
+    "spb-bcn-embr-aggregate-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x4EF59980e2d85dF406a1B6DC7edbBCFa54159B99",
+      "runtimeHash": "0x329449e18c4c4aad764adad146e3214cbba6e6539784fe32a4bcd5887275b75d",
+      "deploymentTxHash": "0x07090ecfab093a1568077a4733ba33b339e9ea42b32aaae0c5c6244f2a9f5323",
+      "deploymentBlock": 9315675
+    },
+    "spb-bcn-embr-aggregate-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0x2e4982BA783FE073a9FAE9456658e8353dC4bA69",
+      "runtimeHash": "0xc1b534b43ce9421a7584b4de644a16c173f8076e16b033f8451281ec18fe0f0e",
+      "deploymentTxHash": "0x2599a79559b2849e26bde0ecf2c11dfebd9e50cb039d2815254acc4558e0f9b1",
+      "deploymentBlock": 9315676
+    },
+    "spb-bcn-embr-fixed-host": {
+      "contractName": "ChainWhisperUnifiedInventoryFixedLimitOrderHostV0",
+      "address": "0x6DdfdF8C7Ca86106B1E3D2ED57d8555Db870E47b",
+      "runtimeHash": "0x09e654e33e847c241785452b5f68fe4242495fb46518d061dd7e8c2889676bfa",
+      "deploymentTxHash": "0x9702f740e695f1c314dab8d614d2d0e9ffabbfda419e450d0339d2d0e7768c16",
+      "deploymentBlock": 9315687
+    },
+    "spb-bcn-embr-fixed-adapter": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookFixedAdapterV0",
+      "address": "0x48c150CA1cE7EB5eD67277AFD698DE83294103C3",
+      "runtimeHash": "0x4bee17a8dff8e63dc01524e5979b1d6ee08ac542c63fafcac6f4e71670ab967e",
+      "deploymentTxHash": "0xdd517f1a15d98cbe80e7ee650df15df0c19d2081930410bf82985f76af856bbe",
+      "deploymentBlock": 9315688
+    },
+    "spb-bcn-embr-fixed-bridge": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8FamilyBridgeV0",
+      "address": "0x8A96092bFDEF8DF192cbE559e228E260e7FABd0f",
+      "runtimeHash": "0xb9aba2991e1aa5cbc0d603687d656b84933c22e93540dc2493b4115e6aebe6b5",
+      "deploymentTxHash": "0x2b30fa81ca8ecd24e9aa9380930cfcdda09dd4df39dc84254d53d5b81ac852ea",
+      "deploymentBlock": 9315689
+    },
+    "spb-bcn-embr-coordinator": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EconomicCoordinatorV0",
+      "address": "0x563F9c6595cd9C87e5DB3229433738a855c0761D",
+      "runtimeHash": "0xc1a33f7f1fa5c1e4c057cc5adbd07426b7478613aa64b33c7689632360b6f2a4",
+      "deploymentTxHash": "0x9d54eff455e7187578fffbae3c03bc87fb70dabb2afe0e67a285c5afb79da32b",
+      "deploymentBlock": 9315696
+    },
+    "spb-bcn-orbt-epoch": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EpochCoreV0",
+      "address": "0xC75ECD78d86aC1771c628D27E92C7dc40E65AE34",
+      "runtimeHash": "0x53002fe599c133b324e61c277e8111a19d03619f5c889c6088bd9f5736738f18",
+      "deploymentTxHash": "0x7d5b83e008a8d348cb33e20ab6c8f604f4bbc02d9328958b6d3160258ae69207",
+      "deploymentBlock": 9315700
+    },
+    "spb-bcn-orbt-aggregate-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0xcFd86a2b1c33D888F7D9500e71E01B180390540A",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0x0aa2973d0f4ea9b2847bad031373153b3753b95fc06310f46f8c98f5d1a7899d",
+      "deploymentBlock": 9315701
+    },
+    "spb-bcn-orbt-aggregate-adapter": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookAggregateAdapterV0",
+      "address": "0x54a2075aF79dDF6A3c6DD0Ba88fD130b43e9D025",
+      "runtimeHash": "0xc699bfc64c219e410ec5215694d326d26375c951a20cd27b3baea4c3dacd2fcd",
+      "deploymentTxHash": "0xfc553d91e76ebcfcbae5755dce7131702f2d12be5853f90554d205052501a346",
+      "deploymentBlock": 9315702
+    },
+    "spb-bcn-orbt-aggregate-bridge": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8FamilyBridgeV0",
+      "address": "0xCAA53A910ee79c013eBA1e00387ac557F6491B9F",
+      "runtimeHash": "0x16f891314906eddbb26ef19971865ae73bd288e89a0e2b0f56d681b6e0b7db49",
+      "deploymentTxHash": "0x8cb71a39ed793a1f631eac87d02f29c227d69f0d97fc675315fb1276a4f3bd4a",
+      "deploymentBlock": 9315703
+    },
+    "spb-bcn-orbt-aggregate-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0x8DD392265a42B3acA09c991BF102bCad319FEd92",
+      "runtimeHash": "0x4c2802a7118a9f71bf2d2b0d720521da5f258125f845d630d5315b5532e66f3a",
+      "deploymentTxHash": "0x0090a154539445218f280a2494e6ea69c1837ea7f8839ad89025d0086dd7d323",
+      "deploymentBlock": 9315705
+    },
+    "spb-bcn-orbt-aggregate-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x165D1316D30FbbF40Ae13daD83cE13df3220b62a",
+      "runtimeHash": "0x5c2a574bd4626f8e667a4ceacf538c94c63f798d52f35f746e125d909a4f5d02",
+      "deploymentTxHash": "0x196defbfbf32a0f0b35f6b04cbe86d9dccbfd3e32d81c1b37731a710cc800da9",
+      "deploymentBlock": 9315707
+    },
+    "spb-bcn-orbt-aggregate-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x88E586dC88d1620a45faf4aA45a83677e5CC0f4F",
+      "runtimeHash": "0xd187c382fb5cece65140739f81a6cbabd58fd43d86e9e26df01f133160932b37",
+      "deploymentTxHash": "0x04b67348f6efecd115bb704cc5e478654e2a9d2234d8c009e331f7a6fd937060",
+      "deploymentBlock": 9315708
+    },
+    "spb-bcn-orbt-aggregate-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0xbb992e505cCA04564FFD3df1C4B2102914934841",
+      "runtimeHash": "0xc2a49acfab8940e29f1b09f4fdb89c86afe725c4bc2dc1e76cad8d19e2db2d54",
+      "deploymentTxHash": "0x0d29659f621bbaff142121c185fb9f764479e7c7c817ecfca616c4fd1e9002e6",
+      "deploymentBlock": 9315709
+    },
+    "spb-bcn-orbt-range-host": {
+      "contractName": "ChainWhisperUnifiedInventoryFixedLimitOrderHostV0",
+      "address": "0x518B0e4f21bBF2b78165C5D180435B028E4Bf5A9",
+      "runtimeHash": "0x9d1059b59f3b8884721bc38bf23dd54fb33e0f503581157a5ca4b7b21012cb45",
+      "deploymentTxHash": "0xc69a2a8f7a7b3e52ccdc434fe43f70f61ca11a2cc1dfe7ec2129a4adc03ea817",
+      "deploymentBlock": 9315720
+    },
+    "spb-bcn-orbt-range-adapter": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookRangeAdapterV0",
+      "address": "0x4c20fe23f44c44a184FB296Ee6591597754E802C",
+      "runtimeHash": "0x020109425508fb8e16fb6a17657b4db17d3862407becb3d6467765f583504abc",
+      "deploymentTxHash": "0x13e57dddc15b4824ba101d21dfff178402308639096a58234e814bb0482e08d6",
+      "deploymentBlock": 9315721
+    },
+    "spb-bcn-orbt-range-bridge": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8FamilyBridgeV0",
+      "address": "0x843Ef005A5cA6940BBbE243b7C453242B24c8358",
+      "runtimeHash": "0xeec12c2ad50a40d51bf6a3a4555dc83c524695b80110040301570de7b0483b81",
+      "deploymentTxHash": "0x505887a38e1e28823da8f8c423d679ee988da4194b32058b6030da507ca7e794",
+      "deploymentBlock": 9315722
+    },
+    "spb-bcn-orbt-coordinator": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EconomicCoordinatorV0",
+      "address": "0x5B6b95780cF86860998D0B3AcE8b6720776E6A32",
+      "runtimeHash": "0x112d2c0d2cbafeaf812b10bbaf95f48b5359e9664c27f4d51d1ed4e25619dde3",
+      "deploymentTxHash": "0xe75f9013f4894df6396ac64fd33f8d5b2a4af9869a6d3f3236aa3e5434cbca3e",
+      "deploymentBlock": 9315729
+    },
+    "spb-embr-orbt-epoch": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EpochCoreV0",
+      "address": "0xb132abc0d7C793125A6d7dE14C59466b43002Bee",
+      "runtimeHash": "0x53002fe599c133b324e61c277e8111a19d03619f5c889c6088bd9f5736738f18",
+      "deploymentTxHash": "0x386f8f68ce601c53c7018214aac1dcef809dd66b68088d58fd657f65152788f8",
+      "deploymentBlock": 9315733
+    },
+    "spb-embr-orbt-recurring-host": {
+      "contractName": "ChainWhisperUnifiedInventoryRecurringOrderHostV0",
+      "address": "0xE3264B4DD480B80A81dAD46e3a278EC96C23DD71",
+      "runtimeHash": "0xb47e155d0bdb7de2f1721a18e974b269f2a66b2181d2c624187cfeae575f855e",
+      "deploymentTxHash": "0x65ca6ae420f7bd73a33e12aafb9b91d2d4c5a4d8c073dec29cd17e001a51f0b1",
+      "deploymentBlock": 9315734
+    },
+    "spb-embr-orbt-recurring-adapter": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookRecurringAdapterV0",
+      "address": "0x03B7F94Bf69D5714a52A85B69b501f47fa56CCd3",
+      "runtimeHash": "0xa78395efc8b1f2b320ff1d46718e70c4a66a288907264da611a82f30cef326d1",
+      "deploymentTxHash": "0x278b02937e68e44d6d8e93b3a433b405d721614462afca584d8cb39fcb597530",
+      "deploymentBlock": 9315735
+    },
+    "spb-embr-orbt-recurring-bridge": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8FamilyBridgeV0",
+      "address": "0xB9eC6a312CEB97707306e002b3EE7bF46e90564E",
+      "runtimeHash": "0x2b6a96a5350d5f67aafe3abde0e150b948c868d4baabd388ee1361c56f4b01fd",
+      "deploymentTxHash": "0x186febaec036e4e47b87ec7d418d06492ad443310f11c3be04c9389de2bed636",
+      "deploymentBlock": 9315736
+    },
+    "spb-embr-orbt-coordinator": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EconomicCoordinatorV0",
+      "address": "0xbD7c56bCb4bb9D95425d91735C9752DbA8A5c118",
+      "runtimeHash": "0x1b539affc8a28799213620d981b7064a4d9ec75124539535d7f02c84b77db4cc",
+      "deploymentTxHash": "0x974d56dfd5dba7ea8380e9776441b7f63218dc0a248968731e2a1d61079c882f",
+      "deploymentBlock": 9315743
+    },
+    "spb-hbr-orbt-epoch": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EpochCoreV0",
+      "address": "0xa1D4cD626f899eb7db69d960709AA96d8bb30317",
+      "runtimeHash": "0x53002fe599c133b324e61c277e8111a19d03619f5c889c6088bd9f5736738f18",
+      "deploymentTxHash": "0xee76afefec08dbd5bfed5f4faaf904a4c433ca9b8f13a2d91f2f3cb5bf6457f8",
+      "deploymentBlock": 9315747
+    },
+    "spb-hbr-orbt-aggregate-tiny-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0xd78A378C690e97aa232f492bBB5120af8578D775",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0xfd27ceffcd692dc0616b8eff108bf4851dda7b675f400731275daaca52a93d9d",
+      "deploymentBlock": 9315748
+    },
+    "spb-hbr-orbt-aggregate-tiny-adapter": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookAggregateAdapterV0",
+      "address": "0x0c0Acab2119E8cC35474CF6a8d82e4d92e6997b3",
+      "runtimeHash": "0x583087ed6a22ec315c0d60434447b146dd3c65b03822b72897b439feabff3bf0",
+      "deploymentTxHash": "0x1caa0cc3c99393484c9e38fdb6ebc2638754fadb3a47d4dc7b4e602239b44b3f",
+      "deploymentBlock": 9315749
+    },
+    "spb-hbr-orbt-aggregate-tiny-bridge": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8FamilyBridgeV0",
+      "address": "0xfBB3C57e1Ac5C2ec451EE351168b6DAF900cAEf5",
+      "runtimeHash": "0x53eaab033a77417324a1bb50cc92b41d6430a55d36011f32c4ddbde1e9899e75",
+      "deploymentTxHash": "0x8d380ec6d14330c0b65ce09d764b07ec807ae6b2f5a51ace36a21b53a2195a2a",
+      "deploymentBlock": 9315750
+    },
+    "spb-hbr-orbt-aggregate-tiny-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0x3b2F5E2CEb2736CC6C9896D92b56E441A8dF743B",
+      "runtimeHash": "0xfb7f9f66dca3283104190933e06ae13656c8b08a44d73d73eea80681c4165448",
+      "deploymentTxHash": "0x811049915e64333c3f582bdd922a0414caff1065f87019f258e6b2b0dfc3615a",
+      "deploymentBlock": 9315752
+    },
+    "spb-hbr-orbt-aggregate-tiny-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x8Ea20A30A2D433531b69226dFa29d5dd0246184E",
+      "runtimeHash": "0x6d0806423d8c4c89f5128c1590b4c2b6c4687c4475fb3ee57204e94c84fbb302",
+      "deploymentTxHash": "0x64b42e1fe78c059e34295090b2ffcf0f504c009e8838b0765320df9f52aa2453",
+      "deploymentBlock": 9315754
+    },
+    "spb-hbr-orbt-aggregate-tiny-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x540d0eF0B1c58F519Bab57E23df4664983BFA9fd",
+      "runtimeHash": "0x4d2f25f30b24677687d029cf949a24fb8ee7ff3ea32f380cd2d75bc6da71909a",
+      "deploymentTxHash": "0x69364e0abc0c313b3c3d6c64edf6f7b1184bfe30af9ce1de86c2fc68b22b1fb2",
+      "deploymentBlock": 9315755
+    },
+    "spb-hbr-orbt-aggregate-tiny-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0x976d9a2636D4A35E430356A113FF3AA692b774E3",
+      "runtimeHash": "0x8fd17b9dd1c6deb3596e243d62703414fddc6c46754d91a38856ec2e9f719a26",
+      "deploymentTxHash": "0xb446636d38d943151fbaac249502e71fee5f8887b577d47657ab50ff35b03af6",
+      "deploymentBlock": 9315756
+    },
+    "spb-hbr-orbt-coordinator": {
+      "contractName": "ChainWhisperUnifiedInventoryPrivateBookL8EconomicCoordinatorV0",
+      "address": "0x8E88a49508773aB835d02B110704027cDD5C4B87",
+      "runtimeHash": "0xd2e6a9460ae6d36f87b3fb6ec9eccd3cd02c4e858169b04174d312b253da2dec",
+      "deploymentTxHash": "0x3230b1a5d7cab5206caf230b5d7d7a2b0277ca2f98cc80ccf6b4a547254a3e74",
+      "deploymentBlock": 9315767
+    },
+    "canonical-bcn-hbr-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0xd8bBDf1772b2dD1B4c7bc3fF3C6BB55e529a8896",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0xcdf18e9f18968128e6788e74382fa38fe2d9e71ebfa0e76de19d63427dbf0a4e",
+      "deploymentBlock": 9315777
+    },
+    "canonical-bcn-hbr-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0x05E38742E41E3580E4669C0a7C0fdD0b18c23907",
+      "runtimeHash": "0x2368f239cdb4518d92941d6a71b4731995b46718a4ea8aee2639d0085936330e",
+      "deploymentTxHash": "0x297f24b83dc0f69aeaf0d4c45c26d0f270c0dfeb3292efed913b74c731272f1c",
+      "deploymentBlock": 9315779
+    },
+    "canonical-bcn-hbr-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x641E93Dfee5E7ff7eb127D7113f592D4f589Ba06",
+      "runtimeHash": "0xccf927a44bf7cd3188a7db1b48532a0c130aad632e415770376d64b69cf3ac0a",
+      "deploymentTxHash": "0x6995d6ea4490de6883ba25c75e0c5c9d5fcbf8760e2e3813cec549ba66d5ecbd",
+      "deploymentBlock": 9315781
+    },
+    "canonical-bcn-hbr-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x50eB9168EDf5Aca03Ef82bAD40Fd2B4B2EfeBF37",
+      "runtimeHash": "0x175279943aa6aa8971cc649946f3531a697f8d292000cab23b423c0eb0692eef",
+      "deploymentTxHash": "0xb59964e42a832086f1608ae44bf67c9a1ead512857d16bb46e3342394cbf23fc",
+      "deploymentBlock": 9315782
+    },
+    "canonical-bcn-hbr-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0xd562170dC95c8E0B0e0aa6faA53fA7cd6276492A",
+      "runtimeHash": "0xaf869c3f062aea099f7c573a91da0856de88ed277a2eeb0516cc79c53eeead9c",
+      "deploymentTxHash": "0xe38ccab751441970a8177c172c4c494012913f1481cbc9b4e83836b479fda2b7",
+      "deploymentBlock": 9315783
+    },
+    "canonical-bcn-embr-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0x803bf07c5a62f5E6102CdA89b8386554e1cA3BD1",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0x3d5e127e57bcc92eeafaebb29c0753488c76d55f67fbc0466325eb6586405b8f",
+      "deploymentBlock": 9315789
+    },
+    "canonical-bcn-embr-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0x0000a3b05fC754561668a84ECaDE6dEA37869Cda",
+      "runtimeHash": "0x995f7870dcb153b04111a34190f21427b7a7b790932bac6293e7399cc15a7b2f",
+      "deploymentTxHash": "0x6c0de34be5cea6505e89c88ab372c04cc0833fd5caac5ddd4ee9ceb74d515c5a",
+      "deploymentBlock": 9315791
+    },
+    "canonical-bcn-embr-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x0A9C446Dc0Df1CEbb30383A191Bd4cCBC083dab3",
+      "runtimeHash": "0x32d17b7576d59156c0d94840282537c36b1798f4f2a087fd023702480f5aed08",
+      "deploymentTxHash": "0x78e21a8d2936b3bbe24360c5118e67fdebbea1fe65b734f9581f6f908d8c7a5f",
+      "deploymentBlock": 9315793
+    },
+    "canonical-bcn-embr-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x42A799821eB20970c03Bf7549c55BE990bb0F30B",
+      "runtimeHash": "0x74ea2031a7bc6a1751accbab1a3f9242e7945c9f47757594fcd6f8f9a2f5850e",
+      "deploymentTxHash": "0x0fccee5c7eeff80bae3b50f6f0d91fa0ec40ff0fc8748ab7c3ab5778e081e5c3",
+      "deploymentBlock": 9315794
+    },
+    "canonical-bcn-embr-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0x61aeECe950FBc65f9953F5aAb343Cdd15dd6e727",
+      "runtimeHash": "0x3b66c15f1a7520d3cae104f52da984447155dde91d92d30d824698a24e2e2171",
+      "deploymentTxHash": "0x88bb45e7d68e80910497433ca1a0c9c235f1fa07133ecf67e38b7fb64b8a9700",
+      "deploymentBlock": 9315795
+    },
+    "canonical-bcn-orbt-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0xfb04DA1411c917a3ab588ecADB2F8631235e9475",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0xb90ef714ca8aa0840bb82ebdf82dc4579de07e6df5272a4c95089ae3d186e932",
+      "deploymentBlock": 9315801
+    },
+    "canonical-bcn-orbt-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0xD5A6e966050A33EfDF028442e1dF044b8920EA7b",
+      "runtimeHash": "0x72bfcf3a975fe34c7cb42ac3fcd3cdd49486ef0484e13ceba4975cddadc1d4f4",
+      "deploymentTxHash": "0xd892f1502f95603e56bb5d51c0fe425efd1bf9ddda8940aade3a7b5359a57250",
+      "deploymentBlock": 9315803
+    },
+    "canonical-bcn-orbt-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x2a88Df9628bd6051BD6aE9B89bffDa0BF7c54e0e",
+      "runtimeHash": "0x788b60653a5572677ac1d44672c17dffef4155c429b832c7cd8f28a6f963ec2f",
+      "deploymentTxHash": "0xe7718d691564fc5cd8d10ca448209d00fa4277165c8f26498684e75ea1235ad9",
+      "deploymentBlock": 9315805
+    },
+    "canonical-bcn-orbt-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x3aA8e6c7a0c140666A0f784E219ebFE68D7Eca95",
+      "runtimeHash": "0x6f0f62375fbd66de7f9958ecad69bf9957ee59a9675b0a9829db46c5d92fb325",
+      "deploymentTxHash": "0x0ed00bc5a972f6663bfbd57da344633248bc02a8f3f547a6350e1cc4a03f915a",
+      "deploymentBlock": 9315806
+    },
+    "canonical-bcn-orbt-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0x867e025b2eBD20aAB850AbA788e919B6a2D93C18",
+      "runtimeHash": "0x040216102b35d4fc538862d867ca5a3865b3662d3adad3034e1e59d197ce49d5",
+      "deploymentTxHash": "0xa03c295b68caeecb6ea368c8b294e02ef6fcb69d13df0f1ac72af0f3db7df8a0",
+      "deploymentBlock": 9315807
+    },
+    "canonical-embr-orbt-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0x592f4A0f1D28a52cf79a4861eE17E704d011044e",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0xca0935a48bf0cbe6d93597a43a6a8d91e6613cd2a0bc8c3618481297112dddc5",
+      "deploymentBlock": 9315813
+    },
+    "canonical-embr-orbt-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0xE8938a51722ec3f4579a636D558Be2B8a1A560b9",
+      "runtimeHash": "0x24a70759e987f4db116ca45d977e17826f9c9e1bf81bbdb71a31362a51c1f896",
+      "deploymentTxHash": "0xa9cae756791860dd292a2fbd91fc21870b75309fb91ad3ba4e2c41c110ae6861",
+      "deploymentBlock": 9315815
+    },
+    "canonical-embr-orbt-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x9398D2F1E0d49499f06E4f755Bf213C5164E4F65",
+      "runtimeHash": "0xf554b02cc4b0a7b5f8fb8cba1a04871e63b093436401e4f75edff334ddf99bca",
+      "deploymentTxHash": "0x671f42e515b6a091af7bd68b90a7aded46a23b8fbd4ea94abc22b6a08af065ee",
+      "deploymentBlock": 9315817
+    },
+    "canonical-embr-orbt-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x9cF71e276C4a093625eA7be7D2c0935dE14235DC",
+      "runtimeHash": "0xc174007b0d574e90c658d8ab3a53535b26a9d19893b866c65028efb1865e90fd",
+      "deploymentTxHash": "0x49e3ae696a1c3a2604301f886be7ca0512b95963f935d6ca99b874d7824afbb3",
+      "deploymentBlock": 9315818
+    },
+    "canonical-embr-orbt-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0x951147655F4aD747FEA8e065D906A35d933b3c97",
+      "runtimeHash": "0xceeaadab34babc7deaf15efe2a1de9f6bf4fd8b2f07d0da772b25f6057933faf",
+      "deploymentTxHash": "0x1717e88b66cfce8682d7eaf4d6c25c6698465f91f07547a757c5a15d19041fd8",
+      "deploymentBlock": 9315819
+    },
+    "canonical-hbr-orbt-host": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateHostV0",
+      "address": "0x7A8e9D7096b98520B49000E2E632dd774DBE95fD",
+      "runtimeHash": "0x6a0bbf36f9e3fae16c23d616a7c58981c31224a5f9f6dee58595d24876c948c6",
+      "deploymentTxHash": "0x621e872320d230fd1fb229ffbba5f801c80fee8952d7f02862041e32d0b5fdcd",
+      "deploymentBlock": 9315825
+    },
+    "canonical-hbr-orbt-direct": {
+      "contractName": "ChainWhisperUnifiedInventoryDirectRouteModuleV0",
+      "address": "0x48d29594990fcc7ae713E509dD74db67B1Da5563",
+      "runtimeHash": "0x3083193992f93fd0c901002a8019885d321ecb1bd00e43b5c37272e28ff599f0",
+      "deploymentTxHash": "0x666be9f7a6fe6105e40a9966102b552d090d5f4cf8032db77ba565fce6e19357",
+      "deploymentBlock": 9315827
+    },
+    "canonical-hbr-orbt-reprice": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftRepriceModuleV0",
+      "address": "0x187217150786B4C5509D1e41D0F36E6f56e3d9Cf",
+      "runtimeHash": "0x0e40cc8d4d41260413f3ed52ab7a8537a0c0b5281119d4e863ddc1ec81d497e6",
+      "deploymentTxHash": "0x5a16f50e03e1e6ceaf3baba0f6c1ab5b7a58d6e6958828d9aff3bb398b1dc684",
+      "deploymentBlock": 9315829
+    },
+    "canonical-hbr-orbt-arbiter": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftArbiterAdapterV0",
+      "address": "0x889610DfD4493827F2717461DEd6a4e41BBbeDC5",
+      "runtimeHash": "0xc6e979a9b8b736daed4062c4deb48ab83d60eb64c9417f0da2351eeb2583fd73",
+      "deploymentTxHash": "0x388b344f6bd001f09c9716abfa07ec8e7617b34002df7024248e58f80cb83547",
+      "deploymentBlock": 9315830
+    },
+    "canonical-hbr-orbt-aggregate-module": {
+      "contractName": "ChainWhisperUnifiedInventoryMultiNftAggregateModuleV0",
+      "address": "0xD2c01F3b6BD8E38c420D083124AD0AB4D5C8e0bf",
+      "runtimeHash": "0x30bc7b611801432c3b961c259768b08c356091a67a6638b99beeca79627bb0c6",
+      "deploymentTxHash": "0x12bcec608667da1b9c125f05696c40a5a1014f29c3f2250eecc009697b10d41a",
+      "deploymentBlock": 9315831
+    }
+  },
+  "tokens": [
+    {
+      "address": "0xa29D04e2393cC5a5cd62896bCf9240116cF0BFb0",
+      "name": "ChainWhisper Beacon Test",
+      "symbol": "BCN",
+      "decimals": 6,
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "faucetAmountRaw": "1000000000000",
+      "faucetMethod": "claimFaucet()",
+      "deploymentTxHash": "0x51d82814eb885afe01efb8b9680afaa82a91294e2ea0a9894768aad3a3feea25",
+      "deploymentBlock": 9315605,
+      "seedMintTxHash": "0x951a788be163c4dbc40304a21dce079304eed93793a7f8ce58a3f8c0626c3e53"
+    },
+    {
+      "address": "0x059b5C3F7c1B0edD17DD6376AB17D50bCe3c5507",
+      "name": "ChainWhisper Harbor Test",
+      "symbol": "HBR",
+      "decimals": 6,
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "faucetAmountRaw": "1000000000000",
+      "faucetMethod": "claimFaucet()",
+      "deploymentTxHash": "0x43090df2bdb887c7cfb7b3682d17510e6ebadf7ce2e854fd4d64deeb1e324b2e",
+      "deploymentBlock": 9315607,
+      "seedMintTxHash": "0xa5469566fab8215ce687c4f6cf44945e4d0e0aa05a84fcb077a7154c279746b8"
+    },
+    {
+      "address": "0x0E43073AECDe5DA8ef4D3ee574059b10F4Df1A4e",
+      "name": "ChainWhisper Ember Test",
+      "symbol": "EMBR",
+      "decimals": 6,
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "faucetAmountRaw": "1000000000000",
+      "faucetMethod": "claimFaucet()",
+      "deploymentTxHash": "0xc1f0f407286135c14b10e5cd171c4caa0ef926563dc92a7c6db087ddfbff0c19",
+      "deploymentBlock": 9315609,
+      "seedMintTxHash": "0x7ce0396270f90780bb6c8463aa73aac2b21dd9ee226feab4e8a47887d5953889"
+    },
+    {
+      "address": "0xe57B081CD6Ec2CBF9735C3258fdCac7c900eF0A4",
+      "name": "ChainWhisper Orbit Test",
+      "symbol": "ORBT",
+      "decimals": 6,
+      "runtimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92",
+      "faucetAmountRaw": "1000000000000",
+      "faucetMethod": "claimFaucet()",
+      "deploymentTxHash": "0xb402659447ba94a5afac95c8f2da97e96473a15110f26f650c6a30d72ff42d0e",
+      "deploymentBlock": 9315611,
+      "seedMintTxHash": "0x2b1fd87a9c475aaa49146c61a6200218bdb06b64c37b03252518e97afe10a419"
+    }
+  ],
+  "pairs": [
+    {
+      "displayPair": "BCN/HBR",
+      "marketKey": "0xa181a3ba90a84f27724bc1aaede223c0d610d31c1ad054808c3035d06f84b781",
+      "token0": "0x059b5C3F7c1B0edD17DD6376AB17D50bCe3c5507",
+      "token1": "0xa29D04e2393cC5a5cd62896bCf9240116cF0BFb0",
+      "seedProfile": "direct-liquidity",
+      "strategies": [
+        "Aggregate"
+      ],
+      "coordinator": "0xaa3d1C8dab4816a96398B0b914cF19d547425349",
+      "epochController": "0x977E8861b74b9fD6Ec1a856fB3cA822C349eDC6B",
+      "sourceCount": 1,
+      "canonicalHost": "0xd8bBDf1772b2dD1B4c7bc3fF3C6BB55e529a8896",
+      "canonicalLiquidity": "zero-inventory",
+      "readiness": "direct-liquidity-seeded"
+    },
+    {
+      "displayPair": "BCN/EMBR",
+      "marketKey": "0x24abe9c995f81b9dfe83e3e7dcdea632f74fa3e1aa4667bc9879d397ef6f871a",
+      "token0": "0x0E43073AECDe5DA8ef4D3ee574059b10F4Df1A4e",
+      "token1": "0xa29D04e2393cC5a5cd62896bCf9240116cF0BFb0",
+      "seedProfile": "direct-liquidity",
+      "strategies": [
+        "Aggregate",
+        "Fixed"
+      ],
+      "coordinator": "0x563F9c6595cd9C87e5DB3229433738a855c0761D",
+      "epochController": "0x40D838242319B1517445684B70dF30Cf59f3465b",
+      "sourceCount": 2,
+      "canonicalHost": "0x803bf07c5a62f5E6102CdA89b8386554e1cA3BD1",
+      "canonicalLiquidity": "zero-inventory",
+      "readiness": "direct-liquidity-seeded"
+    },
+    {
+      "displayPair": "BCN/ORBT",
+      "marketKey": "0x8b832fe255c59c2a4c7d483d12692f1aefaaa3256671cf558d8e3178a29c9081",
+      "token0": "0xa29D04e2393cC5a5cd62896bCf9240116cF0BFb0",
+      "token1": "0xe57B081CD6Ec2CBF9735C3258fdCac7c900eF0A4",
+      "seedProfile": "direct-liquidity",
+      "strategies": [
+        "Aggregate",
+        "Range"
+      ],
+      "coordinator": "0x5B6b95780cF86860998D0B3AcE8b6720776E6A32",
+      "epochController": "0xC75ECD78d86aC1771c628D27E92C7dc40E65AE34",
+      "sourceCount": 2,
+      "canonicalHost": "0xfb04DA1411c917a3ab588ecADB2F8631235e9475",
+      "canonicalLiquidity": "zero-inventory",
+      "readiness": "direct-liquidity-seeded"
+    },
+    {
+      "displayPair": "EMBR/ORBT",
+      "marketKey": "0xbc7390bdea9f1ae34a3334e80f14993dbd33cb7467fa5633e2820476a240b111",
+      "token0": "0x0E43073AECDe5DA8ef4D3ee574059b10F4Df1A4e",
+      "token1": "0xe57B081CD6Ec2CBF9735C3258fdCac7c900eF0A4",
+      "seedProfile": "direct-liquidity",
+      "strategies": [
+        "Recurring"
+      ],
+      "coordinator": "0xbD7c56bCb4bb9D95425d91735C9752DbA8A5c118",
+      "epochController": "0xb132abc0d7C793125A6d7dE14C59466b43002Bee",
+      "sourceCount": 1,
+      "canonicalHost": "0x592f4A0f1D28a52cf79a4861eE17E704d011044e",
+      "canonicalLiquidity": "zero-inventory",
+      "readiness": "direct-liquidity-seeded"
+    },
+    {
+      "displayPair": "HBR/ORBT",
+      "marketKey": "0x7fd20eb72730d53177ee4efe66406766c030622287cc82ec765dd0c8dac21c49",
+      "token0": "0x059b5C3F7c1B0edD17DD6376AB17D50bCe3c5507",
+      "token1": "0xe57B081CD6Ec2CBF9735C3258fdCac7c900eF0A4",
+      "seedProfile": "p2-exhausted",
+      "strategies": [
+        "AggregateTiny"
+      ],
+      "coordinator": "0x8E88a49508773aB835d02B110704027cDD5C4B87",
+      "epochController": "0xa1D4cD626f899eb7db69d960709AA96d8bb30317",
+      "sourceCount": 1,
+      "canonicalHost": "0x7A8e9D7096b98520B49000E2E632dd774DBE95fD",
+      "canonicalLiquidity": "zero-inventory",
+      "readiness": "tiny-direct-liquidity-plus-p2"
+    },
+    {
+      "displayPair": "HBR/EMBR",
+      "marketKey": "0x0448a1ccde0b325f7f8a6b8236faa4cc314a5a69de579deca6c351b3940d181b",
+      "token0": "0x059b5C3F7c1B0edD17DD6376AB17D50bCe3c5507",
+      "token1": "0x0E43073AECDe5DA8ef4D3ee574059b10F4Df1A4e",
+      "seedProfile": "p2-sparse",
+      "strategies": [],
+      "coordinator": null,
+      "epochController": null,
+      "sourceCount": 0,
+      "readiness": "p2-sparse-no-direct-host"
+    }
+  ],
+  "strategies": [
+    {
+      "positionId": "1",
+      "family": "Aggregate",
+      "pair": [
+        "BCN",
+        "HBR"
+      ],
+      "marketKey": "0xa181a3ba90a84f27724bc1aaede223c0d610d31c1ad054808c3035d06f84b781",
+      "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+      "transactionHash": "0xdd2a76f14f2f248ec6bebee01b8b6686984cadd57f03ed5d2d4a887d03d3840d",
+      "blockNumber": 9315859,
+      "ownershipRevision": "1"
+    },
+    {
+      "positionId": "2",
+      "family": "Aggregate",
+      "pair": [
+        "BCN",
+        "EMBR"
+      ],
+      "marketKey": "0x24abe9c995f81b9dfe83e3e7dcdea632f74fa3e1aa4667bc9879d397ef6f871a",
+      "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+      "transactionHash": "0x16f1f036167d526b1f5bd0141ab9b7796bae6df54474919e65830d809341e762",
+      "blockNumber": 9315860,
+      "ownershipRevision": "1"
+    },
+    {
+      "positionId": "3",
+      "family": "Fixed",
+      "pair": [
+        "BCN",
+        "EMBR"
+      ],
+      "marketKey": "0x24abe9c995f81b9dfe83e3e7dcdea632f74fa3e1aa4667bc9879d397ef6f871a",
+      "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+      "transactionHash": "0xaaf602a4623dfabc04a778491860473752479d182911b55e6a10d11cfcf48171",
+      "blockNumber": 9315861,
+      "ownershipRevision": "1"
+    },
+    {
+      "positionId": "4",
+      "family": "Aggregate",
+      "pair": [
+        "BCN",
+        "ORBT"
+      ],
+      "marketKey": "0x8b832fe255c59c2a4c7d483d12692f1aefaaa3256671cf558d8e3178a29c9081",
+      "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+      "transactionHash": "0xe532994454df98e5c7fe0f44bb3f3bc987e3b4590857bf8eb2b9e0f6186eae3c",
+      "blockNumber": 9315862,
+      "ownershipRevision": "1"
+    },
+    {
+      "positionId": "5",
+      "family": "Range",
+      "pair": [
+        "BCN",
+        "ORBT"
+      ],
+      "marketKey": "0x8b832fe255c59c2a4c7d483d12692f1aefaaa3256671cf558d8e3178a29c9081",
+      "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+      "transactionHash": "0xbf19263fb2f7bafdb130475d9814f4c4c43c65cf871adc345b32369ea8abd22e",
+      "blockNumber": 9315863,
+      "ownershipRevision": "1"
+    },
+    {
+      "positionId": "6",
+      "family": "Recurring",
+      "pair": [
+        "EMBR",
+        "ORBT"
+      ],
+      "marketKey": "0xbc7390bdea9f1ae34a3334e80f14993dbd33cb7467fa5633e2820476a240b111",
+      "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+      "transactionHash": "0xc92e1093cbedf0bf949a349d4a5d6f06f0a14a610be9be7ffde5658864a0caa6",
+      "blockNumber": 9315864,
+      "ownershipRevision": "1"
+    },
+    {
+      "positionId": "7",
+      "family": "AggregateTiny",
+      "pair": [
+        "HBR",
+        "ORBT"
+      ],
+      "marketKey": "0x7fd20eb72730d53177ee4efe66406766c030622287cc82ec765dd0c8dac21c49",
+      "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+      "transactionHash": "0x57784e6b429b28a5fcf63bed83d96dcd5b9c1bef5d89cb207a2671f73f150caf",
+      "blockNumber": 9315865,
+      "ownershipRevision": "1"
+    }
+  ],
+  "p2": {
+    "routeCount": 6,
+    "routes": [
+      {
+        "label": "sparse-hbr-embr",
+        "routeIndex": 0,
+        "marketKeys": [
+          "0xa181a3ba90a84f27724bc1aaede223c0d610d31c1ad054808c3035d06f84b781",
+          "0x24abe9c995f81b9dfe83e3e7dcdea632f74fa3e1aa4667bc9879d397ef6f871a"
+        ],
+        "tokenIn": "HBR",
+        "tokenOut": "EMBR",
+        "transactionHash": "0x8d1fe56626655fb6ed764ce678a7439121af1d2fcd4f7c9b0b0221fca8b8bbe6",
+        "blockNumber": 9315839
+      },
+      {
+        "label": "sparse-embr-hbr",
+        "routeIndex": 1,
+        "marketKeys": [
+          "0x24abe9c995f81b9dfe83e3e7dcdea632f74fa3e1aa4667bc9879d397ef6f871a",
+          "0xa181a3ba90a84f27724bc1aaede223c0d610d31c1ad054808c3035d06f84b781"
+        ],
+        "tokenIn": "EMBR",
+        "tokenOut": "HBR",
+        "transactionHash": "0x56d6cfd81d0c148222808d75fb01ebff3c50600ce12f47c39dd2d99fd1cb39b0",
+        "blockNumber": 9315841
+      },
+      {
+        "label": "exhausted-direct-hbr-orbt",
+        "routeIndex": 2,
+        "marketKeys": [
+          "0x7fd20eb72730d53177ee4efe66406766c030622287cc82ec765dd0c8dac21c49"
+        ],
+        "tokenIn": "HBR",
+        "tokenOut": "ORBT",
+        "transactionHash": "0xe3f8e9e31b1183e3367f0cb046a94440c8da5421e0dde64dd4f447c37f4ce56f",
+        "blockNumber": 9315843
+      },
+      {
+        "label": "exhausted-via-hbr-orbt",
+        "routeIndex": 3,
+        "marketKeys": [
+          "0xa181a3ba90a84f27724bc1aaede223c0d610d31c1ad054808c3035d06f84b781",
+          "0x8b832fe255c59c2a4c7d483d12692f1aefaaa3256671cf558d8e3178a29c9081"
+        ],
+        "tokenIn": "HBR",
+        "tokenOut": "ORBT",
+        "transactionHash": "0x4998d8490dd393d765f7d99877f74d8d1629e6012d1cf39b529d3c02409b7d1c",
+        "blockNumber": 9315844
+      },
+      {
+        "label": "exhausted-direct-orbt-hbr",
+        "routeIndex": 4,
+        "marketKeys": [
+          "0x7fd20eb72730d53177ee4efe66406766c030622287cc82ec765dd0c8dac21c49"
+        ],
+        "tokenIn": "ORBT",
+        "tokenOut": "HBR",
+        "transactionHash": "0x60d17c8f948a142a375cfc9d99ab880382c9438daca2bb4d126d2b1281e86a57",
+        "blockNumber": 9315847
+      },
+      {
+        "label": "exhausted-via-orbt-hbr",
+        "routeIndex": 5,
+        "marketKeys": [
+          "0x8b832fe255c59c2a4c7d483d12692f1aefaaa3256671cf558d8e3178a29c9081",
+          "0xa181a3ba90a84f27724bc1aaede223c0d610d31c1ad054808c3035d06f84b781"
+        ],
+        "tokenIn": "ORBT",
+        "tokenOut": "HBR",
+        "transactionHash": "0xed193160af761627a4b34a0ce29593a29c95402d5cee40002ee5b2319f1e9c3e",
+        "blockNumber": 9315848
+      }
+    ],
+    "ordinarySamePairCompetition": false,
+    "sparsePair": [
+      "HBR",
+      "EMBR"
+    ],
+    "exhaustedPair": [
+      "HBR",
+      "ORBT"
+    ],
+    "intermediate": "BCN",
+    "canonicalRouteLiquidity": "zero-inventory-no-match-and-recovery-boundary",
+    "successfulRouteLiquiditySupported": false,
+    "limitation": "Canonical P2 hosts are bound but empty until canonical-market Position-NFT admission is composed."
+  },
+  "c1": {
+    "cycleCount": 2,
+    "cycles": [
+      {
+        "index": 0,
+        "tokens": [
+          "BCN",
+          "EMBR",
+          "ORBT"
+        ],
+        "marketKeys": [
+          "0x24abe9c995f81b9dfe83e3e7dcdea632f74fa3e1aa4667bc9879d397ef6f871a",
+          "0xbc7390bdea9f1ae34a3334e80f14993dbd33cb7467fa5633e2820476a240b111",
+          "0x8b832fe255c59c2a4c7d483d12692f1aefaaa3256671cf558d8e3178a29c9081"
+        ],
+        "startToken": "0xa29D04e2393cC5a5cd62896bCf9240116cF0BFb0",
+        "transactionHash": "0xc352cdfa7aa049fb63818ac54484e6b1e096755b0840fc10efb21333a7dff3db",
+        "blockNumber": 9315837
+      },
+      {
+        "index": 1,
+        "tokens": [
+          "BCN",
+          "HBR",
+          "ORBT"
+        ],
+        "marketKeys": [
+          "0xa181a3ba90a84f27724bc1aaede223c0d610d31c1ad054808c3035d06f84b781",
+          "0x7fd20eb72730d53177ee4efe66406766c030622287cc82ec765dd0c8dac21c49",
+          "0x8b832fe255c59c2a4c7d483d12692f1aefaaa3256671cf558d8e3178a29c9081"
+        ],
+        "startToken": "0xa29D04e2393cC5a5cd62896bCf9240116cF0BFb0",
+        "transactionHash": "0x6b181acb68f1aedb597d6d0917cd5b2ac2595b5919797a4a3b49b8b93d334f91",
+        "blockNumber": 9315838
+      }
+    ]
+  },
+  "privacy": {
+    "publicFieldsExcludeInventoryTermsAllocationsAndParticipantReceipts": true,
+    "privateTokenRuntimeHash": "0xf1c78fbb9c9d4fe3ce93984df1af8bb9c5af44b2b14b923e7f9c3cbbf40cfd92"
+  },
+  "receipts": [
+    {
+      "label": "deploy:token-bcn",
+      "role": "deployer",
+      "transactionHash": "0x51d82814eb885afe01efb8b9680afaa82a91294e2ea0a9894768aad3a3feea25",
+      "blockNumber": 9315605,
+      "gasUsed": "3256082",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:mint-bcn",
+      "role": "deployer",
+      "transactionHash": "0x951a788be163c4dbc40304a21dce079304eed93793a7f8ce58a3f8c0626c3e53",
+      "blockNumber": 9315606,
+      "gasUsed": "655731",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:token-hbr",
+      "role": "deployer",
+      "transactionHash": "0x43090df2bdb887c7cfb7b3682d17510e6ebadf7ce2e854fd4d64deeb1e324b2e",
+      "blockNumber": 9315607,
+      "gasUsed": "3256082",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:mint-hbr",
+      "role": "deployer",
+      "transactionHash": "0xa5469566fab8215ce687c4f6cf44945e4d0e0aa05a84fcb077a7154c279746b8",
+      "blockNumber": 9315608,
+      "gasUsed": "655731",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:token-embr",
+      "role": "deployer",
+      "transactionHash": "0xc1f0f407286135c14b10e5cd171c4caa0ef926563dc92a7c6db087ddfbff0c19",
+      "blockNumber": 9315609,
+      "gasUsed": "3256082",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:mint-embr",
+      "role": "deployer",
+      "transactionHash": "0x7ce0396270f90780bb6c8463aa73aac2b21dd9ee226feab4e8a47887d5953889",
+      "blockNumber": 9315610,
+      "gasUsed": "655731",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:token-orbt",
+      "role": "deployer",
+      "transactionHash": "0xb402659447ba94a5afac95c8f2da97e96473a15110f26f650c6a30d72ff42d0e",
+      "blockNumber": 9315611,
+      "gasUsed": "3256082",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:mint-orbt",
+      "role": "deployer",
+      "transactionHash": "0x2b1fd87a9c475aaa49146c61a6200218bdb06b64c37b03252518e97afe10a419",
+      "blockNumber": 9315612,
+      "gasUsed": "655731",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:arbiter-authority",
+      "role": "deployer",
+      "transactionHash": "0x9afb9ec8731dce94fe0a48eaeffed3f557f00f116ed088975c2c04d01651186e",
+      "blockNumber": 9315613,
+      "gasUsed": "150102",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:cycle-registry",
+      "role": "deployer",
+      "transactionHash": "0xa46d5f3ee793dfdb4221df961235202f78f26c6d1bea108558ca68c55fc0518c",
+      "blockNumber": 9315614,
+      "gasUsed": "2345338",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:global-core",
+      "role": "deployer",
+      "transactionHash": "0x5cfc605eb39f50ff1572cfb9c739c72eb65242fef6cbb2565e959d15bda4f71a",
+      "blockNumber": 9315615,
+      "gasUsed": "6094214",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:bind-arbiter-core",
+      "role": "deployer",
+      "transactionHash": "0x81cd756e7b1e146cc93874b4cab9b3e0faec2a0d34c1908a31d503755c1a2732",
+      "blockNumber": 9315616,
+      "gasUsed": "69304",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:bind-registry-core",
+      "role": "deployer",
+      "transactionHash": "0x1af5d50ae1957caab8c59ebea858fb213b645d2c1796a0eda4224ad3d187e86f",
+      "blockNumber": 9315617,
+      "gasUsed": "59787",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:c1-scorer",
+      "role": "deployer",
+      "transactionHash": "0x555c7301092406fa54019c86cfeee1948240342ab1ee0246003ff880bad20c81",
+      "blockNumber": 9315618,
+      "gasUsed": "916344",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:c1-tournament",
+      "role": "deployer",
+      "transactionHash": "0x3c51aaf1086f8146d1eb1a9f57a32afed0eaf618a30659cf0d80330555b39c88",
+      "blockNumber": 9315619,
+      "gasUsed": "836663",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:c1-shard",
+      "role": "deployer",
+      "transactionHash": "0xfc848cafd832b2e24e18b5303a426dbfdd977378721768bf52515d240f642aea",
+      "blockNumber": 9315620,
+      "gasUsed": "2196274",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:bind-c1-shard",
+      "role": "deployer",
+      "transactionHash": "0xec479e280b922b2ab4cbfda20c8170e7f4eb7dbcc5e35e09351734dd36c4fb41",
+      "blockNumber": 9315621,
+      "gasUsed": "201014",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:p2-route-registry",
+      "role": "deployer",
+      "transactionHash": "0xf7297a87eee26d420964cf893f41f2a6f04356284fc97d15d2c8145c892fcb4b",
+      "blockNumber": 9315622,
+      "gasUsed": "1108224",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:p2-executor",
+      "role": "deployer",
+      "transactionHash": "0xce27c07f4993a5e89c46bc52586bd9ffa684a2a18672c487a37be1dbf80c14bf",
+      "blockNumber": 9315623,
+      "gasUsed": "1447827",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:l8-kernel",
+      "role": "deployer",
+      "transactionHash": "0x5a45039d572451319dd0da510c6f74d5848bfeac8d2988f2cd2d09f2ef2c4e58",
+      "blockNumber": 9315624,
+      "gasUsed": "1156537",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:lifecycle-module",
+      "role": "deployer",
+      "transactionHash": "0x6c75261c75595edaa4730046600d17cd824d75c22d6aae5839cf0db4a264dc84",
+      "blockNumber": 9315625,
+      "gasUsed": "5028536",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:p2-module",
+      "role": "deployer",
+      "transactionHash": "0x268ffc46c9eb09b0701a5eea215d6f0508a6816027aff43caa03ec36e2654429",
+      "blockNumber": 9315626,
+      "gasUsed": "4586244",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:private-book-module",
+      "role": "deployer",
+      "transactionHash": "0x4f52659bfa2a6ecdc7335774e322d77cd7b08078893bc4374dda019e04a0990b",
+      "blockNumber": 9315627,
+      "gasUsed": "6219132",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:range-module",
+      "role": "deployer",
+      "transactionHash": "0x12a492f7d95281b07d90f1271d6dd13b8256a5564a37e16f4cd87807c2f6f658",
+      "blockNumber": 9315628,
+      "gasUsed": "3729177",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:recurring-module",
+      "role": "deployer",
+      "transactionHash": "0xc30c91a62afc30f446dc4d8d548e12187616438744712521490bc08e54ee33cc",
+      "blockNumber": 9315629,
+      "gasUsed": "4903551",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:aggregate-lifecycle-module",
+      "role": "deployer",
+      "transactionHash": "0x35f41b0623324a8842bed990d8b7daefbc61255e44e3e80780e58b2580d7af45",
+      "blockNumber": 9315630,
+      "gasUsed": "4236111",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:work-module",
+      "role": "deployer",
+      "transactionHash": "0x25144148790067fc54772352a15243f66fb0e7bed73ee075f22e546344934cb4",
+      "blockNumber": 9315631,
+      "gasUsed": "1583843",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:p2-complete-book-selector",
+      "role": "deployer",
+      "transactionHash": "0xd7fde3e43832d355fae646a037d6b802cf60592317532f46cfd7c317a9bc134e",
+      "blockNumber": 9315632,
+      "gasUsed": "1450238",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:p2-complete-book-frontier-module",
+      "role": "deployer",
+      "transactionHash": "0xad0ebe9274f1cf12fcc63e74666fcf8306f6e9c4bad6ab1a383d00e76d1dada0",
+      "blockNumber": 9315633,
+      "gasUsed": "931784",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:p2-complete-book-work-module",
+      "role": "deployer",
+      "transactionHash": "0xbee06f8b3347ddc8cc7238695054fd3117939edc5eabb530df930a8a5b9e3742",
+      "blockNumber": 9315634,
+      "gasUsed": "2975008",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:flat-dispatcher",
+      "role": "deployer",
+      "transactionHash": "0x70019a1ad56c31e7dd63ae81898c80922d4ad6dd9b4fb8eaa0d4e2fc993672ca",
+      "blockNumber": 9315635,
+      "gasUsed": "1259586",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:work-authority",
+      "role": "deployer",
+      "transactionHash": "0x14ebe80e6d68eeefef2f63e1ecb962e7ef711bfb9d852c93cbb65233a854a163",
+      "blockNumber": 9315636,
+      "gasUsed": "4313280",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:position-nft",
+      "role": "deployer",
+      "transactionHash": "0xe01e4b2ef6624083cc8a0254a9dc6ca888f062919322e5dcbd4469abb273b815",
+      "blockNumber": 9315637,
+      "gasUsed": "1449710",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:bind-position-nft",
+      "role": "deployer",
+      "transactionHash": "0x502c28550b2a8d8d6f96b1cf1afd23298bc0fdc59ebd5555d161be49efe56506",
+      "blockNumber": 9315638,
+      "gasUsed": "97025",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:bind-lifecycle-boundary",
+      "role": "deployer",
+      "transactionHash": "0x99d7f67b4f86848af25693bbf5c18f01bb157ed51e62452c1da7f74a2eacfcab",
+      "blockNumber": 9315639,
+      "gasUsed": "169767",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:bind-p2",
+      "role": "deployer",
+      "transactionHash": "0x119d1c66c51bf0d66bc928278be65805157fc140de5f923b82f4bd1813dd31d0",
+      "blockNumber": 9315640,
+      "gasUsed": "295703",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:fixed-frontier",
+      "role": "deployer",
+      "transactionHash": "0x1230b472947245530650f76c68b0ee909eb2e889b31dab5b4794505def726d9b",
+      "blockNumber": 9315641,
+      "gasUsed": "1213926",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:normalized-frontier",
+      "role": "deployer",
+      "transactionHash": "0xf8ae2fa3f1c388a9b83e828dbabb7e04eeb4a8964557af668f202661fdf74b23",
+      "blockNumber": 9315642,
+      "gasUsed": "1363702",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-epoch",
+      "role": "deployer",
+      "transactionHash": "0xc8c2035966d221b68a7b5592fbc8fc6b8e072efe829622aabc079642ab0c8b48",
+      "blockNumber": 9315643,
+      "gasUsed": "3962945",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-aggregate-host",
+      "role": "deployer",
+      "transactionHash": "0xfb0bb2a48a826da272311fca1f9e1a26221a1ee82a5c33432d3dfa7a19f0fc37",
+      "blockNumber": 9315644,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-aggregate-adapter",
+      "role": "deployer",
+      "transactionHash": "0x73cf678f04cfc0b2cf1031b37ea9712833577fa52f12c4bef70a9c5193f5ade1",
+      "blockNumber": 9315645,
+      "gasUsed": "3449207",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-aggregate-bridge",
+      "role": "deployer",
+      "transactionHash": "0x16c97151c1688b5545bfe2f34e561262da4a7bf006d6f0081b49fb966102b13a",
+      "blockNumber": 9315646,
+      "gasUsed": "1738320",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0xf564aad1d2d88b2b58970263f94cd51b209dad9fcb6a1d4b4a5e39c0609dd048",
+      "blockNumber": 9315647,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-aggregate-direct",
+      "role": "deployer",
+      "transactionHash": "0xa1ca5e5ae13be7dfce4623350cdf74abe3ee8c97c2ab9a5d53290659f2f5eafb",
+      "blockNumber": 9315648,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0x0253353b77eab92ff6cb864ae8958f9c97b9bdf080adb65fcd5018a82cbe342f",
+      "blockNumber": 9315649,
+      "gasUsed": "134596",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-aggregate-reprice",
+      "role": "deployer",
+      "transactionHash": "0x60326996b15e29456d3ce517974b9a6c2310c007acb5343cb34a12f5795dceb3",
+      "blockNumber": 9315650,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-aggregate-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x1cb369f2b99bdcf0f3804fb5c6b27b772b3d0f48773f6aec1c60b122a989814f",
+      "blockNumber": 9315651,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-aggregate-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0xf00b568f4ec99817b91532ef3f3355b68497a15c35bbec69a5275f3d94c10cbc",
+      "blockNumber": 9315652,
+      "gasUsed": "4902253",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0xe496c9e8a19cfc88bcccb1bf91302ef0b875fff61438ab59186b1ea106ef9974",
+      "blockNumber": 9315653,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0x5e214211c43aa7aadf49cb3d9a4c86f0d2d11a5f7cb0370ba24874c1b79cf776",
+      "blockNumber": 9315654,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0x343d52124876e92c430b3af6aa1a39bbb5a8e4bfc55cd6ed040db64feb5f06a3",
+      "blockNumber": 9315655,
+      "gasUsed": "47012",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-approve-host",
+      "role": "deployer",
+      "transactionHash": "0xe2c973e8d1d932f2604768a96dbb469a70dd93becd7f504bee0d050b4729b436",
+      "blockNumber": 9315656,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-approve-module",
+      "role": "deployer",
+      "transactionHash": "0xcd001a0a1d84d9d1d35396bd9148a878f6f037dc1af1123b76f8acd3c5762d93",
+      "blockNumber": 9315657,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-approve-lifecycle",
+      "role": "deployer",
+      "transactionHash": "0xfb8c6cfb5072b529210f619db6b42a0f68257749d3323fb5a1e2b046409cdaa0",
+      "blockNumber": 9315658,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-approve-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x593d12975acf6c19fc2eef4885ca50eb6e88efcb9a735d9f5bdcd46e9c1fa8c0",
+      "blockNumber": 9315659,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-maker-core",
+      "role": "deployer",
+      "transactionHash": "0xe040fa27af8e7800cbb7686b03f964bac79b51236c583840e1c157a606bc4cf3",
+      "blockNumber": 9315660,
+      "gasUsed": "49500",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-identity",
+      "role": "deployer",
+      "transactionHash": "0x581b801863df9ba104622a1f5987a421df3e42701d2e488b3c5f2eee8756bd1d",
+      "blockNumber": 9315661,
+      "gasUsed": "278789",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-aggregate-register",
+      "role": "deployer",
+      "transactionHash": "0x01b6c1fdba32e2dc930c623a277c978f706c5dab5962cd2ce6ee519111e0f84a",
+      "blockNumber": 9315662,
+      "gasUsed": "101951",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-hbr-coordinator",
+      "role": "deployer",
+      "transactionHash": "0x16b7ffeb621a373a91d05018659d90f53158c1d1390b2b4761f85085832681f4",
+      "blockNumber": 9315663,
+      "gasUsed": "1629218",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-bind-economic-core",
+      "role": "deployer",
+      "transactionHash": "0xc8180e14ace7d970cf41f4ee4f0821c00c656feeeb8425f4d46d96376931e3c6",
+      "blockNumber": 9315664,
+      "gasUsed": "46553",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-bind-private-book",
+      "role": "deployer",
+      "transactionHash": "0x0f70b6dd76548d089de00ca7fa4fb4431ebab74cdd45d4b778a77d1ff1ed5916",
+      "blockNumber": 9315665,
+      "gasUsed": "160253",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-hbr-configure-work",
+      "role": "deployer",
+      "transactionHash": "0xa385d7cd3a1c025c0df612f1cefb90c1657c479add4679ba3393caf4cbc5c418",
+      "blockNumber": 9315666,
+      "gasUsed": "195219",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-epoch",
+      "role": "deployer",
+      "transactionHash": "0x862c8829ff118f2009200ccb5049c5d77765780ac93721925f26d79172a22d50",
+      "blockNumber": 9315667,
+      "gasUsed": "3962945",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-aggregate-host",
+      "role": "deployer",
+      "transactionHash": "0x8581a98be53c76c951363ffae8088b8836fddb6b6fb4020eb424f254742b8289",
+      "blockNumber": 9315668,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-aggregate-adapter",
+      "role": "deployer",
+      "transactionHash": "0xce7d9299c0d6df4171dce4519e59b5907eb49ad77ca0fb26abb79a8c854f4265",
+      "blockNumber": 9315669,
+      "gasUsed": "3449207",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-aggregate-bridge",
+      "role": "deployer",
+      "transactionHash": "0xf1207b2df24570bbe8ca34a2eeeea3516e353f2116353d15453826c871583f65",
+      "blockNumber": 9315670,
+      "gasUsed": "1738320",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0x12a6f1dbb645664e19672fa17ff2d328f3aefc787dbe59ca1178a7231f9d4473",
+      "blockNumber": 9315671,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-aggregate-direct",
+      "role": "deployer",
+      "transactionHash": "0x7f89b3a126484d7881d69dc08a8ca5e3b06e2888d0c38c53b5cd6eccebca1499",
+      "blockNumber": 9315672,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0x983b6cc5994c4bf0ed878535e89a781d5620473755dc3deaa8d06ce6c453e44c",
+      "blockNumber": 9315673,
+      "gasUsed": "134596",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-aggregate-reprice",
+      "role": "deployer",
+      "transactionHash": "0x4b018ff9bbfa7154a92eea9b55f8709c7f3607e041a44236a860cec9c76d45eb",
+      "blockNumber": 9315674,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-aggregate-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x07090ecfab093a1568077a4733ba33b339e9ea42b32aaae0c5c6244f2a9f5323",
+      "blockNumber": 9315675,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-aggregate-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x2599a79559b2849e26bde0ecf2c11dfebd9e50cb039d2815254acc4558e0f9b1",
+      "blockNumber": 9315676,
+      "gasUsed": "4902265",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x2cba2dc99be586639f50623802b465251e673f68f37f1cc5dac3b0688c808def",
+      "blockNumber": 9315677,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0xeee2fe0d39acb8679ff4e33da305c47150b95972390e88e1d4ddbe5084959869",
+      "blockNumber": 9315678,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0xd9a2b1277cb91eaab4d40f09d623d9c3ccdf4c353fa71fbbf523064fb7a4f352",
+      "blockNumber": 9315679,
+      "gasUsed": "47000",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-approve-host",
+      "role": "deployer",
+      "transactionHash": "0x9118b0e5512f0aa4a8303823a6ee20dfbba7d50f067557ced8d50a58d12a174c",
+      "blockNumber": 9315680,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-approve-module",
+      "role": "deployer",
+      "transactionHash": "0x97ff95f1d3862823a580b91faf08a5e8157802c7dac82c0a78afb65dd9179048",
+      "blockNumber": 9315681,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-approve-lifecycle",
+      "role": "deployer",
+      "transactionHash": "0x3675093dfbf48e80f9a3ecfc44bd72ecaccb79fa72da9d879837649cd8d2235d",
+      "blockNumber": 9315682,
+      "gasUsed": "46315",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-approve-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x5d4c4022ffb7e03747709fe395d00b24cf248e0917970c000964d5770918e5e2",
+      "blockNumber": 9315683,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-maker-core",
+      "role": "deployer",
+      "transactionHash": "0x1e9f1d0db8604180032ba78517e95c1b4d787090f3a28cb9797a93d9bb1c0025",
+      "blockNumber": 9315684,
+      "gasUsed": "49500",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-identity",
+      "role": "deployer",
+      "transactionHash": "0x4b6b4ab6fd958251190990cf1dde18792586d87db42b70ea14e24032342621a7",
+      "blockNumber": 9315685,
+      "gasUsed": "278789",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-aggregate-register",
+      "role": "deployer",
+      "transactionHash": "0xe6c06c71d1389b200df198b0587b0235e890e06691e030284f2535e088e5fd85",
+      "blockNumber": 9315686,
+      "gasUsed": "101951",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-fixed-host",
+      "role": "deployer",
+      "transactionHash": "0x9702f740e695f1c314dab8d614d2d0e9ffabbfda419e450d0339d2d0e7768c16",
+      "blockNumber": 9315687,
+      "gasUsed": "5889034",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-fixed-adapter",
+      "role": "deployer",
+      "transactionHash": "0xdd517f1a15d98cbe80e7ee650df15df0c19d2081930410bf82985f76af856bbe",
+      "blockNumber": 9315688,
+      "gasUsed": "3175841",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-fixed-bridge",
+      "role": "deployer",
+      "transactionHash": "0x2b30fa81ca8ecd24e9aa9380930cfcdda09dd4df39dc84254d53d5b81ac852ea",
+      "blockNumber": 9315689,
+      "gasUsed": "1738238",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-fixed-approve-host",
+      "role": "deployer",
+      "transactionHash": "0x3abea76aadfab59df3c455248e7d8f66b2f870f44f80a6ae890b6d1f1b5e0273",
+      "blockNumber": 9315690,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-fixed-frontier",
+      "role": "deployer",
+      "transactionHash": "0xece41adb998db331484e80081a19518c5db06f2ff3c1b5a300d1050db96a5012",
+      "blockNumber": 9315691,
+      "gasUsed": "76103",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-fixed-approve-frontier",
+      "role": "deployer",
+      "transactionHash": "0xcf8d1e7b02c024005e74900c972e78be288cb517899c7388b7f417458ae72b1f",
+      "blockNumber": 9315692,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-fixed-maker-core",
+      "role": "deployer",
+      "transactionHash": "0xff70418042797f41b147a9d76051aa795c3b7fb1c94535d8640a6de6370740a8",
+      "blockNumber": 9315693,
+      "gasUsed": "49514",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-fixed-identity",
+      "role": "deployer",
+      "transactionHash": "0x4a2c7dfea0757d710f6f45adc80369a391b6263736f1db77506cebbd6ffeabe8",
+      "blockNumber": 9315694,
+      "gasUsed": "260309",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-fixed-register",
+      "role": "deployer",
+      "transactionHash": "0x09fab7d4763495ca4f18e774925ffd2e9058651fcbfc1b5642ba622e88bc036e",
+      "blockNumber": 9315695,
+      "gasUsed": "87106",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-embr-coordinator",
+      "role": "deployer",
+      "transactionHash": "0x9d54eff455e7187578fffbae3c03bc87fb70dabb2afe0e67a285c5afb79da32b",
+      "blockNumber": 9315696,
+      "gasUsed": "1629218",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-bind-economic-core",
+      "role": "deployer",
+      "transactionHash": "0x9fbad4c7b1251c650141535408eb35d35a7b27538531c5c24d114e57c5b481d8",
+      "blockNumber": 9315697,
+      "gasUsed": "46553",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-bind-private-book",
+      "role": "deployer",
+      "transactionHash": "0xa93d799efd3530aa947553596dca6fc6b56d430ab77bb1748872a617671b4183",
+      "blockNumber": 9315698,
+      "gasUsed": "160253",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-embr-configure-work",
+      "role": "deployer",
+      "transactionHash": "0xe4ac728efbc0efaad27a0848541100c5447bd04a8fa00e4333dc8dac49a03188",
+      "blockNumber": 9315699,
+      "gasUsed": "204423",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-epoch",
+      "role": "deployer",
+      "transactionHash": "0x7d5b83e008a8d348cb33e20ab6c8f604f4bbc02d9328958b6d3160258ae69207",
+      "blockNumber": 9315700,
+      "gasUsed": "3962945",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-aggregate-host",
+      "role": "deployer",
+      "transactionHash": "0x0aa2973d0f4ea9b2847bad031373153b3753b95fc06310f46f8c98f5d1a7899d",
+      "blockNumber": 9315701,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-aggregate-adapter",
+      "role": "deployer",
+      "transactionHash": "0xfc553d91e76ebcfcbae5755dce7131702f2d12be5853f90554d205052501a346",
+      "blockNumber": 9315702,
+      "gasUsed": "3449195",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-aggregate-bridge",
+      "role": "deployer",
+      "transactionHash": "0x8cb71a39ed793a1f631eac87d02f29c227d69f0d97fc675315fb1276a4f3bd4a",
+      "blockNumber": 9315703,
+      "gasUsed": "1738320",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0x0a008cb2355549bd8e5dbc2eced207483661e7f7d8a6546415b263a6fcadf633",
+      "blockNumber": 9315704,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-aggregate-direct",
+      "role": "deployer",
+      "transactionHash": "0x0090a154539445218f280a2494e6ea69c1837ea7f8839ad89025d0086dd7d323",
+      "blockNumber": 9315705,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0xb3b7e0725c983dc9ceb6ce95bf8acaef8c5687af8cc5bb083d8ec90a4b374b64",
+      "blockNumber": 9315706,
+      "gasUsed": "134596",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-aggregate-reprice",
+      "role": "deployer",
+      "transactionHash": "0x196defbfbf32a0f0b35f6b04cbe86d9dccbfd3e32d81c1b37731a710cc800da9",
+      "blockNumber": 9315707,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-aggregate-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x04b67348f6efecd115bb704cc5e478654e2a9d2234d8c009e331f7a6fd937060",
+      "blockNumber": 9315708,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-aggregate-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x0d29659f621bbaff142121c185fb9f764479e7c7c817ecfca616c4fd1e9002e6",
+      "blockNumber": 9315709,
+      "gasUsed": "4902265",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x533d58df72f81d397ddd452a60c75239d9f610d3e613b56c2a74b8a3ed61e85a",
+      "blockNumber": 9315710,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0x8b01a973013a107ed50b1fe5007486b64801e09819eae552e7e9a0d403672ca0",
+      "blockNumber": 9315711,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0x4591c4e8ab855a5c66914554fdc920f436914bfadad0fc799ff5266974ac09fd",
+      "blockNumber": 9315712,
+      "gasUsed": "47000",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-approve-host",
+      "role": "deployer",
+      "transactionHash": "0xee292e6e039989fc1df754a74b8440e64349253ea0ac7396d44803b34d075f35",
+      "blockNumber": 9315713,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-approve-module",
+      "role": "deployer",
+      "transactionHash": "0xd50870f4ab5bf969c922b179f6a9bf1c318e43f93bd3bdf850bee86702a8cdcd",
+      "blockNumber": 9315714,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-approve-lifecycle",
+      "role": "deployer",
+      "transactionHash": "0xd1ddb5765d2ed16acbaecf25148b351f077d245aa8c2fc8d20d0e62dcc114d3f",
+      "blockNumber": 9315715,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-approve-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x1713d3f0c82316ef3eec73bebe06ee00e6d6500c5ee8c65139c367b5067bdf83",
+      "blockNumber": 9315716,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-maker-core",
+      "role": "deployer",
+      "transactionHash": "0x267e6316e20679d2c2aa75dbdef9876714de9f3f8cb71c00bfc2b481a466256e",
+      "blockNumber": 9315717,
+      "gasUsed": "49500",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-identity",
+      "role": "deployer",
+      "transactionHash": "0x01383fef232eea4474195039b56112c48503a40ef8fc07cb8223c905688557e3",
+      "blockNumber": 9315718,
+      "gasUsed": "278777",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-aggregate-register",
+      "role": "deployer",
+      "transactionHash": "0x108d06b1ea68c4dbad4e2af0a203ff88c423fdb381a86a6c1a262cf7e58e7203",
+      "blockNumber": 9315719,
+      "gasUsed": "101939",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-range-host",
+      "role": "deployer",
+      "transactionHash": "0xc69a2a8f7a7b3e52ccdc434fe43f70f61ca11a2cc1dfe7ec2129a4adc03ea817",
+      "blockNumber": 9315720,
+      "gasUsed": "5889034",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-range-adapter",
+      "role": "deployer",
+      "transactionHash": "0x13e57dddc15b4824ba101d21dfff178402308639096a58234e814bb0482e08d6",
+      "blockNumber": 9315721,
+      "gasUsed": "3164203",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-range-bridge",
+      "role": "deployer",
+      "transactionHash": "0x505887a38e1e28823da8f8c423d679ee988da4194b32058b6030da507ca7e794",
+      "blockNumber": 9315722,
+      "gasUsed": "1738472",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-range-approve-host",
+      "role": "deployer",
+      "transactionHash": "0x0e6955dae9cf63ade33361262c22194dd42d740fbec4664ceda512e44ee41e39",
+      "blockNumber": 9315723,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-range-frontier",
+      "role": "deployer",
+      "transactionHash": "0xb3460c48904393b9e82d3262498469c97ebca0cd7c1cc4a64a0103ddbc37f242",
+      "blockNumber": 9315724,
+      "gasUsed": "76393",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-range-approve-frontier",
+      "role": "deployer",
+      "transactionHash": "0x35e3080d929a38df74b8b5ae8e661d838311ad1ea5027c72e8b2b5c4f2a57653",
+      "blockNumber": 9315725,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-range-maker-core",
+      "role": "deployer",
+      "transactionHash": "0x24f0aba39079b639c5e01b5436b851b2844d84eeb804c7dd26db8ad5d76cfbe1",
+      "blockNumber": 9315726,
+      "gasUsed": "49503",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-range-identity",
+      "role": "deployer",
+      "transactionHash": "0x3a9dbe8f81380e2a47163bf7f814016253363b7bdcd017cffff330071a2fb9b7",
+      "blockNumber": 9315727,
+      "gasUsed": "261031",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-range-register",
+      "role": "deployer",
+      "transactionHash": "0xd0b962835cc0366dc2e45ceee43f23f9b04f9bf871a63708caaf054e8556dfd8",
+      "blockNumber": 9315728,
+      "gasUsed": "87106",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-bcn-orbt-coordinator",
+      "role": "deployer",
+      "transactionHash": "0xe75f9013f4894df6396ac64fd33f8d5b2a4af9869a6d3f3236aa3e5434cbca3e",
+      "blockNumber": 9315729,
+      "gasUsed": "1629218",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-bind-economic-core",
+      "role": "deployer",
+      "transactionHash": "0xaeca1746fabe464955ad7ba51d3264181f3e4f51c0eddaee3a87ddd43b685898",
+      "blockNumber": 9315730,
+      "gasUsed": "46553",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-bind-private-book",
+      "role": "deployer",
+      "transactionHash": "0x3f7e552de151e594aa5a8efd8d17934e53b1bcdeb87555652c574dbb28602a49",
+      "blockNumber": 9315731,
+      "gasUsed": "160253",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-bcn-orbt-configure-work",
+      "role": "deployer",
+      "transactionHash": "0xa1c48d6f7b1e63bc85eebf55f266dd110b25bb8ff61306c9d45b56426533e9f0",
+      "blockNumber": 9315732,
+      "gasUsed": "204489",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-embr-orbt-epoch",
+      "role": "deployer",
+      "transactionHash": "0x386f8f68ce601c53c7018214aac1dcef809dd66b68088d58fd657f65152788f8",
+      "blockNumber": 9315733,
+      "gasUsed": "3962945",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-embr-orbt-recurring-host",
+      "role": "deployer",
+      "transactionHash": "0x65ca6ae420f7bd73a33e12aafb9b91d2d4c5a4d8c073dec29cd17e001a51f0b1",
+      "blockNumber": 9315734,
+      "gasUsed": "6250438",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-embr-orbt-recurring-adapter",
+      "role": "deployer",
+      "transactionHash": "0x278b02937e68e44d6d8e93b3a433b405d721614462afca584d8cb39fcb597530",
+      "blockNumber": 9315735,
+      "gasUsed": "3600802",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-embr-orbt-recurring-bridge",
+      "role": "deployer",
+      "transactionHash": "0x186febaec036e4e47b87ec7d418d06492ad443310f11c3be04c9389de2bed636",
+      "blockNumber": 9315736,
+      "gasUsed": "1738808",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-recurring-approve-host",
+      "role": "deployer",
+      "transactionHash": "0x363c497693b9360a2cf19863284629cd91355f737a6d6eb5f3111a80db8cc26b",
+      "blockNumber": 9315737,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-recurring-frontier",
+      "role": "deployer",
+      "transactionHash": "0xff01b9835b759acfec580ef3ff287a1fdbf45c62e8d5681e11ba0a7a3fa74ce8",
+      "blockNumber": 9315738,
+      "gasUsed": "76079",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-recurring-approve-frontier",
+      "role": "deployer",
+      "transactionHash": "0x9c5ed152bb9a401294e457a9d01f370b9feea4560b46f349a7e915ad7f9db7eb",
+      "blockNumber": 9315739,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-recurring-maker-core",
+      "role": "deployer",
+      "transactionHash": "0x22f4ad7716a8e8c590f18664d169af90ef02db47b7fcbf270087974f4142b0b3",
+      "blockNumber": 9315740,
+      "gasUsed": "49578",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-recurring-identity",
+      "role": "deployer",
+      "transactionHash": "0xde765e66f93894d29c555cc9920d1aaca0c438648f69ec4eb8001c959a123984",
+      "blockNumber": 9315741,
+      "gasUsed": "260490",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-recurring-register",
+      "role": "deployer",
+      "transactionHash": "0xca03a75f17d0957d2a310686c8b4dd08cef0f2058ecd194b4a873fbb78f546f4",
+      "blockNumber": 9315742,
+      "gasUsed": "101951",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-embr-orbt-coordinator",
+      "role": "deployer",
+      "transactionHash": "0x974d56dfd5dba7ea8380e9776441b7f63218dc0a248968731e2a1d61079c882f",
+      "blockNumber": 9315743,
+      "gasUsed": "1629206",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-bind-economic-core",
+      "role": "deployer",
+      "transactionHash": "0x82bec3af2935f25bf2a65b80b5a58652600b798f194de16787a998f58d77c6d8",
+      "blockNumber": 9315744,
+      "gasUsed": "46553",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-bind-private-book",
+      "role": "deployer",
+      "transactionHash": "0xa36d1d8c835d2e8230dba6f3409145236ceacd2b89a40d2559ad9f924fe386a9",
+      "blockNumber": 9315745,
+      "gasUsed": "160253",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-embr-orbt-configure-work",
+      "role": "deployer",
+      "transactionHash": "0xe7d78cfd8c655d1b2e7c7674d913352affe4448f8b9917271c539382edaaef1c",
+      "blockNumber": 9315746,
+      "gasUsed": "175450",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-epoch",
+      "role": "deployer",
+      "transactionHash": "0xee76afefec08dbd5bfed5f4faaf904a4c433ca9b8f13a2d91f2f3cb5bf6457f8",
+      "blockNumber": 9315747,
+      "gasUsed": "3962945",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-aggregate-tiny-host",
+      "role": "deployer",
+      "transactionHash": "0xfd27ceffcd692dc0616b8eff108bf4851dda7b675f400731275daaca52a93d9d",
+      "blockNumber": 9315748,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-aggregate-tiny-adapter",
+      "role": "deployer",
+      "transactionHash": "0x1caa0cc3c99393484c9e38fdb6ebc2638754fadb3a47d4dc7b4e602239b44b3f",
+      "blockNumber": 9315749,
+      "gasUsed": "3449207",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-aggregate-tiny-bridge",
+      "role": "deployer",
+      "transactionHash": "0x8d380ec6d14330c0b65ce09d764b07ec807ae6b2f5a51ace36a21b53a2195a2a",
+      "blockNumber": 9315750,
+      "gasUsed": "1738320",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0x76033a9b771a968e0ce29781b939bfc3579745b8ef493db36b4dca2250bcbd5d",
+      "blockNumber": 9315751,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-aggregate-tiny-direct",
+      "role": "deployer",
+      "transactionHash": "0x811049915e64333c3f582bdd922a0414caff1065f87019f258e6b2b0dfc3615a",
+      "blockNumber": 9315752,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0x1216617f476ca141b7442f0e99fd43429156f487b5bacd7dbd9ccfa183ba035f",
+      "blockNumber": 9315753,
+      "gasUsed": "134596",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-aggregate-tiny-reprice",
+      "role": "deployer",
+      "transactionHash": "0x64b42e1fe78c059e34295090b2ffcf0f504c009e8838b0765320df9f52aa2453",
+      "blockNumber": 9315754,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-aggregate-tiny-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x69364e0abc0c313b3c3d6c64edf6f7b1184bfe30af9ce1de86c2fc68b22b1fb2",
+      "blockNumber": 9315755,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-aggregate-tiny-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0xb446636d38d943151fbaac249502e71fee5f8887b577d47657ab50ff35b03af6",
+      "blockNumber": 9315756,
+      "gasUsed": "4902265",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x86c4df66879d63720c46ab294c5858dd98d939a78442983c57618378214a203f",
+      "blockNumber": 9315757,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0xd17d32c840324f03a1ca4fc0b553a8fce25adf1b60310d9f6d24b0696cb19648",
+      "blockNumber": 9315758,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0xd8f82352d0e2eab9c66ac92f1d3e323e32bcb1ad19e380ea6f7595bfb268b7da",
+      "blockNumber": 9315759,
+      "gasUsed": "47012",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-approve-host",
+      "role": "deployer",
+      "transactionHash": "0x965a5dc9e9f8e3fe3dd1c947c95c5f1fffc656b707dd9ff919f4e23d1152c028",
+      "blockNumber": 9315760,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-approve-module",
+      "role": "deployer",
+      "transactionHash": "0xfb6363de157dff0c81e264c2753f452ccff816d19d3e1bd5d4a099fe42b785c6",
+      "blockNumber": 9315761,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-approve-lifecycle",
+      "role": "deployer",
+      "transactionHash": "0x701fbad6dabe18a797de6fdc1b3f96c3d5e7c02208b222277e4ac5d686c82919",
+      "blockNumber": 9315762,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-approve-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x423fe60fd21a9aee8f2c12815f7254bfc5219eadd07d432db92519a06a6a9e87",
+      "blockNumber": 9315763,
+      "gasUsed": "46327",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-maker-core",
+      "role": "deployer",
+      "transactionHash": "0x04f19e4d716f130adbeed366549ae30b2161693b3de5ad4f72377654830cd987",
+      "blockNumber": 9315764,
+      "gasUsed": "49500",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-identity",
+      "role": "deployer",
+      "transactionHash": "0x1fcd9a89f581118ba2309747907d7ea1885ad1e2c0aca2ff3fe44126a07f5a1f",
+      "blockNumber": 9315765,
+      "gasUsed": "278789",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-aggregate-tiny-register",
+      "role": "deployer",
+      "transactionHash": "0xb0ece3fe446cd8a98ad0eedac39e73690895ce06a30f4429f02fa3b624fb82c3",
+      "blockNumber": 9315766,
+      "gasUsed": "101951",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:spb-hbr-orbt-coordinator",
+      "role": "deployer",
+      "transactionHash": "0x3230b1a5d7cab5206caf230b5d7d7a2b0277ca2f98cc80ccf6b4a547254a3e74",
+      "blockNumber": 9315767,
+      "gasUsed": "1629218",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-bind-economic-core",
+      "role": "deployer",
+      "transactionHash": "0x08c46bd58e657c22154baf1e214bec979a083c0665cf928d2fdefca414183ffc",
+      "blockNumber": 9315768,
+      "gasUsed": "46553",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-bind-private-book",
+      "role": "deployer",
+      "transactionHash": "0x90351da3e09499f87c1440c6831eea59200188f1b54c1c6003ac95051a29edc6",
+      "blockNumber": 9315769,
+      "gasUsed": "160253",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:spb-hbr-orbt-configure-work",
+      "role": "deployer",
+      "transactionHash": "0x713d4d5f320b45d652fe7465ba45bf4cb2a5a5be79fe18837d58d313a5e76670",
+      "blockNumber": 9315770,
+      "gasUsed": "175230",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:registry-admit-bcn-hbr",
+      "role": "deployer",
+      "transactionHash": "0xc09914cd62e716d09f026953f8aac88b24a1f10bff313ac983f3ffbab6e26769",
+      "blockNumber": 9315771,
+      "gasUsed": "75155",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:registry-admit-bcn-embr",
+      "role": "deployer",
+      "transactionHash": "0x9cd25c6c64e249487261e5f6633bf10295e6e79541a38b15df94ad88c9788027",
+      "blockNumber": 9315772,
+      "gasUsed": "75155",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:registry-admit-bcn-orbt",
+      "role": "deployer",
+      "transactionHash": "0xeaae91636efb34cd4401cf8d2ce9b88729f36a31b2f7437931aae277833a90d9",
+      "blockNumber": 9315773,
+      "gasUsed": "75155",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:registry-admit-embr-orbt",
+      "role": "deployer",
+      "transactionHash": "0xad3e3b7eb983099299ae797046f82464b2080da1fbd7dd57b387c8c5b22cb742",
+      "blockNumber": 9315774,
+      "gasUsed": "75155",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:registry-admit-hbr-embr",
+      "role": "deployer",
+      "transactionHash": "0x03013fd06ede14677a82d4797407e9336bee1c4ebb40f83fead8346253f6da43",
+      "blockNumber": 9315775,
+      "gasUsed": "75155",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:registry-admit-hbr-orbt",
+      "role": "deployer",
+      "transactionHash": "0xd53bf2b2fc0a7c46bc13496e8d08c496d60bcb1d1ba2e2d6f1d45bc2b534153c",
+      "blockNumber": 9315776,
+      "gasUsed": "75155",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-hbr-host",
+      "role": "deployer",
+      "transactionHash": "0xcdf18e9f18968128e6788e74382fa38fe2d9e71ebfa0e76de19d63427dbf0a4e",
+      "blockNumber": 9315777,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-hbr-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0xb9b2c71a0cc58aede2c4310894844fb6a47b545bd06c3c078688c32810205106",
+      "blockNumber": 9315778,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-hbr-direct",
+      "role": "deployer",
+      "transactionHash": "0x297f24b83dc0f69aeaf0d4c45c26d0f270c0dfeb3292efed913b74c731272f1c",
+      "blockNumber": 9315779,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-hbr-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0x5f81a139c083646d1f4b49c862e711c85344ff9d6c8bf46adf9ae6e851aa2b0e",
+      "blockNumber": 9315780,
+      "gasUsed": "134596",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-hbr-reprice",
+      "role": "deployer",
+      "transactionHash": "0x6995d6ea4490de6883ba25c75e0c5c9d5fcbf8760e2e3813cec549ba66d5ecbd",
+      "blockNumber": 9315781,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-hbr-arbiter",
+      "role": "deployer",
+      "transactionHash": "0xb59964e42a832086f1608ae44bf67c9a1ead512857d16bb46e3342394cbf23fc",
+      "blockNumber": 9315782,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-hbr-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0xe38ccab751441970a8177c172c4c494012913f1481cbc9b4e83836b479fda2b7",
+      "blockNumber": 9315783,
+      "gasUsed": "4902265",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-hbr-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x9a8e0183aa81806fcf7845f02b763b5305dce2cce7b44c4cf9d6fa261660212f",
+      "blockNumber": 9315784,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-hbr-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0x9335af293be65ab7e1ba18bdb4c9c86be8801e881b648cbf5f35203ef62566d5",
+      "blockNumber": 9315785,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-hbr-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0x5bf2f8cb1378cb952202cc448478cc67faa4caf2069ec9d5f57e749490b7a98b",
+      "blockNumber": 9315786,
+      "gasUsed": "47012",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-hbr-attest",
+      "role": "identity",
+      "transactionHash": "0x3395aefd1aafc8058b5cab5857a4ec7a99e719bab02d154725aa49da68eaae45",
+      "blockNumber": 9315787,
+      "gasUsed": "99958",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-hbr-bind",
+      "role": "deployer",
+      "transactionHash": "0x4995c4586f2f715b61a37a25bcfdf748ce392d1412b2f32b64fdce53cd34636c",
+      "blockNumber": 9315788,
+      "gasUsed": "190247",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-embr-host",
+      "role": "deployer",
+      "transactionHash": "0x3d5e127e57bcc92eeafaebb29c0753488c76d55f67fbc0466325eb6586405b8f",
+      "blockNumber": 9315789,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-embr-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0xa526088d063634660c3855aaf2d872857682f8a8f001d1e068a8f3f17914f2a9",
+      "blockNumber": 9315790,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-embr-direct",
+      "role": "deployer",
+      "transactionHash": "0x6c0de34be5cea6505e89c88ab372c04cc0833fd5caac5ddd4ee9ceb74d515c5a",
+      "blockNumber": 9315791,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-embr-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0xd7c442a11965467ff5b23b011be37aa0d40bb3efbad194192fc4d323352352ac",
+      "blockNumber": 9315792,
+      "gasUsed": "134572",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-embr-reprice",
+      "role": "deployer",
+      "transactionHash": "0x78e21a8d2936b3bbe24360c5118e67fdebbea1fe65b734f9581f6f908d8c7a5f",
+      "blockNumber": 9315793,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-embr-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x0fccee5c7eeff80bae3b50f6f0d91fa0ec40ff0fc8748ab7c3ab5778e081e5c3",
+      "blockNumber": 9315794,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-embr-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x88bb45e7d68e80910497433ca1a0c9c235f1fa07133ecf67e38b7fb64b8a9700",
+      "blockNumber": 9315795,
+      "gasUsed": "4902265",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-embr-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x102215f60b180cda5ae07ed17e8abde3cdeb343db396901bec8a644ae65d87f0",
+      "blockNumber": 9315796,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-embr-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0xb63e7693d344ce4ca3fcb91a0f67385a0905dad8954e75c47c0a7107085d795d",
+      "blockNumber": 9315797,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-embr-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0xebe8a166486ab3d26b3cdfa3fe39706a7bd71102e3d069cffcb43c39ec68c121",
+      "blockNumber": 9315798,
+      "gasUsed": "47012",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-embr-attest",
+      "role": "identity",
+      "transactionHash": "0xac5d91496a0ce0d88af1ada37d64dd67201c6c9f148fbe1edfb426f04311a768",
+      "blockNumber": 9315799,
+      "gasUsed": "99958",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-embr-bind",
+      "role": "deployer",
+      "transactionHash": "0x5b1a77e32ac4f1e130e49c4e6f89d5deb8affb456b6079a39d0aefebcb18f21f",
+      "blockNumber": 9315800,
+      "gasUsed": "190247",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-orbt-host",
+      "role": "deployer",
+      "transactionHash": "0xb90ef714ca8aa0840bb82ebdf82dc4579de07e6df5272a4c95089ae3d186e932",
+      "blockNumber": 9315801,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-orbt-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0xe9e5faf4f1c1c14958994def4a45cb0831e52f3985084977d1239ab56f99831f",
+      "blockNumber": 9315802,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-orbt-direct",
+      "role": "deployer",
+      "transactionHash": "0xd892f1502f95603e56bb5d51c0fe425efd1bf9ddda8940aade3a7b5359a57250",
+      "blockNumber": 9315803,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-orbt-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0xe23344d44cc884d8c92eb20de820d8da2c9baacdf6522611256113ed7a83e1c7",
+      "blockNumber": 9315804,
+      "gasUsed": "134596",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-orbt-reprice",
+      "role": "deployer",
+      "transactionHash": "0xe7718d691564fc5cd8d10ca448209d00fa4277165c8f26498684e75ea1235ad9",
+      "blockNumber": 9315805,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-orbt-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x0ed00bc5a972f6663bfbd57da344633248bc02a8f3f547a6350e1cc4a03f915a",
+      "blockNumber": 9315806,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-bcn-orbt-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0xa03c295b68caeecb6ea368c8b294e02ef6fcb69d13df0f1ac72af0f3db7df8a0",
+      "blockNumber": 9315807,
+      "gasUsed": "4902265",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-orbt-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0xefb8aa824bddf4fd51e47db42f15ce96e0641ddba06109619c43bdb4bea2592e",
+      "blockNumber": 9315808,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-orbt-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0x687a25255a39c69387bfe55fc6db73973d516b9d5645549e1ab0b20c24900149",
+      "blockNumber": 9315809,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-orbt-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0x44b49fae6fb4480f080f4a7e26b2600d35b28c49b581b1fab9eb661c772d73fe",
+      "blockNumber": 9315810,
+      "gasUsed": "47012",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-orbt-attest",
+      "role": "identity",
+      "transactionHash": "0x175222c6f302b0d90dd7bdd55c9f48598bc85e9eb5b893d23b955daee26e420a",
+      "blockNumber": 9315811,
+      "gasUsed": "99958",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-bcn-orbt-bind",
+      "role": "deployer",
+      "transactionHash": "0xaee7a1ff4c7689ddc8258ea42ec1075175df053e1f5558056b50b23de7da0a1a",
+      "blockNumber": 9315812,
+      "gasUsed": "190247",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-embr-orbt-host",
+      "role": "deployer",
+      "transactionHash": "0xca0935a48bf0cbe6d93597a43a6a8d91e6613cd2a0bc8c3618481297112dddc5",
+      "blockNumber": 9315813,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-embr-orbt-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0x1ceea21125b1ab17a7c58a30329dd63d6dba82f920ba9840f4fe226c11006bb6",
+      "blockNumber": 9315814,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-embr-orbt-direct",
+      "role": "deployer",
+      "transactionHash": "0xa9cae756791860dd292a2fbd91fc21870b75309fb91ad3ba4e2c41c110ae6861",
+      "blockNumber": 9315815,
+      "gasUsed": "3289878",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-embr-orbt-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0xb1b1d63143bd27b640a0e2dc74f5966afa7651150d3990ab9a29fddb593381e2",
+      "blockNumber": 9315816,
+      "gasUsed": "134596",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-embr-orbt-reprice",
+      "role": "deployer",
+      "transactionHash": "0x671f42e515b6a091af7bd68b90a7aded46a23b8fbd4ea94abc22b6a08af065ee",
+      "blockNumber": 9315817,
+      "gasUsed": "4643394",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-embr-orbt-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x49e3ae696a1c3a2604301f886be7ca0512b95963f935d6ca99b874d7824afbb3",
+      "blockNumber": 9315818,
+      "gasUsed": "4021797",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-embr-orbt-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x1717e88b66cfce8682d7eaf4d6c25c6698465f91f07547a757c5a15d19041fd8",
+      "blockNumber": 9315819,
+      "gasUsed": "4902265",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-embr-orbt-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x4b589ea74d73c0624eb11a4dc2ec1fcb5ad1539e0a5995d9e2a9a98d5131cf3e",
+      "blockNumber": 9315820,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-embr-orbt-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0x4b192bccfbf898da4bccde4f6bc363b70666483a15876a344b6d3153282ae175",
+      "blockNumber": 9315821,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-embr-orbt-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0xe296bafeb9eadb1b4ff27fd67cb4f9a43c96d43fb277317fda16b5bb601448a4",
+      "blockNumber": 9315822,
+      "gasUsed": "47012",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-embr-orbt-attest",
+      "role": "identity",
+      "transactionHash": "0xb03c355599b0880247c9f448fb370bbbcb3b8ecb3e8a70856a67cc0a1c53f4c8",
+      "blockNumber": 9315823,
+      "gasUsed": "99958",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-embr-orbt-bind",
+      "role": "deployer",
+      "transactionHash": "0xf28c21172e5de04574bd9f26c393fbf1e64f6700d2c8e8ff181b97a25897481e",
+      "blockNumber": 9315824,
+      "gasUsed": "190247",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-hbr-orbt-host",
+      "role": "deployer",
+      "transactionHash": "0x621e872320d230fd1fb229ffbba5f801c80fee8952d7f02862041e32d0b5fdcd",
+      "blockNumber": 9315825,
+      "gasUsed": "5453236",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-hbr-orbt-initialize-executor",
+      "role": "deployer",
+      "transactionHash": "0x09fd37b224707da3168eb9d347c8fae5969d6951f466c186de58eda063ca1a62",
+      "blockNumber": 9315826,
+      "gasUsed": "7797998",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-hbr-orbt-direct",
+      "role": "deployer",
+      "transactionHash": "0x666be9f7a6fe6105e40a9966102b552d090d5f4cf8032db77ba565fce6e19357",
+      "blockNumber": 9315827,
+      "gasUsed": "3289866",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-hbr-orbt-bind-direct",
+      "role": "deployer",
+      "transactionHash": "0x7a1a3c5758d745f7bdb524ea67f28f3f8b94d354d11a3bebab2f3511f0495b4e",
+      "blockNumber": 9315828,
+      "gasUsed": "134584",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-hbr-orbt-reprice",
+      "role": "deployer",
+      "transactionHash": "0x5a16f50e03e1e6ceaf3baba0f6c1ab5b7a58d6e6958828d9aff3bb398b1dc684",
+      "blockNumber": 9315829,
+      "gasUsed": "4643382",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-hbr-orbt-arbiter",
+      "role": "deployer",
+      "transactionHash": "0x388b344f6bd001f09c9716abfa07ec8e7617b34002df7024248e58f80cb83547",
+      "blockNumber": 9315830,
+      "gasUsed": "4021785",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "deploy:canonical-hbr-orbt-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x12bcec608667da1b9c125f05696c40a5a1014f29c3f2250eecc009697b10d41a",
+      "blockNumber": 9315831,
+      "gasUsed": "4902253",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-hbr-orbt-bind-aggregate-module",
+      "role": "deployer",
+      "transactionHash": "0x8ef36feff8410aafbfda0556959d8c01826a6e65bc43e714daa89f7965269f7f",
+      "blockNumber": 9315832,
+      "gasUsed": "135681",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-hbr-orbt-initialize-aggregate",
+      "role": "deployer",
+      "transactionHash": "0x026425546dfbbba85233d77f3a446be3259634318b148c2324cad8f12a2df845",
+      "blockNumber": 9315833,
+      "gasUsed": "8866035",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-hbr-orbt-registry-identity",
+      "role": "deployer",
+      "transactionHash": "0x714013731fcc4393ee2756d32f37ce183f6889d1ef6fde5d4049c47f9b3ba647",
+      "blockNumber": 9315834,
+      "gasUsed": "47000",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-hbr-orbt-attest",
+      "role": "identity",
+      "transactionHash": "0x7634182a43d82482b22e42e5c5d9a37782b3be084981d3bd6ccadadb48f14bf5",
+      "blockNumber": 9315835,
+      "gasUsed": "99946",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:canonical-hbr-orbt-bind",
+      "role": "deployer",
+      "transactionHash": "0x8efa550a3f1a123ec99fde753eae83fffa08df2f473c9423ff7110d00a11f50f",
+      "blockNumber": 9315836,
+      "gasUsed": "190235",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-c1-cycle-0",
+      "role": "deployer",
+      "transactionHash": "0xc352cdfa7aa049fb63818ac54484e6b1e096755b0840fc10efb21333a7dff3db",
+      "blockNumber": 9315837,
+      "gasUsed": "177789",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-c1-cycle-1",
+      "role": "deployer",
+      "transactionHash": "0x6b181acb68f1aedb597d6d0917cd5b2ac2595b5919797a4a3b49b8b93d334f91",
+      "blockNumber": 9315838,
+      "gasUsed": "160689",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-p2-sparse-hbr-embr",
+      "role": "deployer",
+      "transactionHash": "0x8d1fe56626655fb6ed764ce678a7439121af1d2fcd4f7c9b0b0221fca8b8bbe6",
+      "blockNumber": 9315839,
+      "gasUsed": "183038",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:protocol-p2-sparse-hbr-embr",
+      "role": "deployer",
+      "transactionHash": "0xdff1d9a38397c4cda44cc0090fc3c767f0b300697ef5ba65eef5472850a48978",
+      "blockNumber": 9315840,
+      "gasUsed": "60865",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-p2-sparse-embr-hbr",
+      "role": "deployer",
+      "transactionHash": "0x56d6cfd81d0c148222808d75fb01ebff3c50600ce12f47c39dd2d99fd1cb39b0",
+      "blockNumber": 9315841,
+      "gasUsed": "165938",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:protocol-p2-sparse-embr-hbr",
+      "role": "deployer",
+      "transactionHash": "0x9fd493f4f48d73f0a0ee91ed2c46c965c8432042562c14e03d218ffd6b72ccef",
+      "blockNumber": 9315842,
+      "gasUsed": "60877",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-p2-exhausted-direct-hbr-orbt",
+      "role": "deployer",
+      "transactionHash": "0xe3f8e9e31b1183e3367f0cb046a94440c8da5421e0dde64dd4f447c37f4ce56f",
+      "blockNumber": 9315843,
+      "gasUsed": "139590",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-p2-exhausted-via-hbr-orbt",
+      "role": "deployer",
+      "transactionHash": "0x4998d8490dd393d765f7d99877f74d8d1629e6012d1cf39b529d3c02409b7d1c",
+      "blockNumber": 9315844,
+      "gasUsed": "165881",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:protocol-p2-exhausted-hbr-orbt",
+      "role": "deployer",
+      "transactionHash": "0xf003a5da50f0360e1f004409ffcf57a57b1e4ea06155d8964fc558ff97b9ff99",
+      "blockNumber": 9315845,
+      "gasUsed": "60877",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:fallback-p2-exhausted-hbr-orbt",
+      "role": "deployer",
+      "transactionHash": "0x6619a64fcc340ea1bb6fed5b5025e53daf94ef406f54110ba6bdabc6edb82b30",
+      "blockNumber": 9315846,
+      "gasUsed": "60811",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-p2-exhausted-direct-orbt-hbr",
+      "role": "deployer",
+      "transactionHash": "0x60d17c8f948a142a375cfc9d99ab880382c9438daca2bb4d126d2b1281e86a57",
+      "blockNumber": 9315847,
+      "gasUsed": "139647",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:register-p2-exhausted-via-orbt-hbr",
+      "role": "deployer",
+      "transactionHash": "0xed193160af761627a4b34a0ce29593a29c95402d5cee40002ee5b2319f1e9c3e",
+      "blockNumber": 9315848,
+      "gasUsed": "165995",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:protocol-p2-exhausted-orbt-hbr",
+      "role": "deployer",
+      "transactionHash": "0x54194f19f921205092b90d9ccb8044a64d38f0cc8db74e44f2cd3407187607f8",
+      "blockNumber": 9315849,
+      "gasUsed": "60877",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:fallback-p2-exhausted-orbt-hbr",
+      "role": "deployer",
+      "transactionHash": "0xf4d68dae44ad89206e73e4c14ff35c6311fcaa623a98d4ba1422e413f99e0174",
+      "blockNumber": 9315850,
+      "gasUsed": "60811",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:core-admit-token-bcn",
+      "role": "deployer",
+      "transactionHash": "0xd9689ffe8229277371382819d537c6ac8f29f524d1c7351b9c6c261a7c1585d8",
+      "blockNumber": 9315851,
+      "gasUsed": "78585",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:approve-core-bcn",
+      "role": "deployer",
+      "transactionHash": "0xebce96a5cc6d965a3ce247338ffbe42225c48ae6a2a22dc8bc53c92464d3f5d7",
+      "blockNumber": 9315852,
+      "gasUsed": "459128",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:core-admit-token-hbr",
+      "role": "deployer",
+      "transactionHash": "0xb7d054ee09025b1a99e8e946130bfb0217ccd52961e305a82a0fd3d1095a01e7",
+      "blockNumber": 9315853,
+      "gasUsed": "78585",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:approve-core-hbr",
+      "role": "deployer",
+      "transactionHash": "0xc41e6416a919e29f01da19e400c141386752f87da38a55f027cea993da1bb19e",
+      "blockNumber": 9315854,
+      "gasUsed": "459140",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:core-admit-token-embr",
+      "role": "deployer",
+      "transactionHash": "0x77b927895e755310d0963884296bfc60d3106074263918d24cf0e803c777914c",
+      "blockNumber": 9315855,
+      "gasUsed": "78585",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:approve-core-embr",
+      "role": "deployer",
+      "transactionHash": "0x3c6e8d912fe5b347e360a34ed0c8126876bf92c8e9784674cbd64ff63886d926",
+      "blockNumber": 9315856,
+      "gasUsed": "459140",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:core-admit-token-orbt",
+      "role": "deployer",
+      "transactionHash": "0x5a2230bd95742dddab37113d08d31bd46b441b14d6b1d8f6c384700d84e7b1ad",
+      "blockNumber": 9315857,
+      "gasUsed": "78585",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:approve-core-orbt",
+      "role": "deployer",
+      "transactionHash": "0xd662712c422a28254ae79830a7d6795eee3a52aaa567a679cc3dbacb99848d4c",
+      "blockNumber": 9315858,
+      "gasUsed": "459128",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:seed-bcn-hbr-aggregate",
+      "role": "deployer",
+      "transactionHash": "0xdd2a76f14f2f248ec6bebee01b8b6686984cadd57f03ed5d2d4a887d03d3840d",
+      "blockNumber": 9315859,
+      "gasUsed": "26440873",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:seed-bcn-embr-aggregate",
+      "role": "deployer",
+      "transactionHash": "0x16f1f036167d526b1f5bd0141ab9b7796bae6df54474919e65830d809341e762",
+      "blockNumber": 9315860,
+      "gasUsed": "26558738",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:seed-bcn-embr-fixed",
+      "role": "deployer",
+      "transactionHash": "0xaaf602a4623dfabc04a778491860473752479d182911b55e6a10d11cfcf48171",
+      "blockNumber": 9315861,
+      "gasUsed": "6991051",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:seed-bcn-orbt-aggregate",
+      "role": "deployer",
+      "transactionHash": "0xe532994454df98e5c7fe0f44bb3f3bc987e3b4590857bf8eb2b9e0f6186eae3c",
+      "blockNumber": 9315862,
+      "gasUsed": "26558910",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:seed-bcn-orbt-range",
+      "role": "deployer",
+      "transactionHash": "0xbf19263fb2f7bafdb130475d9814f4c4c43c65cf871adc345b32369ea8abd22e",
+      "blockNumber": 9315863,
+      "gasUsed": "7318325",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:seed-embr-orbt-recurring",
+      "role": "deployer",
+      "transactionHash": "0xc92e1093cbedf0bf949a349d4a5d6f06f0a14a610be9be7ffde5658864a0caa6",
+      "blockNumber": 9315864,
+      "gasUsed": "9055178",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    },
+    {
+      "label": "setup:seed-hbr-orbt-aggregate-tiny",
+      "role": "deployer",
+      "transactionHash": "0x57784e6b429b28a5fcf63bed83d96dcd5b9c1bef5d89cb207a2671f73f150caf",
+      "blockNumber": 9315865,
+      "gasUsed": "26771667",
+      "effectiveGasPrice": "8450013",
+      "status": "MINED"
+    }
+  ],
+  "spend": {
+    "actualGasSpendWei": "5535884259531912",
+    "grossValueSentWei": "0",
+    "maximumReservedSpendWei": "62868096720000000",
+    "authorizedCapWei": "140000000000000000"
+  }
+}

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
+import {
+  LEGACY_GROUP_CHAT_CONTRACT_ABI,
+  LEGACY_GROUP_CHAT_CONTRACT_ADDRESS
+} from '../../../lib/legacyChatContracts';
 import {
   COTI_NETWORK,
-  GROUP_CHAT_CONTRACT_ABI,
-  GROUP_CHAT_CONTRACT_ADDRESS,
+  getProviderErrorMessage,
   INITIAL_SYNC_LOOKBACK_BLOCKS,
   isWalletAddress,
   loadCotiEthersModule,
@@ -53,14 +56,13 @@ type ParsedGroupMessagePayload = {
 };
 
 type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   cacheKey: string;
 };
 
 type UseGroupDataSyncArgs = {
   activeGroupId: number | null;
   activeGroupIdRef: MutableRefObject<number | null>;
-  activeSignerSource: string;
   blockTimestampCacheRef: MutableRefObject<Map<number, number>>;
   chainId: number | null;
   clearGroupMessageLoadPhase: (groupId: number) => void;
@@ -80,11 +82,12 @@ type UseGroupDataSyncArgs = {
   isMobileNav: boolean;
   lastReadAllTsRef: MutableRefObject<number>;
   lastReadByGroupRef: MutableRefObject<Record<string, number>>;
+  legacyEnabled?: boolean;
   markGroupConversationAsRead: (groupId?: number | null) => void;
   messagesByGroup: Record<string, ChatMessage[]>;
   messagesByGroupRef: MutableRefObject<Record<string, ChatMessage[]>>;
   parseEncryptedChatMessagePayload: (
-    signer: Wallet | JsonRpcSigner,
+    signer: JsonRpcSigner,
     cacheKey: string,
     ciphertext: unknown
   ) => Promise<ParsedGroupMessagePayload>;
@@ -122,7 +125,6 @@ const GROUP_REMOVAL_NOTICE_MARKERS_STORAGE_KEY = 'coti-chat-group-removal-notice
 export default function useGroupDataSync({
   activeGroupId,
   activeGroupIdRef,
-  activeSignerSource,
   blockTimestampCacheRef,
   chainId,
   clearGroupMessageLoadPhase,
@@ -142,6 +144,7 @@ export default function useGroupDataSync({
   isMobileNav,
   lastReadAllTsRef,
   lastReadByGroupRef,
+  legacyEnabled = true,
   markGroupConversationAsRead,
   messagesByGroup,
   messagesByGroupRef,
@@ -172,6 +175,7 @@ export default function useGroupDataSync({
   walletAccountScope,
   walletAddress
 }: UseGroupDataSyncArgs) {
+  const walletScopeKey = walletAddress.trim().toLowerCase();
   const groupRemovalNoticeMarkerStorage = {
     groupRemovalNoticeMarkersLoadedRef,
     groupRemovalNoticeMarkersRef,
@@ -194,8 +198,9 @@ export default function useGroupDataSync({
   };
 
   const syncGroupData = async (options?: SyncGroupOptions) => {
-    const requestedWalletAddress = walletAddress.trim();
-    const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    if (!legacyEnabled) return;
+    const requestedWalletAddress = walletScopeKey;
+    const requestedWalletKey = walletScopeKey;
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress) || !hasAesReady || chainId !== COTI_NETWORK.chainIdDecimal) {
       return;
     }
@@ -213,8 +218,7 @@ export default function useGroupDataSync({
 
     const walletKey = requestedWalletKey;
     const requestedWalletRole =
-      walletAccountScope.readAccounts.find((account) => account.key === walletKey)?.role ??
-      (activeSignerSource === 'metamask' ? 'owner' : 'chainwhisper');
+      walletAccountScope.readAccounts.find((account) => account.key === walletKey)?.role ?? 'owner';
 
     try {
       syncGroupDataInFlightRef.current = true;
@@ -225,7 +229,11 @@ export default function useGroupDataSync({
       const { signer, cacheKey } = await getMemoSigner();
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
-      const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
+      const contract = new cotiEthers.Contract(
+        LEGACY_GROUP_CHAT_CONTRACT_ADDRESS,
+        LEGACY_GROUP_CHAT_CONTRACT_ABI,
+        readProvider
+      );
       const latestBlock = await readProvider.getBlockNumber();
       if (currentWalletKeyRef.current !== requestedWalletKey) {
         return;
@@ -863,7 +871,7 @@ export default function useGroupDataSync({
       }));
     } catch (syncError) {
       if (!options?.background) {
-        const message = syncError instanceof Error ? syncError.message : 'Failed to sync group data.';
+        const message = getProviderErrorMessage(syncError, 'Failed to sync group data.');
         setError(message);
       }
     } finally {
@@ -889,14 +897,15 @@ export default function useGroupDataSync({
   }, [syncGroupData]);
 
   useEffect(() => {
-    const walletKey = walletAddress.trim().toLowerCase();
+    if (!legacyEnabled) return;
+    const walletKey = walletScopeKey;
     const backfillPlan = resolveActiveGroupBackfillPlan({
       activeGroupId,
       chainId,
       completedBackfillKeys: groupDeepBackfillDoneRef.current,
       hasAesReady,
       requiredChainId: COTI_NETWORK.chainIdDecimal,
-      walletAddress,
+      walletAddress: walletScopeKey,
       walletAddressValid: isWalletAddress(walletKey)
     });
     if (!backfillPlan) {
@@ -910,7 +919,7 @@ export default function useGroupDataSync({
         delete groupDeepBackfillDoneRef.current[backfillPlan.cacheKey];
       });
     }
-  }, [activeGroupId, chainId, groupDeepBackfillDoneRef, hasAesReady, syncGroupDataRef, walletAddress]);
+  }, [activeGroupId, chainId, groupDeepBackfillDoneRef, hasAesReady, legacyEnabled, syncGroupDataRef, walletScopeKey]);
 
   const activateGroup = useCallback((groupId: number) => {
     if (!Number.isFinite(groupId) || groupId <= 0) {
@@ -927,6 +936,7 @@ export default function useGroupDataSync({
   }, [isMobileNav, markGroupConversationAsRead]);
 
   const prefetchGroupBeforeOpen = useCallback((groupId: number) => {
+    if (!legacyEnabled) return;
     const prefetchPlan = resolveGroupPrefetchPlan({
       chainId,
       groups: groupsRef.current,
@@ -934,7 +944,7 @@ export default function useGroupDataSync({
       prefetchedKeys: prefetchedGroupMessagesRef.current,
       requestedGroupId: groupId,
       requiredChainId: COTI_NETWORK.chainIdDecimal,
-      walletAddress
+      walletAddress: walletScopeKey
     });
     if (!prefetchPlan) {
       return;
@@ -944,10 +954,10 @@ export default function useGroupDataSync({
     syncGroupDataRef.current(prefetchPlan.options).catch(() => {
       delete prefetchedGroupMessagesRef.current[prefetchPlan.cacheKey];
     });
-  }, [walletAddress, hasAesReady, chainId]);
+  }, [walletScopeKey, hasAesReady, chainId, legacyEnabled]);
 
   useEffect(() => {
-    if (activeGroupId !== null || sortedGroups.length === 0 || !walletAddress || !hasAesReady) {
+    if (!legacyEnabled || activeGroupId !== null || sortedGroups.length === 0 || !walletScopeKey || !hasAesReady) {
       return;
     }
 
@@ -959,7 +969,7 @@ export default function useGroupDataSync({
     return () => {
       window.clearTimeout(prefetchTimerId);
     };
-  }, [activeGroupId, sortedGroups, walletAddress, hasAesReady, prefetchGroupBeforeOpen]);
+  }, [activeGroupId, sortedGroups, walletScopeKey, hasAesReady, legacyEnabled, prefetchGroupBeforeOpen]);
 
 
 

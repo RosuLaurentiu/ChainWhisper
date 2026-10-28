@@ -7,6 +7,7 @@ import {
 } from './appShared';
 import {
   VERIFIED_ECOSYSTEM_TOKENS,
+  USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS,
   buildPrivateTradeTokenSymbolOrder,
   buildPublicTradeTokenSymbolOrder,
   buildTradeCustomTokenInfoKey,
@@ -24,13 +25,13 @@ export type TradingBalanceDisplayItem = {
   kindLabel: 'Native' | 'Public' | 'Private';
   sortGroup: number;
   address?: string;
-  accountRole?: 'chainwhisper' | 'owner';
+  accountRole?: 'owner';
   accountLabel?: string;
 };
 
 type BuildVisibleTradingBalanceItemsInput = {
   accountLabel?: string;
-  accountRole?: 'chainwhisper' | 'owner';
+  accountRole?: 'owner';
   customTradeTokenInfoByAddress: Record<string, TradeCustomTokenInfo>;
   nativeBalanceWei: bigint | null;
   privateRewardTokenBalanceState: PrivateTokenBalanceState;
@@ -170,7 +171,7 @@ export const buildTotalTradingBalanceItems = (items: TradingBalanceDisplayItem[]
 
 export const buildVisibleTradingBalanceItems = ({
   accountLabel,
-  accountRole = 'chainwhisper',
+  accountRole = 'owner',
   customTradeTokenInfoByAddress,
   nativeBalanceWei,
   privateRewardTokenBalanceState,
@@ -182,7 +183,7 @@ export const buildVisibleTradingBalanceItems = ({
   walletKey
 }: BuildVisibleTradingBalanceItemsInput): TradingBalanceDisplayItem[] => {
   const items: TradingBalanceDisplayItem[] = [];
-  const itemPrefix = accountRole === 'owner' ? 'owner' : 'chainwhisper';
+  const itemPrefix = 'wallet';
   const withAccount = (
     item: Omit<TradingBalanceDisplayItem, 'accountLabel' | 'accountRole'>
   ): TradingBalanceDisplayItem => ({
@@ -204,7 +205,7 @@ export const buildVisibleTradingBalanceItems = ({
     }));
   }
 
-  if (isPositiveBalance(rewardTokenBalanceWei)) {
+  if (!USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS && isPositiveBalance(rewardTokenBalanceWei)) {
     items.push(withAccount({
       id: `erc20:${REWARD_TOKEN_ADDRESS.toLowerCase()}`,
       symbol: rewardTokenSymbol,
@@ -217,7 +218,11 @@ export const buildVisibleTradingBalanceItems = ({
     }));
   }
 
-  if (privateRewardTokenBalanceState.status === 'ready' && privateRewardTokenBalanceState.balanceWei > 0n) {
+  if (
+    !USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS &&
+    privateRewardTokenBalanceState.status === 'ready' &&
+    privateRewardTokenBalanceState.balanceWei > 0n
+  ) {
     items.push(withAccount({
       id: `private-erc20:${PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()}`,
       symbol: privateRewardTokenSymbol,

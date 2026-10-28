@@ -1,17 +1,20 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import {
   readCurrentPrivateErc20BalanceWei,
   readLegacyPrivateRewardBalanceWei
 } from '../../lib/appChain';
 import {
+  LEGACY_GROUP_CHAT_CONTRACT_ABI,
+  LEGACY_GROUP_CHAT_CONTRACT_ADDRESS
+} from '../../lib/legacyChatContracts';
+import {
   COTI_NETWORK,
+  EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ABI,
   ERC20_TOKEN_ABI,
   FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL,
   FALLBACK_REWARD_TOKEN_DECIMALS,
   FALLBACK_REWARD_TOKEN_SYMBOL,
-  GROUP_CHAT_CONTRACT_ABI,
-  GROUP_CHAT_CONTRACT_ADDRESS,
   isWalletAddress,
   LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
   LEGACY_SWAP_VAULT_CONTRACT_ABI,
@@ -28,10 +31,11 @@ import {
   type SwapDirection
 } from '../../lib/appShared';
 import { useTokenToolsStore } from './tokenToolsStore';
+import { isLegacyUnshieldDirection } from './tokenSwapView';
 
 type MemoSignerBundle = {
   cacheKey: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
 };
 
 type ContractCall = (...args: unknown[]) => Promise<unknown>;
@@ -119,28 +123,36 @@ export default function useRewardTokenMetrics({
       };
     }
 
+    setSwapFeeWei(null);
+    setSwapTokenFeeAmount(null);
+    setShieldVaultTokenBalanceWei(null);
+
     const loadShieldVaultReserve = async () => {
       try {
         const cotiEthers = await loadCotiEthersModule();
         const readProvider = await loadCotiReadProvider(true);
         const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
-        const isLegacyUnshield = swapDirection === 'legacy-unshield';
+        const isLegacyUnshield = isLegacyUnshieldDirection(swapDirection);
+        const legacyVaultAbi = swapDirection === 'legacy-unshield-earlier'
+          ? EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ABI
+          : LEGACY_SWAP_VAULT_CONTRACT_ABI;
         const isBridgeUnshield = swapDirection === 'unshield';
         const swapVaultContract = new cotiEthers.Contract(
           activeSwapVaultContractAddress,
-          isLegacyUnshield ? LEGACY_SWAP_VAULT_CONTRACT_ABI : WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
+          isLegacyUnshield ? legacyVaultAbi : WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
           readProvider
         );
-        const [rewardSymbolRaw, rewardDecimalsRaw, swapFeeRaw, swapTokenFeeRaw, shieldVaultTokenBalanceRaw] =
-          await Promise.all([
-            rewardTokenContract.symbol().catch(() => null),
-            rewardTokenContract.decimals().catch(() => null),
-            isLegacyUnshield
-              ? swapVaultContract.swapFeeWei().catch(() => null)
-              : readWispBridgeFee(swapVaultContract as ContractLike, isBridgeUnshield),
-            isLegacyUnshield ? swapVaultContract.getTokenFeeAmount().catch(() => null) : Promise.resolve(0n),
-            rewardTokenContract.balanceOf(activeSwapVaultContractAddress).catch(() => null)
-          ]);
+        const rewardSymbolRaw = await rewardTokenContract.symbol().catch(() => null);
+        const rewardDecimalsRaw = await rewardTokenContract.decimals().catch(() => null);
+        const swapFeeRaw = isLegacyUnshield
+          ? await swapVaultContract.swapFeeWei().catch(() => null)
+          : await readWispBridgeFee(swapVaultContract as ContractLike, isBridgeUnshield);
+        const swapTokenFeeRaw = isLegacyUnshield
+          ? await swapVaultContract.getTokenFeeAmount().catch(() => null)
+          : 0n;
+        const shieldVaultTokenBalanceRaw = await rewardTokenContract
+          .balanceOf(activeSwapVaultContractAddress)
+          .catch(() => null);
 
         if (cancelled) {
           return;
@@ -211,55 +223,46 @@ export default function useRewardTokenMetrics({
           PRIVATE_TOKEN_BALANCE_ABI,
           readProvider
         );
-        const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, readProvider);
-        const isLegacyUnshield = swapDirection === 'legacy-unshield';
+        const groupContract = new cotiEthers.Contract(
+          LEGACY_GROUP_CHAT_CONTRACT_ADDRESS,
+          LEGACY_GROUP_CHAT_CONTRACT_ABI,
+          readProvider
+        );
+        const isLegacyUnshield = isLegacyUnshieldDirection(swapDirection);
+        const legacyVaultAbi = swapDirection === 'legacy-unshield-earlier'
+          ? EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ABI
+          : LEGACY_SWAP_VAULT_CONTRACT_ABI;
         const isBridgeUnshield = swapDirection === 'unshield';
         const swapVaultContract =
           currentSwapDirectionEnabled && activeSwapVaultContractAddress
             ? new cotiEthers.Contract(
                 activeSwapVaultContractAddress,
-                isLegacyUnshield ? LEGACY_SWAP_VAULT_CONTRACT_ABI : WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
+                isLegacyUnshield ? legacyVaultAbi : WISP_PRIVACY_BRIDGE_CONTRACT_ABI,
                 readProvider
               )
             : null;
 
-        const [
-          rewardBalanceRaw,
-          rewardSymbolRaw,
-          rewardDecimalsRaw,
-          privateSymbolRaw,
-          privateDecimalsRaw,
-          legacyPrivateSymbolRaw,
-          legacyPrivateDecimalsRaw,
-          groupNativeFeeRaw,
-          groupTokenFeeRaw,
-          rewardsContractRaw,
-          rewardsPausedRaw,
-          swapFeeRaw,
-          swapTokenFeeRaw
-        ] = await Promise.all([
-          rewardTokenContract.balanceOf(requestedWalletAddress).catch(() => null),
-          rewardTokenContract.symbol().catch(() => null),
-          rewardTokenContract.decimals().catch(() => null),
-          privateTokenContract.symbol().catch(() => null),
-          privateTokenContract.decimals().catch(() => null),
-          legacyPrivateTokenContract.symbol().catch(() => null),
-          legacyPrivateTokenContract.decimals().catch(() => null),
-          groupContract.feeAmount().catch(() => null),
-          groupContract.tokenFeeAmount().catch(() => null),
-          groupContract.rewardsContract().catch(() => null),
-          groupContract.rewardsPaused().catch(() => null),
-          swapVaultContract
-            ? isLegacyUnshield
-              ? swapVaultContract.swapFeeWei().catch(() => null)
-              : readWispBridgeFee(swapVaultContract as ContractLike, isBridgeUnshield)
-            : Promise.resolve(null),
-          swapVaultContract
-            ? isLegacyUnshield
-              ? swapVaultContract.getTokenFeeAmount().catch(() => null)
-              : Promise.resolve(0n)
-            : Promise.resolve(null)
-        ]);
+        const rewardBalanceRaw = await rewardTokenContract.balanceOf(requestedWalletAddress).catch(() => null);
+        const rewardSymbolRaw = await rewardTokenContract.symbol().catch(() => null);
+        const rewardDecimalsRaw = await rewardTokenContract.decimals().catch(() => null);
+        const privateSymbolRaw = await privateTokenContract.symbol().catch(() => null);
+        const privateDecimalsRaw = await privateTokenContract.decimals().catch(() => null);
+        const legacyPrivateSymbolRaw = await legacyPrivateTokenContract.symbol().catch(() => null);
+        const legacyPrivateDecimalsRaw = await legacyPrivateTokenContract.decimals().catch(() => null);
+        const groupNativeFeeRaw = await groupContract.feeAmount().catch(() => null);
+        const groupTokenFeeRaw = await groupContract.tokenFeeAmount().catch(() => null);
+        const rewardsContractRaw = await groupContract.rewardsContract().catch(() => null);
+        const rewardsPausedRaw = await groupContract.rewardsPaused().catch(() => null);
+        const swapFeeRaw = swapVaultContract
+          ? isLegacyUnshield
+            ? await swapVaultContract.swapFeeWei().catch(() => null)
+            : await readWispBridgeFee(swapVaultContract as ContractLike, isBridgeUnshield)
+          : null;
+        const swapTokenFeeRaw = swapVaultContract
+          ? isLegacyUnshield
+            ? await swapVaultContract.getTokenFeeAmount().catch(() => null)
+            : 0n
+          : null;
 
         let privateBalanceWei: bigint | null = null;
         let legacyPrivateBalanceWei: bigint | null = null;
@@ -298,17 +301,12 @@ export default function useRewardTokenMetrics({
         let nextRewardsPublicReserveWei: bigint | null = null;
         if (nextRewardsContractAddress) {
           const rewardsContract = new cotiEthers.Contract(nextRewardsContractAddress, WHISPER_REWARDS_ABI, readProvider);
-          const [
-            rewardsContractPausedRaw,
-            rewardsCallerAllowedRaw,
-            rewardsPublicPerInteractionRaw,
-            rewardsPublicReserveRaw
-          ] = await Promise.all([
-            rewardsContract.paused().catch(() => null),
-            rewardsContract.allowedInteractionContracts(GROUP_CHAT_CONTRACT_ADDRESS).catch(() => null),
-            rewardsContract.publicRewardAmount().catch(() => null),
-            rewardTokenContract.balanceOf(nextRewardsContractAddress).catch(() => null)
-          ]);
+          const rewardsContractPausedRaw = await rewardsContract.paused().catch(() => null);
+          const rewardsCallerAllowedRaw = await rewardsContract
+            .allowedInteractionContracts(LEGACY_GROUP_CHAT_CONTRACT_ADDRESS)
+            .catch(() => null);
+          const rewardsPublicPerInteractionRaw = await rewardsContract.publicRewardAmount().catch(() => null);
+          const rewardsPublicReserveRaw = await rewardTokenContract.balanceOf(nextRewardsContractAddress).catch(() => null);
           nextRewardsContractPaused =
             typeof rewardsContractPausedRaw === 'boolean' ? rewardsContractPausedRaw : null;
           nextRewardsCallerAllowed =

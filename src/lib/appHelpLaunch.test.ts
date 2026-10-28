@@ -41,7 +41,7 @@ describe('App Help launch context', () => {
   it('maps each readiness reason to the closest trusted topic', () => {
     expect(getAppHelpReadinessTopicId('wallet-needed')).toBe('getting-started');
     expect(getAppHelpReadinessTopicId('privacy-locked')).toBe('privacy-and-recovery');
-    expect(getAppHelpReadinessTopicId('account-needed')).toBe('owner-and-chainwhisper-accounts');
+    expect(getAppHelpReadinessTopicId('account-needed')).toBe('browser-wallet');
     expect(getAppHelpReadinessTopicId('funds-needed')).toBe('account-funding');
     expect(getAppHelpReadinessTopicId('wrong-network')).toBe('readiness-troubleshooting');
     expect(getAppHelpReadinessTopicId('generic-error')).toBe('readiness-troubleshooting');

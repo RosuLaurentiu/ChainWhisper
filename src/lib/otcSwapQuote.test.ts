@@ -128,4 +128,29 @@ describe('OTC swap quote side selection', () => {
       basisLabel: 'p.COTI/p.gCOTI'
     });
   });
+
+  it('keeps price ranking independent from the entered amount', () => {
+    const trades = [
+      oneOffTrade({ id: 7, offerAmount: ONE / 4n, requestAmount: ONE }),
+      oneOffTrade({ id: 8, offerAmount: ONE, requestAmount: ONE * 5n })
+    ];
+    const smallOrder = quoteBestSingleOtcSwap({
+      inputAmountWei: ONE / 10n,
+      inputMode: 'sell',
+      sellToken: pGcoti,
+      buyToken: pCoti,
+      trades
+    });
+    const oversizedOrder = quoteBestSingleOtcSwap({
+      inputAmountWei: ONE * 100n,
+      inputMode: 'sell',
+      sellToken: pGcoti,
+      buyToken: pCoti,
+      trades
+    });
+
+    expect(smallOrder.candidates.map((quote) => quote.tradeId)).toEqual([7, 8]);
+    expect(oversizedOrder.candidates.map((quote) => quote.tradeId)).toEqual([7, 8]);
+    expect(oversizedOrder.best?.tradeId).toBe(7);
+  });
 });

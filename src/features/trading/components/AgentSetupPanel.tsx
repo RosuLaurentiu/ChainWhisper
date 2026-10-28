@@ -85,8 +85,8 @@ export default function AgentSetupPanel() {
     <div
       id="assistant-mode-panel"
       className="p2p-agent-setup-panel"
-      role="tabpanel"
-      aria-labelledby="assistant-mode-setup"
+      role="region"
+      aria-label="MCP instructions for user-owned agents"
     >
       <div className="p2p-agent-setup-lead">
         <strong>One package. Two local connections. Private negotiation included.</strong>

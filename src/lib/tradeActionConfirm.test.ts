@@ -74,4 +74,23 @@ describe('tradeActionConfirm', () => {
     expect(isTradeActionConfirmationCancelledError(new TradeActionConfirmationCancelledError())).toBe(true);
     expect(isTradeActionConfirmationCancelledError(new Error('nope'))).toBe(false);
   });
+
+  it('uses exact protocol statistics when supplied', () => {
+    const model = buildTradeActionConfirmModel({
+      actionLabel: 'fill trade',
+      confirmationPolicy: 'always',
+      confirmationStats: [
+        { label: 'COTI private inputs', value: '1 confirmation' },
+        { label: 'On-chain action', value: '1 transaction' }
+      ],
+      estimatedFundingPrompts: 0,
+      fundingMoves: [],
+      transferTransactionCount: 0
+    });
+
+    expect(model.stats).toEqual([
+      { label: 'COTI private inputs', value: '1 confirmation' },
+      { label: 'On-chain action', value: '1 transaction' }
+    ]);
+  });
 });

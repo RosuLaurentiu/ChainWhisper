@@ -56,6 +56,7 @@ export default function useP2PRealtimeSync({
   scheduleP2PSync,
   walletAddress
 }: UseP2PRealtimeSyncArgs) {
+  const walletConnected = Boolean(walletAddress.trim());
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
@@ -70,6 +71,8 @@ export default function useP2PRealtimeSync({
       if (cancelled || (typeof document !== 'undefined' && document.hidden)) {
         return;
       }
+      // A delayed event must not restart an unfinished paced read.
+      if (hasActiveListRefresh()) return;
       if (isWalletTransactionFlowActive(getTradeWalletFlowInput()) || isWalletTransactionFlowActive()) {
         recordWalletTransactionFlowStage(getTradeWalletFlowInput(), 'trading-realtime-dispatch-held');
         return;
@@ -79,7 +82,7 @@ export default function useP2PRealtimeSync({
         domains: [
           'balances',
           'public-trades',
-          ...(walletAddress ? (['wallet-trades'] as const) : []),
+          ...(walletConnected ? (['wallet-trades'] as const) : []),
           ...(routeView === 'trade' && routeTradeId ? (['trade-detail'] as const) : [])
         ],
         escrowContract: routeEscrowContract,
@@ -150,7 +153,8 @@ export default function useP2PRealtimeSync({
 
     const setupTradeRealtimeSubscription = async () => {
       try {
-        if (cancelled) {
+        // These event addresses are Mainnet V1 only. Testnet retains the paced visible refresh.
+        if (cancelled || chainId !== 2632500) {
           return;
         }
 
@@ -326,6 +330,6 @@ export default function useP2PRealtimeSync({
     routeTradeId,
     routeView,
     scheduleP2PSync,
-    walletAddress
+    walletConnected
   ]);
 }

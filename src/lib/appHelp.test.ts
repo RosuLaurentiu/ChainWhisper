@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { redactTradeAgentSecretText } from '../../supabase/functions/_shared/trade-agent-redaction';
+import { encodeTradeLink } from './tradeLinks';
 import {
   APP_HELP_MAX_QUESTION_CHARS,
   APP_HELP_QUICK_QUESTIONS,
@@ -45,7 +46,7 @@ describe('appHelp knowledge matching', () => {
 
   it('handles common spelling and natural-language variants locally', () => {
     const answer = resolveLocalAppHelpAnswer('How do I use my ChainWisper acount and owner walet?', '/');
-    expect(answer?.topicId).toBe('owner-and-chainwhisper-accounts');
+    expect(answer?.topicId).toBe('browser-wallet');
     expect(answer?.confidence).toBe('high');
   });
 
@@ -61,7 +62,7 @@ describe('appHelp knowledge matching', () => {
     if (resolution.kind !== 'remote') {
       throw new Error('Expected a remote App Help fallback');
     }
-    expect(resolution.match.topic?.id).toBe('treasury-data');
+    expect(resolution.match.topic?.id).toBe('private-tvl');
     expect(resolution.match.confidence).toBe('moderate');
   });
 
@@ -99,9 +100,31 @@ describe('appHelp knowledge matching', () => {
     });
   });
 
+  it('blocks bare wallet credentials and encoded legacy private links', () => {
+    const privateCode = encodeTradeLink(22, `0x${'ab'.repeat(32)}`);
+    const cases = [
+      'test test test test test test test test test test test junk',
+      'cd'.repeat(32),
+      `/otcdesk/terminal/l/${privateCode}`,
+      `?p=${encodeURIComponent(`/otcdesk/terminal/l/${privateCode}`)}`,
+      privateCode
+    ];
+
+    cases.forEach((question) => {
+      expect(resolveAppHelpOnClient(question, '/otc/agent').kind, question).toBe('refusal');
+    });
+  });
+
+  it('allows ordinary prose and encoded public order links', () => {
+    const publicCode = encodeTradeLink(22);
+
+    expect(containsSensitiveAppHelpMaterial('How are private keys kept separate?')).toBe(false);
+    expect(containsSensitiveAppHelpMaterial(`/otcdesk/terminal/l/${publicCode}`)).toBe(false);
+  });
+
   it('blocks wallet addresses before invoking remote help', () => {
     const walletAddress = `0x${'a'.repeat(40)}`;
-    const resolution = resolveAppHelpOnClient(`Tell me more about treasury for ${walletAddress}`, '/');
+    const resolution = resolveAppHelpOnClient(`Tell me more about private TVL for ${walletAddress}`, '/');
     expect(resolution.kind).toBe('refusal');
     if (resolution.kind !== 'refusal') {
       throw new Error('Expected a client-side privacy refusal');
@@ -164,19 +187,38 @@ describe('appHelp response and route safety', () => {
     });
   });
 
+  it('refuses secret-bearing model output and rejects it again at the browser boundary', () => {
+    const mnemonic = 'test test test test test test test test test test test junk';
+
+    expect(
+      buildAppHelpAiResult({
+        answer: mnemonic,
+        relatedTopicIds: ['privacy-and-recovery'],
+        supported: true,
+        topicId: 'privacy-portal'
+      })
+    ).toMatchObject({ source: 'refusal', topicId: null });
+    expect(() => normalizeAppHelpResponse({
+      answer: mnemonic,
+      relatedTopicIds: [],
+      source: 'ai',
+      topicId: 'privacy-portal'
+    })).toThrow('unsafe material');
+  });
+
   it('normalizes a grounded response and drops unknown related topics', () => {
     expect(
       normalizeAppHelpResponse({
-        answer: 'Use the owner wallet for recovery.',
+        answer: 'Use the selected browser wallet.',
         relatedTopicIds: ['privacy-and-recovery', 'privacy-and-recovery', 'not-a-topic'],
         source: 'nano',
-        topicId: 'owner-and-chainwhisper-accounts'
+        topicId: 'browser-wallet'
       })
     ).toEqual({
-      answer: 'Use the owner wallet for recovery.',
+      answer: 'Use the selected browser wallet.',
       relatedTopicIds: ['privacy-and-recovery'],
       source: 'ai',
-      topicId: 'owner-and-chainwhisper-accounts'
+      topicId: 'browser-wallet'
     });
   });
 
@@ -213,9 +255,21 @@ describe('appHelp response and route safety', () => {
 
   it('redacts private order material from free-help questions too', () => {
     const secret = `0x${'a'.repeat(64)}`;
-    expect(redactTradeAgentSecretText(`Help with /otc/order/link/PRIVATECODE#${secret}`)).toBe(
+    const privateCode = encodeTradeLink(22, secret);
+    expect(redactTradeAgentSecretText(`Help with /otc/order/link/${privateCode}#${secret}`)).toBe(
       'Help with /otc/order/link/[redacted-trade-link]#[redacted-access-secret]'
     );
+  });
+
+  it('redacts bare credentials and bare private-link codes without altering public codes', () => {
+    const mnemonic = 'test test test test test test test test test test test junk';
+    const privateCode = encodeTradeLink(22, `0x${'ab'.repeat(32)}`);
+    const publicCode = encodeTradeLink(22);
+
+    expect(redactTradeAgentSecretText(`phrase ${mnemonic}`)).not.toContain(mnemonic);
+    expect(redactTradeAgentSecretText(`key ${'cd'.repeat(32)}`)).not.toContain('cd'.repeat(32));
+    expect(redactTradeAgentSecretText(`open ${privateCode}`)).not.toContain(privateCode);
+    expect(redactTradeAgentSecretText(`open ${publicCode}`)).toBe(`open ${publicCode}`);
   });
 
   it('allows general safety questions that mention secret concepts without including a secret', () => {

@@ -1,0 +1,19 @@
+.app-shell-dex-v2 .dex-v2-current-pool select {
+  min-width: 0;
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  color: #f5f2fb;
+  background: #171321;
+  font: inherit;
+}
+.app-shell-dex-v2 .dex-v2-current-pool-status {
+  margin-top: 8px;
+  min-height: 42px;
+  border: 1px solid #554675;
+  border-radius: 8px;
+  color: #d4c4ef;
+  background: #171321;
+}
+.app-shell-dex-v2 .dex-v2-current-pool-status:disabled { opacity: 0.5; }
+.app-shell-dex-v2 .dex-v2-current-pool .dex-v2-activation-note { overflow-wrap: anywhere; }

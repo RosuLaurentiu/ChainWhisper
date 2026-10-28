@@ -17,6 +17,11 @@ import {
   type TradeOfferMessagePayload,
   type TradeSnapshot
 } from './appShared';
+import {
+  CHAINWHISPER_TESTNET_CANDIDATE_CONFIG,
+  type TestnetCandidateConfig
+} from './chainWhisperTestnetCandidate';
+import { CURRENT_P2P_BINDING, isCurrentP2PFinancialScopeQualified } from './currentP2PBinding';
 
 export type MessageReferenceCandidate = {
   txHash?: string;
@@ -37,11 +42,14 @@ export const PRIVATE_WADA_TOKEN_ADDRESS = '0x3a8b49aAC1dAD86aa45a75231FbeC5bEb81
 export const PRIVATE_GCOTI_TOKEN_ADDRESS = '0x394b3c4328160f000763Ca391D07F902926EDaAc';
 export const HOTDOG_PRIVATE_TOKEN_ADDRESS = '0x5085Ea0611A9C49316972C57390ca25C9CF236AB';
 
-export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
+export type VerifiedTradeToken = Readonly<{
   address: string;
   kind: Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
   symbol: string;
-}> = [
+  decimals?: number;
+}>;
+
+export const MAINNET_VERIFIED_ECOSYSTEM_TOKENS: readonly VerifiedTradeToken[] = Object.freeze([
   { address: GCOTI_TOKEN_ADDRESS, kind: 'erc20', symbol: 'gCOTI' },
   { address: '0x659AD6d1F7353Df13Dec552cc05c9c15AfdD04e8', kind: 'erc20', symbol: 'Pengo' },
   { address: '0x256353f5B4b515f488876dD1CAc2300c6C6f98B7', kind: 'erc20', symbol: 'WBBT' },
@@ -60,8 +68,65 @@ export const VERIFIED_ECOSYSTEM_TOKENS: Array<{
   { address: PRIVATE_GCOTI_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'p.gCOTI' },
   { address: '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a', kind: 'private-erc20', symbol: 'p.WISP' },
   { address: '0xefe07cbd73538b2f7b3dd8cbc3a435fd4ee16213', kind: 'private-erc20', symbol: 'p.PENGO' },
-  { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'HOTDOG' },
-];
+  { address: HOTDOG_PRIVATE_TOKEN_ADDRESS, kind: 'private-erc20', symbol: 'HOTDOG' }
+]);
+
+export const USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS =
+  CHAINWHISPER_TESTNET_CANDIDATE_CONFIG.status === 'active';
+
+export const buildChainWhisperTestnetCandidateTradeTokens = (
+  config: TestnetCandidateConfig
+): readonly VerifiedTradeToken[] =>
+  config.status === 'active'
+    ? Object.freeze([
+        Object.freeze({
+          address: config.components.publicTestTokenA.address,
+          kind: 'erc20' as const,
+          symbol: 'cwTUB'
+        }),
+        Object.freeze({
+          address: config.components.publicTestTokenB.address,
+          kind: 'erc20' as const,
+          symbol: 'cwTUQ'
+        }),
+        Object.freeze({
+          address: config.components.privateTestTokenA.address,
+          kind: 'private-erc20' as const,
+          symbol: 'cwTPB'
+        }),
+        Object.freeze({
+          address: config.components.privateTestTokenB.address,
+          kind: 'private-erc20' as const,
+          symbol: 'cwTPQ'
+        })
+      ])
+    : Object.freeze([]);
+
+export const TESTNET_CANDIDATE_TOKENS = buildChainWhisperTestnetCandidateTradeTokens(
+  CHAINWHISPER_TESTNET_CANDIDATE_CONFIG
+);
+
+const USING_REGISTERED_P2P_TOKENS = USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS && Boolean(CURRENT_P2P_BINDING.repairQualification);
+export const SELECTABLE_TRADE_TOKENS: readonly VerifiedTradeToken[] =
+  USING_REGISTERED_P2P_TOKENS ? isCurrentP2PFinancialScopeQualified() ? CURRENT_P2P_BINDING.registeredTokens : Object.freeze([]) :
+  USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
+    ? TESTNET_CANDIDATE_TOKENS
+    : MAINNET_VERIFIED_ECOSYSTEM_TOKENS;
+// Known historical token identities remain readable after their menus move to the registered graph.
+export const VERIFIED_ECOSYSTEM_TOKENS: readonly VerifiedTradeToken[] = USING_REGISTERED_P2P_TOKENS
+  ? Object.freeze([...SELECTABLE_TRADE_TOKENS, ...TESTNET_CANDIDATE_TOKENS.filter(token =>
+    !SELECTABLE_TRADE_TOKENS.some(selected => selected.address.toLowerCase() === token.address.toLowerCase()))])
+  : SELECTABLE_TRADE_TOKENS;
+
+const selectablePublicTokens = (USING_REGISTERED_P2P_TOKENS ? SELECTABLE_TRADE_TOKENS : TESTNET_CANDIDATE_TOKENS).filter(token => token.kind === 'erc20');
+const selectablePrivateTokens = (USING_REGISTERED_P2P_TOKENS ? SELECTABLE_TRADE_TOKENS : TESTNET_CANDIDATE_TOKENS).filter(token => token.kind === 'private-erc20');
+
+export const TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS = Object.freeze({
+  publicBase: selectablePublicTokens[0]?.address.toLowerCase() ?? '',
+  publicQuote: selectablePublicTokens[1]?.address.toLowerCase() ?? '',
+  privateBase: selectablePrivateTokens[0]?.address.toLowerCase() ?? '',
+  privateQuote: selectablePrivateTokens[1]?.address.toLowerCase() ?? ''
+});
 
 export const PUBLIC_TRADE_TOKEN_SYMBOL_ORDER = [
   'gCOTI',
@@ -90,10 +155,14 @@ export const PRIVATE_TRADE_TOKEN_SYMBOL_ORDER = [
 ] as const;
 
 export const buildPublicTradeTokenSymbolOrder = (rewardTokenSymbol: string): string[] =>
-  PUBLIC_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'WISP' ? rewardTokenSymbol : symbol));
+  USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
+    ? selectablePublicTokens.map(token => token.symbol)
+    : PUBLIC_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'WISP' ? rewardTokenSymbol : symbol));
 
 export const buildPrivateTradeTokenSymbolOrder = (privateRewardTokenSymbol: string): string[] =>
-  PRIVATE_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'p.WISP' ? privateRewardTokenSymbol : symbol));
+  USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
+    ? selectablePrivateTokens.map(token => token.symbol)
+    : PRIVATE_TRADE_TOKEN_SYMBOL_ORDER.map((symbol) => (symbol === 'p.WISP' ? privateRewardTokenSymbol : symbol));
 
 export const normalizePrivateTokenDisplaySymbol = (symbol: string): string => {
   const trimmedSymbol = symbol.trim();

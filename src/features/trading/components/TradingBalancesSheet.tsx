@@ -1,9 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useModalA11y } from '../../../shared/hooks/useModalA11y';
-import { buildTotalTradingBalanceItems, type TradingBalanceDisplayItem } from '../../../lib/tradingBalances';
-
-type BalanceAccountRole = 'chainwhisper' | 'owner';
-type BalanceView = 'total' | BalanceAccountRole;
+import type { TradingBalanceDisplayItem } from '../../../lib/tradingBalances';
 
 type TradingBalanceListProps = {
   balances: TradingBalanceDisplayItem[];
@@ -29,80 +26,22 @@ const getBalanceEmptyText = (walletConnected: boolean): string =>
 
 const getBalanceViewCountLabel = (count: number): string => `${count} token${count === 1 ? '' : 's'}`;
 
-const BALANCE_ACCOUNT_OPTIONS: Array<{
-  id: BalanceAccountRole;
-  label: string;
-}> = [
-  { id: 'chainwhisper', label: 'ChainWhisper' },
-  { id: 'owner', label: 'Owner' }
-];
-
 export function TradingBalanceList({ balances, walletConnected }: TradingBalanceListProps) {
-  const [selectedBalanceView, setSelectedBalanceView] = useState<BalanceView>('total');
-  const totalBalances = useMemo(() => buildTotalTradingBalanceItems(balances), [balances]);
-  const accountGroups = useMemo(
-    () =>
-      BALANCE_ACCOUNT_OPTIONS.map((option) => ({
-        ...option,
-        balances: balances.filter((balance) => (balance.accountRole ?? 'chainwhisper') === option.id)
-      })).filter((group) => group.balances.length > 0),
-    [balances]
-  );
-  const balanceViews = useMemo(
-    () => [
-      ...(accountGroups.length > 1 && totalBalances.length > 0
-        ? [{ id: 'total' as const, label: 'Total', balances: totalBalances }]
-        : []),
-      ...accountGroups
-    ],
-    [accountGroups, totalBalances]
-  );
-  const availableViewKey = balanceViews.map((view) => view.id).join('|');
-  const activeView = balanceViews.find((view) => view.id === selectedBalanceView) ?? balanceViews[0];
-  const activeViewIndex = activeView ? balanceViews.findIndex((view) => view.id === activeView.id) : -1;
-  const nextView =
-    activeViewIndex >= 0 && balanceViews.length > 1
-      ? balanceViews[(activeViewIndex + 1) % balanceViews.length]
-      : undefined;
-
-  useEffect(() => {
-    if (activeView && activeView.id !== selectedBalanceView) {
-      setSelectedBalanceView(activeView.id);
-    }
-  }, [activeView, selectedBalanceView, availableViewKey]);
-
-  if (balances.length === 0 || !activeView) {
+  if (balances.length === 0) {
     return <p className="p2p-balance-empty">{getBalanceEmptyText(walletConnected)}</p>;
   }
 
   return (
     <div className="p2p-balance-groups">
-      {balanceViews.length > 1 ? (
-        <button
-          type="button"
-          className="p2p-balance-view-toggle"
-          onClick={() => {
-            if (nextView) {
-              setSelectedBalanceView(nextView.id);
-            }
-          }}
-          title={nextView ? `Showing ${activeView.label}; click to show ${nextView.label}` : activeView.label}
-          aria-label={nextView ? `Showing ${activeView.label} balances. Show ${nextView.label} balances.` : `${activeView.label} balances`}
-        >
-          <span>{activeView.label}</span>
-          <small>{getBalanceViewCountLabel(activeView.balances.length)}</small>
-        </button>
-      ) : (
-        <span className="p2p-balance-account-label">
-          {activeView.label}
-          <small>{getBalanceViewCountLabel(activeView.balances.length)}</small>
-        </span>
-      )}
+      <span className="p2p-balance-account-label">
+        Connected wallet
+        <small>{getBalanceViewCountLabel(balances.length)}</small>
+      </span>
       <div
-        className={`p2p-balance-list p2p-balance-list-${activeView.id}`}
-        aria-label={`${activeView.label} balances`}
+        className="p2p-balance-list p2p-balance-list-owner"
+        aria-label="Connected wallet balances"
       >
-        {activeView.balances.map((balance) => (
+        {balances.map((balance) => (
           <article className="p2p-balance-item" data-balance-kind={balance.kindLabel} key={balance.id}>
             <div className="p2p-balance-item-main">
               <strong className="p2p-balance-symbol">{balance.symbol}</strong>

@@ -1,0 +1,5 @@
+.dex-v2-current-gas { min-width: 0; overflow-wrap: anywhere; }
+.dex-v2-current-gas table { width: 100%; border-collapse: collapse; }
+.dex-v2-current-gas caption, .dex-v2-current-gas th, .dex-v2-current-gas td { text-align: left; padding: 4px; }
+.dex-v2-current-gas a { display: inline-flex; align-items: center; min-height: 44px; }
+.dex-v2-current-gas button, .dex-v2-current-gas summary { min-height: 44px; }

@@ -4,6 +4,8 @@ import {
   formatTradeRatioLabel,
   groupWalletTradesByPerspective,
   hasPartialTradeFill,
+  resolveCanonicalTradeActionSide,
+  resolveDisplayedTradeActionSide,
   resolveRecurringPriceDeskDisplay,
   resolveTradePriceRatioDisplay,
   resolveTradeOrderSummary,
@@ -244,6 +246,14 @@ describe('resolveTradeOrderSummary', () => {
 });
 
 describe('price display helpers', () => {
+  it('relabels the same economic action when the displayed base asset is reversed', () => {
+    expect(resolveDisplayedTradeActionSide('buy', false)).toBe('buy');
+    expect(resolveDisplayedTradeActionSide('buy', true)).toBe('sell');
+    expect(resolveDisplayedTradeActionSide('sell', true)).toBe('buy');
+    expect(resolveCanonicalTradeActionSide('sell', true)).toBe('buy');
+    expect(resolveCanonicalTradeActionSide('buy', true)).toBe('sell');
+  });
+
   it('defaults one-off ratios to the smaller displayed ratio', () => {
     const base = asset('AAA');
     const quote = { ...asset('BBB'), amount: '2500000000000000000' };

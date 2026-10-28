@@ -1,10 +1,11 @@
 import { useCallback, type Dispatch, type FormEvent, type MutableRefObject, type SetStateAction } from 'react';
 import { loadCotiEthersModule } from '../../../lib/appShared';
 import { resolveTradeLinkInput } from './useP2PTradeRoute';
+import type { LinkTradeV2Reference } from '../../../lib/linkTradeV2Terms';
 
 type UseTradeTerminalLinkActionsArgs = {
   lastAppliedSwapPinnedTradeKeyRef: MutableRefObject<string>;
-  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
+  openTrade: (tradeId: number | LinkTradeV2Reference, accessSecret?: string, escrowContract?: string) => void;
   setDetailTradeError: (message: string) => void;
   setEmptyTerminalDrawerOpen: Dispatch<SetStateAction<boolean>>;
   setSwapOrderLinkError: Dispatch<SetStateAction<string>>;
@@ -39,7 +40,7 @@ export default function useTradeTerminalLinkActions({
 
       setDetailTradeError('');
       setEmptyTerminalDrawerOpen(false);
-      openTrade(parsedLink.tradeId, parsedLink.accessSecret, parsedLink.escrowContract);
+      openTrade(parsedLink.linkV2Reference ? parsedLink.linkV2Reference : parsedLink.tradeId, parsedLink.accessSecret, parsedLink.escrowContract);
       setTradeLinkInput('');
     },
     [openTrade, setDetailTradeError, setEmptyTerminalDrawerOpen, setTradeLinkInput, showEmptyTradeRoute, tradeLinkInput]

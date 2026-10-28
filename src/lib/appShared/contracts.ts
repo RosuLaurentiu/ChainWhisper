@@ -1,10 +1,10 @@
-export const CHAT_CONTRACT_ADDRESS = '0xE5101D33986c91565D2C9f8b49AAF0b8FFeE2243';
-export const LEGACY_CHAT_BACKUP_CONTRACT_ADDRESS = '0xF4cab1599aafBBB68677682354B7c1760bCF6c48';
-export const GROUP_ADMIN_BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 export const REWARD_TOKEN_ADDRESS = '0xb70c55bd0823436F44877DC6A9f46E0C55f2C3A8';
 export const PRIVATE_REWARD_TOKEN_ADDRESS = '0x682e3142e62a7aDe2a0CA5bdC87b205CaDe4B17a';
 export const LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS = '0x922B39AC9FD4ccb5E5a9de0694C8189DC2D214E8';
 export const LEGACY_SWAP_VAULT_CONTRACT_ADDRESS = '0x5C35CD3659991051F4Fb04F2C4120643739b7BdE';
+export const EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ADDRESS = '0xAE80B55D78A88dD65AFB692DFf5BF3e71ab9fE7a';
+export const LEGACY_SWAP_VAULT_RUNTIME_HASH = '0x35eebd4f535eb366b9ef29bfc11aea32def0e5257ca15926de244cc2946449de';
+export const EARLIER_LEGACY_SWAP_VAULT_RUNTIME_HASH = '0x98e9da6216143afc65f5b0c1bf32c01d7c3ba8c6ae3e6eeee09b0dd33348eeb5';
 export const WHISPER_SHIELD_ENABLED = true;
 export const WHISPER_SHIELD_LEGACY_UNSHIELD_ENABLED = true;
 export const WISP_PRIVACY_BRIDGE_CONTRACT_ADDRESS = '0x3bCeA2eD4b31107eF877899416dC97213bdc2809';
@@ -13,111 +13,6 @@ export const FALLBACK_PRIVATE_REWARD_TOKEN_SYMBOL = 'p.WISP';
 export const FALLBACK_REWARD_TOKEN_DECIMALS = 6;
 export const MAX_ERC20_APPROVAL = (1n << 256n) - 1n;
 export const PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE = MAX_ERC20_APPROVAL;
-export const CHAT_CONTRACT_ABI = [
-  'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
-  'function submitMultipart(address recipient, ((uint256[] value), bytes[] signature)[] messages) payable',
-  'function getMessage(uint256 messageId) view returns (tuple(uint256 id,address from,address to,uint64 blockNumber,uint64 timestamp,uint32 chunkCount,uint256 valueSent,uint256 feeTaken,(tuple(uint256[] value) ciphertext,tuple(uint256[] value) userCiphertext) ciphertext))',
-  'function getMessageChunk(uint256 messageId,uint256 chunkIndex) view returns ((tuple(uint256[] value) ciphertext,tuple(uint256[] value) userCiphertext) ciphertext)',
-  'function getMessageMetadata(uint256 messageId) view returns (address from,address to,uint64 blockNumber,uint64 timestamp,uint32 chunkCount,uint256 valueSent,uint256 feeTaken)',
-  'function inboxCount(address account) view returns (uint256)',
-  'function sentCount(address account) view returns (uint256)',
-  'function getInboxPage(address account,uint256 offset,uint256 limit) view returns (uint256[])',
-  'function getSentPage(address account,uint256 offset,uint256 limit) view returns (uint256[])',
-  'function getRecentConversations(address account,uint256 limit) view returns (tuple(address peer,uint256 messageId,uint64 blockNumber,uint64 timestamp)[])',
-  'function conversationMessageCount(address me,address peer) view returns (uint256)',
-  'function getConversationMessagePage(address me,address peer,uint256 offset,uint256 limit) view returns (uint256[])',
-  'function setMyNickname(string name)',
-  'function nicknames(address account) view returns (string)',
-  'function getConversationBlockRange(address me, address peer) view returns (uint256 firstBlock, uint256 lastBlock)',
-  'function getFirstBlockForConversation(address me, address peer) view returns (uint256)',
-  'function getLastBlockForConversation(address me, address peer) view returns (uint256)',
-  'function getLastMessageTime(address me, address peer) view returns (uint256)',
-  'function MAX_CHUNK_CELLS() view returns (uint8)',
-  'function MAX_SINGLE_MESSAGE_CELLS() view returns (uint8)',
-  'function MAX_CHUNKS_PER_MESSAGE() view returns (uint32)',
-  'function MAX_RECENT_CONVERSATIONS() view returns (uint256)',
-  'function NICKNAME_MAX_BYTES() view returns (uint256)',
-  'function feeAmount() view returns (uint256)',
-  'event NicknameSet(address indexed user, string nickname)',
-  'event MessageSubmitted(uint256 indexed messageId, address indexed recipient, address indexed from, uint256 valueSent, uint256 feeTaken, uint32 chunkCount)'
-] as const;
-
-export const LEGACY_CHAT_BACKUP_CONTRACT_ABI = [
-  'function submit(address recipient, ((uint256[] value), bytes[] signature) memo) payable',
-  'function getConversationBlockRange(address me, address peer) view returns (uint256 firstBlock, uint256 lastBlock)',
-  'function getFirstBlockForConversation(address me, address peer) view returns (uint256)',
-  'function getLastBlockForConversation(address me, address peer) view returns (uint256)',
-  'function feeAmount() view returns (uint256)',
-  'event MessageSubmitted(address indexed recipient, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender)'
-] as const;
-
-export const GROUP_CHAT_CONTRACT_ADDRESS = '0xE175ec590CE13FB6349f1CAd8b7e9D5d21eaa32b';
-export const GROUP_CHAT_CONTRACT_ABI = [
-  'error AlreadyGroupMember()',
-  'error GroupPaused()',
-  'error GroupTooLarge()',
-  'error InsufficientFee()',
-  'error InvalidAddress()',
-  'error InvalidGroup()',
-  'error InvalidGroupTitle()',
-  'error NotGroupMember()',
-  'error OnlyGroupAdmin()',
-  'error InvalidJoinCode()',
-  'error JoinCodeExhausted()',
-  'error JoinCodeExpired()',
-  'error JoinCodeNotFound()',
-  'error JoinCodeProofExpired()',
-  'error InvalidJoinCodeProof()',
-  'function feeAmount() view returns (uint256)',
-  'function tokenFeeAmount() view returns (uint256)',
-  'function publicFeeToken() view returns (address)',
-  'function privateFeeToken() view returns (address)',
-  'function rewardsContract() view returns (address)',
-  'function rewardsPaused() view returns (bool)',
-  'function INVITE_TTL_DEFAULT() view returns (uint64)',
-  'function INVITE_TTL_MAX() view returns (uint64)',
-  'function JOIN_CODE_TTL_MAX() view returns (uint64)',
-  'function JOIN_CODE_MAX_USES() view returns (uint32)',
-  'function nextGroupId() view returns (uint256)',
-  'function createGroup(string title, address[] initialMembers) returns (uint256 groupId)',
-  'function addMembers(uint256 groupId, address[] accounts)',
-  'function inviteMembers(uint256 groupId, address[] accounts, uint64 inviteTtlSeconds)',
-  'function createJoinCode(uint256 groupId, bytes32 codeHash, address codeSigner, uint64 ttlSeconds, uint32 maxUses, ((uint256[] value), bytes[] signature) encryptedCode)',
-  'function getJoinCode(uint256 groupId, bytes32 codeHash) view returns (bool active, address creator, address signer, uint64 expiresAt, uint32 usesLeft, bool expired)',
-  'function getJoinCodeForAdmin(uint256 groupId, bytes32 codeHash) returns (((uint256[] value) ciphertext, (uint256[] value) userCiphertext) codeForAdmin)',
-  'function getActiveJoinCodeHashesPage(uint256 groupId, uint256 offset, uint256 limit) view returns (bytes32[] hashes, uint256 nextOffset)',
-  'function joinWithCode(uint256 groupId, bytes32 codeHash, uint64 signatureDeadline, bytes signature)',
-  'function revokeJoinCode(uint256 groupId, bytes32 codeHash)',
-  'function acceptInvite(uint256 groupId)',
-  'function declineInvite(uint256 groupId)',
-  'function setGroupAdmin(uint256 groupId, address newAdmin)',
-  'function setGroupTitle(uint256 groupId, string nextTitle)',
-  'function leaveGroup(uint256 groupId)',
-  'function disbandGroup(uint256 groupId)',
-  'function removeMember(uint256 groupId, address account)',
-  'function getInvite(uint256 groupId, address account) view returns (bool pending, address inviter, uint64 expiresAt, bool expired)',
-  'function getGroupInfo(uint256 groupId) view returns (address admin, uint64 createdAt, uint32 memberCount, string title, uint256 lastBlock, uint256 lastTimestamp)',
-  'function lastMessageBlockForGroup(uint256 groupId) view returns (uint256)',
-  'function getGroupMembers(uint256 groupId) view returns (address[])',
-  'function getGroupsForMemberPage(address account, uint256 cursor, uint256 limit) view returns (uint256[] groupIds, uint256 nextCursor)',
-  'function isMember(uint256 groupId, address account) view returns (bool)',
-  'function submitGroupMessage(uint256 groupId, ((uint256[] value), bytes[] signature) encryptedMessage) payable',
-  'function submitGroupMessageWithMode(uint256 groupId, ((uint256[] value), bytes[] signature) encryptedMessage, uint8 paymentMode) payable',
-  'event GroupCreated(uint256 indexed groupId, address indexed admin, string title)',
-  'event GroupMemberAdded(uint256 indexed groupId, address indexed account)',
-  'event GroupMemberRemoved(uint256 indexed groupId, address indexed account)',
-  'event GroupMemberLeft(uint256 indexed groupId, address indexed account)',
-  'event GroupInviteCreated(uint256 indexed groupId, address indexed account, address indexed inviter, uint64 expiresAt)',
-  'event GroupInviteAccepted(uint256 indexed groupId, address indexed account, address indexed inviter)',
-  'event GroupInviteDeclined(uint256 indexed groupId, address indexed account, address indexed inviter)',
-  'event GroupInviteRevoked(uint256 indexed groupId, address indexed account, address indexed revokedBy)',
-  'event GroupJoinCodeCreated(uint256 indexed groupId, bytes32 indexed codeHash, address indexed creator, address signer, uint64 expiresAt, uint32 usesLeft)',
-  'event GroupJoinCodeRevoked(uint256 indexed groupId, bytes32 indexed codeHash, address indexed revokedBy)',
-  'event GroupJoinedWithCode(uint256 indexed groupId, address indexed account, bytes32 indexed codeHash, address creator)',
-  'event GroupMessageSubmitted(uint256 indexed groupId, address indexed from, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForSender, uint256 valueSent, uint256 feeTaken)',
-  'event GroupMessageDelivered(uint256 indexed groupId, address indexed from, address indexed recipient, ((uint256[] value) ciphertext, (uint256[] value) userCiphertext) messageForRecipient)'
-] as const;
-
 export const OTC_ESCROW_CONTRACT_ADDRESS = '0x7a232810f250a2C6e90895215aFf826116DFDb06';
 export const OTC_READER_CONTRACT_ADDRESS = '0x77889B2f9F9fD812ad65AfF41048426fA1382660';
 export const PRIVATE_ORDERS_CONTRACT_ADDRESS = '0xe211c032E4432FdeB9e48f06b69EB98583B2A231';
@@ -125,7 +20,6 @@ export const DIRECT_OTC_CONTRACT_ADDRESS = '0x634c6dddda784c29d0435Cc54ca072Af05
 export const RECURRING_OTC_CONTRACT_ADDRESS = '0x7235B18b9CD59fB9853BC3BF3a0A65bc32162cd5';
 export const OTC_REGISTRY_CONTRACT_ADDRESS = '0x91e32EdFAb1e74DA07ea3012491a44D983aeBA46';
 export const OTC_HISTORY_READER_CONTRACT_ADDRESS = '0x650666328A771d70881c189F3B2BB1F3fBfe0514';
-export const CW_PROFILE_REGISTRY_CONTRACT_ADDRESS = '0xf37196Fafe760E92d3542D837a1595B2a625F618';
 export const TRADE_ESCROW_CONTRACT_ADDRESS = OTC_ESCROW_CONTRACT_ADDRESS;
 export const PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS = PRIVATE_ORDERS_CONTRACT_ADDRESS;
 export const DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS = DIRECT_OTC_CONTRACT_ADDRESS;
@@ -320,21 +214,6 @@ export const OTC_REGISTRY_CONTRACT_ABI = [
   'event ContractsUpdated(address indexed updater, address standardEscrow, address privateEscrow, address directEscrow, address recurringEscrow, address reader, address historyReader)'
 ] as const;
 
-export const CW_PROFILE_REGISTRY_GC_CONTRACT_ABI = [
-  'function contractVersion() pure returns (string)',
-  'function supportsFeature(bytes32 feature) pure returns (bool)',
-  'function MAX_PROFILE_CELLS() view returns (uint256)',
-  'function addProfile(((uint256[] value), bytes[] signature) encryptedPayload, bool makeDefault) returns (uint256 profileId)',
-  'function setProfile(uint256 profileId, ((uint256[] value), bytes[] signature) encryptedPayload)',
-  'function clearProfile(uint256 profileId)',
-  'function setDefaultProfile(uint256 profileId)',
-  'function getProfile(address owner, uint256 profileId) view returns ((uint256[] value) encryptedPayload, bool active, uint64 version, uint256 cellCount)',
-  'function getProfileSummary(address owner, uint256 profileId) view returns (uint64 version, bool active, uint256 cellCount)',
-  'function getProfileSummaries(address owner) view returns ((uint64 version, bool active, uint32 cellCount)[] summaries, uint256 defaultProfileId, bool hasDefault)',
-  'function getDefaultProfile(address owner) view returns (uint256 profileId, bool exists)',
-  'function profileCount(address owner) view returns (uint256)'
-] as const;
-
 export const OTC_HISTORY_READER_CONTRACT_ABI = [
   'function contractVersion() pure returns (string)',
   'function supportsFeature(bytes32 feature) pure returns (bool)',
@@ -486,6 +365,13 @@ export const LEGACY_SWAP_VAULT_CONTRACT_ABI = [
   'event SwapFeePaid(address indexed payer, address indexed receiver, uint8 indexed method, uint256 amount)'
 ] as const;
 
+export const EARLIER_LEGACY_SWAP_VAULT_CONTRACT_ABI = [
+  'function unshield(uint256 amount) payable',
+  'function swapFeeWei() view returns (uint256)',
+  'function getTokenFeeAmount() view returns (uint256)',
+  'event SwapFeePaid(address indexed payer, address indexed receiver, uint8 indexed method, uint256 amount)'
+] as const;
+
 export const WHISPER_REWARDS_ABI = [
   'function rewardInteraction(address user)',
   'function paused() view returns (bool)',
@@ -510,6 +396,7 @@ export const GROUP_CREATE_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
   '0x0e03abe4': 'Group title is too long after encryption. Use a shorter title and try again.'
 };
 export const GROUP_ACTION_ERROR_MESSAGE_BY_SELECTOR: Record<string, string> = {
+  '0xab65a305': 'This wallet is not authorized to read the selected group-key epoch. Refresh the group and retry.',
   '0x569d6b43': 'That wallet is already a member of this group.',
   '0xc377608f': 'Group actions are currently paused on-chain. Try again later.',
   '0x6ebf9e18': 'This group has reached its member limit.',

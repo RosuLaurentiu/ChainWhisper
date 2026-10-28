@@ -1,9 +1,15 @@
 project_id = "ousgmjyajyorywpqbdkf"
 
+[auth.web3.ethereum]
+enabled = true
+
 [functions.chat-image-cleanup]
 verify_jwt = false
 
 [functions.chat-image-upload]
+verify_jwt = false
+
+[functions.chat-image-session]
 verify_jwt = false
 
 [functions.chat-image-confirm]

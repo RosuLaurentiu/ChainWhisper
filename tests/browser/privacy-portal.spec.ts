@@ -1,11 +1,13 @@
 import { expect, test } from '@playwright/test';
+import { installPortalOwner } from './fixtures/portal-owner';
 
 test.describe('Privacy Portal', () => {
   test('keeps WISP in the unified selector and scopes legacy recovery to WISP', async ({ page }) => {
+    await installPortalOwner(page);
     await page.setViewportSize({ width: 1536, height: 1024 });
     await page.goto('/portal');
 
-    await expect(page.getByRole('heading', { name: 'Privacy Portal' })).toBeAttached();
+    await expect(page.getByRole('heading', { name: 'Privacy Portal', exact: true })).toBeAttached();
 
     const rail = page.getByRole('complementary', { name: 'Supported privacy token pairs' });
     const tokenButtons = rail.locator('.privacy-token-list > button');
@@ -14,13 +16,16 @@ test.describe('Privacy Portal', () => {
     await expect(page.getByText('Legacy pWISP recovery', { exact: true })).toHaveCount(0);
 
     await tokenButtons.first().click();
+    await expect(page.getByRole('heading', { name: 'Connect wallet', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Connect MetaMask or CipherTrade', exact: true }).click();
 
     await expect(page.getByText('This pair is provided by ChainWhisper, not an official COTI bridge.')).toBeVisible();
     const outputPanel = page.locator('.privacy-wisp-card .swap-asset-panel-output');
     await expect(outputPanel).toContainText('Balance: Locked');
 
     await page.getByRole('button', { name: 'To public', exact: true }).click();
-    await expect(outputPanel).toContainText('Balance: Unavailable');
+    await expect(outputPanel).toContainText('Balance: 0 WISP');
+    await expect(page.locator('.privacy-wisp-card .swap-asset-panel').first()).toContainText('Balance: Locked');
     await expect(page.locator('.privacy-wisp-card').getByRole('button', { name: 'Max' })).toBeDisabled();
 
     const legacyRecovery = page.locator('.privacy-legacy-recovery');
@@ -56,7 +61,9 @@ test.describe('Privacy Portal', () => {
     test(`${route} remains a Privacy Portal alias`, async ({ page }) => {
       await page.goto(route);
       await expect(page).toHaveURL(/\/portal$/);
-      await expect(page.getByRole('heading', { name: 'Privacy Portal' })).toBeAttached();
+      await expect(page.getByRole('heading', { name: 'Privacy Portal', exact: true })).toBeAttached();
     });
   }
 });
+
+

@@ -1,4 +1,4 @@
-import { ArrowRight, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
   COTI_NETWORK,
@@ -10,6 +10,8 @@ import {
   type TradeAssetPayload,
   type TradeSnapshot
 } from '../../../lib/appShared';
+import { getPrivateBookV2OwnerBudget, getPrivateBookV2Projection } from '../../../lib/privateBookV2Consumer';
+import { isCurrentP2PBookBudgetAdmitted, type CurrentP2PBookBudgetAdmission } from '../../../lib/currentP2PBinding';
 import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
 import type { P2PActionNoticeSurface } from '../../../lib/p2pActionNotice';
 import {
@@ -18,7 +20,11 @@ import {
   canUseWalletAuthorityForDirectAccess,
   getCounterOfferUnavailableReason
 } from '../../../lib/tradeCounterSupport';
-import { buildTradeTransactionHistoryRows } from '../../../lib/tradeHistory';
+import {
+  aggregateVisibleTradeTransactionHistoryRows,
+  buildTradeTransactionHistoryRows
+} from '../../../lib/tradeHistory';
+import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledger';
 import {
   isZeroTradeTakerAddress,
   resolveTradeOrderSummary,
@@ -41,6 +47,7 @@ import {
   getTradeDisplayTerms,
   getTradeTermsVisibility,
   hasHydratedDirectTradeTerms,
+  isDirectTradeSnapshot,
   shouldBlockFillAboveVisibleLiquidity
 } from '../../../lib/p2pTradeView';
 import {
@@ -94,6 +101,9 @@ type TradeStandardTerminalProps = {
   beginEditTrade: (snapshot: TradeSnapshot) => void;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   cancelTrade: (snapshot: TradeSnapshot) => Promise<void>;
+  changePrivateBookBudgetVisibility: (snapshot: TradeSnapshot, visible: boolean) => Promise<void>;
+  bookBudgetAdmission?: CurrentP2PBookBudgetAdmission;
+  renderTradeBalanceDisclosure?: (snapshot: TradeSnapshot) => ReactNode;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
   declineTrade: (snapshot: TradeSnapshot) => Promise<void>;
   getCarbonReferenceDisplay: (
@@ -109,6 +119,8 @@ type TradeStandardTerminalProps = {
   resolveTerminalAssetBalanceLabel: (asset: TradeAssetPayload, maximumFractionDigits?: number) => string;
   toggleMakerControls: (surface: 'terminal', tradeKey: string) => void;
   toggleTradeRateDirection: (tradeId: number, escrowContract?: string) => void;
+  canonicalV2Rows?: readonly TradeHistoryV2ExecutionRow[];
+  showHistoryControl?: boolean;
 };
 
 export default function TradeStandardTerminal({
@@ -135,6 +147,9 @@ export default function TradeStandardTerminal({
   beginEditTrade,
   buildTradeShareUrl,
   cancelTrade,
+  changePrivateBookBudgetVisibility,
+  bookBudgetAdmission,
+  renderTradeBalanceDisclosure,
   copyWithFeedback,
   declineTrade,
   getCarbonReferenceDisplay,
@@ -145,9 +160,15 @@ export default function TradeStandardTerminal({
   resolveKnownTradeAccessSecret,
   resolveTerminalAssetBalanceLabel,
   toggleMakerControls,
-  toggleTradeRateDirection
+  toggleTradeRateDirection,
+  canonicalV2Rows,
+  showHistoryControl = true
 }: TradeStandardTerminalProps) {
   const tradeKey = getSnapshotKey(snapshot);
+  const privateBook = getPrivateBookV2Projection(snapshot);
+  const ownerBudget = routeView !== 'public' ? getPrivateBookV2OwnerBudget(snapshot, walletKey) : undefined;
+  const budgetVisibilityAvailable = Boolean(snapshot.v2 && isCurrentP2PBookBudgetAdmitted({ chainId: snapshot.v2.chainId,
+    contractAddress: snapshot.v2.contractAddress, runtimeBytecodeHash: privateBook?.runtimeBytecodeHash ?? '' }, bookBudgetAdmission));
   const displayTerms = getTradeDisplayTerms(snapshot);
   const displayTrade = {
     ...snapshot,
@@ -161,11 +182,13 @@ export default function TradeStandardTerminal({
   const termsVisibility = getTradeTermsVisibility(snapshot);
   const isHiddenLiquidityTerms = termsVisibility === 'hidden-liquidity';
   const isDirectPrivateTerms = termsVisibility === 'direct-private-terms';
+  const isDirectTrade = isDirectTradeSnapshot(snapshot);
   const directTermsHydrated = hasHydratedDirectTradeTerms(snapshot);
-  const walletHistoryRows = walletKey ? buildTradeTransactionHistoryRows([snapshot], walletAddress) : [];
-  const revealedWalletHistoryRow = walletHistoryRows.find(
-    (row) => row.bought.visible && row.sold.visible && row.amountVisibility !== 'private-hidden'
-  );
+  const directTermsPending = isDirectPrivateTerms && !directTermsHydrated;
+  const walletHistoryRows = walletKey
+    ? buildTradeTransactionHistoryRows([snapshot], walletAddress, canonicalV2Rows)
+    : [];
+  const revealedWalletHistoryRow = aggregateVisibleTradeTransactionHistoryRows(walletHistoryRows);
   const hasRevealedWalletHiddenTerms = isHiddenLiquidityTerms && Boolean(revealedWalletHistoryRow);
   const canShowParticipantHiddenTerms =
     isHiddenLiquidityTerms &&
@@ -175,7 +198,7 @@ export default function TradeStandardTerminal({
   const hiddenRemainingOfferAmount = parseTokenAmountString(snapshot.makerPrivateProgress?.remainingOfferAmount);
   const hiddenOfferUnitAmount = parseTokenAmountString(snapshot.offer.amount);
   const hiddenRequestUnitAmount = parseTokenAmountString(snapshot.request.amount);
-  const visibleHiddenTermAmounts = resolveVisibleHiddenTermAmounts({
+  const visibleHiddenTermAmounts = privateBook ? null : resolveVisibleHiddenTermAmounts({
     initialOfferAmount: hiddenInitialOfferAmount,
     remainingOfferAmount: hiddenRemainingOfferAmount,
     offerUnitAmount: hiddenOfferUnitAmount,
@@ -192,15 +215,15 @@ export default function TradeStandardTerminal({
     const amount = role === 'offer' ? visibleHiddenTermAmounts.offerAmount : visibleHiddenTermAmounts.requestAmount;
     return amount > 0n ? { ...asset, amount: amount.toString() } : asset;
   };
-  const counterUnavailableReason = getCounterOfferUnavailableReason(snapshot, walletKey);
-  const canCounter = canCreateCounterOffer(snapshot, walletKey);
+  const counterUnavailableReason = privateBook ? PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE : getCounterOfferUnavailableReason(snapshot, walletKey);
+  const canCounter = !privateBook && canCreateCounterOffer(snapshot, walletKey);
   const showCounterUnavailable =
     !canCounter &&
     walletKey.length > 0 &&
     !perspective.isMaker &&
     snapshot.status === 'open' &&
     counterUnavailableReason === PRIVATE_ORDER_COUNTER_UNAVAILABLE_MESSAGE;
-  const canEdit = canEditPublicTrade(snapshot, walletKey);
+  const canEdit = !privateBook && canEditPublicTrade(snapshot, walletKey);
   const completionSummary = getTradeCompletionSummary(snapshot);
   const makerPrivateProgressSummary = perspective.isMaker ? getMakerPrivateProgressSummary(snapshot) : null;
   const publicLiquidityProgressSummary =
@@ -385,6 +408,22 @@ export default function TradeStandardTerminal({
         : '';
   const peerExplorerUrl = peerAddress ? `${COTI_NETWORK.blockExplorerUrl}/address/${peerAddress}` : '';
   const peerLabel = peerAddress ? shortenAddress(peerAddress) : visibilityLabel === VISIBLE_LIQUIDITY_LABEL ? 'Open offer' : visibilityLabel;
+  const accessSummary = isDirectTrade
+    ? {
+        label: 'Direct proposal',
+        detail: peerAddress
+          ? `Only ${shortenAddress(peerAddress)} can fill this trade.`
+          : 'Only the designated wallet can fill this trade.'
+      }
+    : snapshot.isPublic === false
+      ? {
+          label: 'Private link',
+          detail: 'Anyone with the private link can fill this offer while it remains open.'
+        }
+      : {
+          label: 'Public offer',
+          detail: 'Open to any eligible wallet.'
+        };
   const remainingOfferAmount = getRemainingOfferAmount(snapshot);
   const remainingRequestAmount = getRemainingRequestAmount(snapshot);
   const fillOfferUnitAmount = isHiddenLiquidityTerms ? parseTokenAmountString(snapshot.offer.amount) : remainingOfferAmount;
@@ -394,6 +433,7 @@ export default function TradeStandardTerminal({
     snapshot.status === 'open' &&
     canActAsTaker &&
     !perspective.isMaker &&
+    !isDirectTrade &&
     !snapshot.counterParentTradeId &&
     fillOfferUnitAmount > 0n &&
     fillRequestUnitAmount > 0n
@@ -435,10 +475,19 @@ export default function TradeStandardTerminal({
     !fillTooHigh
   );
   const maxPayInput = formatExactTokenAmountInput(remainingRequestAmount, displayTrade.request.decimals);
+  const requestedBuyLabel = terminalReceiveFieldValue.trim()
+    ? `${terminalReceiveFieldValue} ${displayTrade.offer.symbol}`
+    : displayTrade.offer.symbol;
+  const fixedBuyLabel =
+    (isHiddenLiquidityTerms && !canShowParticipantHiddenSize) || directTermsPending
+      ? displayTrade.offer.symbol
+      : formatTradeAssetDisplayText(displayTrade.offer);
   const historyConfig = getStandardTerminalHistoryConfig(snapshot);
   const terminalAccessChip = liquidityLabel;
   const terminalExpiryChip = expiryCountdown ? expiryCountdown.label.replace(/^Expires /, '') : '';
   const counterRelation = getTradeCounterRelation(snapshot);
+  const requestBalanceLabel = resolveTerminalAssetBalanceLabel(displayTrade.request);
+  const offerBalanceLabel = resolveTerminalAssetBalanceLabel(displayTrade.offer);
 
   return (
     <article className="p2p-terminal-shell p2p-terminal-shell-standard" key={tradeKey}>
@@ -462,41 +511,24 @@ export default function TradeStandardTerminal({
             ) : null}
           </div>
         </div>
-        <div className="p2p-terminal-toolbar">
-          <button type="button" className="p2p-terminal-share" onClick={() => askAgentAboutOrder(snapshot)}>
-            Ask Agent
-          </button>
-          {renderTradeConversationButton(snapshot, shareUrl || undefined, accessSecret || undefined)}
-          {shareUrl ? (
-            <button
-              type="button"
-              className={lastCopiedKey === shareKey ? 'p2p-terminal-share copied' : 'p2p-terminal-share'}
-              onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
-              title={lastCopiedKey === shareKey ? 'Trade link copied' : 'Share trade link'}
-              aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
-              aria-live="polite"
-            >
-              {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
-            </button>
-          ) : null}
-        </div>
       </header>
+
+      <div className={`p2p-terminal-context-summary${snapshot.isPublic === false ? ' is-private' : ''}`}>
+        <div className="p2p-terminal-access-summary">
+          <strong>{accessSummary.label}</strong>
+          <span>{accessSummary.detail}</span>
+        </div>
+        {isHiddenLiquidityTerms && canActAsTaker && !perspective.isMaker ? (
+          <p className="p2p-terminal-private-fill-note">
+            {privateBook
+              ? 'Maximum payment: escrow fills at this price from available inventory. There is no minimum output. An empty order returns zero output and your full payment. Each fill rounds its payment up.'
+              : 'Maximum amount: available liquidity fills at this price and the remainder returns.'}
+          </p>
+        ) : null}
+      </div>
 
       <div className="p2p-terminal-main">
         <section className="p2p-terminal-market" aria-label="Trade market summary">
-          <button
-            type="button"
-            className="p2p-terminal-price-card"
-            onClick={() => toggleTradeRateDirection(snapshot.tradeId, snapshot.escrowContract)}
-            title={priceRatioDisplay?.toggleTitle ?? 'Private terms'}
-            aria-label={priceRatioDisplay?.ariaLabel ?? `Private terms for trade ${snapshot.tradeId}.`}
-          >
-            <span>Price ratio</span>
-            {terminalPriceSideLabel ? <span className="p2p-price-side-label">{terminalPriceSideLabel}</span> : null}
-            <strong>{tradeRateText}</strong>
-            {renderCarbonPriceReference(terminalCarbonPriceReference)}
-          </button>
-
           {terminalOrderProgressSummary ? (
             <div className="p2p-terminal-progress p2p-terminal-order-progress" aria-label={terminalOrderProgressSummary.percentLabel}>
               <div
@@ -543,24 +575,18 @@ export default function TradeStandardTerminal({
             </div>
           )}
 
-          <div className="p2p-terminal-stat-grid">
-            <div>
-              <span>Maker</span>
-              <a href={makerExplorerUrl} target="_blank" rel="noreferrer" title={snapshot.maker}>
-                {perspective.isMaker ? `${shortenAddress(snapshot.maker)} (you)` : shortenAddress(snapshot.maker)}
-              </a>
-            </div>
-            <div>
-              <span>Peer</span>
-              {peerExplorerUrl ? (
-                <a href={peerExplorerUrl} target="_blank" rel="noreferrer" title={peerAddress}>
-                  {peerLabel}
-                </a>
-              ) : (
-                <strong>{peerLabel}</strong>
-              )}
-            </div>
-          </div>
+          <button
+            type="button"
+            className="p2p-terminal-price-card"
+            onClick={() => toggleTradeRateDirection(snapshot.tradeId, snapshot.escrowContract)}
+            title={priceRatioDisplay?.toggleTitle ?? 'Private terms'}
+            aria-label={priceRatioDisplay?.ariaLabel ?? `Private terms for trade ${snapshot.tradeId}.`}
+          >
+            <span>Price ratio</span>
+            {terminalPriceSideLabel ? <span className="p2p-price-side-label">{terminalPriceSideLabel}</span> : null}
+            <strong>{tradeRateText}</strong>
+            {renderCarbonPriceReference(terminalCarbonPriceReference)}
+          </button>
 
           {fallbackCompletionSummary ? (
             <div className="p2p-terminal-progress" aria-label={fallbackCompletionSummary.percentLabel}>
@@ -577,20 +603,76 @@ export default function TradeStandardTerminal({
             </div>
           ) : null}
 
-          <div className="p2p-terminal-token-actions" aria-label="Token explorer links">
-            <span>Verify tokens</span>
-            <div>
-              {tokenExplorerLinks.length ? (
-                tokenExplorerLinks.map((link) => (
-                  <a key={link.href} href={link.href} target="_blank" rel="noreferrer" title={link.title}>
-                    {link.label}
-                  </a>
-                ))
-              ) : (
-                <strong>Native only</strong>
-              )}
+          {privateBook?.publicBudgetVisibility === true ? (
+            <div className="p2p-terminal-stat-grid" aria-label="Published original budget">
+              <div><span>Published original budget</span><strong>{privateBook.publicOfferBudget !== undefined
+                ? formatTradeAssetDisplayText({ ...snapshot.offer, amount: privateBook.publicOfferBudget })
+                : 'Unavailable. Refresh offer.'}</strong></div>
             </div>
-          </div>
+          ) : null}
+          {ownerBudget ? (
+            <div className="p2p-terminal-stat-grid" aria-label="Your private escrow budget">
+              <div><span>Initial escrow budget</span><strong>{formatTradeAssetDisplayText({ ...snapshot.offer, amount: ownerBudget.totalOfferAmount })}</strong></div>
+              <div><span>Recorded remaining budget</span><strong>{formatTradeAssetDisplayText({ ...snapshot.offer, amount: ownerBudget.remainingOfferAmount })}</strong></div>
+            </div>
+          ) : null}
+          {routeView !== 'public' && walletKey ? renderTradeBalanceDisclosure?.(snapshot) : null}
+          <details className="p2p-terminal-details">
+            <summary>
+              <span>Offer details</span>
+              <ChevronDown aria-hidden="true" size={16} strokeWidth={2} />
+            </summary>
+            <div className="p2p-terminal-stat-grid">
+              <div>
+                <span>Maker</span>
+                <a href={makerExplorerUrl} target="_blank" rel="noreferrer" title={snapshot.maker}>
+                  {perspective.isMaker ? `${shortenAddress(snapshot.maker)} (you)` : shortenAddress(snapshot.maker)}
+                </a>
+              </div>
+              <div>
+                <span>Peer</span>
+                {peerExplorerUrl ? (
+                  <a href={peerExplorerUrl} target="_blank" rel="noreferrer" title={peerAddress}>
+                    {peerLabel}
+                  </a>
+                ) : (
+                  <strong>{peerLabel}</strong>
+                )}
+              </div>
+            </div>
+            <div className="p2p-terminal-token-actions" aria-label="Token explorer links">
+              <span>Verify tokens</span>
+              <div>
+                {tokenExplorerLinks.length ? (
+                  tokenExplorerLinks.map((link) => (
+                    <a key={link.href} href={link.href} target="_blank" rel="noreferrer" title={link.title}>
+                      {link.label}
+                    </a>
+                  ))
+                ) : (
+                  <strong>Native only</strong>
+                )}
+              </div>
+            </div>
+            <div className="p2p-terminal-toolbar">
+              <button type="button" className="p2p-terminal-share" onClick={() => askAgentAboutOrder(snapshot)}>
+                Ask Agent
+              </button>
+              {renderTradeConversationButton(snapshot, shareUrl || undefined, accessSecret || undefined)}
+              {shareUrl ? (
+                <button
+                  type="button"
+                  className={lastCopiedKey === shareKey ? 'p2p-terminal-share copied' : 'p2p-terminal-share'}
+                  onClick={() => copyWithFeedback(shareUrl, shareKey).catch(() => {})}
+                  title={lastCopiedKey === shareKey ? 'Trade link copied' : 'Share trade link'}
+                  aria-label={lastCopiedKey === shareKey ? 'Shared' : SHARE_LABEL}
+                  aria-live="polite"
+                >
+                  {lastCopiedKey === shareKey ? 'Shared' : 'Share'}
+                </button>
+              ) : null}
+            </div>
+          </details>
         </section>
 
         <section className="p2p-terminal-ticket" aria-label="Trade action ticket">
@@ -601,10 +683,10 @@ export default function TradeStandardTerminal({
               <div className="p2p-terminal-amount-grid" aria-label="Trade amount calculator">
                 <label className="p2p-terminal-input-field p2p-terminal-input-field-sell has-inline-action">
                   <div className="p2p-terminal-field-head">
-                    <span>You sell {displayTrade.request.symbol}</span>
-                    <small title={resolveTerminalAssetBalanceLabel(displayTrade.request, 6)}>
-                      {resolveTerminalAssetBalanceLabel(displayTrade.request)}
-                    </small>
+                    <span style={privateBook ? { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip' } : undefined}>{privateBook ? 'Maximum payment' : 'You pay'} {displayTrade.request.symbol}</span>
+                    {requestBalanceLabel !== 'Unlock' ? (
+                      <small title={resolveTerminalAssetBalanceLabel(displayTrade.request, 6)}>{requestBalanceLabel}</small>
+                    ) : null}
                   </div>
                   <input
                     type="text"
@@ -635,10 +717,10 @@ export default function TradeStandardTerminal({
                 </label>
                 <label className="p2p-terminal-input-field p2p-terminal-input-field-buy">
                   <div className="p2p-terminal-field-head">
-                    <span>You buy {displayTrade.offer.symbol}</span>
-                    <small title={resolveTerminalAssetBalanceLabel(displayTrade.offer, 6)}>
-                      {resolveTerminalAssetBalanceLabel(displayTrade.offer)}
-                    </small>
+                    <span style={privateBook ? { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip' } : undefined}>{privateBook ? 'Receive up to' : 'You receive'} {displayTrade.offer.symbol}</span>
+                    {offerBalanceLabel !== 'Unlock' ? (
+                      <small title={resolveTerminalAssetBalanceLabel(displayTrade.offer, 6)}>{offerBalanceLabel}</small>
+                    ) : null}
                   </div>
                   <input
                     type="text"
@@ -664,7 +746,7 @@ export default function TradeStandardTerminal({
                 disabled={processingTradeActionId === tradeKey || !fillCanSubmit}
                 title={
                   processingTradeActionId === tradeKey
-                    ? 'Confirming on-chain...'
+                    ? 'Wallet action in progress...'
                     : !walletKey
                       ? 'Connect wallet first.'
                       : !onCotiNetwork
@@ -687,8 +769,8 @@ export default function TradeStandardTerminal({
                         : fillTooHigh
                           ? 'Amount too high'
                           : isHiddenLiquidityTerms
-                            ? 'Fill order'
-                            : `Buy ${displayTrade.offer.symbol}`}
+                            ? `Buy up to ${requestedBuyLabel}`
+                            : `Buy ${requestedBuyLabel}`}
               </button>
               {canCounter ? (
                 <button type="button" className="trade-card-action trade-card-action-counter" onClick={() => beginCounterTrade(snapshot)}>
@@ -724,6 +806,18 @@ export default function TradeStandardTerminal({
               </button>
               {makerControlsExpanded ? (
                 <div className="p2p-terminal-maker-actions">
+                  {privateBook && routeView !== 'public' ? !budgetVisibilityAvailable
+                    ? <p>Budget visibility unavailable.</p>
+                    : typeof privateBook.publicBudgetVisibility !== 'boolean'
+                    ? <p>Budget visibility unavailable. Refresh offer.</p>
+                    : privateBook.publicBudgetVisibility || ownerBudget
+                      ? <button type="button" className="trade-card-action trade-card-action-counter"
+                          onClick={() => changePrivateBookBudgetVisibility(snapshot, !privateBook.publicBudgetVisibility).catch(() => {})}
+                          disabled={processingTradeActionId === tradeKey || !walletKey || !onCotiNetwork}>
+                          {privateBook.publicBudgetVisibility ? 'Hide budget' : 'Publish original budget'}
+                        </button>
+                      : <p>Unlock privacy or refresh the offer to publish its original budget.</p>
+                    : null}
                   {canEdit ? (
                     <button type="button" className="trade-card-action trade-card-action-counter" onClick={() => beginEditTrade(snapshot)} disabled={processingTradeActionId === tradeKey}>
                       Edit
@@ -750,10 +844,10 @@ export default function TradeStandardTerminal({
                   processingTradeActionId === tradeKey ? ' p2p-action-pending' : ''
                 }`}
                 onClick={() => acceptTrade(snapshot).catch(() => {})}
-                disabled={processingTradeActionId === tradeKey || !walletKey || !onCotiNetwork}
+                disabled={processingTradeActionId === tradeKey || directTermsPending || !walletKey || !onCotiNetwork}
                 title={
                   processingTradeActionId === tradeKey
-                    ? 'Confirming on-chain...'
+                    ? 'Wallet action in progress...'
                     : !walletKey
                       ? 'Connect wallet first.'
                       : !onCotiNetwork
@@ -771,7 +865,7 @@ export default function TradeStandardTerminal({
                       ? 'Switch network'
                       : snapshot.counterParentTradeId
                         ? 'Close parent & accept'
-                        : `Buy ${displayTrade.offer.symbol}`}
+                        : `Buy ${fixedBuyLabel}`}
               </button>
               {!isHiddenLiquidityTerms && snapshot.counterParentTradeId && perspective.isTaker && (
                 <button
@@ -815,12 +909,14 @@ export default function TradeStandardTerminal({
         </section>
       </div>
 
-      <TradeTerminalHistoryMobileControls
-        config={historyConfig}
-        sheetKey={terminalHistorySheetKey}
-        setSheetKey={setTerminalHistorySheetKey}
-        renderActionNotice={renderActionNotice}
-      />
+      {showHistoryControl ? (
+        <TradeTerminalHistoryMobileControls
+          config={historyConfig}
+          sheetKey={terminalHistorySheetKey}
+          setSheetKey={setTerminalHistorySheetKey}
+          renderActionNotice={renderActionNotice}
+        />
+      ) : null}
     </article>
   );
 }

@@ -1,28 +1,10 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction
-} from 'react';
-import type { Wallet } from '@coti-io/coti-ethers';
-import type { AccountFundsDirection } from '../components/AccountFundsModal';
-import AppWalletSwitchButton from '../components/AppWalletSwitchButton';
-import RecoveryTransactionStatus from '../components/RecoveryTransactionStatus';
+import { useMemo, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import WalletHeaderPanel from '../components/WalletHeaderPanel';
 import {
   getProviderErrorMessage,
-  parseBurnerWalletStorageState,
-  shortenAddress,
-  COTI_NETWORK,
-  type BurnerInitMode,
-  type BurnerWalletRecord,
-  type Eip1193Provider,
-  type InjectedWalletOption,
-  type SignerSource
+  type InjectedWalletOption
 } from '../../../lib/appShared';
+import type { WalletAesHealthState } from '../../../lib/cotiAesUnlock';
 import {
   buildMetaMaskMobileDeepLink,
   filterAllowedBrowserWalletOptions,
@@ -30,22 +12,12 @@ import {
   isMobileBrowserUserAgent,
   orderInjectedWalletOptions
 } from '../../../lib/walletOptions';
-import {
-  resolveAppWalletSwitchOptions,
-  resolveAppWalletMenuActionVisibility,
-  resolveAppWalletSetupStorageKind,
-  resolveOwnerAccountFlowModel,
-  resolveWalletConnectionPrimaryAction,
-  resolveWalletHeaderActionVisibility,
-  resolveWalletHeaderViewModel,
-  resolveWalletOnboardingProgressModel,
-  resolveWalletPrimaryButtonClassName,
-  type AppWalletSetupStorageKind,
-  type AppWalletStorageKind
-} from '../../../lib/walletSession';
-import type { WalletAesHealthState } from '../../../lib/cotiAesUnlock';
-import { findRecoveryTransactionHash } from '../../../lib/recoveryExplorer';
 import type { BrowserWalletSession } from './useWalletOnboarding';
+import {
+  CIPHERTRADE_WALLETCONNECT_WALLET_ID,
+  isCipherTradeWalletConnectConfigured
+} from '../../../lib/walletConnectMobile';
+import type { ChatReadCursorCloudSyncStatus } from './useChatReadCursorCloudSync';
 
 type BrowserWalletActivationOptions = {
   forceFreshPrivacy?: boolean;
@@ -53,984 +25,300 @@ type BrowserWalletActivationOptions = {
 };
 
 type UseChatWalletHeaderControlArgs = {
-  activeSignerSource: SignerSource;
-  appWallet: Wallet | null;
   activateBrowserWalletSession: (walletId?: string, options?: BrowserWalletActivationOptions) => Promise<unknown>;
-  beginLinkExistingPinWallet: () => void;
-  beginBurnerPinFlow: (mode: BurnerInitMode) => Promise<unknown>;
-  beginRevealBurnerBackup: () => void;
   browserWalletSession: BrowserWalletSession | null;
-  burnerAddress: string;
-  burnerMnemonicBackup: string;
-  burnerRecordReady: boolean;
-  burnerStorageBlocked: boolean;
-  burnerWallets: BurnerWalletRecord[];
-  chainId: number | null;
-  chatAppWalletMenuOpen: boolean;
   chatWalletMenuOpen: boolean;
-  checkingOwnerRecovery: boolean;
   connectingMethod: 'metamask' | null;
   connectingWalletLabel: string;
-  connectionMethod: 'metamask' | null;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
   currentInjectedWalletOption: InjectedWalletOption | null;
   disconnectWallet: () => Promise<void>;
-  ensureCotiNetwork: (provider: Eip1193Provider) => Promise<void>;
-  getBurnerWalletDisplayName: (walletRecord: BurnerWalletRecord) => string;
-  getConnectedProvider: () => Eip1193Provider | null;
-  handleSwitchActiveBurnerWallet: (walletId: string) => Promise<void> | void;
-  hasAesReady: boolean;
-  hasSavedBurnerWallet: boolean;
   injectedWalletOptions: InjectedWalletOption[];
-  initializingBurner: boolean;
-  isAppWalletRecoveryConfigured: boolean;
-  isConnected: boolean;
   isMobileLayout?: boolean;
   lastCopiedKey: string | null;
-  linkBurnerRecoveryWithWallet: () => Promise<void> | void;
-  onCotiNetwork: boolean;
-  openChangeBurnerPin: () => void;
   ownerAesReady: boolean;
-  ownerRecoveryError: string;
   preferredBrowserWalletId: string;
-  recoverLinkedBurnerWallet: () => Promise<void> | void;
-  recoveringAppWallet: boolean;
-  resetOwnerRecoveryAttempt: () => void;
-  setActiveRecoveryProfileAsDefault: () => Promise<boolean> | boolean;
-  setChatAppWalletMenuOpen: Dispatch<SetStateAction<boolean>>;
+  readCursorCloudConfigured?: boolean;
+  readCursorCloudStatus?: ChatReadCursorCloudSyncStatus;
+  onToggleReadCursorCloud?: () => Promise<void>;
   setChatWalletMenuOpen: Dispatch<SetStateAction<boolean>>;
   setError: Dispatch<SetStateAction<string>>;
-  setShowBurnerImportModal: Dispatch<SetStateAction<boolean>>;
-  onOpenFundsTransfer: (direction: AccountFundsDirection) => void;
   walletAesHealth?: WalletAesHealthState | null;
   walletAddress: string;
+  utilityMenu?: ReactNode;
+  utilityMenuBadgeCount?: number;
+  utilityMenuWarning?: boolean;
 };
 
 type UseChatWalletHeaderControlResult = {
   chatPreferredBrowserWalletOption: InjectedWalletOption | null;
   chatWalletHeaderControl: ReactNode;
-  chatWarmAppWallet: Wallet | null;
+  unlockPrivacy: () => void;
 };
 
+const formatHeaderAddress = (address: string, compact: boolean): string =>
+  compact
+    ? `${address.slice(0, 4)}\u2026${address.slice(-4)}`
+    : `${address.slice(0, 6)}\u2026${address.slice(-4)}`;
+
 export default function useChatWalletHeaderControl({
-  activeSignerSource,
-  appWallet,
   activateBrowserWalletSession,
-  beginLinkExistingPinWallet,
-  beginBurnerPinFlow,
-  beginRevealBurnerBackup,
   browserWalletSession,
-  burnerAddress,
-  burnerMnemonicBackup,
-  burnerRecordReady,
-  burnerStorageBlocked,
-  burnerWallets,
-  chainId,
-  chatAppWalletMenuOpen,
   chatWalletMenuOpen,
-  checkingOwnerRecovery,
   connectingMethod,
   connectingWalletLabel,
-  connectionMethod,
   copyWithFeedback,
   currentInjectedWalletOption,
   disconnectWallet,
-  ensureCotiNetwork,
-  getBurnerWalletDisplayName,
-  getConnectedProvider,
-  handleSwitchActiveBurnerWallet,
-  hasAesReady,
-  hasSavedBurnerWallet,
   injectedWalletOptions,
-  initializingBurner,
-  isAppWalletRecoveryConfigured,
-  isConnected,
   isMobileLayout = false,
   lastCopiedKey,
-  linkBurnerRecoveryWithWallet,
-  onCotiNetwork,
-  openChangeBurnerPin,
   ownerAesReady,
-  ownerRecoveryError,
   preferredBrowserWalletId,
-  recoverLinkedBurnerWallet,
-  recoveringAppWallet,
-  resetOwnerRecoveryAttempt,
-  setActiveRecoveryProfileAsDefault,
-  setChatAppWalletMenuOpen,
+  readCursorCloudConfigured = false,
+  readCursorCloudStatus = 'unavailable',
+  onToggleReadCursorCloud,
   setChatWalletMenuOpen,
   setError,
-  setShowBurnerImportModal,
-  onOpenFundsTransfer,
   walletAesHealth,
-  walletAddress
+  walletAddress,
+  utilityMenu,
+  utilityMenuBadgeCount = 0,
+  utilityMenuWarning = false
 }: UseChatWalletHeaderControlArgs): UseChatWalletHeaderControlResult {
-  const allowedChatBrowserWalletOptions = useMemo(
+  const allowedWallets = useMemo(
     () => filterAllowedBrowserWalletOptions(injectedWalletOptions),
     [injectedWalletOptions]
   );
   const chatPreferredBrowserWalletOption = useMemo(
-    () => getPreferredInjectedWalletOption(allowedChatBrowserWalletOptions, preferredBrowserWalletId, 'metamask'),
-    [allowedChatBrowserWalletOptions, preferredBrowserWalletId]
+    () => getPreferredInjectedWalletOption(allowedWallets, preferredBrowserWalletId, 'selected'),
+    [allowedWallets, preferredBrowserWalletId]
   );
-  const chatBrowserWalletSortId = currentInjectedWalletOption?.id ?? preferredBrowserWalletId;
-  const orderedChatInjectedWalletOptions = useMemo(
-    () => orderInjectedWalletOptions(allowedChatBrowserWalletOptions, chatBrowserWalletSortId, 'metamask'),
-    [allowedChatBrowserWalletOptions, chatBrowserWalletSortId]
+  const orderedWallets = useMemo(
+    () => orderInjectedWalletOptions(
+      allowedWallets,
+      currentInjectedWalletOption?.id ?? preferredBrowserWalletId,
+      'selected'
+    ),
+    [allowedWallets, currentInjectedWalletOption?.id, preferredBrowserWalletId]
   );
-
-  const chatWalletAddressCopyKey = walletAddress ? `wallet-address:${walletAddress.toLowerCase()}` : '';
-  const chatWalletIsAppWallet = isConnected && activeSignerSource === 'burner';
-  const chatOwnerWalletDirectActive = isConnected && activeSignerSource === 'metamask';
-  const chatOwnerWalletAddress = browserWalletSession?.address ?? (chatOwnerWalletDirectActive ? walletAddress : '');
-  const chatOwnerWalletCopyKey = chatOwnerWalletAddress
-    ? `owner-wallet-address:${chatOwnerWalletAddress.toLowerCase()}`
-    : '';
-  const isCopyKeyCopied = (copyKey: string): boolean => Boolean(copyKey && lastCopiedKey === copyKey);
-  const chatOwnerWalletConnected = Boolean(chatOwnerWalletAddress);
-  const appWalletStorageState = burnerStorageBlocked ? null : parseBurnerWalletStorageState();
-  const appWalletSetupStorageKind: AppWalletSetupStorageKind = resolveAppWalletSetupStorageKind({
-    ownerAddress: chatOwnerWalletAddress,
-    storageKind: (appWalletStorageState?.kind ?? 'none') as AppWalletStorageKind,
-    storageOwnerAddress:
-      appWalletStorageState?.kind === 'owner-aes'
-        ? appWalletStorageState.record.ownerAddress
-        : undefined
-  });
-  const hasOwnerLinkedSavedAccount = appWalletSetupStorageKind === 'owner-aes-current-owner';
-  const chatOwnerNeedsAccount = chatOwnerWalletDirectActive && onCotiNetwork && !chatWalletIsAppWallet;
-  const chatOwnerNeedsPrivacy = chatOwnerNeedsAccount && !ownerAesReady;
-  const chatOwnerCanUseSavedAccount =
-    chatOwnerNeedsAccount && ownerAesReady && hasOwnerLinkedSavedAccount;
-  const chatOwnerNeedsAccountSetup = chatOwnerNeedsAccount && !chatOwnerCanUseSavedAccount && ownerAesReady;
-  const chatOwnerFirstConnect = !walletAddress;
-  const chatAccountWalletAddress = burnerAddress || (chatWalletIsAppWallet ? walletAddress : '');
-  const chatWalletProgress = resolveWalletOnboardingProgressModel({
-    appWalletAddress: chatAccountWalletAddress,
-    connectedWithAppWallet: chatWalletIsAppWallet,
-    connectingOwner: connectingMethod === 'metamask',
-    initializingAccount: initializingBurner,
-    ownerAesReady,
-    ownerWalletConnected: chatOwnerWalletConnected,
-    recoveryChecking: checkingOwnerRecovery,
-    recoveringAccount: recoveringAppWallet,
-    walletAesReady: hasAesReady
-  });
-  const ownerAccountFlow = resolveOwnerAccountFlowModel({
-    connectedWithAppWallet: chatWalletIsAppWallet,
-    hasAesReady: ownerAesReady,
-    hasOwnerLinkedSavedAccount,
-    initializingAccount: initializingBurner && chatOwnerNeedsAccount,
-    ownerRecoveryError,
-    ownerWalletConnected: Boolean(chatOwnerWalletAddress),
-    preferredOwnerWalletLabel: chatPreferredBrowserWalletOption?.label,
-    recoveryChecking: checkingOwnerRecovery
-  });
-  const useOwnerAccountFlow =
-    chatOwnerFirstConnect ||
-    chatWalletIsAppWallet ||
-    chatOwnerNeedsAccount ||
-    Boolean(ownerRecoveryError.trim());
-  const chatWalletBusyLabel =
-    connectingMethod === 'metamask'
-      ? 'Connecting owner...'
-      : checkingOwnerRecovery
-        ? 'Checking account...'
-      : recoveringAppWallet
-        ? 'Recovering account...'
-      : initializingBurner
-        ? chatWalletIsAppWallet
-          ? 'Preparing account...'
-          : 'Opening account...'
-        : undefined;
-  const chatWalletPrimaryAction = resolveWalletConnectionPrimaryAction({
-    busyLabel: chatWalletBusyLabel,
-    hasAppWalletStorage: !burnerStorageBlocked,
-    hasSavedAppWallet: hasSavedBurnerWallet,
-    isMobileBrowser: isMobileLayout || isMobileBrowserUserAgent(),
-    onCotiNetwork,
-    policy: 'app-first',
-    preferredBrowserWalletId: chatPreferredBrowserWalletOption?.id,
-    preferredBrowserWalletLabel: chatPreferredBrowserWalletOption?.label,
-    walletAddress
-  });
-  const showMobileBrowserWalletOpenAction = Boolean(
-    !walletAddress && !chatPreferredBrowserWalletOption && (isMobileLayout || isMobileBrowserUserAgent())
-  );
-  const chatWalletPrimaryButtonLabel = chatWalletBusyLabel
-    ? chatWalletBusyLabel
-    : chatWalletIsAppWallet
-      ? shortenAddress(chatAccountWalletAddress || walletAddress)
-    : ownerAccountFlow.state === 'recovery-error'
-      ? 'Recover account'
-      : chatOwnerFirstConnect
-          ? 'Connect'
-            : chatOwnerNeedsPrivacy
-              ? 'Unlock privacy'
-            : chatOwnerCanUseSavedAccount
-              ? 'Open account'
-              : chatOwnerNeedsAccountSetup
-                ? 'Set up account'
-                : chatWalletPrimaryAction.label === 'Set up ChainWhisper account'
-                  ? 'Set up account'
-                  : chatWalletPrimaryAction.label === 'Connect ChainWhisper account'
-                    ? 'Connect account'
-                    : chatWalletPrimaryAction.label;
-  const chatWalletPrimaryButtonClass = chatOwnerNeedsAccount
-    ? 'connect-btn wallet-inline-btn wallet-primary-action p2p-wallet-address'
-    : resolveWalletPrimaryButtonClassName({
-        copied: lastCopiedKey === chatWalletAddressCopyKey,
-        onCotiNetwork,
-        walletAddress
-      });
-  const chatWalletPrimaryDisabled =
-    connectingMethod !== null ||
-    checkingOwnerRecovery ||
-    initializingBurner ||
-    (!chatOwnerFirstConnect && chatWalletPrimaryAction.disabled);
-  const walletNeedsPrivacyRepair =
+  const walletConnectingDesignQa = import.meta.env.DEV && typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('walletQa') === 'connecting';
+  const privacyLockedDesignQa = import.meta.env.DEV && typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('privacyQa') === 'locked';
+  const connected = Boolean(walletAddress) || walletConnectingDesignQa || privacyLockedDesignQa;
+  const displayAddress = walletAddress || '0x5dfc00000000000000000000000000000000979d';
+  const privacyUnlockingDesignQa = import.meta.env.DEV && typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('privacyQa') === 'unlocking';
+  const busy = connectingMethod !== null || walletConnectingDesignQa;
+  const copyKey = connected ? `wallet-address:${displayAddress.toLowerCase()}` : '';
+  const copied = Boolean(copyKey && lastCopiedKey === copyKey);
+  const privacyNeedsRepair =
     walletAesHealth?.status === 'repair-needed' || walletAesHealth?.status === 'key-mismatch';
-  const chatWalletHeaderModel = resolveWalletHeaderViewModel({
-    chainId,
-    hasAesReady,
-    policy: 'app-first',
-    snapStatus: walletNeedsPrivacyRepair ? 'repair-needed' : 'unknown',
-    unlocking: connectingMethod === 'metamask',
-    walletAesHealth,
-    walletAddress,
-    walletKind: !walletAddress ? 'none' : chatWalletIsAppWallet ? 'app' : 'browser'
-  });
-  const chatWalletPrivacyDisplay = chatWalletHeaderModel.privacyDisplay;
-  const chatWarmBrowserWalletLabel = browserWalletSession?.walletLabel ?? chatPreferredBrowserWalletOption?.label ?? 'Browser wallet';
-  const chatWalletStatusLabel = chatWalletIsAppWallet
-    ? chatWalletProgress.active
-      ? chatWalletProgress.title
-      : hasAesReady && ownerAesReady
-      ? 'Privacy ready'
-      : hasAesReady
-        ? 'Account privacy ready'
-        : ownerAesReady
-          ? 'Owner privacy ready'
-          : 'Privacy locked'
-    : useOwnerAccountFlow
-      ? chatOwnerFirstConnect
-        ? ''
-        : chatWalletProgress.active
-          ? chatWalletProgress.title
-        : ownerAccountFlow.state === 'unlock-owner-aes'
-          ? 'Privacy locked'
-          : ownerAccountFlow.state === 'setup-needed' && ownerAesReady
-            ? 'Privacy ready'
-            : ownerAccountFlow.statusLabel
-      : chatOwnerNeedsAccount && ownerAesReady
-    ? appWalletSetupStorageKind === 'owner-aes-current-owner'
-      ? 'Account not active'
-      : appWalletSetupStorageKind === 'pin-encrypted' ||
-          appWalletSetupStorageKind === 'legacy' ||
-          appWalletSetupStorageKind === 'legacy-vault'
-        ? 'Link account'
-      : 'Account needed'
-    : chatOwnerNeedsAccount
-      ? 'Unlock privacy'
-      : chatWalletPrivacyDisplay.statusLabel;
-  const chatWalletStatusTone = useOwnerAccountFlow
-    ? chatWalletProgress.active
-      ? 'muted'
-      : chatOwnerFirstConnect
-      ? 'muted'
-      : ownerAccountFlow.state === 'unlock-owner-aes'
-        ? 'locked'
-        : ownerAesReady
-          ? 'ready'
-          : ownerAccountFlow.statusTone
-    : chatOwnerNeedsAccount && ownerAesReady
-    ? 'warning'
-    : chatWalletPrivacyDisplay.statusTone;
-  const chatWalletDisplayModeLabel: ReactNode = chatOwnerWalletAddress ? (
-    <button
-      type="button"
-      className={
-        isCopyKeyCopied(chatOwnerWalletCopyKey)
-          ? 'p2p-wallet-mode-copy copied'
-          : 'p2p-wallet-mode-copy'
-      }
-      onClick={(event) => {
-        event.stopPropagation();
-        copyWithFeedback(chatOwnerWalletAddress, chatOwnerWalletCopyKey).catch(() => {});
-      }}
-      title={
-        isCopyKeyCopied(chatOwnerWalletCopyKey)
-          ? 'Owner wallet address copied'
-          : `Copy owner wallet address (${chatOwnerWalletAddress})`
-      }
-      aria-label={
-        isCopyKeyCopied(chatOwnerWalletCopyKey)
-          ? 'Owner wallet address copied'
-          : 'Copy owner wallet address'
-      }
-    >
-      <span className="p2p-wallet-copy-address">Owner {shortenAddress(chatOwnerWalletAddress)}</span>
-      {isCopyKeyCopied(chatOwnerWalletCopyKey) ? (
-        <span className="p2p-sr-only" aria-live="polite">Copied</span>
-      ) : null}
-    </button>
-  ) : chatWalletIsAppWallet && chatAccountWalletAddress ? (
-    'ChainWhisper account'
-  ) : (
-    ''
-  );
-  const appWalletMenuVisibility = resolveAppWalletMenuActionVisibility({
-    connectedWithAppWallet: chatWalletIsAppWallet,
-    hasMnemonicBackup: Boolean(burnerMnemonicBackup),
-    hasSavedAppWallet: hasSavedBurnerWallet,
-    ownerWalletConnected: Boolean(chatOwnerWalletAddress),
-    ownerWalletReady: ownerAesReady && Boolean(chatOwnerWalletAddress),
-    recoveryConfigured: isAppWalletRecoveryConfigured,
-    recoveryChecking: checkingOwnerRecovery,
-    recordReady: burnerRecordReady,
-    setupStorageKind: appWalletSetupStorageKind,
-    storageKind: (appWalletStorageState?.kind ?? 'none') as AppWalletStorageKind
-  });
-  const chatWalletActions = useMemo(
-    () =>
-      resolveWalletHeaderActionVisibility({
-        appWalletCount: burnerStorageBlocked || (!chatWalletIsAppWallet && !hasOwnerLinkedSavedAccount) ? 0 : burnerWallets.length,
-        browserWalletOptions: orderedChatInjectedWalletOptions,
-        connectedWithAppWallet: chatWalletIsAppWallet,
-        hasSavedAppWallet: !burnerStorageBlocked && hasOwnerLinkedSavedAccount,
-        isConnected,
-        isOnCotiNetwork: onCotiNetwork,
-        preferredBrowserWalletId: chatPreferredBrowserWalletOption?.id,
-        showDisconnectedBrowserAction: !burnerStorageBlocked
-      }),
-    [
-      burnerStorageBlocked,
-      burnerWallets.length,
-      chatPreferredBrowserWalletOption?.id,
-      chatWalletIsAppWallet,
-      hasOwnerLinkedSavedAccount,
-      isConnected,
-      onCotiNetwork,
-      orderedChatInjectedWalletOptions
-    ]
-  );
-  const {
-    menuBrowserWalletOptions: chatMenuBrowserWalletOptions,
-    showAppWalletSwitchButton: showChatAppWalletSwitchButton,
-    showBrowserWalletMenuSection: showChatBrowserWalletMenuSection
-  } = chatWalletActions;
-
-  const chatAppWalletSwitchButton = showChatAppWalletSwitchButton ? (
-    <AppWalletSwitchButton
-      menuOpen={chatAppWalletMenuOpen}
-      onToggleMenu={() => {
-        setChatWalletMenuOpen(false);
-        setChatAppWalletMenuOpen((previous) => !previous);
-      }}
-      onSelectWallet={(option) => {
-        setChatAppWalletMenuOpen(false);
-        Promise.resolve(handleSwitchActiveBurnerWallet(option.address || option.walletId || option.id)).catch(() => {});
-      }}
-      options={resolveAppWalletSwitchOptions({
-        activeWalletAddress: walletAddress,
-        disabled: initializingBurner,
-        getDisplayName: (walletRecord) => getBurnerWalletDisplayName(walletRecord),
-        wallets: burnerWallets
-      })}
-      disabled={initializingBurner}
-    />
-  ) : null;
-
-  const unlockChatPrivacy = useCallback(async () => {
-    const provider = getConnectedProvider();
-    if (!walletAddress || !provider) {
-      setError('Connect an owner wallet first.');
-      return;
-    }
-
-    setError('');
-    try {
-      if (walletNeedsPrivacyRepair) {
-        resetOwnerRecoveryAttempt();
-      }
-      await activateBrowserWalletSession(
-        currentInjectedWalletOption?.id ?? chatPreferredBrowserWalletOption?.id,
-        { forceFreshPrivacy: walletNeedsPrivacyRepair, preparePrivacy: true }
-      );
-    } catch (privacyError) {
-      setError(getProviderErrorMessage(privacyError, 'Owner privacy unlock was not completed.'));
-    }
-  }, [
-    activateBrowserWalletSession,
-    chatPreferredBrowserWalletOption?.id,
-    currentInjectedWalletOption?.id,
-    getConnectedProvider,
-    resetOwnerRecoveryAttempt,
-    setError,
-    walletNeedsPrivacyRepair,
-    walletAddress
-  ]);
-
-  const showOwnerRecoveryRetryAction = ownerAccountFlow.state === 'recovery-error';
-  const retryOwnerRecovery = () => {
-    if (recoveringAppWallet || checkingOwnerRecovery) {
-      return;
-    }
-    resetOwnerRecoveryAttempt();
-    Promise.resolve(recoverLinkedBurnerWallet()).catch(() => {});
-  };
-
-  const handleChatWalletPrimaryAction = () => {
-    if (ownerAccountFlow.state === 'recovery-error') {
-      retryOwnerRecovery();
-      return;
-    }
-
-    if (chatOwnerFirstConnect) {
-      if (showMobileBrowserWalletOpenAction) {
-        window.location.href = buildMetaMaskMobileDeepLink();
-        return;
-      }
-      activateBrowserWalletSession(chatPreferredBrowserWalletOption?.id, { preparePrivacy: true }).catch(() => {});
-      return;
-    }
-
-    if (chatOwnerNeedsPrivacy) {
-      unlockChatPrivacy().catch(() => {});
-      return;
-    }
-
-    if (chatOwnerCanUseSavedAccount) {
-      beginBurnerPinFlow('stored').catch(() => {});
-      return;
-    }
-
-    if (chatOwnerNeedsAccountSetup) {
-      setChatAppWalletMenuOpen(false);
-      setChatWalletMenuOpen(true);
-      return;
-    }
-
-    switch (chatWalletPrimaryAction.kind) {
-      case 'switch-network': {
-        const provider = getConnectedProvider();
-        if (provider) {
-          ensureCotiNetwork(provider).catch((providerError) => {
-            setError(getProviderErrorMessage(providerError, 'Failed to switch network.'));
-          });
-        }
-        return;
-      }
-      case 'copy-address':
-        copyWithFeedback(walletAddress, chatWalletAddressCopyKey).catch(() => {});
-        return;
-      case 'connect-browser-wallet':
-        activateBrowserWalletSession(chatWalletPrimaryAction.browserWalletId, { preparePrivacy: true }).catch(() => {});
-        return;
-      case 'open-browser-wallet-app':
-        window.location.href = buildMetaMaskMobileDeepLink();
-        return;
-      case 'connect-app-wallet':
-        beginBurnerPinFlow('stored').catch(() => {});
-        return;
-      case 'generate-app-wallet':
-        beginBurnerPinFlow('generate').catch(() => {});
-        return;
-      default:
-        return;
-      }
-  };
-
-  const activeRecoveryWalletRecord =
-    burnerWallets.find((walletRecord) => walletRecord.address?.toLowerCase() === chatAccountWalletAddress.toLowerCase()) ??
-    burnerWallets.find((walletRecord) => walletRecord.id && walletRecord.id === chatAccountWalletAddress) ??
-    null;
-  const activeRecoveryProfileId = activeRecoveryWalletRecord?.recoveryProfileId;
-  const activeRecoveryProfileLinked =
-    typeof activeRecoveryProfileId === 'number' && Number.isSafeInteger(activeRecoveryProfileId);
-  const activeRecoveryProfileIsDefault = activeRecoveryWalletRecord?.recoveryDefault === true;
-  const activeRecoveryTransactionHash =
-    activeRecoveryWalletRecord?.recoveryTransactionHash?.trim() ?? '';
-  const [resolvedRecoveryTransactionHash, setResolvedRecoveryTransactionHash] = useState('');
-  const [resolvingRecoveryTransaction, setResolvingRecoveryTransaction] = useState(false);
-  const effectiveRecoveryTransactionHash =
-    activeRecoveryTransactionHash || resolvedRecoveryTransactionHash;
-  const activeRecoveryTransactionUrl = effectiveRecoveryTransactionHash
-    ? `${COTI_NETWORK.blockExplorerUrl}/tx/${effectiveRecoveryTransactionHash}`
-    : '';
-
-  useEffect(() => {
-    setResolvedRecoveryTransactionHash('');
-  }, [activeRecoveryProfileId, chatOwnerWalletAddress]);
-
-  useEffect(() => {
-    if (
-      !chatWalletMenuOpen ||
-      activeRecoveryTransactionHash ||
-      !activeRecoveryProfileLinked ||
-      !chatOwnerWalletAddress
-    ) {
-      setResolvingRecoveryTransaction(false);
-      return;
-    }
-
-    const abortController = new AbortController();
-    setResolvingRecoveryTransaction(true);
-    findRecoveryTransactionHash({
-      ownerAddress: chatOwnerWalletAddress,
-      profileId: activeRecoveryProfileId,
-      signal: abortController.signal
-    })
-      .then((transactionHash) => {
-        if (transactionHash) {
-          setResolvedRecoveryTransactionHash(transactionHash);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!abortController.signal.aborted) {
-          setResolvingRecoveryTransaction(false);
-        }
-      });
-
-    return () => {
-      abortController.abort();
-    };
-  }, [
-    activeRecoveryProfileId,
-    activeRecoveryProfileLinked,
-    activeRecoveryTransactionHash,
-    chatOwnerWalletAddress,
-    chatWalletMenuOpen
-  ]);
-  const chatOwnerStateMain = chatOwnerWalletAddress
-    ? shortenAddress(chatOwnerWalletAddress)
-    : 'Not connected';
-  const chatOwnerStateDetail = chatOwnerWalletAddress
-    ? `${chatWarmBrowserWalletLabel} - ${ownerAesReady ? 'Privacy ready' : 'Privacy locked'}`
-    : '';
-  const chatAccountStateMain = chatAccountWalletAddress
-    ? shortenAddress(chatAccountWalletAddress)
-    : appWalletSetupStorageKind === 'owner-aes-current-owner'
-      ? 'Saved locally'
-      : appWalletSetupStorageKind === 'owner-aes-other-owner'
-        ? 'Saved for another owner'
-        : appWalletSetupStorageKind === 'pin-encrypted' ||
-            appWalletSetupStorageKind === 'legacy' ||
-            appWalletSetupStorageKind === 'legacy-vault'
-          ? 'PIN-only saved'
-      : 'Not set up';
-  const chatAccountWalletRecord =
-    burnerWallets.find(
-      (walletRecord) =>
-        walletRecord.address?.toLowerCase() === chatAccountWalletAddress.toLowerCase()
-    ) ?? burnerWallets[0];
-  const chatAccountWalletSelector =
-    chatAccountWalletRecord?.id ?? chatAccountWalletRecord?.address ?? chatAccountWalletAddress;
-  const canSelectChatAccount =
-    chatWalletIsAppWallet ||
-    Boolean(chatAccountWalletSelector) ||
-    hasSavedBurnerWallet;
-  const canSelectOwnerWallet =
-    chatOwnerWalletDirectActive ||
-    Boolean(browserWalletSession?.walletId || chatPreferredBrowserWalletOption?.id);
-  const selectChatAccount = () => {
-    setChatWalletMenuOpen(false);
-    if (chatWalletIsAppWallet) {
-      return;
-    }
-    if (chatAccountWalletSelector) {
-      Promise.resolve(handleSwitchActiveBurnerWallet(chatAccountWalletSelector)).catch(() => {});
-      return;
-    }
-    beginBurnerPinFlow('stored').catch(() => {});
-  };
-  const selectOwnerWallet = () => {
-    setChatWalletMenuOpen(false);
-    if (chatOwnerWalletDirectActive) {
-      return;
-    }
-    activateBrowserWalletSession(
-      browserWalletSession?.walletId ?? chatPreferredBrowserWalletOption?.id,
-      { preparePrivacy: true }
-    ).catch(() => {});
-  };
-  const chatAccountStateDetail = chatAccountWalletAddress
-    ? [
-        activeRecoveryProfileIsDefault ? 'Default' : 'Active',
-        hasAesReady ? 'Privacy ready' : 'Privacy locked'
-      ].filter(Boolean).join(' - ')
-    : '';
-  const chatAccountModelHint = chatWalletIsAppWallet
+  const statusLabel = privacyUnlockingDesignQa && connected
+    ? 'Unlocking privacy...'
+    : !connected
     ? ''
-    : ownerRecoveryError
-      ? ownerRecoveryError
-    : appWalletSetupStorageKind === 'pin-encrypted' ||
-        appWalletSetupStorageKind === 'legacy' ||
-        appWalletSetupStorageKind === 'legacy-vault'
-      ? 'Link the saved PIN account once to use owner-wallet recovery.'
-    : chatOwnerWalletConnected
-      ? 'Create, import, or recover a ChainWhisper account to use chat and trades.'
-      : 'Connect an owner wallet, then create or recover a ChainWhisper account.';
+    : privacyNeedsRepair
+      ? 'Privacy needs repair'
+      : ownerAesReady
+        ? 'Privacy ready'
+        : 'Privacy locked';
+  const statusTone = !connected ? 'muted' : ownerAesReady && !privacyNeedsRepair ? 'ready' : 'locked';
+  const preferredLabel =
+    currentInjectedWalletOption?.label ??
+    browserWalletSession?.walletLabel ??
+    chatPreferredBrowserWalletOption?.label ??
+    'wallet';
+  const connectingLabel = connectingWalletLabel || (walletConnectingDesignQa ? 'MetaMask' : preferredLabel);
+
+  const connectWallet = (walletId?: string, forceFreshPrivacy = false): void => {
+    setError('');
+    void activateBrowserWalletSession(walletId, {
+      forceFreshPrivacy,
+      preparePrivacy: true
+    }).catch((error) => {
+      setError(getProviderErrorMessage(error, 'Wallet connection was not completed.'));
+    });
+  };
+  const unlockPrivacy = (): void => {
+    connectWallet(currentInjectedWalletOption?.id ?? browserWalletSession?.walletId, privacyNeedsRepair);
+  };
+
+  const showMobileOpen = !connected && orderedWallets.length === 0 &&
+    (isMobileLayout || isMobileBrowserUserAgent());
+  const compactWalletLabel = busy || isMobileLayout || isMobileBrowserUserAgent();
+  const cipherTradeWalletConnectConfigured = isCipherTradeWalletConnectConfigured();
+  const cipherTradeWalletConnectActive =
+    connected && browserWalletSession?.walletId === CIPHERTRADE_WALLETCONNECT_WALLET_ID;
+  const readCursorCloudBusy =
+    readCursorCloudStatus === 'restoring' || readCursorCloudStatus === 'authorizing';
+  const readCursorCloudReady = readCursorCloudStatus === 'ready';
+  const readCursorCloudLabel = readCursorCloudBusy
+    ? 'Read-status sync working...'
+    : readCursorCloudReady
+      ? 'Disable and delete synced read status'
+      : readCursorCloudStatus === 'authorization-required'
+        ? 'Resume cross-device read status'
+        : 'Enable cross-device read status';
   const chatWalletHeaderControl = (
     <WalletHeaderPanel
-      busy={chatWalletProgress.active}
-      primaryButtonClassName={chatWalletPrimaryButtonClass}
-      primaryButtonLabel={chatWalletPrimaryButtonLabel}
-      primaryAddon={chatAppWalletSwitchButton}
+      busy={busy}
+      primaryButtonClassName={
+        connected
+          ? copied
+            ? 'connect-btn wallet-inline-btn wallet-primary-action p2p-wallet-address copied'
+            : 'connect-btn wallet-inline-btn wallet-primary-action p2p-wallet-address'
+          : 'connect-btn wallet-inline-btn wallet-primary-action'
+      }
+      primaryButtonLabel={
+        busy
+          ? compactWalletLabel
+            ? 'Connecting…'
+            : `Connecting ${connectingWalletLabel || preferredLabel}...`
+          : connected
+            ? formatHeaderAddress(displayAddress, compactWalletLabel)
+            : compactWalletLabel
+              ? 'Connect'
+              : 'Connect wallet'
+      }
       primaryButtonTitle={
-        ownerAccountFlow.state === 'recovery-error'
-          ? ownerRecoveryError || 'Retry ChainWhisper account recovery'
-        : chatOwnerFirstConnect
-          ? 'Connect the owner wallet used for login, funding, and recovery'
-            : chatOwnerNeedsPrivacy
-            ? 'Unlock owner privacy before setting up the ChainWhisper account'
-            : chatOwnerCanUseSavedAccount
-              ? 'Use the saved ChainWhisper account for chat and trades'
-              : chatOwnerNeedsAccountSetup
-                ? 'Open ChainWhisper account setup options'
-                : walletAddress
-                  ? isCopyKeyCopied(chatWalletAddressCopyKey)
-                    ? `Active wallet address copied (${walletAddress})`
-                    : `Copy active wallet address (${walletAddress})`
-                  : undefined
+        busy
+          ? `Connecting to ${connectingLabel}`
+          : connected
+          ? copied
+            ? `Wallet address copied (${displayAddress})`
+            : `Copy wallet address (${displayAddress})`
+          : 'Connect MetaMask or CipherTrade'
       }
-      primaryDisabled={chatWalletPrimaryDisabled}
-      onPrimaryAction={handleChatWalletPrimaryAction}
-      modeLabel={chatWalletDisplayModeLabel}
-      statusLabel={chatWalletStatusLabel}
-      statusTone={chatWalletStatusTone}
-      statusActionDisabled={connectingMethod !== null || recoveringAppWallet || checkingOwnerRecovery}
-      statusActionLabel={
-        showOwnerRecoveryRetryAction
-          ? 'Recover account'
-          : undefined
-      }
-      statusActionTitle={
-        showOwnerRecoveryRetryAction
-          ? ownerRecoveryError || 'Retry ChainWhisper account recovery'
-          : undefined
-      }
-      onStatusAction={
-        showOwnerRecoveryRetryAction
-          ? () => {
-              retryOwnerRecovery();
-            }
-          : undefined
-      }
-      menuOpen={chatWalletMenuOpen}
-      onToggleMenu={() => {
-        setChatAppWalletMenuOpen(false);
-        setChatWalletMenuOpen((previous) => !previous);
+      primaryDisabled={busy}
+      onPrimaryAction={() => {
+        if (connected) {
+          void copyWithFeedback(displayAddress, copyKey);
+          return;
+        }
+        connectWallet(chatPreferredBrowserWalletOption?.id);
       }}
-      menuDisabled={connectingMethod !== null}
+      modeLabel={connected ? preferredLabel : ''}
+      statusLabel={statusLabel}
+      statusTone={statusTone}
+      statusActionLabel={connected && (!ownerAesReady || privacyNeedsRepair) ? 'Unlock privacy' : undefined}
+      statusActionTitle={connected && (!ownerAesReady || privacyNeedsRepair)
+        ? `Unlock privacy with ${preferredLabel}`
+        : undefined}
+      statusActionDisabled={busy}
+      onStatusAction={connected && (!ownerAesReady || privacyNeedsRepair)
+        ? unlockPrivacy
+        : undefined}
+      menuOpen={chatWalletMenuOpen}
+      menuBadgeCount={utilityMenuBadgeCount}
+      menuWarning={utilityMenuWarning}
+      onToggleMenu={() => setChatWalletMenuOpen((open) => !open)}
+      menuDisabled={busy}
       menu={
-        <>
-          <div className="p2p-wallet-menu-section p2p-wallet-account-model">
-            <span>Account</span>
-            {chatWalletProgress.active ? (
-              <div className="p2p-wallet-onboarding-progress" aria-live="polite">
-                <div className="p2p-wallet-onboarding-progress-head">
-                  <strong>{chatWalletProgress.title}</strong>
-                  <small>{chatWalletProgress.detail}</small>
-                </div>
-                <div className="p2p-wallet-onboarding-steps">
-                  {chatWalletProgress.steps.map((step) => (
-                    <span
-                      key={step.label}
-                      className={`p2p-wallet-onboarding-step ${step.state}`}
-                    >
-                      <i aria-hidden="true" />
-                      {step.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={chatWalletIsAppWallet}
-              aria-label={chatWalletIsAppWallet ? 'ChainWhisper account selected' : 'Use ChainWhisper account'}
-              className={`p2p-wallet-account-card wallet-selector${chatWalletIsAppWallet ? ' active' : ''}`}
-              onClick={selectChatAccount}
-              disabled={!canSelectChatAccount || initializingBurner}
-            >
-              <small>ChainWhisper account</small>
-              <strong>{chatAccountStateMain}</strong>
-              {chatAccountStateDetail ? <em>{chatAccountStateDetail}</em> : null}
-            </button>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={chatOwnerWalletDirectActive}
-              aria-label={chatOwnerWalletDirectActive ? 'Owner wallet selected' : 'Use owner wallet'}
-              className={`p2p-wallet-account-card wallet-selector${chatOwnerWalletDirectActive ? ' active' : ''}`}
-              onClick={selectOwnerWallet}
-              disabled={!canSelectOwnerWallet || connectingMethod !== null}
-            >
-              <small>Owner wallet</small>
-              <strong>{chatOwnerStateMain}</strong>
-              {chatOwnerStateDetail ? <em>{chatOwnerStateDetail}</em> : null}
-            </button>
-            {chatWalletIsAppWallet ? (
+        connected ? <>
+          {utilityMenu}
+          {readCursorCloudConfigured && onToggleReadCursorCloud ? (
+            <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">
+              <span>Chat privacy</span>
               <button
                 type="button"
-                className="p2p-wallet-action primary p2p-wallet-account-funds-action"
+                className={readCursorCloudReady ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
                 onClick={() => {
                   setChatWalletMenuOpen(false);
-                  onOpenFundsTransfer('move');
+                  setError('');
+                  void onToggleReadCursorCloud().catch((cause) => {
+                    setError(getProviderErrorMessage(
+                      cause,
+                      'Cross-device read-status preference was not changed.'
+                    ));
+                  });
                 }}
-                disabled={initializingBurner || !burnerAddress || !chatOwnerWalletAddress}
+                disabled={busy || readCursorCloudBusy}
                 role="menuitem"
-                title="Move funds between the owner wallet and the ChainWhisper account"
+                aria-pressed={readCursorCloudReady}
+                title={readCursorCloudReady
+                  ? 'Delete this wallet\'s synced read cursors and sign this device out. Messages and encryption keys were never stored.'
+                  : 'Sync only finalized message IDs and block anchors. Messages and encryption keys stay out of Supabase.'}
               >
-                Move or withdraw
-              </button>
-            ) : null}
-            {chatAccountModelHint ? <p>{chatAccountModelHint}</p> : null}
-          </div>
-
-          <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">
-            <span>Account setup</span>
-            {!chatWalletIsAppWallet && appWalletSetupStorageKind === 'owner-aes-current-owner' ? (
-              <button
-                type="button"
-                className="p2p-wallet-action primary"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  beginBurnerPinFlow('stored').catch(() => {});
-                }}
-                disabled={initializingBurner || burnerStorageBlocked}
-                role="menuitem"
-              >
-                Open saved account
-              </button>
-            ) : null}
-            {appWalletMenuVisibility.showGenerateAccount ? (
-              <button
-                type="button"
-                className="p2p-wallet-action primary"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  beginBurnerPinFlow('generate').catch(() => {});
-                }}
-                disabled={initializingBurner || burnerStorageBlocked || !chatOwnerWalletAddress}
-                role="menuitem"
-              >
-                Create account
-              </button>
-            ) : null}
-            {appWalletMenuVisibility.showImportAccount ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  setShowBurnerImportModal(true);
-                }}
-                disabled={initializingBurner || burnerStorageBlocked || !chatOwnerWalletAddress}
-                role="menuitem"
-              >
-                Import account
-              </button>
-            ) : null}
-            {appWalletMenuVisibility.showLinkExistingPinAccount ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  beginLinkExistingPinWallet();
-                }}
-                disabled={initializingBurner || burnerStorageBlocked || checkingOwnerRecovery}
-                role="menuitem"
-              >
-                Link PIN account
-              </button>
-            ) : null}
-            {appWalletMenuVisibility.showBackupWallet ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  beginRevealBurnerBackup();
-                }}
-                disabled={initializingBurner}
-                role="menuitem"
-              >
-                Back up phrase
-              </button>
-            ) : null}
-            {appWalletMenuVisibility.showChangePin ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  openChangeBurnerPin();
-                }}
-                disabled={initializingBurner}
-                role="menuitem"
-              >
-                Change PIN
-              </button>
-            ) : null}
-          </div>
-
-          <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">
-            <span>Recovery</span>
-            {showChatBrowserWalletMenuSection ? (
-              chatMenuBrowserWalletOptions.length > 0 ? (
-                chatMenuBrowserWalletOptions.map((option) => {
-                  const isCurrentWallet =
-                    activeSignerSource === 'metamask' &&
-                    connectionMethod === 'metamask' &&
-                    currentInjectedWalletOption?.id === option.id &&
-                    isConnected;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={isCurrentWallet ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
-                      onClick={() => {
-                        setChatWalletMenuOpen(false);
-                        if (isCurrentWallet && ownerAesReady) {
-                          return;
-                        }
-                        activateBrowserWalletSession(
-                          option.id,
-                          { preparePrivacy: true }
-                        ).catch(() => {});
-                      }}
-                      disabled={connectingMethod !== null}
-                      role="menuitem"
-                    >
-                      {connectingMethod === 'metamask' && connectingWalletLabel === option.label
-                        ? 'Connecting owner...'
-                        : isCurrentWallet
-                          ? ownerAesReady
-                            ? `${option.label} ready`
-                            : `Unlock ${option.label} privacy`
-                          : `Connect ${option.label}`}
-                    </button>
-                  );
-                })
-              ) : (
-                <button
-                  type="button"
-                  className="p2p-wallet-action"
-                  onClick={() => {
-                    if (showMobileBrowserWalletOpenAction) {
-                      window.location.href = buildMetaMaskMobileDeepLink();
-                    }
-                  }}
-                  disabled={!showMobileBrowserWalletOpenAction}
-                  role="menuitem"
-                >
-                  {showMobileBrowserWalletOpenAction
-                    ? 'Open MetaMask Mobile'
-                    : 'MetaMask or CipherTrade not detected'}
-                </button>
-              )
-            ) : null}
-            {appWalletMenuVisibility.showRecoverWallet ? (
-              <button
-                type="button"
-                className="p2p-wallet-action primary"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  retryOwnerRecovery();
-                }}
-                disabled={initializingBurner || recoveringAppWallet || checkingOwnerRecovery || !chatOwnerWalletAddress}
-                role="menuitem"
-                title="Check the owner wallet recovery profile for a saved ChainWhisper account"
-              >
-                {recoveringAppWallet || checkingOwnerRecovery
-                  ? 'Checking saved account...'
-                  : ownerAesReady
-                    ? 'Recover account'
-                    : 'Unlock privacy and recover'}
-              </button>
-            ) : null}
-            {appWalletMenuVisibility.showSaveRecovery && !activeRecoveryProfileLinked ? (
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  Promise.resolve(linkBurnerRecoveryWithWallet()).catch(() => {});
-                }}
-                disabled={initializingBurner || recoveringAppWallet || !isAppWalletRecoveryConfigured || !chatOwnerWalletAddress}
-                role="menuitem"
-                title={
-                  !chatOwnerWalletAddress
-                    ? 'Connect the owner wallet before saving recovery'
-                    : isAppWalletRecoveryConfigured
-                    ? 'Save this ChainWhisper account recovery to your owner wallet'
-                    : 'ChainWhisper account recovery is not configured yet'
-                }
-              >
-                {recoveringAppWallet ? 'Saving...' : 'Save recovery'}
-              </button>
-            ) : null}
-            {chatWalletIsAppWallet && activeRecoveryProfileLinked && !activeRecoveryProfileIsDefault ? (
-              <button
-                type="button"
-                className="p2p-wallet-action primary"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  Promise.resolve(setActiveRecoveryProfileAsDefault()).catch(() => {});
-                }}
-                disabled={initializingBurner || recoveringAppWallet || !chatOwnerWalletAddress}
-                role="menuitem"
-                title="Use this recovered account automatically after owner login"
-              >
-                Make default
-              </button>
-            ) : null}
-            {chatWalletIsAppWallet && activeRecoveryProfileLinked ? (
-              <RecoveryTransactionStatus
-                profileId={activeRecoveryProfileId}
-                resolving={resolvingRecoveryTransaction}
-                transactionUrl={activeRecoveryTransactionUrl || undefined}
-              />
-            ) : null}
-          </div>
-
-          {appWalletMenuVisibility.showPinOnlyFallback ? (
-            <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section muted">
-              <span>Advanced</span>
-              <button
-                type="button"
-                className="p2p-wallet-action"
-                onClick={() => {
-                  setChatWalletMenuOpen(false);
-                  beginBurnerPinFlow('stored').catch(() => {});
-                }}
-                disabled={initializingBurner || burnerStorageBlocked}
-                role="menuitem"
-              >
-                Use PIN-only account
+                {readCursorCloudLabel}
               </button>
             </div>
           ) : null}
-
-          {walletAddress ? (
+          <button
+            type="button"
+            className="p2p-wallet-action danger p2p-wallet-disconnect-action"
+            onClick={() => {
+              setChatWalletMenuOpen(false);
+              void disconnectWallet();
+            }}
+            disabled={busy}
+            role="menuitem"
+          >
+            Disconnect
+          </button>
+        </> : <>
+          <div className="p2p-wallet-menu-section p2p-wallet-menu-action-section">
+            <span>Wallet</span>
+            {orderedWallets.map((option) => {
+              const active = connected && currentInjectedWalletOption?.id === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={active ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
+                  onClick={() => {
+                    setChatWalletMenuOpen(false);
+                    if (!active || !ownerAesReady || privacyNeedsRepair) {
+                      connectWallet(option.id, active && privacyNeedsRepair);
+                    }
+                  }}
+                  disabled={busy}
+                  role="menuitem"
+                >
+                  {active
+                    ? ownerAesReady && !privacyNeedsRepair
+                      ? `${option.label} ready`
+                      : `Unlock ${option.label} privacy`
+                    : `Connect ${option.label}`}
+                </button>
+              );
+            })}
             <button
               type="button"
-              className="p2p-wallet-action danger p2p-wallet-disconnect-action"
+              className={cipherTradeWalletConnectActive ? 'p2p-wallet-action active' : 'p2p-wallet-action'}
               onClick={() => {
                 setChatWalletMenuOpen(false);
-                disconnectWallet().catch(() => {});
+                connectWallet(CIPHERTRADE_WALLETCONNECT_WALLET_ID);
               }}
-              disabled={connectingMethod !== null}
+              disabled={busy || !cipherTradeWalletConnectConfigured || cipherTradeWalletConnectActive}
+              title={
+                cipherTradeWalletConnectConfigured
+                  ? 'Scan a WalletConnect QR code with CipherTrade Mobile'
+                  : 'Set VITE_WALLETCONNECT_PROJECT_ID to enable CipherTrade Mobile'
+              }
               role="menuitem"
             >
-              Disconnect
+              {cipherTradeWalletConnectActive
+                ? 'CipherTrade Mobile ready'
+                : cipherTradeWalletConnectConfigured
+                  ? 'Connect CipherTrade Mobile'
+                  : 'CipherTrade Mobile setup needed'}
             </button>
-          ) : null}
+            {orderedWallets.length === 0 ? (
+              <button
+                type="button"
+                className="p2p-wallet-action"
+                onClick={() => {
+                  if (showMobileOpen) window.location.href = buildMetaMaskMobileDeepLink();
+                }}
+                disabled={!showMobileOpen}
+                role="menuitem"
+              >
+                {showMobileOpen ? 'Open MetaMask Mobile' : 'MetaMask or CipherTrade not detected'}
+              </button>
+            ) : null}
+          </div>
         </>
       }
     />
@@ -1039,6 +327,6 @@ export default function useChatWalletHeaderControl({
   return {
     chatPreferredBrowserWalletOption,
     chatWalletHeaderControl,
-    chatWarmAppWallet: appWallet
+    unlockPrivacy
   };
 }

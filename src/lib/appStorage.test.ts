@@ -5,9 +5,9 @@ describe('wallet preference storage', () => {
   it('normalizes only safe wallet preference fields', () => {
     const cases = [
       {
-        label: 'app account preference drops browser wallet details',
+        label: 'legacy app-wallet preferences are rejected',
         input: { version: 1, kind: 'app', browserWalletId: 'metamask' },
-        expected: { version: 1, kind: 'app' }
+        expected: null
       },
       {
         label: 'browser wallet preference keeps a normalized safe id',

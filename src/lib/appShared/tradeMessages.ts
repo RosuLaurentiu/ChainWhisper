@@ -184,31 +184,38 @@ export const parseTradeResponseMessagePayload = (text: string): TradeResponseMes
   const tradeId = toSafeNumber(parsed.tradeId);
   const createdAt = toSafeNumber(parsed.createdAt);
   const counterTradeId = toSafeNumber(parsed.counterTradeId);
+  const relatedTradeId = toSafeNumber(parsed.relatedTradeId);
   const escrowContract =
     typeof parsed.escrowContract === 'string' && isWalletAddress(parsed.escrowContract)
       ? parsed.escrowContract
       : TRADE_ESCROW_CONTRACT_ADDRESS;
   const actor = typeof parsed.actor === 'string' && isWalletAddress(parsed.actor) ? parsed.actor : undefined;
-  const action =
+  const legacyAction =
     parsed.action === 'accepted' ||
     parsed.action === 'declined' ||
     parsed.action === 'cancelled' ||
     parsed.action === 'countered'
       ? parsed.action
       : undefined;
+  const action = legacyAction ||
+    (parsed.version === 2 &&
+    (parsed.action === 'expired' || parsed.action === 'superseded' || parsed.action === 'replaced')
+      ? parsed.action
+      : undefined);
 
-  if (parsed.version !== 1 || tradeId <= 0 || createdAt <= 0 || !actor || !action) {
+  if ((parsed.version !== 1 && parsed.version !== 2) || tradeId <= 0 || createdAt <= 0 || !actor || !action) {
     return null;
   }
 
   return {
-    version: 1,
+    version: parsed.version,
     tradeId,
     escrowContract,
     action,
     actor,
     createdAt,
-    counterTradeId: counterTradeId > 0 ? counterTradeId : undefined
+    counterTradeId: counterTradeId > 0 ? counterTradeId : undefined,
+    relatedTradeId: relatedTradeId > 0 ? relatedTradeId : undefined
   };
 };
 

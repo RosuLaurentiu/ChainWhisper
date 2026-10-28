@@ -1,13 +1,10 @@
 import { useMemo } from 'react';
 import type { OnboardInfo } from '@coti-io/coti-ethers';
-import {
-  COTI_NETWORK,
-  type SignerSource
-} from '../../../lib/appShared';
+import { COTI_NETWORK } from '../../../lib/appShared';
 import type { WalletAesHealthState } from '../../../lib/cotiAesUnlock';
 import {
   hasSessionAesKey,
-  resolveOwnerRecoveryWalletState
+  resolveBrowserWalletPrivacyState
 } from '../../../lib/walletSession';
 import {
   buildWalletAccountScope,
@@ -16,55 +13,48 @@ import {
 
 type UseWalletReadinessArgs = {
   activeGroupId: number | null;
-  activeSignerSource: SignerSource;
   browserWalletAddress?: string;
   chainId: number | null;
   isActiveGroupAdmin: boolean;
   sessionOnboardInfo: Record<string, OnboardInfo>;
-  walletAddress: string;
   walletAesHealthByAddress: Record<string, WalletAesHealthState>;
 };
 
 export default function useWalletReadiness({
   activeGroupId,
-  activeSignerSource,
   browserWalletAddress,
   chainId,
   isActiveGroupAdmin,
   sessionOnboardInfo,
-  walletAddress,
   walletAesHealthByAddress
 }: UseWalletReadinessArgs) {
   const hasAesReady = useMemo(
     () => {
-      const walletKey = walletAddress.trim().toLowerCase();
+      const connectedWalletAddress = browserWalletAddress?.trim() ?? '';
+      const walletKey = connectedWalletAddress.toLowerCase();
       return (
-        hasSessionAesKey(walletAddress, sessionOnboardInfo) &&
+        hasSessionAesKey(connectedWalletAddress, sessionOnboardInfo) &&
         walletAesHealthByAddress[walletKey]?.status !== 'key-mismatch'
       );
     },
-    [walletAddress, sessionOnboardInfo, walletAesHealthByAddress]
+    [browserWalletAddress, sessionOnboardInfo, walletAesHealthByAddress]
   );
   const { ownerAesKey, ownerAesReady, ownerWalletAddress } = useMemo(
     () =>
-      resolveOwnerRecoveryWalletState({
-        activeSignerSource,
+      resolveBrowserWalletPrivacyState({
         browserWalletAddress,
         sessionOnboardInfo,
-        walletAddress,
         walletAesHealthByAddress
       }),
-    [activeSignerSource, browserWalletAddress, sessionOnboardInfo, walletAddress, walletAesHealthByAddress]
+    [browserWalletAddress, sessionOnboardInfo, walletAesHealthByAddress]
   );
   const walletAccountScope = useMemo(
     () =>
       buildWalletAccountScope({
-        actionAddress: walletAddress,
-        actionAesReady: hasAesReady,
         ownerAddress: ownerWalletAddress,
         ownerAesReady
       }),
-    [hasAesReady, ownerAesReady, ownerWalletAddress, walletAddress]
+    [ownerAesReady, ownerWalletAddress]
   );
   const readableWalletAccounts = walletAccountScope.readAccounts;
   const readableWalletAccountKeys = useMemo(

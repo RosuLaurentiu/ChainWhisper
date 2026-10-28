@@ -1,109 +1,97 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import { getOnChainFailureMessage, sanitizeOutgoingMessagePlainText } from '../../../lib/appHelpers';
 import { sendChatImageAttachment } from '../../../lib/chatImageAttachment';
+import { getChatReplySourceAnchor } from '../../../lib/chatReplySourceAnchor';
+import type { GroupChatV2SessionController } from '../../../lib/groupChatV2Session';
 import type { ImageAttachmentPreviewState } from '../../../lib/imageAttachmentPreview';
-import { submitGroupMemo } from '../../../lib/groupChatChain';
+import { parseImageTag } from '../../../lib/imagePull';
 import {
-  buildMessageWithReplyPayload,
   getGroupActionErrorMessage,
   getMessageDisplayText,
   IMAGE_MESSAGE_PREFIX,
   isWalletAddress,
   MAX_MESSAGE_LENGTH,
-  mergeOnboardInfo,
   trimReplyPreview,
-  type ChatMessage,
-  type GroupFeeModeSelection,
-  type SyncGroupOptions
+  type ChatMessage
 } from '../../../lib/appShared';
 
 type StateSetter<T> = (next: T | ((previous: T) => T)) => void;
 
-type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
-  cacheKey: string;
-};
-
 type UseGroupMessageActionsArgs = {
   activeGroupId: number | null;
   activeGroupIdRef: MutableRefObject<number | null>;
-  browserWalletLiteMode: boolean;
   clearImageAttachmentStatus: () => void;
   currentWalletKeyRef: MutableRefObject<string>;
-  encodeMemoForActiveSigner: (plain: string) => string;
-  getMemoSigner: () => Promise<MemoSignerBundle>;
-  groupFeeModeSelection: GroupFeeModeSelection;
+  groupChatV2Session?: GroupChatV2SessionController | null;
+  getGroupChatV2ImageSessionToken?: (() => Promise<string>) | null;
+  isGroupChatV2ScopeCurrent?: () => boolean;
   messageInput: string;
-  privateRewardTokenBalanceWei: bigint | null;
   replyingToMessage: ChatMessage | null;
-  resolveGroupSubmitSelector: () => Promise<string>;
-  resolveRequiredFeeForGroupSend: () => Promise<bigint>;
-  resolveRequiredTokenFeeForGroupSend: () => Promise<bigint>;
-  runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   sendingGroupMessage: boolean;
   setError: (next: string) => void;
   setMessageInput: StateSetter<string>;
   setMessagesByGroup: Dispatch<SetStateAction<Record<string, ChatMessage[]>>>;
   setReplyingToMessage: StateSetter<ChatMessage | null>;
   setSendingGroupMessage: StateSetter<boolean>;
-  setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
-  setTopUpMetricsNonce: StateSetter<number>;
+  setWalletBalanceRefreshNonce: StateSetter<number>;
   setUploadingImage: StateSetter<boolean>;
   showImageAttachmentStatus: (status: ImageAttachmentPreviewState) => void;
-  syncGroupData: (options?: SyncGroupOptions) => Promise<void>;
   uploadingImage: boolean;
   walletAddress: string;
 };
 
+/** Group writes are Group Chat V2-only. Legacy group history is deliberately read-only. */
 export default function useGroupMessageActions({
   activeGroupId,
   activeGroupIdRef,
-  browserWalletLiteMode,
   clearImageAttachmentStatus,
   currentWalletKeyRef,
-  encodeMemoForActiveSigner,
-  getMemoSigner,
-  groupFeeModeSelection,
+  groupChatV2Session = null,
+  getGroupChatV2ImageSessionToken = null,
+  isGroupChatV2ScopeCurrent = () => false,
   messageInput,
-  privateRewardTokenBalanceWei,
   replyingToMessage,
-  resolveGroupSubmitSelector,
-  resolveRequiredFeeForGroupSend,
-  resolveRequiredTokenFeeForGroupSend,
-  runWalletTransactionFlow,
   sendingGroupMessage,
   setError,
   setMessageInput,
   setMessagesByGroup,
   setReplyingToMessage,
   setSendingGroupMessage,
-  setSessionOnboardInfo,
-  setTopUpMetricsNonce,
+  setWalletBalanceRefreshNonce,
   setUploadingImage,
   showImageAttachmentStatus,
-  syncGroupData,
   uploadingImage,
   walletAddress
 }: UseGroupMessageActionsArgs) {
   const sendGroupImageMessage = async (file: File) => {
+    if (!groupChatV2Session) {
+      setError('Group Chat V2 is unavailable. No legacy image message was sent.');
+      return;
+    }
+    if (!getGroupChatV2ImageSessionToken) {
+      setError('Encrypted image upload sessions are unavailable for Group Chat V2.');
+      return;
+    }
     const targetGroupId = activeGroupId;
-    const replyTarget = browserWalletLiteMode ? null : replyingToMessage;
     await sendChatImageAttachment({
       clearImageAttachmentStatus,
+      conversationTarget: targetGroupId === null ? '' : String(targetGroupId),
       failureFallbackMessage: 'Failed to send group image.',
       file,
-      isTargetCurrent: () => activeGroupIdRef.current === targetGroupId,
+      isTargetCurrent: () => activeGroupIdRef.current === targetGroupId && isGroupChatV2ScopeCurrent(),
       kind: 'group',
       missingTargetMessage: 'Select a group first.',
       sendImageTag: async (imageTag) => {
-        const txHash = await sendGroupMessage(imageTag, replyTarget);
-        if (!txHash) {
-          throw new Error('Image message transaction was not confirmed.');
-        }
+        const txHash = await sendGroupMessage(imageTag, replyingToMessage, true);
+        if (!txHash) throw new Error('Image message transaction was not confirmed.');
         return txHash;
       },
       senderAddress: walletAddress,
+      uploadAuthorization: {
+        mode: 'session',
+        protocol: 'group-v2',
+        token: getGroupChatV2ImageSessionToken
+      },
       setError,
       setUploadingImage,
       showImageAttachmentStatus,
@@ -113,14 +101,19 @@ export default function useGroupMessageActions({
     });
   };
 
-  const sendGroupMessage = async (overrideMessageText?: string, overrideReplyTarget?: ChatMessage | null) => {
+  const sendGroupMessage = async (
+    overrideMessageText?: string,
+    overrideReplyTarget?: ChatMessage | null,
+    allowPreparedImageTag = false
+  ) => {
     setError('');
-
-    if (sendingGroupMessage) {
-      return;
-    }
+    if (sendingGroupMessage) return;
     if (activeGroupId === null) {
       setError('Select a group first.');
+      return;
+    }
+    if (!groupChatV2Session) {
+      setError('Group Chat V2 is unavailable. No legacy message was sent.');
       return;
     }
 
@@ -133,24 +126,39 @@ export default function useGroupMessageActions({
       setError(`Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`);
       return;
     }
-    if (plainText.startsWith(IMAGE_MESSAGE_PREFIX)) {
+    const parsedImageTag = parseImageTag(plainText);
+    if (plainText.startsWith(IMAGE_MESSAGE_PREFIX) || (parsedImageTag !== null && !allowPreparedImageTag)) {
       setError('Image messages are disabled for security reasons.');
       return;
     }
+
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress)) {
       setError('Connect a wallet first.');
       return;
     }
+    if (!isGroupChatV2ScopeCurrent()) {
+      setError('Group Chat V2 wallet scope changed before submission.');
+      return;
+    }
 
     const groupId = activeGroupId;
     const groupKey = String(groupId);
-    const replyTarget = browserWalletLiteMode ? null : overrideReplyTarget ?? replyingToMessage;
+    const replyTarget = overrideReplyTarget ?? replyingToMessage;
+    if (replyTarget && !replyTarget.groupV2) {
+      setError('Group Chat V2 replies can target only messages from the new group protocol.');
+      return;
+    }
+    const replyAnchorCandidate = replyTarget ? getChatReplySourceAnchor(replyTarget) : null;
+    if (replyTarget && !replyAnchorCandidate) {
+      setError('Group Chat V2 could not authenticate the reply target.');
+      return;
+    }
+    const replyToMessageAnchor = replyAnchorCandidate ?? undefined;
     const replyingPreviewText = replyTarget ? getMessageDisplayText(replyTarget.text) : undefined;
-    const localMessageId = `local-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const localMessageId = `local-group-v2-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const localMessageTimestamp = Math.floor(Date.now() / 1000);
-    let confirmedTxHash = '';
 
     try {
       setSendingGroupMessage(true);
@@ -164,119 +172,75 @@ export default function useGroupMessageActions({
             text: plainText,
             senderAddress: requestedWalletAddress,
             replyToMessageId: replyTarget?.id,
+            replyToMessageAnchor,
             replyToText: replyingPreviewText ? trimReplyPreview(replyingPreviewText) : undefined,
-            replyToTxHash: replyTarget?.txHash,
-            replyToBlockNumber: replyTarget?.blockNumber,
-            replyToLogIndex: replyTarget?.logIndex,
             timestamp: localMessageTimestamp,
             deliveryState: 'pending'
           }
         ]
       }));
-
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        const selector = await resolveGroupSubmitSelector();
-        const paymentMode = groupFeeModeSelection === 'token' ? 1 : 0;
-        const requiredFee = paymentMode === 0 ? await resolveRequiredFeeForGroupSend() : 0n;
-        const requiredTokenFee = paymentMode === 1 ? await resolveRequiredTokenFeeForGroupSend() : 0n;
-        const plainTextWithReply = buildMessageWithReplyPayload(
-          plainText,
-          replyingPreviewText,
-          replyTarget?.txHash,
-          replyTarget?.blockNumber,
-          replyTarget?.logIndex,
-          true
-        );
-        const submittedTx = await submitGroupMemo({
-          signer,
-          groupId,
-          plainText: plainTextWithReply,
-          selector,
-          paymentMode,
-          requestedWalletAddress,
-          requiredFee,
-          requiredTokenFee,
-          privateRewardTokenBalanceWei,
-          encodeMemo: encodeMemoForActiveSigner
-        });
-        const submittedTxHash = submittedTx.txHash;
-        if (currentWalletKeyRef.current !== requestedWalletKey) {
-          return;
-        }
-
-        setMessagesByGroup((previous) => ({
-          ...previous,
-          [groupKey]: (previous[groupKey] ?? []).map((message) =>
-            message.id === localMessageId ? { ...message, txHash: submittedTxHash || undefined } : message
-          )
-        }));
-
-        const receipt = await submittedTx.wait();
-        if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
-          throw new Error('Transaction failed on-chain.');
-        }
-        confirmedTxHash =
-          submittedTxHash ||
-          (typeof (receipt as { transactionHash?: unknown }).transactionHash === 'string'
-            ? (receipt as { transactionHash: string }).transactionHash
-            : '');
-
-        if (currentWalletKeyRef.current !== requestedWalletKey) {
-          return;
-        }
-
-        setMessagesByGroup((previous) => ({
-          ...previous,
-          [groupKey]: (previous[groupKey] ?? []).map((message) =>
-            message.id === localMessageId
-              ? {
-                  ...message,
-                  deliveryState: 'sent',
-                  txHash: submittedTxHash || undefined
-                }
-              : message
-          )
-        }));
-
-        const nextOnboardInfo = signer.getUserOnboardInfo();
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-        }));
-
-        if (typeof overrideMessageText === 'undefined') {
-          setMessageInput('');
-        }
-        setReplyingToMessage(null);
-        await syncGroupData({ background: true, activeMessagesOnly: true });
-        setTopUpMetricsNonce((previous) => previous + 1);
+      const result = await groupChatV2Session.send(BigInt(groupId), {
+        body: plainText,
+        ...(replyTarget?.groupV2 ? { replyToMessageId: BigInt(replyTarget.groupV2.messageId) } : {}),
+        ...(replyToMessageAnchor ? { replyToMessageAnchor } : {}),
+        ...(replyTarget?.groupV2 && replyingPreviewText
+          ? { replyPreview: trimReplyPreview(replyingPreviewText) }
+          : {})
       });
-    } catch (sendError) {
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-      const message = getGroupActionErrorMessage(sendError, getOnChainFailureMessage(sendError, 'Failed to send group message.'));
-      setError(message);
+      if (!isGroupChatV2ScopeCurrent() || currentWalletKeyRef.current !== requestedWalletKey) return;
+
       setMessagesByGroup((previous) => ({
         ...previous,
-        [groupKey]: (previous[groupKey] ?? []).map((messageRecord) =>
-          messageRecord.id === localMessageId
+        [groupKey]: (previous[groupKey] ?? []).map((message) =>
+          message.id === localMessageId
             ? {
-                ...messageRecord,
-                deliveryState: 'failed'
+                ...message,
+                id: result.event.key,
+                deliveryState: 'sent',
+                txHash: result.transactionHash,
+                blockNumber: Number(result.event.blockNumber),
+                logIndex: result.event.logIndex,
+                groupV2: {
+                  protocol: 'group-v2',
+                  contentState: 'available',
+                  chainId: result.event.chainId.toString(),
+                  contractAddress: result.event.contractAddress,
+                  groupId: result.event.groupId.toString(),
+                  messageId: result.event.messageId.toString(),
+                  epoch: result.event.epoch.toString(),
+                  membershipRevision: result.event.membershipRevision.toString(),
+                  senderSequence: result.event.senderSequence.toString(),
+                  nonce: result.event.nonce,
+                  transactionHash: result.event.transactionHash,
+                  blockNumber: result.event.blockNumber.toString(),
+                  blockHash: result.event.blockHash,
+                  logIndex: result.event.logIndex,
+                  finality: 'confirmed'
+                }
               }
-            : messageRecord
+            : message
+        )
+      }));
+      if (typeof overrideMessageText === 'undefined') setMessageInput('');
+      setReplyingToMessage(null);
+      setWalletBalanceRefreshNonce((previous) => previous + 1);
+      return result.transactionHash || undefined;
+    } catch (sendError) {
+      if (currentWalletKeyRef.current !== requestedWalletKey) return;
+      setError(getGroupActionErrorMessage(
+        sendError,
+        getOnChainFailureMessage(sendError, 'Failed to send group message.')
+      ));
+      setMessagesByGroup((previous) => ({
+        ...previous,
+        [groupKey]: (previous[groupKey] ?? []).map((message) =>
+          message.id === localMessageId ? { ...message, deliveryState: 'failed' } : message
         )
       }));
     } finally {
       setSendingGroupMessage(false);
     }
-    return confirmedTxHash || undefined;
   };
 
-  return {
-    sendGroupImageMessage,
-    sendGroupMessage
-  };
+  return { sendGroupImageMessage, sendGroupMessage };
 }

@@ -1,4 +1,4 @@
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { readCurrentPrivateErc20BalanceWei } from '../../../lib/appChain';
 import {
@@ -22,15 +22,17 @@ import {
   shortenAddress,
   type TradeAssetPayload
 } from '../../../lib/appShared';
+import type { WalletWatchedToken } from '../../wallet/hooks/useWalletTokenWatchlist';
 
 type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   cacheKey: string;
 };
 
 type CustomTokenKind = Extract<TradeAssetPayload['kind'], 'erc20' | 'private-erc20'>;
 
 type UseTradeCustomTokenInfoLoaderArgs = {
+  enabled?: boolean;
   chainId: number | null;
   getMemoSignerRef: MutableRefObject<() => Promise<MemoSignerBundle>>;
   hasAesReady: boolean;
@@ -38,15 +40,19 @@ type UseTradeCustomTokenInfoLoaderArgs = {
   normalizedTradeRequestCustomTokenAddress: string;
   setCustomTradeTokenInfoByAddress: Dispatch<SetStateAction<Record<string, TradeCustomTokenInfo>>>;
   setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
-  topUpMetricsNonce: number;
+  walletBalanceRefreshNonce: number;
   tradeCustomOfferTokenKind: CustomTokenKind;
   tradeCustomRequestTokenKind: CustomTokenKind;
   tradeOfferTokenSelection: TradeTokenPresetKey;
   tradeRequestTokenSelection: TradeTokenPresetKey;
   walletAddress: string;
+  watchedTokens?: readonly WalletWatchedToken[];
 };
 
+const EMPTY_WATCHED_TOKENS: readonly WalletWatchedToken[] = [];
+
 export default function useTradeCustomTokenInfoLoader({
+  enabled = true,
   chainId,
   getMemoSignerRef,
   hasAesReady,
@@ -54,14 +60,19 @@ export default function useTradeCustomTokenInfoLoader({
   normalizedTradeRequestCustomTokenAddress,
   setCustomTradeTokenInfoByAddress,
   setSessionOnboardInfo,
-  topUpMetricsNonce,
+  walletBalanceRefreshNonce,
   tradeCustomOfferTokenKind,
   tradeCustomRequestTokenKind,
   tradeOfferTokenSelection,
   tradeRequestTokenSelection,
-  walletAddress
+  walletAddress,
+  watchedTokens = EMPTY_WATCHED_TOKENS
 }: UseTradeCustomTokenInfoLoaderArgs) {
   useEffect(() => {
+    if (!enabled) {
+      setCustomTradeTokenInfoByAddress(previous => Object.keys(previous).length ? {} : previous);
+      return;
+    }
     const verifiedTokenRequests =
       walletAddress.trim() && chainId === COTI_NETWORK.chainIdDecimal
         ? VERIFIED_ECOSYSTEM_TOKENS.map((token) => ({
@@ -74,6 +85,13 @@ export default function useTradeCustomTokenInfoLoader({
       new Map(
         [
           ...verifiedTokenRequests,
+          ...watchedTokens
+            .filter((token) => token.chainId === chainId)
+            .map((token) => ({
+              key: buildTradeCustomTokenInfoKey(token.kind, token.tokenAddress),
+              address: token.tokenAddress.trim().toLowerCase(),
+              kind: token.kind
+            })),
           isCustomTradeTokenSelection(tradeOfferTokenSelection) && isWalletAddress(normalizedTradeOfferCustomTokenAddress)
             ? {
                 key: buildTradeCustomTokenInfoKey(tradeCustomOfferTokenKind, normalizedTradeOfferCustomTokenAddress),
@@ -144,10 +162,11 @@ export default function useTradeCustomTokenInfoLoader({
               : fallbackTokenSymbol;
           })(),
           decimals: previousEntry?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
-          balanceWei: previousEntry?.balanceWei ?? null,
+          balanceWei: request.kind === 'private-erc20' ? null : previousEntry?.balanceWei ?? null,
           loading: true,
           walletKey,
           aesReady: request.kind === 'private-erc20' ? hasAesReady : undefined,
+          privateBalanceState: request.kind === 'private-erc20' ? { status: 'locked' } : undefined,
           error: undefined
         };
       }
@@ -156,7 +175,9 @@ export default function useTradeCustomTokenInfoLoader({
 
     const loadCustomTokens = async () => {
       const cotiEthers = await loadCotiEthersModule();
+      if (cancelled) return;
       const readProvider = await loadCotiReadProvider(true);
+      if (cancelled) return;
       const walletKey = walletAddress.trim().toLowerCase();
       const signerBundle =
         walletKey && hasAesReady && customTokenRequests.some((request) => request.kind === 'private-erc20')
@@ -164,6 +185,7 @@ export default function useTradeCustomTokenInfoLoader({
               .then((result) => result)
               .catch(() => null)
           : null;
+      if (cancelled) return;
       const nextEntries = await Promise.all(
         customTokenRequests.map(async (request) => {
           const fallbackTokenSymbol = getVerifiedEcosystemToken(request.address)?.symbol ?? shortenAddress(request.address);
@@ -177,7 +199,7 @@ export default function useTradeCustomTokenInfoLoader({
             let balanceWei: bigint | null = null;
             let error: string | undefined;
 
-            if (walletKey) {
+            if (walletKey && !cancelled) {
               if (request.kind === 'private-erc20') {
                 if (!signerBundle) {
                   error = 'Unlock privacy to read this private token balance.';
@@ -283,6 +305,7 @@ export default function useTradeCustomTokenInfoLoader({
       cancelled = true;
     };
   }, [
+    enabled,
     chainId,
     getMemoSignerRef,
     hasAesReady,
@@ -290,11 +313,12 @@ export default function useTradeCustomTokenInfoLoader({
     normalizedTradeRequestCustomTokenAddress,
     setCustomTradeTokenInfoByAddress,
     setSessionOnboardInfo,
-    topUpMetricsNonce,
+    walletBalanceRefreshNonce,
     tradeCustomOfferTokenKind,
     tradeCustomRequestTokenKind,
     tradeOfferTokenSelection,
     tradeRequestTokenSelection,
-    walletAddress
+    walletAddress,
+    watchedTokens
   ]);
 }

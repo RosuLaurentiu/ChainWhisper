@@ -1,5 +1,4 @@
 import {
-  CHAT_CONTRACT_ADDRESS,
   COTI_NETWORK,
   isWalletAddress,
   parseSubmitMemoPayload,
@@ -9,6 +8,7 @@ import {
   type RecentPeerMeta,
   type SubmitMemoPayload
 } from './appShared';
+import { LEGACY_CHAT_CONTRACT_ADDRESS } from './legacyChatContracts';
 
 export const CHAT_GC_MAX_CHUNK_CELLS = 3;
 export const CHAT_GC_MAX_SINGLE_MESSAGE_CELLS = 64;
@@ -52,7 +52,7 @@ export const normalizeChatGcMessageId = (value: unknown): string => {
 export const buildChatGcMessageKey = (
   messageId: unknown,
   chainId = COTI_NETWORK.chainIdDecimal,
-  contractAddress = CHAT_CONTRACT_ADDRESS
+  contractAddress = LEGACY_CHAT_CONTRACT_ADDRESS
 ): string => {
   const normalizedMessageId = normalizeChatGcMessageId(messageId);
   return normalizedMessageId

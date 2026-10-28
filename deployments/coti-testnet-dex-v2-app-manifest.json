@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "status": "activated-testnet",
+  "network": "cotiTestnet",
+  "chainId": "7082400",
+  "productionActivationEvidence": false,
+  "operator": "0x23aBDe1d22019D52852D6845c9444326Dde1D99e",
+  "owner": "0x23aBDe1d22019D52852D6845c9444326Dde1D99e",
+  "deploymentPlanHash": "0xd26854f998b1f7613c3bbf49dabb46bee3ab2ebb8e9a541e85450ba969252f1a",
+  "deploymentCandidateHash": "0x19341d5593e4d76a15b2717fedc7216c83483ef63d3c18b032d0e1e9d6ce2a68",
+  "activationPlanHash": "0x3a74f998176fe4fb8095268bb1bea1166006d358f7294d52a7daffb4c0dfd791",
+  "activationReportHash": "0x0256d2a020f770f17266adafc02e5043da487be5eb590ad64ede9ba90c6a6ecd",
+  "addresses": {
+    "factory": "0x198c62A2375808e13D2090b45B646A15481e9a28",
+    "pool": "0x907FE9f484fDfbc18F7Ba3C5B9c9D23B2FC99fd8",
+    "limit": "0x443C7864f0fdc44D87c593570375e2f967429b9C",
+    "recurring": "0x4fBc54E6f2EcB1EFeb82196516e9Baa2919fD365",
+    "swap": "0x46340CA3eC580400e1698Bea455e382aF528f8E7",
+    "core": "0x41063d07e17EcD644A16Ca3C6443cA757f3ac60B",
+    "positionToken": "0xC6D9CeD98Cb990ba67c0505281879CcFE0ED2E83"
+  },
+  "runtimeHashes": {
+    "factory": "0x17f36af4349b07cb0ea4b6b9f8e3f9da80aac4bd67ebca01458c8ea15a593afc",
+    "pool": "0x118ac9e208465e768037bb45565f8d6706568162c0a3c8fae95b05dcea4647c8",
+    "limit": "0x9173be70c71f851f480b13c3cfdadb85fd9c2a88e908ca9c5ded194d5ae1cd2f",
+    "recurring": "0x8d41e83954a3e57b708ab4916975b84b2cc194c23334f1a40fae568d0c5eddd4",
+    "swap": "0xae4dd126967ca676622ed60273c82d02552a341046206e4cf233d2d6175c6bc0",
+    "core": "0xa56c3595dcb96300ee5b462ca520cce74f60c6aeac90a545f7f37c8758f9bbf1",
+    "positionToken": "0xa54ba337c5d0e1d269549a4fd0785ffdb0a696926c6046c0a0332ecb5870faeb"
+  },
+  "deploymentAnchors": {
+    "factory": {
+      "number": "9065120",
+      "hash": "0x4da15cba45086ede2bb75fd6633b88e0e3b5857095bf096e9bb11401c1e6254a"
+    },
+    "economicSuite": {
+      "number": "9065125",
+      "hash": "0x83534c5b042e99506c26415c2378c82cfb2d1b1c217b882529ce32fff84b2695"
+    },
+    "pairRegistration": {
+      "number": "9065140",
+      "hash": "0xe8cb0fbd23ff8073d84fc0f9da9797e826d7cf8c4c19ba843416ccd28e990a7a"
+    }
+  },
+  "pair": {
+    "pairKey": "0x76f01dc8e48a5f63a53e223f802e3b949aaa1685bfaaee4c0fae7c534e5a85e7",
+    "baseToken": "0x222381287eB9f5b3eEa825A3ca5B6c22c6C1893d",
+    "quoteToken": "0x9467E348a5a4B415eA65e551785273E650ee5CA3",
+    "baseTokenRuntimeHash": "0x6418567abdfa4986b3f9607955e8834956014e8d7c9a6f859c4ff97083ef76ce",
+    "quoteTokenRuntimeHash": "0x6418567abdfa4986b3f9607955e8834956014e8d7c9a6f859c4ff97083ef76ce",
+    "privateTokenRuntimeManifestHash": "0xd79e3b9f6af76a3eb9d457c90039adedea39922bd3d53449361df594372c50db",
+    "privateTokenRuntimeManifestLength": 1,
+    "baseDecimals": 6,
+    "quoteDecimals": 6,
+    "baseLotSize": "100",
+    "quoteLotSize": "100",
+    "maximumAggregateLots": "2000000",
+    "tickTableHash": "0xc3d114340cf34f2d23745f3befba0dfc28a9266d5a0cb97c577ae435c4c42354"
+  },
+  "activation": {
+    "result": "pass",
+    "transactionCount": 16,
+    "measuredRouteCount": 4,
+    "finalBlock": {
+      "number": "9066046",
+      "hash": "0x3be75044653c32e473236b777a7126b511286f3cb4b927cdb95c81e96888afcc"
+    },
+    "allProofsPassed": true,
+    "routeGasP95Passed": true,
+    "routeGasMaximumPassed": true,
+    "routeLatencyP95Passed": true
+  },
+  "manifestHash": "0x66ee23e81c15373914d112256f90beef4820d1ba995b9706441cb6da533e6914"
+}

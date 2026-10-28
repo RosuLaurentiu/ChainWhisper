@@ -1,25 +1,14 @@
-const PROHIBITED_KEY_RE =
-  /^(?:access[_ -]?secret|private[_ -]?key|mnemonic|seed[_ -]?phrase|recovery[_ -]?phrase|secret|share[_ -]?code)$/iu;
-const PRIVATE_LINK_RE =
-  /\/(?:otc\/order|trades)\/(?:link|l)\/[A-Za-z0-9_-]+|[?&#]secret=|#0x[a-fA-F0-9]{64}\b/iu;
-const LABELED_SECRET_RE =
-  /\b(?:private\s*key|seed\s*phrase|recovery\s*phrase|mnemonic|access\s*secret)\b\s*(?::|=|is)?\s*(?:0x[a-fA-F0-9]{64}|[a-z]+(?:\s+[a-z]+){11,23})/iu;
-const RAW_SECRET_HEX_RE = /\b0x[a-fA-F0-9]{64}\b/u;
+import {
+  TRADE_AGENT_PROHIBITED_KEY_RE,
+  findTradeAgentSecretText
+} from '../_shared/trade-agent-secret-material.ts';
+
 const WALLET_ADDRESS_RE = /\b0x[a-fA-F0-9]{40}\b/u;
 const DISALLOWED_CONTEXT_KEY_RE =
   /^(?:address|balance|balances|counterparty|error|errors|history|maker|messages|owner|payer|privateAmount|privateInventory|privateProgress|receipt|receipts|recipient|stack|taker|terminalPath|transactionHash|txHash)$/iu;
 
 const findSensitiveText = (value: string): string | null => {
-  if (PRIVATE_LINK_RE.test(value)) {
-    return 'private order link';
-  }
-  if (LABELED_SECRET_RE.test(value)) {
-    return 'wallet secret';
-  }
-  if (RAW_SECRET_HEX_RE.test(value)) {
-    return '64-byte secret';
-  }
-  return null;
+  return findTradeAgentSecretText(value);
 };
 
 export const findProhibitedTradeAgentMaterial = (value: unknown): string | null => {
@@ -39,7 +28,7 @@ export const findProhibitedTradeAgentMaterial = (value: unknown): string | null 
     return null;
   }
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    if (PROHIBITED_KEY_RE.test(key) && nested !== null && nested !== undefined && nested !== '') {
+    if (TRADE_AGENT_PROHIBITED_KEY_RE.test(key) && nested !== null && nested !== undefined && nested !== '') {
       return key;
     }
     const finding = findProhibitedTradeAgentMaterial(nested);

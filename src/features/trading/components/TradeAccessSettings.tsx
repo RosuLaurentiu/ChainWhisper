@@ -1,4 +1,4 @@
-import { shortenAddress } from '../../../lib/appShared';
+import { Globe2, Link2, Send } from 'lucide-react';
 import type { TradeVisibility } from './P2PTradingPage.helpers';
 
 type TradeAccessSettingsProps = {
@@ -25,16 +25,23 @@ export default function TradeAccessSettings({
   }
 
   return (
-    <>
+    <section className="p2p-trade-access-workspace" aria-labelledby="p2p-trade-audience-title">
+      <div className="p2p-trade-access-heading">
+        <strong id="p2p-trade-audience-title">Access</strong>
+      </div>
       <div className="standalone-trade-options p2p-trade-access-settings">
-        <div className="standalone-trade-visibility" role="group" aria-label="Trade visibility">
+        <div className="standalone-trade-visibility" role="group" aria-label="Offer audience">
           <button
             type="button"
             className={tradeVisibility === 'public' ? 'active' : undefined}
             onClick={() => onTradeVisibilityChange('public')}
             aria-pressed={tradeVisibility === 'public'}
           >
-            Public
+            <Globe2 size={16} aria-hidden="true" />
+            <span>
+              <strong>Public offer</strong>
+              <small>Listed in Offers</small>
+            </span>
           </button>
           <button
             type="button"
@@ -42,7 +49,11 @@ export default function TradeAccessSettings({
             onClick={() => onTradeVisibilityChange('unlisted')}
             aria-pressed={tradeVisibility === 'unlisted'}
           >
-            Unlisted
+            <Link2 size={16} aria-hidden="true" />
+            <span>
+              <strong>Private link</strong>
+              <small>Shareable link</small>
+            </span>
           </button>
           <button
             type="button"
@@ -50,27 +61,12 @@ export default function TradeAccessSettings({
             onClick={() => onTradeVisibilityChange('direct')}
             aria-pressed={tradeVisibility === 'direct'}
           >
-            Direct
+            <Send size={16} aria-hidden="true" />
+            <span>
+              <strong>Direct proposal</strong>
+              <small>One wallet</small>
+            </span>
           </button>
-        </div>
-        <div className="standalone-trade-access-summary">
-          <span>Access</span>
-          <strong>
-            {tradeVisibility === 'public'
-              ? 'Public'
-              : tradeVisibility === 'direct'
-                ? directTradeRecipientIsValid
-                  ? `To ${shortenAddress(directTradeRecipientNormalized)}`
-                  : 'Recipient required'
-                : 'Unlisted'}
-          </strong>
-          <p>
-            {tradeVisibility === 'direct'
-              ? 'Direct offers skip the public desk and appear under the recipient wallet received offers.'
-              : tradeVisibility === 'public'
-                ? 'Public offers appear on the desk while open. On-chain terms remain public to contract reads.'
-                : 'Unlisted offers stay off the public desk. On-chain terms remain public to contract reads.'}
-          </p>
         </div>
       </div>
       {tradeVisibility === 'direct' ? (
@@ -85,6 +81,6 @@ export default function TradeAccessSettings({
           />
         </label>
       ) : null}
-    </>
+    </section>
   );
 }

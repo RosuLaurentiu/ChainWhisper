@@ -13,6 +13,8 @@ import {
   buildTradeTransactionHistoryRows,
   type TradeTransactionHistoryRow
 } from '../../../lib/tradeHistory';
+import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledger';
+import type { TradeHistoryV2CanonicalLifecycleEvent } from '../../../lib/tradeHistoryV2Materialize';
 
 type BlockTimestampProvider = {
   getBlock: (blockNumber: number) => Promise<{ timestamp?: unknown } | null | undefined>;
@@ -33,6 +35,8 @@ type HistoryHydrationState = {
 };
 
 type UseTradeTerminalHistoryHydrationOptions = HistoryHydrationState & {
+  canonicalV2Rows?: readonly TradeHistoryV2ExecutionRow[];
+  canonicalV2LifecycleEvents?: readonly TradeHistoryV2CanonicalLifecycleEvent[];
   resolveBlockTimestampMap: ResolveBlockTimestampMap;
   targetTrade: TradeSnapshot | null;
   walletAddress: string;
@@ -68,6 +72,8 @@ const getHistoryAbi = (sourceKind: TradeTransactionHistoryRow['sourceKind']) =>
         : TRADE_ESCROW_CONTRACT_ABI;
 
 export default function useTradeTerminalHistoryHydration({
+  canonicalV2LifecycleEvents,
+  canonicalV2Rows,
   historyLifecycleTxHashes,
   historyTransactionTimestamps,
   historyTransactionTxHashes,
@@ -83,7 +89,7 @@ export default function useTradeTerminalHistoryHydration({
       return;
     }
 
-    const lifecycleRowsNeedingTx = buildTradeLifecycleHistoryRows(targetTrade).filter(
+    const lifecycleRowsNeedingTx = buildTradeLifecycleHistoryRows(targetTrade, canonicalV2LifecycleEvents).filter(
       (row) => !row.txHash && !historyLifecycleTxHashes[row.key]
     );
     if (!lifecycleRowsNeedingTx.length) {
@@ -178,8 +184,42 @@ export default function useTradeTerminalHistoryHydration({
     };
   }, [
     historyLifecycleTxHashes,
+    canonicalV2LifecycleEvents,
     resolveBlockTimestampMap,
     setHistoryLifecycleTxHashes,
+    setHistoryTransactionTimestamps,
+    targetTrade
+  ]);
+
+  useEffect(() => {
+    if (!targetTrade) return;
+    const rowsNeedingTimestamp = buildTradeLifecycleHistoryRows(targetTrade, canonicalV2LifecycleEvents).filter(
+      (row) => historyTransactionTimestamps[row.key] === undefined && typeof row.blockNumber === 'number'
+    );
+    if (!rowsNeedingTimestamp.length) return;
+
+    let cancelled = false;
+    loadCotiReadProvider(true)
+      .then(async (readProvider) => {
+        const timestampByBlockNumber = await resolveBlockTimestampMap(
+          readProvider,
+          rowsNeedingTimestamp.map((row) => row.blockNumber!)
+        );
+        return new Map(rowsNeedingTimestamp
+          .map((row) => [row.key, timestampByBlockNumber.get(row.blockNumber!)] as const)
+          .filter((entry): entry is readonly [string, number] => typeof entry[1] === 'number'));
+      })
+      .then((timestampByRowKey) => {
+        if (cancelled || timestampByRowKey.size === 0) return;
+        setHistoryTransactionTimestamps((current) => mergeEntries(current, timestampByRowKey.entries()));
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [
+    canonicalV2LifecycleEvents,
+    historyTransactionTimestamps,
+    resolveBlockTimestampMap,
     setHistoryTransactionTimestamps,
     targetTrade
   ]);
@@ -189,7 +229,7 @@ export default function useTradeTerminalHistoryHydration({
       return;
     }
 
-    const rowsNeedingTx = buildTradeTransactionHistoryRows([targetTrade], walletAddress).filter(
+    const rowsNeedingTx = buildTradeTransactionHistoryRows([targetTrade], walletAddress, canonicalV2Rows).filter(
       (row) => !row.txHash && !historyTransactionTxHashes[row.key]
     );
     if (!rowsNeedingTx.length) {
@@ -303,6 +343,7 @@ export default function useTradeTerminalHistoryHydration({
     };
   }, [
     historyTransactionTxHashes,
+    canonicalV2Rows,
     resolveBlockTimestampMap,
     setHistoryTransactionTimestamps,
     setHistoryTransactionTxHashes,
@@ -315,7 +356,7 @@ export default function useTradeTerminalHistoryHydration({
       return;
     }
 
-    const rowsNeedingTimestamp = buildTradeTransactionHistoryRows([targetTrade], walletAddress).filter(
+    const rowsNeedingTimestamp = buildTradeTransactionHistoryRows([targetTrade], walletAddress, canonicalV2Rows).filter(
       (row) =>
         historyTransactionTimestamps[row.key] === undefined &&
         (typeof row.blockNumber === 'number' || Boolean(row.txHash ?? historyTransactionTxHashes[row.key]))
@@ -373,6 +414,7 @@ export default function useTradeTerminalHistoryHydration({
   }, [
     historyTransactionTimestamps,
     historyTransactionTxHashes,
+    canonicalV2Rows,
     resolveBlockTimestampMap,
     setHistoryTransactionTimestamps,
     targetTrade,

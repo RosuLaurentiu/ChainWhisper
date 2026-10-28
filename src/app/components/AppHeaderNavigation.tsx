@@ -2,16 +2,16 @@ import {
   preloadChatPage,
   preloadSwapPage,
   preloadTradesPage,
-  preloadTreasuryPage
+  preloadPrivateTvlPage
 } from '../lazyRoutes';
 import type { AppPage } from '../../shell/routing';
 import { moveFocusWithin } from '../../shared/components/a11y';
 
 const APP_NAV_ITEMS: Array<{ page: AppPage; label: string; onPrefetch?: () => void }> = [
   { page: 'chat', label: 'Chat', onPrefetch: preloadChatPage },
-  { page: 'trades', label: 'OTC Desk', onPrefetch: preloadTradesPage },
+  { page: 'trades', label: 'Trading', onPrefetch: preloadTradesPage },
   { page: 'swap', label: 'Privacy Portal', onPrefetch: preloadSwapPage },
-  { page: 'treasury', label: 'Treasury', onPrefetch: preloadTreasuryPage }
+  { page: 'treasury', label: 'Private TVL', onPrefetch: preloadPrivateTvlPage }
 ];
 
 type AppHeaderNavigationProps = {
@@ -20,6 +20,7 @@ type AppHeaderNavigationProps = {
 };
 
 export function AppHeaderNavigation({ activePage, onNavigate }: AppHeaderNavigationProps) {
+  const activeNavPage = activePage === 'dex' ? 'trades' : activePage;
   return (
     <nav
       className="app-header-nav"
@@ -30,9 +31,9 @@ export function AppHeaderNavigation({ activePage, onNavigate }: AppHeaderNavigat
         <button
           key={item.page}
           type="button"
-          className={activePage === item.page ? 'active' : undefined}
-          aria-current={activePage === item.page ? 'page' : undefined}
-          tabIndex={activePage === item.page || (activePage === 'home' && index === 0) ? 0 : -1}
+          className={activeNavPage === item.page ? 'active' : undefined}
+          aria-current={activeNavPage === item.page ? 'page' : undefined}
+          tabIndex={activeNavPage === item.page || (activeNavPage === 'home' && index === 0) ? 0 : -1}
           onClick={() => onNavigate(item.page)}
           onFocus={item.onPrefetch}
           onMouseEnter={item.onPrefetch}

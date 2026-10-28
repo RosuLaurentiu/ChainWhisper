@@ -63,6 +63,7 @@ export type OtcSwapQuoteCandidate = {
 
 export type OtcSwapQuoteResult = {
   best: OtcSwapQuoteCandidate | null;
+  candidates: OtcSwapQuoteCandidate[];
   compatibleCount: number;
   otherCompatibleCount: number;
 };
@@ -518,7 +519,7 @@ export const quoteBestSingleOtcSwap = ({
   const sellKey = getOtcSwapAssetKey(sellToken);
   const buyKey = getOtcSwapAssetKey(buyToken);
   if (!sellKey || !buyKey || sellKey === buyKey) {
-    return { best: null, compatibleCount: 0, otherCompatibleCount: 0 };
+    return { best: null, candidates: [], compatibleCount: 0, otherCompatibleCount: 0 };
   }
 
   const candidates: OtcSwapQuoteCandidate[] = [];
@@ -540,12 +541,13 @@ export const quoteBestSingleOtcSwap = ({
   candidates.sort(compareSwapCandidates);
   return {
     best: candidates[0] ?? null,
+    candidates,
     compatibleCount: candidates.length,
     otherCompatibleCount: Math.max(0, candidates.length - 1)
   };
 };
 
 export const getOtcSwapSourceLabel = (sourceType: OtcSwapSourceType): string =>
-  sourceType === 'recurring' ? 'Recurring OTC' : 'One-off OTC';
+  sourceType === 'recurring' ? 'Recurring P2P' : 'One-off P2P';
 
 export { PRICE_SCALE as OTC_SWAP_PRICE_SCALE };

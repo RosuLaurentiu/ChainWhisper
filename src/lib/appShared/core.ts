@@ -1,15 +1,20 @@
 import type { BrowserProvider, OnboardInfo } from '@coti-io/coti-ethers';
-import { unzlibSync, zlibSync } from 'fflate';
+import { zlibSync } from 'fflate';
 import { TEXT_DECODER, TEXT_ENCODER } from '../byteEncoding';
+import { unzlibBounded } from './boundedCompression';
 import {
   GROUP_ACTION_ERROR_MESSAGE_BY_SELECTOR,
   GROUP_CREATE_ERROR_MESSAGE_BY_SELECTOR,
   GROUP_JOIN_ERROR_MESSAGE_BY_SELECTOR
 } from './contracts';
+import { MAX_STATE_BACKUP_PLAINTEXT_BYTES } from './memoSecurity';
+import { CONFIGURED_COTI_NETWORK } from '../chainWhisperNetworks';
+import { createPacedCotiRpc } from './cotiRpcPacing';
 
 export * from './contracts';
 export * from './groupMetadata';
 export * from './identity';
+export * from '../chainWhisperNetworks';
 export {
   decodeBase64Url,
   decodeBase64UrlBytes,
@@ -104,7 +109,11 @@ export const rememberInjectedWalletProvider = (
 
 export type Contact = {
   address: string;
+  /** Private owner-only label stored in Chat V2 contact settings. */
+  savedName?: string;
+  /** Public self-owned nickname advertised by this contact. */
   name?: string;
+  /** Legacy read-only state; migrated to `hidden` on the next settings write. */
   muted?: boolean;
   hidden?: boolean;
 };
@@ -114,7 +123,58 @@ export type ConversationPreferenceState = {
   hidden?: boolean;
 };
 
-export type WalletAccountRole = 'chainwhisper' | 'owner';
+export type WalletAccountRole = 'owner';
+
+export type DirectChatV2MessageFinality = 'confirmed' | 'finalized';
+
+export type DirectChatV2MessageIdentity = {
+  protocol: 'direct-v2';
+  contentState: 'available' | 'unavailable';
+  chainId: string;
+  contractAddress: string;
+  conversationId: string;
+  messageId: string;
+  epoch: string;
+  senderSequence: string;
+  nonce: string;
+  transactionHash: string;
+  blockNumber: string;
+  blockHash: string;
+  logIndex: number;
+  finality: DirectChatV2MessageFinality;
+};
+
+export type GroupChatV2MessageIdentity = {
+  protocol: 'group-v2';
+  contentState: 'available' | 'unavailable';
+  chainId: string;
+  contractAddress: string;
+  groupId: string;
+  messageId: string;
+  epoch: string;
+  membershipRevision: string;
+  senderSequence: string;
+  nonce: string;
+  transactionHash: string;
+  blockNumber: string;
+  blockHash: string;
+  logIndex: number;
+  finality: DirectChatV2MessageFinality;
+};
+
+export type DirectTradeV2ChatIdentity = {
+  protocol: 'direct-trade-v2';
+  eventKind: 'opened' | 'status';
+  chainId: string;
+  contractAddress: string;
+  tradeId: string;
+  relatedTradeId: string;
+  transactionHash: string;
+  blockNumber: string;
+  blockHash: string;
+  logIndex: number;
+  finality: 'finalized';
+};
 
 export type ChatMessage = {
   id: string;
@@ -125,6 +185,7 @@ export type ChatMessage = {
   accountRole?: WalletAccountRole;
   isSystem?: boolean;
   replyToMessageId?: string;
+  replyToMessageAnchor?: string;
   replyToText?: string;
   replyToTxHash?: string;
   replyToBlockNumber?: number;
@@ -139,6 +200,9 @@ export type ChatMessage = {
   logIndex?: number;
   txHash?: string;
   deliveryState?: 'pending' | 'sent' | 'failed';
+  directV2?: DirectChatV2MessageIdentity;
+  groupV2?: GroupChatV2MessageIdentity;
+  directTradeV2?: DirectTradeV2ChatIdentity;
 };
 
 export type HistoryEntry = {
@@ -149,6 +213,7 @@ export type HistoryEntry = {
   accountAddress?: string;
   accountRole?: WalletAccountRole;
   replyToMessageId?: string;
+  replyToMessageAnchor?: string;
   replyToText?: string;
   replyToTxHash?: string;
   replyToBlockNumber?: number;
@@ -162,6 +227,8 @@ export type HistoryEntry = {
   blockNumber: number;
   logIndex: number;
   timestamp?: number;
+  directV2?: DirectChatV2MessageIdentity;
+  directTradeV2?: DirectTradeV2ChatIdentity;
 };
 
 export type ConversationLog = {
@@ -187,6 +254,7 @@ export type GroupSummary = {
   admin: string;
   title: string;
   isPrivate: boolean;
+  archived?: boolean;
   createdAt: number;
   memberCount: number;
   members: string[];
@@ -223,6 +291,7 @@ export type GroupMessageEntry = {
   accountRole?: WalletAccountRole;
   isSystem?: boolean;
   replyToMessageId?: string;
+  replyToMessageAnchor?: string;
   replyToText?: string;
   replyToTxHash?: string;
   replyToBlockNumber?: number;
@@ -231,45 +300,31 @@ export type GroupMessageEntry = {
   reactionToBlockNumber?: number;
   reactionToLogIndex?: number;
   reactionEmoji?: string;
+  tradeReference?: TradeMessageReferencePayload;
   txHash: string;
   blockNumber: number;
   logIndex: number;
   timestamp?: number;
+  groupV2?: GroupChatV2MessageIdentity;
 };
 
 export type GroupFeeModeSelection = 'coti' | 'token';
-export type SwapDirection = 'shield' | 'unshield' | 'legacy-unshield';
+export type SwapDirection = 'shield' | 'unshield' | 'legacy-unshield' | 'legacy-unshield-earlier';
 export type SwapFeeModeSelection = 'token' | 'coti';
 
-export const BURNER_WALLET_STORAGE_KEY = 'coti-chat-burner-wallet';
-export const BURNER_WALLET_STORAGE_PROBE_KEY = 'coti-chat-burner-wallet-probe';
-export const BURNER_WALLET_STORAGE_VERSION = 2;
-export const BURNER_OWNER_AES_WALLET_STORAGE_VERSION = 1;
-export const BURNER_OWNER_AES_WALLET_STORAGE_SCHEME = 'owner-aes-gcm-v1';
-export const BURNER_WALLET_VAULT_VERSION = 1;
-export const BURNER_PIN_MIN_LENGTH = 5;
-export const LEGACY_BURNER_PIN_MIN_LENGTH = 4;
-export const BURNER_PIN_PBKDF2_ITERATIONS = 250000;
 export const AUTO_SYNC_INTERVAL_MS = 30000;
 export const WS_HEALTHCHECK_TTL_MS = 12000;
 export const WS_RETRY_COOLDOWN_MS = 15000;
 export const REALTIME_SYNC_DEBOUNCE_MS = 250;
 export const REALTIME_SYNC_BURST_THROTTLE_MS = 1500;
 export const REALTIME_SYNC_FALLBACK_INTERVAL_MS = 5000;
-export const READ_STATE_BACKUP_DEBOUNCE_MS = 2500;
-export const READ_STATE_BACKUP_MIN_INTERVAL_MS = 45000;
 export const INITIAL_SYNC_LOOKBACK_BLOCKS = 2500;
 export const HISTORY_PAGINATION_BLOCK_WINDOW = 10000;
 export const SELF_BACKUP_RESTORE_BLOCK_WINDOW = 20000;
 export const FAST_CONTACT_PREVIEW_BATCH_SIZE = 8;
 export const FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK = 24;
-export const AUTO_STATE_BACKUP_BLOCK_DISTANCE = 18000;
-export const AUTO_STATE_BACKUP_RETRY_BLOCKS = 3000;
-export const GROUP_SUBMIT_GAS_BUFFER = 700_000n;
-export const GROUP_SUBMIT_GAS_LIMIT_MAX = 8_000_000n;
 export const DEFAULT_GROUP_JOIN_CODE_MAX_USES = 1;
 export const DEFAULT_GROUP_JOIN_CODE_MULTI_USES = 10;
-export const BURNER_ONBOARD_TIMEOUT_MS = 45000;
 export const DEFAULT_NICKNAME_MAX_BYTES = 42;
 export const NICKNAME_DELIMITER = '\u001f';
 export const REPLY_DELIMITER = '\u001e';
@@ -304,16 +359,12 @@ export const MAX_MESSAGE_LENGTH = 2000;
 export const COPY_FEEDBACK_DURATION_MS = 1400;
 export const GROUP_REMOVAL_NOTICE_AUTO_DISMISS_MS = 9000;
 export const COTI_WEI = 10n ** 18n;
-export const MIN_BURNER_TOP_UP_WEI = 1_000_000_000_000_000n;
-export const BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI = 5_000_000_000_000_000n;
-export const BURNER_TOP_UP_MIN_MESSAGE_TARGET = 1;
-export const BURNER_TOP_UP_MAX_MESSAGE_TARGET = 200;
-export const BURNER_TOP_UP_DEFAULT_MESSAGE_TARGET = 50;
 const MEMO_RAW_PREFIX = '[[coti-memo-raw:v1]]';
 const MEMO_COMPRESSED_PREFIX = '[[coti-memo-z:v1]]';
 export const REPLY_METADATA_PREFIX_REGEX = new RegExp(REPLY_METADATA_PREFIX, 'g');
 const UTF8_FATAL_DECODER = new TextDecoder('utf-8', { fatal: true });
 const MEMO_BASE64_REGEX = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const MAX_COMPRESSED_MEMO_OVERHEAD_BYTES = 1024;
 
 const isAsciiOnly = (value: string): boolean => {
   for (let index = 0; index < value.length; index += 1) {
@@ -422,64 +473,28 @@ export const debugLog = (...args: unknown[]): void => {
   }
 };
 
-export type BurnerWalletRecord = {
-  id?: string;
-  address?: string;
-  name?: string;
-  privateKey: string;
-  mnemonic?: string;
-  onboardInfo?: OnboardInfo;
-  recoveryDefault?: boolean;
-  recoveryProfileId?: number;
-  recoveryProfileVersion?: string;
-  recoveryTransactionHash?: string;
-};
-
-export type BurnerWalletVault = {
-  version: number;
-  wallets: BurnerWalletRecord[];
-  activeWalletId: string;
-};
-
-export type EncryptedBurnerWalletRecord = {
-  version: number;
-  salt: string;
-  iv: string;
-  ciphertext: string;
-  iterations: number;
-};
-
-export type OwnerAesBurnerWalletRecord = {
-  version: number;
-  scheme: typeof BURNER_OWNER_AES_WALLET_STORAGE_SCHEME;
-  ownerAddress: string;
-  iv: string;
-  ciphertext: string;
-};
-
-export type LegacyBurnerWalletVaultRecord = {
-  wallets: BurnerWalletRecord[];
-  activeWalletId?: string;
-};
-
-export type BurnerWalletStorageState =
-  | { kind: 'none' }
-  | { kind: 'legacy'; record: BurnerWalletRecord }
-  | { kind: 'legacy-vault'; record: LegacyBurnerWalletVaultRecord }
-  | { kind: 'encrypted'; record: EncryptedBurnerWalletRecord }
-  | { kind: 'owner-aes'; record: OwnerAesBurnerWalletRecord };
-
-export type BurnerInitMode = 'generate' | 'import' | 'stored';
-export type SignerSource = 'burner' | 'metamask';
-export type BurnerPinMode = 'set' | 'unlock';
-export type BurnerInitResult = 'connected' | 'needs-funding' | 'imported' | 'failed';
-export type SensitiveAction = 'reveal-backup' | 'link-pin-account';
+export type SignerSource = 'metamask';
 export type MobileView = 'contacts' | 'chat';
 export type TipTokenSelection = 'coti' | 'wisp' | 'pwisp';
 export type TradeAssetKind = 'native' | 'erc20' | 'private-erc20';
 export type TradeFeeModeSelection = 'coti' | 'token';
-export type TradeMessageAction = 'accepted' | 'declined' | 'cancelled' | 'countered';
-export type TradeOnChainStatus = 'open' | 'accepted' | 'cancelled' | 'declined' | 'expired' | 'unknown';
+export type TradeMessageAction =
+  | 'accepted'
+  | 'declined'
+  | 'cancelled'
+  | 'countered'
+  | 'expired'
+  | 'superseded'
+  | 'replaced';
+export type TradeOnChainStatus =
+  | 'open'
+  | 'accepted'
+  | 'cancelled'
+  | 'declined'
+  | 'expired'
+  | 'superseded'
+  | 'replaced'
+  | 'unknown';
 
 export type TradeAssetPayload = {
   kind: TradeAssetKind;
@@ -587,6 +602,23 @@ export type RecurringPrivateExecutionPayload = {
   blockNumber?: number;
 };
 
+export type RecurringTradeV2Identity = {
+  protocol: 'recurring-v2' | 'private-recurring-v2';
+  chainId: string;
+  contractAddress: string;
+  revision: string;
+  pairKey: string;
+};
+
+export type OneOffTradeV2Identity = {
+  protocol: 'standard-v2' | 'private-v2' | 'direct-v2';
+  chainId: string;
+  contractAddress: string;
+  revision?: string;
+  amountMode?: 'public' | 'private';
+  privateMode?: 'fully-private' | 'private-offer-public-request' | 'public-offer-private-request';
+};
+
 export type RecurringTradeSnapshotPayload = {
   orderId: number;
   selectedSide: RecurringTradeSide;
@@ -606,16 +638,18 @@ export type RecurringTradeSnapshotPayload = {
   makerPrivateInventory?: RecurringPrivateInventoryPayload;
   privateExecutions?: RecurringPrivateExecutionPayload[];
   publicExecutions?: RecurringPrivateExecutionPayload[];
+  v2?: RecurringTradeV2Identity;
 };
 
 export type TradeResponseMessagePayload = {
-  version: 1;
+  version: 1 | 2;
   tradeId: number;
   escrowContract?: string;
   action: TradeMessageAction;
   actor: string;
   createdAt: number;
   counterTradeId?: number;
+  relatedTradeId?: number;
 };
 
 export type TradeSnapshot = {
@@ -646,18 +680,13 @@ export type TradeSnapshot = {
   makerPrivateProgress?: PrivateTradeMakerProgressPayload;
   privateFillReceipts?: PrivateTradeFillReceiptPayload[];
   recurringOrder?: RecurringTradeSnapshotPayload;
+  v2?: OneOffTradeV2Identity;
   accountAddress?: string;
   accountRole?: WalletAccountRole;
   accountMatches?: Array<{
     address: string;
     role: WalletAccountRole;
   }>;
-};
-
-export type PendingBurnerInit = {
-  mode: BurnerInitMode;
-  seedOrPrivateKey?: string;
-  walletId?: string;
 };
 
 export type SyncConversationOptions = {
@@ -704,11 +733,6 @@ export type BackupReadStateEntry = {
   lastReadTs: number;
 };
 
-export type BackupLocalStateOptions = {
-  force?: boolean;
-  background?: boolean;
-};
-
 export type SubmitMemoPayload = {
   ciphertextValue: bigint[];
   signature: string[];
@@ -721,19 +745,7 @@ export type MessageReactionPayload = {
   emoji: string;
 };
 
-export const COTI_NETWORK = {
-  chainIdHex: '0x282b34',
-  chainIdDecimal: 2632500,
-  chainName: 'COTI',
-  rpcUrl: 'https://mainnet.coti.io/rpc',
-  wsUrl: 'wss://mainnet.coti.io/ws',
-  nativeCurrency: {
-    name: 'COTI',
-    symbol: 'COTI',
-    decimals: 18
-  },
-  blockExplorerUrl: 'https://mainnet.cotiscan.io'
-};
+export const COTI_NETWORK = CONFIGURED_COTI_NETWORK;
 export const TIP_NATIVE_TOKEN_SYMBOL = COTI_NETWORK.nativeCurrency.symbol;
 export const TIP_NATIVE_TOKEN_DECIMALS = COTI_NETWORK.nativeCurrency.decimals;
 
@@ -744,6 +756,7 @@ export type CotiReadProvider = CotiWsProvider | CotiHttpProvider;
 let cotiEthersModulePromise: Promise<CotiEthersModule> | null = null;
 let cotiWsProviderPromise: Promise<CotiWsProvider> | null = null;
 let cotiHttpProviderPromise: Promise<CotiHttpProvider> | null = null;
+let cotiHttpGetUrl: InstanceType<CotiEthersModule['FetchRequest']>['getUrlFunc'] | null = null;
 let cotiWsLastHealthyAt = 0;
 
 export const getCotiWsLastHealthyAt = (): number => cotiWsLastHealthyAt;
@@ -774,13 +787,47 @@ export const loadCotiWsProvider = async (): Promise<CotiWsProvider> => {
 
 export const loadCotiHttpProvider = async (): Promise<CotiHttpProvider> => {
   if (!cotiHttpProviderPromise) {
-    cotiHttpProviderPromise = loadCotiEthersModule().then(
-      (cotiEthers) =>
-        new cotiEthers.JsonRpcProvider(COTI_NETWORK.rpcUrl, {
+    const providerPromise: Promise<CotiHttpProvider> = loadCotiEthersModule().then(
+      async (cotiEthers) => {
+        const request = new cotiEthers.FetchRequest(COTI_NETWORK.rpcUrl);
+        request.timeout = 30_000;
+        // Keep the queue and 403 stop when a failed startup clears the provider cache.
+        cotiHttpGetUrl ??= createPacedCotiRpc(request.getUrlFunc);
+        request.getUrlFunc = cotiHttpGetUrl;
+        const provider = new cotiEthers.JsonRpcProvider(request, {
           name: COTI_NETWORK.chainName,
           chainId: COTI_NETWORK.chainIdDecimal
-        })
-    );
+        }, { batchMaxCount: 1 });
+        let disposed = false;
+        const disposeFailedStartup = (): void => {
+          if (disposed) return;
+          disposed = true;
+          provider.destroy();
+          if (cotiHttpProviderPromise === providerPromise) cotiHttpProviderPromise = null;
+        };
+        try {
+          // A retained failed startup keeps ethers' network-discovery retry alive.
+          // Validate before sharing; also dispose a failed first-read bootstrap.
+          await provider.on('error', (error: unknown) => {
+            if (cotiEthers.isError(error, 'NETWORK_ERROR') && error.event === 'initial-network-discovery') {
+              disposeFailedStartup();
+            }
+          });
+          const network = await provider.getNetwork();
+          if (network.chainId !== BigInt(COTI_NETWORK.chainIdDecimal)) {
+            throw new Error('Configured COTI RPC returned a different chain.');
+          }
+          return provider;
+        } catch (error) {
+          disposeFailedStartup();
+          throw error;
+        }
+      }
+    ).catch((error: unknown) => {
+      if (cotiHttpProviderPromise === providerPromise) cotiHttpProviderPromise = null;
+      throw error;
+    });
+    cotiHttpProviderPromise = providerPromise;
   }
 
   return cotiHttpProviderPromise;
@@ -1002,8 +1049,104 @@ export const isProviderRequestAlreadyPending = (error: unknown): boolean => {
   return codeCandidate === -32002 || normalized.includes('already pending');
 };
 
+const providerErrorMessages = (
+  error: unknown,
+  seen: Set<object> = new Set(),
+  depth = 0
+): string[] => {
+  if (depth > 4 || !error || typeof error !== 'object') {
+    return typeof error === 'string' ? [error] : [];
+  }
+  if (seen.has(error)) return [];
+  seen.add(error);
+  const value = error as Record<string, unknown>;
+  const nested = [value.error, value.data, value.info, value.cause];
+  return [
+    typeof value.message === 'string' ? value.message : '',
+    ...nested.flatMap((candidate) => providerErrorMessages(candidate, seen, depth + 1))
+  ].filter(Boolean);
+};
+
+export const isProviderRpcTransportUnavailable = (error: unknown): boolean =>
+  providerErrorMessages(error).some((message) => {
+    const normalized = message.toLowerCase();
+    return normalized.includes('failed to fetch') ||
+      normalized.includes('network request failed') ||
+      normalized.includes('unable to connect to the remote server') ||
+      normalized.includes('rpc endpoint returned too many errors');
+  });
+
+export const PROVIDER_RPC_UNAVAILABLE_MESSAGE =
+  'MetaMask lost its RPC connection. The app kept your wallet selected; this does not necessarily mean COTI Testnet is offline. Reload MetaMask if it crashed, then retry. If you already approved a transaction, check MetaMask Activity before retrying.';
+
+export const PROVIDER_RELOADED_MESSAGE =
+  'The selected wallet provider closed or reloaded before the request completed. The app did not retry the request. Reconnect the wallet, check its Activity for any submitted transaction, then retry only if needed.';
+
+const isProviderReloadedError = (error: unknown): boolean =>
+  providerErrorMessages(error).some((message) => {
+    const normalized = message.toLowerCase();
+    return normalized.includes('provider destroyed') ||
+      normalized.includes('cancelled request') ||
+      normalized.includes('canceled request');
+  });
+
+const isUnsafeProviderErrorMessage = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return message.length > 500 ||
+    normalized.includes('could not coalesce error') ||
+    normalized.includes('payload=') ||
+    normalized.includes('"jsonrpc"') ||
+    normalized.includes('"params"') ||
+    normalized.includes('chrome-extension://') ||
+    normalized.includes('service-worker.js') ||
+    normalized.includes('transaction={') ||
+    normalized.includes('error={');
+};
+
+const safeProviderFallback = (fallbackMessage: string): string => {
+  const trimmed = fallbackMessage.trim();
+  return trimmed && !isUnsafeProviderErrorMessage(trimmed)
+    ? trimmed
+    : 'The wallet request failed. Check the wallet Activity before retrying.';
+};
+
+const browserWalletSessionChangedMessage = (error: unknown): string | null => {
+  const messages = providerErrorMessages(error);
+  const matching = messages.find((message) =>
+    message.toLowerCase().includes('owner wallet session changed')
+  );
+  if (!matching) return null;
+  const mismatch = matching.match(/\[([a-z-]+)\]/iu)?.[1]?.toLowerCase() ?? 'unclassified';
+  if (['active-address', 'live-account', 'session-address'].includes(mismatch)) {
+    return `The selected wallet account changed while this action was being prepared. No transaction was sent. Reconnect the intended account and retry. (diagnostic: ${mismatch})`;
+  }
+  if (['active-chain', 'live-chain', 'session-chain'].includes(mismatch)) {
+    return `The selected wallet network changed while this action was being prepared. No transaction was sent. Select COTI Testnet and retry. (diagnostic: ${mismatch})`;
+  }
+  if (['active-provider', 'session-provider', 'session-source'].includes(mismatch)) {
+    return `The selected wallet provider changed or reloaded before submission. No transaction was sent. Reload the wallet extension, reconnect it, and retry. (diagnostic: ${mismatch})`;
+  }
+  if (mismatch === 'lifecycle-epoch') {
+    return 'The wallet signing authority was retired before submission. No transaction was sent. Reconnect and retry; if this repeats, copy this diagnostic: lifecycle-epoch.';
+  }
+  if (mismatch === 'session-missing') {
+    return 'The selected wallet session ended before submission. No transaction was sent. Reconnect the wallet and retry. (diagnostic: session-missing)';
+  }
+  return 'The selected wallet session could not be verified before submission. No transaction was sent. Reconnect and retry. (diagnostic: unclassified)';
+};
+
+export const isBrowserWalletSessionChangedError = (error: unknown): boolean =>
+  providerErrorMessages(error).some((message) =>
+    message.toLowerCase().includes('owner wallet session changed')
+  );
+
 export const getProviderErrorMessage = (error: unknown, fallbackMessage: string): string => {
-  const rawMessage = error instanceof Error ? error.message : '';
+  const messages = providerErrorMessages(error);
+  const rawMessage = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : messages[0] ?? '';
   const codeCandidate = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   const code = typeof codeCandidate === 'number' ? codeCandidate : null;
 
@@ -1015,7 +1158,27 @@ export const getProviderErrorMessage = (error: unknown, fallbackMessage: string)
     return 'The wallet request was rejected.';
   }
 
-  return rawMessage || fallbackMessage;
+  const walletSessionMessage = browserWalletSessionChangedMessage(error);
+  if (walletSessionMessage) {
+    return walletSessionMessage;
+  }
+
+  if (isProviderRpcTransportUnavailable(error)) {
+    return PROVIDER_RPC_UNAVAILABLE_MESSAGE;
+  }
+
+  if (isProviderReloadedError(error)) {
+    return PROVIDER_RELOADED_MESSAGE;
+  }
+
+  if (rawMessage && !isUnsafeProviderErrorMessage(rawMessage)) {
+    return rawMessage;
+  }
+
+  const nestedMessage = messages.find((message) =>
+    message !== rawMessage && !isUnsafeProviderErrorMessage(message)
+  );
+  return nestedMessage || safeProviderFallback(fallbackMessage);
 };
 
 export const isProviderActionRejected = (error: unknown): boolean => {
@@ -1255,16 +1418,34 @@ export const encodeCompactMemoPlaintext = (plain: string): string => {
   return shortest;
 };
 
-export const decodeMemoPlaintext = (raw: string): string => {
+const isUtf8WithinByteLimit = (value: string, maxBytes: number): boolean =>
+  value.length <= maxBytes && TEXT_ENCODER.encode(value).length <= maxBytes;
+
+const maxBase64LengthForBytes = (maxBytes: number): number => Math.ceil(maxBytes / 3) * 4;
+
+export const decodeMemoPlaintext = (
+  raw: string,
+  maxDecodedBytes = MAX_STATE_BACKUP_PLAINTEXT_BYTES
+): string => {
   if (raw.startsWith(MEMO_RAW_PREFIX)) {
-    return repairUtf8MojibakeSegments(raw.slice(MEMO_RAW_PREFIX.length));
+    const plain = raw.slice(MEMO_RAW_PREFIX.length);
+    if (!isUtf8WithinByteLimit(plain, maxDecodedBytes)) {
+      return raw;
+    }
+    return repairUtf8MojibakeSegments(plain);
   }
 
   if (raw.startsWith(MEMO_COMPRESSED_PREFIX)) {
     try {
       const encodedCompressed = raw.slice(MEMO_COMPRESSED_PREFIX.length);
+      if (
+        encodedCompressed.length >
+        maxBase64LengthForBytes(maxDecodedBytes + MAX_COMPRESSED_MEMO_OVERHEAD_BYTES)
+      ) {
+        return raw;
+      }
       const compressedBytes = base64ToBytes(encodedCompressed);
-      const inflatedBytes = unzlibSync(compressedBytes);
+      const inflatedBytes = unzlibBounded(compressedBytes, maxDecodedBytes);
       return TEXT_DECODER.decode(inflatedBytes);
     } catch {
       return raw;
@@ -1272,6 +1453,9 @@ export const decodeMemoPlaintext = (raw: string): string => {
   }
 
   try {
+    if (raw.length > maxBase64LengthForBytes(maxDecodedBytes)) {
+      return raw;
+    }
     const binary = atob(raw);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
@@ -1283,17 +1467,32 @@ export const decodeMemoPlaintext = (raw: string): string => {
   }
 };
 
-export const decodeMemoPlaintextStrict = (raw: string): string | null => {
+export const decodeMemoPlaintextStrict = (
+  raw: string,
+  maxDecodedBytes = MAX_STATE_BACKUP_PLAINTEXT_BYTES
+): string | null => {
   if (raw.startsWith(MEMO_RAW_PREFIX)) {
-    const plain = repairUtf8MojibakeSegments(raw.slice(MEMO_RAW_PREFIX.length));
-    return isPlausibleMemoPlaintext(plain) ? plain : null;
+    const encodedPlain = raw.slice(MEMO_RAW_PREFIX.length);
+    if (encodedPlain.length > maxDecodedBytes) {
+      return null;
+    }
+    const plain = repairUtf8MojibakeSegments(encodedPlain);
+    return isUtf8WithinByteLimit(plain, maxDecodedBytes) && isPlausibleMemoPlaintext(plain)
+      ? plain
+      : null;
   }
 
   if (raw.startsWith(MEMO_COMPRESSED_PREFIX)) {
     try {
       const encodedCompressed = raw.slice(MEMO_COMPRESSED_PREFIX.length);
+      if (
+        encodedCompressed.length >
+        maxBase64LengthForBytes(maxDecodedBytes + MAX_COMPRESSED_MEMO_OVERHEAD_BYTES)
+      ) {
+        return null;
+      }
       const compressedBytes = base64ToBytes(encodedCompressed);
-      const inflatedBytes = unzlibSync(compressedBytes);
+      const inflatedBytes = unzlibBounded(compressedBytes, maxDecodedBytes);
       const plain = decodeUtf8Strict(inflatedBytes);
       return plain !== null && isPlausibleMemoPlaintext(plain) ? plain : null;
     } catch {
@@ -1305,9 +1504,18 @@ export const decodeMemoPlaintextStrict = (raw: string): string | null => {
     return '';
   }
 
-  if (raw.trim() === raw && raw.length % 4 === 0 && MEMO_BASE64_REGEX.test(raw)) {
+  if (
+    raw.length <= maxBase64LengthForBytes(maxDecodedBytes) &&
+    raw.trim() === raw &&
+    raw.length % 4 === 0 &&
+    MEMO_BASE64_REGEX.test(raw)
+  ) {
     try {
-      const plain = decodeUtf8Strict(base64ToBytes(raw));
+      const decodedBytes = base64ToBytes(raw);
+      if (decodedBytes.length > maxDecodedBytes) {
+        return null;
+      }
+      const plain = decodeUtf8Strict(decodedBytes);
       if (plain !== null && isPlausibleMemoPlaintext(plain)) {
         return plain;
       }
@@ -1315,8 +1523,13 @@ export const decodeMemoPlaintextStrict = (raw: string): string | null => {
     }
   }
 
+  if (raw.length > maxDecodedBytes) {
+    return null;
+  }
   const legacyPlain = repairUtf8MojibakeSegments(raw);
-  return isPlausibleMemoPlaintext(legacyPlain) ? legacyPlain : null;
+  return isUtf8WithinByteLimit(legacyPlain, maxDecodedBytes) && isPlausibleMemoPlaintext(legacyPlain)
+    ? legacyPlain
+    : null;
 };
 
 export const formatMessageTimestamp = (timestamp?: number): string => {
@@ -1350,14 +1563,6 @@ export const formatExpiryCountdown = (expiresAt: number): { label: string; urgen
   }
   const urgency: TradeExpiryUrgency = hours > 24 ? 'low' : hours > 1 ? 'medium' : 'high';
   return { label: `Expires ${label}`, urgency };
-};
-
-export const calculateEstimatedBurnerTopUpAmount = (messageTarget: number): bigint => {
-  const safeMessageTarget = Math.max(
-    BURNER_TOP_UP_MIN_MESSAGE_TARGET,
-    Math.min(BURNER_TOP_UP_MAX_MESSAGE_TARGET, Math.floor(messageTarget))
-  );
-  return BURNER_TOP_UP_ESTIMATED_COTI_PER_MESSAGE_WEI * BigInt(safeMessageTarget);
 };
 
 export const formatCotiAmount = (weiAmount: bigint, precision = 6): string => {
@@ -1507,30 +1712,6 @@ export const formatTipNoticeText = (
 export const hasInsufficientFundsError = (message: string): boolean =>
   /insufficient funds|exceeds balance|not enough funds|account balance is 0/i.test(message);
 
-export const normalizeImportInput = (value: string): string => value.replace(/\r?\n/g, ' ').trim();
-
-export const normalizeMnemonicInput = (value: string): string =>
-  value
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((part) => part.length > 0)
-    .join(' ');
-
-export const normalizePrivateKeyInput = (value: string): string | null => {
-  const compact = value.replace(/\s+/g, '');
-  if (!/^(0x)?[a-fA-F0-9]{64}$/.test(compact)) {
-    return null;
-  }
-
-  return compact.startsWith('0x') ? compact : `0x${compact}`;
-};
-
-export const looksLikePrivateKeyInput = (value: string): boolean => {
-  const compact = value.replace(/\s+/g, '');
-  return compact.startsWith('0x') || /^[a-fA-F0-9]+$/.test(compact);
-};
-
 export async function withTimeout<T>(task: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   let timeoutId: number | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -1545,17 +1726,6 @@ export async function withTimeout<T>(task: Promise<T>, timeoutMs: number, timeou
     }
   }
 }
-
-export const isBurnerStorageAvailable = (): boolean => {
-  try {
-    const probeValue = `${Date.now()}`;
-    window.localStorage.setItem(BURNER_WALLET_STORAGE_PROBE_KEY, probeValue);
-    window.localStorage.removeItem(BURNER_WALLET_STORAGE_PROBE_KEY);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 export const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number') {

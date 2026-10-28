@@ -26,7 +26,7 @@ const LEGAL_DOCUMENTS: Record<LegalDocumentKey, LegalDocument> = {
   privacy: {
     title: 'Privacy notice',
     summary:
-      'This notice describes how the current ChainWhisper browser app handles information when you use its messaging, trading, privacy, treasury, and agent features.',
+      'This notice describes how the current ChainWhisper browser app handles information when you use its messaging, trading, privacy, Private TVL, and agent features.',
     sections: [
       {
         title: 'The information the app handles',
@@ -34,7 +34,7 @@ const LEGAL_DOCUMENTS: Record<LegalDocumentKey, LegalDocument> = {
           'The current app does not use a traditional hosted user account or Supabase Auth. A connected public wallet address acts as the interactive identity.',
           'Wallet addresses, network identifiers, transaction hashes, contract events, order data, sender and recipient details, timestamps, fees, tips, public nicknames, group membership and administration events, and other blockchain metadata needed to read from or write to COTI Mainnet.',
           'Encrypted direct and group messages, encrypted image attachments, group state, and the metadata needed to deliver and display those features.',
-          'Browser-stored settings and working data, including interface preferences, cached decrypted timelines, read state, wallet preferences, trade access details, paid-agent retry data, and encrypted ChainWhisper account vaults.',
+          'Browser-stored settings and working data, including interface preferences, cached decrypted timelines, read state, wallet preferences, trade access details, and paid-agent retry data.',
           'Questions, prompts, and the limited app context you choose to send through App Help or the Trade Agent.'
         ]
       },
@@ -44,7 +44,7 @@ const LEGAL_DOCUMENTS: Record<LegalDocumentKey, LegalDocument> = {
           'Blockchain actions and records are submitted to COTI Mainnet through wallet, RPC, contract, and explorer services. On-chain records may be permanent and cannot be deleted by ChainWhisper.',
           'Encrypted image blobs are uploaded to Supabase Storage. The bucket can serve those encrypted blobs publicly, while decryption material is carried inside the encrypted message. Upload records also include the owner wallet, conversation kind, file type and size, timestamps, and a confirmed transaction hash when available.',
           'App Help and Trade Agent requests pass through Supabase Edge Functions and may be processed by OpenAI. API storage is disabled for those requests. Raw prompts and contexts are not stored in the payment table, although rate-limit and payment-status records may be retained.',
-          'Market, token, treasury, wallet, and explorer features can request data from COTI infrastructure and the third-party services identified in the relevant app surface. Hosting, remote font, wallet-integration, RPC, and API providers may receive ordinary request data such as your network address and browser information.'
+          'Market, token, bridge-reserve, Band price, wallet, and explorer features can request data from COTI infrastructure and the third-party services identified in the relevant app surface. Hosting, remote font, wallet-integration, RPC, and API providers may receive ordinary request data such as your network address and browser information.'
         ]
       },
       {
@@ -61,7 +61,7 @@ const LEGAL_DOCUMENTS: Record<LegalDocumentKey, LegalDocument> = {
       {
         title: 'Your choices and security',
         items: [
-          'You can browse Home and Treasury Data without connecting a wallet, decline optional AI features, disconnect your wallet, and clear ChainWhisper site data in your browser.',
+          'You can browse Home and COTI Private TVL without connecting a wallet, decline optional AI features, disconnect your wallet, and clear ChainWhisper site data in your browser.',
           'Never share a private key, recovery phrase, wallet password, AES key, trade secret, or other credential with ChainWhisper, an MCP tool, App Help, the Trade Agent, or a public support issue.',
           'Encryption reduces exposure of message content, but no wallet, browser, smart contract, network, or storage system can be guaranteed completely secure.'
         ]
@@ -82,7 +82,7 @@ const LEGAL_DOCUMENTS: Record<LegalDocumentKey, LegalDocument> = {
       {
         title: 'Service and eligibility',
         items: [
-          'ChainWhisper is a browser interface for COTI messaging, self-custodial wallet activity, OTC smart contracts, token privacy tools, treasury data, and optional agent assistance.',
+          'ChainWhisper is a browser interface for COTI messaging, self-custodial wallet activity, DEX and P2P smart contracts, token privacy tools, private-TVL data, and optional agent assistance.',
           'You are responsible for determining whether your use is lawful and for complying with applicable obligations and third-party terms.',
           'Some features, integrations, contracts, and data sources may be experimental, incomplete, paused, changed, or withdrawn.'
         ]
@@ -99,7 +99,7 @@ const LEGAL_DOCUMENTS: Record<LegalDocumentKey, LegalDocument> = {
         title: 'No advice, brokerage, or guarantee',
         items: [
           'ChainWhisper provides software and information, not financial, investment, legal, tax, or security advice. It is not a broker, exchange, fiduciary, or custodian.',
-          'Quotes, prices, balances, simulations, treasury figures, and agent responses may be delayed, incomplete, or wrong. Independently verify information before acting.',
+          'Quotes, prices, balances, simulations, bridge reserves, liabilities, TVL figures, and agent responses may be delayed, incomplete, or wrong. Independently verify information before acting.',
           'Private or encrypted features do not guarantee anonymity. Public addresses, timing, transaction metadata, group membership and administration events, contract activity, counterparties, or compromised devices may reveal information.'
         ]
       },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { isTradeMobileShellRoute } from '../../lib/tradeMobileShell';
 import {
   freezeDirectMetaMaskMobileRoute,
@@ -12,6 +12,7 @@ import {
   getTitleForAppPage,
   resolveAppRouteFromLocation,
   resolveAppRouteFromPath,
+  resolveCanonicalTradingPath,
   resolveNavigationPathFromLocation,
   stripStaleTradeSearchParams,
   type AppPage
@@ -23,6 +24,9 @@ type UseAppNavigationArgs = {
 };
 
 export default function useAppNavigation({ activePage, setActivePage }: UseAppNavigationArgs) {
+  const [navigationPath, setNavigationPath] = useState(() => typeof window === 'undefined'
+    ? getPathForAppPage(activePage)
+    : resolveCanonicalTradingPath(resolveNavigationPathFromLocation()));
   const navigateToPage = useCallback(
     (page: AppPage) => {
       setActivePage(page);
@@ -35,6 +39,7 @@ export default function useAppNavigation({ activePage, setActivePage }: UseAppNa
         writeWalletBootstrapActiveRouteState(nextPath, {
           replace: resolveNavigationPathFromLocation() === nextPath
         });
+        setNavigationPath(nextPath);
         return;
       }
 
@@ -52,6 +57,7 @@ export default function useAppNavigation({ activePage, setActivePage }: UseAppNa
         nextUrl.searchParams.delete('p');
         nextUrl.hash = nextHash;
         window.history.pushState(window.history.state, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
       }
     },
     [setActivePage]
@@ -84,6 +90,7 @@ export default function useAppNavigation({ activePage, setActivePage }: UseAppNa
           replace: resolveNavigationPathFromLocation() === targetPath
         });
         setActivePage(resolveAppRouteFromPath(targetPath).page);
+        setNavigationPath(resolveCanonicalTradingPath(targetUrl.pathname));
         return;
       }
 
@@ -100,22 +107,26 @@ export default function useAppNavigation({ activePage, setActivePage }: UseAppNa
         return;
       }
       freezeDirectMetaMaskMobileRoute();
-      const nextRoute = resolveAppRouteFromLocation();
+      const currentPath = resolveNavigationPathFromLocation();
+      const canonicalTradingPath = resolveCanonicalTradingPath(currentPath);
+      setNavigationPath(canonicalTradingPath);
+      const nextRoute = resolveAppRouteFromPath(canonicalTradingPath, window.location.hash);
       setActivePage(nextRoute.page);
 
-      const currentPath = resolveNavigationPathFromLocation();
       const preserveWalletBootstrap = isWalletBootstrapRoute(window.location.pathname);
       if (preserveWalletBootstrap) {
         freezeWalletBootstrapUrlAfterEntry();
       }
-      const lowerCurrentPath = currentPath.toLowerCase();
-      const canonicalPath =
-        nextRoute.page === 'trades' &&
-        (lowerCurrentPath.startsWith('/otc') ||
-          lowerCurrentPath.startsWith('/trades') ||
-          lowerCurrentPath.startsWith('/otcdesk'))
-          ? currentPath
-          : getPathForAppPage(nextRoute.page);
+      const lowerCurrentPath = canonicalTradingPath.toLowerCase();
+      const preserveProductSubroute =
+        (nextRoute.page === 'trades' &&
+          (lowerCurrentPath.startsWith('/otc') ||
+            lowerCurrentPath.startsWith('/trades') ||
+            lowerCurrentPath.startsWith('/otcdesk'))) ||
+        (nextRoute.page === 'dex' && lowerCurrentPath.startsWith('/dex/'));
+      const canonicalPath = preserveProductSubroute
+        ? canonicalTradingPath
+        : getPathForAppPage(nextRoute.page);
       const canonicalHash = nextRoute.page === 'trades' ? window.location.hash : '';
       const preserveTradeShell =
         nextRoute.page === 'trades' && isTradeMobileShellRoute(window.location.pathname, window.location.search);
@@ -155,5 +166,5 @@ export default function useAppNavigation({ activePage, setActivePage }: UseAppNa
     }
   }, [activePage]);
 
-  return { navigateToInternalAppLink, navigateToPage };
+  return { navigationPath, navigateToInternalAppLink, navigateToPage };
 }

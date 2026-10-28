@@ -1,11 +1,8 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import { formatUnits } from '@coti-io/coti-ethers';
 import {
   PRIVATE_REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_ADDRESS,
-  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-  PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   formatTokenAmount,
   type TradeAssetPayload,
   type TradeSnapshot
@@ -22,26 +19,26 @@ import {
   type TradeFundingPreflightInput
 } from '../../../lib/tradeActionConfirm';
 import type { TradeComposerModel } from '../../../lib/tradeComposer';
-import {
-  counterTradeAndCloseCounteredTradeOnChain,
-  createTradeOnChain,
-  editDirectTradeOnChain,
-  editTradeOnChain,
-  replacePrivateFixedPriceTradeOnChain
-} from '../../../lib/tradeActions';
 import { getCounterOfferUnavailableReason } from '../../../lib/tradeCounterSupport';
-import { createTradeAccessSecret } from '../../../lib/directTradeTerms';
-import { resolveOneOffTradeAccessPlan, type TradeVisibility } from '../../../lib/tradeCreationAccess';
+import type { TradeVisibility } from '../../../lib/tradeCreationAccess';
 import { ZERO_TRADE_TAKER_ADDRESS } from '../../../lib/tradePerspective';
-import type { P2PActionNoticeAction, P2PActionNoticeInput } from '../../../lib/p2pActionNotice';
+import {
+  getP2PActionFailureStatus,
+  type P2PActionNoticeAction,
+  type P2PActionNoticeInput
+} from '../../../lib/p2pActionNotice';
 import type { TradeEntryMode, TradeSurfaceView } from './useP2PTradeRoute';
 import { formatWalletFundAmount } from '../../../lib/walletFunds';
-
-type TradeSigner = JsonRpcSigner | Wallet;
-
-const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
-
-const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
+import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
+import { isPrivateBookV2RuntimeHash } from '../../../lib/privateBookV2Actions';
+import { getPrivateBookV2OwnerBudget, getPrivateBookV2Projection } from '../../../lib/privateBookV2Consumer';
+import { buildPrivateBookV2ComposerAction, executePrivateBookV2Composer } from '../../../lib/privateBookV2Composer';
+import { normalizePrivateBookV2Price } from '../../../lib/privateBookV2Terms';
+import { captureWalletActionIntent, readWalletActionIntent } from '../../../lib/walletActionIntent';
+import {
+  buildOtcV2ConditionalApproval,
+  buildOtcV2ConfirmationDetails
+} from '../../../lib/otcV2Confirmation';
 
 const quotePrivateRequestAmountForOffer = (
   offerAmountOut: bigint,
@@ -131,32 +128,6 @@ const resolveTradeAssetSelection = (
   };
 };
 
-const resolveComposerFeeEscrowContract = ({
-  counterParentTrade,
-  editingTrade,
-  hiddenLiquidity,
-  tradeVisibility
-}: {
-  counterParentTrade: TradeSnapshot | null;
-  editingTrade: TradeSnapshot | null;
-  hiddenLiquidity: boolean;
-  tradeVisibility: TradeVisibility;
-}): string => {
-  if (editingTrade?.escrowContract) {
-    return editingTrade.escrowContract;
-  }
-  if (counterParentTrade) {
-    return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
-  }
-  if (hiddenLiquidity) {
-    return PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS;
-  }
-  if (tradeVisibility !== 'public') {
-    return DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS;
-  }
-  return TRADE_ESCROW_CONTRACT_ADDRESS;
-};
-
 type UseP2PTradeComposerActionsArgs = {
   buildCurrentTradeSurfacePath: (view: TradeSurfaceView, tradeMode?: TradeEntryMode) => string;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
@@ -166,23 +137,12 @@ type UseP2PTradeComposerActionsArgs = {
   directTradeRecipientNormalized: string;
   editingTrade: TradeSnapshot | null;
   ensureTradeFunding?: (input: TradeFundingPreflightInput) => Promise<void>;
-  getTradeSigner: (requireAes: boolean) => Promise<TradeSigner>;
-  hashTradeAccessSecret: (accessSecret: string) => Promise<string>;
-  loadWalletBalances: (signer?: TradeSigner) => Promise<void>;
+  loadWalletBalances: () => Promise<void>;
   mergeTradeSnapshot: (snapshot: TradeSnapshot) => void;
   navigateToTradePath: (path: string) => void;
   openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
   refreshMyTrades: () => Promise<void>;
   refreshPublicTrades: () => Promise<void>;
-  rememberPrivateTradeLiquidity: (
-    tradeId: number,
-    escrowContract: string | undefined,
-    offerAmountWei: bigint,
-    requestAmountWei?: bigint
-  ) => void;
-  rememberTradeAccessSecret: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
-  resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
-  resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
   runTradeWalletPromptFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setCounterParentTrade: Dispatch<SetStateAction<TradeSnapshot | null>>;
   setCreatedTradeId: Dispatch<SetStateAction<number | null>>;
@@ -209,6 +169,8 @@ type UseP2PTradeComposerActionsArgs = {
   walletAddress: string;
   walletKey: string;
   onActionNotice?: (notice: P2PActionNoticeInput) => void;
+  otcV2ActionRuntime?: OtcV2ActionRuntime | null;
+  refreshOneOffV2Trades?: () => void;
 };
 
 type UseP2PTradeComposerActionsResult = {
@@ -229,18 +191,12 @@ export default function useP2PTradeComposerActions({
   directTradeRecipientNormalized,
   editingTrade,
   ensureTradeFunding,
-  getTradeSigner,
-  hashTradeAccessSecret,
   loadWalletBalances,
   mergeTradeSnapshot,
   navigateToTradePath,
   openTrade,
   refreshMyTrades,
   refreshPublicTrades,
-  rememberPrivateTradeLiquidity,
-  rememberTradeAccessSecret,
-  resolveKnownTradeAccessSecret,
-  resolveRequiredFeeForTradeCreate,
   runTradeWalletPromptFlow,
   setCounterParentTrade,
   setCreatedTradeId,
@@ -266,7 +222,9 @@ export default function useP2PTradeComposerActions({
   tradeVisibility,
   walletAddress,
   walletKey,
-  onActionNotice
+  onActionNotice,
+  otcV2ActionRuntime,
+  refreshOneOffV2Trades
 }: UseP2PTradeComposerActionsArgs): UseP2PTradeComposerActionsResult {
   const notifyComposerAction = useCallback(
     (input: Omit<P2PActionNoticeInput, 'surface'>) => {
@@ -277,6 +235,10 @@ export default function useP2PTradeComposerActions({
 
   const beginCounterTrade = useCallback(
     (snapshot: TradeSnapshot) => {
+      if (!snapshot.v2) {
+        setTradeActionError('Legacy OTC orders are read-only and cannot receive new counter offers.');
+        return;
+      }
       const counterUnavailableReason = getCounterOfferUnavailableReason(snapshot, walletAddress ? walletKey : '');
       if (counterUnavailableReason) {
         setTradeActionError(counterUnavailableReason);
@@ -339,12 +301,23 @@ export default function useP2PTradeComposerActions({
 
   const beginEditTrade = useCallback(
     (snapshot: TradeSnapshot) => {
+      if (!snapshot.v2) {
+        setTradeActionError('Legacy OTC orders are read-only and cannot be edited.');
+        return;
+      }
       if (!walletAddress) {
         setTradeActionError('Connect the maker wallet before editing.');
         return;
       }
       if (!canEditPublicTrade(snapshot, walletKey)) {
-        setTradeActionError('Only your open, unfilled public trades can be edited.');
+        setTradeActionError('Only your open, unfilled trades can be edited.');
+        return;
+      }
+
+      const currentBook = getPrivateBookV2Projection(snapshot);
+      const ownerBudget = currentBook ? getPrivateBookV2OwnerBudget(snapshot, walletAddress) : undefined;
+      if (currentBook && !ownerBudget) {
+        setTradeActionError('Unlock and refresh your private escrow budget before editing.');
         return;
       }
 
@@ -359,7 +332,7 @@ export default function useP2PTradeComposerActions({
       setTradeRequestCustomTokenAddress(nextRequestSelection.customAddress);
       if (snapshot.hiddenLiquidity) {
         const hiddenOfferAmountRaw =
-          snapshot.makerPrivateProgress?.remainingOfferAmount ?? snapshot.makerPrivateProgress?.initialOfferAmount;
+          ownerBudget?.remainingOfferAmount ?? snapshot.makerPrivateProgress?.remainingOfferAmount ?? snapshot.makerPrivateProgress?.initialOfferAmount;
         const hiddenOfferAmount =
           hiddenOfferAmountRaw && /^\d+$/.test(hiddenOfferAmountRaw) ? BigInt(hiddenOfferAmountRaw) : null;
         const hiddenRequestAmount =
@@ -446,16 +419,17 @@ export default function useP2PTradeComposerActions({
       return;
     }
 
-    const offerToken = tradeComposerModel.selectedTradeOfferToken;
-    const requestToken = tradeComposerModel.selectedTradeRequestToken;
+    const offerToken = tradeComposerModel.selectedTradeOfferToken ? { ...tradeComposerModel.selectedTradeOfferToken } : null;
+    const requestToken = tradeComposerModel.selectedTradeRequestToken ? { ...tradeComposerModel.selectedTradeRequestToken } : null;
     const offerAmount = tradeComposerModel.parsedTradeOfferAmountWei;
     const requestAmount = tradeComposerModel.parsedTradeRequestAmountWei;
     if (!offerToken || !requestToken || !offerAmount || !requestAmount) {
       setComposerActionError('Complete the trade terms first.');
       return;
     }
+    const capturedExpiresAt = tradeHasNoExpiry ? 0 : Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
     if (editingTrade && !canEditPublicTrade(editingTrade, walletKey)) {
-      setComposerActionError('Only your open, unfilled public trades can be edited.');
+      setComposerActionError('Only your open, unfilled trades can be edited.');
       return;
     }
     if (!editingTrade && tradeVisibility === 'direct') {
@@ -471,11 +445,54 @@ export default function useP2PTradeComposerActions({
 
     try {
       setCreatingTrade(true);
+      // Keep the reviewed parent identity stable across wallet confirmation.
+      const counterParentSnapshot = counterParentTrade ? { ...counterParentTrade,
+        v2: counterParentTrade.v2 ? { ...counterParentTrade.v2 } : undefined } : null;
       const createdResult = await runTradeWalletPromptFlow(async () => {
+      const counterParentTrade = counterParentSnapshot;
       const isCounterTrade = counterParentTrade !== null;
       const isCounterReplacement = Boolean(counterParentTrade?.counterParentTradeId);
       const editSourceTrade = editingTrade;
       const isEditTrade = editSourceTrade !== null;
+      if (!isCounterTrade && !isEditTrade && tradeVisibility === 'unlisted') {
+        const link = otcV2ActionRuntime?.link;
+        if (!otcV2ActionRuntime?.isCurrent() || !link || link.ownerAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+          throw new Error('Shared-link creation is unavailable in the current wallet session.');
+        }
+        if (offerToken.kind === 'native' || requestToken.kind === 'native' || offerToken.kind !== requestToken.kind ||
+            !offerToken.tokenAddress || !requestToken.tokenAddress) {
+          throw new Error('Shared links require two public tokens or two private tokens.');
+        }
+        if (offerToken.kind === 'private-erc20' && !tradeHidePrivateLiquidity) throw new Error('Public private-token budget disclosure is not enabled for shared links.');
+        if (!ensureTradeFunding) throw new Error('Trade confirmation is unavailable.');
+        const price = normalizePrivateBookV2Price({ offerAmount, requestAmount });
+        const intent = captureWalletActionIntent({ offerBudget: offerAmount.toString(), terms: {
+          offerToken: offerToken.tokenAddress.toLowerCase(), requestToken: requestToken.tokenAddress.toLowerCase(),
+          privatePair: offerToken.kind === 'private-erc20', priceOffer: price.offerAmount.toString(),
+          priceRequest: price.requestAmount.toString(), expiresAt: capturedExpiresAt.toString() } });
+        const details = buildOtcV2ConfirmationDetails({ cotiPrivateInputCount: intent.action.terms.privatePair ? 4 : 1,
+          approvals: [{ kind: offerToken.kind, symbol: offerToken.symbol }], summaryRows: [
+            { label: 'Access', value: 'Shared link' },
+            { label: 'Offer budget', value: `${formatUnits(offerAmount, offerToken.decimals)} ${offerToken.symbol}` },
+            { label: 'Price', value: `${formatUnits(price.offerAmount, offerToken.decimals)} ${offerToken.symbol} for ${formatUnits(price.requestAmount, requestToken.decimals)} ${requestToken.symbol}` },
+            { label: 'Privacy', value: intent.action.terms.privatePair ? 'Price and budget encrypted on-chain; link holders can read the price' : 'Public token terms and amounts' },
+            { label: 'Fills', value: 'Partial fills at this price; each payment rounds up' }
+          ] });
+        await ensureTradeFunding({ actionLabel: 'create shared trade', confirmButtonLabel: 'Create trade',
+          confirmTitle: 'Confirm shared trade', confirmMessage: details.confirmMessage, confirmationPolicy: 'always',
+          confirmationStats: details.confirmationStats, tradeSummary: details.tradeSummary,
+          requirements: [{ asset: offerToken, amountWei: offerAmount, reason: 'trade offer' }] });
+        if (!otcV2ActionRuntime.isCurrent() || otcV2ActionRuntime.link !== link) throw new Error('Shared-link wallet session changed during review.');
+        notifyComposerAction({ action: composerAction, status: 'pending' });
+        const created = await link.create(readWalletActionIntent(intent));
+        const shareUrl = typeof window === 'undefined' ? created.sharePath : new URL(created.sharePath, window.location.origin).href;
+        setCreatedTradeLink(shareUrl);
+        setTradeOfferAmountInput(''); setTradeRequestAmountInput('');
+        setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS); setTradeHasNoExpiry(false); setTradeHidePrivateLiquidity(true);
+        try { navigateToTradePath(created.sharePath); await loadWalletBalances(); }
+        catch { setTradeActionError('Trade created. Its display is pending a refresh. Keep the Share link; do not create it again.'); }
+        return { txHash: created.transactionHash };
+      }
       if (counterParentTrade) {
         const counterUnavailableReason = getCounterOfferUnavailableReason(counterParentTrade, walletKey);
         if (counterUnavailableReason) {
@@ -491,41 +508,81 @@ export default function useP2PTradeComposerActions({
           !isCounterTrade &&
           (!isEditTrade || editSourceTrade?.hiddenLiquidity)
       );
+      const v2Protocol = editSourceTrade?.v2?.protocol ?? (
+        counterParentTrade?.v2?.protocol === 'direct-v2'
+          ? 'direct-v2'
+          : !isEditTrade && !isCounterTrade && tradeVisibility === 'direct'
+            ? 'direct-v2'
+            : !isEditTrade && !isCounterTrade && tradeVisibility === 'public'
+              ? offerToken.kind === 'private-erc20' || requestToken.kind === 'private-erc20'
+                ? 'private-v2'
+                : 'standard-v2'
+              : null
+      );
+      if (!v2Protocol) {
+        throw new Error('This order type has no frozen OTC V2 implementation. Use Public, Direct, or Private OTC V2.');
+      }
+      if (!otcV2ActionRuntime?.isCurrent()) {
+        throw new Error('The verified OTC V2 suite is unavailable in the current wallet session.');
+      }
+      if (counterParentTrade && counterParentTrade.v2?.protocol !== 'direct-v2') {
+        throw new Error('Only Direct OTC V2 offers support counter offers.');
+      }
+      const v2Deployment = otcV2ActionRuntime.deployments[v2Protocol];
+      if (counterParentTrade && (
+        counterParentTrade.v2?.chainId !== v2Deployment.chainId ||
+        counterParentTrade.v2?.contractAddress.toLowerCase() !== v2Deployment.contractAddress.toLowerCase() ||
+        counterParentTrade.escrowContract?.toLowerCase() !== v2Deployment.contractAddress.toLowerCase()
+      )) {
+        throw new Error('This counter offer does not match the verified Direct OTC V2 deployment.');
+      }
+      if (v2Protocol === 'private-v2' && isPrivateBookV2RuntimeHash(otcV2ActionRuntime.deployments['private-v2'].runtimeBytecodeHash)) {
+        if (isCounterTrade || tradeVisibility !== 'public') throw new Error('This private book candidate supports public-book creation only.');
+        if (!ensureTradeFunding) throw new Error('Trade confirmation is unavailable.');
+        const action = buildPrivateBookV2ComposerAction({ offerToken, requestToken, offerBudget: offerAmount,
+          requestAtBudget: requestAmount, expiresAt: capturedExpiresAt, editingTrade: editSourceTrade,
+          disclosePrivateBudget: !tradeHidePrivateLiquidity });
+        const result = await executePrivateBookV2Composer({ runtime: otcV2ActionRuntime, action, offerToken, requestToken,
+          walletAddress, editingTrade: editSourceTrade, confirm: async details => {
+            await ensureTradeFunding({ actionLabel: isEditTrade ? 'update trade' : 'create trade',
+              confirmButtonLabel: isEditTrade ? 'Update trade' : 'Create trade', confirmMessage: details.confirmMessage,
+              confirmationStats: details.confirmationStats, confirmTitle: isEditTrade ? 'Confirm trade update' : 'Confirm new trade',
+              confirmationPolicy: 'always', requirements: [{ asset: offerToken, amountWei: offerAmount, reason: 'trade offer' }],
+              tradeSummary: details.tradeSummary });
+            notifyComposerAction({ action: composerAction, status: 'pending' });
+            return true;
+          } });
+        if (!result) return null;
+        setCreatedTradeId(result.tradeId);
+        setCreatedTradeLink(buildTradeShareUrl(result.tradeId, undefined, result.escrowContract));
+        setCounterParentTrade(null);
+        setEditingTrade(null);
+        setTradeOfferAmountInput('');
+        setTradeRequestAmountInput('');
+        setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
+        setTradeHasNoExpiry(false);
+        setTradeHidePrivateLiquidity(true);
+        if (result.snapshot) {
+          mergeTradeSnapshot(result.snapshot);
+          setDetailTrade(result.snapshot);
+        }
+        // The send is confirmed. A display/list refresh failure cannot turn it into a failed creation.
+        let refreshError = result.refreshError;
+        try {
+          openTrade(result.tradeId, undefined, result.escrowContract);
+          refreshOneOffV2Trades?.();
+          await Promise.all([loadWalletBalances(), refreshMyTrades(), refreshPublicTrades()]);
+        } catch {
+          refreshError = 'Trade confirmed. Its display is pending a refresh. Keep the order ID; do not create it again.';
+        }
+        if (refreshError) setTradeActionError(refreshError);
+        return result;
+      }
+      if (editSourceTrade && getPrivateBookV2Projection(editSourceTrade)) throw new Error('This edit requires the promoted private book runtime.');
       if (isEditTrade && editSourceTrade.hiddenLiquidity && !hiddenLiquidity) {
         setComposerActionError('Hidden amount orders must stay hidden when edited. Cancel the edit to create a visible order.');
         return null;
       }
-      const visiblePrivateTokenDirectTrade = Boolean(
-        !hiddenLiquidity &&
-          !isEditTrade &&
-          (isCounterTrade || tradeVisibility !== 'public')
-      );
-      const isEditingDirectTrade = Boolean(
-        editSourceTrade?.escrowContract?.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase()
-      );
-      const accessPlan = resolveOneOffTradeAccessPlan({
-        hiddenLiquidity,
-        tradeVisibility,
-        isEditTrade,
-        isCounterTrade,
-        isEditingDirectTrade
-      });
-      const existingEditAccessSecret = isEditingDirectTrade
-        ? resolveKnownTradeAccessSecret(editSourceTrade!.tradeId, editSourceTrade!.escrowContract)
-        : '';
-      const accessSecret =
-        accessPlan.shouldCreateAccessSecret
-          ? createTradeAccessSecret()
-          : '';
-      const directEditAccessSecret = isEditingDirectTrade ? existingEditAccessSecret || accessSecret : accessSecret;
-      const nativeFeeWei = await resolveRequiredFeeForTradeCreate(
-        resolveComposerFeeEscrowContract({
-          counterParentTrade,
-          editingTrade,
-          hiddenLiquidity,
-          tradeVisibility
-        })
-      );
       const actionLabel = isEditTrade ? 'update trade' : isCounterTrade ? 'create counter offer' : 'create trade';
       const actionTitle = isEditTrade
         ? 'Confirm trade update'
@@ -564,23 +621,28 @@ export default function useP2PTradeComposerActions({
           value: directTradeRecipientNormalized
         });
       }
-      if (nativeFeeWei > 0n) {
-        tradeSummary.push({
-          label: 'Fee',
-          value: formatWalletFundAmount(
-            nativeFeeWei,
-            {
-              kind: 'native',
-              symbol: 'COTI',
-              decimals: 18
-            },
-            6
-          )
-        });
-      }
+      const v2Approval = buildOtcV2ConditionalApproval({
+        amountWei: offerAmount,
+        kind: offerToken.kind === 'native' ? 'none' : offerToken.kind,
+        symbol: offerToken.symbol
+      });
+      const v2Confirmation = buildOtcV2ConfirmationDetails({
+        approvals: v2Approval ? [v2Approval] : [],
+        cotiPrivateInputCount:
+          v2Protocol === 'private-v2'
+            ? 1
+            : v2Protocol === 'direct-v2' &&
+                offerToken.kind === 'private-erc20' &&
+                requestToken.kind === 'private-erc20'
+              ? 2
+              : 0,
+        summaryRows: tradeSummary
+      });
       await ensureTradeFunding?.({
         actionLabel,
         confirmButtonLabel: actionPrimaryLabel,
+        confirmMessage: v2Confirmation.confirmMessage,
+        confirmationStats: v2Confirmation.confirmationStats,
         confirmTitle: actionTitle,
         confirmationPolicy: 'always',
         requirements: [
@@ -588,167 +650,194 @@ export default function useP2PTradeComposerActions({
             asset: offerToken,
             amountWei: offerAmount,
             reason: 'trade offer'
-          },
-          {
-            asset: {
-              kind: 'native',
-              symbol: 'COTI',
-              decimals: 18
-            },
-            amountWei: nativeFeeWei,
-            reason: 'trade fee'
           }
         ],
-        tradeSummary
+        tradeSummary: v2Confirmation.tradeSummary
       });
       notifyComposerAction({ action: composerAction, status: 'pending' });
-      const accessHash = directEditAccessSecret ? await hashTradeAccessSecret(directEditAccessSecret) : ZERO_BYTES32;
-      const signer = await getTradeSigner(
-        isPrivateTradeAsset(offerToken) || isPrivateTradeAsset(requestToken) || hiddenLiquidity || visiblePrivateTokenDirectTrade
-      );
       const expiresAt = tradeHasNoExpiry
         ? 0
         : Math.floor(Date.now() / 1000) + tradeComposerModel.parsedTradeExpiryHours * 3600;
-      const publicOfferAmount = hiddenLiquidity ? tradeComposerModel.hiddenPriceOfferAmountWei! : offerAmount;
-      const publicRequestAmount = hiddenLiquidity ? tradeComposerModel.hiddenPriceRequestAmountWei! : requestAmount;
       const takerAddress =
         counterParentTrade?.maker ??
         (isEditTrade
-          ? isEditingDirectTrade
+          ? v2Protocol === 'direct-v2'
             ? editSourceTrade?.taker ?? ZERO_TRADE_TAKER_ADDRESS
             : ZERO_TRADE_TAKER_ADDRESS
           : tradeVisibility === 'direct'
             ? directTradeRecipientNormalized
             : ZERO_TRADE_TAKER_ADDRESS);
-      const createResult = isEditTrade
-        ? hiddenLiquidity
-          ? await replacePrivateFixedPriceTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              originalTradeId: editSourceTrade.tradeId,
-              takerAddress: ZERO_TRADE_TAKER_ADDRESS,
-              offerAsset: offerToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: requestToken,
-              requestAmountWei: publicRequestAmount,
-              expiresAt,
-              nativeFeeWei,
-              isPublic: true,
-              accessSecret: accessSecret || undefined,
-              hiddenOfferAmountWei: offerAmount,
-              hiddenRequestAmountWei: requestAmount,
-              publicOfferAmountWei: publicOfferAmount
-            })
-          : isEditingDirectTrade
-            ? await editDirectTradeOnChain({
-                signer,
-                makerAddress: walletAddress,
-                originalTradeId: editSourceTrade.tradeId,
-                takerAddress,
-                offerAsset: offerToken,
-                offerAmountWei: offerAmount,
-                requestAsset: requestToken,
-                requestAmountWei: requestAmount,
-                expiresAt,
-                nativeFeeWei,
-                directAccessSecret: directEditAccessSecret || undefined,
-                parentEscrowContract: editSourceTrade.counterParentEscrow,
-                parentTradeId: editSourceTrade.counterParentTradeId
-              })
-          : await editTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              originalTradeId: editSourceTrade.tradeId,
-              takerAddress: ZERO_TRADE_TAKER_ADDRESS,
-              offerAsset: offerToken,
-              offerAmountWei: offerAmount,
-              requestAsset: requestToken,
-              requestAmountWei: requestAmount,
-              expiresAt,
-              nativeFeeWei,
-              isPublic: true
-            })
-        : isCounterReplacement && counterParentTrade
-          ? await counterTradeAndCloseCounteredTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              counteredTradeId: counterParentTrade.tradeId,
-              offerAsset: offerToken,
-              offerAmountWei: offerAmount,
-              requestAsset: requestToken,
-              requestAmountWei: requestAmount,
-              expiresAt,
-              nativeFeeWei,
-              directAccessSecret: accessSecret || undefined,
-              counterTakerAddress: counterParentTrade.maker,
-              counteredEscrowContract: counterParentTrade.escrowContract,
-              parentEscrowContract: counterParentTrade.counterParentEscrow ?? counterParentTrade.escrowContract,
-              parentTradeId: counterParentTrade.counterParentTradeId
-            })
-          : await createTradeOnChain({
-              signer,
-              makerAddress: walletAddress,
-              takerAddress,
-              offerAsset: offerToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: requestToken,
-              requestAmountWei: publicRequestAmount,
-              expiresAt,
-              nativeFeeWei,
-              isPublic: !isCounterTrade && tradeVisibility === 'public',
-              accessHash: accessHash !== ZERO_BYTES32 ? accessHash : undefined,
-              accessSecret: accessSecret || undefined,
-              parentTradeId: counterParentTrade?.tradeId,
-              hidePrivateLiquidity: hiddenLiquidity,
-              hiddenOfferAmountWei: hiddenLiquidity ? offerAmount : undefined,
-              hiddenRequestAmountWei: hiddenLiquidity ? requestAmount : undefined,
-              publicOfferAmountWei: hiddenLiquidity ? publicOfferAmount : undefined,
-              directAccessSecret: accessSecret || undefined,
-              parentEscrowContract: counterParentTrade?.escrowContract
-            });
-      const tradeId = createResult.tradeId;
-      if (hiddenLiquidity) {
-        rememberPrivateTradeLiquidity(tradeId, createResult.escrowContract, offerAmount, requestAmount);
+      if (editSourceTrade?.v2 && (
+        editSourceTrade.v2.chainId !== v2Deployment.chainId ||
+        editSourceTrade.v2.contractAddress.toLowerCase() !== v2Deployment.contractAddress.toLowerCase() ||
+        editSourceTrade.escrowContract?.toLowerCase() !== v2Deployment.contractAddress.toLowerCase()
+      )) {
+        throw new Error('This edit does not match the verified OTC V2 deployment.');
       }
+      const createResult = await (async () => {
+            const publicAsset = (value: Pick<TradeAssetPayload, 'kind' | 'tokenAddress'>) => value.kind === 'native'
+              ? { assetType: 'native' as const }
+              : { assetType: 'erc20' as const, token: value.tokenAddress };
+            let confirmed: { tradeId?: string; orderId?: string; transactionHash: string };
+            if (v2Protocol === 'standard-v2') {
+              if (offerToken.kind === 'private-erc20' || requestToken.kind === 'private-erc20') {
+                throw new Error('Standard OTC V2 supports public assets only.');
+              }
+              confirmed = await otcV2ActionRuntime.standard(isEditTrade
+                ? {
+                    kind: 'replace', originalTradeId: editSourceTrade.tradeId,
+                    offerAsset: { ...publicAsset(offerToken), amount: offerAmount },
+                    requestAsset: { ...publicAsset(requestToken), amount: requestAmount },
+                    fillPolicy: { partialFillsAllowed: true, minPartialFillBps: 0n, minRequestAmount: 0n, maxRequestAmountPerWallet: 0n, oneFillPerWallet: false },
+                    expiresAt
+                  }
+                : {
+                    kind: 'create',
+                    offerAsset: { ...publicAsset(offerToken), amount: offerAmount },
+                    requestAsset: { ...publicAsset(requestToken), amount: requestAmount },
+                    fillPolicy: { partialFillsAllowed: true, minPartialFillBps: 0n, minRequestAmount: 0n, maxRequestAmountPerWallet: 0n, oneFillPerWallet: false },
+                    expiresAt
+                  });
+            } else if (v2Protocol === 'private-v2') {
+              if (offerToken.kind !== 'private-erc20' && requestToken.kind !== 'private-erc20') {
+                throw new Error('Private OTC V2 requires at least one private token.');
+              }
+              const privateAsset = (value: Pick<TradeAssetPayload, 'kind' | 'tokenAddress'>, amount: bigint) => ({
+                assetType: value.kind,
+                ...(value.kind === 'native' ? {} : { token: value.tokenAddress }),
+                amount
+              });
+              confirmed = await otcV2ActionRuntime.privateTrade(isEditTrade
+                ? {
+                    kind: 'replace', originalOrderId: editSourceTrade.tradeId,
+                    offerAsset: privateAsset(offerToken, offerAmount),
+                    requestAsset: privateAsset(requestToken, requestAmount),
+                    fillPolicy: { partialFillsAllowed: true, minPartialFillBps: 0n, maxFills: 64n },
+                    expiresAt
+                  }
+                : {
+                    kind: 'create',
+                    offerAsset: privateAsset(offerToken, offerAmount),
+                    requestAsset: privateAsset(requestToken, requestAmount),
+                    fillPolicy: { partialFillsAllowed: true, minPartialFillBps: 0n, maxFills: 64n },
+                    expiresAt
+                  });
+            } else {
+              const privateDirect = offerToken.kind === 'private-erc20' || requestToken.kind === 'private-erc20';
+              if (privateDirect && (offerToken.kind !== 'private-erc20' || requestToken.kind !== 'private-erc20')) {
+                throw new Error('Direct OTC V2 supports either two public assets or two private tokens, not a mixed pair.');
+              }
+              if (isCounterTrade && counterParentTrade?.v2?.contractAddress.toLowerCase() !== v2Deployment.contractAddress.toLowerCase()) {
+                throw new Error('A Direct OTC V2 counter must use the same verified contract as its parent.');
+              }
+              if (privateDirect) {
+                const privateTerms = {
+                  offerToken: offerToken.tokenAddress!,
+                  requestToken: requestToken.tokenAddress!,
+                  offerAmount,
+                  requestAmount,
+                  expiresAt
+                };
+                confirmed = isEditTrade
+                  ? await otcV2ActionRuntime.direct({
+                      kind: 'replace-private',
+                      originalTradeId: editSourceTrade.tradeId,
+                      ...privateTerms
+                    })
+                  : isCounterTrade
+                    ? await otcV2ActionRuntime.direct({
+                        kind: 'counter-private',
+                        parentTradeId: counterParentTrade!.tradeId,
+                        ...privateTerms
+                      })
+                    : await otcV2ActionRuntime.direct({
+                        kind: 'create-private',
+                        taker: takerAddress,
+                        ...privateTerms
+                      });
+              } else {
+                const publicTerms = {
+                  offerAsset: publicAsset(offerToken),
+                  requestAsset: publicAsset(requestToken),
+                  offerAmount,
+                  requestAmount,
+                  expiresAt
+                };
+                confirmed = isEditTrade
+                  ? await otcV2ActionRuntime.direct({
+                      kind: 'replace-public',
+                      originalTradeId: editSourceTrade.tradeId,
+                      ...publicTerms
+                    })
+                  : isCounterTrade
+                    ? await otcV2ActionRuntime.direct({
+                        kind: 'counter-public',
+                        parentTradeId: counterParentTrade!.tradeId,
+                        ...publicTerms
+                      })
+                    : await otcV2ActionRuntime.direct({
+                        kind: 'create-public',
+                        taker: takerAddress,
+                        ...publicTerms
+                      });
+              }
+            }
+            const id = Number(confirmed.tradeId ?? confirmed.orderId ?? '');
+            if (!Number.isSafeInteger(id) || id <= 0) throw new Error('The confirmed OTC V2 order ID is invalid.');
+            return { tradeId: id, escrowContract: v2Deployment.contractAddress, txHash: confirmed.transactionHash };
+          })();
+      const tradeId = createResult.tradeId;
       const createdAt = Math.floor(Date.now() / 1000);
       const counterParentTradeId = isCounterReplacement
         ? counterParentTrade?.counterParentTradeId
         : counterParentTrade?.tradeId;
-      const createdOnDirectEscrow = createResult.escrowContract.toLowerCase() === DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+      const createdOnDirectEscrow = v2Protocol === 'direct-v2';
+      const privateMode = offerToken.kind === 'private-erc20' && requestToken.kind === 'private-erc20'
+        ? 'fully-private' as const
+        : offerToken.kind === 'private-erc20'
+          ? 'private-offer-public-request' as const
+          : requestToken.kind === 'private-erc20'
+            ? 'public-offer-private-request' as const
+            : undefined;
       const snapshot: TradeSnapshot = {
         tradeId,
         escrowContract: createResult.escrowContract,
         maker: walletAddress,
         taker: takerAddress,
-        offer: { ...offerToken, amount: hiddenLiquidity && accessSecret ? offerAmount.toString() : publicOfferAmount.toString() },
-        request: { ...requestToken, amount: hiddenLiquidity && accessSecret ? requestAmount.toString() : publicRequestAmount.toString() },
+        offer: { ...offerToken, amount: offerAmount.toString() },
+        request: { ...requestToken, amount: requestAmount.toString() },
         createdAt,
         expiresAt,
         status: 'open',
         isPublic: createdOnDirectEscrow ? false : isEditTrade || (!isCounterTrade && tradeVisibility === 'public'),
-        hasAccessHash: Boolean(directEditAccessSecret),
-        accessHash: directEditAccessSecret ? accessHash : undefined,
         parentTradeId: isEditTrade ? editSourceTrade.tradeId : counterParentTradeId,
         counterParentEscrow: isCounterTrade ? counterParentTrade?.escrowContract : undefined,
         counterParentTradeId: isCounterTrade ? counterParentTradeId : undefined,
         replacesTradeId: isEditTrade ? editSourceTrade.tradeId : undefined,
         fillState: {
-          remainingOfferAmount: hiddenLiquidity ? '0' : offerAmount.toString(),
-          remainingRequestAmount: hiddenLiquidity ? '0' : requestAmount.toString(),
+          remainingOfferAmount: offerAmount.toString(),
+          remainingRequestAmount: requestAmount.toString(),
           filledOfferAmount: '0',
           filledRequestAmount: '0'
         },
-        hiddenLiquidity,
-        makerPrivateProgress: hiddenLiquidity
+        hiddenLiquidity: v2Protocol === 'private-v2' || (v2Protocol === 'direct-v2' && Boolean(privateMode)),
+        makerPrivateProgress: v2Protocol === 'private-v2' || (v2Protocol === 'direct-v2' && Boolean(privateMode))
           ? {
               initialOfferAmount: offerAmount.toString(),
               remainingOfferAmount: offerAmount.toString(),
               filledOfferAmount: '0'
             }
-          : undefined
+          : undefined,
+        v2: {
+          protocol: v2Protocol,
+          chainId: v2Deployment.chainId,
+          contractAddress: v2Deployment.contractAddress,
+          ...(v2Protocol === 'standard-v2' || v2Protocol === 'private-v2' ? { revision: '1' } : {}),
+          ...(v2Protocol === 'direct-v2' ? { amountMode: privateMode ? 'private' as const : 'public' as const } : {}),
+          ...(privateMode ? { privateMode } : {})
+        }
       };
-      const shareUrl = buildTradeShareUrl(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
-      rememberTradeAccessSecret(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
+      const shareUrl = buildTradeShareUrl(tradeId, undefined, createResult.escrowContract);
       if (isEditTrade) {
         mergeTradeSnapshot({
           ...editSourceTrade,
@@ -776,13 +865,14 @@ export default function useP2PTradeComposerActions({
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
       setTradeHasNoExpiry(false);
       setTradeHidePrivateLiquidity(true);
-      openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
+      openTrade(tradeId, undefined, createResult.escrowContract);
+      refreshOneOffV2Trades?.();
       await Promise.all([
-        loadWalletBalances(signer),
+        loadWalletBalances(),
         refreshMyTrades(),
         snapshot.isPublic ? refreshPublicTrades() : Promise.resolve()
       ]);
-      openTrade(tradeId, directEditAccessSecret || undefined, createResult.escrowContract);
+      openTrade(tradeId, undefined, createResult.escrowContract);
       return createResult;
       });
       if (!createdResult) {
@@ -793,10 +883,13 @@ export default function useP2PTradeComposerActions({
       if (isTradeActionConfirmationCancelledError(error)) {
         return;
       }
-      const message = error instanceof Error ? error.message : 'Failed to create trade.';
-      const actionError = getOnChainFailureMessage(error, message);
+      const actionError = getOnChainFailureMessage(error, 'Failed to create trade.');
       setTradeActionError(actionError);
-      notifyComposerAction({ action: composerAction, message: actionError, status: 'error' });
+      notifyComposerAction({
+        action: composerAction,
+        message: actionError,
+        status: getP2PActionFailureStatus(actionError)
+      });
     } finally {
       setCreatingTrade(false);
     }
@@ -808,18 +901,15 @@ export default function useP2PTradeComposerActions({
     directTradeRecipientNormalized,
     editingTrade,
     ensureTradeFunding,
-    getTradeSigner,
-    hashTradeAccessSecret,
     loadWalletBalances,
     mergeTradeSnapshot,
+    navigateToTradePath,
     openTrade,
     notifyComposerAction,
+    otcV2ActionRuntime,
     refreshMyTrades,
     refreshPublicTrades,
-    rememberPrivateTradeLiquidity,
-    rememberTradeAccessSecret,
-    resolveKnownTradeAccessSecret,
-    resolveRequiredFeeForTradeCreate,
+    refreshOneOffV2Trades,
     runTradeWalletPromptFlow,
     setCounterParentTrade,
     setCreatedTradeId,

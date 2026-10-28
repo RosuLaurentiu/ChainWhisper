@@ -22,6 +22,7 @@ type DirectChatComposeProps = {
   onTipTokenSelectionChange: (selection: TipTokenSelection) => void;
   rewardTokenSymbol: string;
   privateRewardTokenSymbol: string;
+  nativeTipsOnly: boolean;
   tipAmountInput: string;
   onTipAmountInputChange: (value: string) => void;
   activeTipTokenSymbol: string;
@@ -64,6 +65,7 @@ export default function DirectChatCompose({
   onTipTokenSelectionChange,
   rewardTokenSymbol,
   privateRewardTokenSymbol,
+  nativeTipsOnly,
   tipAmountInput,
   onTipAmountInputChange,
   activeTipTokenSymbol,
@@ -125,7 +127,7 @@ export default function DirectChatCompose({
                 type="button"
                 className={tipTokenSelection === 'wisp' ? 'active' : undefined}
                 onClick={() => onTipTokenSelectionChange('wisp')}
-                disabled={tipping}
+                disabled={tipping || nativeTipsOnly}
                 aria-pressed={tipTokenSelection === 'wisp'}
               >
                 {rewardTokenSymbol}
@@ -134,7 +136,7 @@ export default function DirectChatCompose({
                 type="button"
                 className={tipTokenSelection === 'pwisp' ? 'active' : undefined}
                 onClick={() => onTipTokenSelectionChange('pwisp')}
-                disabled={tipping}
+                disabled={tipping || nativeTipsOnly}
                 aria-pressed={tipTokenSelection === 'pwisp'}
               >
                 {privateRewardTokenSymbol}
@@ -170,6 +172,11 @@ export default function DirectChatCompose({
             <span>{tipAmountSummaryLabel}</span>
             <span>Balance: {tipBalanceSummaryLabel}</span>
           </div>
+          {nativeTipsOnly ? (
+            <p className="chat-tip-warning">
+              Direct Chat V2 sends native COTI with this one message transaction. The recipient claims the credited tip from chat.
+            </p>
+          ) : null}
           {tipAmountExceedsBalance ? (
             <p className="chat-tip-warning">Amount exceeds available balance.</p>
           ) : null}

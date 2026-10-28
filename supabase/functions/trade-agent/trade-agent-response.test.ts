@@ -19,6 +19,8 @@ const context = {
   }
 };
 
+const PRIVATE_LINK_CODE = 'VQEAAAAAABYBI0VniavN7wEjRWeJq83vASNFZ4mrze8BI0VniavN7w';
+
 Deno.test('normalizes valid discriminated recurring and trusted order actions', () => {
   const result = normalizeSafeTradeAgentResponse({
     answer: 'Draft ready.',
@@ -174,4 +176,25 @@ Deno.test('never carries model-authored labels or access secrets into cached act
       amountVisibility: 'visible'
     }]
   });
+});
+
+Deno.test('rejects bare wallet credentials and encoded private links from model output', () => {
+  const unsafeAnswers = [
+    'test test test test test test test test test test test junk',
+    '34'.repeat(32),
+    PRIVATE_LINK_CODE,
+    `/otcdesk/terminal/l/${PRIVATE_LINK_CODE}`
+  ];
+
+  for (const answer of unsafeAnswers) {
+    let rejected = false;
+    try {
+      normalizeSafeTradeAgentResponse({ answer, warnings: [], actions: [] }, context);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) {
+      throw new Error(`Expected unsafe output to be rejected: ${answer.slice(0, 12)}`);
+    }
+  }
 });

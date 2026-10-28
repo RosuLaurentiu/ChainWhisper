@@ -385,7 +385,7 @@ export default function useP2PTradeAgentActions({
   const askAgentAboutOrder = useCallback(
     (snapshot: TradeSnapshot) => {
       const id = snapshot.recurringOrder?.orderId ?? snapshot.tradeId;
-      const source = snapshot.recurringOrder ? 'Recurring OTC' : 'One-off OTC';
+      const source = snapshot.recurringOrder ? 'Recurring P2P' : 'One-off P2P';
       terminalReturnSurfaceRef.current = 'agent';
       saveMobileDeskScroll('agent');
       setEmptyTerminalDrawerOpen(false);
@@ -869,7 +869,7 @@ export default function useP2PTradeAgentActions({
         return;
       }
       if (!walletAddress) {
-        setTradeAgentError('Connect your ChainWhisper account before using the Trade Agent.');
+        setTradeAgentError('Connect MetaMask or CipherTrade before using the Trade Agent.');
         return;
       }
 

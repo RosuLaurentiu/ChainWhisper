@@ -1,6 +1,7 @@
 import type { Hex, MetamaskConnectEVM } from '@metamask/connect-evm';
 import {
   COTI_NETWORK,
+  getProviderErrorMessage,
   getInjectedWalletOptions,
   normalizeChainId,
   rememberInjectedWalletProvider,
@@ -14,6 +15,7 @@ import {
 } from './mobileWalletDiagnostics';
 import { isWalletBootstrapRoute } from './walletBootstrapRoute';
 import { isMobileBrowserUserAgent, isPreferredMetaMaskWalletOption } from './walletOptions';
+import type { ChainWhisperCotiNetwork } from './chainWhisperNetworks';
 
 export const METAMASK_CONNECT_MOBILE_WALLET_ID = 'metamask-connect-mobile';
 export const METAMASK_CONNECT_MOBILE_WALLET_LABEL = 'MetaMask Mobile';
@@ -365,7 +367,7 @@ export const getMetaMaskConnectMobileClient = async (): Promise<MetamaskConnectE
       .catch((error) => {
         clientPromise = null;
         logMobileWalletDiagnostic('metamask-connect-init-error', {
-          message: error instanceof Error ? error.message : String(error)
+          message: getProviderErrorMessage(error, 'MetaMask Connect initialization failed.')
         });
         throw error;
       });
@@ -440,17 +442,19 @@ export const connectMetaMaskMobile = async (
   };
 };
 
-export const switchMetaMaskConnectMobileToCoti = async (): Promise<void> => {
+export const switchMetaMaskConnectMobileToCoti = async (
+  network: ChainWhisperCotiNetwork = COTI_NETWORK
+): Promise<void> => {
   const client = await getMetaMaskConnectMobileClient();
   await client.switchChain({
     chainConfiguration: {
-      blockExplorerUrls: [COTI_NETWORK.blockExplorerUrl],
-      chainId: COTI_NETWORK.chainIdHex,
-      chainName: COTI_NETWORK.chainName,
-      nativeCurrency: COTI_NETWORK.nativeCurrency,
-      rpcUrls: [COTI_NETWORK.rpcUrl]
+      blockExplorerUrls: [network.blockExplorerUrl],
+      chainId: network.chainIdHex as Hex,
+      chainName: network.chainName,
+      nativeCurrency: network.nativeCurrency,
+      rpcUrls: [network.rpcUrl]
     },
-    chainId: COTI_CHAIN_ID_HEX
+    chainId: network.chainIdHex as Hex
   });
 };
 

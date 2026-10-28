@@ -1,4 +1,4 @@
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import type { TradeAssetPayload } from './appShared';
 import { bytesToHex, hexToBytes, TEXT_DECODER, TEXT_ENCODER, toArrayBuffer } from './byteEncoding';
 import { normalizeAccessHash } from './tradeLinks';
@@ -7,7 +7,7 @@ const RECOVERY_PAYLOAD_VERSION = 1;
 const ENCRYPTED_PAYLOAD_VERSION = 1;
 const IV_BYTES = 12;
 
-type RecoverySigner = Wallet | JsonRpcSigner;
+type RecoverySigner = JsonRpcSigner;
 
 export type TradeRecoveryAsset = Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'amount'>;
 
@@ -65,10 +65,10 @@ const readSignerAesKey = (signer: RecoverySigner): string => {
   return aesKey;
 };
 
-const deriveRecoveryKey = async (aesKey: string, usages: KeyUsage[]): Promise<CryptoKey> => {
+const deriveRecoveryKey = async (aesKey: string, usages: KeyUsage[], domain = 'ChainWhisperTradeRecoveryV1'): Promise<CryptoKey> => {
   const keyDigest = await crypto.subtle.digest(
     'SHA-256',
-    toArrayBuffer(TEXT_ENCODER.encode(`ChainWhisperTradeRecoveryV1:${aesKey}`))
+    toArrayBuffer(TEXT_ENCODER.encode(`${domain}:${aesKey}`))
   );
   return crypto.subtle.importKey('raw', keyDigest, { name: 'AES-GCM' }, false, usages);
 };
@@ -127,17 +127,16 @@ export const encodeTradeRecoveryPayload = (payload: TradeRecoveryPayload): strin
     parentTradeId: payload.parentTradeId
   });
 
-export const encryptTradeRecoveryPayload = async (
-  payload: TradeRecoveryPayload,
-  aesKey: string
+const encryptRecoveryText = async (
+  plaintext: string, aesKey: string, context?: string
 ): Promise<string> => {
-  const key = await deriveRecoveryKey(aesKey, ['encrypt']);
+  const key = await deriveRecoveryKey(aesKey, ['encrypt'], context ? 'ChainWhisperLinkCreationRecoveryV1' : undefined);
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ciphertext = new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv: toArrayBuffer(iv) },
+      { name: 'AES-GCM', iv: toArrayBuffer(iv), ...(context ? { additionalData: toArrayBuffer(TEXT_ENCODER.encode(context)) } : {}) },
       key,
-      toArrayBuffer(TEXT_ENCODER.encode(encodeTradeRecoveryPayload(payload)))
+      toArrayBuffer(TEXT_ENCODER.encode(plaintext))
     )
   );
   const encryptedPayload = new Uint8Array(1 + iv.length + ciphertext.length);
@@ -147,20 +146,31 @@ export const encryptTradeRecoveryPayload = async (
   return bytesToHex(encryptedPayload, '0x');
 };
 
-export const decryptTradeRecoveryPayload = async (
-  encryptedPayload: string,
-  aesKey: string
-): Promise<TradeRecoveryPayload> => {
+const decryptRecoveryText = async (encryptedPayload: string, aesKey: string, context?: string): Promise<string> => {
   const payload = hexToBytes(encryptedPayload, 'Invalid encrypted trade recovery payload.');
   if (payload.length <= 1 + IV_BYTES || payload[0] !== ENCRYPTED_PAYLOAD_VERSION) {
     throw new Error('Invalid encrypted trade recovery payload.');
   }
-  const key = await deriveRecoveryKey(aesKey, ['decrypt']);
+  const key = await deriveRecoveryKey(aesKey, ['decrypt'], context ? 'ChainWhisperLinkCreationRecoveryV1' : undefined);
   const iv = payload.slice(1, 1 + IV_BYTES);
   const ciphertext = payload.slice(1 + IV_BYTES);
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv) }, key, toArrayBuffer(ciphertext));
-  const parsed = JSON.parse(TEXT_DECODER.decode(decrypted)) as TradeRecoveryPayload;
-  return buildTradeRecoveryPayload(parsed);
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv),
+    ...(context ? { additionalData: toArrayBuffer(TEXT_ENCODER.encode(context)) } : {}) }, key, toArrayBuffer(ciphertext));
+  return TEXT_DECODER.decode(decrypted);
+};
+
+export const encryptTradeRecoveryPayload = (payload: TradeRecoveryPayload, aesKey: string): Promise<string> =>
+  encryptRecoveryText(encodeTradeRecoveryPayload(payload), aesKey);
+export const decryptTradeRecoveryPayload = async (payload: string, aesKey: string): Promise<TradeRecoveryPayload> =>
+  buildTradeRecoveryPayload(JSON.parse(await decryptRecoveryText(payload, aesKey)) as TradeRecoveryPayload);
+
+export const encryptLinkCreationRecoveryForSigner = (signer: RecoverySigner, plaintext: string, context: string): Promise<string> => {
+  if (!context || context.length > 1024 || TEXT_ENCODER.encode(plaintext).length > 262144) throw new Error('Invalid Link recovery envelope.');
+  return encryptRecoveryText(plaintext, readSignerAesKey(signer), context);
+};
+export const decryptLinkCreationRecoveryForSigner = (signer: RecoverySigner, payload: string, context: string): Promise<string> => {
+  if (!context || context.length > 1024 || payload.length > 524400) throw new Error('Invalid Link recovery envelope.');
+  return decryptRecoveryText(payload, readSignerAesKey(signer), context);
 };
 
 export const encryptTradeRecoveryPayloadForSigner = async (

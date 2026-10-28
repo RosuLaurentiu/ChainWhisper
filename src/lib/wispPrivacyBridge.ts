@@ -80,17 +80,19 @@ export type ChainWhisperWispSubmittedTransaction = {
 export const submitAndConfirmChainWhisperWispConversion = async ({
   assertReady,
   submit,
+  waitForReceipt,
   onProgress
 }: {
   assertReady: () => Promise<void>;
   submit: () => Promise<ChainWhisperWispSubmittedTransaction>;
+  waitForReceipt: (transaction: ChainWhisperWispSubmittedTransaction) => Promise<unknown>;
   onProgress?: (stage: ChainWhisperWispStage) => void;
 }): Promise<{ transaction: ChainWhisperWispSubmittedTransaction; receipt: unknown }> => {
   await assertReady();
   onProgress?.('awaiting-conversion');
   const transaction = await submit();
   onProgress?.('confirming');
-  const receipt = await transaction.wait();
+  const receipt = await waitForReceipt(transaction);
   const receiptStatus = Number((receipt as { status?: number | bigint } | null)?.status ?? 0);
   if (!receipt || receiptStatus !== 1) {
     throw new Error('ChainWhisper WISP conversion failed on-chain.');

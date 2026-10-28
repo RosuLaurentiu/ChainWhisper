@@ -6,8 +6,10 @@ let directChatPanelModulePromise: Promise<typeof import('../features/chat/compon
 let groupChatPanelModulePromise: Promise<typeof import('../features/groups/components/GroupChatPanel')> | null = null;
 let p2pTradingPageModulePromise: Promise<typeof import('../features/trading/components/P2PTradingPage')> | null = null;
 let tokenSwapPageModulePromise: Promise<typeof import('../features/tokenTools/components/TokenSwapPage')> | null = null;
-let treasuryPageModulePromise: Promise<typeof import('../features/treasury/components/TreasuryPage')> | null = null;
-let treasuryDataModulePromise: Promise<typeof import('../features/treasury/treasuryData')> | null = null;
+let privateTvlPageModulePromise: Promise<typeof import('../features/treasury/components/PrivateTvlPage')> | null = null;
+type DexPageModule = Pick<typeof import('../features/dex/components/DexV2Page'), 'default'>;
+let dexV2PageModulePromise: Promise<DexPageModule> | null = null;
+let privateTvlDataModulePromise: Promise<typeof import('../features/treasury/privateTvlData')> | null = null;
 
 const loadDirectChatPanel = () => {
   directChatPanelModulePromise ??= import('../features/chat/components/DirectChatPanel');
@@ -29,19 +31,24 @@ const loadTokenSwapPage = () => {
   return tokenSwapPageModulePromise;
 };
 
-const loadTreasuryPage = () => {
-  treasuryPageModulePromise ??= import('../features/treasury/components/TreasuryPage');
-  return treasuryPageModulePromise;
+const loadPrivateTvlPage = () => {
+  privateTvlPageModulePromise ??= import('../features/treasury/components/PrivateTvlPage');
+  return privateTvlPageModulePromise;
 };
 
-const preloadTreasuryDashboardData = () => {
-  treasuryDataModulePromise ??= import('../features/treasury/treasuryData');
-  void treasuryDataModulePromise.then(({ preloadDashboardData }) => preloadDashboardData()).catch(() => {});
+const loadDexV2Page = () => {
+  dexV2PageModulePromise ??= import('../features/dex/components/DexV2Page');
+  return dexV2PageModulePromise;
 };
 
-export const preloadTreasuryPage = () => {
-  void loadTreasuryPage();
-  preloadTreasuryDashboardData();
+const preloadPrivateTvlSnapshot = () => {
+  privateTvlDataModulePromise ??= import('../features/treasury/privateTvlData');
+  void privateTvlDataModulePromise.then(({ preloadPrivateTvlData }) => preloadPrivateTvlData()).catch(() => {});
+};
+
+export const preloadPrivateTvlPage = () => {
+  void loadPrivateTvlPage();
+  preloadPrivateTvlSnapshot();
 };
 
 export const preloadChatPage = () => {
@@ -57,11 +64,16 @@ export const preloadSwapPage = () => {
   void loadTokenSwapPage();
 };
 
+export const preloadDexV2Page = () => {
+  void loadDexV2Page();
+};
+
 export const DirectChatPanel = lazy(loadDirectChatPanel);
 export const GroupChatPanel = lazy(loadGroupChatPanel);
 export const P2PTradingPage = lazy(loadP2PTradingPage);
 export const TokenSwapPage = lazy(loadTokenSwapPage);
-export const TreasuryPage = lazy(loadTreasuryPage);
+export const PrivateTvlPage = lazy(loadPrivateTvlPage);
+export const DexV2Page = lazy(loadDexV2Page);
 export const TradeComposerPanel = lazy(() => import('../features/trading/components/TradeComposerPanel'));
 
 export function RouteLoadingFallback({

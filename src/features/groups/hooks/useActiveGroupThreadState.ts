@@ -47,6 +47,7 @@ export default function useActiveGroupThreadState({
   setGroupTipRecipientAddress,
   walletAddress
 }: UseActiveGroupThreadStateArgs) {
+  const walletScopeKey = walletAddress.trim().toLowerCase();
   const activeGroupMeta = useMemo(
     () => (activeGroupId !== null ? groups.find((group) => group.id === activeGroupId) ?? null : null),
     [activeGroupId, groups]
@@ -57,7 +58,7 @@ export default function useActiveGroupThreadState({
       return [];
     }
 
-    const currentWalletKey = walletAddress.trim().toLowerCase();
+    const currentWalletKey = walletScopeKey;
     const adminKey = activeGroupMeta.admin.trim().toLowerCase();
     const ownNickname = normalizeContactName(myNickname);
     const seenMembers = new Set<string>();
@@ -90,7 +91,7 @@ export default function useActiveGroupThreadState({
         isAdmin
       };
     });
-  }, [activeGroupMeta, contacts, myNickname, onChainNicknameCacheRef, walletAddress]);
+  }, [activeGroupMeta, contacts, myNickname, onChainNicknameCacheRef, walletScopeKey]);
 
   const activeGroupMemberCount =
     activeGroupParticipants.length > 0 ? activeGroupParticipants.length : activeGroupMeta?.memberCount ?? 0;
@@ -131,12 +132,12 @@ export default function useActiveGroupThreadState({
   );
 
   const isActiveGroupAdmin = useMemo(() => {
-    if (!activeGroupMeta || !walletAddress) {
+    if (!activeGroupMeta || !walletScopeKey) {
       return false;
     }
 
-    return activeGroupMeta.admin.trim().toLowerCase() === walletAddress.trim().toLowerCase();
-  }, [activeGroupMeta, walletAddress]);
+    return activeGroupMeta.admin.trim().toLowerCase() === walletScopeKey;
+  }, [activeGroupMeta, walletScopeKey]);
 
   useEffect(() => {
     if (!isActiveGroupAdmin && groupRenameOpen) {

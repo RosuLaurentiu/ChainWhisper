@@ -43,6 +43,7 @@ type TradeTerminalHistoryRowsProps = {
   historyTransactionTimestamps: Record<string, number>;
   swapFillNotes: OtcSwapFillNote[];
   getTransactionLinkFeedbackProps: GetTransactionLinkFeedbackProps;
+  statusMessage?: string;
 };
 
 type TradeTerminalHistoryContentProps = {
@@ -65,9 +66,10 @@ export function TradeTerminalHistoryRows({
   historyTransactionTxHashes,
   historyTransactionTimestamps,
   swapFillNotes,
-  getTransactionLinkFeedbackProps
+  getTransactionLinkFeedbackProps,
+  statusMessage
 }: TradeTerminalHistoryRowsProps) {
-  if (!lifecycleRows.length && !transactionRows.length) {
+  if (!lifecycleRows.length && !transactionRows.length && !statusMessage) {
     return null;
   }
 
@@ -83,6 +85,11 @@ export function TradeTerminalHistoryRows({
 
   return (
     <>
+      {statusMessage ? (
+        <div className="p2p-terminal-history-empty" role="status">
+          <p>{statusMessage}</p>
+        </div>
+      ) : null}
       {lifecycleRows.map((row) => {
         const txHash = row.txHash ?? historyLifecycleTxHashes[row.key];
         const txUrl = buildTransactionExplorerUrl(txHash);
@@ -98,11 +105,23 @@ export function TradeTerminalHistoryRows({
         const actionLabel =
           row.action === 'created'
             ? 'Opened'
+            : row.action === 'accepted'
+              ? 'Filled'
             : row.action === 'cancelled'
               ? 'Closed'
+              : row.action === 'declined'
+                ? 'Declined'
+                : row.action === 'expired'
+                  ? 'Expired'
               : row.action === 'replaced'
                 ? 'Replaced'
-                : 'Edited';
+                : row.action === 'paused'
+                  ? 'Paused'
+                  : row.action === 'resumed'
+                    ? 'Resumed'
+                    : row.action === 'settled'
+                      ? 'Returned'
+                      : 'Edited';
         return (
           <div
             className={`p2p-terminal-history-row p2p-terminal-history-row-lifecycle p2p-terminal-history-row-${row.action}`}
@@ -118,6 +137,15 @@ export function TradeTerminalHistoryRows({
                 <strong>{sourceLabel}</strong>
                 <span>{actionLabel}</span>
               </div>
+              {row.returnedAssets?.map((asset) => (
+                <div
+                  className="p2p-terminal-history-chip p2p-terminal-history-chip-lifecycle"
+                  key={`${asset.kind}:${asset.tokenAddress}:${asset.symbol}`}
+                >
+                  <strong>Returned</strong>
+                  <span>{formatHistoryAmount(asset)}</span>
+                </div>
+              ))}
             </div>
             {txUrl && txLinkFeedback ? (
               <div className="p2p-terminal-history-proof">
@@ -204,14 +232,16 @@ export function TradeTerminalHistoryContent({
   config,
   renderActionNotice
 }: TradeTerminalHistoryContentProps) {
+  const eventCountLabel = `${config.count} ${config.count === 1 ? 'event' : 'events'}`;
+
   return (
     <>
       <div className="p2p-terminal-history-head">
         <div>
-          <span>Your history</span>
+          <span>Trade activity</span>
           <strong>{config.title}</strong>
         </div>
-        <span>{config.count}</span>
+        <span>{eventCountLabel}</span>
       </div>
       {renderActionNotice('history', config.tradeKey)}
       {config.children ? (
@@ -236,7 +266,7 @@ export function TradeTerminalHistoryMobileControls({
     <div className="p2p-terminal-history-sheet" role="dialog" aria-modal="true" aria-label={`${config.title} history`}>
       <div className="p2p-terminal-history-sheet-head">
         <div>
-          <span>Your history</span>
+          <span>Trade activity</span>
           <strong>{config.title}</strong>
         </div>
         <button type="button" onClick={() => setSheetKey('')}>

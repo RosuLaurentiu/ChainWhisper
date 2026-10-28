@@ -7,6 +7,10 @@ import {
   type TradeOfferMessagePayload,
   type TradeSnapshot
 } from './appShared';
+import {
+  TRADE_AGENT_PROHIBITED_KEY_RE,
+  containsTradeAgentSecretMaterial
+} from '../../supabase/functions/_shared/trade-agent-secret-material';
 import { ZERO_TRADE_TAKER_ADDRESS } from './tradePerspective';
 
 export const TRADE_AGENT_FEE_RECIPIENT = '0xD5F92B95D6224804FA54BCAE2Ee73b5A4a2D8BbD';
@@ -284,7 +288,7 @@ export const getTradeAgentPromptTokenMentions = (prompt: string, knownSymbols: s
 export const TRADE_AGENT_QUICK_ACTIONS: TradeAgentQuickAction[] = [
   {
     action: 'find_price',
-    label: 'Compare price references',
+    label: 'Compare prices',
     prompt: 'Compare token prices.'
   },
   {
@@ -350,18 +354,8 @@ const normalizePositiveAmountInput = (value: unknown, decimals = 18): string => 
   return raw;
 };
 
-const PRIVATE_LINK_PATTERN =
-  /\/(?:otc\/order|trades)\/(?:link|l)\/[A-Za-z0-9_-]+|[?&#]secret=|#0x[a-fA-F0-9]{64}\b/i;
-const HEX_SECRET_PATTERN = /\b0x[a-f0-9]{64}\b/i;
-const LABELED_SECRET_PATTERN =
-  /\b(?:private\s*key|seed\s*phrase|recovery\s*phrase|mnemonic|access\s*secret)\b\s*(?::|=|is)?\s*(?:0x[a-fA-F0-9]{64}|[a-z]+(?:\s+[a-z]+){11,23})/i;
-const SECRET_KEY_PATTERN =
-  /^(?:access[_ -]?secret|private[_ -]?key|mnemonic|seed[_ -]?phrase|recovery[_ -]?phrase|secret|share[_ -]?code)$/i;
-
 export const containsTradeAgentSecretText = (value: string): boolean =>
-  PRIVATE_LINK_PATTERN.test(value) ||
-  HEX_SECRET_PATTERN.test(value) ||
-  LABELED_SECRET_PATTERN.test(value);
+  containsTradeAgentSecretMaterial(value);
 
 const normalizeAgentMessage = (value: unknown): string => {
   const message = normalizeString(value).slice(0, 1_200);
@@ -561,6 +555,9 @@ export const normalizeTradeAgentResponse = (
   const warnings = Array.isArray(record.warnings)
     ? record.warnings.map(normalizeString).filter(Boolean).slice(0, 4)
     : [];
+  if (containsTradeAgentSecretText(answer) || warnings.some(containsTradeAgentSecretText)) {
+    throw new Error('Trade Agent response contained unsafe material.');
+  }
   const actions = Array.isArray(record.actions)
     ? record.actions
         .map((action) => normalizeTradeAgentAction(action, options))
@@ -832,7 +829,7 @@ const objectContainsTradeAgentSecret = (value: unknown, depth = 0): boolean => {
   return Object.entries(value as Record<string, unknown>)
     .slice(0, 80)
     .some(([key, item]) =>
-      (SECRET_KEY_PATTERN.test(key) && item !== null && item !== undefined && item !== '') ||
+      (TRADE_AGENT_PROHIBITED_KEY_RE.test(key) && item !== null && item !== undefined && item !== '') ||
       objectContainsTradeAgentSecret(item, depth + 1)
     );
 };

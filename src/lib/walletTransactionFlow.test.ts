@@ -10,6 +10,7 @@ import {
   isWalletTransactionFlowActive,
   isWalletTransactionPromptActive,
   runWalletTransactionFlow,
+  shouldDeferBrowserWalletChainRefreshDuringPrompt,
   shouldIgnoreBrowserWalletAccountsDuringFlow,
   shouldIgnoreBrowserWalletRefreshDuringFlow
 } from './walletTransactionFlow';
@@ -227,5 +228,32 @@ describe('walletTransactionFlow', () => {
         walletFlowActive: true
       })
     ).toBe(false);
+  });
+
+  it('defers a transient chain refresh only while an owner prompt is active', () => {
+    const input = {
+      previousChainId: 7_082_400,
+      selectedChainId: 1,
+      previousWalletKey: '0x0000000000000000000000000000000000000001'
+    };
+
+    expect(shouldDeferBrowserWalletChainRefreshDuringPrompt({
+      ...input,
+      walletPromptActive: true
+    })).toBe(true);
+    expect(shouldDeferBrowserWalletChainRefreshDuringPrompt({
+      ...input,
+      walletPromptActive: false
+    })).toBe(false);
+    expect(shouldDeferBrowserWalletChainRefreshDuringPrompt({
+      ...input,
+      previousWalletKey: '',
+      walletPromptActive: true
+    })).toBe(false);
+    expect(shouldDeferBrowserWalletChainRefreshDuringPrompt({
+      ...input,
+      selectedChainId: input.previousChainId,
+      walletPromptActive: true
+    })).toBe(false);
   });
 });

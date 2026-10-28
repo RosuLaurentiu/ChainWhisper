@@ -1,11 +1,10 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ESTIMATED_DIRECT_TRADE_ACCESS_SECRET,
   ESTIMATED_DIRECT_TRADE_NOTIFICATION_TRADE_ID,
   resolveMetaMaskPromptEstimateTone
 } from '../../../app/appHelpers';
 import {
-  buildMessageWithTradeReferencePayload,
   buildTradeOfferMessagePayload,
   DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   encodeCompactMemoPlaintext,
@@ -13,9 +12,13 @@ import {
   isWalletAddress
 } from '../../../lib/appShared';
 import {
+  buildDirectChatV2PromptEstimateMessage,
+  buildDirectTradeV2PromptEstimateMessage,
   buildMetaMaskPromptEstimateMessage,
-  estimateChatWalletPromptLoad
+  estimateChatWalletPromptLoad,
+  type DirectChatV2PromptConversationState
 } from '../../../lib/chatWalletPromptEstimate';
+import type { DirectChatV2SessionController } from '../../../lib/directChatV2Session';
 import { buildTradeMessageReferenceFromContext, type LinkedTradeContext } from '../../../lib/linkedTradeContext';
 import { sanitizeOutgoingMessagePlainText } from '../../../lib/appHelpers';
 
@@ -29,10 +32,15 @@ type UseDirectComposerPromptEstimatesArgs = {
   activeGroupId: number | null;
   activeLinkedTradeContext: LinkedTradeContext | null;
   browserWalletLiteMode: boolean;
+  directChatV2ConversationKnown: boolean;
+  directChatV2Session: DirectChatV2SessionController | null;
+  directTradeV2Enabled: boolean;
   messageInput: string;
   parsedTradeExpiryHours: number;
   tradeComposerOpen: boolean;
   tradeCounterParentId: number | null;
+  tradeOfferTokenKind: 'native' | 'erc20' | 'private-erc20' | null;
+  tradeOfferTokenSymbol: string;
   walletAddress: string;
 };
 
@@ -41,12 +49,72 @@ export default function useDirectComposerPromptEstimates({
   activeGroupId,
   activeLinkedTradeContext,
   browserWalletLiteMode,
+  directChatV2ConversationKnown,
+  directChatV2Session,
+  directTradeV2Enabled,
   messageInput,
   parsedTradeExpiryHours,
   tradeComposerOpen,
   tradeCounterParentId,
+  tradeOfferTokenKind,
+  tradeOfferTokenSymbol,
   walletAddress
 }: UseDirectComposerPromptEstimatesArgs) {
+  const normalizedActivePeer = activeContact?.trim().toLowerCase() ?? '';
+  const [directChatV2Inspection, setDirectChatV2Inspection] = useState<{
+    peer: string;
+    session: DirectChatV2SessionController;
+    state: 'existing' | 'new' | 'unavailable';
+  } | null>(null);
+  const directChatV2ConversationState: DirectChatV2PromptConversationState =
+    directChatV2ConversationKnown
+      ? 'existing'
+      : !directChatV2Session
+        ? 'unavailable'
+        : directChatV2Inspection?.session === directChatV2Session &&
+            directChatV2Inspection.peer === normalizedActivePeer
+          ? directChatV2Inspection.state
+          : 'checking';
+
+  useEffect(() => {
+    let disposed = false;
+    const peer = activeContact?.trim() ?? '';
+    if (!browserWalletLiteMode || activeGroupId !== null || !isWalletAddress(peer)) {
+      return () => { disposed = true; };
+    }
+    if (directChatV2ConversationKnown) {
+      return () => { disposed = true; };
+    }
+    if (!directChatV2Session) {
+      return () => { disposed = true; };
+    }
+
+    void directChatV2Session.inspect(peer).then((conversation) => {
+      if (!disposed) {
+        setDirectChatV2Inspection({
+          peer: peer.toLowerCase(),
+          session: directChatV2Session,
+          state: conversation.exists ? 'existing' : 'new'
+        });
+      }
+    }).catch(() => {
+      if (!disposed) {
+        setDirectChatV2Inspection({
+          peer: peer.toLowerCase(),
+          session: directChatV2Session,
+          state: 'unavailable'
+        });
+      }
+    });
+    return () => { disposed = true; };
+  }, [
+    activeContact,
+    activeGroupId,
+    browserWalletLiteMode,
+    directChatV2ConversationKnown,
+    directChatV2Session
+  ]);
+
   const tradeComposerPromptEstimate = useMemo<PromptEstimateNotice | null>(() => {
     const makerAddress = walletAddress.trim();
     const takerAddress = activeContact?.trim() ?? '';
@@ -58,6 +126,16 @@ export default function useDirectComposerPromptEstimates({
       !isWalletAddress(takerAddress)
     ) {
       return null;
+    }
+
+    if (directTradeV2Enabled) {
+      return {
+        tone: 'ok',
+        label: buildDirectTradeV2PromptEstimateMessage({
+          offerAssetKind: tradeOfferTokenKind ?? 'unknown',
+          offerSymbol: tradeOfferTokenSymbol
+        })
+      };
     }
 
     const createdAt = Math.floor(Date.now() / 1000);
@@ -82,9 +160,12 @@ export default function useDirectComposerPromptEstimates({
     activeContact,
     activeGroupId,
     browserWalletLiteMode,
+    directTradeV2Enabled,
     parsedTradeExpiryHours,
     tradeComposerOpen,
     tradeCounterParentId,
+    tradeOfferTokenKind,
+    tradeOfferTokenSymbol,
     walletAddress
   ]);
 
@@ -101,17 +182,27 @@ export default function useDirectComposerPromptEstimates({
     const linkedTradeReference = activeLinkedTradeContext
       ? buildTradeMessageReferenceFromContext(activeLinkedTradeContext)
       : undefined;
-    const plainTextWithMetadata = buildMessageWithTradeReferencePayload(plainText, linkedTradeReference);
-    const estimate = estimateChatWalletPromptLoad(plainTextWithMetadata, encodeCompactMemoPlaintext);
     const estimateSubject = linkedTradeReference
       ? `this message with Trade #${linkedTradeReference.tradeId} reference`
       : 'this message';
 
+    // MetaMask direct-chat writes are Chat V2-only. Never show ChatGC's
+    // per-cell encryption estimate for an operation that cannot use ChatGC.
     return {
-      tone: resolveMetaMaskPromptEstimateTone(estimate),
-      label: buildMetaMaskPromptEstimateMessage(estimate, estimateSubject)
+      tone: directChatV2ConversationState === 'unavailable' ? 'warning' : 'ok',
+      label: buildDirectChatV2PromptEstimateMessage(
+        estimateSubject,
+        directChatV2ConversationState
+      )
     };
-  }, [activeGroupId, activeLinkedTradeContext, browserWalletLiteMode, messageInput, tradeComposerOpen]);
+  }, [
+    activeGroupId,
+    activeLinkedTradeContext,
+    browserWalletLiteMode,
+    directChatV2ConversationState,
+    messageInput,
+    tradeComposerOpen
+  ]);
 
   return {
     directComposerPromptEstimate,

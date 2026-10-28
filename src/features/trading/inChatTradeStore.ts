@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
+  TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS,
+  USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS,
   type PendingTradeCounterContext,
   type TradeCustomTokenInfo,
   type TradeTokenPresetKey
@@ -51,8 +53,12 @@ export const useInChatTradeStore = create<InChatTradeState>((set) => ({
   processingTradeActionId: '',
   tradeFeeModeSelection: 'coti',
   tradeRequiredFeeWei: null,
-  tradeOfferTokenSelection: 'coti',
-  tradeRequestTokenSelection: 'wisp',
+  tradeOfferTokenSelection: USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
+    ? TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS.publicBase
+    : 'coti',
+  tradeRequestTokenSelection: USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS
+    ? TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS.publicQuote
+    : 'wisp',
   tradeOfferCustomTokenAddress: '',
   tradeRequestCustomTokenAddress: '',
   customTradeTokenInfoByAddress: {},

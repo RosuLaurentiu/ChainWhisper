@@ -1,0 +1,102 @@
+{
+  "history.fixture.ts": {
+    "source": "APP/reports/dex-daily-history-2026-10-03/history.fixture.ts",
+    "sourceSha256": "ac85c587b3ff128b88c1939c50c9e04a618f1d7b6d3f26c197194e5df55c0d82",
+    "fixtureSha256": "ac85c587b3ff128b88c1939c50c9e04a618f1d7b6d3f26c197194e5df55c0d82"
+  },
+  "full-candidate-ChainWhisperCounterOTCEscrowV2.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/custody-adversarial/full-candidate/artifacts/contracts/p2p/ChainWhisperCounterOTCEscrowV2.sol/ChainWhisperCounterOTCEscrowV2.json",
+    "sourceSha256": "e057f546eac55233b4f9b27a8c51803d3fc2da8a953ba69eda24c5ac528df6e8",
+    "fixtureSha256": "f0c1c60dd2a68013c72d6b02d7d182bab358e9f2e25ae453fc8eda7fa674b83a"
+  },
+  "full-candidate-ChainWhisperLinkOTCEscrowV2.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/custody-adversarial/full-candidate/artifacts/contracts/p2p/ChainWhisperLinkOTCEscrowV2.sol/ChainWhisperLinkOTCEscrowV2.json",
+    "sourceSha256": "bee53ddffd06f61e05c1b33216fb3537295450d957f585dca451b88695d07845",
+    "fixtureSha256": "322d45e38501b18a3fbca49e2bac50db0401bff0160f9b76cebd12e94a96959b"
+  },
+  "production-ChainWhisperPrivateOTCEscrowV2.json": {
+    "source": "ChainWhisper Contracts V2/production/artifacts/contracts/p2p/ChainWhisperPrivateOTCEscrowV2.sol/ChainWhisperPrivateOTCEscrowV2.json",
+    "sourceSha256": "1eee29c4f2719801f727d4270a3cff054b6706b93c48fd2440fba84bdd948e06",
+    "fixtureSha256": "0609031c8a81c1fa92172b5cbc0eaf7980d4fc57dba4000029b66845360bcbf0"
+  },
+  "production-ChainWhisperStandardOTCEscrowV2.json": {
+    "source": "ChainWhisper Contracts V2/production/artifacts/contracts/p2p/ChainWhisperStandardOTCEscrowV2.sol/ChainWhisperStandardOTCEscrowV2.json",
+    "sourceSha256": "2038fb4cca7bbf800600f99bb94a0c73f43f00e066c67836cde3e5cb0bd7f1d9",
+    "fixtureSha256": "91e2aa7e3291391a4431076a9ed689bb3ba564b2535b858f4d889986a996ea6a"
+  },
+  "full-candidate-ChainWhisperP2PDisclosure.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/custody-adversarial/full-candidate/artifacts/contracts/p2p/ChainWhisperP2PDisclosure.sol/ChainWhisperP2PDisclosure.json",
+    "sourceSha256": "4a65de2bc44c63d26d52c426ee0ee2d7a61d08136f2cdbc818a7a9c3452313d2",
+    "fixtureSha256": "42fe6b9bd07b0f5a9be57138ac548032de3507fd1245f38962814668dd0f5899"
+  },
+  "validation-ChainWhisperPrivateOTCEscrowV2.json": {
+    "source": "ChainWhisper Contracts V2/validation/artifacts/@chainwhisper/contracts/contracts/p2p/ChainWhisperPrivateOTCEscrowV2.sol/ChainWhisperPrivateOTCEscrowV2.json",
+    "sourceSha256": "f76c0b39575a39503a1b9ca2634b7a8f1cab419a9653a2e4ca28efacdef0ec28",
+    "fixtureSha256": "bb30ff370e864dbd409ac355f4f99bd4faa8b7f846b1c5fd66c44502484f0005"
+  },
+  "p2p-previousBinding.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/disclosure-frame-repair-2026-10-26/PREVIOUS_P2P_BINDING.json",
+    "sourceSha256": "a3e7e39d5ef865a9922da8d8d4f0e8fd7c117ac8dc4929714ce0f72b56f29d97",
+    "fixtureSha256": "7de4b077192df226289669fb4fddb29b4158ee8abb450d0417f00f5c54adb7a1"
+  },
+  "p2p-disclosureNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/disclosure-frame-repair-2026-10-26/DISCLOSURE_REPAIR_NATIVE_RESULT.json",
+    "sourceSha256": "a9c6bcafad6888fab047eed600ed5d52fac1a68d4a21025b30a41d9b5ba681c0",
+    "fixtureSha256": "fe0fed26222a9427147b329024559a1d442792af229de507b28ecb07d08395db"
+  },
+  "p2p-native.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/BOOK_MATH_DEPLOY_NATIVE_RESULT.json",
+    "sourceSha256": "797bd9b7c24d55852ca5574cf28843759fb127cd752d036d01b55a57d6dbc20a",
+    "fixtureSha256": "611a140646d288b6ad69ace35c04073e17ef4eafec0c9f7221e4dccb0a6c3264"
+  },
+  "p2p-linkNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/LINK_REPAIR_NATIVE_RESULT.json",
+    "sourceSha256": "707d6c4f65a2942f1105a22d38a6230f21471a33bd0c18c0315f1580ee4c5fc5",
+    "fixtureSha256": "65e596fdd9152917d11adf360755b8361556d51136729746f550a67e4426a0b1"
+  },
+  "p2p-directNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/DIRECT_CASE_NATIVE_RESULT.json",
+    "sourceSha256": "08979c2937e3668ee448708ca47df9b8dae002eeada54b37550fe8aa79e6355b",
+    "fixtureSha256": "8fd513ea52ea60ed798627458428b91c9b0c6a5c49428159e01c5deab2bfa860"
+  },
+  "p2p-directCounterNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/direct-counter-2026-10-24/NATIVE_RESULT.json",
+    "sourceSha256": "7f11689253477f072f696cb1b101e34a889037dd12b92f4902c754194e5d67dd",
+    "fixtureSha256": "0b864d56abf2d5dfe9744bb8bb32d26b9586fc046a1f5a7f77a0fced06c1994c"
+  },
+  "p2p-publicDirectNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/public-direct-2026-10-24/NATIVE_RESULT.json",
+    "sourceSha256": "18b37378130dc3c5312b4f8f375195a9e4dab450abd1622339fbf4f9302059d6",
+    "fixtureSha256": "b23ba6706725f8b21dc638f0b1f3f962f82bb07e0f84d4b80a88f87d1317d0df"
+  },
+  "p2p-publicDirectCounterNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/public-direct-2026-10-24/counter/NATIVE_RESULT.json",
+    "sourceSha256": "6b5073ba0497f435f1b64ece1d084d249211743a8e3161a05ca35e56a6b0229e",
+    "fixtureSha256": "c28d6d2df829a0b07d8a4ea0b7a9fdaf618579d04969ab12660b178fd697a6f1"
+  },
+  "p2p-bookCounterNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/COUNTER_CASE_NATIVE_RESULT.json",
+    "sourceSha256": "5e9b6abb5032bd954618f57921ea82ccc7f54ea45f900cfdf93a3a001f7d7be6",
+    "fixtureSha256": "7b0ca2670ad2ab244f4c0eda6c1d44b8a320354025adbc52e64c130b2dc18c31"
+  },
+  "p2p-linkCounterNative.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/link-counter-2026-10-25/NATIVE_RESULT.json",
+    "sourceSha256": "6a311cece5f5c19e05e0c6cebe9d1f6c54bd2b70d18813c96fc8565796cf7f52",
+    "fixtureSha256": "b317451cda576c099ba5d7ec6631745913d5bba3d895d2e9cf2f9b48deb66046"
+  },
+  "public-standard-2026-10-25.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/public-standard-2026-10-25/NATIVE_RESULT.json",
+    "sourceSha256": "c5a5d8ebee79bc2510ac9dd289e75a829099be4684c71929b9d1f2f6d25d208a",
+    "fixtureSha256": "74be4806d97a9085efa9c4042ec92557101331783bba1115d7a1107f871f964b"
+  },
+  "public-link-2026-10-25.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/public-link-2026-10-25/NATIVE_RESULT.json",
+    "sourceSha256": "4ce3546bfa53adf6713c28ca805ce1a6d6d724b8317b445edf87566e41967271",
+    "fixtureSha256": "6e58275e55bebd89926825e2a538f0ae9327cd57970267e04ee14dd26ab87dc5"
+  },
+  "public-link-counter-2026-10-25.json": {
+    "source": "ChainWhisper Contracts V2/validation/reports/chat-p2p-readiness-2026-10-05/native-private-book-2026-10-23/public-link-counter-2026-10-25/NATIVE_RESULT.json",
+    "sourceSha256": "b5db54d849f7e1aaab0effb928e538a005cc890908545235eae3ae3449e13465",
+    "fixtureSha256": "9436c0a96a9ff4677d32d9b59c877db4a51df696395f24d0670df70141219e22"
+  }
+}

@@ -8,6 +8,11 @@ import {
   isWalletAddress,
   normalizeReactionEmoji
 } from '../../../lib/appShared';
+import type { ChatReactionObservation } from '../../../lib/chatReactionsV1';
+import {
+  getChatReactionMessageKey,
+  summarizeChatReactionsV1
+} from '../../../lib/chatReactionsV1Messages';
 
 type MessageReactionSummary = {
   emoji: string;
@@ -19,6 +24,7 @@ type UseMessageReactionsArgs = {
   activeContact: string | null;
   activeGroupId: number | null;
   activeThreadMessages: ChatMessage[];
+  chatReactionsV1States?: readonly ChatReactionObservation[];
   walletAddress: string;
 };
 
@@ -26,8 +32,14 @@ export default function useMessageReactions({
   activeContact,
   activeGroupId,
   activeThreadMessages,
+  chatReactionsV1States = [],
   walletAddress
 }: UseMessageReactionsArgs) {
+  const walletScopeKey = walletAddress.trim().toLowerCase();
+  const chatReactionsV1Summaries = useMemo(
+    () => summarizeChatReactionsV1(chatReactionsV1States, walletScopeKey),
+    [chatReactionsV1States, walletScopeKey]
+  );
   const activeThreadMessageReferenceLookup = useMemo(() => {
     const lookup = new Map<string, string>();
 
@@ -71,7 +83,7 @@ export default function useMessageReactions({
   );
 
   const activeThreadReactions = useMemo(() => {
-    const ownAddress = walletAddress.trim().toLowerCase();
+    const ownAddress = walletScopeKey;
     const peerAddress = activeContact?.trim().toLowerCase() ?? '';
     const byTarget = new Map<string, Map<string, Set<string>>>();
 
@@ -143,10 +155,14 @@ export default function useMessageReactions({
     }
 
     return summarized;
-  }, [activeThreadMessages, activeContact, activeGroupId, activeThreadMessageReferenceLookup, walletAddress]);
+  }, [activeThreadMessages, activeContact, activeGroupId, activeThreadMessageReferenceLookup, walletScopeKey]);
 
   const getReactionsForMessage = useCallback(
     (message: ChatMessage): MessageReactionSummary[] => {
+      const v2MessageKey = getChatReactionMessageKey(message);
+      if (v2MessageKey) {
+        return [...(chatReactionsV1Summaries.get(v2MessageKey) ?? [])];
+      }
       const messageReferenceKeyCandidates = buildMessageReferenceKeys({
         txHash: message.txHash,
         blockNumber: message.blockNumber,
@@ -162,7 +178,7 @@ export default function useMessageReactions({
 
       return activeThreadReactions.get(messageReferenceKey) ?? [];
     },
-    [activeThreadMessageReferenceLookup, activeThreadReactions]
+    [activeThreadMessageReferenceLookup, activeThreadReactions, chatReactionsV1Summaries]
   );
 
   return {

@@ -143,6 +143,24 @@ describe('wallet-scoped Snap AES state', () => {
       )
     ).toBe(false);
   });
+
+  it('normalizes an in-memory state preserved from before stale-token tracking', () => {
+    const activeProvider = provider();
+    const current = createWalletScopedSnapAesState({
+      provider: activeProvider,
+      status: 'installed-aes-ready',
+      walletAddress
+    });
+    const legacyState = {
+      sessionKey: current.sessionKey,
+      status: current.status,
+      walletKey: current.walletKey
+    } as never;
+
+    expect(resolveWalletScopedSnapAesState(legacyState, walletAddress, activeProvider)).toMatchObject({
+      staleTokenAddresses: []
+    });
+  });
 });
 
 describe('getOrRecoverAesForWallet', () => {
@@ -183,7 +201,7 @@ describe('getOrRecoverAesForWallet', () => {
     expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
   });
 
-  it('reuses one in-flight fallback AES request for app wallets without a provider', async () => {
+  it('reuses one in-flight fallback AES request for provider-less privacy signers', async () => {
     const firstSigner = signer();
     const secondSigner = signer();
 
@@ -204,6 +222,463 @@ describe('getOrRecoverAesForWallet', () => {
     expect(firstSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
     expect(secondSigner.generateOrRecoverAes).not.toHaveBeenCalled();
     expect(secondSigner.setUserOnboardInfo).toHaveBeenCalledWith({ aesKey: 'fallback-aes' });
+  });
+
+  it.each([
+    { clearMode: 'wallet-wide clear', passProvider: false },
+    { clearMode: 'provider-bound disconnect clear', passProvider: true }
+  ])('invalidates every provider fallback request after $clearMode', async ({ passProvider }) => {
+    const firstProvider = metaMaskProvider();
+    const secondProvider = provider();
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+
+    const createDeferredSigner = (aesKey: string) => {
+      let onboardInfo: OnboardInfo | undefined;
+      let releaseRecovery = () => {};
+      const recoveryGate = new Promise<void>((resolve) => {
+        releaseRecovery = resolve;
+      });
+      return {
+        releaseRecovery,
+        signer: {
+          generateOrRecoverAes: vi.fn(async () => {
+            await recoveryGate;
+            onboardInfo = { ...(onboardInfo ?? {}), aesKey } as OnboardInfo;
+          }),
+          getUserOnboardInfo: vi.fn(() => onboardInfo),
+          setUserOnboardInfo: vi.fn((nextInfo: OnboardInfo) => {
+            onboardInfo = { ...(onboardInfo ?? {}), ...nextInfo } as OnboardInfo;
+          })
+        }
+      };
+    };
+
+    const firstDeferred = createDeferredSigner('late-first-provider-aes');
+    const secondDeferred = createDeferredSigner('late-second-provider-aes');
+    const firstUnlock = getOrRecoverAesForWallet({
+      provider: firstProvider,
+      signer: firstDeferred.signer as never,
+      walletAddress
+    });
+    const secondUnlock = getOrRecoverAesForWallet({
+      provider: secondProvider,
+      signer: secondDeferred.signer as never,
+      walletAddress
+    });
+    const firstRejection = expect(firstUnlock).rejects.toThrow('wallet session changed');
+    const secondRejection = expect(secondUnlock).rejects.toThrow('wallet session changed');
+
+    await vi.waitFor(() => {
+      expect(firstDeferred.signer.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+      expect(secondDeferred.signer.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    });
+
+    clearCotiAesUnlockRequest(walletAddress, passProvider ? firstProvider : undefined);
+
+    const freshSigner = signer();
+    await expect(
+      getOrRecoverAesForWallet({
+        provider: firstProvider,
+        signer: freshSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({ aesKey: 'fallback-aes' });
+
+    firstDeferred.releaseRecovery();
+    secondDeferred.releaseRecovery();
+    await Promise.all([firstRejection, secondRejection]);
+
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, firstProvider)).toMatchObject({
+      aesKey: 'fallback-aes'
+    });
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, secondProvider)).toBeNull();
+  });
+
+  it('clears late signer onboarding state when fallback recovery settles after disconnect', async () => {
+    const activeProvider = metaMaskProvider();
+    let onboardInfo: OnboardInfo | undefined;
+    let releaseRecovery = () => {};
+    const recoveryGate = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const activeSigner = {
+      generateOrRecoverAes: vi.fn(async () => {
+        await recoveryGate;
+        onboardInfo = {
+          aesKey: 'late-disconnected-aes',
+          rsaKey,
+          txHash: '0xlate'
+        } as OnboardInfo;
+      }),
+      getUserOnboardInfo: vi.fn(() => onboardInfo),
+      setUserOnboardInfo: vi.fn((nextInfo: OnboardInfo) => {
+        onboardInfo = { ...(onboardInfo ?? {}), ...nextInfo } as OnboardInfo;
+      })
+    };
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+
+    const unlockOutcome = getOrRecoverAesForWallet({
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    );
+    await vi.waitFor(() => {
+      expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    });
+
+    clearCotiAesUnlockRequest(walletAddress, activeProvider);
+    releaseRecovery();
+
+    const outcome = await unlockOutcome;
+    expect('error' in outcome ? outcome.error : null).toBeInstanceOf(Error);
+    expect('error' in outcome ? String(outcome.error) : '').toContain('wallet session changed');
+    expect(activeSigner.getUserOnboardInfo()).toEqual({
+      aesKey: null,
+      rsaKey: null,
+      txHash: null
+    });
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+  });
+
+  it('checks the caller lifecycle immediately before fallback recovery after an earlier await', async () => {
+    const activeProvider = provider();
+    const activeSigner = signer();
+    let lifecycleCurrent = true;
+    let releaseSnap = (result: { status: 'missing-aes' }) => {
+      void result;
+    };
+    const snapGate = new Promise<{ status: 'missing-aes' }>((resolve) => {
+      releaseSnap = resolve;
+    });
+    vi.mocked(getCotiSnapAesKeyResult).mockReturnValue(snapGate);
+
+    const unlock = getOrRecoverAesForWallet({
+      assertCurrent: () => {
+        if (!lifecycleCurrent) {
+          throw new Error('wallet lifecycle expired');
+        }
+      },
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    });
+    await vi.waitFor(() => {
+      expect(getCotiSnapAesKeyResult).toHaveBeenCalledTimes(1);
+    });
+
+    lifecycleCurrent = false;
+    releaseSnap({ status: 'missing-aes' });
+
+    await expect(unlock).rejects.toThrow('wallet lifecycle expired');
+    expect(activeSigner.generateOrRecoverAes).not.toHaveBeenCalled();
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+  });
+
+  it('salvages full onboarding metadata without returning or persisting fallback AES when recovery finishes stale', async () => {
+    const activeProvider = metaMaskProvider();
+    let lifecycleCurrent = true;
+    let onboardInfo: OnboardInfo | undefined;
+    let releaseRecovery = () => {};
+    const recoveryGate = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const activeSigner = {
+      generateOrRecoverAes: vi.fn(async () => {
+        await recoveryGate;
+        onboardInfo = {
+          aesKey: 'late-lifecycle-aes',
+          rsaKey,
+          txHash: '0xlifecycle'
+        } as OnboardInfo;
+      }),
+      getUserOnboardInfo: vi.fn(() => onboardInfo),
+      setUserOnboardInfo: vi.fn((nextInfo: OnboardInfo) => {
+        onboardInfo = { ...(onboardInfo ?? {}), ...nextInfo } as OnboardInfo;
+      })
+    };
+    const onInvalidatedOnboardInfo = vi.fn();
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+
+    const unlock = getOrRecoverAesForWallet({
+      assertCurrent: () => {
+        if (!lifecycleCurrent) {
+          throw new Error('wallet lifecycle expired');
+        }
+      },
+      onInvalidatedOnboardInfo,
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    });
+    await vi.waitFor(() => {
+      expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    });
+
+    lifecycleCurrent = false;
+    releaseRecovery();
+
+    await expect(unlock).rejects.toThrow('wallet lifecycle expired');
+    expect(onInvalidatedOnboardInfo).toHaveBeenCalledTimes(1);
+    expect(onInvalidatedOnboardInfo).toHaveBeenCalledWith({
+      onboardInfo: {
+        aesKey: 'late-lifecycle-aes',
+        rsaKey,
+        txHash: '0xlifecycle'
+      },
+      walletAddress
+    });
+    const salvagedOnboardInfo = onInvalidatedOnboardInfo.mock.calls[0]?.[0]?.onboardInfo as
+      | OnboardInfo
+      | undefined;
+    expect(salvagedOnboardInfo?.rsaKey?.privateKey).not.toBe(rsaKey.privateKey);
+    expect(salvagedOnboardInfo?.rsaKey?.publicKey).not.toBe(rsaKey.publicKey);
+    expect(activeSigner.getUserOnboardInfo()).toEqual({
+      aesKey: null,
+      rsaKey: null,
+      txHash: null
+    });
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+  });
+
+  it('keeps the signer recovery copy and original stale error when invalidated onboarding salvage fails', async () => {
+    const activeProvider = metaMaskProvider();
+    let lifecycleCurrent = true;
+    let onboardInfo: OnboardInfo | undefined;
+    let releaseRecovery = () => {};
+    const recoveryGate = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const activeSigner = {
+      generateOrRecoverAes: vi.fn(async () => {
+        await recoveryGate;
+        onboardInfo = {
+          aesKey: 'retained-recovery-aes',
+          rsaKey,
+          txHash: '0xretained'
+        } as OnboardInfo;
+      }),
+      getUserOnboardInfo: vi.fn(() => onboardInfo),
+      setUserOnboardInfo: vi.fn((nextInfo: OnboardInfo) => {
+        onboardInfo = { ...(onboardInfo ?? {}), ...nextInfo } as OnboardInfo;
+      })
+    };
+    const onInvalidatedOnboardInfo = vi.fn(() => {
+      throw new Error('address-bound salvage failed');
+    });
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+
+    const unlockOutcome = getOrRecoverAesForWallet({
+      assertCurrent: () => {
+        if (!lifecycleCurrent) {
+          throw new Error('wallet lifecycle expired');
+        }
+      },
+      onInvalidatedOnboardInfo,
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    );
+    await vi.waitFor(() => {
+      expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    });
+
+    lifecycleCurrent = false;
+    releaseRecovery();
+
+    const outcome = await unlockOutcome;
+    expect('value' in outcome).toBe(false);
+    expect('error' in outcome ? String(outcome.error) : '').toContain('wallet lifecycle expired');
+    expect('error' in outcome ? String(outcome.error) : '').not.toContain('address-bound salvage failed');
+    expect(onInvalidatedOnboardInfo).toHaveBeenCalledTimes(1);
+    expect(activeSigner.getUserOnboardInfo()).toMatchObject({
+      aesKey: 'retained-recovery-aes',
+      rsaKey,
+      txHash: '0xretained'
+    });
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+  });
+
+  it('serializes a replacement fallback unlock on the same signer after disconnect', async () => {
+    const activeProvider = metaMaskProvider();
+    let onboardInfo: OnboardInfo | undefined;
+    let releaseOldRecovery = () => {};
+    let releaseNewRecovery = () => {};
+    const oldRecoveryGate = new Promise<void>((resolve) => {
+      releaseOldRecovery = resolve;
+    });
+    const newRecoveryGate = new Promise<void>((resolve) => {
+      releaseNewRecovery = resolve;
+    });
+    let recoveryCall = 0;
+    const activeSigner = {
+      generateOrRecoverAes: vi.fn(async () => {
+        const call = recoveryCall;
+        recoveryCall += 1;
+        if (call === 0) {
+          await oldRecoveryGate;
+          onboardInfo = {
+            aesKey: 'old-aes',
+            rsaKey,
+            txHash: '0xold'
+          } as OnboardInfo;
+          return;
+        }
+        await newRecoveryGate;
+        onboardInfo = {
+          aesKey: 'new-aes',
+          rsaKey,
+          txHash: '0xnew'
+        } as OnboardInfo;
+      }),
+      getUserOnboardInfo: vi.fn(() => onboardInfo),
+      setUserOnboardInfo: vi.fn((nextInfo: OnboardInfo) => {
+        onboardInfo = { ...(onboardInfo ?? {}), ...nextInfo } as OnboardInfo;
+      })
+    };
+    vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
+
+    const oldOutcome = getOrRecoverAesForWallet({
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    );
+    await vi.waitFor(() => {
+      expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    });
+
+    clearCotiAesUnlockRequest(walletAddress, activeProvider);
+    const newOutcome = getOrRecoverAesForWallet({
+      forceRefresh: true,
+      provider: activeProvider,
+      signer: activeSigner as never,
+      walletAddress
+    }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const recoveryCallsBeforeOldSettled = activeSigner.generateOrRecoverAes.mock.calls.length;
+    releaseNewRecovery();
+    await Promise.resolve();
+    releaseOldRecovery();
+
+    const [oldResult, newResult] = await Promise.all([oldOutcome, newOutcome]);
+    expect(recoveryCallsBeforeOldSettled).toBe(1);
+    expect('error' in oldResult ? String(oldResult.error) : '').toContain('wallet session changed');
+    expect('value' in newResult ? newResult.value : null).toMatchObject({
+      aesKey: 'new-aes',
+      rsaKey,
+      txHash: '0xnew'
+    });
+    expect(activeSigner.getUserOnboardInfo()).toMatchObject({
+      aesKey: 'new-aes',
+      rsaKey,
+      txHash: '0xnew'
+    });
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toMatchObject({
+      aesKey: 'new-aes'
+    });
+  });
+
+  it('rechecks the wallet epoch before an in-flight waiter applies AES to its signer', async () => {
+    const activeProvider = provider();
+    let releaseSnap = (result: { status: 'ready'; aesKey: string }) => {
+      void result;
+    };
+    const snapGate = new Promise<{ status: 'ready'; aesKey: string }>((resolve) => {
+      releaseSnap = resolve;
+    });
+    const primarySigner = signer();
+    const waitingSigner = signer();
+    primarySigner.setUserOnboardInfo.mockImplementation((nextInfo: OnboardInfo) => {
+      queueMicrotask(() => clearCotiAesUnlockRequest(walletAddress, activeProvider));
+      return nextInfo;
+    });
+    vi.mocked(getCotiSnapAesKeyResult).mockReturnValue(snapGate);
+
+    const primaryOutcome = getOrRecoverAesForWallet({
+      provider: activeProvider,
+      signer: primarySigner as never,
+      walletAddress
+    }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    );
+    await vi.waitFor(() => {
+      expect(getCotiSnapAesKeyResult).toHaveBeenCalledTimes(1);
+    });
+    const waiterOutcome = getOrRecoverAesForWallet({
+      provider: activeProvider,
+      signer: waitingSigner as never,
+      walletAddress
+    }).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error })
+    );
+    await vi.waitFor(() => {
+      expect(waitingSigner.getUserOnboardInfo).toHaveBeenCalled();
+    });
+
+    releaseSnap({ status: 'ready', aesKey: 'stale-snap-aes' });
+
+    const [primaryResult, waiterResult] = await Promise.all([primaryOutcome, waiterOutcome]);
+    expect('error' in primaryResult ? String(primaryResult.error) : '').toContain('wallet session changed');
+    expect('error' in waiterResult ? String(waiterResult.error) : '').toContain('wallet session changed');
+    expect(waitingSigner.setUserOnboardInfo).not.toHaveBeenCalledWith(
+      expect.objectContaining({ aesKey: 'stale-snap-aes' })
+    );
+  });
+
+  it('rechecks each caller lifecycle before an in-flight waiter applies AES to its signer', async () => {
+    const activeProvider = provider();
+    let waiterCurrent = true;
+    let releaseSnap = (result: { status: 'ready'; aesKey: string }) => {
+      void result;
+    };
+    const snapGate = new Promise<{ status: 'ready'; aesKey: string }>((resolve) => {
+      releaseSnap = resolve;
+    });
+    const primarySigner = signer();
+    const waitingSigner = signer();
+    vi.mocked(getCotiSnapAesKeyResult).mockReturnValue(snapGate);
+
+    const primaryOutcome = getOrRecoverAesForWallet({
+      provider: activeProvider,
+      signer: primarySigner as never,
+      walletAddress
+    });
+    await vi.waitFor(() => {
+      expect(getCotiSnapAesKeyResult).toHaveBeenCalledTimes(1);
+    });
+    const waiterOutcome = getOrRecoverAesForWallet({
+      assertCurrent: () => {
+        if (!waiterCurrent) {
+          throw new Error('waiter lifecycle expired');
+        }
+      },
+      provider: activeProvider,
+      signer: waitingSigner as never,
+      walletAddress
+    });
+
+    waiterCurrent = false;
+    releaseSnap({ status: 'ready', aesKey: 'shared-snap-aes' });
+
+    await expect(primaryOutcome).resolves.toMatchObject({ aesKey: 'shared-snap-aes' });
+    await expect(waiterOutcome).rejects.toThrow('waiter lifecycle expired');
+    expect(waitingSigner.setUserOnboardInfo).not.toHaveBeenCalledWith(
+      expect.objectContaining({ aesKey: 'shared-snap-aes' })
+    );
   });
 
   it('stops after Snap returns AES and does not ask for the legacy wallet signature', async () => {
@@ -349,7 +824,32 @@ describe('getOrRecoverAesForWallet', () => {
     expect(storeCotiSnapAesKeyResult).not.toHaveBeenCalled();
   });
 
-  it('stores fallback AES in session storage and rehydrates it for the same wallet/provider', async () => {
+  it('never sends a MetaMask Snap RPC to a known non-MetaMask wallet', async () => {
+    const cipherTradeProvider = provider();
+    const activeSigner = signer();
+    vi.mocked(getCotiSnapAesKeyResult).mockRejectedValue(
+      new Error('CipherTrade must never receive wallet_invokeSnap')
+    );
+
+    await expect(
+      getOrRecoverAesForWalletResult({
+        allowLegacyFallback: true,
+        probeSnapAes: false,
+        provider: cipherTradeProvider,
+        signer: activeSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({
+      status: 'ready',
+      onboardInfo: { aesKey: 'fallback-aes' },
+      source: 'fallback'
+    });
+
+    expect(getCotiSnapAesKeyResult).not.toHaveBeenCalled();
+    expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledOnce();
+  });
+
+  it('keeps fallback AES in memory only and binds it to the exact provider instance', async () => {
     const firstProvider = metaMaskProvider();
     const firstSigner = signer();
     vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
@@ -365,13 +865,13 @@ describe('getOrRecoverAesForWallet', () => {
     expect(readFallbackAesSessionOnboardInfo(walletAddress, firstProvider)).toMatchObject({
       aesKey: 'fallback-aes'
     });
+    expect(window.sessionStorage.length).toBe(0);
 
     vi.mocked(getCotiSnapAesKeyResult).mockClear();
-    const secondProvider = metaMaskProvider();
     const secondSigner = signer();
     await expect(
       getOrRecoverAesForWallet({
-        provider: secondProvider,
+        provider: firstProvider,
         signer: secondSigner as never,
         walletAddress
       })
@@ -379,9 +879,40 @@ describe('getOrRecoverAesForWallet', () => {
 
     expect(getCotiSnapAesKeyResult).not.toHaveBeenCalled();
     expect(secondSigner.generateOrRecoverAes).not.toHaveBeenCalled();
+
+    const replacementProvider = metaMaskProvider();
+    const replacementSigner = signer();
+    await expect(
+      getOrRecoverAesForWallet({
+        provider: replacementProvider,
+        signer: replacementSigner as never,
+        walletAddress
+      })
+    ).resolves.toMatchObject({ aesKey: 'fallback-aes' });
+
+    expect(getCotiSnapAesKeyResult).toHaveBeenCalledWith(replacementProvider, snapContext);
+    expect(replacementSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
+    expect(window.sessionStorage.length).toBe(0);
   });
 
-  it('clears wallet-scoped fallback AES session storage', async () => {
+  it('purges legacy plaintext fallback AES from session storage without rehydrating it', () => {
+    const activeProvider = metaMaskProvider();
+    const legacyStorageKey = `chainwhisper:fallback-aes:v1:${getCotiAesWalletSessionKey(
+      walletAddress,
+      activeProvider
+    )}`;
+    window.sessionStorage.setItem(legacyStorageKey, JSON.stringify({
+      aesKey: 'legacy-plaintext-aes',
+      chainId: 2632500,
+      providerId: 'metamask',
+      walletKey: walletAddress.toLowerCase()
+    }));
+
+    expect(readFallbackAesSessionOnboardInfo(walletAddress, activeProvider)).toBeNull();
+    expect(window.sessionStorage.getItem(legacyStorageKey)).toBeNull();
+  });
+
+  it('clears wallet-scoped fallback AES from the in-memory session cache', async () => {
     const activeProvider = metaMaskProvider();
     const activeSigner = signer();
     vi.mocked(getCotiSnapAesKeyResult).mockResolvedValue({ status: 'unsupported-mobile' });
@@ -727,7 +1258,7 @@ describe('getOrRecoverAesForWallet', () => {
         signer: activeSigner as never,
         validationProbes: [
           {
-            name: 'app-wallet-recovery',
+            name: 'privacy-key-recovery',
             validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fallback-aes'
           }
         ],
@@ -736,7 +1267,7 @@ describe('getOrRecoverAesForWallet', () => {
     ).resolves.toMatchObject({
       source: 'fallback',
       status: 'ready',
-      validation: { passedProbes: ['app-wallet-recovery'] }
+      validation: { passedProbes: ['privacy-key-recovery'] }
     });
 
     expect(activeSigner.generateOrRecoverAes).toHaveBeenCalledTimes(1);
@@ -759,7 +1290,7 @@ describe('getOrRecoverAesForWallet', () => {
         signer: activeSigner as never,
         validationProbes: [
           {
-            name: 'app-wallet-recovery',
+            name: 'privacy-key-recovery',
             validate: (_signer, onboardInfo) => onboardInfo.aesKey === 'fallback-aes'
           }
         ],

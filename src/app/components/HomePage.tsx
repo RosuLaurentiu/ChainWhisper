@@ -3,36 +3,37 @@ import AppFavicon from '../../assets/favicon.png';
 import HomeFooter from './HomeFooter';
 
 type HomePageProps = {
+  networkName: string;
   onLaunchChat: () => void;
   onOpenSwap: () => void;
-  onOpenTreasury: () => void;
+  onOpenPrivateTvl: () => void;
   onPrefetchChat?: () => void;
   onPrefetchSwap?: () => void;
   onPrefetchTrades?: () => void;
-  onPrefetchTreasury?: () => void;
+  onPrefetchPrivateTvl?: () => void;
   onOpenTrades: () => void;
 };
 
 export default function HomePage({
+  networkName,
   onLaunchChat,
   onOpenSwap,
-  onOpenTreasury,
+  onOpenPrivateTvl,
   onOpenTrades,
   onPrefetchChat,
   onPrefetchSwap,
   onPrefetchTrades,
-  onPrefetchTreasury
+  onPrefetchPrivateTvl
 }: HomePageProps) {
   return (
     <div className="landing-shell">
       <main className="landing-main">
         <section className="landing-hero">
           <div className="landing-hero-main">
-            <p className="landing-eyebrow">COTI Mainnet privacy hub</p>
+            <p className="landing-eyebrow">{networkName} privacy hub</p>
             <h1 className="landing-title">ChainWhisper</h1>
             <p className="landing-description">
-              Private messaging, peer-to-peer trading, token privacy tools, and treasury insights for the COTI
-              ecosystem.
+              Private chat, trading and token tools on COTI.
             </p>
 
             <div className="landing-hero-actions">
@@ -52,7 +53,7 @@ export default function HomePage({
                 onFocus={onPrefetchTrades}
                 onPointerEnter={onPrefetchTrades}
               >
-                Open OTC Desk
+                Open Trading
               </button>
             </div>
           </div>
@@ -73,8 +74,7 @@ export default function HomePage({
         <section className="landing-section landing-section-secondary">
           <div className="landing-section-heading">
             <div>
-              <p className="landing-eyebrow">Available apps</p>
-              <h2 className="landing-section-title">Built around private coordination</h2>
+              <h2 className="landing-section-title">Your apps</h2>
             </div>
           </div>
 
@@ -87,7 +87,7 @@ export default function HomePage({
                 <span className="landing-module-kicker">Messaging</span>
               </div>
               <h3>Encrypted Chat</h3>
-              <p>Private direct messages and group conversations with reactions, replies, tips, and invitations.</p>
+              <p>Direct and group chats with replies, reactions, tips and invitations.</p>
               <button
                 type="button"
                 className="landing-module-cta"
@@ -107,8 +107,8 @@ export default function HomePage({
                 </span>
                 <span className="landing-module-kicker">Trading</span>
               </div>
-              <h3>OTC Desk</h3>
-              <p>Discover peer offers, create escrow orders, share direct links, and manage private trades.</p>
+              <h3>DEX & P2P</h3>
+              <p>Trade through private DEX strategies or peer-to-peer offers.</p>
               <button
                 type="button"
                 className="landing-module-cta"
@@ -116,7 +116,7 @@ export default function HomePage({
                 onFocus={onPrefetchTrades}
                 onPointerEnter={onPrefetchTrades}
               >
-                Open OTC Desk
+                Open Trading
                 <ArrowUpRight aria-hidden="true" />
               </button>
             </article>
@@ -129,7 +129,7 @@ export default function HomePage({
                 <span className="landing-module-kicker">Private tokens</span>
               </div>
               <h3>Privacy Portal</h3>
-              <p>Convert supported COTI tokens between public and private forms through official bridges.</p>
+              <p>Convert public and private tokens through official COTI bridges.</p>
               <button
                 type="button"
                 className="landing-module-cta"
@@ -149,16 +149,16 @@ export default function HomePage({
                 </span>
                 <span className="landing-module-kicker">Analytics</span>
               </div>
-              <h3>Treasury Data</h3>
-              <p>Explore live treasury metrics, historical snapshots, COTI pool data, and gCOTI insights.</p>
+              <h3>COTI Private TVL</h3>
+              <p>Bridge reserves, coverage and verified Band USD values.</p>
               <button
                 type="button"
                 className="landing-module-cta"
-                onClick={onOpenTreasury}
-                onFocus={onPrefetchTreasury}
-                onPointerEnter={onPrefetchTreasury}
+                onClick={onOpenPrivateTvl}
+                onFocus={onPrefetchPrivateTvl}
+                onPointerEnter={onPrefetchPrivateTvl}
               >
-                Open Treasury
+                Open Private TVL
                 <ArrowUpRight aria-hidden="true" />
               </button>
             </article>

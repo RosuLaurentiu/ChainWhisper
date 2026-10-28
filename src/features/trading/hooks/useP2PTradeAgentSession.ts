@@ -79,7 +79,7 @@ export default function useP2PTradeAgentSession({
     const retry = readTradeAgentPaymentRetry();
     return retry?.context.clientSurface === 'otc-agent' ? retry : null;
   });
-  const [tradeAgentPanelMode, setTradeAgentPanelMode] = useState<TradeAgentPanelMode>('help');
+  const [tradeAgentPanelMode, setTradeAgentPanelMode] = useState<TradeAgentPanelMode>('trade');
   const [tradeAgentAction, setTradeAgentAction] = useState<TradeAgentActionType>(
     () => initialTradeAgentRetryPayment?.action ?? 'find_price'
   );
@@ -89,7 +89,7 @@ export default function useP2PTradeAgentSession({
       id: 'intro',
       role: 'assistant',
       title: 'Trade Agent',
-      text: 'Compare price references, explain or review orders, and draft limit, recurring, counter, or chat-based trades. Every result is editable and you still confirm every action.'
+      text: 'Compare prices, review an order, or draft a trade. Nothing is submitted until you confirm it.'
     }
   ]);
   const [tradeAgentFeeQuote, setTradeAgentFeeQuote] = useState<TradeAgentFeeQuote | null>(null);

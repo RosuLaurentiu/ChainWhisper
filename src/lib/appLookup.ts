@@ -1,20 +1,16 @@
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
-  CHAT_CONTRACT_ABI,
-  CHAT_CONTRACT_ADDRESS,
   isWalletAddress,
   loadCotiEthersModule,
   loadCotiReadProvider,
-  mergeOnboardInfo,
   normalizeContactName,
   parseConversationBlockRange,
   parseRecentPeersWithMetaResult,
   toSafeNumber,
-  type Contact,
   type ConversationBlockRange,
   type RecentPeerMeta
 } from './appShared';
 import { CHAT_GC_RECENT_CONVERSATION_LIMIT, parseChatGcConversationRefs } from './chatGc';
+import { LEGACY_CHAT_CONTRACT_ABI, LEGACY_CHAT_CONTRACT_ADDRESS } from './legacyChatContracts';
 
 type PromiseRef<T> = { current: Promise<T> | null };
 type BooleanRef = { current: boolean };
@@ -30,26 +26,6 @@ type GetNicknameMaxLengthArgs = {
 type FetchOnChainNicknamesArgs = {
   onChainNicknameCacheRef: RecordRef<Record<string, string | null>>;
   getNicknameMaxLength: () => Promise<number>;
-};
-
-type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
-  cacheKey: string;
-};
-
-type SaveMyNicknameOnChainArgs = {
-  walletAddress: string;
-  nickname: string;
-  overrideNickname?: string;
-  getNicknameMaxLength: () => Promise<number>;
-  onChainNicknameCacheRef: RecordRef<Record<string, string | null>>;
-  getMemoSigner: () => Promise<MemoSignerBundle>;
-  setMyNickname: (value: string) => void;
-  setContacts: (updater: (previous: Contact[]) => Contact[]) => void;
-  setSessionOnboardInfo: (
-    updater: (previous: Record<string, OnboardInfo>) => Record<string, OnboardInfo>
-  ) => void;
-  setError: (value: string) => void;
 };
 
 export const isAlreadyKnownTransactionError = (error: unknown): boolean => {
@@ -112,34 +88,6 @@ export const extractRawTransactionFromError = (error: unknown): string | undefin
   return undefined;
 };
 
-const waitForKnownTransaction = async (
-  cotiEthers: Awaited<ReturnType<typeof loadCotiEthersModule>>,
-  error: unknown
-): Promise<boolean> => {
-  if (!isAlreadyKnownTransactionError(error)) {
-    return false;
-  }
-
-  const rawTransaction = extractRawTransactionFromError(error);
-  if (!rawTransaction || !cotiEthers.Transaction?.from) {
-    return false;
-  }
-
-  try {
-    const parsedTransaction = cotiEthers.Transaction.from(rawTransaction) as { hash?: string };
-    const hash = parsedTransaction.hash;
-    if (!hash || !/^0x[a-fA-F0-9]{64}$/.test(hash)) {
-      return false;
-    }
-
-    const readProvider = await loadCotiReadProvider(true);
-    const receipt = await readProvider.waitForTransaction(hash, 1, 90_000);
-    return Number((receipt as { status?: number | bigint } | null | undefined)?.status ?? 0) === 1;
-  } catch {
-    return false;
-  }
-};
-
 export const getNicknameMaxLength = async ({
   nicknameMaxBytesLoadedRef,
   nicknameMaxBytesRequestRef,
@@ -155,7 +103,11 @@ export const getNicknameMaxLength = async ({
       try {
         const cotiEthers = await loadCotiEthersModule();
         const readProvider = await loadCotiReadProvider(true);
-        const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+        const readContract = new cotiEthers.Contract(
+          LEGACY_CHAT_CONTRACT_ADDRESS,
+          LEGACY_CHAT_CONTRACT_ABI,
+          readProvider
+        );
         const onChainMax = toSafeNumber(await readContract.NICKNAME_MAX_BYTES());
         if (onChainMax > 0) {
           setNicknameMaxBytes(onChainMax);
@@ -197,7 +149,11 @@ export const fetchOnChainNicknames = async (
     const maxLength = await getNicknameMaxLength();
     const cotiEthers = await loadCotiEthersModule();
     const readProvider = await loadCotiReadProvider(true);
-    const readContract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+    const readContract = new cotiEthers.Contract(
+      LEGACY_CHAT_CONTRACT_ADDRESS,
+      LEGACY_CHAT_CONTRACT_ABI,
+      readProvider
+    );
     await Promise.all(
       uncachedAddresses.map(async (address) => {
         try {
@@ -219,79 +175,6 @@ export const fetchOnChainNicknames = async (
     }
   }
   return resolved;
-};
-
-export const saveMyNicknameOnChain = async ({
-  walletAddress,
-  nickname,
-  overrideNickname,
-  getNicknameMaxLength,
-  onChainNicknameCacheRef,
-  getMemoSigner,
-  setMyNickname,
-  setContacts,
-  setSessionOnboardInfo,
-  setError
-}: SaveMyNicknameOnChainArgs): Promise<boolean> => {
-  const address = walletAddress.trim().toLowerCase();
-  if (!isWalletAddress(address)) {
-    return false;
-  }
-
-  const maxLength = await getNicknameMaxLength();
-  const nextNickname = normalizeContactName(
-    (typeof overrideNickname === 'string' ? overrideNickname : nickname).replace(/\r?\n/g, '')
-  )?.slice(0, maxLength);
-  if (!nextNickname) {
-    return false;
-  }
-
-  const cachedNickname = onChainNicknameCacheRef.current[address];
-  if (cachedNickname === nextNickname) {
-    return true;
-  }
-
-  const applySavedNickname = (cacheKey: string, signer: Wallet | JsonRpcSigner): void => {
-    onChainNicknameCacheRef.current[address] = nextNickname;
-    setMyNickname(nextNickname);
-    setContacts((previous) =>
-      previous.map((contact) =>
-        contact.address.toLowerCase() === address ? { ...contact, name: nextNickname } : contact
-      )
-    );
-
-    const nextOnboardInfo = signer.getUserOnboardInfo();
-    setSessionOnboardInfo((previous) => ({
-      ...previous,
-      [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-    }));
-  };
-
-  try {
-    const { signer, cacheKey } = await getMemoSigner();
-    const cotiEthers = await loadCotiEthersModule();
-    const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, signer);
-    try {
-      const tx = await contract.setMyNickname(nextNickname);
-      await tx.wait();
-    } catch (submitError) {
-      const recovered = await waitForKnownTransaction(cotiEthers, submitError);
-      if (!recovered) {
-        throw submitError;
-      }
-    }
-
-    applySavedNickname(cacheKey, signer);
-    return true;
-  } catch (nicknameError) {
-    const message = isAlreadyKnownTransactionError(nicknameError)
-      ? 'Nickname update is already pending. Wait for it to confirm, then refresh chat.'
-      : nicknameError instanceof Error
-        ? nicknameError.message
-        : 'Failed to save nickname on chain.';
-    setError(message);
-    return false;
-  }
 };
 
 export const loadMyNicknameFromChain = async (

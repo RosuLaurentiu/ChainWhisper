@@ -24,6 +24,33 @@ type MessageReactionSummary = {
   reactedByMe: boolean;
 };
 
+export const getGroupReplyActionPolicy = ({
+  archived = false,
+  groupChatV2RepliesEnabled,
+  message,
+  walletPromptSensitiveActionsDisabled,
+  walletPromptSensitiveActionsTitle
+}: Readonly<{
+  archived?: boolean;
+  groupChatV2RepliesEnabled: boolean;
+  message: ChatMessage;
+  walletPromptSensitiveActionsDisabled: boolean;
+  walletPromptSensitiveActionsTitle: string;
+}>): Readonly<{ disabled: boolean; title: string }> => {
+  if (archived) return { disabled: true, title: 'Archived groups cannot receive new messages.' };
+  if (!walletPromptSensitiveActionsDisabled) return { disabled: false, title: 'Reply' };
+  if (!groupChatV2RepliesEnabled) {
+    return { disabled: true, title: walletPromptSensitiveActionsTitle };
+  }
+  if (!message.groupV2) {
+    return {
+      disabled: true,
+      title: 'Group Chat V2 replies can target only authenticated new-protocol messages.'
+    };
+  }
+  return { disabled: false, title: 'Reply' };
+};
+
 type GroupParticipantSummary = {
   key: string;
   address: string;
@@ -43,6 +70,8 @@ type GroupChatPanelProps = {
   onCopyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
   processingGroupAction: boolean;
   onRemoveMember: (address: string) => Promise<void>;
+  onTransferAdmin: (address: string) => Promise<void>;
+  adminTransferEnabled: boolean;
   desktopJoinCodeList?: ReactNode;
   desktopInviteMenu: ReactNode;
   mobileInviteTools: ReactNode;
@@ -56,6 +85,9 @@ type GroupChatPanelProps = {
   chatMessagesRef: Ref<HTMLDivElement>;
   activeGroupMessages: ChatMessage[];
   messageLoadPhase: 'initial' | 'history' | null;
+  groupEpochSyncRequired: boolean;
+  groupEpochSyncPending: boolean;
+  onSynchronizeGroupEpoch: () => void;
   isReactionOnlyMessage: (message: ChatMessage) => boolean;
   getReactionsForMessage: (message: ChatMessage) => MessageReactionSummary[];
   reactionPickerMessageId: string | null;
@@ -64,12 +96,15 @@ type GroupChatPanelProps = {
   onSendReaction: (targetMessage: ChatMessage, emojiInput: string) => Promise<void>;
   walletPromptSensitiveActionsDisabled: boolean;
   walletPromptSensitiveActionsTitle: string;
+  chatReactionsV1Enabled: boolean;
+  groupChatV2RepliesEnabled: boolean;
   replyingToMessage: ChatMessage | null;
   onReplyToMessage: (message: ChatMessage) => void;
   highlightedMessageId: string | null;
   messageElementRefs: MutableRefObject<Record<string, HTMLDivElement | null>>;
   onJumpToReferencedMessage: (
     replyToMessageId?: string,
+    replyToMessageAnchor?: string,
     replyToText?: string,
     replyToTxHash?: string,
     replyToBlockNumber?: number,
@@ -111,6 +146,7 @@ type GroupChatPanelProps = {
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
+  promptEstimate?: Readonly<{ tone: 'ok' | 'warning'; label: string }> | null;
   onOpenInternalAppLink: (href: string) => void;
 };
 
@@ -124,6 +160,8 @@ export default function GroupChatPanel({
   onCopyWithFeedback,
   processingGroupAction,
   onRemoveMember,
+  onTransferAdmin,
+  adminTransferEnabled,
   desktopJoinCodeList,
   desktopInviteMenu,
   mobileInviteTools,
@@ -137,6 +175,9 @@ export default function GroupChatPanel({
   chatMessagesRef,
   activeGroupMessages,
   messageLoadPhase,
+  groupEpochSyncRequired,
+  groupEpochSyncPending,
+  onSynchronizeGroupEpoch,
   isReactionOnlyMessage,
   getReactionsForMessage,
   reactionPickerMessageId,
@@ -145,6 +186,8 @@ export default function GroupChatPanel({
   onSendReaction,
   walletPromptSensitiveActionsDisabled,
   walletPromptSensitiveActionsTitle,
+  chatReactionsV1Enabled,
+  groupChatV2RepliesEnabled,
   replyingToMessage,
   onReplyToMessage,
   highlightedMessageId,
@@ -186,8 +229,10 @@ export default function GroupChatPanel({
   onSendMessage,
   maxMessageLength,
   onMessageInputChange,
+  promptEstimate,
   onOpenInternalAppLink
 }: GroupChatPanelProps) {
+  const archived = activeGroupMeta?.archived === true;
   const chatMessagesNodeRef = useRef<HTMLDivElement | null>(null);
   const mobileGroupToolsButtonRef = useRef<HTMLButtonElement | null>(null);
   const setChatMessagesNode = useCallback(
@@ -207,7 +252,8 @@ export default function GroupChatPanel({
     () => activeGroupMessages.filter((message) => !isReactionOnlyMessage(message)),
     [activeGroupMessages, isReactionOnlyMessage]
   );
-  const showInitialMessageSkeleton = messageLoadPhase !== null && renderableMessages.length === 0;
+  const showInitialMessageSkeleton =
+    !groupEpochSyncRequired && messageLoadPhase !== null && renderableMessages.length === 0;
   const showHistorySyncIndicator = messageLoadPhase !== null && renderableMessages.length > 0;
   const messageLoadLabel = messageLoadPhase === 'initial' ? 'Catching up' : 'Loading older messages';
   const messageLoadAriaLabel =
@@ -295,18 +341,33 @@ export default function GroupChatPanel({
                               {isParticipantCopied ? 'Copied' : participant.shortAddress}
                             </span>
                           </button>
-                          {isActiveGroupAdmin && !participant.isSelf ? (
-                            <button
-                              type="button"
-                              className="group-member-remove"
-                              onClick={() => {
-                                onRemoveMember(participant.address).catch(() => {});
-                              }}
-                              disabled={processingGroupAction}
-                              title={`Remove ${participant.address}`}
-                            >
-                              Remove
-                            </button>
+                          {!archived && isActiveGroupAdmin && !participant.isSelf ? (
+                            <>
+                              {adminTransferEnabled ? (
+                                <button
+                                  type="button"
+                                  className="group-member-remove"
+                                  onClick={() => {
+                                    onTransferAdmin(participant.address).catch(() => {});
+                                  }}
+                                  disabled={processingGroupAction}
+                                  title={`Transfer administration to ${participant.address}`}
+                                >
+                                  Make admin
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="group-member-remove"
+                                onClick={() => {
+                                  onRemoveMember(participant.address).catch(() => {});
+                                }}
+                                disabled={processingGroupAction}
+                                title={`Remove ${participant.address}`}
+                              >
+                                Remove
+                              </button>
+                            </>
                           ) : null}
                         </div>
                       </li>
@@ -330,7 +391,7 @@ export default function GroupChatPanel({
               >
                 {syncingGroups ? 'Refreshing...' : 'Refresh'}
               </button>
-              <button
+              {!archived ? <button
                 ref={mobileGroupToolsButtonRef}
                 type="button"
                 className={
@@ -343,12 +404,12 @@ export default function GroupChatPanel({
                 onClick={onToggleMobileGroupOptions}
               >
                 {mobileGroupOptionsOpen ? 'Hide tools' : 'Group tools'}
-              </button>
+              </button> : null}
             </>
           ) : (
             <>
-              {desktopInviteMenu}
-              {desktopJoinCodeList}
+              {!archived ? desktopInviteMenu : null}
+              {!archived ? desktopJoinCodeList : null}
               <button
                 type="button"
                 className="contact group-refresh-button group-desktop-refresh-btn"
@@ -360,7 +421,7 @@ export default function GroupChatPanel({
             </>
           )}
         </div>
-        {isMobileNav && mobileGroupOptionsOpen ? (
+        {!archived && isMobileNav && mobileGroupOptionsOpen ? (
           <div
             id="group-mobile-tools-panel"
             className="group-mobile-options-panel"
@@ -380,7 +441,11 @@ export default function GroupChatPanel({
               <div className="group-mobile-section-header">
                 <span className="group-mobile-section-title">Group actions</span>
                 <span className="group-mobile-section-subtitle">
-                  {isActiveGroupAdmin ? 'Rename, leave, or close group' : 'Leave group'}
+                  {isActiveGroupAdmin
+                    ? activeGroupMeta?.isPrivate
+                      ? 'Private label, leave, or close group'
+                      : 'Rename, leave, or close group'
+                    : 'Leave group'}
                 </span>
               </div>
               <div className="group-mobile-options-actions group-mobile-options-actions-secondary">
@@ -388,12 +453,36 @@ export default function GroupChatPanel({
               </div>
             </div>
           </div>
-        ) : !isMobileNav ? (
+        ) : !archived && !isMobileNav ? (
           <div className="group-header-actions">{desktopGroupActions}</div>
         ) : null}
       </div>
 
       <div className="chat-messages" ref={setChatMessagesNode}>
+        {archived ? (
+          <div className="chat-empty-state" role="status">
+            <strong>Archived</strong>
+            <p>New messages are disabled. Existing messages and authorized history remain available.</p>
+          </div>
+        ) : null}
+        {groupEpochSyncRequired ? (
+          <div className="chat-empty-state" role="alert" aria-live="polite">
+            <strong>Sync this group’s privacy key</strong>
+            <p>
+              The group membership changed. One wallet transaction lets this wallet decrypt the
+              new epoch and load its finalized messages.
+            </p>
+            <div className="chat-empty-actions">
+              <button
+                type="button"
+                onClick={onSynchronizeGroupEpoch}
+                disabled={groupEpochSyncPending}
+              >
+                {groupEpochSyncPending ? 'Synchronizing...' : 'Sync group privacy'}
+              </button>
+            </div>
+          </div>
+        ) : null}
         {showHistorySyncIndicator ? (
           <div className="group-message-sync-indicator" role="status" aria-live="polite">
             <span className="inline-spinner" aria-hidden="true" />
@@ -414,7 +503,7 @@ export default function GroupChatPanel({
               </div>
             ))}
           </div>
-        ) : renderableMessages.length === 0 ? (
+        ) : renderableMessages.length === 0 && !groupEpochSyncRequired ? (
           <div className="chat-empty-state" role="status" aria-live="polite">
             <strong>No group messages yet</strong>
             <p>Send the first message, or refresh this group if recent messages are still syncing.</p>
@@ -441,11 +530,14 @@ export default function GroupChatPanel({
             const reactedEmojiSet = new Set(
               messageReactions.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)
             );
+            const groupChatV2Finalizing = message.groupV2?.finality === 'confirmed';
             const deliveryLabel =
               message.deliveryState === 'pending'
                 ? 'Sending...'
                 : message.deliveryState === 'sent'
-                  ? 'Sent'
+                  ? groupChatV2Finalizing
+                    ? 'Sent · finalizing (about 25s)'
+                    : 'Sent'
                   : message.deliveryState === 'failed'
                     ? 'Failed'
                     : '';
@@ -464,6 +556,15 @@ export default function GroupChatPanel({
                   ? shortenAddress(message.senderAddress)
                   : 'Member');
             const canReplyToGroupMessage = !isGroupSystemMessage;
+            const chatReactionV1Allowed = chatReactionsV1Enabled &&
+              Boolean(message.groupV2);
+            const replyAction = getGroupReplyActionPolicy({
+              archived,
+              groupChatV2RepliesEnabled,
+              message,
+              walletPromptSensitiveActionsDisabled,
+              walletPromptSensitiveActionsTitle
+            });
             const messageRowClassName = isGroupSystemMessage
               ? 'message-row system'
               : message.direction === 'outgoing'
@@ -499,13 +600,30 @@ export default function GroupChatPanel({
                   {canReplyToGroupMessage ? (
                     <MessageActions
                       message={message}
-                      pickerOpen={!walletPromptSensitiveActionsDisabled && reactionPickerMessageId === message.id}
+                      pickerOpen={
+                        (!walletPromptSensitiveActionsDisabled || chatReactionV1Allowed) &&
+                        reactionPickerMessageId === message.id
+                      }
                       reactedEmojiSet={reactedEmojiSet}
                       sendingReaction={sendingReaction}
-                      reactionDisabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
-                      reactionTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
-                      replyDisabled={walletPromptSensitiveActionsDisabled}
-                      replyTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'Reply'}
+                      reactionDisabled={
+                        !message.txHash || sendingReaction ||
+                        (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
+                      }
+                      reactionTitle={
+                        walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
+                          ? walletPromptSensitiveActionsTitle
+                          : chatReactionV1Allowed
+                            ? 'React publicly on-chain · 1 wallet transaction'
+                            : 'React'
+                      }
+                      reactionDisclosure={
+                        chatReactionV1Allowed
+                          ? 'Emoji reactions are public on-chain and need one wallet transaction.'
+                          : undefined
+                      }
+                      replyDisabled={replyAction.disabled}
+                      replyTitle={replyAction.title}
                       onToggleReactionPicker={onToggleReactionPicker}
                       onSendReaction={onSendReaction}
                       onReplyToMessage={onReplyToMessage}
@@ -535,6 +653,7 @@ export default function GroupChatPanel({
                       onClick={() =>
                         onJumpToReferencedMessage(
                           message.replyToMessageId,
+                          message.replyToMessageAnchor,
                           message.replyToText,
                           message.replyToTxHash,
                           message.replyToBlockNumber,
@@ -568,9 +687,13 @@ export default function GroupChatPanel({
                             !message.txHash ||
                             sendingReaction ||
                             reaction.reactedByMe ||
-                            walletPromptSensitiveActionsDisabled
+                            (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
                           }
-                          title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}
+                          title={
+                            walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
+                              ? walletPromptSensitiveActionsTitle
+                              : undefined
+                          }
                           aria-label={`${reaction.reactedByMe ? 'Your reaction' : 'Reaction'} ${reaction.emoji}, ${
                             reaction.count
                           } ${reaction.count === 1 ? 'reaction' : 'reactions'}`}
@@ -612,7 +735,7 @@ export default function GroupChatPanel({
         )}
       </div>
 
-      <GroupChatCompose
+      {!archived ? <GroupChatCompose
         replyPreviewText={replyingPreviewText}
         onCancelReply={onCancelReply}
         tipComposerOpen={tipComposerOpen}
@@ -636,19 +759,20 @@ export default function GroupChatPanel({
         activeGroupTipRecipients={activeGroupTipRecipients}
         selectedGroupTipRecipient={selectedGroupTipRecipient}
         sendingGroupMessage={sendingGroupMessage}
-        processingGroupAction={processingGroupAction}
+        processingGroupAction={processingGroupAction || groupEpochSyncRequired}
         composerRef={composerRef}
         isMobileNav={isMobileNav}
         onSendImage={onSendImage}
         uploadingImage={uploadingImage}
         imageAttachmentStatus={imageAttachmentStatus}
-        imageAttachDisabled={imageAttachDisabled}
+        imageAttachDisabled={imageAttachDisabled || groupEpochSyncRequired}
         imageAttachTitle={imageAttachTitle}
         onDismissImageAttachmentStatus={onDismissImageAttachmentStatus}
         onSendMessage={onSendMessage}
         maxMessageLength={maxMessageLength}
         onMessageInputChange={onMessageInputChange}
-      />
+        promptEstimate={promptEstimate}
+      /> : null}
     </div>
   );
 }

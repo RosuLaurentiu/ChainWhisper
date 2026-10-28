@@ -29,8 +29,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test
-        run: npm run test
+      - name: Test standalone App source
+        run: npm run test:ci
 
       - name: Check ChainWhisper Read API
         run: npm run check:api
@@ -45,7 +45,7 @@ jobs:
         run: npm run test:agent
 
       - name: Build
-        run: npm run build
+        run: npm run build:pages
 
       - name: Setup Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5

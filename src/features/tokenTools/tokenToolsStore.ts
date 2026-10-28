@@ -12,8 +12,6 @@ import type { ChainWhisperWispStage } from '../../lib/wispPrivacyBridge';
 import { resolveStateUpdate, type StateUpdate } from '../../shared/state/storeUtils';
 
 type TokenToolsState = {
-  topUpAmountWei: bigint | null;
-  requiredFeeWei: bigint | null;
   tipNativeBalanceWei: bigint | null;
   groupRewardsContractAddress: string;
   groupRewardsPaused: boolean | null;
@@ -43,10 +41,7 @@ type TokenToolsState = {
   privacyDirection: PrivacyDirection;
   privacyTokenSearch: string;
   privacyRecoveryOpen: boolean;
-  loadingTopUpQuote: boolean;
   loadingRewardBalances: boolean;
-  setTopUpAmountWei: (next: StateUpdate<bigint | null>) => void;
-  setRequiredFeeWei: (next: StateUpdate<bigint | null>) => void;
   setTipNativeBalanceWei: (next: StateUpdate<bigint | null>) => void;
   setGroupRewardsContractAddress: (next: StateUpdate<string>) => void;
   setGroupRewardsPaused: (next: StateUpdate<boolean | null>) => void;
@@ -76,13 +71,10 @@ type TokenToolsState = {
   setPrivacyDirection: (next: StateUpdate<PrivacyDirection>) => void;
   setPrivacyTokenSearch: (next: StateUpdate<string>) => void;
   setPrivacyRecoveryOpen: (next: StateUpdate<boolean>) => void;
-  setLoadingTopUpQuote: (next: StateUpdate<boolean>) => void;
   setLoadingRewardBalances: (next: StateUpdate<boolean>) => void;
 };
 
 export const useTokenToolsStore = create<TokenToolsState>((set) => ({
-  topUpAmountWei: null,
-  requiredFeeWei: null,
   tipNativeBalanceWei: null,
   groupRewardsContractAddress: '',
   groupRewardsPaused: null,
@@ -112,10 +104,7 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
   privacyDirection: 'public-to-private',
   privacyTokenSearch: '',
   privacyRecoveryOpen: false,
-  loadingTopUpQuote: false,
   loadingRewardBalances: false,
-  setTopUpAmountWei: (next) => set((state) => ({ topUpAmountWei: resolveStateUpdate(next, state.topUpAmountWei) })),
-  setRequiredFeeWei: (next) => set((state) => ({ requiredFeeWei: resolveStateUpdate(next, state.requiredFeeWei) })),
   setTipNativeBalanceWei: (next) =>
     set((state) => ({ tipNativeBalanceWei: resolveStateUpdate(next, state.tipNativeBalanceWei) })),
   setGroupRewardsContractAddress: (next) =>
@@ -183,8 +172,6 @@ export const useTokenToolsStore = create<TokenToolsState>((set) => ({
     set((state) => ({ privacyTokenSearch: resolveStateUpdate(next, state.privacyTokenSearch) })),
   setPrivacyRecoveryOpen: (next) =>
     set((state) => ({ privacyRecoveryOpen: resolveStateUpdate(next, state.privacyRecoveryOpen) })),
-  setLoadingTopUpQuote: (next) =>
-    set((state) => ({ loadingTopUpQuote: resolveStateUpdate(next, state.loadingTopUpQuote) })),
   setLoadingRewardBalances: (next) =>
     set((state) => ({ loadingRewardBalances: resolveStateUpdate(next, state.loadingRewardBalances) }))
 }));

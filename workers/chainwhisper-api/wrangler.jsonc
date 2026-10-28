@@ -26,6 +26,7 @@
   ],
   "vars": {
     "COTI_RPC_URL": "https://mainnet.coti.io/rpc",
-    "CARBON_API_BASE_URL": "https://api.carbondefi.xyz/v1/coti"
+    "CARBON_API_BASE_URL": "https://api.carbondefi.xyz/v1/coti",
+    "CHAINWHISPER_TESTNET_RPC_URL": "https://testnet.coti.io/rpc"
   }
 }

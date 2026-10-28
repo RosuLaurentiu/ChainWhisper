@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
 import type { OtcSwapFillNote } from '../../../lib/otcSwapIntent';
+import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledger';
+import type { TradeHistoryV2CanonicalLifecycleEvent } from '../../../lib/tradeHistoryV2Materialize';
 import {
   formatTradeContractIdLabel,
   getSnapshotKey,
@@ -15,7 +17,6 @@ import { resolveTradeOrderSummary } from '../../../lib/tradePerspective';
 import {
   getTradeAccountPerspectiveAddress,
   getWalletActionAccount,
-  getWalletOwnerAccount,
   type WalletReadAccount
 } from '../../../lib/walletAccountScope';
 import type { TerminalHistoryPanelConfig } from './P2PTradingPage.helpers';
@@ -33,13 +34,18 @@ export type TerminalHistoryConfigParams = {
   historyTransactionTimestamps: Record<string, number>;
   swapFillNotes: OtcSwapFillNote[];
   getTransactionLinkFeedbackProps: GetTransactionLinkFeedbackProps;
+  canonicalV2Rows?: readonly TradeHistoryV2ExecutionRow[];
+  canonicalV2LifecycleEvents?: readonly TradeHistoryV2CanonicalLifecycleEvent[];
+  canonicalV2Loading?: boolean;
+  canonicalV2Error?: string;
 };
 
 const renderHistoryRows = (
   lifecycleRows: ReturnType<typeof buildTradeLifecycleHistoryRows>,
   transactionRows: TradeTransactionHistoryRow[],
   tradeKey: string,
-  params: TerminalHistoryConfigParams
+  params: TerminalHistoryConfigParams,
+  statusMessage?: string
 ): ReactNode => (
   <TradeTerminalHistoryRows
     lifecycleRows={lifecycleRows}
@@ -50,49 +56,31 @@ const renderHistoryRows = (
     historyTransactionTimestamps={params.historyTransactionTimestamps}
     swapFillNotes={params.swapFillNotes}
     getTransactionLinkFeedbackProps={params.getTransactionLinkFeedbackProps}
+    statusMessage={statusMessage}
   />
 );
 
-type TerminalHistoryWalletParams = Pick<TerminalHistoryConfigParams, 'walletAddress' | 'walletReadAccounts'>;
-
-const findReadableMakerAccount = (
+const resolveCanonicalV2HistoryStatus = (
   snapshot: TradeSnapshot,
-  accounts: WalletReadAccount[]
-): WalletReadAccount | null => {
-  const makerKey = snapshot.maker.trim().toLowerCase();
-  return accounts.find((account) => account.key === makerKey) ?? null;
+  params: TerminalHistoryConfigParams
+): string | undefined => {
+  if (!snapshot.v2 && !snapshot.recurringOrder?.v2) return undefined;
+  if (params.canonicalV2Error) return 'Exact fill history could not be verified. Retry the trade refresh.';
+  if (params.canonicalV2Loading) return 'Verifying exact fill amounts…';
+  return undefined;
 };
 
-const hasRecurringExecutionsForWallet = (snapshot: TradeSnapshot, walletKey?: string): boolean => {
-  const key = walletKey?.trim().toLowerCase();
-  if (!key || !snapshot.recurringOrder) {
-    return false;
-  }
-  return [
-    ...(snapshot.recurringOrder.privateExecutions ?? []),
-    ...(snapshot.recurringOrder.publicExecutions ?? [])
-  ].some((execution) => execution.filler?.toLowerCase() === key);
-};
+type TerminalHistoryWalletParams = Pick<TerminalHistoryConfigParams, 'walletAddress' | 'walletReadAccounts'>;
 
 export const resolveTerminalHistoryWallet = (
   snapshot: TradeSnapshot,
   params: TerminalHistoryWalletParams
 ): { walletAddress: string; walletKey: string } => {
   const actionAccount = getWalletActionAccount(params.walletReadAccounts);
-  const ownerAccount = getWalletOwnerAccount(params.walletReadAccounts);
-  const perspectiveAddress = getTradeAccountPerspectiveAddress(snapshot, { actionAccount, ownerAccount }) || params.walletAddress;
-  const makerAddress = findReadableMakerAccount(snapshot, params.walletReadAccounts)?.address;
-  const recurringFallbackAddress =
-    snapshot.recurringOrder && actionAccount && !hasRecurringExecutionsForWallet(snapshot, actionAccount.key) &&
-    ownerAccount && hasRecurringExecutionsForWallet(snapshot, ownerAccount.key)
-      ? ownerAccount.address
-      : '';
-  const walletAddress =
-    makerAddress
-      ? makerAddress
-      : snapshot.recurringOrder
-        ? recurringFallbackAddress || actionAccount?.address || perspectiveAddress
-      : perspectiveAddress;
+  const walletAddress = actionAccount?.address || getTradeAccountPerspectiveAddress(snapshot, {
+    actionAccount,
+    ownerAccount: actionAccount
+  }) || params.walletAddress;
   return {
     walletAddress,
     walletKey: walletAddress.trim().toLowerCase()
@@ -122,8 +110,12 @@ export const buildStandardTerminalHistoryConfig = (
   const privateFillReceiptsForWallet = (snapshot.privateFillReceipts ?? []).filter(
     (receipt) => perspective.isMaker || receipt.filler?.toLowerCase() === historyWallet.walletKey
   );
-  const lifecycleRows = buildTradeLifecycleHistoryRows(snapshot);
-  const historyRows = buildTradeTransactionHistoryRows([snapshot], historyWallet.walletAddress);
+  const lifecycleRows = buildTradeLifecycleHistoryRows(snapshot, params.canonicalV2LifecycleEvents);
+  const historyRows = buildTradeTransactionHistoryRows(
+    [snapshot],
+    historyWallet.walletAddress,
+    params.canonicalV2Rows
+  );
   const historyEmptyCopy = !historyWallet.walletKey
     ? 'Connect your trading wallet to show your history for this trade.'
     : privateFillReceiptsForWallet.length
@@ -135,7 +127,13 @@ export const buildStandardTerminalHistoryConfig = (
     title: formatTradeContractIdLabel(snapshot),
     count: lifecycleRows.length + historyRows.length,
     emptyCopy: historyEmptyCopy,
-    children: renderHistoryRows(lifecycleRows, historyRows, tradeKey, params)
+    children: renderHistoryRows(
+      lifecycleRows,
+      historyRows,
+      tradeKey,
+      params,
+      resolveCanonicalV2HistoryStatus(snapshot, params)
+    )
   };
 };
 
@@ -150,8 +148,12 @@ export const buildRecurringTerminalHistoryConfig = (
 
   const tradeKey = getSnapshotKey(snapshot);
   const historyWallet = resolveTerminalHistoryWallet(snapshot, params);
-  const lifecycleRows = buildTradeLifecycleHistoryRows(snapshot);
-  const historyRows = buildTradeTransactionHistoryRows([snapshot], historyWallet.walletAddress);
+  const lifecycleRows = buildTradeLifecycleHistoryRows(snapshot, params.canonicalV2LifecycleEvents);
+  const historyRows = buildTradeTransactionHistoryRows(
+    [snapshot],
+    historyWallet.walletAddress,
+    params.canonicalV2Rows
+  );
   const emptyCopy =
     !historyWallet.walletKey
       ? 'Connect your trading wallet to show your history for this order.'
@@ -162,7 +164,13 @@ export const buildRecurringTerminalHistoryConfig = (
     title: formatTradeContractIdLabel(snapshot),
     count: lifecycleRows.length + historyRows.length,
     emptyCopy,
-    children: renderHistoryRows(lifecycleRows, historyRows, tradeKey, params)
+    children: renderHistoryRows(
+      lifecycleRows,
+      historyRows,
+      tradeKey,
+      params,
+      resolveCanonicalV2HistoryStatus(snapshot, params)
+    )
   };
 };
 

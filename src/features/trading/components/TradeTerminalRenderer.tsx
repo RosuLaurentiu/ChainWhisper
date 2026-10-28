@@ -14,10 +14,12 @@ import TradeRecurringTerminal from './TradeRecurringTerminal';
 import TradeStandardTerminal from './TradeStandardTerminal';
 import {
   TradeTerminalHistoryWindowForTrade,
+  buildTerminalHistoryConfig,
   buildRecurringTerminalHistoryConfig,
   buildStandardTerminalHistoryConfig,
   type TerminalHistoryConfigParams
 } from './tradeTerminalHistoryConfig';
+import { TradeTerminalHistoryContent } from './TradeTerminalHistoryPanel';
 
 type CounterAcceptMode = 'close-related' | 'fill';
 type RecurringStatusAction = 'pause' | 'resume' | 'cancel';
@@ -46,6 +48,8 @@ export type TradeTerminalRendererProps = {
   beginEditTrade: (snapshot: TradeSnapshot) => void;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   cancelTrade: (snapshot: TradeSnapshot) => Promise<void>;
+  changePrivateBookBudgetVisibility: (snapshot: TradeSnapshot, visible: boolean) => Promise<void>;
+  renderTradeBalanceDisclosure?: (snapshot: TradeSnapshot) => ReactNode;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
   declineTrade: (snapshot: TradeSnapshot) => Promise<void>;
   fillRecurringOrderSide: (snapshot: TradeSnapshot, side: RecurringTerminalActionSide) => Promise<void>;
@@ -71,6 +75,7 @@ export type TradeTerminalRendererProps = {
   beginEditRecurringOrder: (snapshot: TradeSnapshot) => void;
   updateRecurringOrderStatus: (snapshot: TradeSnapshot, action: RecurringStatusAction) => Promise<void>;
   terminalHistoryConfigParams: TerminalHistoryConfigParams;
+  showHistoryControl?: boolean;
 };
 
 export function TradeTerminalRenderer({
@@ -97,6 +102,8 @@ export function TradeTerminalRenderer({
   beginEditTrade,
   buildTradeShareUrl,
   cancelTrade,
+  changePrivateBookBudgetVisibility,
+  renderTradeBalanceDisclosure,
   copyWithFeedback,
   declineTrade,
   fillRecurringOrderSide,
@@ -117,7 +124,8 @@ export function TradeTerminalRenderer({
   setRecurringSellFillInput,
   beginEditRecurringOrder,
   updateRecurringOrderStatus,
-  terminalHistoryConfigParams
+  terminalHistoryConfigParams,
+  showHistoryControl = true
 }: TradeTerminalRendererProps) {
   if (snapshot.recurringOrder) {
     return (
@@ -151,6 +159,7 @@ export function TradeTerminalRenderer({
         toggleMakerControls={toggleMakerControls}
         toggleTradeRateDirection={toggleTradeRateDirection}
         updateRecurringOrderStatus={updateRecurringOrderStatus}
+        showHistoryControl={showHistoryControl}
       />
     );
   }
@@ -180,6 +189,8 @@ export function TradeTerminalRenderer({
       beginEditTrade={beginEditTrade}
       buildTradeShareUrl={buildTradeShareUrl}
       cancelTrade={cancelTrade}
+      changePrivateBookBudgetVisibility={changePrivateBookBudgetVisibility}
+      renderTradeBalanceDisclosure={renderTradeBalanceDisclosure}
       copyWithFeedback={copyWithFeedback}
       declineTrade={declineTrade}
       getCarbonReferenceDisplay={getCarbonReferenceDisplay}
@@ -192,6 +203,8 @@ export function TradeTerminalRenderer({
       resolveTerminalAssetBalanceLabel={resolveTerminalAssetBalanceLabel}
       toggleMakerControls={toggleMakerControls}
       toggleTradeRateDirection={toggleTradeRateDirection}
+      canonicalV2Rows={terminalHistoryConfigParams.canonicalV2Rows}
+      showHistoryControl={showHistoryControl}
     />
   );
 }
@@ -200,13 +213,23 @@ type TradeTerminalHistoryRendererProps = {
   snapshot: TradeSnapshot;
   terminalHistoryConfigParams: TerminalHistoryConfigParams;
   renderActionNotice: (surface: P2PActionNoticeSurface, tradeKey?: string) => ReactNode;
+  embedded?: boolean;
 };
 
 export function TradeTerminalHistoryRenderer({
   snapshot,
   terminalHistoryConfigParams,
-  renderActionNotice
+  renderActionNotice,
+  embedded = false
 }: TradeTerminalHistoryRendererProps) {
+  if (embedded) {
+    const config = buildTerminalHistoryConfig(snapshot, terminalHistoryConfigParams);
+    return config ? (
+      <section className="p2p-terminal-activity-panel" aria-live="polite">
+        <TradeTerminalHistoryContent config={config} renderActionNotice={renderActionNotice} />
+      </section>
+    ) : null;
+  }
   return (
     <TradeTerminalHistoryWindowForTrade
       snapshot={snapshot}

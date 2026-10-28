@@ -1,4 +1,8 @@
 import { REWARD_TOKEN_ADDRESS } from './appShared';
+import {
+  TRADE_AGENT_PROHIBITED_KEY_RE,
+  containsTradeAgentSecretMaterial
+} from '../../supabase/functions/_shared/trade-agent-secret-material';
 
 export const TRADE_AGENT_PAYMENT_PROTOCOL = 'ChainWhisper Trade Agent';
 export const TRADE_AGENT_PAYMENT_PROTOCOL_VERSION = 2 as const;
@@ -28,13 +32,6 @@ const HASH_RE = /^0x[a-f0-9]{64}$/u;
 const REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const SIGNATURE_RE = /^0x(?:[a-f0-9]{128}|[a-f0-9]{130})$/u;
 const QUOTE_TOKEN_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
-const PROHIBITED_KEY_RE =
-  /^(?:access[_ -]?secret|private[_ -]?key|mnemonic|seed[_ -]?phrase|recovery[_ -]?phrase|secret|share[_ -]?code)$/iu;
-const PRIVATE_LINK_RE =
-  /\/(?:otc\/order|trades)\/(?:link|l)\/[A-Za-z0-9_-]+|[?&#]secret=|#0x[a-fA-F0-9]{64}\b/iu;
-const LABELED_SECRET_RE =
-  /\b(?:private\s*key|seed\s*phrase|recovery\s*phrase|mnemonic|access\s*secret)\b\s*(?::|=|is)?\s*(?:0x[a-fA-F0-9]{64}|[a-z]+(?:\s+[a-z]+){11,23})/iu;
-const RAW_SECRET_HEX_RE = /\b0x[a-fA-F0-9]{64}\b/u;
 
 export type TradeAgentPaymentAction =
   | 'explain_order'
@@ -138,6 +135,7 @@ export type OrchestrateTradeAgentPaymentInput = {
     persistence: { persisted: boolean; storageError?: string }
   ) => void;
   request: TradeAgentPaymentRequest;
+  rejectConflictingRetry?: boolean;
   retryRecord?: TradeAgentPaymentRetryRecord | null;
   storage?: TradeAgentPaymentStorage | null;
   now?: () => number;
@@ -162,7 +160,7 @@ const isCanonicalIsoDate = (value: string): boolean => {
 
 const assertNoProhibitedMaterial = (value: unknown): void => {
   if (typeof value === 'string') {
-    if (PRIVATE_LINK_RE.test(value) || LABELED_SECRET_RE.test(value) || RAW_SECRET_HEX_RE.test(value)) {
+    if (containsTradeAgentSecretMaterial(value)) {
       throw new Error('Trade Agent request contains private material.');
     }
     return;
@@ -175,7 +173,7 @@ const assertNoProhibitedMaterial = (value: unknown): void => {
     return;
   }
   Object.entries(value as Record<string, unknown>).forEach(([key, nested]) => {
-    if (PROHIBITED_KEY_RE.test(key) && nested !== null && nested !== undefined && nested !== '') {
+    if (TRADE_AGENT_PROHIBITED_KEY_RE.test(key) && nested !== null && nested !== undefined && nested !== '') {
       throw new Error('Trade Agent request contains private material.');
     }
     assertNoProhibitedMaterial(nested);
@@ -589,6 +587,7 @@ export const orchestrateTradeAgentPayment = async <T>({
   callbacks,
   onPaidRequest,
   request,
+  rejectConflictingRetry = false,
   retryRecord = null,
   storage = getDefaultStorage(),
   now = Date.now
@@ -610,14 +609,26 @@ export const orchestrateTradeAgentPayment = async <T>({
   const inMemoryRetryMatchesRequest = Boolean(
     inMemoryRetry && doesTradeAgentPaymentRetryMatch(inMemoryRetry, normalizedRequest)
   );
+  const storedRetryIsExact = Boolean(
+    storedRetryMatchesRequest && storedRetry?.requestHash === expectedRequestHash
+  );
+  const inMemoryRetryIsExact = Boolean(
+    inMemoryRetryMatchesRequest && inMemoryRetry?.requestHash === expectedRequestHash
+  );
+  if (
+    rejectConflictingRetry &&
+    ((storedRetry && !storedRetryIsExact) || (inMemoryRetry && !inMemoryRetryIsExact))
+  ) {
+    throw new Error(
+      'Recover the existing paid Trade Agent request before starting another request.'
+    );
+  }
   const reusableRetry =
     inMemoryRetry &&
-    inMemoryRetryMatchesRequest &&
-    inMemoryRetry.requestHash === expectedRequestHash
+    inMemoryRetryIsExact
       ? inMemoryRetry
       : storedRetry &&
-          storedRetryMatchesRequest &&
-          storedRetry.requestHash === expectedRequestHash
+          storedRetryIsExact
         ? storedRetry
         : null;
   let paidRequest: TradeAgentPaymentRetryRecord;

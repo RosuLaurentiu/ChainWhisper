@@ -6,9 +6,11 @@
   },
   "imports": {
     "@supabase/functions-js/edge-runtime.d.ts": "jsr:@supabase/functions-js@2.111.0/edge-runtime.d.ts",
-    "supabase": "npm:@supabase/supabase-js@2.111.0"
+    "supabase": "npm:@supabase/supabase-js@2.111.0",
+    "viem": "npm:viem@2.48.2"
   },
   "tasks": {
-    "check": "deno check index.ts"
+    "check": "deno check index.ts index.test.ts",
+    "test": "deno test --allow-env index.test.ts"
   }
 }

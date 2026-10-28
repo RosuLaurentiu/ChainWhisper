@@ -1,4 +1,4 @@
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import { COTI_NETWORK, type Eip1193Provider } from './appShared';
 import {
   getCotiSnapAesKeyResult,
@@ -7,22 +7,55 @@ import {
 } from './cotiSnap';
 
 type CotiAesSigner = Pick<
-  JsonRpcSigner | Wallet,
+  JsonRpcSigner,
   'generateOrRecoverAes' | 'getUserOnboardInfo' | 'setUserOnboardInfo'
 > &
-  Partial<Pick<JsonRpcSigner | Wallet, 'clearUserOnboardInfo'>>;
+  Partial<Pick<JsonRpcSigner, 'clearUserOnboardInfo'>>;
 
 type UnlockArgs = {
   allowLegacyFallback?: boolean;
   allowUnrecoverableReset?: boolean;
+  assertCurrent?: () => void | Promise<void>;
   forceFreshAes?: boolean;
   forceLegacyRefresh?: boolean;
   forceRefresh?: boolean;
   preferSnapAes?: boolean;
+  probeSnapAes?: boolean;
   provider?: Eip1193Provider | null;
   requireSnapAes?: boolean;
+  onInvalidatedOnboardInfo?: (completed: {
+    onboardInfo: OnboardInfo;
+    walletAddress: string;
+  }) => void | Promise<void>;
   signer: CotiAesSigner;
   walletAddress: string;
+};
+
+type UnlockLifecycleState = {
+  completedFallbackOnboardInfo?: OnboardInfo;
+  fallbackGenerationStarted: boolean;
+  fallbackStorageCommitted: boolean;
+  invalidated: boolean;
+  invalidatedOnboardInfoSalvage: 'not-attempted' | 'succeeded' | 'failed';
+};
+
+const runWithUnlockLifecycleAssertion = async <T>(
+  assertCurrent: UnlockArgs['assertCurrent'],
+  lifecycleState: UnlockLifecycleState,
+  operation: () => T | Promise<T>
+): Promise<T> => {
+  if (assertCurrent) {
+    try {
+      const assertion = assertCurrent();
+      if (assertion) {
+        await assertion;
+      }
+    } catch (error) {
+      lifecycleState.invalidated = true;
+      throw error;
+    }
+  }
+  return operation();
 };
 
 export type PrivacyUnlockResult =
@@ -85,88 +118,81 @@ export type WalletScopedAesValidationResult = CotiAesValidationResult & {
 
 const providerIds = new WeakMap<object, number>();
 let nextProviderId = 1;
-const inFlightUnlocks = new Map<string, Promise<PrivacyUnlockResult>>();
-const FALLBACK_AES_SESSION_STORAGE_PREFIX = 'chainwhisper:fallback-aes:v1:';
+const inFlightUnlocks = new Map<
+  string,
+  {
+    promise: Promise<PrivacyUnlockResult>;
+    walletKey: string;
+  }
+>();
+const walletUnlockEpochs = new Map<string, number>();
+const signerUnlockTails = new WeakMap<object, Promise<void>>();
+const fallbackAesSessionCache = new Map<string, OnboardInfo>();
+const LEGACY_FALLBACK_AES_SESSION_STORAGE_PREFIX = 'chainwhisper:fallback-aes:v1:';
 const COTI_ONBOARD_CONSOLE_ERROR = 'unable to onboard user.';
 let cotiOnboardConsoleSuppressionDepth = 0;
 let originalCotiOnboardConsoleError: typeof console.error | null = null;
-
 const normalizeWalletKey = (walletAddress: string): string => walletAddress.trim().toLowerCase();
 
-const getStableProviderId = (provider?: Eip1193Provider | null): string => {
-  if (!provider || (typeof provider !== 'object' && typeof provider !== 'function')) {
-    return 'no-provider';
+const cloneOnboardInfo = (onboardInfo: OnboardInfo): OnboardInfo => ({
+  ...onboardInfo,
+  rsaKey: onboardInfo.rsaKey
+    ? {
+        privateKey: onboardInfo.rsaKey.privateKey.slice(),
+        publicKey: onboardInfo.rsaKey.publicKey.slice()
+      }
+    : onboardInfo.rsaKey
+});
+
+const salvageInvalidatedOnboardInfo = async (
+  onInvalidatedOnboardInfo: UnlockArgs['onInvalidatedOnboardInfo'],
+  walletAddress: string,
+  lifecycleState: UnlockLifecycleState
+): Promise<void> => {
+  if (
+    !onInvalidatedOnboardInfo ||
+    !lifecycleState.completedFallbackOnboardInfo ||
+    lifecycleState.invalidatedOnboardInfoSalvage !== 'not-attempted'
+  ) {
+    return;
   }
 
-  const providerWithFlags = provider as Eip1193Provider & {
-    isBackpack?: boolean;
-    isBraveWallet?: boolean;
-    isCipher?: boolean;
-    isCipherTrade?: boolean;
-    isCipherWallet?: boolean;
-    isCoinbaseWallet?: boolean;
-    isCypher?: boolean;
-    isCypherTrade?: boolean;
-    isCypherWallet?: boolean;
-    isFrame?: boolean;
-    isMetaMask?: boolean;
-    isOKXWallet?: boolean;
-    isPhantom?: boolean;
-    isRabby?: boolean;
-    isTally?: boolean;
-    isTrust?: boolean;
-    isTrustWallet?: boolean;
-  };
-  if (
-    providerWithFlags.isCipherTrade ||
-    providerWithFlags.isCipherWallet ||
-    providerWithFlags.isCipher ||
-    providerWithFlags.isCypherTrade ||
-    providerWithFlags.isCypherWallet ||
-    providerWithFlags.isCypher
-  ) {
-    return 'ciphertrade';
+  try {
+    await onInvalidatedOnboardInfo({
+      onboardInfo: cloneOnboardInfo(lifecycleState.completedFallbackOnboardInfo),
+      walletAddress: normalizeWalletKey(walletAddress)
+    });
+    lifecycleState.invalidatedOnboardInfoSalvage = 'succeeded';
+  } catch {
+    // Keep the original stale-lifecycle error authoritative and retain the
+    // signer's recovery copy when the address-bound persistence sink fails.
+    lifecycleState.invalidatedOnboardInfoSalvage = 'failed';
   }
-  if (providerWithFlags.isMetaMask && providerWithFlags.isBraveWallet) {
-    return 'brave-wallet';
+};
+
+const runWithSerializedSignerUnlock = async <T>(signer: CotiAesSigner, operation: () => Promise<T>): Promise<T> => {
+  const signerKey = signer as object;
+  const previousUnlock = signerUnlockTails.get(signerKey) ?? Promise.resolve();
+  let releaseUnlock = () => {};
+  const currentUnlock = new Promise<void>((resolve) => {
+    releaseUnlock = resolve;
+  });
+  signerUnlockTails.set(signerKey, currentUnlock);
+
+  await previousUnlock;
+  try {
+    return await operation();
+  } finally {
+    releaseUnlock();
+    if (signerUnlockTails.get(signerKey) === currentUnlock) {
+      signerUnlockTails.delete(signerKey);
+    }
   }
-  if (providerWithFlags.isMetaMask) {
-    return 'metamask';
-  }
-  if (providerWithFlags.isRabby) {
-    return 'rabby';
-  }
-  if (providerWithFlags.isCoinbaseWallet) {
-    return 'coinbase-wallet';
-  }
-  if (providerWithFlags.isTrust || providerWithFlags.isTrustWallet) {
-    return 'trust-wallet';
-  }
-  if (providerWithFlags.isFrame) {
-    return 'frame';
-  }
-  if (providerWithFlags.isPhantom) {
-    return 'phantom';
-  }
-  if (providerWithFlags.isBackpack) {
-    return 'backpack';
-  }
-  if (providerWithFlags.isOKXWallet) {
-    return 'okx-wallet';
-  }
-  if (providerWithFlags.isTally) {
-    return 'tally';
-  }
-  return '';
 };
 
 const getProviderId = (provider?: Eip1193Provider | null): string => {
   if (!provider || (typeof provider !== 'object' && typeof provider !== 'function')) {
     return 'no-provider';
-  }
-  const stableProviderId = getStableProviderId(provider);
-  if (stableProviderId) {
-    return stableProviderId;
   }
   const providerObject = provider as object;
   const existing = providerIds.get(providerObject);
@@ -194,43 +220,38 @@ const getFallbackAesStorage = (): Storage | null => {
   }
 };
 
-const getFallbackAesSessionStorageKey = (walletAddress: string, provider?: Eip1193Provider | null): string =>
-  `${FALLBACK_AES_SESSION_STORAGE_PREFIX}${getCotiAesWalletSessionKey(walletAddress, provider)}`;
+const purgeLegacyFallbackAesSessionStorage = (): void => {
+  const storage = getFallbackAesStorage();
+  if (!storage) {
+    return;
+  }
+
+  try {
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(LEGACY_FALLBACK_AES_SESSION_STORAGE_PREFIX)) {
+        storage.removeItem(key);
+      }
+    }
+  } catch {
+  }
+};
+
+purgeLegacyFallbackAesSessionStorage();
 
 export const readFallbackAesSessionOnboardInfo = (
   walletAddress: string,
   provider?: Eip1193Provider | null
 ): OnboardInfo | null => {
   const walletKey = normalizeWalletKey(walletAddress);
-  const storage = getFallbackAesStorage();
-  if (!walletKey || !provider || !storage) {
+  purgeLegacyFallbackAesSessionStorage();
+  if (!walletKey || !provider) {
     return null;
   }
 
-  try {
-    const raw = storage.getItem(getFallbackAesSessionStorageKey(walletAddress, provider));
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as {
-      aesKey?: unknown;
-      chainId?: unknown;
-      providerId?: unknown;
-      walletKey?: unknown;
-    };
-    const aesKey = typeof parsed.aesKey === 'string' ? parsed.aesKey.trim() : '';
-    if (
-      !aesKey ||
-      parsed.walletKey !== walletKey ||
-      parsed.providerId !== getProviderId(provider) ||
-      parsed.chainId !== COTI_NETWORK.chainIdDecimal
-    ) {
-      return null;
-    }
-    return { aesKey } as OnboardInfo;
-  } catch {
-    return null;
-  }
+  const cached = fallbackAesSessionCache.get(getCotiAesWalletSessionKey(walletAddress, provider));
+  const aesKey = typeof cached?.aesKey === 'string' ? cached.aesKey.trim() : '';
+  return aesKey ? ({ aesKey } as OnboardInfo) : null;
 };
 
 export const storeFallbackAesSessionOnboardInfo = (
@@ -240,26 +261,16 @@ export const storeFallbackAesSessionOnboardInfo = (
 ): boolean => {
   const walletKey = normalizeWalletKey(walletAddress);
   const aesKey = typeof onboardInfo?.aesKey === 'string' ? onboardInfo.aesKey.trim() : '';
-  const storage = getFallbackAesStorage();
-  if (!walletKey || !provider || !aesKey || !storage) {
+  purgeLegacyFallbackAesSessionStorage();
+  if (!walletKey || !provider || !aesKey) {
     return false;
   }
 
-  try {
-    storage.setItem(
-      getFallbackAesSessionStorageKey(walletAddress, provider),
-      JSON.stringify({
-        aesKey,
-        chainId: COTI_NETWORK.chainIdDecimal,
-        providerId: getProviderId(provider),
-        savedAt: Date.now(),
-        walletKey
-      })
-    );
-    return true;
-  } catch {
-    return false;
-  }
+  fallbackAesSessionCache.set(
+    getCotiAesWalletSessionKey(walletAddress, provider),
+    { aesKey } as OnboardInfo
+  );
+  return true;
 };
 
 export const clearFallbackAesSessionOnboardInfo = (
@@ -267,34 +278,20 @@ export const clearFallbackAesSessionOnboardInfo = (
   provider?: Eip1193Provider | null
 ): void => {
   const walletKey = normalizeWalletKey(walletAddress);
-  const storage = getFallbackAesStorage();
-  if (!walletKey || !storage) {
+  purgeLegacyFallbackAesSessionStorage();
+  if (!walletKey) {
     return;
   }
 
-  try {
-    if (provider) {
-      storage.removeItem(getFallbackAesSessionStorageKey(walletAddress, provider));
-      return;
+  if (provider) {
+    fallbackAesSessionCache.delete(getCotiAesWalletSessionKey(walletAddress, provider));
+    return;
+  }
+  const walletPrefix = `${walletKey}:`;
+  for (const cacheKey of fallbackAesSessionCache.keys()) {
+    if (cacheKey.startsWith(walletPrefix)) {
+      fallbackAesSessionCache.delete(cacheKey);
     }
-    for (let index = storage.length - 1; index >= 0; index -= 1) {
-      const key = storage.key(index);
-      if (!key?.startsWith(FALLBACK_AES_SESSION_STORAGE_PREFIX)) {
-        continue;
-      }
-      const raw = storage.getItem(key);
-      if (!raw) {
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(raw) as { walletKey?: unknown };
-        if (parsed.walletKey === walletKey) {
-          storage.removeItem(key);
-        }
-      } catch {
-      }
-    }
-  } catch {
   }
 };
 
@@ -344,9 +341,14 @@ export const resolveWalletScopedSnapAesState = (
   if (!state || !walletKey) {
     return null;
   }
-  return state.walletKey === walletKey && state.sessionKey === getCotiAesWalletSessionKey(walletAddress, provider)
+  if (state.walletKey !== walletKey || state.sessionKey !== getCotiAesWalletSessionKey(walletAddress, provider)) {
+    return null;
+  }
+  // Vite fast refresh can preserve a state object created before this field
+  // existed. Normalize that legacy in-memory shape at the boundary.
+  return Array.isArray(state.staleTokenAddresses)
     ? state
-    : null;
+    : { ...state, staleTokenAddresses: [] };
 };
 
 export const isWalletScopedPrivateTokenSnapStale = (
@@ -512,28 +514,62 @@ export const validateCotiAesForWallet = async (
   };
 };
 
-export const clearCotiAesUnlockRequest = (walletAddress: string, provider?: Eip1193Provider | null): void => {
-  inFlightUnlocks.delete(getCotiAesWalletSessionKey(walletAddress, provider));
+export const clearCotiAesUnlockRequest = (walletAddress: string, _provider?: Eip1193Provider | null): void => {
+  const walletKey = normalizeWalletKey(walletAddress);
+  if (!walletKey) {
+    return;
+  }
+
+  // A disconnect clears every provider's fallback AES for this owner, so any
+  // pending recovery for the same owner must be invalidated as one session.
+  walletUnlockEpochs.set(walletKey, (walletUnlockEpochs.get(walletKey) ?? 0) + 1);
+  for (const [sessionKey, unlock] of inFlightUnlocks) {
+    if (unlock.walletKey === walletKey) {
+      inFlightUnlocks.delete(sessionKey);
+    }
+  }
 };
 
-export const getOrRecoverAesForWalletResult = async ({
-  allowLegacyFallback = true,
-  allowUnrecoverableReset = false,
-  forceFreshAes = false,
-  forceLegacyRefresh = false,
-  forceRefresh = false,
-  preferSnapAes = false,
-  provider,
-  requireSnapAes = false,
-  signer,
-  walletAddress
-}: UnlockArgs): Promise<PrivacyUnlockResult> => {
+const getOrRecoverAesForWalletResultWithinSignerLock = async (
+  {
+    allowLegacyFallback = true,
+    allowUnrecoverableReset = false,
+    assertCurrent,
+    forceFreshAes = false,
+    forceLegacyRefresh = false,
+    forceRefresh = false,
+    onInvalidatedOnboardInfo,
+    preferSnapAes = false,
+    probeSnapAes = true,
+    provider,
+    requireSnapAes = false,
+    signer,
+    walletAddress
+  }: UnlockArgs,
+  walletUnlockEpoch: number,
+  lifecycleState: UnlockLifecycleState
+): Promise<PrivacyUnlockResult> => {
   const walletKey = normalizeWalletKey(walletAddress);
   if (!walletKey) {
     throw new Error('Connect a wallet before unlocking privacy.');
   }
+  const assertUnlockSessionIsCurrent = () => {
+    if ((walletUnlockEpochs.get(walletKey) ?? 0) !== walletUnlockEpoch) {
+      throw new Error('Privacy unlock was cancelled because the wallet session changed.');
+    }
+  };
+  const runIfUnlockCurrent = <T>(operation: () => T | Promise<T>): Promise<T> => {
+    assertUnlockSessionIsCurrent();
+    return runWithUnlockLifecycleAssertion(assertCurrent, lifecycleState, () => {
+      assertUnlockSessionIsCurrent();
+      return operation();
+    });
+  };
+  await runIfUnlockCurrent(() => undefined);
 
-  const shouldTrySnapBeforeCache = Boolean(preferSnapAes && provider && !forceLegacyRefresh);
+  const shouldTrySnapBeforeCache = Boolean(
+    probeSnapAes && preferSnapAes && provider && !forceLegacyRefresh
+  );
   const existingOnboardInfo = signer.getUserOnboardInfo();
   if (
     !shouldTrySnapBeforeCache &&
@@ -541,136 +577,231 @@ export const getOrRecoverAesForWalletResult = async ({
     !forceRefresh &&
     !forceLegacyRefresh
   ) {
-    return {
+    return runIfUnlockCurrent(() => ({
       status: 'ready',
       onboardInfo: existingOnboardInfo,
       source: 'cache'
-    };
+    }));
   }
   if (!shouldTrySnapBeforeCache && !forceRefresh && !forceLegacyRefresh) {
-    const storedOnboardInfo = hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
+    const storedOnboardInfo = await runIfUnlockCurrent(
+      () => hydrateSignerWithFallbackAesSession(signer, walletAddress, provider)
+    );
     if (storedOnboardInfo?.aesKey) {
-      return {
+      return runIfUnlockCurrent(() => ({
         status: 'ready',
         onboardInfo: storedOnboardInfo,
         source: 'cache'
-      };
+      }));
     }
   }
 
   const unlockKey = getCotiAesWalletSessionKey(walletAddress, provider);
-  const existingUnlock = inFlightUnlocks.get(unlockKey);
+  const existingUnlock = inFlightUnlocks.get(unlockKey)?.promise;
   if (existingUnlock) {
     const existingResult = await existingUnlock;
-    if (existingResult.status === 'ready') {
-      signer.setUserOnboardInfo(existingResult.onboardInfo);
-    }
-    return existingResult;
+    return runIfUnlockCurrent(() => {
+      if (existingResult.status === 'ready') {
+        signer.setUserOnboardInfo(existingResult.onboardInfo);
+      }
+      return existingResult;
+    });
   }
 
   const unlockPromise = (async () => {
-    if (provider && !forceLegacyRefresh) {
-      const snapResult = await getCotiSnapAesKeyResult(provider, getSnapWalletContext(walletAddress));
+    if (probeSnapAes && provider && !forceLegacyRefresh) {
+      const snapResult = await runIfUnlockCurrent(
+        () => getCotiSnapAesKeyResult(provider, getSnapWalletContext(walletAddress))
+      );
       if (snapResult.status === 'ready') {
-        const onboardInfo = mergeAesKey(signer.getUserOnboardInfo(), snapResult.aesKey);
-        signer.setUserOnboardInfo(onboardInfo);
-        return {
-          status: 'ready' as const,
-          onboardInfo,
-          source: 'snap' as const
-        };
+        return runIfUnlockCurrent(() => {
+          const onboardInfo = mergeAesKey(signer.getUserOnboardInfo(), snapResult.aesKey);
+          signer.setUserOnboardInfo(onboardInfo);
+          return {
+            status: 'ready' as const,
+            onboardInfo,
+            source: 'snap' as const
+          };
+        });
       }
       if (
         snapResult.status === 'wallet-mismatch' ||
         snapResult.status === 'wrong-network' ||
         snapResult.status === 'rejected'
       ) {
-        return {
+        return runIfUnlockCurrent(() => ({
           status: 'fallback-unavailable' as const,
           reason: snapResult.status
-        };
+        }));
       }
       if (
         requireSnapAes &&
         snapResult.status !== 'unsupported' &&
         snapResult.status !== 'unsupported-mobile'
       ) {
-        return {
+        return runIfUnlockCurrent(() => ({
           status: 'fallback-unavailable' as const,
           reason: snapResult.status
-        };
+        }));
       }
       if (!allowLegacyFallback) {
-        return {
+        return runIfUnlockCurrent(() => ({
           status: 'fallback-unavailable' as const,
           reason: snapResult.status
-        };
+        }));
       }
     }
 
     if (shouldTrySnapBeforeCache && !forceRefresh) {
       const cachedOnboardInfo = signer.getUserOnboardInfo();
       if (cachedOnboardInfo?.aesKey) {
-        return {
+        return runIfUnlockCurrent(() => ({
           status: 'ready' as const,
           onboardInfo: cachedOnboardInfo,
           source: 'cache' as const
-        };
+        }));
       }
-      const storedOnboardInfo = hydrateSignerWithFallbackAesSession(signer, walletAddress, provider);
+      const storedOnboardInfo = await runIfUnlockCurrent(
+        () => hydrateSignerWithFallbackAesSession(signer, walletAddress, provider)
+      );
       if (storedOnboardInfo?.aesKey) {
-        return {
+        return runIfUnlockCurrent(() => ({
           status: 'ready' as const,
           onboardInfo: storedOnboardInfo,
           source: 'cache' as const
-        };
+        }));
       }
     }
 
     if (!allowLegacyFallback) {
-      return {
+      return runIfUnlockCurrent(() => ({
         status: 'fallback-unavailable' as const,
         reason: 'disabled' as const
-      };
+      }));
     }
 
     const existingInfoBeforeFallback = signer.getUserOnboardInfo();
     if (forceLegacyRefresh && !forceFreshAes && !hasRecoverableOnboardInfo(existingInfoBeforeFallback)) {
       if (!allowUnrecoverableReset) {
-        return {
+        return runIfUnlockCurrent(() => ({
           status: 'fallback-unavailable' as const,
           reason: 'unrecoverable' as const
-        };
+        }));
       }
     }
-    if (forceLegacyRefresh && forceFreshAes) {
-      resetSignerOnboardInfoForFreshAes(signer);
-    } else if (forceLegacyRefresh) {
-      clearSignerAesKey(signer);
-    }
-    await generateOrRecoverAes(signer);
+    await runIfUnlockCurrent(() => {
+      if (forceLegacyRefresh && forceFreshAes) {
+        resetSignerOnboardInfoForFreshAes(signer);
+      } else if (forceLegacyRefresh) {
+        clearSignerAesKey(signer);
+      }
+      lifecycleState.fallbackGenerationStarted = true;
+      return generateOrRecoverAes(signer);
+    });
     const recoveredOnboardInfo = requireOnboardInfo(signer.getUserOnboardInfo());
-    storeFallbackAesSessionOnboardInfo(walletAddress, provider, recoveredOnboardInfo);
-    return {
-      status: 'ready' as const,
-      onboardInfo: recoveredOnboardInfo,
-      source: 'fallback' as const
-    };
+    lifecycleState.completedFallbackOnboardInfo = cloneOnboardInfo(recoveredOnboardInfo);
+    let fallbackCommitStarted = false;
+    try {
+      return await runIfUnlockCurrent(() => {
+        fallbackCommitStarted = true;
+        lifecycleState.fallbackStorageCommitted = storeFallbackAesSessionOnboardInfo(
+          walletAddress,
+          provider,
+          recoveredOnboardInfo
+        );
+        return {
+          status: 'ready' as const,
+          onboardInfo: recoveredOnboardInfo,
+          source: 'fallback' as const
+        };
+      });
+    } catch (error) {
+      if (!fallbackCommitStarted) {
+        await salvageInvalidatedOnboardInfo(
+          onInvalidatedOnboardInfo,
+          walletKey,
+          lifecycleState
+        );
+      }
+      throw error;
+    }
   })();
 
-  inFlightUnlocks.set(unlockKey, unlockPromise);
+  inFlightUnlocks.set(unlockKey, { promise: unlockPromise, walletKey });
   try {
     return await unlockPromise;
   } finally {
-    if (inFlightUnlocks.get(unlockKey) === unlockPromise) {
+    if (inFlightUnlocks.get(unlockKey)?.promise === unlockPromise) {
       inFlightUnlocks.delete(unlockKey);
     }
   }
 };
 
+export const getOrRecoverAesForWalletResult = (args: UnlockArgs): Promise<PrivacyUnlockResult> => {
+  const walletKey = normalizeWalletKey(args.walletAddress);
+  const walletUnlockEpoch = walletUnlockEpochs.get(walletKey) ?? 0;
+  return runWithSerializedSignerUnlock(args.signer, async () => {
+    const lifecycleState: UnlockLifecycleState = {
+      completedFallbackOnboardInfo: undefined,
+      fallbackGenerationStarted: false,
+      fallbackStorageCommitted: false,
+      invalidated: false,
+      invalidatedOnboardInfoSalvage: 'not-attempted'
+    };
+    try {
+      const result = await getOrRecoverAesForWalletResultWithinSignerLock(
+        args,
+        walletUnlockEpoch,
+        lifecycleState
+      );
+      return await runWithUnlockLifecycleAssertion(args.assertCurrent, lifecycleState, () => {
+        if ((walletUnlockEpochs.get(walletKey) ?? 0) !== walletUnlockEpoch) {
+          throw new Error('Privacy unlock was cancelled because the wallet session changed.');
+        }
+        return result;
+      });
+    } catch (error) {
+      if (lifecycleState.fallbackGenerationStarted && args.assertCurrent && !lifecycleState.invalidated) {
+        try {
+          await runWithUnlockLifecycleAssertion(args.assertCurrent, lifecycleState, () => undefined);
+        } catch {
+          // Preserve the original unlock error while recording stale lifecycle state for cleanup.
+        }
+      }
+      const walletEpochInvalidated = (walletUnlockEpochs.get(walletKey) ?? 0) !== walletUnlockEpoch;
+      const fallbackResultInvalidated =
+        lifecycleState.fallbackGenerationStarted &&
+        (walletEpochInvalidated || lifecycleState.invalidated);
+      if (fallbackResultInvalidated) {
+        await salvageInvalidatedOnboardInfo(
+          args.onInvalidatedOnboardInfo,
+          walletKey,
+          lifecycleState
+        );
+        if (lifecycleState.fallbackStorageCommitted) {
+          clearFallbackAesSessionOnboardInfo(args.walletAddress, args.provider);
+          lifecycleState.fallbackStorageCommitted = false;
+        }
+      }
+      if (
+        walletKey &&
+        fallbackResultInvalidated &&
+        lifecycleState.invalidatedOnboardInfoSalvage !== 'failed'
+      ) {
+        resetSignerOnboardInfoForFreshAes(args.signer);
+      }
+      throw error;
+    }
+  });
+};
+
 export const getOrRecoverAesForWallet = async (args: UnlockArgs): Promise<OnboardInfo> => {
   const result = await getOrRecoverAesForWalletResult(args);
   if (result.status === 'ready') {
+    const assertion = args.assertCurrent?.();
+    if (assertion) {
+      await assertion;
+    }
     return result.onboardInfo;
   }
   throw new Error(`Privacy unlock fallback is unavailable: ${result.reason}.`);

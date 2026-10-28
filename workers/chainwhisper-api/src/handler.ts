@@ -14,13 +14,19 @@ import { RUNTIME_VERIFICATION_SCOPE } from './source';
 import {
   ApiFault,
   type ChainWhisperApiSource,
+  type PrivateLiquidityDailyPriceApiSource,
+  type PrivateLiquidityV2ApiSource,
+  type TestnetRegistryV2ApiSource,
   type VerifiedAsset
 } from './types';
 
 const MAX_BODY_BYTES = 4_096;
 const MAX_ORDER_LIMIT = 20;
+const MAX_DAILY_PRICE_LIMIT = 366;
 const MAX_CURSOR = 1_000_000_000;
 const MAX_UINT256 = (1n << 256n) - 1n;
+const BYTES32 = /^0x[0-9a-fA-F]{64}$/u;
+const ZERO_BYTES32 = `0x${'00'.repeat(32)}`;
 
 export type QuoteRateLimiter = {
   limit(input: { key: string }): Promise<{ success: boolean }>;
@@ -124,7 +130,10 @@ const parseAmount = (raw: unknown, decimals: number): string => {
 
 export const createChainWhisperApiHandler = (
   source: ChainWhisperApiSource,
-  quoteRateLimiter?: QuoteRateLimiter
+  quoteRateLimiter?: QuoteRateLimiter,
+  privateLiquidityV2Source?: PrivateLiquidityV2ApiSource,
+  privateLiquidityDailyPriceSource?: PrivateLiquidityDailyPriceApiSource,
+  testnetRegistryV2Source?: TestnetRegistryV2ApiSource
 ): ((request: Request) => Promise<Response>) =>
   async (request) => {
     if (request.method === 'OPTIONS') {
@@ -177,13 +186,21 @@ export const createChainWhisperApiHandler = (
           },
           operations: {
             reads: ['status', 'capabilities', 'public-orders', 'market-reference', 'best-single-order-swap-quote'],
-            writes: []
+            writes: [],
+            testnetRegistryV2: testnetRegistryV2Source ? ['deployment-and-event-policy'] : [],
+            testnetPrivateLiquidityV2: privateLiquidityV2Source ? ['complete-public-pair'] : [],
+            testnetPrivateLiquidityAnalytics: privateLiquidityDailyPriceSource
+              ? ['daily-marginal-price-history']
+              : []
           },
           boundaries: {
             accountData: false,
             privateAmounts: false,
             unlistedOrders: false,
             directOrders: false,
+            rawEventData: false,
+            encryptedEventContent: false,
+            participantEncryptedReceipts: false,
             executionCalldata: false,
             signing: false
           },
@@ -200,6 +217,102 @@ export const createChainWhisperApiHandler = (
           })),
           privacyRoutes: PRIVACY_ROUTES
         }, 200, 'public, max-age=3600, stale-while-revalidate=86400');
+      }
+
+      if (path === API_ROUTES.testnetRegistryV2.path) {
+        if (request.method !== 'GET') throw new ApiFault('method_not_allowed', 'Method not allowed.', 405);
+        assertQueryKeys(url, []);
+        if (!testnetRegistryV2Source) {
+          throw new ApiFault(
+            'testnet_registry_unavailable',
+            'The reviewed ChainWhisper V2 testnet registry is not active for public reads.',
+            503
+          );
+        }
+        try {
+          return json(
+            await testnetRegistryV2Source.getRegistry(),
+            200,
+            'public, max-age=30, stale-while-revalidate=120'
+          );
+        } catch {
+          throw new ApiFault(
+            'testnet_registry_unavailable',
+            'The reviewed ChainWhisper V2 testnet registry could not be verified.',
+            503
+          );
+        }
+      }
+
+      if (path === API_ROUTES.privateLiquidityPair.path) {
+        if (request.method !== 'GET') throw new ApiFault('method_not_allowed', 'Method not allowed.', 405);
+        assertQueryKeys(url, []);
+        if (!privateLiquidityV2Source) {
+          throw new ApiFault(
+            'testnet_candidate_unavailable',
+            'The unified Private Liquidity V2 testnet candidate is not active for public reads.',
+            503
+          );
+        }
+        try {
+          return json(
+            await privateLiquidityV2Source.getPair(),
+            200,
+            'public, max-age=5, stale-while-revalidate=15'
+          );
+        } catch {
+          throw new ApiFault(
+            'testnet_candidate_unavailable',
+            'The unified Private Liquidity V2 testnet candidate could not be verified.',
+            503
+          );
+        }
+      }
+
+      if (path === API_ROUTES.privateLiquidityDailyPrices.path) {
+        if (request.method !== 'GET') throw new ApiFault('method_not_allowed', 'Method not allowed.', 405);
+        assertQueryKeys(url, ['pairKey', 'start', 'limit']);
+        if (!privateLiquidityDailyPriceSource) {
+          throw new ApiFault(
+            'testnet_analytics_unavailable',
+            'The reviewed Private Liquidity daily-price store is not active for public reads.',
+            503
+          );
+        }
+        const rawPairKey = url.searchParams.get('pairKey');
+        if (
+          !rawPairKey ||
+          !BYTES32.test(rawPairKey) ||
+          rawPairKey.toLowerCase() === ZERO_BYTES32
+        ) throw new ApiFault('invalid_query', 'pairKey must be a nonzero bytes32 value.', 400);
+        const rawStart = url.searchParams.get('start');
+        const start = rawStart === null
+          ? null
+          : parseBoundedInteger(rawStart, 0, 0, MAX_CURSOR, 'start');
+        const limit = parseBoundedInteger(
+          url.searchParams.get('limit'),
+          90,
+          1,
+          MAX_DAILY_PRICE_LIMIT,
+          'limit'
+        );
+        try {
+          return json(
+            await privateLiquidityDailyPriceSource.getDailyPrices({
+              pairKey: rawPairKey.toLowerCase() as `0x${string}`,
+              start,
+              limit
+            }),
+            200,
+            'public, max-age=30, stale-while-revalidate=120'
+          );
+        } catch {
+          throw new ApiFault(
+            'testnet_analytics_unavailable',
+            'The reviewed Private Liquidity daily-price history could not be verified.',
+            503
+          );
+        }
       }
 
       if (path === API_ROUTES.orders.path) {

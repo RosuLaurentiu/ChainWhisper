@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   mergeDirectSyncOptions,
+  shouldRunLegacyDirectBackgroundSync,
   resolveDirectSyncRange,
   resolveKnownEarliestMessageBlock,
   resolveOlderDirectHistoryRange
 } from './directSyncPlan';
+
+describe('shouldRunLegacyDirectBackgroundSync', () => {
+  it('stops automatic ChatGC history work after Direct Chat V2 is active', () => {
+    expect(shouldRunLegacyDirectBackgroundSync({ directChatV2Enabled: true })).toBe(false);
+    expect(shouldRunLegacyDirectBackgroundSync({ directChatV2Enabled: false })).toBe(true);
+  });
+});
 
 describe('mergeDirectSyncOptions', () => {
   it('lets deep sync override narrower pending contact work', () => {

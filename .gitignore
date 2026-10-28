@@ -9,6 +9,18 @@ test-results/
 .env
 .env.*
 !.env.example
+!.env.coti-testnet-candidate
+# Local validation, browser captures and workspace-only evidence are not release source.
+/reports/
+/design-audit/
+/output/
+/.playwright-cli/
+/.tmp*/
+/*.log
+/supabase/.branches/
+/docs/WORKSPACE_CURRENT_STATE.md
+/docs/WORKSPACE_CHANGE_CLASSIFICATION.md
+/docs/design/
 TESTING.md
 APP_IMPROVEMENTS.md
 SMART_CONTRACT_IMPROVEMENTS.md

@@ -94,6 +94,7 @@ export default function useTokenSwapViewModel({
 
   useEffect(() => {
     const fallbackSwapDirection = resolveTokenSwapDirectionFallback({
+      canEarlierLegacyUnshieldTokens: view.canEarlierLegacyUnshieldTokens,
       canLegacyUnshieldTokens: view.canLegacyUnshieldTokens,
       canShieldTokens: view.canShieldTokens,
       canUnshieldTokens: view.canUnshieldTokens,
@@ -107,6 +108,7 @@ export default function useTokenSwapViewModel({
     setSwapDirection,
     swapDirection,
     view.canLegacyUnshieldTokens,
+    view.canEarlierLegacyUnshieldTokens,
     view.canShieldTokens,
     view.canUnshieldTokens,
     view.currentSwapDirectionEnabled

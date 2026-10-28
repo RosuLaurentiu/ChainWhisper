@@ -1,0 +1,21 @@
+{
+  "status": "VERIFIED_NATIVE_PUBLIC_DIRECT_CASE",
+  "chainId": 7082400,
+  "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+  "binding": {
+    "address": "0xca2555ef16418fa8970552149f5febe88723ecce",
+    "runtimeHash": "0x11c3177b38ad65bf312d9db6174742a99fdc4eae48ff5dee636d90b35854208a"
+  },
+  "observed": {
+    "offerPaid": "75000",
+    "requestReceived": "25000",
+    "noPending": true,
+    "escrowZero": true
+  },
+  "authority": {
+    "closed": true
+  },
+  "sourcePins": {
+    "APP/src/lib/currentP2PBinding.json": "bba3790126ec77fd53defe8ffea9a339f6dc0f8cd0df3fe6843a328a5f8d63a8"
+  }
+}

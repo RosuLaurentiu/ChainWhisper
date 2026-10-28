@@ -14,6 +14,7 @@ import {
   messageReferencesMatch,
   parseSharedTxReference
 } from '../../../lib/appHelpers';
+import { chatReplyTargetMatchesAnchor } from '../../../lib/chatReplySourceAnchor';
 import {
   getMessageDisplayText,
   shortenAddress,
@@ -35,6 +36,8 @@ type UseChatThreadScrollArgs = {
   walletAddress: string;
   hasAesReady: boolean;
   loadOlderMessagesForActiveContact: () => Promise<void>;
+  onLatestDirectMessageVisible?: (message: ChatMessage) => void | Promise<void>;
+  onLatestGroupMessageVisible?: (message: ChatMessage) => void | Promise<void>;
   setHighlightedMessageId: (next: StateUpdate<string | null>) => void;
 };
 
@@ -53,6 +56,8 @@ export default function useChatThreadScroll({
   walletAddress,
   hasAesReady,
   loadOlderMessagesForActiveContact,
+  onLatestDirectMessageVisible,
+  onLatestGroupMessageVisible,
   setHighlightedMessageId
 }: UseChatThreadScrollArgs) {
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
@@ -72,6 +77,8 @@ export default function useChatThreadScroll({
   const previousVisibleThreadMessageCountForScrollRef = useRef(0);
   const lastObservedScrollHeightRef = useRef<number>(0);
   const stickToBottomRef = useRef(true);
+  const latestVisibilityAcknowledgedKeyRef = useRef<string | null>(null);
+  const latestVisibilityInFlightKeyRef = useRef<string | null>(null);
   const [visibleThreadMessageCount, setVisibleThreadMessageCount] = useState(0);
   const [chatMessagesViewportVersion, setChatMessagesViewportVersion] = useState(0);
 
@@ -171,6 +178,7 @@ export default function useChatThreadScroll({
   const jumpToReferencedMessage = useCallback(
     (
       replyToMessageId?: string,
+      replyToMessageAnchor?: string,
       replyToText?: string,
       replyToTxHash?: string,
       replyToBlockNumber?: number,
@@ -182,6 +190,16 @@ export default function useChatThreadScroll({
       }
 
       let targetId = replyToMessageId;
+      if (targetId && replyToMessageAnchor) {
+        const anchoredCandidate = referencePool.find((message) => message.id === targetId);
+        if (!anchoredCandidate || !chatReplyTargetMatchesAnchor({
+          replyToMessageId: targetId,
+          replyToMessageAnchor,
+          candidate: anchoredCandidate
+        })) {
+          return;
+        }
+      }
       if (!targetId) {
         const matchedByReference = referencePool.find((message) =>
           messageReferencesMatch(
@@ -200,7 +218,7 @@ export default function useChatThreadScroll({
         targetId = matchedByReference?.id;
       }
 
-      if (!targetId && replyToText) {
+      if (!targetId && !replyToMessageAnchor && replyToText) {
         const targetPreview = trimReplyPreview(replyToText);
         const matched = referencePool.find(
           (message) => trimReplyPreview(getMessageDisplayText(message.text)) === targetPreview
@@ -472,6 +490,94 @@ export default function useChatThreadScroll({
     });
   }, [isConnected, activeThreadKey, chatMessagesViewportVersion, scrollChatToBottom]);
 
+  useEffect(() => {
+    const isGroup = activeGroupId !== null;
+    const messages = isGroup ? activeGroupMessages : activeMessages;
+    const onLatestVisible = isGroup
+      ? onLatestGroupMessageVisible
+      : onLatestDirectMessageVisible;
+    if (!isConnected || !hasAesReady || !activeThreadKey || !onLatestVisible || messages.length === 0 || (!isGroup && !activeContact)) return;
+    const container = chatMessagesRef.current;
+    const latestMessage = messages[messages.length - 1];
+    if (
+      !container ||
+      (isGroup
+        ? latestMessage.groupV2?.finality !== 'finalized'
+        : latestMessage.directV2?.finality !== 'finalized')
+    ) return;
+    const latestElement = messageElementRefs.current[latestMessage.id];
+    if (!latestElement) return;
+    const visibilityKey = `${walletAddress}:${activeThreadKey}:${latestMessage.id}`;
+    let disposed = false;
+
+    const acknowledgeIfVisible = () => {
+      if (
+        disposed ||
+        document.visibilityState !== 'visible' ||
+        latestVisibilityAcknowledgedKeyRef.current === visibilityKey ||
+        latestVisibilityInFlightKeyRef.current === visibilityKey ||
+        !isNearBottom(container)
+      ) {
+        return;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const messageRect = latestElement.getBoundingClientRect();
+      if (
+        messageRect.bottom <= containerRect.top ||
+        messageRect.top >= containerRect.bottom ||
+        messageRect.bottom > containerRect.bottom + 1
+      ) {
+        return;
+      }
+      latestVisibilityInFlightKeyRef.current = visibilityKey;
+      void Promise.resolve(onLatestVisible(latestMessage))
+        .then(() => {
+          if (!disposed) latestVisibilityAcknowledgedKeyRef.current = visibilityKey;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!disposed && latestVisibilityInFlightKeyRef.current === visibilityKey) {
+            latestVisibilityInFlightKeyRef.current = null;
+          }
+        });
+    };
+
+    const handleVisibilityChange = () => acknowledgeIfVisible();
+    container.addEventListener('scroll', acknowledgeIfVisible, { passive: true });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const observer = typeof IntersectionObserver === 'undefined'
+      ? null
+      : new IntersectionObserver(
+          (entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) acknowledgeIfVisible();
+          },
+          { root: container, threshold: 0.5 }
+        );
+    observer?.observe(latestElement);
+    requestAnimationFrame(acknowledgeIfVisible);
+    return () => {
+      disposed = true;
+      if (latestVisibilityInFlightKeyRef.current === visibilityKey) {
+        latestVisibilityInFlightKeyRef.current = null;
+      }
+      observer?.disconnect();
+      container.removeEventListener('scroll', acknowledgeIfVisible);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [
+    activeContact,
+    activeGroupId,
+    activeGroupMessages,
+    activeMessages,
+    activeThreadKey,
+    chatMessagesViewportVersion,
+    isConnected,
+    hasAesReady,
+    walletAddress,
+    onLatestDirectMessageVisible,
+    onLatestGroupMessageVisible
+  ]);
+
   const resetThreadScrollState = useCallback(() => {
     stickToBottomRef.current = true;
     previousActiveContactForScrollRef.current = null;
@@ -480,6 +586,8 @@ export default function useChatThreadScroll({
     previousVisibleThreadMessageCountForScrollRef.current = 0;
     pendingForcedBottomAnchorThreadKeyRef.current = null;
     suppressNextBottomAnchorRef.current = false;
+    latestVisibilityAcknowledgedKeyRef.current = null;
+    latestVisibilityInFlightKeyRef.current = null;
   }, []);
 
   return {

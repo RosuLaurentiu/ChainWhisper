@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildP2PActionNotice, getP2PActionNoticeMessage, type P2PActionNoticeAction } from './p2pActionNotice';
+import {
+  buildP2PActionNotice,
+  getP2PActionFailureStatus,
+  getP2PActionNoticeAutoDismissMs,
+  getP2PActionNoticeMessage,
+  type P2PActionNoticeAction
+} from './p2pActionNotice';
 
 describe('p2p action notices', () => {
   it('uses the compact shared pending copy', () => {
@@ -19,6 +25,7 @@ describe('p2p action notices', () => {
     ['counter', 'Counter sent'],
     ['decline', 'Offer refused'],
     ['cancel', 'Offer cancelled'],
+    ['budget-visibility', 'Budget visibility changed'],
     ['recurring-update', 'Order updated'],
     ['recurring-liquidity', 'Liquidity changed'],
     ['recurring-close', 'Order closed'],
@@ -45,5 +52,28 @@ describe('p2p action notices', () => {
       tradeKey: '7:0xabc',
       txHash: '0x123'
     });
+  });
+});
+
+describe('getP2PActionNoticeAutoDismissMs', () => {
+  it('keeps failures and pending transactions visible until another explicit action', () => {
+    expect(getP2PActionNoticeAutoDismissMs('error')).toBeNull();
+    expect(getP2PActionNoticeAutoDismissMs('pending')).toBeNull();
+    expect(getP2PActionNoticeAutoDismissMs('wallet')).toBeNull();
+    expect(getP2PActionNoticeAutoDismissMs('uncertain')).toBeNull();
+  });
+
+  it('clears completed informational notices after a short delay', () => {
+    expect(getP2PActionNoticeAutoDismissMs('success')).toBe(6500);
+    expect(getP2PActionNoticeAutoDismissMs('info')).toBe(6500);
+  });
+});
+
+describe('getP2PActionFailureStatus', () => {
+  it('keeps submitted confirmation timeouts distinct from ordinary failures', () => {
+    expect(getP2PActionFailureStatus(
+      'The transaction was submitted, but COTI confirmation timed out. Check wallet activity before retrying.'
+    )).toBe('uncertain');
+    expect(getP2PActionFailureStatus('The wallet rejected the request.')).toBe('error');
   });
 });

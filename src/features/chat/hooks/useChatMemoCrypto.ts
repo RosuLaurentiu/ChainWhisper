@@ -1,247 +1,89 @@
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
+import { useCallback, type MutableRefObject } from 'react';
 import {
-  COTI_NETWORK,
-  createCotiBrowserProvider,
+  CHAT_MEMO_SECURITY_LIMITS,
   decodeMemoPlaintextStrict,
+  decryptMemoWithCellLimit,
   encodeCompactMemoPlaintext,
-  encodeMemoPlaintext,
-  mergeOnboardInfo,
-  mergeOnboardInfoByAddress,
+  getProviderErrorMessage,
+  isWalletAddress,
   parseChatMessagePayload,
-  type Eip1193Provider,
-  type SignerSource
+  MemoCiphertextLimitError,
+  type MemoSecurityLimits
 } from '../../../lib/appShared';
 import {
   buildWalletAesHealthState,
-  getOrRecoverAesForWallet,
   type WalletAesHealthState
 } from '../../../lib/cotiAesUnlock';
-import { getCotiSnapOwnerAesKeyResult, getCotiSnapOwnerAesStatusMessage } from '../../../lib/cotiSnap';
-import type { WalletReadAccount } from '../../../lib/walletAccountScope';
+import {
+  assertWalletReadSignerMatchesAccount,
+  resolveWalletReadSignerRoute,
+  type WalletReadAccount
+} from '../../../lib/walletAccountScope';
 
 type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   cacheKey: string;
 };
 
 type UseChatMemoCryptoArgs = {
-  activeSignerSource: SignerSource;
-  browserWalletProvider: Eip1193Provider | null | undefined;
-  burnerWalletRef: MutableRefObject<Wallet | null>;
-  chainId: number | null;
   encodeMemoForActiveSignerRef: MutableRefObject<(plain: string) => string>;
-  getConnectedProvider: () => Eip1193Provider | null;
   getMemoSignerRef: MutableRefObject<() => Promise<MemoSignerBundle>>;
+  getOwnerReadSigner: (requirePrivacy: boolean) => Promise<JsonRpcSigner>;
   memoAesRecoveryAttemptedRef: MutableRefObject<Record<string, boolean>>;
   ownerWalletAddress: string;
-  sessionOnboardInfo: Record<string, OnboardInfo>;
   setOnboardStatus: (status: string) => void;
-  setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
   setWalletAesHealth: (address: string, health: WalletAesHealthState) => void;
-  signerCacheRef: MutableRefObject<Record<string, JsonRpcSigner>>;
-  signerProviderCacheRef: MutableRefObject<Record<string, Eip1193Provider>>;
-  walletAddress: string;
   walletAesHealthByAddress: Record<string, WalletAesHealthState>;
 };
 
 export default function useChatMemoCrypto({
-  activeSignerSource,
-  browserWalletProvider,
-  burnerWalletRef,
-  chainId,
   encodeMemoForActiveSignerRef,
-  getConnectedProvider,
   getMemoSignerRef,
+  getOwnerReadSigner,
   memoAesRecoveryAttemptedRef,
   ownerWalletAddress,
-  sessionOnboardInfo,
   setOnboardStatus,
-  setSessionOnboardInfo,
   setWalletAesHealth,
-  signerCacheRef,
-  signerProviderCacheRef,
-  walletAddress,
   walletAesHealthByAddress
 }: UseChatMemoCryptoArgs) {
   const getMemoSigner = useCallback(async (): Promise<MemoSignerBundle> => {
-    if (activeSignerSource === 'metamask') {
-      const provider = getConnectedProvider();
-      if (!provider) {
-        throw new Error('Owner wallet provider not detected. Connect your owner wallet first.');
-      }
-
-      if (!walletAddress) {
-        throw new Error('Connect your owner wallet first.');
-      }
-
-      if (chainId !== COTI_NETWORK.chainIdDecimal) {
-        throw new Error('Switch to COTI network first.');
-      }
-
-      const cacheKey = walletAddress.toLowerCase();
-      const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
-      let signer = signerCacheRef.current[cacheKey] as JsonRpcSigner | undefined;
-      if (signer && signerProviderCacheRef.current[cacheKey] !== provider) {
-        delete signerCacheRef.current[cacheKey];
-        delete signerProviderCacheRef.current[cacheKey];
-        signer = undefined;
-      }
-      if (!signer) {
-        const browserProvider = await createCotiBrowserProvider(provider);
-        signer = await browserProvider.getSigner(walletAddress, cachedOnboardInfo);
-        signer.disableAutoOnboard();
-        signerCacheRef.current[cacheKey] = signer;
-        signerProviderCacheRef.current[cacheKey] = provider;
-      } else if (cachedOnboardInfo) {
-        signer.setUserOnboardInfo(cachedOnboardInfo);
-      }
-
-      signer.disableAutoOnboard();
-
-      let onboardInfo = signer.getUserOnboardInfo();
-      if (!onboardInfo?.aesKey) {
-        if (cachedOnboardInfo) {
-          signer.setUserOnboardInfo(cachedOnboardInfo);
-          onboardInfo = signer.getUserOnboardInfo();
-        }
-      }
-
-      if (!onboardInfo?.aesKey) {
-        const snapAesResult = await getCotiSnapOwnerAesKeyResult(provider, walletAddress);
-        if (snapAesResult.status !== 'ready') {
-          throw new Error(getCotiSnapOwnerAesStatusMessage(snapAesResult.status));
-        }
-        onboardInfo = mergeOnboardInfo(signer.getUserOnboardInfo(), {
-          aesKey: snapAesResult.aesKey
-        } as OnboardInfo);
-        signer.setUserOnboardInfo(onboardInfo);
-      }
-
-      if (!onboardInfo?.aesKey) {
-        throw new Error('Privacy unlock unavailable. Complete the privacy unlock signature once.');
-      }
-
-      setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, onboardInfo));
-      setWalletAesHealth(walletAddress, buildWalletAesHealthState({
-        status: 'ready-unverified',
-        walletAddress
-      }));
-
-      setOnboardStatus('Owner privacy ready');
-      return { signer, cacheKey };
-    }
-
-    const signer = burnerWalletRef.current;
-    if (!signer) {
-      throw new Error('ChainWhisper account is not initialized.');
-    }
-
+    const signer = await getOwnerReadSigner(true);
     const cacheKey = signer.address.toLowerCase();
-    const cachedOnboardInfo = sessionOnboardInfo[cacheKey];
-    if (cachedOnboardInfo) {
-      signer.setUserOnboardInfo(cachedOnboardInfo);
-    }
-
-    let onboardInfo = signer.getUserOnboardInfo();
-    if (!onboardInfo?.aesKey) {
-      onboardInfo = await getOrRecoverAesForWallet({
-        signer,
-        walletAddress: signer.address
-      });
-    }
-
-    if (!onboardInfo?.aesKey) {
-      throw new Error('Privacy unlock unavailable in this session. Please sign to enable encryption.');
-    }
-
-    setSessionOnboardInfo((previous) => mergeOnboardInfoByAddress(previous, cacheKey, onboardInfo));
-
-    setOnboardStatus('Privacy ready');
-
     return { signer, cacheKey };
-  }, [
-    activeSignerSource,
-    burnerWalletRef,
-    chainId,
-    getConnectedProvider,
-    sessionOnboardInfo,
-    setOnboardStatus,
-    setSessionOnboardInfo,
-    setWalletAesHealth,
-    signerCacheRef,
-    signerProviderCacheRef,
-    walletAddress
-  ]);
+  }, [getOwnerReadSigner]);
 
   const getMemoSignerForAccount = useCallback(async (account: WalletReadAccount): Promise<MemoSignerBundle> => {
-    const accountKey = account.key || account.address.trim().toLowerCase();
-    const activeWalletKey = walletAddress.trim().toLowerCase();
-    if (accountKey === activeWalletKey) {
-      return getMemoSigner();
+    resolveWalletReadSignerRoute({
+      account,
+      ownerAddress: ownerWalletAddress
+    });
+    const bundle = {
+      signer: await getOwnerReadSigner(true),
+      cacheKey: account.key.toLowerCase()
+    };
+    assertWalletReadSignerMatchesAccount(account, bundle.signer.address);
+    const accountKey = account.key.trim().toLowerCase();
+    if (!isWalletAddress(bundle.cacheKey) || bundle.cacheKey.trim().toLowerCase() !== accountKey) {
+      throw new Error('The wallet signer cache scope changed. Refresh the wallet session and try again.');
     }
-
-    const ownerKey = ownerWalletAddress.trim().toLowerCase();
-    if (account.role !== 'owner' || !ownerKey || accountKey !== ownerKey) {
-      return getMemoSigner();
-    }
-
-    const provider = browserWalletProvider ?? getConnectedProvider();
-    if (!provider) {
-      throw new Error('Owner wallet is not connected.');
-    }
-    if (chainId !== COTI_NETWORK.chainIdDecimal) {
-      throw new Error('Switch to COTI network first.');
-    }
-
-    const cachedOnboardInfo = sessionOnboardInfo[ownerKey];
-    if (!cachedOnboardInfo?.aesKey) {
-      throw new Error('Owner privacy is locked.');
-    }
-
-    let signer = signerCacheRef.current[ownerKey] as JsonRpcSigner | undefined;
-    if (signer && signerProviderCacheRef.current[ownerKey] !== provider) {
-      delete signerCacheRef.current[ownerKey];
-      delete signerProviderCacheRef.current[ownerKey];
-      signer = undefined;
-    }
-    if (!signer) {
-      const browserProvider = await createCotiBrowserProvider(provider);
-      signer = await browserProvider.getSigner(ownerWalletAddress, cachedOnboardInfo);
-      signer.disableAutoOnboard();
-      signerCacheRef.current[ownerKey] = signer;
-      signerProviderCacheRef.current[ownerKey] = provider;
-    } else {
-      signer.setUserOnboardInfo(cachedOnboardInfo);
-    }
-
-    signer.disableAutoOnboard();
-    if (!signer.getUserOnboardInfo()?.aesKey) {
-      throw new Error('Owner privacy is locked.');
-    }
-
-    return { signer, cacheKey: ownerKey };
+    return { ...bundle, cacheKey: accountKey };
   }, [
-    browserWalletProvider,
-    chainId,
-    getConnectedProvider,
-    getMemoSigner,
-    ownerWalletAddress,
-    sessionOnboardInfo,
-    signerCacheRef,
-    signerProviderCacheRef,
-    walletAddress
+    getOwnerReadSigner,
+    ownerWalletAddress
   ]);
 
   const encodeMemoForActiveSigner = useCallback(
-    (plain: string): string =>
-      activeSignerSource === 'metamask' ? encodeCompactMemoPlaintext(plain) : encodeMemoPlaintext(plain),
-    [activeSignerSource]
+    (plain: string): string => encodeCompactMemoPlaintext(plain),
+    []
   );
 
-  const decodeDecryptedMemoPlaintext = useCallback((decrypted: string | bigint): string => {
+  const decodeDecryptedMemoPlaintext = useCallback((
+    decrypted: string | bigint,
+    maxPlaintextBytes = CHAT_MEMO_SECURITY_LIMITS.maxPlaintextBytes
+  ): string => {
     const raw = typeof decrypted === 'string' ? decrypted : decrypted.toString();
-    const plain = decodeMemoPlaintextStrict(raw);
+    const plain = decodeMemoPlaintextStrict(raw, maxPlaintextBytes);
     if (plain === null) {
       throw new Error('Decrypted memo is not a valid ChainWhisper payload.');
     }
@@ -250,21 +92,25 @@ export default function useChatMemoCrypto({
 
   const tryRecoverRegisteredMemoAes = useCallback(
     async (
-      signer: Wallet | JsonRpcSigner,
+      signer: JsonRpcSigner,
       cacheKey: string,
-      previousError: unknown
+      previousError: unknown,
+      shouldCommit: () => boolean
     ): Promise<boolean> => {
-      if (activeSignerSource !== 'metamask' || memoAesRecoveryAttemptedRef.current[cacheKey]) {
+      if (!shouldCommit() || memoAesRecoveryAttemptedRef.current[cacheKey]) {
         return false;
       }
 
       memoAesRecoveryAttemptedRef.current[cacheKey] = true;
       void signer;
       const currentHealth = walletAesHealthByAddress[cacheKey]?.status;
-      const message =
-        previousError instanceof Error
-          ? previousError.message
-          : 'The privacy key did not decrypt existing wallet data.';
+      const message = getProviderErrorMessage(
+        previousError,
+        'The privacy key did not decrypt existing wallet data.'
+      );
+      if (!shouldCommit()) {
+        return false;
+      }
       if (currentHealth !== 'ready') {
         setWalletAesHealth(cacheKey, buildWalletAesHealthState({
           message,
@@ -278,7 +124,6 @@ export default function useChatMemoCrypto({
       return false;
     },
     [
-      activeSignerSource,
       memoAesRecoveryAttemptedRef,
       setOnboardStatus,
       setWalletAesHealth,
@@ -288,30 +133,47 @@ export default function useChatMemoCrypto({
 
   const decryptMemoPlaintextWithRecovery = useCallback(
     async (
-      signer: Wallet | JsonRpcSigner,
+      signer: JsonRpcSigner,
       cacheKey: string,
-      ciphertext: unknown
+      ciphertext: unknown,
+      limits: MemoSecurityLimits = CHAT_MEMO_SECURITY_LIMITS,
+      shouldCommit: () => boolean = () => true
     ): Promise<string> => {
       try {
-        const decrypted = await signer.decryptValue(ciphertext as never);
-        const plain = decodeDecryptedMemoPlaintext(decrypted);
-        setWalletAesHealth(cacheKey, buildWalletAesHealthState({
-          status: 'ready',
-          walletAddress: cacheKey
-        }));
+        const decrypted = await decryptMemoWithCellLimit(
+          ciphertext,
+          limits.maxCiphertextCells,
+          () => signer.decryptValue(ciphertext as never)
+        );
+        const plain = decodeDecryptedMemoPlaintext(decrypted, limits.maxPlaintextBytes);
+        if (shouldCommit()) {
+          setWalletAesHealth(cacheKey, buildWalletAesHealthState({
+            status: 'ready',
+            walletAddress: cacheKey
+          }));
+        }
         return plain;
       } catch (firstError) {
-        const recovered = await tryRecoverRegisteredMemoAes(signer, cacheKey, firstError);
+        if (firstError instanceof MemoCiphertextLimitError) {
+          throw firstError;
+        }
+        const recovered = await tryRecoverRegisteredMemoAes(signer, cacheKey, firstError, shouldCommit);
         if (!recovered) {
           throw firstError;
         }
 
-        const decrypted = await signer.decryptValue(ciphertext as never);
-        const plain = decodeDecryptedMemoPlaintext(decrypted);
-        setWalletAesHealth(cacheKey, buildWalletAesHealthState({
-          status: 'ready',
-          walletAddress: cacheKey
-        }));
+        const decrypted = await decryptMemoWithCellLimit(
+          ciphertext,
+          limits.maxCiphertextCells,
+          () => signer.decryptValue(ciphertext as never)
+        );
+        const plain = decodeDecryptedMemoPlaintext(decrypted, limits.maxPlaintextBytes);
+        if (shouldCommit()) {
+          setWalletAesHealth(cacheKey, buildWalletAesHealthState({
+            status: 'ready',
+            walletAddress: cacheKey
+          }));
+        }
         return plain;
       }
     },
@@ -320,7 +182,7 @@ export default function useChatMemoCrypto({
 
   const parseEncryptedChatMessagePayload = useCallback(
     async (
-      signer: Wallet | JsonRpcSigner,
+      signer: JsonRpcSigner,
       cacheKey: string,
       ciphertext: unknown
     ): Promise<ReturnType<typeof parseChatMessagePayload>> => {

@@ -40,7 +40,7 @@ export const resolveTradeAgentReadiness = ({
   if (!hasAccount) {
     return {
       kind: 'account-needed',
-      message: 'Connect your ChainWhisper account to use the Trade Agent.',
+      message: 'Connect MetaMask or CipherTrade to use the Trade Agent.',
       canSubmit: false
     };
   }
@@ -71,7 +71,7 @@ export const resolveTradeAgentReadiness = ({
 
   return {
     kind: 'ready',
-    message: 'Paid from your ChainWhisper account.',
+    message: 'Paid from your connected wallet.',
     canSubmit: true
   };
 };

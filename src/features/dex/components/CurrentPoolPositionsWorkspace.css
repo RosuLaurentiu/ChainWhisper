@@ -1,0 +1,13 @@
+.app-shell-dex-v2 .dex-v2-test-form.dex-v2-current-pool-positions {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+.app-shell-dex-v2 .dex-v2-current-pool-positions > button {
+  align-self: start;
+  min-height: 45px;
+  padding: 10px 14px;
+}
+.app-shell-dex-v2 .dex-v2-current-pool-positions > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

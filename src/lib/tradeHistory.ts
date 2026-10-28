@@ -6,11 +6,23 @@ import {
 import { buildTradeSnapshotKey } from './appShared/core';
 import { formatTradeContractIdLabel, getTradeTermsVisibility, hasHydratedDirectTradeTerms } from './p2pTradeView';
 import { isZeroTradeTakerAddress } from './tradePerspective';
+import type { TradeHistoryV2ExecutionRow } from './tradeHistoryV2Ledger';
+import type { TradeHistoryV2CanonicalLifecycleEvent } from './tradeHistoryV2Materialize';
 
 export type TradeTransactionHistoryRole = 'maker' | 'taker' | 'filler';
 export type TradeTransactionHistorySource = 'standard' | 'private' | 'direct' | 'recurring';
 export type TradeTransactionAmountVisibility = 'public' | 'private-revealed' | 'private-hidden';
-export type TradeLifecycleHistoryAction = 'created' | 'edited' | 'replaced' | 'accepted' | 'cancelled';
+export type TradeLifecycleHistoryAction =
+  | 'created'
+  | 'edited'
+  | 'replaced'
+  | 'accepted'
+  | 'cancelled'
+  | 'declined'
+  | 'expired'
+  | 'paused'
+  | 'resumed'
+  | 'settled';
 
 export type TradeTransactionAsset = TradeAssetPayload & {
   visible: boolean;
@@ -50,8 +62,54 @@ export type TradeLifecycleHistoryRow = {
   detail: string;
   actor: string;
   relatedTradeId?: number;
+  returnedAssets?: TradeTransactionAsset[];
   txHash?: string;
+  blockNumber?: number;
   timestamp?: number;
+};
+
+export const aggregateVisibleTradeTransactionHistoryRows = (
+  rows: readonly TradeTransactionHistoryRow[]
+): TradeTransactionHistoryRow | undefined => {
+  const first = rows[0];
+  if (!first) return undefined;
+  const boughtKey = getAssetKey(first.bought);
+  const soldKey = getAssetKey(first.sold);
+  let boughtAmount = 0n;
+  let soldAmount = 0n;
+
+  for (const row of rows) {
+    if (
+      row.contractAddress.toLowerCase() !== first.contractAddress.toLowerCase() ||
+      row.localId !== first.localId ||
+      row.sourceKind !== first.sourceKind ||
+      row.amountVisibility === 'private-hidden' ||
+      !row.bought.visible ||
+      !row.sold.visible ||
+      getAssetKey(row.bought) !== boughtKey ||
+      getAssetKey(row.sold) !== soldKey ||
+      !/^\d+$/.test(row.bought.amount) ||
+      !/^\d+$/.test(row.sold.amount)
+    ) {
+      return undefined;
+    }
+    boughtAmount += BigInt(row.bought.amount);
+    soldAmount += BigInt(row.sold.amount);
+  }
+
+  const bought = { ...first.bought, amount: boughtAmount.toString() };
+  const sold = { ...first.sold, amount: soldAmount.toString() };
+  return {
+    ...first,
+    key: `${first.contractAddress.toLowerCase()}:${first.localId}:exact-total`,
+    bought,
+    sold,
+    tokenFlows: buildTokenFlows([first.sold, first.bought], bought, sold),
+    sequence: undefined,
+    txHash: undefined,
+    blockNumber: undefined,
+    timestamp: undefined
+  };
 };
 
 const normalizeAddress = (value?: string | null): string => value?.trim().toLowerCase() ?? '';
@@ -109,7 +167,10 @@ const resolveTradeSourceKind = (trade: TradeSnapshot): TradeTransactionHistorySo
   return 'standard';
 };
 
-export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifecycleHistoryRow[] => {
+export const buildTradeLifecycleHistoryRows = (
+  trade: TradeSnapshot,
+  canonicalV2Events?: readonly TradeHistoryV2CanonicalLifecycleEvent[]
+): TradeLifecycleHistoryRow[] => {
   const contractAddress = trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS;
   const snapshotKey = buildTradeSnapshotKey(trade.tradeId, contractAddress);
   const recurring = trade.recurringOrder;
@@ -117,7 +178,13 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
   const localId = recurring?.orderId ?? trade.tradeId;
   const subjectLabel = formatTradeContractIdLabel(trade);
   const formatRelatedTradeLabel = (tradeId: number): string =>
-    formatTradeContractIdLabel({ tradeId, escrowContract: trade.escrowContract });
+    formatTradeContractIdLabel({ tradeId, escrowContract: trade.escrowContract, v2: trade.v2 });
+  const formatCanonicalRelatedTradeLabel = (tradeId: string): string => {
+    const parsed = BigInt(tradeId);
+    return parsed <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? formatRelatedTradeLabel(Number(parsed))
+      : `Order #${tradeId}`;
+  };
   const rows: TradeLifecycleHistoryRow[] = [
     {
       key: `${snapshotKey}:lifecycle:created`,
@@ -221,7 +288,169 @@ export const buildTradeLifecycleHistoryRows = (trade: TradeSnapshot): TradeLifec
     });
   }
 
-  return rows;
+  const identity = trade.v2 ?? trade.recurringOrder?.v2;
+  if (!canonicalV2Events || !identity) return rows;
+  const canonicalEvents = canonicalV2Events.filter((event) =>
+    event.protocol === identity.protocol &&
+    event.chainId === identity.chainId &&
+    event.contractAddress === identity.contractAddress.toLowerCase() &&
+    (
+      event.orderId === String(localId) ||
+      (event.kind === 'lifecycle' &&
+        event.lifecycleKind === 'replacement' &&
+        event.replacementOrderId === String(localId))
+    )
+  );
+  const canonicalRows = canonicalEvents.map((event): TradeLifecycleHistoryRow | null => {
+    let action: TradeLifecycleHistoryAction;
+    let label: string;
+    let detail: string;
+    let actor = event.maker ?? trade.maker;
+    let relatedOrderId: string | undefined;
+    let returnedAssets: TradeTransactionAsset[] | undefined;
+    let timestamp: number | undefined;
+
+    if (event.kind === 'direct-opened') {
+      action = 'created';
+      label = 'Created';
+      detail = `${subjectLabel} opened`;
+      timestamp = Number(event.createdAt);
+    } else if (event.kind === 'lifecycle' && event.lifecycleKind === 'opened') {
+      action = 'created';
+      label = 'Created';
+      detail = `${subjectLabel} opened`;
+      timestamp = event.createdAt === undefined ? undefined : Number(event.createdAt);
+    } else if (event.kind === 'lifecycle' && event.lifecycleKind === 'edited') {
+      action = 'edited';
+      label = 'Edited';
+      detail = event.protocol === 'private-recurring-v2' && event.liquidityChanged
+        ? `${subjectLabel} updated its private terms and liquidity`
+        : `${subjectLabel} updated`;
+    } else if (event.kind === 'lifecycle' && event.lifecycleKind === 'replacement') {
+      if (event.replacementOrderId !== String(localId)) return null;
+      action = 'edited';
+      label = 'Edited';
+      relatedOrderId = event.orderId;
+      detail = `Replaces ${formatCanonicalRelatedTradeLabel(event.orderId)}`;
+    } else if (event.kind === 'lifecycle' && event.lifecycleKind === 'settlement') {
+      action = 'settled';
+      label = 'Inventory returned';
+      detail = event.settledAmounts
+        ? `${subjectLabel} returned its remaining public inventory`
+        : `${subjectLabel} returned its remaining private inventory`;
+      if (trade.recurringOrder) {
+        returnedAssets = event.settledAmounts
+          ? [
+              withAmount(trade.recurringOrder.baseAsset, event.settledAmounts.baseAmount, true),
+              withAmount(trade.recurringOrder.quoteAsset, event.settledAmounts.quoteAmount, true)
+            ]
+          : [
+              withAmount(trade.recurringOrder.baseAsset, undefined, false),
+              withAmount(trade.recurringOrder.quoteAsset, undefined, false)
+            ];
+      }
+    } else if (event.kind === 'direct-status' || (event.kind === 'lifecycle' && event.lifecycleKind === 'status')) {
+      const nextStatus = event.nextStatus;
+      actor = event.actor ?? event.maker ?? trade.maker;
+      relatedOrderId = event.relatedOrderId;
+      const recurringStatus = identity.protocol === 'recurring-v2' || identity.protocol === 'private-recurring-v2';
+      if (recurringStatus) {
+        if (nextStatus === '1') {
+          action = 'resumed';
+          label = 'Resumed';
+          detail = `${subjectLabel} resumed`;
+        } else if (nextStatus === '2') {
+          action = 'paused';
+          label = 'Paused';
+          detail = `${subjectLabel} paused`;
+        } else if (nextStatus === '3') {
+          action = 'cancelled';
+          label = 'Closed';
+          detail = `${subjectLabel} closed`;
+        } else if (nextStatus === '4') {
+          action = 'expired';
+          label = 'Expired';
+          detail = `${subjectLabel} expired`;
+        } else {
+          return null;
+        }
+      } else if (identity.protocol === 'direct-v2') {
+        if (nextStatus === '2') {
+          action = 'accepted';
+          label = trade.counterParentTradeId ? 'Counter accepted' : 'Accepted';
+          detail = trade.counterParentTradeId
+            ? `${subjectLabel} accepted as counter to ${formatRelatedTradeLabel(trade.counterParentTradeId)}`
+            : `${subjectLabel} accepted`;
+        } else if (nextStatus === '3') {
+          action = 'cancelled';
+          label = 'Cancelled';
+          detail = `${subjectLabel} cancelled`;
+        } else if (nextStatus === '4') {
+          action = 'declined';
+          label = 'Declined';
+          detail = `${subjectLabel} declined`;
+        } else if (nextStatus === '5') {
+          action = 'expired';
+          label = 'Expired';
+          detail = `${subjectLabel} expired`;
+        } else if (nextStatus === '6' || nextStatus === '7') {
+          action = 'replaced';
+          label = 'Replaced';
+          detail = relatedOrderId && relatedOrderId !== '0'
+            ? `Replaced by ${formatCanonicalRelatedTradeLabel(relatedOrderId)}`
+            : `${subjectLabel} replaced`;
+        } else {
+          return null;
+        }
+      } else if (nextStatus === '2') {
+        action = 'accepted';
+        label = 'Filled';
+        detail = `${subjectLabel} filled`;
+      } else if (nextStatus === '3') {
+        action = 'cancelled';
+        label = 'Cancelled';
+        detail = `${subjectLabel} cancelled`;
+      } else if (nextStatus === '4') {
+        action = 'expired';
+        label = 'Expired';
+        detail = `${subjectLabel} expired`;
+      } else if (nextStatus === '5') {
+        action = 'replaced';
+        label = 'Replaced';
+        detail = relatedOrderId && relatedOrderId !== '0'
+          ? `Replaced by ${formatCanonicalRelatedTradeLabel(relatedOrderId)}`
+          : `${subjectLabel} replaced`;
+      } else {
+        return null;
+      }
+    } else {
+      return null;
+    }
+
+    const blockNumber = BigInt(event.log.blockNumber);
+    const relatedId = relatedOrderId && relatedOrderId !== '0' ? BigInt(relatedOrderId) : undefined;
+    return {
+      key: `${snapshotKey}:canonical:${event.log.blockHash}:${event.log.transactionHash}:${event.log.logIndex}`,
+      contractAddress,
+      localId,
+      sourceKind,
+      action,
+      label,
+      detail,
+      actor,
+      ...(returnedAssets ? { returnedAssets } : {}),
+      ...(timestamp !== undefined && Number.isSafeInteger(timestamp) ? { timestamp } : {}),
+      ...(relatedId !== undefined && relatedId <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? { relatedTradeId: Number(relatedId) }
+        : {}),
+      txHash: event.log.transactionHash,
+      ...(blockNumber <= BigInt(Number.MAX_SAFE_INTEGER) ? { blockNumber: Number(blockNumber) } : {})
+    };
+  }).filter((row): row is TradeLifecycleHistoryRow => Boolean(row));
+
+  return [
+    ...canonicalRows
+  ];
 };
 
 const appendRecurringRows = (
@@ -259,18 +488,12 @@ const appendRecurringRows = (
     const isFiller = walletKey === fillerKey;
     if (!isMaker && !isFiller) continue;
 
-    const fallbackTerms = execution.side === 'buy' ? recurring.buyTerms : recurring.sellTerms;
-    const useTermFallback = recurring.mode !== 'public' && execution.historySource === 'public';
     const baseAmount = isPositiveAmount(execution.baseAmount)
       ? execution.baseAmount
-      : useTermFallback
-        ? fallbackTerms.baseAmount
-        : undefined;
+      : undefined;
     const quoteAmount = isPositiveAmount(execution.quoteAmount)
       ? execution.quoteAmount
-      : useTermFallback
-        ? fallbackTerms.quoteAmount
-        : undefined;
+      : undefined;
     const fillerBuysBase = execution.side === 'buy';
     const walletBuysBase = isMaker ? !fillerBuysBase : fillerBuysBase;
     const baseVisible = isPositiveAmount(baseAmount);
@@ -302,9 +525,88 @@ const appendRecurringRows = (
   }
 };
 
+const buildCanonicalV2Rows = (
+  trade: TradeSnapshot,
+  walletKey: string,
+  canonicalRows: readonly TradeHistoryV2ExecutionRow[]
+): TradeTransactionHistoryRow[] | null => {
+  const identity = trade.v2 ?? trade.recurringOrder?.v2;
+  if (!identity) return null;
+
+  const contractAddress = identity.contractAddress.toLowerCase();
+  const localId = String(trade.recurringOrder?.orderId ?? trade.tradeId);
+  const matchingRows = canonicalRows.filter((row) =>
+    row.protocol === identity.protocol &&
+    row.order.chainId === identity.chainId &&
+    row.order.contractAddress.toLowerCase() === contractAddress &&
+    row.order.orderId === localId &&
+    (row.maker === walletKey || row.participant === walletKey)
+  );
+
+  return matchingRows.map((row) => {
+    const isMaker = row.maker === walletKey;
+    const visible = row.amountState === 'available';
+    const sourceKind: TradeTransactionHistorySource =
+      row.protocol === 'standard-v2'
+        ? 'standard'
+        : row.protocol === 'private-v2'
+          ? 'private'
+          : row.protocol === 'direct-v2'
+            ? 'direct'
+            : 'recurring';
+    const amountVisibility: TradeTransactionAmountVisibility = visible
+      ? sourceKind === 'standard' || getTradeTermsVisibility(trade) === 'public'
+        ? 'public'
+        : 'private-revealed'
+      : 'private-hidden';
+
+    let bought: TradeTransactionAsset;
+    let sold: TradeTransactionAsset;
+    let orderedAssets: TradeAssetPayload[];
+    if (trade.recurringOrder) {
+      const { baseAsset, quoteAsset } = trade.recurringOrder;
+      const walletBuysBase = isMaker ? row.side !== 'buy' : row.side === 'buy';
+      bought = walletBuysBase
+        ? withAmount(baseAsset, row.amounts.baseAmount, visible)
+        : withAmount(quoteAsset, row.amounts.quoteAmount, visible);
+      sold = walletBuysBase
+        ? withAmount(quoteAsset, row.amounts.quoteAmount, visible)
+        : withAmount(baseAsset, row.amounts.baseAmount, visible);
+      orderedAssets = [baseAsset, quoteAsset];
+    } else {
+      bought = isMaker
+        ? withAmount(trade.request, row.amounts.requestAmount, visible)
+        : withAmount(trade.offer, row.amounts.offerAmount, visible);
+      sold = isMaker
+        ? withAmount(trade.offer, row.amounts.offerAmount, visible)
+        : withAmount(trade.request, row.amounts.requestAmount, visible);
+      orderedAssets = [trade.offer, trade.request];
+    }
+
+    const sequence = BigInt(row.sequence);
+    const blockNumber = BigInt(row.log.blockNumber);
+    return {
+      key: row.key,
+      contractAddress: identity.contractAddress,
+      localId: Number(localId),
+      role: isMaker ? 'maker' : row.protocol === 'direct-v2' ? 'taker' : 'filler',
+      sourceKind,
+      counterparty: isMaker ? row.participant : row.maker,
+      bought,
+      sold,
+      tokenFlows: buildTokenFlows(orderedAssets, bought, sold),
+      amountVisibility,
+      ...(sequence <= BigInt(Number.MAX_SAFE_INTEGER) ? { sequence: Number(sequence) } : {}),
+      txHash: row.log.transactionHash,
+      ...(blockNumber <= BigInt(Number.MAX_SAFE_INTEGER) ? { blockNumber: Number(blockNumber) } : {})
+    };
+  });
+};
+
 export const buildTradeTransactionHistoryRows = (
   trades: TradeSnapshot[],
-  walletAddress: string
+  walletAddress: string,
+  canonicalV2Rows?: readonly TradeHistoryV2ExecutionRow[]
 ): TradeTransactionHistoryRow[] => {
   const walletKey = normalizeAddress(walletAddress);
   if (!walletKey) return [];
@@ -313,6 +615,13 @@ export const buildTradeTransactionHistoryRows = (
 
   for (const trade of trades) {
     const contractAddress = trade.escrowContract || TRADE_ESCROW_CONTRACT_ADDRESS;
+    if (canonicalV2Rows) {
+      const canonicalRows = buildCanonicalV2Rows(trade, walletKey, canonicalV2Rows);
+      if (canonicalRows) {
+        rows.push(...canonicalRows);
+        continue;
+      }
+    }
     if (trade.recurringOrder) {
       appendRecurringRows(rows, trade, walletKey, contractAddress);
       continue;

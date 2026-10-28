@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import {
   buildTradeAgentChatContext,
   createTradeAgentPaymentQuote,
@@ -18,6 +19,7 @@ import {
   hashTradeAgentPaymentRequest,
   orchestrateTradeAgentPayment,
   readTradeAgentPaymentRetry,
+  writeTradeAgentPaymentRetry,
   type TradeAgentPaymentRequest,
   type TradeAgentPaymentRetryRecord,
   type TradeAgentSafeContext
@@ -37,16 +39,100 @@ import { transferWalletFundAsset } from '../../../lib/walletFunds';
 import type { StateUpdate } from '../../../shared/state/storeUtils';
 
 type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   cacheKey: string;
 };
 
 type RunPaidChatTradeAgentRequestInput = {
   action: TradeAgentActionType;
   context: unknown;
+  origin: ChatTradeAgentOperationGuard;
   prompt: string;
   workingStatus: string;
 };
+
+export type ChatTradeAgentOperationOrigin = {
+  conversationKey: string;
+  generation: number;
+  linkedTradeKey: string;
+  operationId: number;
+  sourceMessageId: string | null;
+  walletKey: string;
+  walletSessionEpoch: number;
+};
+
+type ChatTradeAgentOperationGuard = {
+  assertCurrent: () => void;
+  commit: (mutation: () => void) => void;
+  finish: () => void;
+  isCurrent: () => boolean;
+  origin: ChatTradeAgentOperationOrigin;
+};
+
+type CompletedPaidChatTradeAgentRequest = {
+  paidRequest: TradeAgentPaymentRetryRecord | null;
+  response: TradeAgentResponse;
+};
+
+class ChatTradeAgentOriginChangedError extends Error {
+  constructor() {
+    super('The conversation changed while Trade Agent was working. Reopen the original message or linked order to recover the paid response.');
+    this.name = 'ChatTradeAgentOriginChangedError';
+  }
+}
+
+const isChatTradeAgentOriginChangedError = (
+  error: unknown
+): error is ChatTradeAgentOriginChangedError =>
+  error instanceof ChatTradeAgentOriginChangedError;
+
+export const commitChatTradeAgentOriginMutation = (
+  origin: ChatTradeAgentOperationOrigin,
+  current: ChatTradeAgentOperationOrigin,
+  mutation: () => void
+): boolean => {
+  if (
+    origin.conversationKey !== current.conversationKey ||
+    origin.generation !== current.generation ||
+    origin.linkedTradeKey !== current.linkedTradeKey ||
+    origin.operationId !== current.operationId ||
+    origin.sourceMessageId !== current.sourceMessageId ||
+    origin.walletKey !== current.walletKey ||
+    origin.walletSessionEpoch !== current.walletSessionEpoch
+  ) {
+    return false;
+  }
+  mutation();
+  return true;
+};
+
+export const completeIrreversibleChatTradeAgentPayment = (
+  paymentTxHash: string,
+  isOriginCurrent: () => boolean
+): { originChanged: boolean; paymentTxHash: string } => ({
+  originChanged: !isOriginCurrent(),
+  paymentTxHash
+});
+
+const normalizeOriginKey = (value?: string | null): string =>
+  value?.trim().toLowerCase() ?? '';
+
+const buildChatTradeAgentConversationKey = (
+  activeContact: string | null,
+  activeGroupId: number | null
+): string =>
+  activeGroupId !== null
+    ? `group:${activeGroupId}`
+    : activeContact
+      ? `contact:${normalizeOriginKey(activeContact)}`
+      : '';
+
+const buildChatTradeAgentLinkedTradeKey = (
+  context: LinkedTradeContext | null
+): string =>
+  context
+    ? `${normalizeOriginKey(context.escrowContract) || 'default'}:${context.tradeId}`
+    : '';
 
 export const selectChatTradeAgentRetry = (
   record: TradeAgentPaymentRetryRecord | null
@@ -64,12 +150,19 @@ export const isChatTradeAgentRetryAvailable = (
   );
 
 type UseChatTradeAgentActionsArgs = {
+  activeContact: string | null;
+  activeGroupId: number | null;
   activeLinkedTradeContext: LinkedTradeContext | null;
+  currentWalletKeyRef: MutableRefObject<string>;
   draftingTradeMessageId: string;
   getMemoSigner: () => Promise<MemoSignerBundle>;
   handleMessageInputChange: (value: string) => void;
   negotiatingLinkedTradeKey: string;
-  prepareCounterTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
+  prepareCounterTrade: (
+    offer: TradeOfferMessagePayload,
+    sourceMessage: ChatMessage,
+    isTargetCurrent?: () => boolean
+  ) => Promise<void>;
   runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   setDraftingTradeMessageId: (next: string) => void;
   setError: (next: string) => void;
@@ -86,10 +179,14 @@ type UseChatTradeAgentActionsArgs = {
   setTradeRequestTokenSelection: (next: StateUpdate<TradeTokenPresetKey>) => void;
   tradeTokenOptions: TradeComposerModel['tradeTokenOptions'];
   walletAddress: string;
+  walletSessionEpochRef: MutableRefObject<number>;
 };
 
 export default function useChatTradeAgentActions({
+  activeContact,
+  activeGroupId,
   activeLinkedTradeContext,
+  currentWalletKeyRef,
   draftingTradeMessageId,
   getMemoSigner,
   handleMessageInputChange,
@@ -110,7 +207,8 @@ export default function useChatTradeAgentActions({
   setTradeRequestAmountInput,
   setTradeRequestTokenSelection,
   tradeTokenOptions,
-  walletAddress
+  walletAddress,
+  walletSessionEpochRef
 }: UseChatTradeAgentActionsArgs) {
   const tradeAgentKnownTokens = useMemo<TradeAgentKnownToken[]>(
     () =>
@@ -121,6 +219,112 @@ export default function useChatTradeAgentActions({
           aliases: [option.value, option.label]
         })),
     [tradeTokenOptions]
+  );
+  const currentChatTradeAgentOriginRef = useRef({
+    conversationKey: buildChatTradeAgentConversationKey(activeContact, activeGroupId),
+    generation: 0,
+    linkedTradeContext: activeLinkedTradeContext,
+    linkedTradeKey: buildChatTradeAgentLinkedTradeKey(activeLinkedTradeContext),
+    walletKey: normalizeOriginKey(currentWalletKeyRef.current || walletAddress),
+    walletSessionEpoch: walletSessionEpochRef.current
+  });
+  const currentChatTradeAgentOperationRef = useRef<ChatTradeAgentOperationOrigin | null>(null);
+  const chatTradeAgentOperationSequenceRef = useRef(0);
+
+  useLayoutEffect(() => {
+    const previous = currentChatTradeAgentOriginRef.current;
+    const conversationKey = buildChatTradeAgentConversationKey(activeContact, activeGroupId);
+    const linkedTradeKey = buildChatTradeAgentLinkedTradeKey(activeLinkedTradeContext);
+    const walletKey = normalizeOriginKey(walletAddress);
+    const changed =
+      previous.conversationKey !== conversationKey ||
+      previous.linkedTradeContext !== activeLinkedTradeContext ||
+      previous.linkedTradeKey !== linkedTradeKey ||
+      previous.walletKey !== walletKey ||
+      previous.walletSessionEpoch !== walletSessionEpochRef.current;
+    currentChatTradeAgentOriginRef.current = {
+      conversationKey,
+      generation: previous.generation + (changed ? 1 : 0),
+      linkedTradeContext: activeLinkedTradeContext,
+      linkedTradeKey,
+      walletKey,
+      walletSessionEpoch: walletSessionEpochRef.current
+    };
+  }, [
+    activeContact,
+    activeGroupId,
+    activeLinkedTradeContext,
+    walletAddress,
+    walletSessionEpochRef
+  ]);
+
+  const beginChatTradeAgentOperation = useCallback(
+    (sourceMessageId: string | null): ChatTradeAgentOperationGuard | null => {
+      if (currentChatTradeAgentOperationRef.current) {
+        return null;
+      }
+      const previous = currentChatTradeAgentOriginRef.current;
+      const walletKey = normalizeOriginKey(currentWalletKeyRef.current);
+      const walletSessionEpoch = walletSessionEpochRef.current;
+      const current =
+        previous.walletKey === walletKey && previous.walletSessionEpoch === walletSessionEpoch
+        ? previous
+        : {
+            ...previous,
+            generation: previous.generation + 1,
+            walletKey,
+            walletSessionEpoch
+          };
+      currentChatTradeAgentOriginRef.current = current;
+      const origin: ChatTradeAgentOperationOrigin = {
+        conversationKey: current.conversationKey,
+        generation: current.generation,
+        linkedTradeKey: current.linkedTradeKey,
+        operationId: ++chatTradeAgentOperationSequenceRef.current,
+        sourceMessageId,
+        walletKey: current.walletKey,
+        walletSessionEpoch: current.walletSessionEpoch
+      };
+      currentChatTradeAgentOperationRef.current = origin;
+
+      const readCurrent = (): ChatTradeAgentOperationOrigin => {
+        const latest = currentChatTradeAgentOriginRef.current;
+        const operation = currentChatTradeAgentOperationRef.current;
+        return {
+          conversationKey: latest.conversationKey,
+          generation: latest.generation,
+          linkedTradeKey: latest.linkedTradeKey,
+          operationId: operation?.operationId ?? -1,
+          sourceMessageId: operation?.sourceMessageId ?? null,
+          walletKey: normalizeOriginKey(currentWalletKeyRef.current),
+          walletSessionEpoch: walletSessionEpochRef.current
+        };
+      };
+      const isCurrent = () =>
+        commitChatTradeAgentOriginMutation(origin, readCurrent(), () => undefined);
+      const assertCurrent = () => {
+        if (!isCurrent()) {
+          throw new ChatTradeAgentOriginChangedError();
+        }
+      };
+
+      return {
+        assertCurrent,
+        commit: (mutation) => {
+          if (!commitChatTradeAgentOriginMutation(origin, readCurrent(), mutation)) {
+            throw new ChatTradeAgentOriginChangedError();
+          }
+        },
+        finish: () => {
+          if (currentChatTradeAgentOperationRef.current?.operationId === origin.operationId) {
+            currentChatTradeAgentOperationRef.current = null;
+          }
+        },
+        isCurrent,
+        origin
+      };
+    },
+    [currentWalletKeyRef, walletSessionEpochRef]
   );
   const chatTradeAgentRequestInFlightRef = useRef(false);
   const [pendingChatTradeAgentRetry, setPendingChatTradeAgentRetry] = useState(
@@ -136,9 +340,24 @@ export default function useChatTradeAgentActions({
     },
     []
   );
+  const retainChatTradeAgentPaidRequest = useCallback(
+    (record: TradeAgentPaymentRetryRecord | null) => {
+      if (!record) {
+        return;
+      }
+      try {
+        writeTradeAgentPaymentRetry(record);
+      } catch {
+        // Keep the paid request in memory when browser retry storage is unavailable.
+      }
+      rememberChatTradeAgentPaidRequest(record);
+    },
+    [rememberChatTradeAgentPaidRequest]
+  );
 
   const runPaidChatTradeAgentRequest = useCallback(
-    async ({ action, context, prompt, workingStatus }: RunPaidChatTradeAgentRequestInput) => {
+    async ({ action, context, origin, prompt, workingStatus }: RunPaidChatTradeAgentRequestInput): Promise<CompletedPaidChatTradeAgentRequest> => {
+      origin.assertCurrent();
       const preflightError = getTradeAgentPreflightError({
         action,
         context,
@@ -149,7 +368,7 @@ export default function useChatTradeAgentActions({
         throw new Error(preflightError);
       }
       if (!walletAddress) {
-        throw new Error('Connect your ChainWhisper account before using Trade Agent.');
+        throw new Error('Connect MetaMask or CipherTrade before using Trade Agent.');
       }
       if (chatTradeAgentRequestInFlightRef.current) {
         throw new Error('A Trade Agent request is already processing.');
@@ -174,6 +393,7 @@ export default function useChatTradeAgentActions({
           rememberChatTradeAgentPaidRequest(storedRetry);
         }
         const expectedRequestHash = await hashTradeAgentPaymentRequest(paymentRequest);
+        origin.assertCurrent();
         const retryingExactRequest = Boolean(
           storedRetry &&
           storedRetry.context.clientSurface === 'chat' &&
@@ -200,35 +420,52 @@ export default function useChatTradeAgentActions({
           knownTokens: tradeAgentKnownTokens,
           trustedOrders
         };
-        let paymentSigner: Wallet | JsonRpcSigner | null = null;
-        const getPaymentSigner = async (): Promise<Wallet | JsonRpcSigner> => {
-          paymentSigner ??= (await getMemoSigner()).signer;
+        let paymentSigner: JsonRpcSigner | null = null;
+        const getPaymentSigner = async (): Promise<JsonRpcSigner> => {
+          origin.assertCurrent();
+          if (!paymentSigner) {
+            const signerBundle = await getMemoSigner();
+            origin.assertCurrent();
+            paymentSigner = signerBundle.signer;
+          }
           return paymentSigner;
         };
         let recoveryChecked = false;
 
         const result = await orchestrateTradeAgentPayment<TradeAgentResponse>({
           request: paymentRequest,
+          rejectConflictingRetry: true,
           retryRecord: chatTradeAgentPaidRequestRef.current,
           onPaidRequest: (record) => {
             rememberChatTradeAgentPaidRequest(record);
           },
           callbacks: {
             createQuote: async (request) => {
-              setStatus('Getting the final WISP quote...');
-              return createTradeAgentPaymentQuote(request);
+              origin.commit(() => setStatus('Getting the final WISP quote...'));
+              const quote = await createTradeAgentPaymentQuote(request);
+              origin.assertCurrent();
+              return quote;
             },
             signAuthorization: async ({ authorizationMessage }) => {
-              setStatus('Authorizing this exact request...');
-              return (await getPaymentSigner()).signMessage(authorizationMessage);
+              origin.commit(() => setStatus('Authorizing this exact request...'));
+              const signer = await getPaymentSigner();
+              origin.assertCurrent();
+              const signature = await signer.signMessage(authorizationMessage);
+              origin.assertCurrent();
+              return signature;
             },
             transferPayment: async ({ quote }) => {
-              setStatus(
-                `Paying ${formatTokenAmount(BigInt(quote.feeAmountWei), quote.feeTokenDecimals, 4)} WISP...`
+              origin.commit(() =>
+                setStatus(
+                  `Paying ${formatTokenAmount(BigInt(quote.feeAmountWei), quote.feeTokenDecimals, 4)} WISP...`
+                )
               );
               let paymentTxHash = '';
               await runWalletTransactionFlow(async () => {
-                paymentTxHash = await transferWalletFundAsset({
+                origin.assertCurrent();
+                const signer = await getPaymentSigner();
+                origin.assertCurrent();
+                const submittedPaymentTxHash = await transferWalletFundAsset({
                   amountWei: BigInt(quote.feeAmountWei),
                   asset: {
                     kind: 'erc20',
@@ -236,24 +473,37 @@ export default function useChatTradeAgentActions({
                     symbol: 'WISP',
                     decimals: quote.feeTokenDecimals
                   },
-                  signer: await getPaymentSigner(),
+                  signer,
                   toAddress: quote.feeRecipient
                 });
+                paymentTxHash = completeIrreversibleChatTradeAgentPayment(
+                  submittedPaymentTxHash,
+                  origin.isCurrent
+                ).paymentTxHash;
               });
-              return paymentTxHash;
+              return completeIrreversibleChatTradeAgentPayment(
+                paymentTxHash,
+                origin.isCurrent
+              ).paymentTxHash;
             },
             runRequest: async (record: TradeAgentPaymentRetryRecord) => {
+              // Payment is already irreversible here; this guard runs only after
+              // orchestrateTradeAgentPayment has persisted the exact paid record.
+              origin.assertCurrent();
               if (retryingExactRequest && !recoveryChecked) {
                 recoveryChecked = true;
-                setStatus('Recovering the previous Agent response...');
+                origin.commit(() => setStatus('Recovering the previous Agent response...'));
                 const signedAt = new Date().toISOString();
-                const signature = await (await getPaymentSigner()).signMessage(
+                const signer = await getPaymentSigner();
+                origin.assertCurrent();
+                const signature = await signer.signMessage(
                   buildTradeAgentRecoveryMessage({
                     payerAddress: record.payerAddress,
                     requestId: record.requestId,
                     signedAt
                   })
                 );
+                origin.assertCurrent();
                 try {
                   const recovered = await recoverTradeAgentRequest({
                     normalization,
@@ -262,15 +512,23 @@ export default function useChatTradeAgentActions({
                     signature,
                     signedAt
                   });
+                  origin.assertCurrent();
                   if (recovered.status !== 'retryable') {
                     return recovered;
                   }
-                } catch {
-                  setStatus('Recovery was unavailable. Retrying the exact paid request...');
+                } catch (error) {
+                  if (isChatTradeAgentOriginChangedError(error)) {
+                    throw error;
+                  }
+                  origin.commit(() =>
+                    setStatus('Recovery was unavailable. Retrying the exact paid request...')
+                  );
                 }
               }
-              setStatus(retryingExactRequest ? 'Retrying the paid Agent request...' : workingStatus);
-              return runTradeAgentRequest({
+              origin.commit(() =>
+                setStatus(retryingExactRequest ? 'Retrying the paid Agent request...' : workingStatus)
+              );
+              const response = await runTradeAgentRequest({
                 action: record.action,
                 context: record.context,
                 normalization,
@@ -282,9 +540,12 @@ export default function useChatTradeAgentActions({
                 requestHash: record.requestHash,
                 requestId: record.requestId
               });
+              origin.assertCurrent();
+              return response;
             }
           }
         });
+        origin.assertCurrent();
 
         if (result.status === 'processing') {
           const retryInSeconds = Math.max(1, Math.ceil((result.retryAfterMs ?? 2_000) / 1_000));
@@ -298,15 +559,21 @@ export default function useChatTradeAgentActions({
             'The provider did not finish this exact request. Retry without paying again.'
           );
         }
-        setStatus(workingStatus);
-        rememberChatTradeAgentPaidRequest(null);
-        return result.response;
+        origin.commit(() => setStatus(workingStatus));
+        return {
+          paidRequest: chatTradeAgentPaidRequestRef.current,
+          response: result.response
+        };
       } catch (error) {
         const paidRequest =
           chatTradeAgentPaidRequestRef.current ??
           selectChatTradeAgentRetry(readTradeAgentPaymentRetry());
         if (paidRequest && chatTradeAgentPaidRequestRef.current === null) {
           rememberChatTradeAgentPaidRequest(paidRequest);
+        }
+        if (!origin.isCurrent() || isChatTradeAgentOriginChangedError(error)) {
+          retainChatTradeAgentPaidRequest(paidRequest);
+          throw new ChatTradeAgentOriginChangedError();
         }
         if (
           paidRequest &&
@@ -327,6 +594,7 @@ export default function useChatTradeAgentActions({
     [
       getMemoSigner,
       rememberChatTradeAgentPaidRequest,
+      retainChatTradeAgentPaidRequest,
       runWalletTransactionFlow,
       setStatus,
       tradeAgentKnownTokens,
@@ -358,9 +626,14 @@ export default function useChatTradeAgentActions({
   );
 
   const applyChatTradeAgentAction = useCallback(
-    async (action: TradeAgentResponseAction, sourceMessage: ChatMessage) => {
+    async (
+      action: TradeAgentResponseAction,
+      sourceMessage: ChatMessage,
+      linkedTradeContext: LinkedTradeContext | null,
+      origin: ChatTradeAgentOperationGuard
+    ) => {
       if (action.type === 'prefill_message' && action.message) {
-        handleMessageInputChange(action.message);
+        origin.commit(() => handleMessageInputChange(action.message));
         return;
       }
 
@@ -380,31 +653,37 @@ export default function useChatTradeAgentActions({
       };
 
       if (action.type === 'prefill_counter') {
-        if (!activeLinkedTradeContext?.previewOffer) {
-          setError('Open or link an order before drafting a counter.');
+        if (!linkedTradeContext?.previewOffer) {
+          origin.commit(() => setError('Open or link an order before drafting a counter.'));
           return;
         }
-        await prepareCounterTrade(activeLinkedTradeContext.previewOffer, sourceMessage);
-        applyDraftFields(action);
+        await prepareCounterTrade(
+          linkedTradeContext.previewOffer,
+          sourceMessage,
+          origin.isCurrent
+        );
+        origin.assertCurrent();
+        origin.commit(() => applyDraftFields(action));
         return;
       }
 
       if (action.type === 'prefill_limit') {
-        setTradeCounterParentId(null);
-        setTradeCounterContext(null);
-        setReplyingToMessage(sourceMessage);
-        setTipComposerOpen(false);
-        setTradeComposerOpen(true);
-        applyDraftFields(action);
+        origin.commit(() => {
+          setTradeCounterParentId(null);
+          setTradeCounterContext(null);
+          setReplyingToMessage(sourceMessage);
+          setTipComposerOpen(false);
+          setTradeComposerOpen(true);
+          applyDraftFields(action);
+        });
         return;
       }
 
       if (action.type === 'prefill_message') {
-        handleMessageInputChange(action.message);
+        origin.commit(() => handleMessageInputChange(action.message));
       }
     },
     [
-      activeLinkedTradeContext,
       handleMessageInputChange,
       prepareCounterTrade,
       resolveChatTradeAgentTokenSelection,
@@ -423,19 +702,32 @@ export default function useChatTradeAgentActions({
 
   const negotiateLinkedTrade = useCallback(
     async (context: LinkedTradeContext) => {
-      const tradeKey = `${context.escrowContract ?? 'default'}:${context.tradeId}`;
+      const tradeKey = buildChatTradeAgentLinkedTradeKey(context);
       if (negotiatingLinkedTradeKey) {
         return;
       }
+      const origin = beginChatTradeAgentOperation(null);
+      if (!origin) {
+        return;
+      }
+      if (!origin.origin.conversationKey || origin.origin.linkedTradeKey !== tradeKey) {
+        origin.finish();
+        return;
+      }
 
-      setNegotiatingLinkedTradeKey(tradeKey);
+      let completedPaidRequest: TradeAgentPaymentRetryRecord | null = null;
+      origin.commit(() => setNegotiatingLinkedTradeKey(tradeKey));
       try {
-        const response = await runPaidChatTradeAgentRequest({
+        const completed = await runPaidChatTradeAgentRequest({
           action: 'draft_counter',
           context: buildTradeAgentChatContext({ linkedTrade: context }),
+          origin,
           prompt: `Draft one concise negotiation message for linked order #${context.tradeId}. Return only a message I can edit and send.`,
           workingStatus: 'Drafting negotiation...'
         });
+        origin.assertCurrent();
+        completedPaidRequest = completed.paidRequest;
+        const response = completed.response;
         const draftAction = response.actions.find(
           (
             action
@@ -443,17 +735,31 @@ export default function useChatTradeAgentActions({
             (action.type === 'prefill_message' || action.type === 'prefill_counter') && Boolean(action.message)
         );
         const draft = draftAction?.message ?? response.answer;
-        handleMessageInputChange(draft);
-        setStatus('Negotiation draft ready.');
+        origin.commit(() => {
+          handleMessageInputChange(draft);
+          setStatus('Negotiation draft ready.');
+          rememberChatTradeAgentPaidRequest(null);
+        });
       } catch (error) {
-        setError(getProviderErrorMessage(error, 'Could not draft negotiation message.'));
+        retainChatTradeAgentPaidRequest(completedPaidRequest);
+        if (!isChatTradeAgentOriginChangedError(error) && origin.isCurrent()) {
+          origin.commit(() =>
+            setError(getProviderErrorMessage(error, 'Could not draft negotiation message.'))
+          );
+        }
       } finally {
-        setNegotiatingLinkedTradeKey('');
+        if (currentChatTradeAgentOperationRef.current?.operationId === origin.origin.operationId) {
+          setNegotiatingLinkedTradeKey('');
+        }
+        origin.finish();
       }
     },
     [
+      beginChatTradeAgentOperation,
       handleMessageInputChange,
       negotiatingLinkedTradeKey,
+      rememberChatTradeAgentPaidRequest,
+      retainChatTradeAgentPaidRequest,
       runPaidChatTradeAgentRequest,
       setError,
       setNegotiatingLinkedTradeKey,
@@ -467,46 +773,75 @@ export default function useChatTradeAgentActions({
       if (!messageText || draftingTradeMessageId) {
         return;
       }
+      const origin = beginChatTradeAgentOperation(message.id);
+      if (!origin) {
+        return;
+      }
+      if (!origin.origin.conversationKey.startsWith('contact:')) {
+        origin.finish();
+        return;
+      }
+      const linkedTradeContext = activeLinkedTradeContext;
 
-      setDraftingTradeMessageId(message.id);
+      let completedPaidRequest: TradeAgentPaymentRetryRecord | null = null;
+      origin.commit(() => setDraftingTradeMessageId(message.id));
       try {
         const safeContext = buildTradeAgentChatContext({
-          linkedTrade: activeLinkedTradeContext,
+          linkedTrade: linkedTradeContext,
           selectedMessage: {
             direction: message.direction,
             text: messageText
           }
         });
-        const response = await runPaidChatTradeAgentRequest({
+        const completed = await runPaidChatTradeAgentRequest({
           action: 'chat_to_trade',
           context: safeContext,
+          origin,
           prompt:
             'Turn the explicitly selected chat message into a ChainWhisper trade draft. ' +
             'If it counters the linked order, return a counter draft. Otherwise return a limit-order draft. Do not execute anything.',
           workingStatus: 'Drafting trade...'
         });
+        origin.assertCurrent();
+        completedPaidRequest = completed.paidRequest;
+        const response = completed.response;
         const action = response.actions.find((candidate) =>
           candidate.type === 'prefill_counter' ||
           candidate.type === 'prefill_limit' ||
           candidate.type === 'prefill_message'
         );
         if (action) {
-          await applyChatTradeAgentAction(action, message);
+          await applyChatTradeAgentAction(action, message, linkedTradeContext, origin);
+          origin.assertCurrent();
         } else {
-          handleMessageInputChange(response.answer);
+          origin.commit(() => handleMessageInputChange(response.answer));
         }
-        setStatus('Trade draft ready.');
+        origin.commit(() => {
+          setStatus('Trade draft ready.');
+          rememberChatTradeAgentPaidRequest(null);
+        });
       } catch (error) {
-        setError(getProviderErrorMessage(error, 'Could not draft a trade from this message.'));
+        retainChatTradeAgentPaidRequest(completedPaidRequest);
+        if (!isChatTradeAgentOriginChangedError(error) && origin.isCurrent()) {
+          origin.commit(() =>
+            setError(getProviderErrorMessage(error, 'Could not draft a trade from this message.'))
+          );
+        }
       } finally {
-        setDraftingTradeMessageId('');
+        if (currentChatTradeAgentOperationRef.current?.operationId === origin.origin.operationId) {
+          setDraftingTradeMessageId('');
+        }
+        origin.finish();
       }
     },
     [
       activeLinkedTradeContext,
       applyChatTradeAgentAction,
+      beginChatTradeAgentOperation,
       draftingTradeMessageId,
       handleMessageInputChange,
+      rememberChatTradeAgentPaidRequest,
+      retainChatTradeAgentPaidRequest,
       runPaidChatTradeAgentRequest,
       setDraftingTradeMessageId,
       setError,

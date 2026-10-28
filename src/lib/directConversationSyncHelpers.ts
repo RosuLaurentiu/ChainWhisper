@@ -1,10 +1,61 @@
+import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import { buildMessageReferenceKeys, messageReferencesMatch, type MessageReferenceCandidate } from './appHelpers';
 import {
   isWalletAddress,
+  mergeOnboardInfo,
   normalizeMessagesByContact,
   type ChatMessage,
+  type ConversationPreferenceState,
   type HistoryEntry
 } from './appShared';
+import { buildWalletReadAccountsKey, type WalletReadAccount } from './walletAccountScope';
+
+export type MemoSignerOnboardInfoUpdate = Readonly<{
+  cacheKey: string;
+  onboardInfo: OnboardInfo;
+}>;
+
+export const collectMemoSignerOnboardInfoUpdates = (
+  bundles: readonly Readonly<{ signer: Pick<JsonRpcSigner, 'getUserOnboardInfo'>; cacheKey: string }>[]
+): MemoSignerOnboardInfoUpdate[] => {
+  const updates: MemoSignerOnboardInfoUpdate[] = [];
+  for (const { signer, cacheKey } of bundles) {
+    const onboardInfo = signer.getUserOnboardInfo();
+    if (onboardInfo) updates.push({ cacheKey, onboardInfo });
+  }
+  return updates;
+};
+
+export const mergeMemoSignerOnboardInfoUpdates = (
+  previous: Record<string, OnboardInfo>,
+  updates: readonly MemoSignerOnboardInfoUpdate[]
+): Record<string, OnboardInfo> => {
+  let next = previous;
+  for (const { cacheKey, onboardInfo } of updates) {
+    next = {
+      ...next,
+      [cacheKey]: mergeOnboardInfo(next[cacheKey], onboardInfo)
+    };
+  }
+  return next;
+};
+
+export const buildDirectConversationReadScopeKey = (
+  walletAddress: string,
+  hasAesReady: boolean,
+  readAccounts?: WalletReadAccount[]
+): string => {
+  const walletKey = walletAddress.trim().toLowerCase();
+  const accountsKey = readAccounts
+    ? buildWalletReadAccountsKey(readAccounts, { includePrivateReadState: true })
+    : `${walletKey}:${hasAesReady ? 'r' : 'l'}`;
+  return `${walletKey}|${accountsKey}`;
+};
+
+export const filterLegacyConversationPreferenceStateByDirection = (
+  direction: HistoryEntry['direction'],
+  state: ConversationPreferenceState | undefined
+): ConversationPreferenceState | undefined => direction === 'outgoing' ? state : undefined;
 
 export const historyEntryToChatMessage = (
   entry: HistoryEntry,
@@ -17,6 +68,7 @@ export const historyEntryToChatMessage = (
   accountAddress: entry.accountAddress ?? requestedWalletAddress,
   accountRole: entry.accountRole,
   replyToMessageId: entry.replyToMessageId,
+  replyToMessageAnchor: entry.replyToMessageAnchor,
   replyToText: entry.replyToText,
   replyToTxHash: entry.replyToTxHash,
   replyToBlockNumber: entry.replyToBlockNumber,
@@ -29,7 +81,8 @@ export const historyEntryToChatMessage = (
   timestamp: entry.timestamp,
   blockNumber: entry.blockNumber,
   logIndex: entry.logIndex,
-  txHash: entry.txHash
+  txHash: entry.txHash,
+  directV2: entry.directV2
 });
 
 const findMatchingOptimisticOutgoingIndex = (
@@ -43,6 +96,7 @@ const findMatchingOptimisticOutgoingIndex = (
     const candidate = existingMessages[index];
     if (
       !candidate.id.startsWith('local-') ||
+      candidate.id.startsWith('local-direct-v2-') ||
       candidate.direction !== 'outgoing' ||
       candidate.text !== entry.text ||
       (candidate.replyToText ?? '') !== (entry.replyToText ?? '') ||
@@ -220,6 +274,32 @@ export const mergeDirectHistoryEntries = (
   }
 
   return normalizeMessagesByContact(next);
+};
+
+export const pruneDirectMessagesOutsideReadScope = (
+  previous: Record<string, ChatMessage[]>,
+  readableAccountKeys: ReadonlySet<string>
+): Record<string, ChatMessage[]> => {
+  let changed = false;
+  const next: Record<string, ChatMessage[]> = {};
+
+  for (const [contactKey, messages] of Object.entries(previous)) {
+    const retained = messages.filter((message) => {
+      if (message.directV2?.protocol === 'direct-v2') return true;
+      const accountKey = message.accountAddress?.trim().toLowerCase();
+      return !accountKey || readableAccountKeys.has(accountKey);
+    });
+    if (retained.length !== messages.length) {
+      changed = true;
+    }
+    if (retained.length > 0) {
+      next[contactKey] = retained;
+    } else if (messages.length === 0) {
+      next[contactKey] = messages;
+    }
+  }
+
+  return changed ? next : previous;
 };
 
 export type DirectUnreadResolution = {

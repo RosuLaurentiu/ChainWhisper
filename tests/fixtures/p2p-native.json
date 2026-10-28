@@ -1,0 +1,44 @@
+{
+  "book": {
+    "address": "0xC47C9b7D8c882a9c103d21e6D61702d210DDcA6F",
+    "runtimeHash": "0xd6cad7ae0951b41edc13f23c247bfb0cec4e554e4b89746e477fe23a423435ae"
+  },
+  "math": {
+    "address": "0x5d352629C640222ddA714bA7C2b7425014eD5FF4",
+    "runtimeHash": "0x7df0fc7b9dbcae23b0123227b0d0901dd56e548f962e59a450b14bf5e82390d7"
+  },
+  "receipts": [
+    {
+      "blockNumber": 10238601,
+      "blockHash": "0x3bc2b39d44e7ad05d17c4fb6d91ed72c51455306e178cabc177c387796f7bd29"
+    },
+    {
+      "blockNumber": 10238610,
+      "blockHash": "0x158c62c7bd3170ce823192dbd410aa04f4eb1d1d2b086288715950ece2439374"
+    },
+    {
+      "blockNumber": 10238620,
+      "blockHash": "0x14f5e8c45a93a1aaf2cc0899a7be5bab015943297bb920bf08a0ac64f0f6a49a"
+    },
+    {
+      "blockNumber": 10238630,
+      "blockHash": "0xc1ebf93fdd97fce9c75d5fa07716139caf3cb5a78215632e7ad1242ca1403834"
+    },
+    {
+      "blockNumber": 10238640,
+      "blockHash": "0xc5ba2ab86cbea3c7da22fcbd83b7f6794b19b11ec846a4c9244bddd2c44bba6f"
+    },
+    {
+      "blockNumber": 10238650,
+      "blockHash": "0x1d29814ff66ae1a0a2dcc95733046caa24637b93ffbaf7fa6c82a9e2b3e49623"
+    },
+    {
+      "blockNumber": 10238660,
+      "blockHash": "0x3c4bc20f72794bb940ba0bed6273bfeabc7869bfb49be173063f924360d9079b"
+    },
+    {
+      "blockNumber": 10238670,
+      "blockHash": "0x37ddbdf466753d4cd7de35ff81cb8e81573ae2d30cf5a3c68d576d637c253487"
+    }
+  ]
+}

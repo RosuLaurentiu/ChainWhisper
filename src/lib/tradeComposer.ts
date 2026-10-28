@@ -16,7 +16,8 @@ import {
   type TradeFeeModeSelection
 } from './appShared';
 import {
-  VERIFIED_ECOSYSTEM_TOKENS,
+  SELECTABLE_TRADE_TOKENS,
+  USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS,
   buildPrivateTradeTokenSymbolOrder,
   buildPublicTradeTokenSymbolOrder,
   buildTradeCustomTokenInfoKey,
@@ -63,7 +64,7 @@ type DeriveTradeComposerModelParams = {
     string,
     {
       combinedBalanceWei: bigint | null;
-      ownerPrivacyRequired?: boolean;
+      privacyRequired?: boolean;
       availableLabel?: string;
       breakdownLabel?: string;
       splitLabel?: string;
@@ -110,6 +111,8 @@ export type TradeComposerModel = {
   tradeOfferMaxAmountWei: bigint | null;
   tradeOfferMaxInputValue: string;
   canUseTradeOfferMax: boolean;
+  tradeRequestMaxInputValue: string;
+  canUseTradeRequestMax: boolean;
   tradePreviewLabel: string;
   tradeRateLabel: string;
   tradeReverseRateLabel: string;
@@ -176,7 +179,7 @@ export const resolveSelectedTradeToken = ({
         address: verifiedFallbackToken.address,
         fallbackSymbol: verifiedFallbackToken.symbol
       }),
-      decimals: customTokenInfo?.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
+      decimals: customTokenInfo?.decimals ?? verifiedFallbackToken.decimals ?? FALLBACK_REWARD_TOKEN_DECIMALS,
       custom: true
     };
   }
@@ -299,7 +302,7 @@ export const deriveTradeComposerModel = ({
   tradeRequiredFeeWei,
   counterpartyRequired = true,
   missingCounterpartyMessage = 'Select a contact first.',
-  selfTradeMessage = 'OTC Desk offers are only available in private chats with another wallet.'
+  selfTradeMessage = 'P2P offers are only available in private chats with another wallet.'
 }: DeriveTradeComposerModelParams): TradeComposerModel => {
   const resolvedTradeFeeModeSelection: TradeFeeModeSelection =
     tradeFeeModeSelection === 'token' ? 'coti' : tradeFeeModeSelection;
@@ -309,7 +312,7 @@ export const deriveTradeComposerModel = ({
     REWARD_TOKEN_ADDRESS.toLowerCase(),
     PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()
   ]);
-  const verifiedTokenOptions = VERIFIED_ECOSYSTEM_TOKENS.filter(
+  const verifiedTokenOptions = SELECTABLE_TRADE_TOKENS.filter(
     ({ address }) => !builtInTokenAddresses.has(address.toLowerCase())
   ).map(({ address, kind, symbol: fallbackSymbol }) => {
     const key = buildTradeCustomTokenInfoKey(kind, address);
@@ -361,7 +364,7 @@ export const deriveTradeComposerModel = ({
     label: `✓ ${TIP_NATIVE_TOKEN_SYMBOL} (native)`,
     symbol: TIP_NATIVE_TOKEN_SYMBOL,
     kindLabel: 'Native' as const,
-    addressLabel: 'COTI Mainnet native asset',
+    addressLabel: `${COTI_NETWORK.shortName} native asset`,
     verificationLabel: 'Native asset'
   };
   const rewardTokenOption = {
@@ -381,11 +384,11 @@ export const deriveTradeComposerModel = ({
     verificationLabel: 'Verified private token'
   };
   const publicTradeTokenOptions = sortTradeTokenOptionsBySymbol(
-    [...publicVerifiedTokenOptions, rewardTokenOption],
+    [...publicVerifiedTokenOptions, ...(USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS ? [] : [rewardTokenOption])],
     buildPublicTradeTokenSymbolOrder(rewardTokenSymbol)
   );
   const privateTradeTokenOptions = sortTradeTokenOptionsBySymbol(
-    [...privateVerifiedTokenOptions, privateRewardTokenOption],
+    [...privateVerifiedTokenOptions, ...(USING_CHAINWHISPER_TESTNET_CANDIDATE_TOKENS ? [] : [privateRewardTokenOption])],
     buildPrivateTradeTokenSymbolOrder(privateRewardTokenSymbol)
   );
   const tradeTokenOptions = [nativeCotiTokenOption, ...publicTradeTokenOptions, ...privateTradeTokenOptions];
@@ -513,16 +516,17 @@ export const deriveTradeComposerModel = ({
   const parsedTradeRequestAmountWei = selectedTradeRequestToken
     ? parseTokenAmountInput(tradeRequestAmountInput, selectedTradeRequestToken.decimals)
     : null;
-  const privateOrderSelected = selectedTradeOfferToken?.kind === 'private-erc20';
+  const privateOrderSelected = selectedTradeOfferToken?.kind === 'private-erc20' ||
+    selectedTradeRequestToken?.kind === 'private-erc20';
   const privateOrderPairInvalid =
-    privateOrderSelected &&
+    selectedTradeOfferToken?.kind === 'private-erc20' &&
     selectedTradeRequestToken?.kind === 'private-erc20' &&
     selectedTradeRequestToken.tokenAddress?.toLowerCase() === selectedTradeOfferToken?.tokenAddress?.toLowerCase();
   const hiddenLiquidityPairMessage = privateOrderSelected
     ? privateOrderPairInvalid
       ? 'Hidden amount orders need two different token sides.'
       : ''
-    : 'Private liquidity requires the token you sell to be private.';
+    : 'Private liquidity requires a private token on either side.';
   const canHidePrivateLiquidity = privateOrderSelected && !privateOrderPairInvalid && !hiddenLiquidityUnavailableMessage;
   const hiddenLiquidityActive = Boolean(tradeHidePrivateLiquidity && canHidePrivateLiquidity);
   const resolvedHiddenLiquidityUnavailableMessage =
@@ -729,7 +733,7 @@ export const deriveTradeComposerModel = ({
 
   if (tradeRequiredFeeWei === null) {
     tradeComposerFieldErrors.fee = 'Loading trade fee...';
-  } else if (selectedTradeOfferToken?.kind !== 'native') {
+  } else if (tradeRequiredFeeWei > 0n && selectedTradeOfferToken?.kind !== 'native') {
     if (nativeAvailableBalanceWei === null || nativeAvailableBalanceWei < tradeRequiredFeeWei) {
       tradeComposerFieldErrors.fee = `Need ${formatCotiAmount(tradeRequiredFeeWei)} ${TIP_NATIVE_TOKEN_SYMBOL} for the trade fee.`;
     }
@@ -767,42 +771,53 @@ export const deriveTradeComposerModel = ({
     tokenMetadataPendingMessage ??
     '';
 
-  let tradeOfferMaxAmountWei: bigint | null = null;
-  if (selectedTradeOfferToken) {
-    if (selectedTradeOfferToken.kind === 'native') {
+  const resolveTradeMaxAmountWei = (
+    selectedToken: ResolvedTradeToken | null,
+    availableBalanceWei: bigint | null
+  ): bigint | null => {
+    let maxAmountWei: bigint | null = null;
+    if (selectedToken?.kind === 'native') {
       if (nativeAvailableBalanceWei !== null) {
-        tradeOfferMaxAmountWei = nativeAvailableBalanceWei;
+        maxAmountWei = nativeAvailableBalanceWei;
         if (resolvedTradeFeeModeSelection === 'coti') {
-          tradeOfferMaxAmountWei =
+          maxAmountWei =
             tradeRequiredFeeWei === null
               ? null
-              : tradeOfferMaxAmountWei > tradeRequiredFeeWei
-                ? tradeOfferMaxAmountWei - tradeRequiredFeeWei
+              : maxAmountWei > tradeRequiredFeeWei
+                ? maxAmountWei - tradeRequiredFeeWei
                 : 0n;
         }
       }
-    } else if (selectedTradeOfferAvailableBalanceWei !== null) {
-      tradeOfferMaxAmountWei = selectedTradeOfferAvailableBalanceWei;
+    } else if (selectedToken && availableBalanceWei !== null) {
+      maxAmountWei = availableBalanceWei;
     }
-  }
+    if (selectedToken?.kind === 'private-erc20' && maxAmountWei !== null) {
+      maxAmountWei = maxAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+        ? PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
+        : maxAmountWei;
+    }
+    return maxAmountWei !== null && maxAmountWei < 0n ? 0n : maxAmountWei;
+  };
 
-  if (
-    selectedTradeOfferToken?.kind === 'private-erc20' &&
-    tradeOfferMaxAmountWei !== null &&
-    tradeOfferMaxAmountWei > PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE
-  ) {
-    tradeOfferMaxAmountWei = PRIVATE_TOKEN_MAX_PLAINTEXT_BALANCE;
-  }
-
-  if (tradeOfferMaxAmountWei !== null && tradeOfferMaxAmountWei < 0n) {
-    tradeOfferMaxAmountWei = 0n;
-  }
+  const tradeOfferMaxAmountWei = resolveTradeMaxAmountWei(
+    selectedTradeOfferToken,
+    selectedTradeOfferAvailableBalanceWei
+  );
+  const tradeRequestMaxAmountWei = resolveTradeMaxAmountWei(
+    selectedTradeRequestToken,
+    selectedTradeRequestAvailableBalanceWei
+  );
 
   const tradeOfferMaxInputValue =
     selectedTradeOfferToken && tradeOfferMaxAmountWei !== null
       ? formatTokenAmount(tradeOfferMaxAmountWei, selectedTradeOfferToken.decimals, 18)
       : '';
   const canUseTradeOfferMax = tradeOfferMaxAmountWei !== null && tradeOfferMaxAmountWei > 0n;
+  const tradeRequestMaxInputValue =
+    selectedTradeRequestToken && tradeRequestMaxAmountWei !== null
+      ? formatTokenAmount(tradeRequestMaxAmountWei, selectedTradeRequestToken.decimals, 18)
+      : '';
+  const canUseTradeRequestMax = tradeRequestMaxAmountWei !== null && tradeRequestMaxAmountWei > 0n;
 
   const tradePreviewLabel =
     !selectedTradeOfferToken ||
@@ -877,6 +892,8 @@ export const deriveTradeComposerModel = ({
     tradeOfferMaxAmountWei,
     tradeOfferMaxInputValue,
     canUseTradeOfferMax,
+    tradeRequestMaxInputValue,
+    canUseTradeRequestMax,
     tradePreviewLabel,
     tradeRateLabel,
     tradeReverseRateLabel,

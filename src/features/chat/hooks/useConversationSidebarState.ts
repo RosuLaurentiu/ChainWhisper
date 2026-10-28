@@ -34,6 +34,7 @@ export default function useConversationSidebarState({
   unreadMap,
   walletAddress
 }: UseConversationSidebarStateArgs) {
+  const walletScopeKey = walletAddress.trim().toLowerCase();
   const sortedContacts = useMemo(() => {
     const persistedOrderIndex = new Map<string, number>();
     for (let index = 0; index < persistedContactOrder.length; index += 1) {
@@ -88,7 +89,7 @@ export default function useConversationSidebarState({
   }, [contacts, messagesByContact, persistedContactOrder]);
 
   useEffect(() => {
-    if (!walletAddress || !isWalletAddress(walletAddress)) {
+    if (!walletScopeKey || !isWalletAddress(walletScopeKey)) {
       return;
     }
 
@@ -98,18 +99,19 @@ export default function useConversationSidebarState({
     if (!sameOrder) {
       setPersistedContactOrder(nextOrder);
     }
-  }, [persistedContactOrder, setPersistedContactOrder, sortedContacts, walletAddress]);
+  }, [persistedContactOrder, setPersistedContactOrder, sortedContacts, walletScopeKey]);
 
   const visibleSortedContacts = useMemo(
     () =>
       sortedContacts.filter((contact) => {
-        return showHiddenContacts ? !!contact.hidden : !contact.hidden;
+        const hidden = Boolean(contact.hidden || contact.muted);
+        return showHiddenContacts ? hidden : !hidden;
       }),
     [sortedContacts, showHiddenContacts]
   );
 
   const hiddenContactsCount = useMemo(
-    () => contacts.reduce((count, contact) => (contact.hidden ? count + 1 : count), 0),
+    () => contacts.reduce((count, contact) => (contact.hidden || contact.muted ? count + 1 : count), 0),
     [contacts]
   );
   const hiddenContactsLabel = hiddenContactsCount === 1 ? '1 hidden chat' : `${hiddenContactsCount} hidden chats`;

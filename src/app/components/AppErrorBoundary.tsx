@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { getProviderErrorMessage } from '../../lib/appShared/core';
 
 type Props = {
   children: ReactNode;
@@ -19,7 +20,11 @@ export default class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('[AppErrorBoundary]', error, info.componentStack);
+    console.error(
+      '[AppErrorBoundary]',
+      getProviderErrorMessage(error, 'Unexpected interface failure.'),
+      info.componentStack
+    );
   }
 
   componentDidUpdate(previousProps: Props) {

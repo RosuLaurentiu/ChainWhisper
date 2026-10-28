@@ -8,10 +8,15 @@ const paymentTxHash = `0x${'33'.repeat(32)}`;
 Deno.env.set('SUPABASE_URL', 'http://mock-supabase');
 Deno.env.set('SUPABASE_SERVICE_ROLE_KEY', 'mock-service-role-key');
 Deno.env.set('TRADE_AGENT_QUOTE_SECRET', quoteSecret);
+Deno.env.set('TRADE_AGENT_RATE_LIMIT_SECRET', 'endpoint-rate-limit-secret-used-only-for-tests-1234567890');
 Deno.env.set('COTI_RPC_URL', 'http://mock-rpc');
 Deno.env.set('CARBON_WISP_USD_RATE_URL', 'http://mock-carbon');
 
-const { handleTradeAgentHttpRequest } = await import('./index.ts');
+const {
+  getForwardedClientIp,
+  handleTradeAgentHttpRequest,
+  resetTradeAgentRuntimeStateForTests
+} = await import('./index.ts');
 
 function assert(condition: unknown, message = 'Assertion failed'): asserts condition {
   if (!condition) {
@@ -19,10 +24,13 @@ function assert(condition: unknown, message = 'Assertion failed'): asserts condi
   }
 }
 
-const invoke = async (body: Record<string, unknown>): Promise<{ body: Record<string, unknown>; status: number }> => {
+const invoke = async (
+  body: Record<string, unknown>,
+  headers: Record<string, string> = { 'x-forwarded-for': '203.0.113.10' }
+): Promise<{ body: Record<string, unknown>; status: number }> => {
   const response = await handleTradeAgentHttpRequest(new Request('http://localhost/trade-agent', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body)
   }));
   return {
@@ -32,12 +40,31 @@ const invoke = async (body: Record<string, unknown>): Promise<{ body: Record<str
 };
 
 Deno.test('endpoint serves estimate, quote, cached run, recovery, and rejects a legacy row', async () => {
+  resetTradeAgentRuntimeStateForTests();
   const originalFetch = globalThis.fetch;
+  let carbonFetchCount = 0;
   let paymentRow: Record<string, unknown> | null = null;
   globalThis.fetch = (input: string | URL | Request): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.startsWith('http://mock-carbon')) {
+      carbonFetchCount += 1;
       return Promise.resolve(Response.json({ data: { USD: 0.01 } }));
+    }
+    if (url.startsWith('http://mock-supabase/rest/v1/rpc/claim_trade_agent_request')) {
+      return Promise.resolve(Response.json([{
+        allowed: true,
+        global_count: 1,
+        reason: 'allowed',
+        retry_after_seconds: 3_600,
+        user_count: 1
+      }]));
+    }
+    if (url.startsWith('http://mock-supabase/rest/v1/rpc/claim_trade_agent_payment')) {
+      if (paymentRow?.attempt_count === 3) {
+        paymentRow = { ...paymentRow, status: 'terminal' };
+        return Promise.resolve(Response.json([]));
+      }
+      throw new Error('Unexpected payment claim in endpoint state test.');
     }
     if (url.startsWith('http://mock-supabase/rest/v1/trade_agent_payments')) {
       return Promise.resolve(Response.json(paymentRow));
@@ -87,6 +114,7 @@ Deno.test('endpoint serves estimate, quote, cached run, recovery, and rejects a 
 
     paymentRow = {
       action_type: action,
+      attempt_count: 1,
       completed_at: new Date().toISOString(),
       fee_amount_wei: quote.body.feeAmountWei,
       fee_recipient: String(quote.body.feeRecipient).toLowerCase(),
@@ -150,6 +178,28 @@ Deno.test('endpoint serves estimate, quote, cached run, recovery, and rejects a 
 
     paymentRow = {
       ...completedPaymentRow,
+      attempt_count: 1,
+      next_attempt_at: new Date(Date.now() + 30_000).toISOString(),
+      response_json: null,
+      status: 'failed'
+    };
+    const backingOff = await invoke(runBody);
+    assert(backingOff.status === 202, JSON.stringify(backingOff.body));
+    assert(backingOff.body.status === 'processing');
+
+    paymentRow = {
+      ...completedPaymentRow,
+      attempt_count: 3,
+      response_json: null,
+      status: 'failed'
+    };
+    const exhausted = await invoke(runBody);
+    assert(exhausted.status === 409, JSON.stringify(exhausted.body));
+
+    paymentRow = {
+      ...completedPaymentRow,
+      attempt_count: 1,
+      next_attempt_at: null,
       response_json: null,
       status: 'failed'
     };
@@ -179,6 +229,142 @@ Deno.test('endpoint serves estimate, quote, cached run, recovery, and rejects a 
     paymentRow = { ...completedPaymentRow, request_hash: null };
     const legacy = await invoke(runBody);
     assert(legacy.status === 409, JSON.stringify(legacy.body));
+    assert(carbonFetchCount === 1, `Expected one shared Carbon request, received ${carbonFetchCount}.`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('paid Trade Agent routes fail closed when admission cannot identify the client', async () => {
+  const response = await invoke(
+    { kind: 'estimate', action: 'find_price', prompt: '', context: {} },
+    {}
+  );
+  assert(response.status === 503, JSON.stringify(response.body));
+});
+
+Deno.test('admission identity uses the validated right-most forwarded hop', () => {
+  const request = new Request('http://localhost/trade-agent', {
+    headers: { 'x-forwarded-for': '198.51.100.44, 203.0.113.10' }
+  });
+  assert(getForwardedClientIp(request) === '203.0.113.10');
+});
+
+Deno.test('Trade Agent admission rejects capacity exhaustion before Carbon work', async () => {
+  resetTradeAgentRuntimeStateForTests();
+  const originalFetch = globalThis.fetch;
+  let carbonFetchCount = 0;
+  globalThis.fetch = (input: string | URL | Request): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith('http://mock-supabase/rest/v1/rpc/claim_trade_agent_request')) {
+      return Promise.resolve(Response.json([{
+        allowed: false,
+        global_count: 5_000,
+        reason: 'global_limit',
+        retry_after_seconds: 900,
+        user_count: 1
+      }]));
+    }
+    if (url.startsWith('http://mock-carbon')) {
+      carbonFetchCount += 1;
+      return Promise.resolve(Response.json({ data: { USD: 0.01 } }));
+    }
+    throw new Error(`Unexpected test fetch: ${url}`);
+  };
+
+  try {
+    const response = await invoke({ kind: 'estimate', action: 'find_price', prompt: '', context: {} });
+    assert(response.status === 429, JSON.stringify(response.body));
+    assert(carbonFetchCount === 0, 'Capacity rejection must happen before Carbon work.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('repeated unconfirmed payment checks reuse bounded negative RPC state', async () => {
+  resetTradeAgentRuntimeStateForTests();
+  const originalFetch = globalThis.fetch;
+  let chainIdCalls = 0;
+  let receiptCalls = 0;
+  globalThis.fetch = async (
+    input: string | URL | Request,
+    init?: RequestInit
+  ): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith('http://mock-carbon')) {
+      return Response.json({ data: { USD: 0.01 } });
+    }
+    if (url.startsWith('http://mock-supabase/rest/v1/rpc/claim_trade_agent_request')) {
+      return Response.json([{
+        allowed: true,
+        global_count: 1,
+        reason: 'allowed',
+        retry_after_seconds: 3_600,
+        user_count: 1
+      }]);
+    }
+    if (url.startsWith('http://mock-supabase/rest/v1/trade_agent_payments')) {
+      return Response.json(null);
+    }
+    if (url.startsWith('http://mock-rpc')) {
+      const rawBody = typeof init?.body === 'string'
+        ? init.body
+        : input instanceof Request
+        ? await input.clone().text()
+        : '';
+      const rpc = JSON.parse(rawBody) as { method?: string };
+      if (rpc.method === 'eth_chainId') {
+        chainIdCalls += 1;
+        return Response.json({ jsonrpc: '2.0', id: 1, result: '0x282b34' });
+      }
+      if (rpc.method === 'eth_getTransactionReceipt') {
+        receiptCalls += 1;
+        return Response.json({ jsonrpc: '2.0', id: 1, result: null });
+      }
+    }
+    throw new Error(`Unexpected test fetch: ${url}`);
+  };
+
+  try {
+    const action = 'find_price';
+    const prompt = 'I want to buy 1 WISP with COTI.';
+    const context = {
+      selectedPair: {
+        buyToken: { symbol: 'WISP' },
+        sellToken: { symbol: 'COTI' },
+        mode: 'buy'
+      }
+    };
+    const quote = await invoke({
+      kind: 'quote',
+      action,
+      context,
+      payerAddress: payerAccount.address,
+      prompt
+    });
+    assert(quote.status === 200, JSON.stringify(quote.body));
+    const payerSignature = await payerAccount.signMessage({
+      message: String(quote.body.authorizationMessage)
+    });
+    const runBody = {
+      kind: 'run',
+      action,
+      context,
+      payerAddress: payerAccount.address,
+      payerSignature,
+      paymentTxHash,
+      prompt,
+      quoteToken: quote.body.quoteToken,
+      requestHash: quote.body.requestHash,
+      requestId: quote.body.requestId
+    };
+
+    const first = await invoke(runBody);
+    const second = await invoke(runBody);
+    assert(first.status === 402, JSON.stringify(first.body));
+    assert(second.status === 402, JSON.stringify(second.body));
+    assert(chainIdCalls === 1, `Expected one chain-id request, received ${chainIdCalls}.`);
+    assert(receiptCalls === 1, `Expected one receipt request, received ${receiptCalls}.`);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -51,7 +51,6 @@ type UseOtcSwapQuoteStateArgs = {
   setSwapBuyTokenSelection: Dispatch<SetStateAction<TradeTokenPresetKey>>;
   setSwapInputMode: Dispatch<SetStateAction<OtcSwapInputMode>>;
   setSwapPinnedTradeKey: Dispatch<SetStateAction<string>>;
-  setSwapPriceDisplayInverted: Dispatch<SetStateAction<boolean>>;
   setSwapSellAmountInput: Dispatch<SetStateAction<string>>;
   setSwapSellTokenSelection: Dispatch<SetStateAction<TradeTokenPresetKey>>;
   swapActionMode: OtcSwapInputMode;
@@ -79,7 +78,6 @@ export default function useOtcSwapQuoteState({
   setSwapBuyTokenSelection,
   setSwapInputMode,
   setSwapPinnedTradeKey,
-  setSwapPriceDisplayInverted,
   setSwapSellAmountInput,
   setSwapSellTokenSelection,
   swapActionMode,
@@ -194,10 +192,6 @@ export default function useOtcSwapQuoteState({
     ? buildTradeComposerAssetBalanceKey(swapDisplayQuoteToken)
     : '';
 
-  useEffect(() => {
-    setSwapPriceDisplayInverted(false);
-  }, [setSwapPriceDisplayInverted, swapActionMode, swapDisplayBaseKey, swapDisplayQuoteKey]);
-
   const swapMarketSellQuote = useMemo(
     () =>
       swapDisplayBaseToken && swapDisplayQuoteToken
@@ -209,7 +203,7 @@ export default function useOtcSwapQuoteState({
             inputMode: swapActionMode === 'sell' ? swapInputMode : 'sell',
             inputAmountWei: swapActionMode === 'sell' ? swapInputAmountWei : 0n
           })
-        : { best: null, compatibleCount: 0, otherCompatibleCount: 0 },
+        : { best: null, candidates: [], compatibleCount: 0, otherCompatibleCount: 0 },
     [
       swapDisplayBaseToken,
       swapDisplayQuoteToken,
@@ -231,7 +225,7 @@ export default function useOtcSwapQuoteState({
             inputMode: swapActionMode === 'buy' ? swapInputMode : 'buy',
             inputAmountWei: swapActionMode === 'buy' ? swapInputAmountWei : 0n
           })
-        : { best: null, compatibleCount: 0, otherCompatibleCount: 0 },
+        : { best: null, candidates: [], compatibleCount: 0, otherCompatibleCount: 0 },
     [
       swapDisplayBaseToken,
       swapDisplayQuoteToken,

@@ -1,6 +1,6 @@
 import { getAppHelpTopic } from './appHelp';
 
-export type AppHelpOrigin = 'home' | 'chat' | 'otc' | 'portal' | 'treasury' | 'error';
+export type AppHelpOrigin = 'home' | 'chat' | 'otc' | 'dex' | 'portal' | 'treasury' | 'error';
 
 export type AppHelpReason =
   | 'wallet-needed'
@@ -20,6 +20,7 @@ const APP_HELP_ORIGINS = new Set<AppHelpOrigin>([
   'home',
   'chat',
   'otc',
+  'dex',
   'portal',
   'treasury',
   'error'
@@ -62,7 +63,7 @@ export const getAppHelpReadinessTopicId = (reason?: AppHelpReason): string => {
     case 'privacy-locked':
       return 'privacy-and-recovery';
     case 'account-needed':
-      return 'owner-and-chainwhisper-accounts';
+      return 'browser-wallet';
     case 'funds-needed':
       return 'account-funding';
     default:

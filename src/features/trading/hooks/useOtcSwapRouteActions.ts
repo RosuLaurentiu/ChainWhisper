@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type FormEvent, type MutableRefObject, type SetStateAction } from 'react';
+import type { LinkTradeV2Reference } from '../../../lib/linkTradeV2Terms';
 import { buildTradeSnapshotKey } from '../../../lib/appShared';
 import type { TradeTokenPresetKey } from '../../../lib/appHelpers';
 import type { OtcSwapInputMode } from '../../../lib/otcSwapQuote';
@@ -9,7 +10,7 @@ import type { TerminalReturnSurface } from '../components/P2PTradingPage.helpers
 type UseOtcSwapRouteActionsArgs = {
   lastAppliedSwapPinnedTradeKeyRef: MutableRefObject<string>;
   navigateToTradePath: (path: string) => void;
-  openTrade: (tradeId: number, accessSecret?: string, escrowContract?: string) => void;
+  openTrade: (tradeId: number | LinkTradeV2Reference, accessSecret?: string, escrowContract?: string) => void;
   resetSwapLinkedOrder: () => void;
   routeView: string;
   setDetailTradeError: Dispatch<SetStateAction<string>>;
@@ -83,6 +84,11 @@ export default function useOtcSwapRouteActions({
       setSwapSellAmountInput('');
       setSwapBuyAmountInput('');
       lastAppliedSwapPinnedTradeKeyRef.current = '';
+      if (parsedLink.linkV2Reference) {
+        setSwapPinnedTradeKey('');
+        openTrade(parsedLink.linkV2Reference, parsedLink.accessSecret, parsedLink.escrowContract);
+        return;
+      }
       setSwapPinnedTradeKey(buildTradeSnapshotKey(parsedLink.tradeId, parsedLink.escrowContract));
       openTrade(parsedLink.tradeId, parsedLink.accessSecret, parsedLink.escrowContract);
     },

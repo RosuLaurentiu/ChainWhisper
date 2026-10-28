@@ -7,8 +7,10 @@ import {
   type TradeAssetPayload,
   type TradeSnapshot
 } from '../../../lib/appShared';
+import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledger';
 import { buildWalletAccountScope } from '../../../lib/walletAccountScope';
 import {
+  buildOtcV2DataScopeKey,
   mergeOnboardInfoByAddress,
   renderCarbonPriceReference,
   resolveVisibleHiddenTermAmounts
@@ -20,11 +22,22 @@ import {
   type TerminalHistoryConfigParams
 } from './tradeTerminalHistoryConfig';
 import TradeStandardOrderCard from './TradeStandardOrderCard';
-import { __mergeTradeSnapshotEnrichmentForTest } from '../hooks/useP2PTradeData';
+import { TradeTerminalHistoryRows } from './TradeTerminalHistoryPanel';
 
 const owner = '0x1111111111111111111111111111111111111111';
 const chainwhisper = '0x2222222222222222222222222222222222222222';
 const maker = '0x3333333333333333333333333333333333333333';
+
+it.each(['Verifying exact fill amounts…', 'Exact fill history could not be verified.'])('shows history status before any rows exist: %s', (statusMessage) => {
+  const markup = renderToStaticMarkup(createElement(TradeTerminalHistoryRows, {
+    lifecycleRows: [], transactionRows: [], historyLifecycleTxHashes: {},
+    historyTransactionTxHashes: {}, historyTransactionTimestamps: {}, swapFillNotes: [],
+    getTransactionLinkFeedbackProps: () => ({ className: '', label: '', title: '', onClick: () => {} }),
+    statusMessage
+  }));
+  expect(markup).toContain('role="status"');
+  expect(markup).toContain(statusMessage);
+});
 
 const asset = (symbol: string, amount = '1000000'): TradeAssetPayload => ({
   kind: symbol.startsWith('p') ? 'private-erc20' : 'erc20',
@@ -34,10 +47,43 @@ const asset = (symbol: string, amount = '1000000'): TradeAssetPayload => ({
   amount
 });
 
+describe('buildOtcV2DataScopeKey', () => {
+  it('binds cached projections to the attested deployment and wallet without transient RPC chain state', () => {
+    expect(buildOtcV2DataScopeKey({
+      deploymentFingerprint: ' COTI-TESTNET:DIRECT-V2 ',
+      walletAddress: owner.toUpperCase(),
+      walletKey: ''
+    })).toBe(`coti-testnet:direct-v2:${owner}`);
+
+    expect(buildOtcV2DataScopeKey({
+      deploymentFingerprint: 'coti-testnet:direct-v2',
+      walletAddress: chainwhisper,
+      walletKey: owner
+    })).toBe(`coti-testnet:direct-v2:${owner}`);
+  });
+
+  it('changes for a different attested deployment or wallet', () => {
+    const current = buildOtcV2DataScopeKey({
+      deploymentFingerprint: 'candidate-a',
+      walletAddress: owner,
+      walletKey: owner
+    });
+
+    expect(buildOtcV2DataScopeKey({
+      deploymentFingerprint: 'candidate-b',
+      walletAddress: owner,
+      walletKey: owner
+    })).not.toBe(current);
+    expect(buildOtcV2DataScopeKey({
+      deploymentFingerprint: 'candidate-a',
+      walletAddress: chainwhisper,
+      walletKey: chainwhisper
+    })).not.toBe(current);
+  });
+});
+
 const terminalHistoryParams = (walletAddress: string): TerminalHistoryConfigParams => {
   const scope = buildWalletAccountScope({
-    actionAddress: chainwhisper,
-    actionAesReady: true,
     ownerAddress: owner,
     ownerAesReady: true
   });
@@ -113,8 +159,8 @@ const standardTrade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot =>
     status: 'open',
     hiddenLiquidity: false,
     accountAddress: chainwhisper,
-    accountRole: 'chainwhisper',
-    accountMatches: [{ address: chainwhisper, role: 'chainwhisper' }],
+    accountRole: 'owner',
+    accountMatches: [{ address: chainwhisper, role: 'owner' }],
     walletHasFill: true,
     walletFillEvents: [
       {
@@ -191,13 +237,7 @@ describe('renderCarbonPriceReference', () => {
 });
 
 describe('buildRecurringTerminalHistoryConfig', () => {
-  it('counts recurring fills using the app wallet before owner compatibility history', () => {
-    const config = buildRecurringTerminalHistoryConfig(recurringTrade(), terminalHistoryParams(chainwhisper));
-
-    expect(config?.count).toBe(2);
-  });
-
-  it('does not fall back to owner recurring fills when the app wallet has history', () => {
+  it('shows fills made by the connected wallet', () => {
     const baseRecurring = recurringTrade().recurringOrder!;
     const config = buildRecurringTerminalHistoryConfig(
       recurringTrade({
@@ -223,59 +263,12 @@ describe('buildRecurringTerminalHistoryConfig', () => {
     expect(config?.count).toBe(2);
   });
 
-  it('falls back to owner recurring fills when the app wallet has no recurring rows', () => {
-    const config = buildRecurringTerminalHistoryConfig(
-      recurringTrade({
-        recurringOrder: {
-          ...recurringTrade().recurringOrder!,
-          executionCount: 13,
-          publicExecutions: [
-            {
-              fillIndex: 7,
-              side: 'buy',
-              filler: owner,
-              baseAmount: '1000000',
-              quoteAmount: '125000',
-              txHash: '0xowner-compat'
-            }
-          ]
-        }
-      }),
-      terminalHistoryParams(owner)
-    );
-
-    expect(config?.count).toBe(2);
+  it('does not show fills belonging to a different wallet', () => {
+    const config = buildRecurringTerminalHistoryConfig(recurringTrade(), terminalHistoryParams(owner));
+    expect(config?.count).toBe(1);
   });
 
-  it('falls back to owner maker history when the app wallet has no recurring rows', () => {
-    const config = buildRecurringTerminalHistoryConfig(
-      recurringTrade({
-        maker: owner,
-        accountAddress: owner,
-        accountRole: 'owner',
-        accountMatches: [{ address: owner, role: 'owner' }],
-        walletHasFill: false,
-        recurringOrder: {
-          ...recurringTrade().recurringOrder!,
-          publicExecutions: [
-            {
-              fillIndex: 1,
-              side: 'sell',
-              filler: maker,
-              baseAmount: '1000000',
-              quoteAmount: '100000',
-              txHash: '0xowner-maker'
-            }
-          ]
-        }
-      }),
-      terminalHistoryParams(owner)
-    );
-
-    expect(config?.count).toBe(2);
-  });
-
-  it('shows all recurring fill rows to the maker even when the app wallet also has history', () => {
+  it('shows all recurring fill rows to the connected maker', () => {
     const config = buildRecurringTerminalHistoryConfig(
       recurringTrade({
         maker: owner,
@@ -313,45 +306,12 @@ describe('buildRecurringTerminalHistoryConfig', () => {
 });
 
 describe('buildStandardTerminalHistoryConfig', () => {
-  it('keeps owner-visible standard rows when preparing the terminal snapshot', () => {
-    const params = terminalHistoryParams(chainwhisper);
-    const detailSnapshot = standardTrade({
-      maker: owner,
-      accountAddress: owner,
-      accountRole: 'owner',
-      accountMatches: [{ address: owner, role: 'owner' }],
-      walletHasFill: false,
-      walletFillEvents: undefined
-    });
-    const walletCopy = standardTrade({
-      maker: owner,
-      accountAddress: chainwhisper,
-      accountRole: 'chainwhisper',
-      accountMatches: [
-        { address: chainwhisper, role: 'chainwhisper' },
-        { address: owner, role: 'owner' }
-      ],
-      walletFillEvents: [
-        ...(standardTrade().walletFillEvents ?? []),
-        {
-          fillIndex: 2,
-          filler: maker,
-          offerAmount: '2000000',
-          requestAmount: '2000',
-          txHash: '0xother'
-        }
-      ]
-    });
-
-    const mergeKey = resolveTerminalHistoryMergeWalletKey(walletCopy, params, chainwhisper);
-    const terminalSnapshot = __mergeTradeSnapshotEnrichmentForTest(detailSnapshot, walletCopy, mergeKey);
-    const config = buildStandardTerminalHistoryConfig(terminalSnapshot, params);
-
-    expect(mergeKey).toBe(owner);
-    expect(config.count).toBe(3);
+  it('uses the connected wallet as the only terminal-history merge key', () => {
+    const params = terminalHistoryParams(owner);
+    expect(resolveTerminalHistoryMergeWalletKey(standardTrade(), params, chainwhisper)).toBe(owner);
   });
 
-  it('shows all standard fill rows to the maker when the app wallet also has history', () => {
+  it('shows all standard fill rows to the connected maker', () => {
     const config = buildStandardTerminalHistoryConfig(
       standardTrade({
         maker: owner,
@@ -359,7 +319,7 @@ describe('buildStandardTerminalHistoryConfig', () => {
         accountRole: 'owner',
         accountMatches: [
           { address: owner, role: 'owner' },
-          { address: chainwhisper, role: 'chainwhisper' }
+          { address: chainwhisper, role: 'owner' }
         ],
         walletFillEvents: [
           ...(standardTrade().walletFillEvents ?? []),
@@ -378,11 +338,11 @@ describe('buildStandardTerminalHistoryConfig', () => {
     expect(config.count).toBe(3);
   });
 
-  it('keeps standard filler history scoped to the app wallet when the maker is not connected', () => {
+  it('keeps standard filler history scoped to the connected wallet when the maker is not connected', () => {
     const config = buildStandardTerminalHistoryConfig(
       standardTrade({
         accountMatches: [
-          { address: chainwhisper, role: 'chainwhisper' },
+          { address: chainwhisper, role: 'owner' },
           { address: owner, role: 'owner' }
         ],
         walletFillEvents: [
@@ -406,8 +366,6 @@ describe('buildStandardTerminalHistoryConfig', () => {
 describe('TradeStandardOrderCard', () => {
   it('does not render a manual reveal button for unhydrated Direct OTC terms', () => {
     const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
       ownerAddress: owner,
       ownerAesReady: true
     });
@@ -422,8 +380,8 @@ describe('TradeStandardOrderCard', () => {
           request: asset('pCOTI', '0'),
           hiddenLiquidity: true,
           accountAddress: chainwhisper,
-          accountRole: 'chainwhisper',
-          accountMatches: [{ address: chainwhisper, role: 'chainwhisper' }]
+          accountRole: 'owner',
+          accountMatches: [{ address: chainwhisper, role: 'owner' }]
         }),
         options: {},
         routeView: 'mine',
@@ -441,5 +399,153 @@ describe('TradeStandardOrderCard', () => {
     );
 
     expect(markup).not.toContain('Reveal terms');
+  });
+
+  it('uses canonical participant amounts for an accepted private Direct order card', () => {
+    const scope = buildWalletAccountScope({
+      ownerAddress: owner,
+      ownerAesReady: true
+    });
+    const canonicalRow: TradeHistoryV2ExecutionRow = {
+      key: 'direct-v2-private-acceptance',
+      protocol: 'direct-v2',
+      order: {
+        chainId: '7082400',
+        contractAddress: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase(),
+        orderId: '8'
+      },
+      sequence: '1',
+      maker: owner,
+      participant: chainwhisper,
+      side: 'accept',
+      amountState: 'available',
+      amounts: { offerAmount: '1250000', requestAmount: '2500000' },
+      source: 'participant-receipt',
+      log: {
+        blockNumber: '99',
+        blockHash: `0x${'11'.repeat(32)}`,
+        transactionHash: `0x${'22'.repeat(32)}`,
+        transactionIndex: 0,
+        logIndex: 1
+      }
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(TradeStandardOrderCard, {
+        trade: standardTrade({
+          escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+          maker: owner,
+          taker: chainwhisper,
+          offer: asset('pWISP', '0'),
+          request: asset('pCOTI', '0'),
+          status: 'accepted',
+          hiddenLiquidity: true,
+          walletFillEvents: [],
+          walletHasFill: false,
+          v2: {
+            protocol: 'direct-v2',
+            chainId: '7082400',
+            contractAddress: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+            revision: '1'
+          }
+        }),
+        options: { groupId: 'history' },
+        routeView: 'mine',
+        walletAddress: owner,
+        walletKey: owner.toLowerCase(),
+        walletReadAccounts: scope.readAccounts,
+        reversedRateTradeIds: {},
+        lastCopiedKey: '',
+        openTradeSnapshot: () => {},
+        toggleTradeRateDirection: () => {},
+        resolveKnownTradeAccessSecret: () => '',
+        buildTradeShareUrl: () => '',
+        copyWithFeedback: async () => {},
+        canonicalV2Rows: [canonicalRow]
+      })
+    );
+
+    expect(markup).toContain('1.25');
+    expect(markup).toContain('2.5');
+    expect(markup).not.toContain('Private amount');
+  });
+
+  it('shows the sum of all exact private fills instead of treating the first fill as the order total', () => {
+    const scope = buildWalletAccountScope({ ownerAddress: owner, ownerAesReady: true });
+    const contractAddress = DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
+    const canonicalRows: TradeHistoryV2ExecutionRow[] = [
+      {
+        key: 'private-fill-1',
+        protocol: 'private-v2',
+        order: { chainId: '7082400', contractAddress, orderId: '8' },
+        sequence: '1',
+        maker: owner,
+        participant: chainwhisper,
+        side: 'fill',
+        amountState: 'available',
+        amounts: { offerAmount: '125000', requestAmount: '275000' },
+        source: 'participant-receipt',
+        log: {
+          blockNumber: '99',
+          blockHash: `0x${'11'.repeat(32)}`,
+          transactionHash: `0x${'22'.repeat(32)}`,
+          transactionIndex: 0,
+          logIndex: 1
+        }
+      },
+      {
+        key: 'private-fill-2',
+        protocol: 'private-v2',
+        order: { chainId: '7082400', contractAddress, orderId: '8' },
+        sequence: '2',
+        maker: owner,
+        participant: maker,
+        side: 'fill',
+        amountState: 'available',
+        amounts: { offerAmount: '375000', requestAmount: '825000' },
+        source: 'participant-receipt',
+        log: {
+          blockNumber: '100',
+          blockHash: `0x${'33'.repeat(32)}`,
+          transactionHash: `0x${'44'.repeat(32)}`,
+          transactionIndex: 0,
+          logIndex: 1
+        }
+      }
+    ];
+
+    const markup = renderToStaticMarkup(
+      createElement(TradeStandardOrderCard, {
+        trade: standardTrade({
+          escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+          maker: owner,
+          offer: asset('pWISP', '0'),
+          request: asset('pCOTI', '0'),
+          status: 'accepted',
+          hiddenLiquidity: true,
+          walletFillEvents: [],
+          walletHasFill: false,
+          v2: { protocol: 'private-v2', chainId: '7082400', contractAddress, revision: '1' }
+        }),
+        options: { groupId: 'history' },
+        routeView: 'mine',
+        walletAddress: owner,
+        walletKey: owner.toLowerCase(),
+        walletReadAccounts: scope.readAccounts,
+        reversedRateTradeIds: {},
+        lastCopiedKey: '',
+        openTradeSnapshot: () => {},
+        toggleTradeRateDirection: () => {},
+        resolveKnownTradeAccessSecret: () => '',
+        buildTradeShareUrl: () => '',
+        copyWithFeedback: async () => {},
+        canonicalV2Rows: canonicalRows
+      })
+    );
+
+    expect(markup).toContain('0.5 pWISP');
+    expect(markup).toContain('1.1 pCOTI');
+    expect(markup).not.toContain('0.125 pWISP');
+    expect(markup).not.toContain('0.275 pCOTI');
   });
 });

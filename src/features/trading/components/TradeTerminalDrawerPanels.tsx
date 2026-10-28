@@ -1,4 +1,4 @@
-import type { FormEvent, RefObject } from 'react';
+import type { FormEvent, KeyboardEventHandler, RefObject } from 'react';
 import {
   formatTradeContractIdLabel
 } from '../../../lib/p2pTradeView';
@@ -7,6 +7,7 @@ import {
   SHARE_LABEL,
   renderP2PEmptyState
 } from './P2PTradingPage.helpers';
+import { moveFocusWithin } from '../../../shared/components/a11y';
 
 type TradeTerminalOpenPanelProps = {
   inputRef: RefObject<HTMLInputElement>;
@@ -15,6 +16,10 @@ type TradeTerminalOpenPanelProps = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onOpenDesk: () => void;
   onCreateOffer: () => void;
+  persistentOffers?: boolean;
+  tradeDirection?: 'buy' | 'sell';
+  tradeDirectionEnabled?: Record<'buy' | 'sell', boolean>;
+  onTradeDirectionChange?: (direction: 'buy' | 'sell') => void;
 };
 
 type TradeTerminalCreatedNoticeProps = {
@@ -54,44 +59,76 @@ export function TradeTerminalOpenPanel({
   onTradeLinkInputChange,
   onSubmit,
   onOpenDesk,
-  onCreateOffer
+  onCreateOffer,
+  persistentOffers = false,
+  tradeDirection,
+  tradeDirectionEnabled,
+  onTradeDirectionChange
 }: TradeTerminalOpenPanelProps) {
+  const handleDirectionKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (!moveFocusWithin(event, { orientation: 'horizontal', selector: '[role="tab"]:not(:disabled)' })) return;
+    const direction = (event.currentTarget.ownerDocument.activeElement as HTMLElement | null)?.dataset
+      .tradeDirection as 'buy' | 'sell' | undefined;
+    if (direction && tradeDirectionEnabled?.[direction]) onTradeDirectionChange?.(direction);
+  };
+
   return (
     <div className="p2p-terminal-open-panel">
       <div className="p2p-terminal-open-copy">
-        <strong>Paste a shared offer link</strong>
-        <p>Use a full trade URL, compact code, or offer id.</p>
+        <strong>{persistentOffers ? 'Select an offer' : 'Paste a shared offer link'}</strong>
+        <p>{persistentOffers
+            ? 'Choose from the list to review its terms.'
+            : 'Use an offer link, code or ID.'}</p>
       </div>
+      {persistentOffers && tradeDirection && tradeDirectionEnabled ? (
+        <div
+          className="p2p-swap-side-switch p2p-terminal-direction-switch"
+          role="tablist"
+          aria-label="Trade direction"
+          onKeyDown={handleDirectionKeyDown}
+        >
+          {(['buy', 'sell'] as const).map((direction) => (
+            <button
+              key={direction}
+              type="button"
+              className={tradeDirection === direction ? 'active' : undefined}
+              role="tab"
+              aria-selected={tradeDirection === direction}
+              tabIndex={tradeDirection === direction ? 0 : -1}
+              data-trade-direction={direction}
+              disabled={!tradeDirectionEnabled[direction]}
+              onClick={() => onTradeDirectionChange?.(direction)}
+            >
+              {direction === 'buy' ? 'Buy' : 'Sell'}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <form className="p2p-link-open-form p2p-action-open-form p2p-drawer-open-form" onSubmit={onSubmit}>
         <input
           ref={inputRef}
           type="text"
           value={tradeLinkInput}
           onChange={(event) => onTradeLinkInputChange(event.target.value)}
-          placeholder="Paste offer link, compact code, or id"
+          placeholder="Offer link, code or ID"
           aria-label="Trade link, compact code, or trade id"
         />
         <button type="submit">{OPEN_TERMINAL_LABEL}</button>
       </form>
-      <div className="p2p-terminal-open-actions" aria-label="Order alternatives">
-        <button type="button" onClick={onOpenDesk}>
-          Open desk
-        </button>
-        <button type="button" onClick={onCreateOffer}>
-          Create offer
-        </button>
-      </div>
+      {!persistentOffers ? (
+        <div className="p2p-terminal-open-actions" aria-label="Order alternatives">
+          <button type="button" onClick={onOpenDesk}>Open desk</button>
+          <button type="button" onClick={onCreateOffer}>Create offer</button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 export function TradeTerminalSafetyWarning() {
   return (
-    <div className="trade-compose-warning p2p-trade-window-warning" role="alert">
-      <p>
-        <strong>OTC safety check:</strong> Verify maker, token contracts, amount, and price. Escrow settles
-        approved terms.
-      </p>
+    <div className="trade-compose-warning p2p-trade-window-warning" role="note">
+      <p>Review the amount and price before confirming in your wallet.</p>
     </div>
   );
 }

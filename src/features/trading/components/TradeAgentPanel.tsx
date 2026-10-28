@@ -1,4 +1,4 @@
-import type { FormEventHandler, KeyboardEventHandler, Ref } from 'react';
+import type { FormEventHandler, Ref } from 'react';
 import { APP_HELP_MAX_QUESTION_CHARS, getAppHelpTopic } from '../../../lib/appHelp';
 import type { TradeAgentQuickAction, TradeAgentResponseAction } from '../../../lib/tradeAgent';
 import type { TradeAgentReadiness } from '../../../lib/tradeAgentReadiness';
@@ -7,29 +7,6 @@ import AgentSetupPanel from './AgentSetupPanel';
 
 export type TradeAgentPanelMode = 'help' | 'trade' | 'setup';
 
-const TRADE_AGENT_PANEL_MODES: readonly TradeAgentPanelMode[] = ['help', 'trade', 'setup'];
-
-export const getNextTradeAgentPanelMode = (
-  currentMode: TradeAgentPanelMode,
-  key: string
-): TradeAgentPanelMode | null => {
-  if (key === 'Home') {
-    return 'help';
-  }
-  if (key === 'End') {
-    return 'setup';
-  }
-  if (key === 'ArrowLeft' || key === 'ArrowRight') {
-    const currentIndex = TRADE_AGENT_PANEL_MODES.indexOf(currentMode);
-    const direction = key === 'ArrowRight' ? 1 : -1;
-    return TRADE_AGENT_PANEL_MODES[
-      (currentIndex + direction + TRADE_AGENT_PANEL_MODES.length) %
-        TRADE_AGENT_PANEL_MODES.length
-    ];
-  }
-  return null;
-};
-
 type AppHelpQuickQuestion = {
   label: string;
   question: string;
@@ -37,8 +14,13 @@ type AppHelpQuickQuestion = {
 };
 
 type TradeAgentPanelProps = {
+  compactLayout?: boolean;
   mode: TradeAgentPanelMode;
   onModeChange: (mode: TradeAgentPanelMode) => void;
+  venueLabel: 'DEX' | 'P2P';
+  pairLabel: string;
+  ratioLabel: string;
+  actionsAvailable: boolean;
   helpMessages: TradeAgentChatMessage[];
   helpLoading: boolean;
   helpMessagesEndRef: Ref<HTMLDivElement>;
@@ -74,8 +56,13 @@ type TradeAgentPanelProps = {
 };
 
 export default function TradeAgentPanel({
+  compactLayout = false,
   mode,
   onModeChange,
+  venueLabel,
+  pairLabel,
+  ratioLabel,
+  actionsAvailable,
   helpMessages,
   helpLoading,
   helpMessagesEndRef,
@@ -115,314 +102,234 @@ export default function TradeAgentPanel({
   const visibleMessages = helpMode ? helpMessages : messages;
   const activeLoading = helpMode ? helpLoading : loading;
   const activeMessagesEndRef = helpMode ? helpMessagesEndRef : messagesEndRef;
-  const compactConversation = !setupMode && visibleMessages.length <= 1 && !activeLoading;
-  const handleModeKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
-    const nextMode = getNextTradeAgentPanelMode(mode, event.key);
-    if (!nextMode) {
-      return;
-    }
-    event.preventDefault();
-    onModeChange(nextMode);
-    event.currentTarget
-      .querySelector<HTMLButtonElement>(`#assistant-mode-${nextMode}`)
-      ?.focus();
-  };
+  const emptyTradeConversation = tradeMode && visibleMessages.length <= 1 && !activeLoading;
 
   return (
-    <section className="standalone-trades-section p2p-agent-section p2p-trade-workspace-panel" aria-label="ChainWhisper Assistant">
-      <div
-        className={`p2p-trade-entry-panel p2p-agent-panel${
-          setupMode ? ' p2p-agent-panel-setup' : ''
-        }`}
-      >
-        <div
-          className="p2p-agent-mode-toggle"
-          role="tablist"
-          aria-label="Assistant mode"
-          onKeyDown={handleModeKeyDown}
-        >
-          <button
-            id="assistant-mode-help"
-            type="button"
-            role="tab"
-            aria-selected={helpMode}
-            aria-controls="assistant-mode-panel"
-            tabIndex={helpMode ? 0 : -1}
-            className={helpMode ? 'active' : undefined}
-            onClick={() => onModeChange('help')}
-          >
+    <section className="standalone-trades-section p2p-agent-section p2p-trade-workspace-panel" aria-label={helpMode ? 'ChainWhisper App Help' : 'ChainWhisper Trade Agent'}>
+      <div className={`p2p-trade-entry-panel p2p-agent-panel${setupMode ? ' p2p-agent-panel-setup' : ''}`}>
+        <nav className="p2p-agent-mode-toggle" aria-label="Agent tools">
+          <button type="button" className={helpMode ? 'active' : ''} aria-current={helpMode ? 'page' : undefined} onClick={() => onModeChange('help')}>
             App Help
           </button>
-          <button
-            id="assistant-mode-trade"
-            type="button"
-            role="tab"
-            aria-selected={tradeMode}
-            aria-controls="assistant-mode-panel"
-            tabIndex={tradeMode ? 0 : -1}
-            className={tradeMode ? 'active' : undefined}
-            onClick={() => onModeChange('trade')}
-          >
+          <button type="button" className={tradeMode ? 'active' : ''} aria-current={tradeMode ? 'page' : undefined} onClick={() => onModeChange('trade')}>
             Trade Agent
           </button>
-          <button
-            id="assistant-mode-setup"
-            type="button"
-            role="tab"
-            aria-selected={setupMode}
-            aria-controls="assistant-mode-panel"
-            tabIndex={setupMode ? 0 : -1}
-            className={setupMode ? 'active' : undefined}
-            onClick={() => onModeChange('setup')}
-          >
-            Agent Setup
+          <button type="button" className={setupMode ? 'active' : ''} aria-current={setupMode ? 'page' : undefined} onClick={() => onModeChange('setup')}>
+            MCP for agents
           </button>
-        </div>
-
-        <div className="p2p-agent-hero">
-          <div>
-            <span>{helpMode ? 'App Help' : tradeMode ? 'Trade Agent' : 'Agent Setup'}</span>
-            <strong>
-              {helpMode
-                ? 'Learn how ChainWhisper works.'
-                : tradeMode
-                  ? 'Trading help, not autopilot.'
-                  : 'ChainWhisper MCP setup is coming soon.'}
-            </strong>
-          </div>
-          <small>
-            {helpMode
-              ? 'Free — no wallet required.'
-              : tradeMode
-                ? feeLabel
-                : 'Preview how it works.'}
-          </small>
-        </div>
+        </nav>
 
         {setupMode ? (
           <AgentSetupPanel />
         ) : (
-          <div
-            id="assistant-mode-panel"
-            className={`p2p-agent-chat-window${
-              compactConversation ? ' p2p-agent-chat-window-compact' : ''
-            }`}
-            role="tabpanel"
-            aria-labelledby={helpMode ? 'assistant-mode-help' : 'assistant-mode-trade'}
-          >
-          <div
-            className="p2p-agent-messages"
-            role="log"
-            aria-live="polite"
-            aria-relevant="additions text"
-            aria-busy={activeLoading}
-          >
-            {visibleMessages.map((message) => {
-              const actions = helpMode ? [] : (message.actions ?? []).filter(canUseAction);
-              const relatedHelpTopics = helpMode
-                ? (message.relatedHelpTopicIds ?? [])
-                    .map((topicId) => getAppHelpTopic(topicId))
-                    .filter((topic) => Boolean(topic))
-                : [];
-              const hasResponseExtras = actions.length > 0 || relatedHelpTopics.length > 0 || Boolean(message.helpSource);
-              return (
-                <div
-                  className={`p2p-agent-message p2p-agent-message-${message.role}${hasResponseExtras ? ' p2p-agent-response' : ''}`}
-                  key={message.id}
-                >
-                  <span>{message.title}</span>
-                  <p>{message.text}</p>
-                  {helpMode && message.helpSource ? (
-                    <small className={`p2p-agent-help-source p2p-agent-help-source-${message.helpSource}`}>
-                      {message.helpSource === 'local'
-                        ? 'Verified ChainWhisper help · answered on this device'
-                        : message.helpSource === 'ai'
-                          ? 'AI-assisted · grounded in ChainWhisper help'
-                          : 'Safety check · nothing was sent'}
-                    </small>
-                  ) : null}
-                  {message.warnings?.length ? (
-                    <ul>
-                      {message.warnings.map((warning) => (
-                        <li key={warning}>{warning}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {relatedHelpTopics.length ? (
-                    <div className="p2p-agent-related-topics" aria-label="Related help topics">
-                      {relatedHelpTopics.map((topic) =>
-                        topic ? (
+          <div className={`p2p-agent-workspace${helpMode ? ' p2p-agent-workspace-help' : ''}`}>
+            <div className="p2p-agent-conversation">
+              <div
+                className={`p2p-agent-chat-window${emptyTradeConversation ? ' p2p-agent-chat-window-empty' : ''}`}
+                role="tabpanel"
+              >
+                {emptyTradeConversation ? (
+                  <div className="p2p-agent-empty-state">
+                    <span>Private trading assistant</span>
+                    <h2>What do you want to do?</h2>
+                    <p>Start from the current Trading context or describe a different trade.</p>
+                    <div className="p2p-agent-quick-actions p2p-agent-quick-action-grid" aria-label="Trade Agent actions">
+                      {quickActions.map((item) => {
+                        const quickPrompt = resolveQuickActionPrompt(item);
+                        return (
                           <button
-                            key={topic.id}
+                            key={`${item.action}:${item.label}`}
                             type="button"
-                            disabled={helpLoading}
-                            onClick={() => {
-                              onAskHelpQuestion(topic.questions[0]).catch(() => {});
-                            }}
+                            disabled={!actionsAvailable}
+                            onClick={() => onSelectQuickAction(item, quickPrompt)}
                           >
-                            {topic.title}
+                            <strong>{item.label}</strong>
+                            <small>{actionsAvailable ? 'Use current Trading context' : 'DEX action coming soon'}</small>
                           </button>
-                        ) : null
-                      )}
+                        );
+                      })}
                     </div>
-                  ) : null}
-                  {actions.length ? (
-                    <div className="p2p-agent-response-actions">
-                      {actions.map((action, index) => (
-                        <div className="p2p-agent-action-card" key={`${message.id}:${action.type}:${index}`}>
-                          <div>
-                            <strong>{getActionButtonLabel(action)}</strong>
-                            <small>{getActionDescription(action)}</small>
-                          </div>
-                          <button
-                            type="button"
-                            className="standalone-trade-secondary-btn"
-                            onClick={() => {
-                              onApplyAction(action).catch((applyError) => {
-                                onActionError(applyError instanceof Error ? applyError.message : 'Could not use this draft.');
-                              });
-                            }}
-                          >
-                            {getActionCta(action)}
-                          </button>
+                  </div>
+                ) : (
+                  <div
+                    className="p2p-agent-messages"
+                    role="log"
+                    aria-live="polite"
+                    aria-relevant="additions text"
+                    aria-busy={activeLoading}
+                  >
+                    {visibleMessages.map((message) => {
+                      const actions = helpMode ? [] : (message.actions ?? []).filter(canUseAction);
+                      const relatedHelpTopics = helpMode
+                        ? (message.relatedHelpTopicIds ?? [])
+                            .map((topicId) => getAppHelpTopic(topicId))
+                            .filter((topic) => Boolean(topic))
+                        : [];
+                      return (
+                        <div className={`p2p-agent-message p2p-agent-message-${message.role}`} key={message.id}>
+                          <span>{message.title}</span>
+                          <p>{message.text}</p>
+                          {helpMode && message.helpSource ? (
+                            <small className={`p2p-agent-help-source p2p-agent-help-source-${message.helpSource}`}>
+                              {message.helpSource === 'local'
+                                ? 'Verified ChainWhisper help · answered on this device'
+                                : message.helpSource === 'ai'
+                                  ? 'AI-assisted · grounded in ChainWhisper help'
+                                  : 'Safety check · nothing was sent'}
+                            </small>
+                          ) : null}
+                          {message.warnings?.length ? (
+                            <ul>{message.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                          ) : null}
+                          {relatedHelpTopics.length ? (
+                            <div className="p2p-agent-related-topics" aria-label="Related help topics">
+                              {relatedHelpTopics.map((topic) => topic ? (
+                                <button
+                                  key={topic.id}
+                                  type="button"
+                                  disabled={helpLoading}
+                                  onClick={() => { onAskHelpQuestion(topic.questions[0]).catch(() => {}); }}
+                                >
+                                  {topic.title}
+                                </button>
+                              ) : null)}
+                            </div>
+                          ) : null}
+                          {actions.length ? (
+                            <div className="p2p-agent-response-actions">
+                              {actions.map((action, index) => (
+                                <div className="p2p-agent-action-card" key={`${message.id}:${action.type}:${index}`}>
+                                  <div>
+                                    <strong>{getActionButtonLabel(action)}</strong>
+                                    <small>{getActionDescription(action)}</small>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="standalone-trade-secondary-btn"
+                                    disabled={!actionsAvailable}
+                                    onClick={() => {
+                                      onApplyAction(action).catch((applyError) => {
+                                        onActionError(applyError instanceof Error ? applyError.message : 'Could not use this draft.');
+                                      });
+                                    }}
+                                  >
+                                    {actionsAvailable ? getActionCta(action) : 'Coming soon'}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
+                      );
+                    })}
+                    {activeLoading ? (
+                      <div className="p2p-agent-message p2p-agent-message-assistant">
+                        <span>{helpMode ? 'App Help' : 'Trade Agent'}</span>
+                        <p>{helpMode ? 'Checking ChainWhisper help...' : status || 'Working...'}</p>
+                      </div>
+                    ) : null}
+                    <div ref={activeMessagesEndRef} />
+                  </div>
+                )}
+
+                {helpMode ? (
+                  <div className="p2p-agent-composer p2p-agent-composer-help">
+                    {helpError ? (
+                      <div className="error p2p-agent-error" role="alert">
+                        <span>{helpError}</span>
+                        {helpCanRetry ? (
+                          <button type="button" className="standalone-trade-secondary-btn" onClick={() => { onRetryHelpQuestion().catch(() => {}); }}>
+                            Retry
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className="p2p-agent-quick-actions" aria-label="Common App Help questions">
+                      {helpQuickQuestions.map((item) => (
+                        <button key={item.topicId} type="button" disabled={helpLoading} onClick={() => { onAskHelpQuestion(item.question).catch(() => {}); }}>
+                          {item.label}
+                        </button>
                       ))}
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
-
-            {activeLoading ? (
-              <div className="p2p-agent-message p2p-agent-message-assistant">
-                <span>{helpMode ? 'App Help' : 'Trade Agent'}</span>
-                <p>{helpMode ? 'Checking ChainWhisper help...' : status || 'Working...'}</p>
+                    <form className="p2p-agent-prompt" onSubmit={onHelpSubmit}>
+                      <label className="p2p-sr-only" htmlFor="app-help-question">Ask App Help a question</label>
+                      <textarea
+                        id="app-help-question"
+                        value={helpPrompt}
+                        onChange={(event) => onHelpPromptChange(event.target.value)}
+                        placeholder="Ask a question about ChainWhisper..."
+                        maxLength={APP_HELP_MAX_QUESTION_CHARS}
+                        aria-describedby="app-help-question-hint"
+                        rows={2}
+                      />
+                      <div className="p2p-agent-submit-row">
+                        <span id="app-help-question-hint">{helpPrompt.length}/{APP_HELP_MAX_QUESTION_CHARS} · Free product help.</span>
+                        <button type="submit" className="trade-card-action trade-card-action-accept" disabled={!helpCanSubmit}>
+                          {helpLoading ? 'Checking...' : 'Ask free'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : (
+                  <div className="p2p-agent-composer p2p-agent-composer-trade">
+                    <form className="p2p-agent-prompt" onSubmit={onSubmit}>
+                      <label className="p2p-sr-only" htmlFor="trade-agent-question">Ask the Trade Agent</label>
+                      <textarea
+                        id="trade-agent-question"
+                        value={prompt}
+                        onChange={(event) => onPromptChange(event.target.value)}
+                        placeholder="Describe the trade you want to review or prepare..."
+                        aria-describedby="trade-agent-readiness"
+                        rows={2}
+                      />
+                      <div className="p2p-agent-submit-row">
+                        <span
+                          id="trade-agent-readiness"
+                          className={`p2p-agent-readiness p2p-agent-readiness-${readiness.kind}`}
+                          role={readiness.kind === 'error' ? 'alert' : 'status'}
+                          aria-live={readiness.kind === 'error' ? 'assertive' : 'polite'}
+                        >
+                          {actionsAvailable ? readiness.message : 'DEX preparation actions are preview-only for now.'}
+                        </span>
+                        {readiness.kind === 'account-needed' ? (
+                          <button type="button" className="standalone-trade-secondary-btn p2p-agent-connect-account" onClick={onConnectAccount}>
+                            Connect wallet
+                          </button>
+                        ) : (
+                          <button type="submit" className="trade-card-action trade-card-action-accept" disabled={!actionsAvailable || !readiness.canSubmit}>
+                            {loading ? 'Working...' : retryPaymentTxHash ? 'Retry without paying' : 'Pay and send'}
+                          </button>
+                        )}
+                      </div>
+                    </form>
+                  </div>
+                )}
               </div>
+            </div>
+
+            {tradeMode ? (
+              <details className="p2p-agent-context" aria-label="Attached Trading context" open={!compactLayout}>
+                <summary className="p2p-agent-context-heading">
+                  <span>Attached context</span>
+                  <strong>{venueLabel}</strong>
+                </summary>
+                <article>
+                  <span>Market</span>
+                  <strong>{pairLabel}</strong>
+                  <small>{ratioLabel}</small>
+                </article>
+                <article>
+                  <span>Attached item</span>
+                  <strong>{prompt.trim() ? 'Draft request' : 'No trade attached'}</strong>
+                  <small>{prompt.trim() ? 'The current prompt will be reviewed before any action.' : 'Select an offer, order, or strategy to bring it here.'}</small>
+                </article>
+                <article>
+                  <span>Readiness</span>
+                  <strong>{actionsAvailable ? 'P2P actions available' : 'DEX preview'}</strong>
+                  <small>{actionsAvailable ? feeLabel : 'DEX execution actions will unlock when their integrations are ready.'}</small>
+                </article>
+              </details>
             ) : null}
-            <div ref={activeMessagesEndRef} />
-          </div>
-
-          {helpMode ? (
-            <div className="p2p-agent-composer p2p-agent-composer-help">
-              {helpError ? (
-                <div className="error p2p-agent-error" role="alert">
-                  <span>{helpError}</span>
-                  {helpCanRetry ? (
-                    <button
-                      type="button"
-                      className="standalone-trade-secondary-btn"
-                      onClick={() => {
-                        onRetryHelpQuestion().catch(() => {});
-                      }}
-                    >
-                      Retry
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="p2p-agent-quick-actions" aria-label="Common App Help questions">
-                {helpQuickQuestions.map((item) => (
-                  <button
-                    key={item.topicId}
-                    type="button"
-                    disabled={helpLoading}
-                    onClick={() => {
-                      onAskHelpQuestion(item.question).catch(() => {});
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-
-              <form className="p2p-agent-prompt" onSubmit={onHelpSubmit}>
-                <label className="p2p-sr-only" htmlFor="app-help-question">
-                  Ask App Help a question
-                </label>
-                <textarea
-                  id="app-help-question"
-                  value={helpPrompt}
-                  onChange={(event) => onHelpPromptChange(event.target.value)}
-                  placeholder="Ask a question about ChainWhisper..."
-                  maxLength={APP_HELP_MAX_QUESTION_CHARS}
-                  aria-describedby="app-help-question-hint"
-                  rows={2}
-                />
-                <div className="p2p-agent-submit-row">
-                  <span id="app-help-question-hint">
-                    {helpPrompt.length}/{APP_HELP_MAX_QUESTION_CHARS} · Common answers stay on this device. Broader
-                    questions may use AI after safety checks.
-                  </span>
-                  <button
-                    type="submit"
-                    className="trade-card-action trade-card-action-accept"
-                    disabled={!helpCanSubmit}
-                  >
-                    {helpLoading ? 'Checking...' : 'Ask free'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          ) : (
-            <div className="p2p-agent-composer p2p-agent-composer-trade">
-              <div className="p2p-agent-quick-actions" aria-label="Trade Agent actions">
-                {quickActions.map((item) => {
-                  const quickPrompt = resolveQuickActionPrompt(item);
-                  return (
-                    <button
-                      key={`${item.action}:${item.label}`}
-                      type="button"
-                      className={prompt === quickPrompt ? 'active' : undefined}
-                      onClick={() => onSelectQuickAction(item, quickPrompt)}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <form className="p2p-agent-prompt" onSubmit={onSubmit}>
-                <label className="p2p-sr-only" htmlFor="trade-agent-question">
-                  Ask the Trade Agent
-                </label>
-                <textarea
-                  id="trade-agent-question"
-                  value={prompt}
-                  onChange={(event) => onPromptChange(event.target.value)}
-                  placeholder="Ask about a pair, paste a note, or describe the order you want..."
-                  aria-describedby="trade-agent-readiness"
-                  rows={2}
-                />
-                <div className="p2p-agent-submit-row">
-                  <span
-                    id="trade-agent-readiness"
-                    className={`p2p-agent-readiness p2p-agent-readiness-${readiness.kind}`}
-                    role={readiness.kind === 'error' ? 'alert' : 'status'}
-                    aria-live={readiness.kind === 'error' ? 'assertive' : 'polite'}
-                  >
-                    {readiness.message}
-                  </span>
-                  {readiness.kind === 'account-needed' ? (
-                    <button
-                      type="button"
-                      className="standalone-trade-secondary-btn p2p-agent-connect-account"
-                      onClick={onConnectAccount}
-                    >
-                      Connect account
-                    </button>
-                  ) : (
-                    <button
-                      type="submit"
-                      className="trade-card-action trade-card-action-accept"
-                      disabled={!readiness.canSubmit}
-                    >
-                      {loading ? 'Working...' : retryPaymentTxHash ? 'Retry without paying' : 'Pay and send'}
-                    </button>
-                  )}
-                </div>
-              </form>
-            </div>
-          )}
           </div>
         )}
       </div>

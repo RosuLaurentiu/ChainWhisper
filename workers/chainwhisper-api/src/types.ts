@@ -144,6 +144,162 @@ export type SwapQuote = {
   observedAt: string;
 };
 
+export type PublicPrivateLiquidityPosition = {
+  positionId: string;
+  owner: Address;
+  revision: string;
+  createdAt: string;
+  lastActivityBlock: string;
+  buyTerms: { baseAmount: string; quoteAmount: string };
+  sellTerms: { baseAmount: string; quoteAmount: string };
+  buySideAvailable: boolean;
+  sellSideAvailable: boolean;
+};
+
+export type PublicPrivateLiquidityPair = {
+  protocol: 'PrivateLiquidityV2';
+  network: 'COTI Testnet';
+  chainId: 7_082_400;
+  manifestHash: `0x${string}`;
+  contractAddress: Address;
+  pairKey: `0x${string}`;
+  baseToken: Address;
+  quoteToken: Address;
+  atBlock: { number: string; hash: `0x${string}`; timestamp: string };
+  complete: true;
+  discoveredPositionCount: number;
+  activeContributorCount: number;
+  positions: PublicPrivateLiquidityPosition[];
+  askRoute: { positionIds: string[]; expectedRevisions: string[] };
+  bidRoute: { positionIds: string[]; expectedRevisions: string[] };
+  hiddenIntentQueue: { openCount: string; cursor: string };
+  privacyBoundary: {
+    inventory: 'not-returned';
+    hiddenIntentTerms: 'not-returned';
+    hiddenIntentSelection: 'contract-selected-only';
+  };
+};
+
+export interface PrivateLiquidityV2ApiSource {
+  getPair(): Promise<PublicPrivateLiquidityPair>;
+}
+
+export type PublicPrivateLiquidityDailyPricePoint = {
+  day: string;
+  capturedAt: string;
+  direction: 'base-to-quote' | 'quote-to-base';
+  revision: string;
+  price: {
+    baseUnits: string;
+    quoteUnits: string;
+    basis: 'quote_per_base';
+  };
+  source: {
+    blockNumber: string;
+    blockHash: `0x${string}`;
+    transactionHash: `0x${string}`;
+    logIndex: number;
+    swapId: string;
+    positionId: string;
+  };
+};
+
+export type PublicPrivateLiquidityDailyPricePage = {
+  protocol: 'ChainWhisperPrivateLiquidityDailyPriceStoreV1';
+  network: 'COTI Testnet';
+  chainId: 7_082_400;
+  analyticsManifestHash: `0x${string}`;
+  storeAddress: Address;
+  sourceBook: Address;
+  pairKey: `0x${string}`;
+  atBlock: { number: string; hash: `0x${string}`; timestamp: string };
+  totalCount: string;
+  start: string;
+  nextStart: string | null;
+  completeRange: true;
+  points: PublicPrivateLiquidityDailyPricePoint[];
+  privacyBoundary: {
+    publicFields: readonly ['daily-marginal-price', 'utc-day', 'source-provenance'];
+    excluded: readonly ['liquidity-depth', 'inventory', 'traded-amounts', 'volume', 'participants'];
+    recorderReplayVerifiedByApi: false;
+  };
+};
+
+export interface PrivateLiquidityDailyPriceApiSource {
+  getDailyPrices(input: {
+    pairKey: `0x${string}`;
+    start: number | null;
+    limit: number;
+  }): Promise<PublicPrivateLiquidityDailyPricePage>;
+}
+
+export type TestnetRegistryComponentSurface =
+  | 'direct-chat'
+  | 'group-chat'
+  | 'chat-reactions'
+  | 'direct-otc'
+  | 'standard-otc'
+  | 'private-otc'
+  | 'recurring-otc'
+  | 'private-recurring-otc'
+  | 'private-liquidity-book'
+  | 'private-liquidity-hidden-intents'
+  | 'private-liquidity-position-nft'
+  | 'public-test-token'
+  | 'private-test-token';
+
+export type TestnetRegistryEventPolicy = {
+  publicIndexable: readonly string[];
+  encryptedContentNotReturned: readonly string[];
+  participantEncryptedNotReturned: readonly string[];
+  catalogOnlyNotReturned: readonly string[];
+  incomingDirectTradeNotification: readonly string[];
+};
+
+export type PublicTestnetRegistryComponent = {
+  key: string;
+  contract: string;
+  surface: TestnetRegistryComponentSurface;
+  address: Address;
+  runtimeBytecodeHash: `0x${string}`;
+  deploymentBlock: string;
+  events: TestnetRegistryEventPolicy;
+};
+
+export type PublicTestnetRegistryV2 = {
+  protocol: 'ChainWhisperTestnetRegistryV2';
+  schemaVersion: 1;
+  network: 'COTI Testnet';
+  chainId: 7_082_400;
+  manifestHash: `0x${string}`;
+  owner: Address;
+  attestationBlock: { number: string; hash: `0x${string}` };
+  atBlock: { number: string; hash: `0x${string}`; timestamp: string };
+  complete: true;
+  components: readonly PublicTestnetRegistryComponent[];
+  privacyBoundary: {
+    eventDataReturned: false;
+    ciphertextReturned: false;
+    privateAmountsReturned: false;
+    participantReceiptsReturned: false;
+    hiddenIntentIdentifiersReturned: false;
+    walletActivityReturned: false;
+  };
+  notificationPolicy: {
+    incomingDirectTradesAndCounters: {
+      componentKey: 'directOtcV2';
+      eventName: 'DirectTradeOpened';
+      recipientField: 'taker';
+      counterWhenParentTradeIdNonzero: true;
+    };
+    otherTradingEvents: 'none';
+  };
+};
+
+export interface TestnetRegistryV2ApiSource {
+  getRegistry(): Promise<PublicTestnetRegistryV2>;
+}
+
 export interface ChainWhisperApiSource {
   getStatus(): Promise<ApiStatus>;
   listOrders(input: { cursor: number; limit: number }): Promise<OrdersPage>;

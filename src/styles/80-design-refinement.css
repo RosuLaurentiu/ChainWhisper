@@ -12,12 +12,12 @@ body {
 
 .app-root,
 .top-header-bar {
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
 }
 
 @media (min-width: 921px) {
   .app-shell-chat .top-header.top-header-has-wallet.top-header-no-links .top-header-bar {
-    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-columns: 320px minmax(0, 1fr);
   }
 }
 
@@ -1124,11 +1124,122 @@ body {
   gap: 7px;
 }
 
-.chat-readiness-copy strong {
+.chat-readiness-copy h2 {
+  margin: 0;
   color: var(--text-primary);
   font-family: "Space Grotesk", sans-serif;
   font-size: clamp(1.35rem, 2.2vw, 1.75rem);
   letter-spacing: -0.025em;
+}
+
+/* Keep the disconnected Portal informative without presenting unusable conversion controls. */
+.privacy-connection-card {
+  min-height: 330px;
+  align-content: center;
+  justify-items: center;
+  gap: 18px;
+  padding: clamp(30px, 6vw, 64px);
+  text-align: center;
+}
+
+.privacy-connection-icon {
+  width: 58px;
+  height: 58px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(139, 92, 246, 0.48);
+  border-radius: 18px;
+  background: rgba(124, 58, 237, 0.13);
+  color: #c4a7ff;
+  box-shadow: 0 16px 34px rgba(69, 31, 128, 0.22);
+}
+
+.privacy-connection-copy {
+  max-width: 520px;
+  display: grid;
+  gap: 8px;
+}
+
+.privacy-connection-copy > span {
+  color: #a982ff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.privacy-connection-copy h2 {
+  margin: 0;
+  color: #f8f7fc;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(1.35rem, 2.5vw, 1.8rem);
+  line-height: 1.12;
+}
+
+.privacy-connection-copy p {
+  margin: 0;
+  color: #aaa6b9;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.privacy-connection-facts {
+  width: min(100%, 560px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(76, 72, 105, 0.42);
+  border-radius: 12px;
+  background: rgba(9, 9, 17, 0.42);
+}
+
+.privacy-connection-facts > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 13px 16px;
+}
+
+.privacy-connection-facts > span + span {
+  border-left: 1px solid rgba(76, 72, 105, 0.42);
+}
+
+.privacy-connection-facts strong {
+  color: #e9e5f2;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.privacy-connection-facts small {
+  color: #918c9f;
+  font-size: 0.69rem;
+  line-height: 1.35;
+}
+
+.privacy-connection-help {
+  min-height: 40px;
+}
+
+@media (max-width: 520px) {
+  .privacy-connection-card {
+    min-height: 0;
+    gap: 16px;
+    padding: 26px 18px;
+  }
+
+  .privacy-connection-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .privacy-connection-facts > span + span {
+    border-top: 1px solid rgba(76, 72, 105, 0.42);
+    border-left: 0;
+  }
+
+  .privacy-connection-help {
+    min-height: 44px;
+  }
 }
 
 .chat-readiness-copy p {
@@ -1137,6 +1248,19 @@ body {
   color: var(--text-secondary);
   font-size: 0.9375rem;
   line-height: 1.55;
+}
+
+.chat-readiness-error {
+  width: min(440px, 100%);
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(244, 114, 182, 0.38);
+  border-radius: var(--radius-md);
+  background: rgba(88, 28, 58, 0.18);
+  color: #f9a8d4;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .chat-readiness-action {
@@ -1230,6 +1354,123 @@ body {
   color: var(--text-tertiary);
   font-size: 0.75rem;
   line-height: 1.45;
+}
+
+/* Private TVL unavailable state: preserve trust without leaving an empty analytics canvas. */
+.treasury-readiness-panel {
+  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+  align-items: stretch;
+  gap: 18px;
+  padding: 24px 28px;
+}
+
+.treasury-readiness-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 9px;
+  border-right: 1px solid var(--border-subtle);
+  padding: 8px 24px 8px 0;
+}
+
+.treasury-readiness-copy .landing-eyebrow,
+.treasury-readiness-copy h2,
+.treasury-readiness-copy p {
+  margin: 0;
+}
+
+.treasury-readiness-copy > p:not(.landing-eyebrow) {
+  max-width: 48ch;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.treasury-readiness-action {
+  min-height: 38px;
+  margin-top: 5px;
+  border: 1px solid rgba(139, 92, 246, 0.42);
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.16);
+  color: var(--text);
+  padding: 0 14px;
+  font-size: 0.8125rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.treasury-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.treasury-readiness-grid article {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(8, 10, 20, 0.5);
+  padding: 15px;
+}
+
+.treasury-readiness-grid span {
+  color: var(--text-tertiary);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.treasury-readiness-grid strong {
+  color: var(--text);
+  font-size: 0.875rem;
+  line-height: 1.3;
+}
+
+.treasury-readiness-grid p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .treasury-readiness-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .treasury-readiness-copy {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 2px 0 18px;
+  }
+}
+
+@media (max-width: 600px) {
+  .treasury-readiness-panel {
+    gap: 14px;
+    padding: 18px 14px;
+  }
+
+  .treasury-readiness-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .treasury-readiness-grid article {
+    grid-template-columns: minmax(86px, 0.38fr) minmax(0, 0.62fr);
+    align-items: baseline;
+    gap: 4px 12px;
+    padding: 12px;
+  }
+
+  .treasury-readiness-grid article p {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

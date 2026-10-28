@@ -1,0 +1,123 @@
+{
+  "chainId": "7082400",
+  "components": [
+    {
+      "contract": "ChainWhisperP2PTokenValidation",
+      "address": "0xdb637ead4d85299eb0a83146d669947afd7992ab",
+      "runtimeBytecodeHash": "0x0e9af4fbde3ad9f68c22a616f9b167e1484c2360f11db73fd7a7f125f94e1353",
+      "deploymentBlock": "10225073",
+      "deploymentBlockHash": "0x1d34add3f4d9a183cfebf6c8f9c567449f79a0fef6bc04ab48b7677eb30ce69d"
+    },
+    {
+      "contract": "ChainWhisperP2PDisclosure",
+      "address": "0xc9634eddf002e0a4af780c82b8da997f2eae3dad",
+      "runtimeBytecodeHash": "0xa2a51a2fe6c8be49986c82c04eb1324222c0e4a15eba68fc34d6965ca401985f",
+      "deploymentBlock": "10225078",
+      "deploymentBlockHash": "0x1ba79909e52734bd9c39cf84c3036cad9596c1952a70980c1f6a73657f2181b1"
+    },
+    {
+      "contract": "ChainWhisperPrivateBookMath",
+      "address": "0x5d352629c640222dda714ba7c2b7425014ed5ff4",
+      "runtimeBytecodeHash": "0x7df0fc7b9dbcae23b0123227b0d0901dd56e548f962e59a450b14bf5e82390d7",
+      "deploymentBlock": "10238601",
+      "deploymentBlockHash": "0x3bc2b39d44e7ad05d17c4fb6d91ed72c51455306e178cabc177c387796f7bd29"
+    },
+    {
+      "contract": "ChainWhisperLinkPrivateMath",
+      "address": "0x6f1697d753cb25ed86e3fb5d6847f5fcea34e546",
+      "runtimeBytecodeHash": "0x1b276701e91e98a07340d93fc1de832c8073673d5d6e5f32401f271606076caf",
+      "deploymentBlock": "10252411",
+      "deploymentBlockHash": "0x75608fc34b91b0e8e4c3ecee01743edb39b336866b160e1b3c61e1e8e2b67c96"
+    },
+    {
+      "contract": "ChainWhisperStandardOTCEscrowV2",
+      "address": "0x8822bfefa12ebb0c5054a041119df088d7286902",
+      "runtimeBytecodeHash": "0xf4eb4024cef08e941ac04b268d2db28d1eec5757423e0fbb46a5ffdc637c70cd",
+      "deploymentBlock": "10225093",
+      "deploymentBlockHash": "0xd2a39e12a1d4f150712022c3f08dbc535fb132b87389bbb87891a39b8b5739df",
+      "protocol": "standard-v2"
+    },
+    {
+      "contract": "ChainWhisperPrivateOTCEscrowV2",
+      "address": "0xc47c9b7d8c882a9c103d21e6d61702d210ddca6f",
+      "runtimeBytecodeHash": "0xd6cad7ae0951b41edc13f23c247bfb0cec4e554e4b89746e477fe23a423435ae",
+      "deploymentBlock": "10238610",
+      "deploymentBlockHash": "0x158c62c7bd3170ce823192dbd410aa04f4eb1d1d2b086288715950ece2439374",
+      "protocol": "private-v2"
+    },
+    {
+      "contract": "ChainWhisperDirectOTCEscrowV2",
+      "address": "0xca2555ef16418fa8970552149f5febe88723ecce",
+      "runtimeBytecodeHash": "0x11c3177b38ad65bf312d9db6174742a99fdc4eae48ff5dee636d90b35854208a",
+      "deploymentBlock": "10225103",
+      "deploymentBlockHash": "0x989cae759d6bbaad1f9239587b1cb54394ad1046afc1d260936b2d6fbe1bfee3",
+      "protocol": "direct-v2"
+    },
+    {
+      "contract": "ChainWhisperLinkOTCEscrowV2",
+      "address": "0xe74a14c96217e38735329c0f04392699ad26fe07",
+      "runtimeBytecodeHash": "0xc179812ed29a2cdd533c3807ef31fac29a7e9fb5c0d398fabc39bdd5ff566bce",
+      "deploymentBlock": "10252421",
+      "deploymentBlockHash": "0x90a872360fca0d4a359cce8a2ce67d2ffb98ab2730b79ce82fb09e34ecd44333",
+      "protocol": "link-v2"
+    },
+    {
+      "contract": "ChainWhisperCounterOTCEscrowV2",
+      "address": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "runtimeBytecodeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "deploymentBlock": "10225113",
+      "deploymentBlockHash": "0xaa1f49d9017a4c65078ce2cdc065fe71c2aa85168fa12ee38a84dab4f4aa2750",
+      "protocol": "counter-v2"
+    }
+  ],
+  "privateCounterProofs": [
+    {
+      "parentProtocol": "private-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0xc47c9b7d8c882a9c103d21e6d61702d210ddca6f",
+      "parentRuntimeHash": "0xd6cad7ae0951b41edc13f23c247bfb0cec4e554e4b89746e477fe23a423435ae",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "proofSha256": "5e9b6abb5032bd954618f57921ea82ccc7f54ea45f900cfdf93a3a001f7d7be6"
+    },
+    {
+      "parentProtocol": "link-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0xe74a14c96217e38735329c0f04392699ad26fe07",
+      "parentRuntimeHash": "0xc179812ed29a2cdd533c3807ef31fac29a7e9fb5c0d398fabc39bdd5ff566bce",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "proofSha256": "6a311cece5f5c19e05e0c6cebe9d1f6c54bd2b70d18813c96fc8565796cf7f52"
+    }
+  ],
+  "publicBookLinkProofs": [
+    {
+      "parentProtocol": "standard-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0x8822bfefa12ebb0c5054a041119df088d7286902",
+      "parentRuntimeHash": "0xf4eb4024cef08e941ac04b268d2db28d1eec5757423e0fbb46a5ffdc637c70cd",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "forwardProofSha256": "c5a5d8ebee79bc2510ac9dd289e75a829099be4684c71929b9d1f2f6d25d208a",
+      "counterProofSha256": "c5a5d8ebee79bc2510ac9dd289e75a829099be4684c71929b9d1f2f6d25d208a"
+    },
+    {
+      "parentProtocol": "link-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0xe74a14c96217e38735329c0f04392699ad26fe07",
+      "parentRuntimeHash": "0xc179812ed29a2cdd533c3807ef31fac29a7e9fb5c0d398fabc39bdd5ff566bce",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "forwardProofSha256": "4ce3546bfa53adf6713c28ca805ce1a6d6d724b8317b445edf87566e41967271",
+      "counterProofSha256": "b5db54d849f7e1aaab0effb928e538a005cc890908545235eae3ae3449e13465"
+    }
+  ],
+  "directPublicProofSha256": "18b37378130dc3c5312b4f8f375195a9e4dab450abd1622339fbf4f9302059d6",
+  "directPublicCounterProofSha256": "6b5073ba0497f435f1b64ece1d084d249211743a8e3161a05ca35e56a6b0229e",
+  "directCounterProofSha256": "7f11689253477f072f696cb1b101e34a889037dd12b92f4902c754194e5d67dd",
+  "directProofSha256": "08979c2937e3668ee448708ca47df9b8dae002eeada54b37550fe8aa79e6355b"
+}

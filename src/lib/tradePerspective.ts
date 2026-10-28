@@ -4,6 +4,24 @@ export const ZERO_TRADE_TAKER_ADDRESS = '0x0000000000000000000000000000000000000
 
 export type TradePerspectiveTone = 'send' | 'receive' | 'neutral';
 export type TradePerspectiveRole = 'maker' | 'taker' | 'open-taker' | 'unrelated' | 'unknown';
+export type TradeActionSide = 'buy' | 'sell';
+
+/**
+ * Buy and Sell are expressed relative to the currently displayed base asset.
+ * Reversing the ratio changes that base asset, so the same economic action gets
+ * the opposite display label without changing what the user spends or receives.
+ */
+export const resolveDisplayedTradeActionSide = (
+  canonicalSide: TradeActionSide,
+  priceDisplayInverted = false
+): TradeActionSide => priceDisplayInverted
+  ? canonicalSide === 'buy' ? 'sell' : 'buy'
+  : canonicalSide;
+
+export const resolveCanonicalTradeActionSide = (
+  displayedSide: TradeActionSide,
+  priceDisplayInverted = false
+): TradeActionSide => resolveDisplayedTradeActionSide(displayedSide, priceDisplayInverted);
 
 export type TradePerspectiveSide = {
   asset: TradeAssetPayload;

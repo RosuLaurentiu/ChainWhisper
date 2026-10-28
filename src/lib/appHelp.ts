@@ -64,6 +64,9 @@ export const normalizeAppHelpResponse = (value: unknown): AppHelpResponse => {
   if (!answer || answer.length > 2_000) {
     throw new Error('App Help response was empty or invalid.');
   }
+  if (containsSensitiveAppHelpMaterial(answer)) {
+    throw new Error('App Help response contained unsafe material.');
+  }
   if (source !== 'local' && source !== 'ai' && source !== 'refusal') {
     throw new Error('App Help returned an invalid response source.');
   }

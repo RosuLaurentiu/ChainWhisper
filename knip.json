@@ -1,0 +1,38 @@
+{
+  "$schema": "https://unpkg.com/knip@6.41.0/schema.json",
+  "paths": {"/src/*": ["./src/*"]},
+  "entry": [
+    "src/main.tsx",
+    "src/testnetTokenAdmissionTool.ts",
+    "workers/chainwhisper-api/src/index.ts",
+    "supabase/functions/*/index.ts",
+    "tests/browser/fixtures/*-harness.tsx",
+    "tests/real-wallet/harness/main.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx,js,jsx}",
+    "scripts/**/*.{ts,mts,cts,js,mjs,cjs}",
+    "tests/**/*.{ts,tsx,js,mjs,cjs}",
+    "workers/chainwhisper-api/{src,test}/**/*.ts",
+    "supabase/functions/**/*.ts",
+    "*.config.{ts,js,mjs,cjs}",
+    "!.tmp*"
+  ],
+  "ignore": ["reports/**", "archive/**", "output/**", "dist/**"],
+  "playwright": {
+    "config": [
+      "playwright.config.ts",
+      "playwright.real-wallet.config.ts",
+      "playwright.real-wallet-recovery.config.ts"
+    ],
+    "entry": ["tests/**/*.spec.ts"]
+  },
+  "vitest": {
+    "entry": [
+      "src/**/*.{test,spec}.{ts,tsx}",
+      "tests/**/*.test.ts",
+      "workers/chainwhisper-api/test/**/*.test.ts",
+      "supabase/functions/**/*.test.ts"
+    ]
+  }
+}

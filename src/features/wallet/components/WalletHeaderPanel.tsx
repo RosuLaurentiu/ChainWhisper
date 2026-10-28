@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
-import { LockKeyhole, RefreshCw, Wallet } from 'lucide-react';
+import { ChevronDown, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw, Wallet } from 'lucide-react';
 import { resolveWalletStatusTone, type WalletStatusTone } from '../../../lib/walletSession';
 import { moveFocusWithin } from '../../../shared/components/a11y';
 
@@ -10,6 +10,8 @@ type WalletHeaderPanelProps = {
   menuDisabled?: boolean;
   menuLabel?: string;
   menuOpen: boolean;
+  menuBadgeCount?: number;
+  menuWarning?: boolean;
   modeLabel: ReactNode;
   onPrimaryAction: () => void;
   onToggleMenu: () => void;
@@ -34,6 +36,8 @@ export default function WalletHeaderPanel({
   menuDisabled = false,
   menuLabel = 'Wallet',
   menuOpen,
+  menuBadgeCount = 0,
+  menuWarning = false,
   modeLabel,
   onPrimaryAction,
   onToggleMenu,
@@ -57,14 +61,18 @@ export default function WalletHeaderPanel({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const hasStatusAction = Boolean(statusActionLabel && onStatusAction);
   const hasStatusText = Boolean(modeLabel || statusLabel);
+  const connected = primaryButtonClassName.includes('p2p-wallet-address');
   const normalizedStatusActionLabel = statusActionLabel?.toLowerCase() ?? '';
   const StatusActionIcon =
-    normalizedStatusActionLabel.includes('refresh') ||
-    normalizedStatusActionLabel.includes('recover') ||
-    normalizedStatusActionLabel.includes('retry') ||
-    normalizedStatusActionLabel.includes('set up')
-      ? RefreshCw
-      : LockKeyhole;
+    resolvedStatusTone === 'ready'
+      ? LockKeyholeOpen
+      : normalizedStatusActionLabel.includes('refresh') ||
+          normalizedStatusActionLabel.includes('recover') ||
+          normalizedStatusActionLabel.includes('retry') ||
+          normalizedStatusActionLabel.includes('set up')
+        ? RefreshCw
+        : LockKeyhole;
+  const directPrivacyLabel = statusActionTitle ?? statusActionLabel ?? statusLabel ?? 'Privacy status';
   const statusIndicatorContent = (
     <>
       <i aria-hidden="true" />
@@ -103,7 +111,9 @@ export default function WalletHeaderPanel({
   return (
     <div
       ref={panelRef}
-      className={busy ? 'p2p-wallet-panel wallet-header-panel is-wallet-busy' : 'p2p-wallet-panel wallet-header-panel'}
+      className={`${busy ? 'p2p-wallet-panel wallet-header-panel is-wallet-busy' : 'p2p-wallet-panel wallet-header-panel'}${
+        connected ? ' wallet-header-panel-connected' : ' wallet-header-panel-disconnected'
+      }`}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && menuOpen) {
           event.preventDefault();
@@ -129,7 +139,16 @@ export default function WalletHeaderPanel({
               disabled={primaryDisabled}
               title={primaryButtonTitle}
               aria-label={primaryButtonTitle ?? primaryButtonLabel}
+              aria-busy={busy}
             >
+              {busy ? (
+                <LoaderCircle
+                  className="p2p-wallet-primary-spinner"
+                  size={15}
+                  strokeWidth={2.25}
+                  aria-hidden="true"
+                />
+              ) : null}
               <span>{primaryButtonLabel}</span>
               {primaryMetaLabel ? <small aria-live="polite">{primaryMetaLabel}</small> : null}
             </button>
@@ -144,7 +163,7 @@ export default function WalletHeaderPanel({
               {modeLabel ? <div className="p2p-wallet-mode-label">{modeLabel}</div> : null}
               {statusLabel ? (
                 <div className="p2p-wallet-status-row">
-                  {hasStatusAction ? (
+                  {hasStatusAction && !connected ? (
                     <button
                       type="button"
                       className="p2p-wallet-status-indicator p2p-wallet-status-button"
@@ -163,6 +182,19 @@ export default function WalletHeaderPanel({
             </div>
           ) : null}
         </div>
+        {connected ? (
+          <button
+            type="button"
+            className={`p2p-wallet-privacy-direct p2p-wallet-privacy-${resolvedStatusTone}`}
+            onClick={onStatusAction}
+            disabled={!hasStatusAction || statusActionDisabled}
+            title={directPrivacyLabel}
+            aria-label={directPrivacyLabel}
+            aria-busy={busy && hasStatusAction}
+          >
+            <StatusActionIcon size={17} strokeWidth={2.25} aria-hidden="true" />
+          </button>
+        ) : null}
         {action ? <div className="p2p-wallet-status-actions">{action}</div> : null}
       </div>
 
@@ -178,8 +210,16 @@ export default function WalletHeaderPanel({
           aria-controls={menuOpen ? menuId : undefined}
           aria-label={menuOpen ? `Close ${menuLabel} menu` : `Open ${menuLabel} menu`}
         >
-          <Wallet className="p2p-wallet-menu-icon" size={18} strokeWidth={2} aria-hidden="true" />
-          <span className="p2p-wallet-menu-label">{menuLabel}</span>
+          {connected ? (
+            <ChevronDown className="p2p-wallet-menu-icon" size={18} strokeWidth={2.25} aria-hidden="true" />
+          ) : (
+            <Wallet className="p2p-wallet-menu-icon" size={18} strokeWidth={2} aria-hidden="true" />
+          )}
+          <span className="p2p-wallet-menu-label">{connected ? 'More' : menuLabel}</span>
+          {connected && menuBadgeCount > 0 ? (
+            <span className="p2p-wallet-menu-badge" aria-hidden="true">{Math.min(menuBadgeCount, 99)}</span>
+          ) : null}
+          {connected && menuWarning ? <span className="p2p-wallet-menu-warning" aria-hidden="true" /> : null}
         </button>
         {menuOpen ? (
           <div ref={menuRef} id={menuId} className="p2p-wallet-menu" role="menu" aria-label={menuLabel}>

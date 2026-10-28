@@ -1906,6 +1906,29 @@
   transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
+.chat-contact-name-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-contact-name-editor input {
+  width: 132px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(12, 12, 22, 0.76);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.chat-contact-name-editor input:focus {
+  outline: none;
+  border-color: rgba(167, 139, 250, 0.7);
+}
+
 .message-draft-trade-action {
   right: 72px;
 }
@@ -2050,6 +2073,16 @@
   left: auto;
   right: 8px;
   justify-content: flex-end;
+}
+
+.message-reaction-disclosure {
+  flex: 0 0 100%;
+  margin: 0;
+  padding: 4px 6px 2px;
+  max-width: 290px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
 }
 
 .message-reaction-picker button {

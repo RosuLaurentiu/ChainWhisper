@@ -1,14 +1,21 @@
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import {
+  getBytes,
+  getAddress,
+  solidityPacked,
+  type JsonRpcSigner
+} from '@coti-io/coti-ethers';
 import {
   decodeUint,
+  decryptUint,
+  decryptUint256,
   encodeKey,
   encrypt,
-  prepareIT256,
+  type ctUint256,
   type itUint256
 } from '@coti-io/coti-sdk-typescript';
 import { logMobileWalletDiagnostic } from './mobileWalletDiagnostics';
 
-type PrivateUint256Signer = Wallet | JsonRpcSigner;
+type PrivateUint256Signer = JsonRpcSigner;
 
 export type PrivateUint256Input = {
   ciphertext: {
@@ -17,6 +24,11 @@ export type PrivateUint256Input = {
   };
   signature: string | Uint8Array;
 };
+
+export type PrivateUint256Output = Readonly<{
+  ciphertextHigh: bigint | number | string;
+  ciphertextLow: bigint | number | string;
+}>;
 
 export const EMPTY_PRIVATE_UINT256_INPUT: PrivateUint256Input = {
   ciphertext: {
@@ -30,23 +42,8 @@ const BLOCK_SIZE_BYTES = 16;
 const UINT256_SIZE_BYTES = 32;
 const MAX_UINT256 = (1n << 256n) - 1n;
 
-const stripHexPrefix = (value: string): string => value.startsWith('0x') ? value.slice(2) : value;
-
 const bytesToHex = (bytes: Uint8Array): string =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-
-const hexToBytes = (value: string): Uint8Array => {
-  const hex = stripHexPrefix(value);
-  if (hex.length % 2 !== 0) {
-    throw new Error('Invalid hex string.');
-  }
-
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let index = 0; index < bytes.length; index += 1) {
-    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
-  }
-  return bytes;
-};
 
 const packPrivateUint256ValidationMessage = (
   senderAddress: string,
@@ -54,9 +51,12 @@ const packPrivateUint256ValidationMessage = (
   functionSelector: string,
   ciphertextBytes: Uint8Array
 ): Uint8Array =>
-  hexToBytes(
-    `0x${stripHexPrefix(senderAddress)}${stripHexPrefix(contractAddress)}${stripHexPrefix(functionSelector)}${stripHexPrefix(bytesToHex(ciphertextBytes))}`
-  );
+  // COTI's browser-wallet path validates personal_sign over this full 108-byte domain.
+  // Signing its 32-byte keccak digest instead is a different signature and is rejected on-chain.
+  getBytes(solidityPacked(
+    ['bytes', 'bytes', 'bytes4', 'bytes'],
+    [getBytes(senderAddress), getBytes(contractAddress), functionSelector, ciphertextBytes]
+  ));
 
 const normalizePrivateUint256Input = (value: itUint256 | PrivateUint256Input): PrivateUint256Input => ({
   ciphertext: {
@@ -118,11 +118,82 @@ const resolveSignerAddress = async (signer: PrivateUint256Signer): Promise<strin
 };
 
 const normalizeAmount = (plaintextValue: bigint | number): bigint => {
+  if (typeof plaintextValue === 'number' && !Number.isSafeInteger(plaintextValue)) {
+    throw new RangeError('encryptPrivateUint256Input: use bigint unless the value is a safe integer.');
+  }
   const plaintext = typeof plaintextValue === 'number' ? BigInt(plaintextValue) : plaintextValue;
   if (plaintext < 0n || plaintext > MAX_UINT256) {
     throw new RangeError('encryptPrivateUint256Input: value must fit uint256.');
   }
   return plaintext;
+};
+
+const normalizeCiphertextWord = (value: bigint | number | string, label: string): bigint => {
+  let word: bigint;
+  try {
+    word = BigInt(value);
+  } catch {
+    throw new TypeError(`${label} must be an unsigned integer.`);
+  }
+  if (word < 0n || word > MAX_UINT256) {
+    throw new RangeError(`${label} must fit uint256.`);
+  }
+  return word;
+};
+
+export const decryptPrivateUint256Output = (
+  signer: Pick<PrivateUint256Signer, 'getUserOnboardInfo'>,
+  ciphertext: PrivateUint256Output
+): bigint => {
+  const aesKey = signer.getUserOnboardInfo()?.aesKey?.trim();
+  if (!aesKey) {
+    throw new Error('Unlock privacy before revealing private token amounts.');
+  }
+  const normalized: ctUint256 = {
+    ciphertextHigh: normalizeCiphertextWord(ciphertext.ciphertextHigh, 'Private ciphertext high word'),
+    ciphertextLow: normalizeCiphertextWord(ciphertext.ciphertextLow, 'Private ciphertext low word')
+  };
+  return decryptUint256(normalized, aesKey);
+};
+
+export const decryptPrivateBoolOutput = (
+  signer: Pick<PrivateUint256Signer, 'getUserOnboardInfo'>, ciphertext: bigint
+): boolean => {
+  const aesKey = signer.getUserOnboardInfo()?.aesKey?.trim();
+  if (!aesKey) throw new Error('Unlock privacy before revealing private Boolean values.');
+  const value = decryptUint(normalizeCiphertextWord(ciphertext, 'Private Boolean ciphertext'), aesKey);
+  if (value !== 0n && value !== 1n) throw new Error('Private Boolean value is invalid.');
+  return value === 1n;
+};
+
+// A preview commitment binds ciphertext, not plaintext. Re-encryption would
+// invalidate it. Browser COTI signatures cover the full domain, not its digest.
+export const resignPrivateInput = async <T extends bigint | Readonly<{ ciphertextHigh: bigint; ciphertextLow: bigint }>>(
+  signer: PrivateUint256Signer, ciphertext: T, contractAddress: string, functionSelector: string
+): Promise<{ ciphertext: T; signature: string }> => {
+  const contract = getAddress(contractAddress);
+  if (BigInt(contract) === 0n || !/^0x[0-9a-fA-F]{8}$/.test(functionSelector) || BigInt(functionSelector) === 0n) throw new Error('Invalid private input domain.');
+  const words = typeof ciphertext === 'bigint' ? [ciphertext] : [ciphertext?.ciphertextHigh, ciphertext?.ciphertextLow];
+  if (words.some(word => typeof word !== 'bigint' || word < 0n || word > MAX_UINT256)) throw new Error('Invalid private input ciphertext.');
+  const frozen = (typeof ciphertext === 'bigint' ? ciphertext : Object.freeze({ ciphertextHigh: words[0], ciphertextLow: words[1] })) as T;
+  const bytes = new Uint8Array(words.flatMap(word => [...uintToBytes(word, UINT256_SIZE_BYTES)]));
+  await ensureSignerAesKey(signer);
+  const owner = getAddress(await resolveSignerAddress(signer));
+  if (BigInt(owner) === 0n) throw new Error('Invalid private input owner.');
+  const signature = await signer.signMessage(packPrivateUint256ValidationMessage(owner, contract, functionSelector, bytes));
+  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new Error('Invalid private input signature.');
+  return Object.freeze({ ciphertext: frozen, signature });
+};
+
+// The installed browser SDK encryptValue is limited to uint64. Pool terms are
+// uint128; use the same 16-byte plaintext block and browser signature domain.
+export const encryptPrivateUint128Input = async (
+  signer: PrivateUint256Signer, value: bigint, contractAddress: string, functionSelector: string
+) => {
+  if (typeof value !== 'bigint' || value < 0n || value >= 1n << 128n) throw new RangeError('Private value must fit uint128.');
+  const encrypted = encrypt(encodeKey(await ensureSignerAesKey(signer)), uintToBytes(value, BLOCK_SIZE_BYTES));
+  const ciphertext = decodeUint(new Uint8Array([...encrypted.ciphertext, ...encrypted.r]));
+  return resignPrivateInput(signer, ciphertext, contractAddress, functionSelector);
 };
 
 const encryptWithBrowserSigner = async (
@@ -159,6 +230,7 @@ export const encryptPrivateUint256Input = async (
   contractAddress: string,
   functionSelector: string
 ): Promise<PrivateUint256Input> => {
+  const plaintext = normalizeAmount(plaintextValue);
   const nativeEncryptValue256 = (signer as {
     encryptValue256?: (
       plaintextValue: bigint | number,
@@ -171,19 +243,11 @@ export const encryptPrivateUint256Input = async (
       source: 'native-encrypt'
     });
     return normalizePrivateUint256Input(
-      await nativeEncryptValue256.call(signer, plaintextValue, contractAddress, functionSelector)
+      await nativeEncryptValue256.call(signer, plaintext, contractAddress, functionSelector)
     );
   }
 
-  const plaintext = normalizeAmount(plaintextValue);
   const aesKey = await ensureSignerAesKey(signer);
-  const privateKey = (signer as { privateKey?: unknown }).privateKey;
-  if (typeof privateKey === 'string' && privateKey.trim()) {
-    return normalizePrivateUint256Input(
-      prepareIT256(plaintext, { wallet: signer as Wallet, userKey: aesKey }, contractAddress, functionSelector)
-    );
-  }
-
   logMobileWalletDiagnostic('private-amount-sign', {
     source: 'browser-signer'
   });

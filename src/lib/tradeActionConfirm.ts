@@ -24,6 +24,7 @@ export type TradeActionConfirmModel = {
   fundingMoves: TradeActionConfirmFundingMove[];
   message: string;
   primaryLabel: string;
+  secondaryLabel?: string | null;
   stats: TradeActionConfirmStat[];
   summaryRows: TradeActionConfirmSummaryRow[];
   title: string;
@@ -33,6 +34,7 @@ export type TradeFundingPreflightInput = {
   actionLabel: string;
   confirmButtonLabel?: string;
   confirmMessage?: string;
+  confirmationStats?: TradeActionConfirmStat[];
   confirmTitle?: string;
   confirmationPolicy?: TradeActionConfirmationPolicy;
   requirements: WalletFundingRequirement[];
@@ -70,6 +72,7 @@ export const buildTradeActionConfirmModel = ({
   confirmationPolicy = 'funding-only',
   confirmButtonLabel,
   confirmMessage,
+  confirmationStats,
   confirmTitle,
   estimatedFundingPrompts,
   fundingMoves,
@@ -80,6 +83,7 @@ export const buildTradeActionConfirmModel = ({
   confirmationPolicy?: TradeActionConfirmationPolicy;
   confirmButtonLabel?: string;
   confirmMessage?: string;
+  confirmationStats?: TradeActionConfirmStat[];
   confirmTitle?: string;
   estimatedFundingPrompts: number;
   fundingMoves: TradeActionConfirmFundingMove[];
@@ -88,8 +92,10 @@ export const buildTradeActionConfirmModel = ({
 }): TradeActionConfirmModel => {
   const normalizedAction = actionLabel.trim() || 'continue';
   const hasFundingMoves = fundingMoves.length > 0;
-  const stats: TradeActionConfirmStat[] = hasFundingMoves
-    ? [
+  const stats: TradeActionConfirmStat[] = confirmationStats?.length
+    ? [...confirmationStats]
+    : hasFundingMoves
+      ? [
         {
           label: 'Owner prompts',
           value: `${estimatedFundingPrompts}`
@@ -102,8 +108,8 @@ export const buildTradeActionConfirmModel = ({
           label: 'Then',
           value: normalizedAction
         }
-      ]
-    : [
+        ]
+      : [
         {
           label: 'Next',
           value: 'wallet approval'
@@ -112,7 +118,7 @@ export const buildTradeActionConfirmModel = ({
           label: 'Action',
           value: normalizedAction
         }
-      ];
+        ];
 
   return {
     fundingMoves,

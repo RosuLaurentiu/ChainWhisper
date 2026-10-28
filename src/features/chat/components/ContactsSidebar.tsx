@@ -15,9 +15,11 @@ type ContactGroupPanelRatio = {
 };
 
 type ContactsSidebarProps = {
+  groupDiscoveryState?: 'loading' | 'ready' | 'error';
   nicknameEditorRef: Ref<HTMLDivElement>;
   nicknameMaxBytes: number;
   hasAesReady: boolean;
+  canSavePublicName: boolean;
   walletAddress: string;
   onNicknameInputChange: (value: string) => void;
   onSaveNickname: () => void;
@@ -37,9 +39,6 @@ type ContactsSidebarProps = {
   visibleSortedContacts: Contact[];
   contactsListEmptyMessage: string;
   activeContact: string | null;
-  editingContactAddress: string | null;
-  editingContactName: string;
-  onEditingContactNameChange: (value: string) => void;
   isConversationStateSyncPending: (address: string) => boolean;
   conversationMetadataActionsDisabled: boolean;
   messagesByContact: Record<string, ChatMessage[]>;
@@ -47,10 +46,7 @@ type ContactsSidebarProps = {
   unreadMap: Record<string, boolean>;
   onCopyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
   onActivateContact: (address: string) => void;
-  onStartRenameContact: (address: string, name?: string) => void;
   onRemoveContact: (address: string) => void;
-  onSaveRenamedContact: (address: string) => void;
-  onCancelRenameContact: () => void;
   sortedGroupInvites: GroupInvite[];
   onAcceptGroupInvite: (groupId: number) => void;
   onDeclineGroupInvite: (groupId: number) => void;
@@ -65,9 +61,11 @@ type ContactsSidebarProps = {
 };
 
 function ContactsSidebar({
+  groupDiscoveryState,
   nicknameEditorRef,
   nicknameMaxBytes,
   hasAesReady,
+  canSavePublicName,
   walletAddress,
   onNicknameInputChange,
   onSaveNickname,
@@ -87,9 +85,6 @@ function ContactsSidebar({
   visibleSortedContacts,
   contactsListEmptyMessage,
   activeContact,
-  editingContactAddress,
-  editingContactName,
-  onEditingContactNameChange,
   isConversationStateSyncPending,
   conversationMetadataActionsDisabled,
   messagesByContact,
@@ -97,10 +92,7 @@ function ContactsSidebar({
   unreadMap,
   onCopyWithFeedback,
   onActivateContact,
-  onStartRenameContact,
   onRemoveContact,
-  onSaveRenamedContact,
-  onCancelRenameContact,
   sortedGroupInvites,
   onAcceptGroupInvite,
   onDeclineGroupInvite,
@@ -118,7 +110,7 @@ function ContactsSidebar({
   return (
     <aside className="contacts-sidebar">
       <div className="contact-profile-card contact-profile-card-fixed">
-        <span className="contact-profile-label">Name</span>
+        <span className="contact-profile-label">Public name</span>
         <div className="contact-profile-editor-wrap">
           <div
             ref={nicknameEditorRef}
@@ -132,6 +124,7 @@ function ContactsSidebar({
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();
+                if (canSavePublicName) onSaveNickname();
                 event.currentTarget.blur();
               }
             }}
@@ -143,13 +136,6 @@ function ContactsSidebar({
               }
               onNicknameInputChange(singleLine);
             }}
-            onBlur={() => {
-              if (!hasAesReady || !walletAddress) {
-                return;
-              }
-
-              onSaveNickname();
-            }}
           />
           <button
             type="button"
@@ -158,7 +144,8 @@ function ContactsSidebar({
               event.preventDefault();
             }}
             onClick={onSaveNickname}
-            disabled={!hasAesReady || !walletAddress}
+            disabled={!canSavePublicName || !walletAddress}
+            title="Saved publicly by your wallet in ChainWhisper Chat V2"
           >
             Save
           </button>
@@ -237,9 +224,10 @@ function ContactsSidebar({
             visibleSortedContacts.map((contact) => {
               const normalizedAddress = contact.address.toLowerCase();
               const isActive = activeContact?.toLowerCase() === normalizedAddress;
-              const isEditing = editingContactAddress?.toLowerCase() === normalizedAddress;
               const conversationStatePending = isConversationStateSyncPending(contact.address);
-              const hasName = Boolean(contact.name?.trim());
+              const isHidden = Boolean(contact.hidden || contact.muted);
+              const displayName = contact.savedName?.trim() || contact.name?.trim() || '';
+              const hasName = Boolean(displayName);
               const hasConversation = (messagesByContact[normalizedAddress]?.length ?? 0) > 0;
               const contactCopyKey = `contact:${normalizedAddress}`;
               const isContactCopied = lastCopiedKey === contactCopyKey;
@@ -251,12 +239,12 @@ function ContactsSidebar({
                       conversationStatePending
                         ? isActive
                           ? 'contact-card active syncing'
-                          : contact.hidden
+                          : isHidden
                             ? 'contact-card hidden syncing'
                             : 'contact-card syncing'
                         : isActive
                           ? 'contact-card active'
-                          : contact.hidden
+                          : isHidden
                             ? 'contact-card hidden'
                             : 'contact-card'
                     }
@@ -274,7 +262,7 @@ function ContactsSidebar({
                       <div className="contact-main" title={contact.address}>
                         {hasName ? (
                           <>
-                            <span className="contact-name-inline">{contact.name}</span>
+                            <span className="contact-name-inline">{displayName}</span>
                             <button
                               type="button"
                               className={
@@ -327,34 +315,7 @@ function ContactsSidebar({
                           </svg>
                         </span>
                       ) : null}
-                      {!isEditing ? (
-                        <>
-                          <button
-                            type="button"
-                            className="contact-icon"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onStartRenameContact(contact.address, contact.name);
-                            }}
-                            disabled={conversationStatePending}
-                            aria-label="Rename contact"
-                            title={conversationStatePending ? 'Wait for sync to finish' : 'Rename'}
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              width="14"
-                              height="14"
-                              aria-hidden="true"
-                              focusable="false"
-                              xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path
-                                fill="currentColor"
-                                d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm17.71-10.04a1 1 0 0 0 0-1.42l-2.5-2.5a1 1 0 0 0-1.42 0l-1.96 1.96 3.75 3.75 2.13-2.09z"
-                              />
-                            </svg>
-                          </button>
-                          <button
+                      <button
                             type="button"
                             className={conversationStatePending ? 'contact-icon loading' : 'contact-icon'}
                             onClick={(event) => {
@@ -367,7 +328,7 @@ function ContactsSidebar({
                                 ? 'Conversation sync unavailable'
                                 : conversationStatePending
                                 ? 'Conversation update in progress'
-                                : contact.hidden
+                                : isHidden
                                   ? 'Unhide conversation'
                                   : 'Hide conversation'
                             }
@@ -376,7 +337,7 @@ function ContactsSidebar({
                                 ? walletPromptSensitiveActionsTitle
                                 : conversationStatePending
                                 ? 'Waiting for confirmation...'
-                                : contact.hidden
+                                : isHidden
                                   ? 'Unhide'
                                   : 'Hide'
                             }
@@ -420,39 +381,9 @@ function ContactsSidebar({
                                 strokeLinecap="round"
                               />
                             </svg>
-                          </button>
-                        </>
-                      ) : null}
+                      </button>
                     </div>
                   </div>
-                  {isEditing ? (
-                    <div className="contact-rename">
-                      <input
-                        value={editingContactName}
-                        onChange={(event) => onEditingContactNameChange(event.target.value)}
-                        placeholder="Enter name"
-                        aria-label="Rename contact"
-                      />
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSaveRenamedContact(contact.address);
-                        }}
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onCancelRenameContact();
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : null}
                 </li>
               );
             })
@@ -513,8 +444,15 @@ function ContactsSidebar({
         ) : null}
 
         <ul className="contacts-list contacts-list-scroll groups-main-list">
-          {sortedGroups.length === 0 ? (
-            <li className="contacts-empty-state">No groups yet.</li>
+          {groupDiscoveryState === 'error' ? (
+            <li className="contacts-empty-state" role="status">
+              {sortedGroups.length === 0 ? 'Groups unavailable. Refresh to retry.' : 'Groups may be incomplete. Refresh to retry.'}
+            </li>
+          ) : null}
+          {sortedGroups.length === 0 && groupDiscoveryState === 'loading' ? (
+            <li className="contacts-empty-state" role="status">Loading groups…</li>
+          ) : sortedGroups.length === 0 ? (
+            groupDiscoveryState === 'error' ? null : <li className="contacts-empty-state">No groups yet.</li>
           ) : sortedGroups.map((group) => {
             const isActive = activeGroupId === group.id;
             const groupTitle = group.title || `Group ${group.id}`;

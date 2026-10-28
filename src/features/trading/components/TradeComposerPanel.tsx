@@ -7,6 +7,7 @@ import {
   type ReactNode
 } from 'react';
 import { flushSync } from 'react-dom';
+import { ChevronDown, SlidersHorizontal } from 'lucide-react';
 import {
   COTI_NETWORK,
   TRADE_ESCROW_CONTRACT_ADDRESS,
@@ -69,6 +70,8 @@ type TradeComposerPanelProps = {
   priceReverseReference?: CarbonPairReferenceDisplay | null;
   priceReverseSummaryLabel?: string;
   priceSummaryLabel?: string;
+  priceDisplayInverted?: boolean;
+  onPriceDisplayInvertedChange?: (inverted: boolean) => void;
   priceHelpText?: string;
   pricePlacement?: 'bottom' | 'sell-side' | 'top';
   showPriceRatioPreview?: boolean;
@@ -81,6 +84,9 @@ type TradeComposerPanelProps = {
   offerBalanceBreakdownLabel?: string;
   requestBalanceBreakdownLabel?: string;
   pricingSourceFields?: TradePricingField[];
+  pairTokensLocked?: boolean;
+  displayedTradeSide?: 'buy' | 'sell';
+  displayedTradeBaseSymbol?: string;
   onSwapSides?: () => void;
   swapDisabled?: boolean;
   tradePreviewLabel?: string;
@@ -105,8 +111,10 @@ type TradeComposerPanelProps = {
   sendLabel?: string;
   sendingLabel?: string;
   sendTitle?: string;
+  submissionBlocked?: boolean;
   actionNotice?: ReactNode;
   settingsSlot?: ReactNode;
+  showHeader?: boolean;
   onSendTradeOffer: () => void;
   generalError?: string;
   validationMessage?: string;
@@ -173,6 +181,22 @@ const isDeferredSendValidationMessage = (validationMessage?: string): boolean =>
     normalizedMessage.includes('loading trade fee') ||
     normalizedMessage.includes('unable to read') ||
     normalizedMessage.includes('balance yet')
+  );
+};
+
+const isHardSendReadinessBlock = (validationMessage?: string): boolean => {
+  const normalizedMessage = validationMessage?.trim().toLowerCase() ?? '';
+  if (!normalizedMessage) return false;
+  return (
+    normalizedMessage.includes('connect your wallet') ||
+    normalizedMessage.includes('switch to coti') ||
+    normalizedMessage.includes('unlock privacy') ||
+    normalizedMessage.includes('refresh privacy') ||
+    normalizedMessage.includes('loading token') ||
+    normalizedMessage.includes('loading trade fee') ||
+    normalizedMessage.includes('unable to read') ||
+    normalizedMessage.includes('balance yet') ||
+    normalizedMessage.includes('insufficient balance')
   );
 };
 
@@ -521,6 +545,8 @@ export default function TradeComposerPanel({
   priceReverseReference = null,
   priceReverseSummaryLabel = '',
   priceSummaryLabel = '',
+  priceDisplayInverted,
+  onPriceDisplayInvertedChange,
   priceHelpText = 'Fill any two fields; the third updates automatically.',
   pricePlacement = 'bottom',
   showPriceRatioPreview = false,
@@ -533,6 +559,9 @@ export default function TradeComposerPanel({
   offerBalanceBreakdownLabel,
   requestBalanceBreakdownLabel,
   pricingSourceFields = [],
+  pairTokensLocked = false,
+  displayedTradeSide,
+  displayedTradeBaseSymbol,
   onSwapSides,
   swapDisabled,
   tradePreviewLabel,
@@ -556,26 +585,47 @@ export default function TradeComposerPanel({
   sendLabel = 'Send Trade',
   sendingLabel = 'Creating...',
   sendTitle = 'Create the escrow trade and send the encrypted offer to this chat.',
+  submissionBlocked = false,
   actionNotice,
   settingsSlot,
+  showHeader = true,
   onSendTradeOffer,
   generalError,
   validationMessage
 }: TradeComposerPanelProps) {
   const priceInputId = useId();
+  const termsHelpId = `${priceInputId}-terms-help`;
   const showOfferCustomToken = offerTokenSelection.startsWith('custom');
   const showRequestCustomToken = requestTokenSelection.startsWith('custom');
+  const selectedOfferDisplay = parseTokenLabel(offerTokenOptions.find((option) => option.value === offerTokenSelection));
+  const selectedRequestDisplay = parseTokenLabel(requestTokenOptions.find((option) => option.value === requestTokenSelection));
+  const showDirectionControl = Boolean(displayedTradeSide && displayedTradeBaseSymbol && onSwapSides);
   const compactFeeSummaryLabel = feeSummaryLabel.replace(/^fee:\s*/i, '').trim();
   const hasTradePreview = Boolean(tradePreviewLabel || tradeRateLabel || showPriceRatioPreview);
   const escrowContractUrl = `${COTI_NETWORK.blockExplorerUrl}/address/${escrowContractAddress}`;
   const escrowContractTitleLabel = escrowContractLabel.toLowerCase().includes('contract')
     ? escrowContractLabel
     : `${escrowContractLabel} contract`;
-  const [showReverseRate, setShowReverseRate] = useState(false);
+  const [localShowReverseRate, setLocalShowReverseRate] = useState(false);
   const [touchedFields, setTouchedFields] = useState<Partial<Record<TradeComposerValidationField, boolean>>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [sendWhenReady, setSendWhenReady] = useState(false);
-  const [showReversePriceDisplay, setShowReversePriceDisplay] = useState(false);
+  const [localShowReversePriceDisplay, setLocalShowReversePriceDisplay] = useState(false);
+  const orientationIsControlled = priceDisplayInverted !== undefined;
+  const showReversePriceDisplay = orientationIsControlled
+    ? priceDisplayInverted
+    : localShowReversePriceDisplay;
+  const showReverseRate = orientationIsControlled
+    ? priceDisplayInverted
+    : localShowReverseRate;
+  const setPriceOrientation = (next: boolean) => {
+    if (orientationIsControlled) {
+      onPriceDisplayInvertedChange?.(next);
+      return;
+    }
+    setLocalShowReversePriceDisplay(next);
+    setLocalShowReverseRate(next);
+  };
   const visibleTradeRateLabel = showReverseRate && tradeReverseRateLabel ? tradeReverseRateLabel : tradeRateLabel;
   const canTogglePriceDisplay = Boolean(priceReverseSummaryLabel);
   const showInvertedPriceDisplay = showReversePriceDisplay && canTogglePriceDisplay;
@@ -615,9 +665,10 @@ export default function TradeComposerPanel({
   const showOfferAmountError = shouldShowError('offerAmount', offerAmountError);
   const showRequestAmountError = shouldShowError('requestAmount', requestAmountError);
   const showExpiryError = shouldShowError('expiry', expiryError);
-  const sendButtonDisabled = validationAfterInteraction ? sending : !canSend;
+  const hardReadinessBlocked = !canSend && isHardSendReadinessBlock(validationMessage);
+  const sendButtonDisabled = submissionBlocked || hardReadinessBlocked || (validationAfterInteraction ? sending : !canSend);
   const showSendDisabledStyle = validationAfterInteraction
-    ? submitAttempted && !canSend && !sending
+    ? submissionBlocked || hardReadinessBlocked || (submitAttempted && !canSend && !sending)
     : !canSend && !sending;
   const sendButtonClassName = [
     showSendDisabledStyle ? 'trade-compose-send trade-compose-send-disabled' : 'trade-compose-send',
@@ -640,6 +691,9 @@ export default function TradeComposerPanel({
         ? 'trade-compose-readiness-ready'
         : 'trade-compose-readiness-blocked'
   ].join(' ');
+  const generalErrorDuplicatesReadiness = !actionNotice && Boolean(
+    generalError?.trim() && generalError.trim() === validationMessage?.trim()
+  );
   useEffect(() => {
     if (!sendWhenReady || sending) {
       return;
@@ -679,14 +733,16 @@ export default function TradeComposerPanel({
   const renderPricingFieldState = (field: TradePricingField) => {
     const fieldIsSource = pricingSourceFields.includes(field);
     const fieldIsDerived = pricingSourceFields.length >= 2 && !fieldIsSource;
-    return fieldIsDerived ? <span className="trade-compose-pricing-state">Derived</span> : null;
+    return fieldIsDerived ? (
+      <span className="trade-compose-pricing-state" aria-live="polite">Calculated</span>
+    ) : null;
   };
   const renderPriceReference = () =>
     displayedPriceReference && canTogglePriceDisplay ? (
       <button
         type="button"
         className="p2p-carbon-price-reference"
-        onClick={() => setShowReversePriceDisplay((value) => !value)}
+        onClick={() => setPriceOrientation(!showReversePriceDisplay)}
         aria-pressed={showReversePriceDisplay}
         title={displayedPriceReference.title}
       >
@@ -716,6 +772,7 @@ export default function TradeComposerPanel({
         type="text"
         inputMode="decimal"
         value={displayedPriceInput}
+        aria-describedby={pairTokensLocked ? termsHelpId : undefined}
         onChange={(event) => {
           if (showInvertedPriceDisplay && onPriceReverseInputChange) {
             onPriceReverseInputChange(event.target.value);
@@ -730,9 +787,10 @@ export default function TradeComposerPanel({
   ) : null;
 
   useEffect(() => {
-    setShowReverseRate(false);
-    setShowReversePriceDisplay(false);
-  }, [priceReverseSummaryLabel, priceSummaryLabel, tradeRateLabel, tradeReverseRateLabel]);
+    if (orientationIsControlled) return;
+    setLocalShowReverseRate(false);
+    setLocalShowReversePriceDisplay(false);
+  }, [orientationIsControlled, priceReverseSummaryLabel, priceSummaryLabel, tradeRateLabel, tradeReverseRateLabel]);
 
   const previewInReceivePanel = pricePlacement === 'sell-side' && hasTradePreview;
   const showDockPreview = hasTradePreview && !previewInReceivePanel;
@@ -743,7 +801,7 @@ export default function TradeComposerPanel({
         <button
           type="button"
           className="trade-compose-rate-toggle"
-          onClick={() => setShowReverseRate((value) => !value)}
+          onClick={() => setPriceOrientation(!showReverseRate)}
           title="Flip rate"
           aria-label="Flip displayed trade rate"
         >
@@ -760,8 +818,8 @@ export default function TradeComposerPanel({
   );
 
   return (
-    <div className="trade-compose-panel" role="group" aria-label="OTC trade offer">
-      <div className="trade-compose-header">
+    <div className="trade-compose-panel" role="group" aria-label="P2P trade offer">
+      {showHeader ? <div className="trade-compose-header">
         <strong>{title}</strong>
         <div className="trade-compose-header-meta">
           <span>{metaLabel}</span>
@@ -775,7 +833,38 @@ export default function TradeComposerPanel({
             {escrowContractLabel}
           </a>
         </div>
-      </div>
+      </div> : null}
+
+      {settingsSlot ? <div className="trade-compose-settings-slot trade-compose-settings-slot-primary">{settingsSlot}</div> : null}
+
+      <section className="p2p-create-terms" aria-labelledby="p2p-create-terms-title">
+        <header className="p2p-create-section-heading">
+          <strong id="p2p-create-terms-title">Price and amounts</strong>
+          <p id={termsHelpId}>Enter any two values.</p>
+        </header>
+
+      {showDirectionControl ? (
+        <div className="trade-compose-direction-control">
+          <span>Trade direction</span>
+          <div role="tablist" aria-label={`Buy or sell ${displayedTradeBaseSymbol}`}>
+            {(['buy', 'sell'] as const).map((side) => (
+              <button
+                key={side}
+                type="button"
+                role="tab"
+                aria-selected={displayedTradeSide === side}
+                className={displayedTradeSide === side ? `active ${side}` : side}
+                disabled={swapDisabled}
+                onClick={() => {
+                  if (displayedTradeSide !== side) onSwapSides?.();
+                }}
+              >
+                {side === 'buy' ? 'Buy' : 'Sell'} {displayedTradeBaseSymbol}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {showPriceInput && pricePlacement === 'top' ? (
         <div className="trade-compose-limit-price">
@@ -785,7 +874,7 @@ export default function TradeComposerPanel({
         </div>
       ) : null}
 
-      <div className="trade-compose-grid">
+      <div className={pairTokensLocked ? 'trade-compose-grid trade-compose-grid-fixed-pair' : 'trade-compose-grid'}>
         <section className="trade-compose-section trade-compose-section-sell" aria-label="Asset you are sending">
           <div className="trade-compose-section-header">
             <strong>You sell</strong>
@@ -804,7 +893,7 @@ export default function TradeComposerPanel({
           {offerBalanceBreakdownLabel ? (
             <div className="trade-compose-balance-breakdown">{offerBalanceBreakdownLabel}</div>
           ) : null}
-          <label className="trade-compose-field trade-compose-asset-field">
+          {pairTokensLocked ? null : <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
             </span>
@@ -821,8 +910,8 @@ export default function TradeComposerPanel({
               balanceLabel={offerBalanceSummaryLabel}
               verifyUrl={!showOfferCustomToken ? offerVerifyUrl : undefined}
             />
-          </label>
-          {showOfferCustomToken ? (
+          </label>}
+          {!pairTokensLocked && showOfferCustomToken ? (
             <>
               <label className="trade-compose-field">
                 <span className="trade-compose-field-label">Contract</span>
@@ -866,20 +955,24 @@ export default function TradeComposerPanel({
                 <strong className="trade-compose-field-value">{offerAmountSummaryLabel}</strong>
               </span>
             </span>
-            <input
-              className="trade-compose-input"
-              type="text"
-              inputMode="decimal"
-              value={offerAmountInput}
-              onChange={(event) => {
-                markTouched('offerAmount');
-                onOfferAmountInputChange(event.target.value);
-              }}
-              onBlur={() => markTouched('offerAmount')}
-              placeholder={offerAmountPlaceholder}
-              disabled={sending}
-              aria-invalid={showOfferAmountError ? 'true' : 'false'}
-            />
+            <div className={pairTokensLocked ? 'trade-compose-amount-input-shell' : undefined}>
+              <input
+                className="trade-compose-input"
+                type="text"
+                inputMode="decimal"
+                value={offerAmountInput}
+                aria-describedby={pairTokensLocked ? termsHelpId : undefined}
+                onChange={(event) => {
+                  markTouched('offerAmount');
+                  onOfferAmountInputChange(event.target.value);
+                }}
+                onBlur={() => markTouched('offerAmount')}
+                placeholder={offerAmountPlaceholder}
+                disabled={sending}
+                aria-invalid={showOfferAmountError ? 'true' : 'false'}
+              />
+              {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedOfferDisplay.symbol}</strong><small>{selectedOfferDisplay.kindLabel}</small></span> : null}
+            </div>
           </label>
           {showOfferAmountError ? <p className="trade-compose-field-error">{offerAmountError}</p> : null}
           {pricePlacement === 'sell-side' ? (
@@ -891,7 +984,7 @@ export default function TradeComposerPanel({
           ) : null}
         </section>
 
-        <button
+        {pairTokensLocked || showDirectionControl ? null : <button
           type="button"
           className="trade-compose-swap-indicator"
           onClick={() => onSwapSides?.()}
@@ -900,7 +993,7 @@ export default function TradeComposerPanel({
           title="Swap trade sides"
         >
           <TradeSwapIcon />
-        </button>
+        </button>}
 
         <section className="trade-compose-section trade-compose-section-buy" aria-label="Asset you buy">
           <div className="trade-compose-section-header">
@@ -910,7 +1003,7 @@ export default function TradeComposerPanel({
           {requestBalanceBreakdownLabel ? (
             <div className="trade-compose-balance-breakdown">{requestBalanceBreakdownLabel}</div>
           ) : null}
-          <label className="trade-compose-field trade-compose-asset-field">
+          {pairTokensLocked ? null : <label className="trade-compose-field trade-compose-asset-field">
             <span className="trade-compose-field-head">
               <span className="trade-compose-field-label">Asset</span>
             </span>
@@ -927,8 +1020,8 @@ export default function TradeComposerPanel({
               balanceLabel={requestBalanceSummaryLabel}
               verifyUrl={!showRequestCustomToken ? requestVerifyUrl : undefined}
             />
-          </label>
-          {showRequestCustomToken ? (
+          </label>}
+          {!pairTokensLocked && showRequestCustomToken ? (
             <>
               <label className="trade-compose-field">
                 <span className="trade-compose-field-label">Contract</span>
@@ -972,72 +1065,73 @@ export default function TradeComposerPanel({
                 <strong className="trade-compose-field-value">{requestAmountSummaryLabel}</strong>
               </span>
             </span>
-            <input
-              className="trade-compose-input"
-              type="text"
-              inputMode="decimal"
-              value={requestAmountInput}
-              onChange={(event) => {
-                markTouched('requestAmount');
-                onRequestAmountInputChange(event.target.value);
-              }}
-              onBlur={() => markTouched('requestAmount')}
-              placeholder={requestAmountPlaceholder}
-              disabled={sending}
-              aria-invalid={showRequestAmountError ? 'true' : 'false'}
-            />
+            <div className={pairTokensLocked ? 'trade-compose-amount-input-shell' : undefined}>
+              <input
+                className="trade-compose-input"
+                type="text"
+                inputMode="decimal"
+                value={requestAmountInput}
+                aria-describedby={pairTokensLocked ? termsHelpId : undefined}
+                onChange={(event) => {
+                  markTouched('requestAmount');
+                  onRequestAmountInputChange(event.target.value);
+                }}
+                onBlur={() => markTouched('requestAmount')}
+                placeholder={requestAmountPlaceholder}
+                disabled={sending}
+                aria-invalid={showRequestAmountError ? 'true' : 'false'}
+              />
+              {pairTokensLocked ? <span className="trade-compose-fixed-token"><strong>{selectedRequestDisplay.symbol}</strong><small>{selectedRequestDisplay.kindLabel}</small></span> : null}
+            </div>
           </label>
           {showRequestAmountError ? <p className="trade-compose-field-error">{requestAmountError}</p> : null}
           {previewInReceivePanel ? renderTradePreview('trade-compose-preview trade-compose-inline-preview') : null}
         </section>
       </div>
+      </section>
 
-      {showHiddenLiquidityToggle ? (
-        <div className={privateLiquidityPanelClassName}>
-          <div className="trade-compose-privacy-copy">
-            <span>Order privacy</span>
-            <strong>{privateLiquidityStateLabel}</strong>
-          </div>
-          <p className="trade-compose-privacy-help">{privateLiquidityHelpText}</p>
-          <div className="trade-compose-privacy-toggle" role="group" aria-label="Private liquidity">
-            <button
-              type="button"
-              className={hidePrivateLiquidity ? 'active' : undefined}
-              onClick={() => onHidePrivateLiquidityChange?.(true)}
-              aria-pressed={hidePrivateLiquidity}
-              disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
-              title={canHidePrivateLiquidity ? 'Publish only the ratio; keep amounts and fills private' : hiddenLiquidityUnavailableMessage}
-            >
-              Private liquidity
-            </button>
-            <button
-              type="button"
-              className={!hidePrivateLiquidity ? 'active' : undefined}
-              onClick={() => onHidePrivateLiquidityChange?.(false)}
-              aria-pressed={!hidePrivateLiquidity}
-              disabled={sending}
-            >
-              Visible amounts
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {settingsSlot ? <div className="trade-compose-settings-slot">{settingsSlot}</div> : null}
-
-      <div className="trade-compose-quote-dock">
-        {showPriceInput && pricePlacement === 'bottom' ? (
-          <div className="trade-compose-pricing-row">
-            {priceField}
-            {priceHelpText ? <p>{priceHelpText}</p> : null}
-            {renderPriceReference()}
-          </div>
-        ) : null}
-
-        <div className={showDockPreview ? 'trade-compose-bottom' : 'trade-compose-bottom trade-compose-bottom-compact'}>
-          {showDockPreview ? renderTradePreview() : null}
-
-          <div className="trade-compose-footer">
+      <details className="trade-compose-advanced-options">
+        <summary>
+          <SlidersHorizontal size={15} aria-hidden="true" />
+          <span>Advanced options</span>
+          <small>
+            {showHiddenLiquidityToggle ? privateLiquidityStateLabel : 'Visible amounts'} ·{' '}
+            {expiresNever ? 'Permanent' : `${expiresHoursInput || '—'}h`}
+          </small>
+          <ChevronDown size={15} aria-hidden="true" />
+        </summary>
+        <div className="trade-compose-advanced-body">
+          {showHiddenLiquidityToggle ? (
+            <div className={privateLiquidityPanelClassName}>
+              <div className="trade-compose-privacy-copy">
+                <span>Order privacy</span>
+                <strong>{privateLiquidityStateLabel}</strong>
+              </div>
+              <p className="trade-compose-privacy-help">{privateLiquidityHelpText}</p>
+              <div className="trade-compose-privacy-toggle" role="group" aria-label="Private liquidity">
+                <button
+                  type="button"
+                  className={hidePrivateLiquidity ? 'active' : undefined}
+                  onClick={() => onHidePrivateLiquidityChange?.(true)}
+                  aria-pressed={hidePrivateLiquidity}
+                  disabled={sending || (!canHidePrivateLiquidity && !hidePrivateLiquidity)}
+                  title={canHidePrivateLiquidity ? 'Publish only the ratio; keep amounts and fills private' : hiddenLiquidityUnavailableMessage}
+                >
+                  Private liquidity
+                </button>
+                <button
+                  type="button"
+                  className={!hidePrivateLiquidity ? 'active' : undefined}
+                  onClick={() => onHidePrivateLiquidityChange?.(false)}
+                  aria-pressed={!hidePrivateLiquidity}
+                  disabled={sending}
+                >
+                  Visible amounts
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="trade-compose-advanced-settings">
             <div className="trade-compose-fee-row trade-compose-fee-row-inline">
               <div className="trade-compose-fee-copy">
                 <span className="trade-compose-field-label">Fee</span>
@@ -1102,6 +1196,33 @@ export default function TradeComposerPanel({
                 ) : null}
               </div>
             </div>
+          </div>
+          <div className="trade-compose-warning" role="note">
+            <p>
+              <strong>Before signing:</strong> Verify token contracts, amounts, price, and expiry. Escrow settles the
+              approved terms; it does not verify counterparty reputation.
+            </p>
+          </div>
+        </div>
+      </details>
+
+      <div className="trade-compose-quote-dock">
+        {showPriceInput && pricePlacement === 'bottom' ? (
+          <div className="trade-compose-pricing-row">
+            {priceField}
+            {priceHelpText ? <p>{priceHelpText}</p> : null}
+            {renderPriceReference()}
+          </div>
+        ) : null}
+
+        <div className={showDockPreview ? 'trade-compose-bottom' : 'trade-compose-bottom trade-compose-bottom-compact'}>
+          {showDockPreview ? renderTradePreview() : null}
+
+          <div className="trade-compose-footer">
+            <div className="trade-compose-submit-context" aria-label="Offer summary">
+              <span>Fee <strong>{compactFeeSummaryLabel || feeSummaryLabel}</strong></span>
+              <span>Duration <strong>{expiresNever ? 'Permanent' : `${expiresHoursInput || '—'}h`}</strong></span>
+            </div>
             <div className="trade-compose-action-stack">
               {actionNotice ? (
                 <div className="trade-compose-action-notice-slot">{actionNotice}</div>
@@ -1124,15 +1245,9 @@ export default function TradeComposerPanel({
           </div>
         </div>
       </div>
-      <div className="trade-compose-warning" role="alert">
-        <p>
-          <strong>OTC safety check:</strong> Verify token contracts, amounts, price, and expiry before signing. Escrow
-          settles approved terms; it does not verify counterparty reputation.
-        </p>
-      </div>
       {showExpiryError ? <p className="trade-compose-field-error">{expiryError}</p> : null}
 
-      {generalError ? <p className="trade-compose-validation">{generalError}</p> : null}
+      {generalError && !generalErrorDuplicatesReadiness ? <p className="trade-compose-validation">{generalError}</p> : null}
     </div>
   );
 }

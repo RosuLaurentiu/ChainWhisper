@@ -1,4 +1,12 @@
 import { bytesToHex, hexToBytes } from './byteEncoding';
+import {
+  assertChatImageAuthorizationSignature,
+  buildChatImageUploadAuthorizationMessage,
+  CHAT_IMAGE_AUTHORIZATION_TTL_SECONDS,
+  getChatImageAuthorizationDomain,
+  normalizeChatImageConversationTarget,
+  sha256Hex
+} from '../../supabase/functions/_shared/chat-image-authorization';
 
 export type ParsedImageTag = {
   blobId: string;
@@ -9,6 +17,25 @@ export type ParsedImageTag = {
 };
 
 export type ChatImageConversationKind = 'direct' | 'group';
+export type ChatImageProtocol = 'legacy-v1' | 'direct-v2' | 'group-v2';
+
+export type ChatImageUploadAuthorizationSigner = (message: string) => Promise<string>;
+export type ChatImageUploadAuthorization =
+  | Readonly<{
+      mode: 'signature';
+      sign: ChatImageUploadAuthorizationSigner;
+    }>
+  | Readonly<{
+      mode: 'session';
+      protocol: ChatImageProtocol;
+      token: () => Promise<string>;
+    }>;
+
+export type PreparedChatImageUpload = {
+  blobId: string;
+  confirmationToken: string;
+  imageTag: string;
+};
 
 export const MAX_IMAGE_PLAINTEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_IMAGE_ENCRYPTED_BYTES = MAX_IMAGE_PLAINTEXT_BYTES + 64 * 1024;
@@ -228,7 +255,15 @@ async function uploadEncryptedBlob(
   mime: string,
   sizeBytes: number,
   kind: ChatImageConversationKind,
-  ownerAddress: string
+  ownerAddress: string,
+  conversationTarget: string,
+  ciphertextSha256: string,
+  confirmationTokenHash: string,
+  issuedAt: number,
+  expiresAt: number,
+  authorization:
+    | Readonly<{ mode: 'signature'; signature: string }>
+    | Readonly<{ mode: 'session'; protocol: ChatImageProtocol; token: string }>
 ): Promise<void> {
   const normalizedOwnerAddress = ownerAddress.trim().toLowerCase();
   if (!WALLET_ADDRESS_REGEX.test(normalizedOwnerAddress)) {
@@ -238,26 +273,44 @@ async function uploadEncryptedBlob(
   const { getSupabaseBrowserClient } = await import('./supabaseClient');
   const supabase = getSupabaseBrowserClient();
   const encryptedBlob = new Blob([encrypted], { type: 'application/octet-stream' });
+  const headers: Record<string, string> = {
+    'x-chat-image-blob-id': blobId,
+    'x-chat-image-ciphertext-sha256': ciphertextSha256,
+    'x-chat-image-confirmation-token-hash': confirmationTokenHash,
+    'x-chat-image-kind': kind,
+    'x-chat-image-mime': mime,
+    'x-chat-image-owner': normalizedOwnerAddress,
+    'x-chat-image-plaintext-size': String(sizeBytes),
+    'x-chat-image-encrypted-size': String(encrypted.byteLength),
+    'x-chat-image-target': conversationTarget,
+    'x-chat-image-issued-at': String(issuedAt),
+    'x-chat-image-expires-at': String(expiresAt)
+  };
+  if (authorization.mode === 'session') {
+    headers['x-chat-image-protocol'] = authorization.protocol;
+    headers['x-chat-image-session-token'] = authorization.token;
+  } else {
+    headers['x-chat-image-protocol'] = 'legacy-v1';
+    headers['x-chat-image-authorization-signature'] = authorization.signature;
+  }
   const { error } = await supabase.functions.invoke('chat-image-upload', {
     body: encryptedBlob,
-    headers: {
-      'content-type': 'application/octet-stream',
-      'x-chat-image-blob-id': blobId,
-      'x-chat-image-kind': kind,
-      'x-chat-image-mime': mime,
-      'x-chat-image-owner': normalizedOwnerAddress,
-      'x-chat-image-plaintext-size': String(sizeBytes)
-    }
+    headers
   });
   if (error) {
     throw new Error(getStorageUploadErrorMessage(error));
   }
 }
 
-export async function confirmChatImageUpload(blobId: string, txHash: string): Promise<void> {
+export async function confirmChatImageUpload(
+  blobId: string,
+  txHash: string,
+  confirmationToken: string
+): Promise<void> {
   const normalizedBlobId = blobId.trim().toLowerCase();
   const normalizedTxHash = txHash.trim().toLowerCase();
-  if (!normalizedBlobId || !normalizedTxHash) {
+  const normalizedConfirmationToken = confirmationToken.trim().toLowerCase();
+  if (!normalizedBlobId || !normalizedTxHash || !/^[a-f0-9]{64}$/.test(normalizedConfirmationToken)) {
     throw new Error('Image message transaction is unavailable.');
   }
 
@@ -265,7 +318,8 @@ export async function confirmChatImageUpload(blobId: string, txHash: string): Pr
   const { error } = await getSupabaseBrowserClient().functions.invoke('chat-image-confirm', {
     body: {
       blobId: normalizedBlobId,
-      txHash: normalizedTxHash
+      txHash: normalizedTxHash,
+      confirmationToken: normalizedConfirmationToken
     }
   });
   if (error) {
@@ -310,12 +364,87 @@ async function encryptImageToBlob(file: File): Promise<{ blobId: string; encrypt
 export async function createEncryptedImageTagFromFile(
   file: File,
   kind: ChatImageConversationKind,
-  ownerAddress: string
-): Promise<string> {
+  ownerAddress: string,
+  conversationTarget: string,
+  authorization: ChatImageUploadAuthorization
+): Promise<PreparedChatImageUpload> {
+  const uploadAuthorization = Object.freeze({ ...authorization });
   const { mime, sizeBytes } = validateImageFile(file);
+  if (kind !== 'direct' && kind !== 'group') throw new Error('Invalid chat image conversation kind.');
+  const normalizedTarget = normalizeChatImageConversationTarget(kind, conversationTarget);
+  const normalizedOwner = ownerAddress.trim().toLowerCase();
+  if (!WALLET_ADDRESS_REGEX.test(normalizedOwner)) throw new Error('Connect a wallet before sending an image.');
+  if (uploadAuthorization.mode === 'session' && uploadAuthorization.protocol !== 'legacy-v1' &&
+      uploadAuthorization.protocol !== (kind === 'direct' ? 'direct-v2' : 'group-v2')) {
+    throw new Error('Chat image session protocol does not match its conversation kind.');
+  }
   const { blobId, encrypted, keyHex, ivHex } = await encryptImageToBlob(file);
-  await uploadEncryptedBlob(blobId, encrypted, mime, sizeBytes, kind, ownerAddress);
-  return `[img:${blobId}|${keyHex}:${ivHex}|${sizeBytes}|${mime}]`;
+  const { webCrypto } = getSecureWebCrypto();
+  const confirmationTokenBytes = webCrypto.getRandomValues(new Uint8Array(32));
+  const confirmationToken = bytesToHex(confirmationTokenBytes);
+  const [ciphertextSha256, confirmationTokenHash] = await Promise.all([
+    sha256Hex(encrypted),
+    sha256Hex(confirmationTokenBytes)
+  ]);
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const expiresAt = issuedAt + CHAT_IMAGE_AUTHORIZATION_TTL_SECONDS;
+  let resolvedAuthorization:
+    | Readonly<{ mode: 'signature'; signature: string }>
+    | Readonly<{ mode: 'session'; protocol: ChatImageProtocol; token: string }>;
+  if (uploadAuthorization.mode === 'session') {
+    const token = (await uploadAuthorization.token()).trim();
+    if (!token || token.length > 4_096) throw new Error('Chat image upload session is invalid.');
+    resolvedAuthorization = Object.freeze({
+      mode: 'session' as const,
+      protocol: uploadAuthorization.protocol,
+      token
+    });
+  } else {
+    const { getSupabaseUrl } = await import('./supabaseClient');
+    const domain = getChatImageAuthorizationDomain(kind);
+    const authorizationMessage = buildChatImageUploadAuthorizationMessage({
+      audience: getSupabaseUrl(),
+      blobId,
+      chainId: domain.chainId,
+      ciphertextSha256,
+      confirmationTokenHash,
+      contractAddress: domain.contractAddress,
+      conversationKind: kind,
+      conversationTarget: normalizedTarget,
+      encryptedSize: encrypted.byteLength,
+      expiresAt,
+      issuedAt,
+      mime,
+      ownerAddress: normalizedOwner,
+      plaintextSize: sizeBytes
+    });
+    resolvedAuthorization = Object.freeze({
+      mode: 'signature' as const,
+      signature: assertChatImageAuthorizationSignature(
+        await uploadAuthorization.sign(authorizationMessage)
+      )
+    });
+  }
+
+  await uploadEncryptedBlob(
+    blobId,
+    encrypted,
+    mime,
+    sizeBytes,
+    kind,
+    normalizedOwner,
+    normalizedTarget,
+    ciphertextSha256,
+    confirmationTokenHash,
+    issuedAt,
+    expiresAt,
+    resolvedAuthorization
+  );
+  return {
+    blobId,
+    confirmationToken,
+    imageTag: `[img:${blobId}|${keyHex}:${ivHex}|${sizeBytes}|${mime}]`
+  };
 }
 
 export async function fetchEncryptedBlob(blobId: string, signal?: AbortSignal): Promise<ArrayBuffer> {

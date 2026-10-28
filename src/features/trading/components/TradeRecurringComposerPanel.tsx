@@ -1,21 +1,13 @@
-import type { Dispatch, ReactNode, SetStateAction } from 'react';
+import type { ReactNode } from 'react';
 import {
-  COTI_NETWORK,
   formatCotiAmount,
   sanitizeTokenAmountInput,
   TIP_NATIVE_TOKEN_SYMBOL,
   type TradeSnapshot
 } from '../../../lib/appShared';
-import type { CarbonPairReferenceDisplay } from '../../../lib/carbonMarketPrice';
-import type { ResolvedTradeToken, TradeTokenPresetKey } from '../../../lib/appHelpers';
+import type { ResolvedTradeToken } from '../../../lib/appHelpers';
 import { invertPriceInput } from '../../../lib/tradePricing';
-import {
-  RecurringCycleIcon,
-  SHARE_LABEL,
-  formatRecurringLiveLiquidityAmount,
-  renderCarbonPriceReference
-} from './P2PTradingPage.helpers';
-import { TradeTokenSelect, type TradeComposerTokenOption } from './TradeComposerPanel';
+import { SHARE_LABEL, formatRecurringLiveLiquidityAmount } from './P2PTradingPage.helpers';
 
 type TradeRecurringComposerPanelProps = {
   actionNotice: ReactNode;
@@ -33,7 +25,6 @@ type TradeRecurringComposerPanelProps = {
   recurringBuyReceiveEditable: boolean;
   recurringBuyReceiveInput: string;
   recurringBuyReceivePreview: string;
-  recurringComposerCarbonPriceReference: CarbonPairReferenceDisplay | null;
   recurringHidePrivateAmounts: boolean;
   recurringPriceDisplayInverted: boolean;
   recurringRemoveBuyBudgetInput: string;
@@ -43,20 +34,18 @@ type TradeRecurringComposerPanelProps = {
   recurringSellReceiveEditable: boolean;
   recurringSellReceiveInput: string;
   recurringSellReceivePreview: string;
+  recurringBaseBalanceLabel: string;
+  recurringQuoteBalanceLabel: string;
+  recurringBaseMaxInputValue: string;
+  recurringQuoteMaxInputValue: string;
+  canUseRecurringBaseMax: boolean;
+  canUseRecurringQuoteMax: boolean;
   setRecurringHidePrivateAmounts: (value: boolean) => void;
-  setRecurringPriceDisplayInverted: Dispatch<SetStateAction<boolean>>;
   setRecurringRemoveBuyBudgetInput: (value: string) => void;
   setRecurringRemoveSellInventoryInput: (value: string) => void;
-  swapRecurringOrderSides: () => void;
   tradeFeeEscrowContract: string;
   tradeFeeEscrowContractLabel: string;
   tradeFeeEscrowContractTitleLabel: string;
-  tradeOfferBalanceSummaryLabel: string;
-  tradeOfferTokenSelection: TradeTokenPresetKey;
-  tradeOfferVerifyUrl?: string;
-  tradeRequestBalanceSummaryLabel: string;
-  tradeRequestTokenSelection: TradeTokenPresetKey;
-  tradeRequestVerifyUrl?: string;
   updateRecurringBuyLiquidityInput: (value: string) => void;
   updateRecurringBuyPriceInput: (value: string) => void;
   updateRecurringBuyReceiveInput: (value: string) => void;
@@ -65,13 +54,10 @@ type TradeRecurringComposerPanelProps = {
   updateRecurringSellPriceInput: (value: string) => void;
   updateRecurringSellReceiveInput: (value: string) => void;
   updateRecurringSellReversePriceInput: (value: string) => void;
-  onOfferTokenSelectionChange: (value: TradeTokenPresetKey) => void;
-  onRequestTokenSelectionChange: (value: TradeTokenPresetKey) => void;
   toggleRecurringBuyReceiveEditable: () => void;
   toggleRecurringSellReceiveEditable: () => void;
   onCotiNetwork: boolean;
   tradeRequiredFeeWei: bigint | null;
-  tradeTokenOptions: TradeComposerTokenOption[];
   walletAddress: string;
 };
 
@@ -93,7 +79,6 @@ export default function TradeRecurringComposerPanel({
   recurringBuyReceiveEditable,
   recurringBuyReceiveInput,
   recurringBuyReceivePreview,
-  recurringComposerCarbonPriceReference,
   recurringHidePrivateAmounts,
   recurringPriceDisplayInverted,
   recurringRemoveBuyBudgetInput,
@@ -103,20 +88,15 @@ export default function TradeRecurringComposerPanel({
   recurringSellReceiveEditable,
   recurringSellReceiveInput,
   recurringSellReceivePreview,
+  recurringBaseBalanceLabel,
+  recurringQuoteBalanceLabel,
+  recurringBaseMaxInputValue,
+  recurringQuoteMaxInputValue,
+  canUseRecurringBaseMax,
+  canUseRecurringQuoteMax,
   setRecurringHidePrivateAmounts,
-  setRecurringPriceDisplayInverted,
   setRecurringRemoveBuyBudgetInput,
   setRecurringRemoveSellInventoryInput,
-  swapRecurringOrderSides,
-  tradeFeeEscrowContract,
-  tradeFeeEscrowContractLabel,
-  tradeFeeEscrowContractTitleLabel,
-  tradeOfferBalanceSummaryLabel,
-  tradeOfferTokenSelection,
-  tradeOfferVerifyUrl,
-  tradeRequestBalanceSummaryLabel,
-  tradeRequestTokenSelection,
-  tradeRequestVerifyUrl,
   updateRecurringBuyLiquidityInput,
   updateRecurringBuyPriceInput,
   updateRecurringBuyReceiveInput,
@@ -125,33 +105,24 @@ export default function TradeRecurringComposerPanel({
   updateRecurringSellPriceInput,
   updateRecurringSellReceiveInput,
   updateRecurringSellReversePriceInput,
-  onOfferTokenSelectionChange,
-  onRequestTokenSelectionChange,
   toggleRecurringBuyReceiveEditable,
   toggleRecurringSellReceiveEditable,
   onCotiNetwork,
   tradeRequiredFeeWei,
-  tradeTokenOptions,
   walletAddress
 }: TradeRecurringComposerPanelProps) {
-  const recurringTokenOptions = tradeTokenOptions.filter((option) => !option.value.startsWith('custom'));
   const recurringHasPrivateToken =
     recurringBaseToken?.kind === 'private-erc20' || recurringQuoteToken?.kind === 'private-erc20';
-  const recurringPrivateAmountsHidden = recurringHasPrivateToken && recurringHidePrivateAmounts;
-  const recurringPrivacyLabel =
-    recurringBaseToken?.kind === 'private-erc20' && recurringQuoteToken?.kind === 'private-erc20'
-      ? 'Fully private order'
-      : recurringBaseToken?.kind === 'private-erc20' || recurringQuoteToken?.kind === 'private-erc20'
-        ? 'Hybrid private order'
-        : 'Public order';
-  const recurringPrivateAmountCopy =
-    !recurringHasPrivateToken
-      ? 'Select a private token if this order should use COTI private-token settlement.'
-      : recurringPrivateAmountsHidden
-        ? 'Public views show the prices, but private-token order size and fill amounts stay hidden.'
-        : 'Public views can show the entered order size; private-token transfers and receipts still use COTI privacy.';
   const recurringBaseSymbol = recurringBaseToken?.symbol ?? 'base';
   const recurringQuoteSymbol = recurringQuoteToken?.symbol ?? 'quote';
+  const recurringDisplayedBaseSymbol = recurringPriceDisplayInverted
+    ? recurringQuoteSymbol
+    : recurringBaseSymbol;
+  const recurringDisplayedQuoteSymbol = recurringPriceDisplayInverted
+    ? recurringBaseSymbol
+    : recurringQuoteSymbol;
+  const recurringSellAction = recurringPriceDisplayInverted ? 'Buy' : 'Sell';
+  const recurringBuyAction = recurringPriceDisplayInverted ? 'Sell' : 'Buy';
   const recurringDisplayedBuyPriceInput = recurringPriceDisplayInverted
     ? invertPriceInput(recurringBuyPriceInput)
     : recurringBuyPriceInput;
@@ -185,93 +156,19 @@ export default function TradeRecurringComposerPanel({
 
   return (
     <>
-      <div className="trade-compose-panel p2p-recurring-builder" role="group" aria-label="Recurring OTC order">
-        <div className="trade-compose-header p2p-recurring-header">
-          <strong>Reusable OTC order</strong>
-          <div className="trade-compose-header-meta">
-            <span>{recurringPrivacyLabel}</span>
-            <a
-              className="trade-compose-header-link"
-              href={`${COTI_NETWORK.blockExplorerUrl}/address/${tradeFeeEscrowContract}`}
-              target="_blank"
-              rel="noreferrer"
-              title={`Open ${tradeFeeEscrowContractTitleLabel}`}
-            >
-              {tradeFeeEscrowContractLabel}
-            </a>
-          </div>
-        </div>
-
-        <div className="p2p-recurring-pair-picker" aria-label="Recurring order pair">
-          <label className="trade-compose-field trade-compose-asset-field p2p-recurring-asset-field">
-            <span className="trade-compose-field-head">
-              <span className="trade-compose-field-label">Base</span>
-              <strong className="trade-compose-field-value">Available {tradeOfferBalanceSummaryLabel}</strong>
-            </span>
-            <TradeTokenSelect
-              options={recurringTokenOptions}
-              value={tradeOfferTokenSelection}
-              onChange={(value) => onOfferTokenSelectionChange(value as TradeTokenPresetKey)}
-              excludedValues={[tradeRequestTokenSelection]}
-              disabled={creatingRecurringOrder || Boolean(editingRecurringOrder)}
-              balanceLabel={tradeOfferBalanceSummaryLabel}
-              verifyUrl={tradeOfferVerifyUrl}
-            />
-          </label>
-          <button
-            type="button"
-            className="p2p-recurring-cycle-indicator"
-            onClick={swapRecurringOrderSides}
-            disabled={creatingRecurringOrder || Boolean(editingRecurringOrder)}
-            aria-label="Swap recurring token sides"
-            title={
-              editingRecurringOrder
-                ? 'Token sides cannot be swapped while editing a live recurring order'
-                : 'Swap recurring token sides'
-            }
-          >
-            <RecurringCycleIcon />
-          </button>
-          <label className="trade-compose-field trade-compose-asset-field p2p-recurring-asset-field">
-            <span className="trade-compose-field-head">
-              <span className="trade-compose-field-label">Quote</span>
-              <strong className="trade-compose-field-value">Available {tradeRequestBalanceSummaryLabel}</strong>
-            </span>
-            <TradeTokenSelect
-              options={recurringTokenOptions}
-              value={tradeRequestTokenSelection}
-              onChange={(value) => onRequestTokenSelectionChange(value as TradeTokenPresetKey)}
-              excludedValues={[tradeOfferTokenSelection]}
-              disabled={creatingRecurringOrder || Boolean(editingRecurringOrder)}
-              balanceLabel={tradeRequestBalanceSummaryLabel}
-              verifyUrl={tradeRequestVerifyUrl}
-            />
-          </label>
-          {recurringBaseToken && recurringQuoteToken ? (
-            <div className="p2p-recurring-pair-price">
-              {renderCarbonPriceReference(recurringComposerCarbonPriceReference, {
-                fallbackLabel: 'Carbon price unavailable',
-                fallbackTitle: 'Flip recurring price ratio',
-                onToggle: () => setRecurringPriceDisplayInverted((value) => !value),
-                pressed: recurringPriceDisplayInverted
-              })}
-            </div>
-          ) : null}
-        </div>
-
+      <div className="trade-compose-panel p2p-recurring-builder" role="group" aria-label="Recurring P2P order">
         <div className="trade-compose-grid p2p-recurring-side-grid">
-          <section className="trade-compose-section trade-compose-section-sell p2p-recurring-side-panel p2p-recurring-side-panel-sell">
+          <section className={`trade-compose-section p2p-recurring-side-panel p2p-recurring-side-panel-${recurringPriceDisplayInverted ? 'buy' : 'sell'}`}>
             <div className="p2p-recurring-side-head">
-              <span>Sell side</span>
-              <strong>Sell {recurringBaseToken?.symbol ?? 'base'}</strong>
-              <small>
-                {editingRecurringOrder
-                  ? 'Edit the sell price. Liquidity is managed below.'
-                  : 'Set the maker sell price. Liquidity is managed below.'}
-              </small>
+              <span>{recurringSellAction} side</span>
+              <strong>{recurringSellAction} {recurringDisplayedBaseSymbol}</strong>
+              <small>Spend {recurringBaseSymbol} · receive {recurringQuoteSymbol}</small>
             </div>
             <label className="trade-compose-field p2p-recurring-price-field">
-              <span>Sell price</span>
+              <span className="trade-compose-field-head">
+                <span>{recurringSellAction} price</span>
+                <strong>{recurringDisplayedQuoteSymbol} per {recurringDisplayedBaseSymbol}</strong>
+              </span>
               <input
                 className="trade-compose-input"
                 type="text"
@@ -288,66 +185,50 @@ export default function TradeRecurringComposerPanel({
             </label>
             {!editingRecurringOrder ? (
               <>
-                <label className="trade-compose-field p2p-recurring-primary-field">
-                  <span>Sell liquidity</span>
-                  <input
-                    className="trade-compose-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={recurringAddSellInventoryInput}
-                    onChange={(event) => updateRecurringSellLiquidityInput(event.target.value)}
-                    placeholder="0"
-                    disabled={creatingRecurringOrder}
-                  />
-                </label>
-                <label
-                  className={`trade-compose-field p2p-recurring-derived-field${
-                    recurringSellReceiveEditable ? ' is-editing' : ''
-                  }`}
-                >
+                <div className="trade-compose-field p2p-recurring-primary-field">
                   <span className="trade-compose-field-head">
-                    <span>You buy</span>
-                    <button
-                      type="button"
-                      className="p2p-recurring-derived-toggle"
-                      onClick={toggleRecurringSellReceiveEditable}
-                      aria-label={
-                        recurringSellReceiveEditable
-                          ? 'Preview amount bought on sell side'
-                          : 'Edit amount bought on sell side'
-                      }
-                      disabled={creatingRecurringOrder}
-                    >
-                      {recurringSellReceiveEditable ? 'Preview' : 'Edit'}
-                    </button>
+                    <span>Starting inventory</span>
+                    <span className="trade-compose-field-tools">
+                      <span>Available: {recurringBaseBalanceLabel}</span>
+                      <button
+                        type="button"
+                        className="trade-compose-max"
+                        onClick={() => updateRecurringSellLiquidityInput(recurringBaseMaxInputValue)}
+                        disabled={!canUseRecurringBaseMax || creatingRecurringOrder}
+                      >
+                        Max
+                      </button>
+                    </span>
                   </span>
                   <input
                     className="trade-compose-input"
                     type="text"
                     inputMode="decimal"
-                    value={recurringSellReceiveEditable ? recurringSellReceiveInput : recurringSellReceivePreview}
-                    onChange={(event) => updateRecurringSellReceiveInput(event.target.value)}
+                    aria-label={`Starting inventory in ${recurringBaseSymbol}`}
+                    value={recurringAddSellInventoryInput}
+                    onChange={(event) => updateRecurringSellLiquidityInput(event.target.value)}
                     placeholder="0"
-                    readOnly={!recurringSellReceiveEditable}
                     disabled={creatingRecurringOrder}
                   />
-                </label>
+                  <span className="p2p-recurring-receive-preview">
+                    Receive ≈ <strong>{recurringSellReceivePreview || '--'} {recurringQuoteSymbol}</strong>
+                  </span>
+                </div>
               </>
             ) : null}
           </section>
 
-          <section className="trade-compose-section trade-compose-section-buy p2p-recurring-side-panel p2p-recurring-side-panel-buy">
+          <section className={`trade-compose-section p2p-recurring-side-panel p2p-recurring-side-panel-${recurringPriceDisplayInverted ? 'sell' : 'buy'}`}>
             <div className="p2p-recurring-side-head">
-              <span>Buy side</span>
-              <strong>Buy {recurringBaseToken?.symbol ?? 'base'}</strong>
-              <small>
-                {editingRecurringOrder
-                  ? 'Edit the buy price. Liquidity is managed below.'
-                  : 'Set the maker buy price. Liquidity is managed below.'}
-              </small>
+              <span>{recurringBuyAction} side</span>
+              <strong>{recurringBuyAction} {recurringDisplayedBaseSymbol}</strong>
+              <small>Spend {recurringQuoteSymbol} · receive {recurringBaseSymbol}</small>
             </div>
             <label className="trade-compose-field p2p-recurring-price-field">
-              <span>Buy price</span>
+              <span className="trade-compose-field-head">
+                <span>{recurringBuyAction} price</span>
+                <strong>{recurringDisplayedQuoteSymbol} per {recurringDisplayedBaseSymbol}</strong>
+              </span>
               <input
                 className="trade-compose-input"
                 type="text"
@@ -364,50 +245,35 @@ export default function TradeRecurringComposerPanel({
             </label>
             {!editingRecurringOrder ? (
               <>
-                <label className="trade-compose-field p2p-recurring-primary-field">
-                  <span>Buy liquidity</span>
-                  <input
-                    className="trade-compose-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={recurringAddBuyBudgetInput}
-                    onChange={(event) => updateRecurringBuyLiquidityInput(event.target.value)}
-                    placeholder="0"
-                    disabled={creatingRecurringOrder}
-                  />
-                </label>
-                <label
-                  className={`trade-compose-field p2p-recurring-derived-field${
-                    recurringBuyReceiveEditable ? ' is-editing' : ''
-                  }`}
-                >
+                <div className="trade-compose-field p2p-recurring-primary-field">
                   <span className="trade-compose-field-head">
-                    <span>You buy</span>
-                    <button
-                      type="button"
-                      className="p2p-recurring-derived-toggle"
-                      onClick={toggleRecurringBuyReceiveEditable}
-                      aria-label={
-                        recurringBuyReceiveEditable
-                          ? 'Preview amount bought on buy side'
-                          : 'Edit amount bought on buy side'
-                      }
-                      disabled={creatingRecurringOrder}
-                    >
-                      {recurringBuyReceiveEditable ? 'Preview' : 'Edit'}
-                    </button>
+                    <span>Starting budget</span>
+                    <span className="trade-compose-field-tools">
+                      <span>Available: {recurringQuoteBalanceLabel}</span>
+                      <button
+                        type="button"
+                        className="trade-compose-max"
+                        onClick={() => updateRecurringBuyLiquidityInput(recurringQuoteMaxInputValue)}
+                        disabled={!canUseRecurringQuoteMax || creatingRecurringOrder}
+                      >
+                        Max
+                      </button>
+                    </span>
                   </span>
                   <input
                     className="trade-compose-input"
                     type="text"
                     inputMode="decimal"
-                    value={recurringBuyReceiveEditable ? recurringBuyReceiveInput : recurringBuyReceivePreview}
-                    onChange={(event) => updateRecurringBuyReceiveInput(event.target.value)}
+                    aria-label={`Starting budget in ${recurringQuoteSymbol}`}
+                    value={recurringAddBuyBudgetInput}
+                    onChange={(event) => updateRecurringBuyLiquidityInput(event.target.value)}
                     placeholder="0"
-                    readOnly={!recurringBuyReceiveEditable}
                     disabled={creatingRecurringOrder}
                   />
-                </label>
+                  <span className="p2p-recurring-receive-preview">
+                    Receive ≈ <strong>{recurringBuyReceivePreview || '--'} {recurringBaseSymbol}</strong>
+                  </span>
+                </div>
               </>
             ) : null}
           </section>
@@ -415,16 +281,8 @@ export default function TradeRecurringComposerPanel({
 
         <div className={`trade-compose-privacy-panel p2p-recurring-privacy-note${recurringHasPrivateToken ? ' is-private' : ''}`}>
           <div className="trade-compose-privacy-copy">
-            <span>Order privacy</span>
-            <strong>
-              {recurringHasPrivateToken
-                ? recurringPrivateAmountsHidden
-                  ? 'Private-token amounts hidden'
-                  : 'Private-token amounts visible'
-                : 'Public amounts visible'}
-            </strong>
+            <strong>Amounts</strong>
           </div>
-          <p className="trade-compose-privacy-help">{recurringPrivateAmountCopy}</p>
           {recurringHasPrivateToken ? (
             <div
               className="trade-compose-privacy-toggle p2p-recurring-privacy-toggle"
@@ -590,24 +448,11 @@ export default function TradeRecurringComposerPanel({
           </div>
         ) : null}
 
-        <div className="p2p-recurring-fill-handling">
-          <span>Funding and fills</span>
-          <p>Liquidity stays in this order and cycles between sides. Closing the order returns remaining funds to the maker.</p>
-        </div>
-
         <div className="trade-compose-bottom p2p-recurring-actions">
-          <p className="p2p-recurring-action-copy">
-            {editingRecurringOrder
-              ? 'Save prices and liquidity changes without changing the link.'
-              : 'Set buy and sell prices, then fund buy liquidity, sell liquidity, or both.'}
-          </p>
           <div className="trade-compose-fee-row trade-compose-fee-row-inline p2p-recurring-action-fee">
             <div className="trade-compose-fee-copy">
               <span className="trade-compose-field-label">Fee</span>
               <strong className="trade-compose-fee-value">{recurringFeeSummaryLabel}</strong>
-              <span className="trade-compose-fee-note">
-                {editingRecurringOrder ? 'No create fee for edits.' : 'Fee may vary before submit.'}
-              </span>
             </div>
           </div>
           <div className="trade-compose-action-stack p2p-recurring-action-stack">
@@ -630,15 +475,9 @@ export default function TradeRecurringComposerPanel({
                   : 'Creating...'
                 : editingRecurringOrder
                   ? 'Save Recurring Order'
-                  : 'Create Recurring Order'}
+                  : 'Create recurring strategy'}
             </button>
           </div>
-        </div>
-        <div className="trade-compose-warning">
-          <p>
-            <strong>OTC safety check:</strong> Verify token contracts, buy/sell prices, and funded liquidity before
-            signing. Buy and sell prices are independent.
-          </p>
         </div>
       </div>
       {createdRecurringOrderLink ? (

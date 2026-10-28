@@ -1,10 +1,12 @@
 import { useEffect, type MutableRefObject } from 'react';
 import { BACKGROUND_DEEP_SYNC_DELAY_MS } from '../../../app/appHelpers';
 import {
+  LEGACY_GROUP_CHAT_CONTRACT_ABI,
+  LEGACY_GROUP_CHAT_CONTRACT_ADDRESS
+} from '../../../lib/legacyChatContracts';
+import {
   COTI_NETWORK,
   getCotiWsLastHealthyAt,
-  GROUP_CHAT_CONTRACT_ABI,
-  GROUP_CHAT_CONTRACT_ADDRESS,
   loadCotiEthersModule,
   loadCotiWsProvider,
   markCotiWsHealthyNow,
@@ -32,6 +34,7 @@ type UseGroupRealtimeSyncArgs = {
   groupInvitesRef: MutableRefObject<GroupInvite[]>;
   groupsRef: MutableRefObject<GroupSummary[]>;
   hasAesReady: boolean;
+  legacyEnabled?: boolean;
   setGroupRealtimeStatus: (status: RealtimeConnectionStatus) => void;
   syncGroupDataInFlightRef: MutableRefObject<boolean>;
   syncGroupDataRef: MutableRefObject<(options?: SyncGroupOptions) => Promise<void>>;
@@ -44,13 +47,14 @@ export default function useGroupRealtimeSync({
   groupInvitesRef,
   groupsRef,
   hasAesReady,
+  legacyEnabled = true,
   setGroupRealtimeStatus,
   syncGroupDataInFlightRef,
   syncGroupDataRef,
   walletAddress
 }: UseGroupRealtimeSyncArgs) {
   useEffect(() => {
-    if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal || !hasAesReady) {
+    if (!legacyEnabled || !walletAddress || chainId !== COTI_NETWORK.chainIdDecimal || !hasAesReady) {
       setGroupRealtimeStatus('idle');
       return;
     }
@@ -186,7 +190,11 @@ export default function useGroupRealtimeSync({
         }
         markCotiWsHealthyNow();
 
-        const contract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, wsProvider);
+        const contract = new cotiEthers.Contract(
+          LEGACY_GROUP_CHAT_CONTRACT_ADDRESS,
+          LEGACY_GROUP_CHAT_CONTRACT_ABI,
+          wsProvider
+        );
         const handleOverviewEvent = () => scheduleRealtimeSync({ overviewOnly: true });
         const handleMessageEvent = (groupIdValue: unknown) => {
           scheduleRealtimeSync(resolveRealtimeGroupSyncOptions(groupIdValue, activeGroupIdRef.current));
@@ -294,6 +302,7 @@ export default function useGroupRealtimeSync({
     groupInvitesRef,
     groupsRef,
     hasAesReady,
+    legacyEnabled,
     setGroupRealtimeStatus,
     syncGroupDataInFlightRef,
     syncGroupDataRef,

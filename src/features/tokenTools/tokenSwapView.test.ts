@@ -11,6 +11,7 @@ import {
 import {
   derivePrivacyPortalView,
   deriveTokenSwapView,
+  resolveLegacyRecoverySpendableAmount,
   resolveTokenSwapDirectionFallback
 } from './tokenSwapView';
 import { useTokenToolsStore } from './tokenToolsStore';
@@ -93,12 +94,55 @@ describe('deriveTokenSwapView', () => {
     expect(view.swapInputSymbol).toBe('pWISP (old)');
     expect(view.tokenToolsSummary).toBe('WISP 3 | pWISP (old) 7');
   });
+
+  it('selects the verified earlier legacy vault explicitly', () => {
+    const view = deriveTokenSwapView({
+      ...baseInput,
+      swapDirection: 'legacy-unshield-earlier'
+    });
+
+    expect(view.activeSwapVaultContractAddress.toLowerCase()).toBe(
+      '0xae80b55d78a88dd65afb692dff5bf3e71ab9fe7a'
+    );
+    expect(view.legacySwapVaultContractUrl.toLowerCase()).toContain(
+      '0xae80b55d78a88dd65afb692dff5bf3e71ab9fe7a'
+    );
+    expect(view.canEarlierLegacyUnshieldTokens).toBe(true);
+    expect(view.swapInputSymbol).toBe('pWISP (old)');
+  });
+});
+
+describe('resolveLegacyRecoverySpendableAmount', () => {
+  it('reserves the earlier vault private-token fee when it can be collected', () => {
+    expect(resolveLegacyRecoverySpendableAmount({
+      balanceWei: 20_000000n,
+      direction: 'legacy-unshield-earlier',
+      tokenFeeWei: 5_000000n
+    })).toBe(15_000000n);
+  });
+
+  it('allows the whole balance when the earlier vault must fall through to its native fee', () => {
+    expect(resolveLegacyRecoverySpendableAmount({
+      balanceWei: 4_000000n,
+      direction: 'legacy-unshield-earlier',
+      tokenFeeWei: 5_000000n
+    })).toBe(4_000000n);
+  });
+
+  it('does not subtract a token fee from the newer legacy vault native-only route', () => {
+    expect(resolveLegacyRecoverySpendableAmount({
+      balanceWei: 20_000000n,
+      direction: 'legacy-unshield',
+      tokenFeeWei: 2_500000n
+    })).toBe(20_000000n);
+  });
 });
 
 describe('resolveTokenSwapDirectionFallback', () => {
   it('keeps current WISP shielding when the bridge is enabled', () => {
     expect(
       resolveTokenSwapDirectionFallback({
+        canEarlierLegacyUnshieldTokens: true,
         canLegacyUnshieldTokens: true,
         canShieldTokens: true,
         canUnshieldTokens: true,
@@ -111,6 +155,7 @@ describe('resolveTokenSwapDirectionFallback', () => {
   it('keeps current unshield explicit even when legacy recovery is available', () => {
     expect(
       resolveTokenSwapDirectionFallback({
+        canEarlierLegacyUnshieldTokens: true,
         canLegacyUnshieldTokens: true,
         canShieldTokens: true,
         canUnshieldTokens: true,
@@ -123,6 +168,7 @@ describe('resolveTokenSwapDirectionFallback', () => {
   it('keeps current unshield when the wallet has current pWISP', () => {
     expect(
       resolveTokenSwapDirectionFallback({
+        canEarlierLegacyUnshieldTokens: true,
         canLegacyUnshieldTokens: true,
         canShieldTokens: true,
         canUnshieldTokens: true,
@@ -287,9 +333,6 @@ describe('TokenSwapPage', () => {
         onTokenSearchChange: () => {},
         privacyDirection: 'public-to-private',
         onPrivacyDirectionChange: () => {},
-        activePortalAccount: 'chainwhisper',
-        showPortalAccountTabs: true,
-        onPortalAccountChange: () => {},
         amountInput: '100',
         onAmountInputChange: () => {},
         onMaxAmount: () => {},
@@ -319,9 +362,11 @@ describe('TokenSwapPage', () => {
           canShield: true,
           canUnshield: true,
           canLegacyUnshield: true,
+          canEarlierLegacyUnshield: true,
           publicSymbol: 'WISP',
           privateSymbol: 'pWISP',
           inputSymbol: 'pWISP',
+          liquidityLabel: '857943.23 WISP',
           feeLabel: '—',
           contractUrl: '',
           busy: false,
@@ -349,8 +394,47 @@ describe('TokenSwapPage', () => {
     expect(officialHtml).not.toContain('privacy-legacy-recovery');
     expect(wispHtml).toContain('ChainWhisper bridge');
     expect(wispHtml).toContain('Legacy pWISP');
+    expect(wispHtml).toContain('Newer legacy vault');
+    expect(wispHtml).toContain('Earlier legacy vault');
+    expect(wispHtml).toContain('Selected vault liquidity');
     expect(wispHtml).toMatch(/privacy-wisp-card[\s\S]*privacy-legacy-recovery/);
     expect(wispHtml).toContain('Balance: 7 WISP');
     expect(wispHtml).not.toContain('Move between WISP and pWISP');
+  });
+
+  it('uses one connection-readiness state before rendering conversion controls', () => {
+    const disconnectedHtml = renderToStaticMarkup(createElement(TokenSwapPage, {
+      pairs: PRIVACY_TOKEN_PAIRS,
+      selectedPair: privacyPair,
+      onPairChange: () => {},
+      tokenSearch: '',
+      onTokenSearchChange: () => {},
+      privacyDirection: 'public-to-private',
+      onPrivacyDirectionChange: () => {},
+      amountInput: '',
+      onAmountInputChange: () => {},
+      onMaxAmount: () => {},
+      metrics: null,
+      quote: null,
+      loading: false,
+      actionStage: null,
+      walletAddress: '',
+      onCotiNetwork: false,
+      hasAesReady: false,
+      canConvert: false,
+      buttonLabel: 'Connect wallet',
+      onConvert: async () => {},
+      onRefresh: () => {},
+      statusMessage: '',
+      error: 'Switch to COTI Mainnet and try again.',
+      onOpenHelp: () => {}
+    }));
+
+    expect(disconnectedHtml).toMatch(/<h2[^>]*>Connect wallet<\/h2>/);
+    expect(disconnectedHtml).toContain('Connect in the header to view balances and convert.');
+    expect(disconnectedHtml).toContain('COTI / p.COTI');
+    expect(disconnectedHtml).not.toContain('class="swap-flow"');
+    expect(disconnectedHtml).not.toContain('class="connect-btn swap-action-btn"');
+    expect(disconnectedHtml).not.toContain('Switch to COTI Mainnet and try again.');
   });
 });

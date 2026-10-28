@@ -94,8 +94,7 @@ export default function useActiveConversationState({
   );
 
   const activeConversationStateSyncPending = isConversationStateSyncPending(activeContact);
-  const activeConversationMuted = Boolean(activeContactMeta?.muted);
-  const activeConversationHidden = Boolean(activeContactMeta?.hidden);
+  const activeConversationHidden = Boolean(activeContactMeta?.hidden || activeContactMeta?.muted);
   const isSelfChat = Boolean(
     activeContact && walletAddress && activeContact.toLowerCase() === walletAddress.toLowerCase()
   );
@@ -103,7 +102,6 @@ export default function useActiveConversationState({
   return {
     activeContactMeta,
     activeConversationHidden,
-    activeConversationMuted,
     activeConversationStateSyncPending,
     activeGroupMessageLoadPhase,
     activeGroupMessages,

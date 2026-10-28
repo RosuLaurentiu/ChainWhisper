@@ -136,7 +136,7 @@ describe('trading balance display model', () => {
 
   it('builds total balances across ChainWhisper and owner wallets', () => {
     const chainwhisperItems = buildVisibleTradingBalanceItems({
-      accountRole: 'chainwhisper',
+      accountRole: 'owner',
       customTradeTokenInfoByAddress: {},
       nativeBalanceWei: 9n * 10n ** 18n,
       privateRewardTokenBalanceState: { status: 'ready', balanceWei: tokenUnits(109n) },

@@ -1,0 +1,16 @@
+{
+  "status": "VERIFIED_PRIVATE_BOOK_COUNTER_CASE",
+  "chainId": 7082400,
+  "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+  "book": {
+    "address": "0xC47C9b7D8c882a9c103d21e6D61702d210DDcA6F",
+    "runtimeHash": "0xd6cad7ae0951b41edc13f23c247bfb0cec4e554e4b89746e477fe23a423435ae"
+  },
+  "counter": {
+    "address": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+    "runtimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b"
+  },
+  "observed": {
+    "noPending": true
+  }
+}

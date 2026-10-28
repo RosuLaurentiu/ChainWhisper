@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import {
   extractUserCiphertext,
   FAST_CONTACT_PREVIEW_BLOCK_LOOKBACK,
@@ -58,7 +58,7 @@ type ParsedGroupMessagePayload = {
 };
 
 type ParseEncryptedChatMessagePayload = (
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   cacheKey: string,
   ciphertext: unknown
 ) => Promise<ParsedGroupMessagePayload>;
@@ -87,7 +87,7 @@ type SyncActiveGroupMessagesArgs = {
   requestedWalletAddress: string;
   requestedWalletRole?: WalletAccountRole;
   setMessagesByGroup: Dispatch<SetStateAction<Record<string, ChatMessage[]>>>;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   stickToBottomRef: MutableRefObject<boolean>;
   walletKey: string;
   fastOptions?: ActiveGroupMessageFastOptions;
@@ -116,6 +116,36 @@ export const mergeGroupMessageEntries = (
   const existingIds = new Set(nextMessages.map((message) => message.id));
   for (const entry of entries) {
     if (existingIds.has(entry.id)) {
+      if (entry.groupV2) {
+        const existingIndex = nextMessages.findIndex((message) => message.id === entry.id);
+        const existingMessage = nextMessages[existingIndex];
+        if (existingMessage?.groupV2) {
+          if (
+            existingMessage.groupV2.blockHash !== entry.groupV2.blockHash ||
+            existingMessage.groupV2.transactionHash !== entry.groupV2.transactionHash ||
+            existingMessage.groupV2.logIndex !== entry.groupV2.logIndex
+          ) {
+            throw new Error('Group V2 message finality update conflicts with its canonical source log.');
+          }
+          nextMessages[existingIndex] = {
+            ...existingMessage,
+            text: entry.text,
+            senderAddress: entry.senderAddress,
+            accountAddress: entry.accountAddress,
+            accountRole: entry.accountRole,
+            replyToMessageId: entry.replyToMessageId,
+            replyToMessageAnchor: entry.replyToMessageAnchor,
+            replyToText: entry.replyToText,
+            tradeReference: entry.tradeReference,
+            timestamp: entry.timestamp,
+            blockNumber: entry.blockNumber,
+            logIndex: entry.logIndex,
+            txHash: entry.txHash,
+            groupV2: entry.groupV2,
+            deliveryState: undefined
+          };
+        }
+      }
       continue;
     }
 
@@ -129,6 +159,7 @@ export const mergeGroupMessageEntries = (
       accountRole: entry.accountRole,
       isSystem: entry.isSystem,
       replyToMessageId: entry.replyToMessageId,
+      replyToMessageAnchor: entry.replyToMessageAnchor,
       replyToText: entry.replyToText,
       replyToTxHash: entry.replyToTxHash,
       replyToBlockNumber: entry.replyToBlockNumber,
@@ -137,10 +168,12 @@ export const mergeGroupMessageEntries = (
       reactionToBlockNumber: entry.reactionToBlockNumber,
       reactionToLogIndex: entry.reactionToLogIndex,
       reactionEmoji: entry.reactionEmoji,
+      tradeReference: entry.tradeReference,
       timestamp: entry.timestamp,
       blockNumber: entry.blockNumber,
       logIndex: entry.logIndex,
-      txHash: entry.txHash
+      txHash: entry.txHash,
+      groupV2: entry.groupV2
     });
   }
 

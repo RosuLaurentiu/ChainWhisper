@@ -22,25 +22,25 @@ const TRADING_CONTRACT_SOURCE_ITEMS: TradingContractSourceItem[] = [
   {
     id: 'standard',
     name: 'ChainWhisperOTCEscrowV1',
-    role: 'Standard OTC',
+    role: 'Standard P2P',
     address: TRADE_ESCROW_CONTRACT_ADDRESS
   },
   {
     id: 'private',
     name: 'ChainWhisperPrivateOTCEscrowV1',
-    role: 'Private OTC',
+    role: 'Private P2P',
     address: PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS
   },
   {
     id: 'direct',
     name: 'ChainWhisperDirectOTCEscrowV1',
-    role: 'Direct OTC',
+    role: 'Direct P2P',
     address: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS
   },
   {
     id: 'recurring',
     name: 'ChainWhisperRecurringOTCEscrowV1',
-    role: 'Recurring OTC',
+    role: 'Recurring P2P',
     address: RECURRING_OTC_CONTRACT_ADDRESS
   },
   {

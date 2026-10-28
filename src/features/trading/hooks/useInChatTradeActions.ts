@@ -1,5 +1,4 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
 import {
   DEFAULT_TRADE_EXPIRY_HOURS,
   getOnChainFailureMessage,
@@ -7,26 +6,19 @@ import {
   type PendingTradeCounterContext,
   type TradeTokenPresetKey
 } from '../../../lib/appHelpers';
+import { getCounterOfferUnavailableReason } from '../../../lib/tradeCounterSupport';
+import type { DirectTradeV2Action, DirectTradeV2PublicAsset } from '../../../lib/directTradeV2Actions';
+import { resolveDirectTradeV2RuntimeReference, type DirectTradeV2Runtime } from '../../../lib/directTradeV2Runtime';
 import {
-  acceptCounterTradeAndCloseParentOnChain,
-  acceptTradeOnChain,
-  cancelTradeOnChain,
-  counterTradeAndCloseCounteredTradeOnChain,
-  createTradeOnChain,
-  declineTradeOnChain,
-  fillPrivateFixedPriceTradeOnChain
-} from '../../../lib/tradeActions';
-import { canUseWalletAuthorityForDirectAccess, getCounterOfferUnavailableReason } from '../../../lib/tradeCounterSupport';
-import { createTradeAccessSecret } from '../../../lib/directTradeTerms';
+  buildDirectTradeV2ActionConfirmation,
+  type DirectTradeV2ApprovalKind,
+  type DirectTradeV2ConfirmationAction
+} from '../../../lib/directTradeV2Confirmation';
+import type { TradeActionConfirmModel, TradeActionConfirmSummaryRow } from '../../../lib/tradeActionConfirm';
 import {
-  buildTradeOfferMessagePayload,
-  buildTradeResponseMessagePayload,
   buildTradeSnapshotKey,
-  DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
   formatTokenAmount,
-  hasInsufficientFundsError,
   isWalletAddress,
-  mergeOnboardInfo,
   PRIVATE_REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_ADDRESS,
   type ChatMessage,
@@ -35,38 +27,26 @@ import {
   type TradeSnapshot
 } from '../../../lib/appShared';
 
-type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
-  cacheKey: string;
-};
-
 type UseInChatTradeActionsArgs = {
   activeContact: string | null;
-  activeSignerSource: string;
   creatingTrade: boolean;
   currentWalletKeyRef: MutableRefObject<string>;
-  getMemoSigner: () => Promise<MemoSignerBundle>;
+  directTradeV2Runtime: DirectTradeV2Runtime | null;
   parsedTradeExpiryHours: number;
   parsedTradeOfferAmountWei: bigint | null;
   parsedTradeRequestAmountWei: bigint | null;
   processingTradeActionId: string;
-  onRequestAccountFunding?: (message: string) => void;
-  preflightDirectMessageSend: (messageText: string, replyTarget?: ChatMessage | null) => boolean;
-  replyingToMessage: ChatMessage | null;
-  runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
-  resolveRequiredFeeForTradeCreate: (escrowContract?: string | null) => Promise<bigint>;
+  requestTradeActionConfirmation: (confirmation: TradeActionConfirmModel) => Promise<boolean>;
   resolveTradeSnapshotForOffer: (offerMessage: TradeOfferMessagePayload) => Promise<TradeSnapshot>;
   selectedTradeOfferToken: ResolvedTradeToken | null;
   selectedTradeRequestToken: ResolvedTradeToken | null;
-  sendMessage: (overrideMessageText?: string, overrideReplyTarget?: ChatMessage | null) => Promise<void>;
   sendingRef: MutableRefObject<boolean>;
   setCreatingTrade: (next: boolean) => void;
   setError: (next: string) => void;
   setProcessingTradeActionId: (next: string) => void;
   setReplyingToMessage: (next: ChatMessage | null) => void;
-  setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
   setTipComposerOpen: (next: boolean) => void;
-  setTopUpMetricsNonce: (next: (previous: number) => number) => void;
+  setWalletBalanceRefreshNonce: (next: (previous: number) => number) => void;
   setTradeComposerOpen: (next: boolean) => void;
   setTradeCounterContext: (next: PendingTradeCounterContext | null) => void;
   setTradeCounterParentId: (next: number | null) => void;
@@ -86,35 +66,88 @@ type UseInChatTradeActionsArgs = {
   walletAddress: string;
 };
 
-const ESTIMATED_DIRECT_TRADE_NOTIFICATION_TRADE_ID = 999_999_999;
+const toDirectTradeV2PublicAsset = (
+  asset: ResolvedTradeToken | TradeAssetPayload
+): DirectTradeV2PublicAsset => {
+  if (asset.kind === 'native') return Object.freeze({ assetType: 'native' as const });
+  if (asset.kind === 'erc20' && asset.tokenAddress) {
+    return Object.freeze({ assetType: 'erc20' as const, token: asset.tokenAddress });
+  }
+  throw new Error('Direct Trade V2 public orders support native COTI and public ERC-20 tokens only.');
+};
+
+const isDirectTradeV2PrivatePair = (
+  offer: ResolvedTradeToken | TradeAssetPayload,
+  request: ResolvedTradeToken | TradeAssetPayload
+): boolean => offer.kind === 'private-erc20' && request.kind === 'private-erc20';
+
+const assertDirectTradeV2Pair = (
+  offer: ResolvedTradeToken | TradeAssetPayload,
+  request: ResolvedTradeToken | TradeAssetPayload
+): void => {
+  const bothPrivate = isDirectTradeV2PrivatePair(offer, request);
+  const bothPublic = offer.kind !== 'private-erc20' && request.kind !== 'private-erc20';
+  if (!bothPrivate && !bothPublic) {
+    throw new Error('Direct Trade V2 does not mix public and private tokens in one direct order.');
+  }
+};
+
+const directTradeApprovalKind = (
+  asset: ResolvedTradeToken | TradeAssetPayload
+): DirectTradeV2ApprovalKind => asset.kind === 'native' ? 'none' : asset.kind;
+
+const formatDirectTradeConfirmAmount = (
+  amount: bigint,
+  asset: ResolvedTradeToken | TradeAssetPayload
+): string => {
+  const decimals = Math.max(0, Math.min(30, Math.floor(asset.decimals)));
+  if (decimals === 0) return `${amount.toString()} ${asset.symbol}`;
+  const base = 10n ** BigInt(decimals);
+  const whole = amount / base;
+  const fraction = (amount % base).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${fraction ? `${whole.toString()}.${fraction}` : whole.toString()} ${asset.symbol}`;
+};
+
+const requestDirectTradeV2Confirmation = ({
+  action,
+  approvalAsset,
+  privateTerms,
+  requestConfirmation,
+  summaryRows
+}: {
+  action: DirectTradeV2ConfirmationAction;
+  approvalAsset?: ResolvedTradeToken | TradeAssetPayload;
+  privateTerms: boolean;
+  requestConfirmation: (confirmation: TradeActionConfirmModel) => Promise<boolean>;
+  summaryRows: TradeActionConfirmSummaryRow[];
+}): Promise<boolean> => requestConfirmation(buildDirectTradeV2ActionConfirmation({
+  action,
+  approvalKind: approvalAsset ? directTradeApprovalKind(approvalAsset) : 'none',
+  approvalSymbol: approvalAsset?.symbol,
+  privateTerms,
+  summaryRows
+}));
 
 export default function useInChatTradeActions({
   activeContact,
-  activeSignerSource,
   creatingTrade,
   currentWalletKeyRef,
-  getMemoSigner,
+  directTradeV2Runtime,
   parsedTradeExpiryHours,
   parsedTradeOfferAmountWei,
   parsedTradeRequestAmountWei,
   processingTradeActionId,
-  onRequestAccountFunding,
-  preflightDirectMessageSend,
-  replyingToMessage,
-  runWalletTransactionFlow,
-  resolveRequiredFeeForTradeCreate,
+  requestTradeActionConfirmation,
   resolveTradeSnapshotForOffer,
   selectedTradeOfferToken,
   selectedTradeRequestToken,
-  sendMessage,
   sendingRef,
   setCreatingTrade,
   setError,
   setProcessingTradeActionId,
   setReplyingToMessage,
-  setSessionOnboardInfo,
   setTipComposerOpen,
-  setTopUpMetricsNonce,
+  setWalletBalanceRefreshNonce,
   setTradeComposerOpen,
   setTradeCounterContext,
   setTradeCounterParentId,
@@ -133,7 +166,18 @@ export default function useInChatTradeActions({
   tradeCounterParentId,
   walletAddress
 }: UseInChatTradeActionsArgs) {
-  const createTradeOffer = async (overrideReplyTarget?: ChatMessage | null) => {
+  const runtimeForOffer = async (offer: TradeOfferMessagePayload, message: ChatMessage) => {
+    const identity = message.directTradeV2;
+    if (!identity) throw new Error('Legacy direct offers are read-only. Create a new Direct V2 offer instead.');
+    if (identity.contractAddress.toLowerCase() !== offer.escrowContract.toLowerCase() || identity.tradeId !== String(offer.tradeId)) {
+      throw new Error('Direct V2 card reference does not match this offer.');
+    }
+    return resolveDirectTradeV2RuntimeReference(directTradeV2Runtime, {
+      chainId: identity.chainId, contractAddress: identity.contractAddress, orderId: identity.tradeId
+    });
+  };
+
+  const createTradeOffer = async (_overrideReplyTarget?: ChatMessage | null) => {
     setError('');
 
     if (sendingRef.current || tipping || creatingTrade) {
@@ -168,137 +212,117 @@ export default function useInChatTradeActions({
       return;
     }
 
-    const directAccessSecret = createTradeAccessSecret();
-    const estimatedCreatedAt = Math.floor(Date.now() / 1000);
-    const estimatedTradeMessagePayload = buildTradeOfferMessagePayload({
-      version: 2,
-      tradeId: ESTIMATED_DIRECT_TRADE_NOTIFICATION_TRADE_ID,
-      escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
-      maker: requestedWalletAddress,
-      taker: activeContact,
-      createdAt: estimatedCreatedAt,
-      expiresAt: estimatedCreatedAt + parsedTradeExpiryHours * 3600,
-      parentTradeId: tradeCounterParentId ?? undefined,
-      accessSecret: directAccessSecret || undefined
-    });
-    if (!preflightDirectMessageSend(estimatedTradeMessagePayload, overrideReplyTarget ?? replyingToMessage)) {
+    let directV2 = directTradeV2Runtime?.isCurrent() ? directTradeV2Runtime : null;
+    if (!directV2) {
+      setError('Direct Trade V2 is unavailable. No legacy trade or chat transaction was sent.');
       return;
     }
-
     try {
       setCreatingTrade(true);
+      let counteredSnapshot: TradeSnapshot | null = null;
       if (pendingCounterContext) {
+        directV2 = await runtimeForOffer(pendingCounterContext.offer, pendingCounterContext.sourceMessage);
         setProcessingTradeActionId(
           buildTradeSnapshotKey(pendingCounterContext.offer.tradeId, pendingCounterContext.offer.escrowContract)
         );
-      }
-      await runWalletTransactionFlow(async () => {
-      const { signer, cacheKey } = await getMemoSigner();
-      const nativeFeeWei = await resolveRequiredFeeForTradeCreate(DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS);
-      let counteredSnapshot: TradeSnapshot | null = null;
-
-      if (pendingCounterContext) {
-        const parentSnapshot = await resolveTradeSnapshotForOffer(pendingCounterContext.offer);
-        counteredSnapshot = parentSnapshot;
-        const counterUnavailableReason = getCounterOfferUnavailableReason(parentSnapshot, requestedWalletKey);
-        if (counterUnavailableReason) {
-          throw new Error(counterUnavailableReason);
-        }
-        const isParentMaker = pendingCounterContext.offer.maker.toLowerCase() === requestedWalletKey;
-        const isParentTaker = pendingCounterContext.offer.taker.toLowerCase() === requestedWalletKey;
-
-        if (!isParentMaker && !isParentTaker) {
-          throw new Error('You are no longer a participant in the original trade.');
-        }
-
-        const counterOnboardInfo = signer.getUserOnboardInfo();
-        setSessionOnboardInfo((previous) => ({
-          ...previous,
-          [cacheKey]: mergeOnboardInfo(previous[cacheKey], counterOnboardInfo)
-        }));
+        counteredSnapshot = await resolveTradeSnapshotForOffer(pendingCounterContext.offer);
+        const counterUnavailableReason = getCounterOfferUnavailableReason(counteredSnapshot, requestedWalletKey);
+        if (counterUnavailableReason) throw new Error(counterUnavailableReason);
       }
 
+      assertDirectTradeV2Pair(selectedTradeOfferToken, selectedTradeRequestToken);
       const expiresAt = Math.floor(Date.now() / 1000) + parsedTradeExpiryHours * 3600;
-      const isCounterReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
-      const publicOfferAmount = parsedTradeOfferAmountWei;
-      const createResult =
-        isCounterReplacement && counteredSnapshot
-          ? await counterTradeAndCloseCounteredTradeOnChain({
-              signer,
-              makerAddress: requestedWalletAddress,
-              counteredTradeId: counteredSnapshot.tradeId,
-              offerAsset: selectedTradeOfferToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: selectedTradeRequestToken,
-              requestAmountWei: parsedTradeRequestAmountWei,
-              expiresAt,
-              nativeFeeWei,
-              directAccessSecret: directAccessSecret || undefined,
-              counterTakerAddress: counteredSnapshot.maker,
-              counteredEscrowContract: counteredSnapshot.escrowContract,
-              parentEscrowContract: counteredSnapshot.counterParentEscrow ?? counteredSnapshot.escrowContract,
-              parentTradeId: counteredSnapshot.counterParentTradeId
-            })
-          : await createTradeOnChain({
-              signer,
-              makerAddress: requestedWalletAddress,
-              takerAddress: activeContact,
-              offerAsset: selectedTradeOfferToken,
-              offerAmountWei: publicOfferAmount,
-              requestAsset: selectedTradeRequestToken,
-              requestAmountWei: parsedTradeRequestAmountWei,
-              expiresAt,
-              nativeFeeWei,
-              parentTradeId: tradeCounterParentId ?? undefined,
-              directAccessSecret: directAccessSecret || undefined,
-              parentEscrowContract: counteredSnapshot?.escrowContract
-            });
-      const tradeId = createResult.tradeId;
-      const tradeKey = buildTradeSnapshotKey(tradeId, createResult.escrowContract);
+      const isPrivate = isDirectTradeV2PrivatePair(selectedTradeOfferToken, selectedTradeRequestToken);
+      const isReplacement = Boolean(counteredSnapshot?.counterParentTradeId);
+      let action: DirectTradeV2Action;
+      if (isPrivate) {
+        if (!selectedTradeOfferToken.tokenAddress || !selectedTradeRequestToken.tokenAddress) {
+          throw new Error('Direct private token addresses are unavailable.');
+        }
+        const privateTerms = {
+          offerToken: selectedTradeOfferToken.tokenAddress,
+          requestToken: selectedTradeRequestToken.tokenAddress,
+          offerAmount: parsedTradeOfferAmountWei,
+          requestAmount: parsedTradeRequestAmountWei,
+          expiresAt
+        } as const;
+        action = isReplacement && counteredSnapshot
+          ? { kind: 'replace-private', originalTradeId: counteredSnapshot.tradeId, ...privateTerms }
+          : tradeCounterParentId
+            ? { kind: 'counter-private', parentTradeId: tradeCounterParentId, ...privateTerms }
+            : { kind: 'create-private', taker: activeContact, ...privateTerms };
+      } else {
+        const publicTerms = {
+          offerAsset: toDirectTradeV2PublicAsset(selectedTradeOfferToken),
+          requestAsset: toDirectTradeV2PublicAsset(selectedTradeRequestToken),
+          offerAmount: parsedTradeOfferAmountWei,
+          requestAmount: parsedTradeRequestAmountWei,
+          expiresAt
+        } as const;
+        action = isReplacement && counteredSnapshot
+          ? { kind: 'replace-public', originalTradeId: counteredSnapshot.tradeId, ...publicTerms }
+          : tradeCounterParentId
+            ? { kind: 'counter-public', parentTradeId: tradeCounterParentId, ...publicTerms }
+            : { kind: 'create-public', taker: activeContact, ...publicTerms };
+      }
 
+      const confirmationAction: DirectTradeV2ConfirmationAction = action.kind.startsWith('replace')
+        ? 'replace'
+        : action.kind.startsWith('counter')
+          ? 'counter'
+          : 'create';
+      const confirmed = await requestDirectTradeV2Confirmation({
+        action: confirmationAction,
+        approvalAsset: selectedTradeOfferToken,
+        privateTerms: isPrivate,
+        requestConfirmation: requestTradeActionConfirmation,
+        summaryRows: [
+          {
+            label: 'You sell',
+            value: formatDirectTradeConfirmAmount(parsedTradeOfferAmountWei, selectedTradeOfferToken)
+          },
+          {
+            label: 'You buy',
+            value: formatDirectTradeConfirmAmount(parsedTradeRequestAmountWei, selectedTradeRequestToken)
+          },
+          { label: 'Recipient', value: activeContact }
+        ]
+      });
+      if (!confirmed) return;
+
+      const result = await directV2.execute(action);
+      if (!directV2.isCurrent() || currentWalletKeyRef.current !== requestedWalletKey || !result.tradeId) return;
+      const tradeId = Number(BigInt(result.tradeId));
+      if (!Number.isSafeInteger(tradeId) || tradeId <= 0) {
+        throw new Error('Direct Trade V2 returned an unsupported trade ID.');
+      }
+      const tradeKey = buildTradeSnapshotKey(tradeId, directV2.contractAddress);
+      const escrowContract = directV2.contractAddress;
       const createdAt = Math.floor(Date.now() / 1000);
-      const tradeMessagePayload: TradeOfferMessagePayload = {
-        version: 2,
-        tradeId,
-        escrowContract: createResult.escrowContract,
-        maker: requestedWalletAddress,
-        taker: activeContact,
-        createdAt,
-        expiresAt,
-        parentTradeId: tradeCounterParentId ?? undefined,
-        accessSecret: directAccessSecret || undefined
-      };
-
       setTradeSnapshotsById((previous) => ({
         ...previous,
-        ...(isCounterReplacement && counteredSnapshot
-          ? {
-              [buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)]: {
-                ...(previous[buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)] ??
-                  counteredSnapshot),
-                status: 'declined' as const
-              }
-            }
-          : {}),
+        ...(counteredSnapshot ? {
+          [buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)]: {
+            ...(previous[buildTradeSnapshotKey(counteredSnapshot.tradeId, counteredSnapshot.escrowContract)] ?? counteredSnapshot),
+            status: isReplacement ? 'replaced' as const : 'superseded' as const,
+            ...(isReplacement ? { replacementTradeId: tradeId } : {})
+          }
+        } : {}),
         [tradeKey]: {
           tradeId,
-          escrowContract: createResult.escrowContract,
+          escrowContract,
           maker: requestedWalletAddress,
           taker: activeContact,
-          offer: {
-            ...selectedTradeOfferToken,
-            amount: publicOfferAmount.toString()
-          },
-          request: {
-            ...selectedTradeRequestToken,
-            amount: parsedTradeRequestAmountWei.toString()
-          },
+          offer: { ...selectedTradeOfferToken, amount: parsedTradeOfferAmountWei.toString() },
+          request: { ...selectedTradeRequestToken, amount: parsedTradeRequestAmountWei.toString() },
           createdAt,
           expiresAt,
           status: 'open',
           parentTradeId: tradeCounterParentId ?? undefined,
-          counterParentEscrow: counteredSnapshot?.escrowContract,
+          counterParentEscrow: tradeCounterParentId ? escrowContract : undefined,
           counterParentTradeId: tradeCounterParentId ?? undefined,
+          replacesTradeId: isReplacement ? counteredSnapshot?.tradeId : undefined,
+          hiddenLiquidity: isPrivate,
           fillState: {
             remainingOfferAmount: parsedTradeOfferAmountWei.toString(),
             remainingRequestAmount: parsedTradeRequestAmountWei.toString(),
@@ -307,18 +331,7 @@ export default function useInChatTradeActions({
           }
         }
       }));
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-
-      setTopUpMetricsNonce((previous) => previous + 1);
+      setWalletBalanceRefreshNonce((previous) => previous + 1);
       setTradeOfferAmountInput('');
       setTradeRequestAmountInput('');
       setTradeExpiryHoursInput(DEFAULT_TRADE_EXPIRY_HOURS);
@@ -326,28 +339,17 @@ export default function useInChatTradeActions({
       setTradeCounterParentId(null);
       setTradeCounterContext(null);
       setTradeComposerOpen(false);
-      await sendMessage(buildTradeOfferMessagePayload(tradeMessagePayload), overrideReplyTarget ?? replyingToMessage);
-      });
+      setReplyingToMessage(null);
+      return;
     } catch (tradeError) {
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
-        return;
-      }
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to create trade offer.');
-      setError(message);
-      if (activeSignerSource === 'burner' && hasInsufficientFundsError(message)) {
-        onRequestAccountFunding?.(message);
-      }
+      if (currentWalletKeyRef.current !== requestedWalletKey) return;
+      setError(getOnChainFailureMessage(tradeError, 'Failed to create the Direct V2 trade offer.'));
+      return;
     } finally {
       setCreatingTrade(false);
-      if (pendingCounterContext) {
-        setProcessingTradeActionId('');
-      }
+      if (pendingCounterContext) setProcessingTradeActionId('');
     }
   };
-
   const acceptTradeOffer = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
     setError('');
 
@@ -358,103 +360,61 @@ export default function useInChatTradeActions({
     try {
       const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
       setProcessingTradeActionId(tradeKey);
-      await runWalletTransactionFlow(async () => {
+      const directV2 = await runtimeForOffer(offer, sourceMessage);
       const snapshot = await resolveTradeSnapshotForOffer(offer);
-      if (snapshot.hiddenLiquidity) {
-        throw new Error('Open the shared OTC trade link to fill private orders.');
-      }
-      const remainingRequestAmount = (() => {
-        try {
-          return BigInt(snapshot.fillState?.remainingRequestAmount ?? snapshot.request.amount);
-        } catch {
-          return BigInt(snapshot.request.amount);
-        }
-      })();
-      const requestAsset = {
-        ...snapshot.request,
-        amount: remainingRequestAmount.toString()
-      };
-      const { signer, cacheKey } = await getMemoSigner();
-      const directWalletAuthority = canUseWalletAuthorityForDirectAccess(snapshot, walletAddress);
-      const acceptResult = snapshot.counterParentTradeId
-        ? await acceptCounterTradeAndCloseParentOnChain({
-            signer,
-            ownerAddress: walletAddress,
-            tradeId: offer.tradeId,
-            requestAsset,
-            requestAmountWei: remainingRequestAmount,
-            escrowContract: snapshot.escrowContract,
-            accessSecret: offer.accessSecret,
-            useDirectWalletAuthority: directWalletAuthority
-          })
-        : offer.accessSecret
-          ? await fillPrivateFixedPriceTradeOnChain({
-              signer,
-              ownerAddress: walletAddress,
+        assertDirectTradeV2Pair(snapshot.offer, snapshot.request);
+        const remainingOfferAmount = BigInt(
+          snapshot.fillState?.remainingOfferAmount ?? snapshot.offer.amount
+        );
+        const remainingRequestAmount = BigInt(
+          snapshot.fillState?.remainingRequestAmount ?? snapshot.request.amount
+        );
+        const action: DirectTradeV2Action = isDirectTradeV2PrivatePair(snapshot.offer, snapshot.request)
+          ? {
+              kind: 'accept-private',
               tradeId: offer.tradeId,
-              requestAsset,
-              requestAmountWei: remainingRequestAmount,
-              escrowContract: snapshot.escrowContract,
-              accessSecret: offer.accessSecret,
-              useDirectWalletAuthority: directWalletAuthority
-            })
-          : await acceptTradeOnChain({
-              signer,
-              ownerAddress: walletAddress,
+              expectedRequestAmount: remainingRequestAmount,
+              requestToken: snapshot.request.tokenAddress ?? ''
+            }
+          : {
+              kind: 'accept-public',
               tradeId: offer.tradeId,
-              requestAsset,
-              requestAmountWei: remainingRequestAmount,
-              accessSecret: offer.accessSecret
-            });
-      const acceptedTxHash =
-        (acceptResult as { acceptedTxHash?: string }).acceptedTxHash ??
-        (acceptResult as { filledTxHash?: string }).filledTxHash;
-
-      setTradeSnapshotsById((previous) => {
-        const next = {
-          ...previous,
-          [tradeKey]: {
-            ...(previous[tradeKey] ?? snapshot),
-            status: 'accepted' as const,
-            acceptedTxHash
-          }
-        };
-        const parentSnapshot = snapshot.counterParentTradeId
-          ? previous[buildTradeSnapshotKey(snapshot.counterParentTradeId, snapshot.escrowContract)]
-          : undefined;
-        if (snapshot.counterParentTradeId && parentSnapshot) {
-          next[buildTradeSnapshotKey(snapshot.counterParentTradeId, parentSnapshot.escrowContract ?? snapshot.escrowContract)] = {
-            ...parentSnapshot,
-            status: 'cancelled'
-          };
-        }
-        return next;
-      });
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
+              expectedOfferAmount: remainingOfferAmount,
+              expectedRequestAmount: remainingRequestAmount,
+              requestAsset: toDirectTradeV2PublicAsset(snapshot.request)
+            };
+        const privateTerms = isDirectTradeV2PrivatePair(snapshot.offer, snapshot.request);
+        const confirmed = await requestDirectTradeV2Confirmation({
+          action: 'accept',
+          approvalAsset: snapshot.request,
+          privateTerms,
+          requestConfirmation: requestTradeActionConfirmation,
+          summaryRows: [
+            { label: 'Offer', value: `#${offer.tradeId}` },
+            {
+              label: 'You pay',
+              value: formatDirectTradeConfirmAmount(remainingRequestAmount, snapshot.request)
+            },
+            {
+              label: 'You receive',
+              value: formatDirectTradeConfirmAmount(remainingOfferAmount, snapshot.offer)
+            }
+          ]
+        });
+        if (!confirmed) return;
+      const result = await directV2.execute(action);
+      if (!directV2.isCurrent()) return;
+      setTradeSnapshotsById((previous) => ({
         ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
+        [tradeKey]: {
+          ...(previous[tradeKey] ?? snapshot),
+          status: 'accepted',
+          acceptedTxHash: result.transactionHash
+        }
       }));
-
-      await sendMessage(
-        buildTradeResponseMessagePayload({
-          version: 1,
-          tradeId: offer.tradeId,
-          escrowContract: offer.escrowContract,
-          action: 'accepted',
-          actor: walletAddress,
-          createdAt: Math.floor(Date.now() / 1000)
-        }),
-        sourceMessage
-      );
-      });
+      setWalletBalanceRefreshNonce((previous) => previous + 1);
     } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to accept trade.');
+      const message = getOnChainFailureMessage(tradeError, 'Failed to accept trade.');
       setError(message);
     } finally {
       setProcessingTradeActionId('');
@@ -471,47 +431,24 @@ export default function useInChatTradeActions({
     try {
       const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
       setProcessingTradeActionId(tradeKey);
-      await runWalletTransactionFlow(async () => {
+      const directV2 = await runtimeForOffer(offer, sourceMessage);
       const snapshot = await resolveTradeSnapshotForOffer(offer);
-      const { signer, cacheKey } = await getMemoSigner();
-      await declineTradeOnChain({
-        signer,
-        tradeId: offer.tradeId,
-        escrowContract: snapshot.escrowContract
-      });
-
+        const confirmed = await requestDirectTradeV2Confirmation({
+          action: 'decline',
+          privateTerms: isDirectTradeV2PrivatePair(snapshot.offer, snapshot.request),
+          requestConfirmation: requestTradeActionConfirmation,
+          summaryRows: [{ label: 'Offer', value: `#${offer.tradeId}` }]
+        });
+        if (!confirmed) return;
+      await directV2.execute({ kind: 'decline', tradeId: offer.tradeId });
+      if (!directV2.isCurrent()) return;
       setTradeSnapshotsById((previous) => ({
         ...previous,
-        [tradeKey]: {
-          ...(previous[tradeKey] ?? snapshot),
-          status: 'declined'
-        }
+        [tradeKey]: { ...(previous[tradeKey] ?? snapshot), status: 'declined' }
       }));
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await sendMessage(
-        buildTradeResponseMessagePayload({
-          version: 1,
-          tradeId: offer.tradeId,
-          escrowContract: offer.escrowContract,
-          action: 'declined',
-          actor: walletAddress,
-          createdAt: Math.floor(Date.now() / 1000)
-        }),
-        sourceMessage
-      );
-      });
+      setWalletBalanceRefreshNonce((previous) => previous + 1);
     } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to refuse trade.');
+      const message = getOnChainFailureMessage(tradeError, 'Failed to refuse trade.');
       setError(message);
     } finally {
       setProcessingTradeActionId('');
@@ -528,54 +465,42 @@ export default function useInChatTradeActions({
     try {
       const tradeKey = buildTradeSnapshotKey(offer.tradeId, offer.escrowContract);
       setProcessingTradeActionId(tradeKey);
-      await runWalletTransactionFlow(async () => {
+      const directV2 = await runtimeForOffer(offer, sourceMessage);
       const snapshot = await resolveTradeSnapshotForOffer(offer);
-      const { signer, cacheKey } = await getMemoSigner();
-      await cancelTradeOnChain({
-        signer,
-        tradeId: offer.tradeId,
-        escrowContract: snapshot.escrowContract
-      });
-
+        const confirmed = await requestDirectTradeV2Confirmation({
+          action: 'cancel',
+          privateTerms: isDirectTradeV2PrivatePair(snapshot.offer, snapshot.request),
+          requestConfirmation: requestTradeActionConfirmation,
+          summaryRows: [{ label: 'Offer', value: `#${offer.tradeId}` }]
+        });
+        if (!confirmed) return;
+      await directV2.execute({ kind: 'cancel', tradeId: offer.tradeId });
+      if (!directV2.isCurrent()) return;
       setTradeSnapshotsById((previous) => ({
         ...previous,
-        [tradeKey]: {
-          ...(previous[tradeKey] ?? snapshot),
-          status: 'cancelled'
-        }
+        [tradeKey]: { ...(previous[tradeKey] ?? snapshot), status: 'cancelled' }
       }));
-      setTopUpMetricsNonce((previous) => previous + 1);
-
-      const nextOnboardInfo = signer.getUserOnboardInfo();
-      setSessionOnboardInfo((previous) => ({
-        ...previous,
-        [cacheKey]: mergeOnboardInfo(previous[cacheKey], nextOnboardInfo)
-      }));
-
-      await sendMessage(
-        buildTradeResponseMessagePayload({
-          version: 1,
-          tradeId: offer.tradeId,
-          escrowContract: offer.escrowContract,
-          action: 'cancelled',
-          actor: walletAddress,
-          createdAt: Math.floor(Date.now() / 1000)
-        }),
-        sourceMessage
-      );
-      });
+      setWalletBalanceRefreshNonce((previous) => previous + 1);
     } catch (tradeError) {
-      const message =
-        tradeError instanceof Error
-          ? getOnChainFailureMessage(tradeError, tradeError.message)
-          : getOnChainFailureMessage(tradeError, 'Failed to cancel trade.');
+      const message = getOnChainFailureMessage(tradeError, 'Failed to cancel trade.');
       setError(message);
     } finally {
       setProcessingTradeActionId('');
     }
   };
 
-  const prepareCounterTrade = async (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => {
+  const prepareCounterTrade = async (
+    offer: TradeOfferMessagePayload,
+    sourceMessage: ChatMessage,
+    isTargetCurrent: () => boolean = () => true
+  ): Promise<void> => {
+    try {
+      await runtimeForOffer(offer, sourceMessage);
+    } catch (error) {
+      setError(getOnChainFailureMessage(error, 'Direct V2 offer is unavailable.'));
+      return;
+    }
+
     const applyAssetSelection = (
       asset: TradeAssetPayload,
       onSelectionChange: (value: TradeTokenPresetKey) => void,
@@ -604,6 +529,9 @@ export default function useInChatTradeActions({
     };
 
     const snapshot = await resolveTradeSnapshotForOffer(offer);
+    if (!isTargetCurrent()) {
+      return;
+    }
     const counterUnavailableReason = getCounterOfferUnavailableReason(
       snapshot,
       currentWalletKeyRef.current.toLowerCase()

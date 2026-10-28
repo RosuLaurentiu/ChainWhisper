@@ -229,23 +229,29 @@ export default function useOtcSwapReviewState({
     },
     [activeTerminalSwapIntentRef, buildSwapQuoteIntent]
   );
+  const openSwapQuoteInTerminal = useCallback((quote: OtcSwapQuoteCandidate) => {
+    rememberSwapQuoteIntent(quote);
+    lastAppliedSwapPinnedTradeKeyRef.current = '';
+    setSwapPinnedTradeKey(getSnapshotKey(quote.trade));
+    openTradeSnapshot(quote.trade);
+  }, [
+    lastAppliedSwapPinnedTradeKeyRef,
+    openTradeSnapshot,
+    rememberSwapQuoteIntent,
+    setSwapPinnedTradeKey
+  ]);
   const openSwapCurrentOrderInTerminal = useCallback(() => {
     const quote = swapBestQuote;
     if (quote) {
-      rememberSwapQuoteIntent(quote);
-      lastAppliedSwapPinnedTradeKeyRef.current = '';
-      setSwapPinnedTradeKey(getSnapshotKey(quote.trade));
-      openTradeSnapshot(quote.trade);
+      openSwapQuoteInTerminal(quote);
       return;
     }
     if (swapPinnedTrade) {
       openTradeSnapshot(swapPinnedTrade);
     }
   }, [
-    lastAppliedSwapPinnedTradeKeyRef,
     openTradeSnapshot,
-    rememberSwapQuoteIntent,
-    setSwapPinnedTradeKey,
+    openSwapQuoteInTerminal,
     swapBestQuote,
     swapPinnedTrade
   ]);
@@ -330,6 +336,7 @@ export default function useOtcSwapReviewState({
     executeSwapQuote,
     formatSwapAvailability,
     openSwapCurrentOrderInTerminal,
+    openSwapQuoteInTerminal,
     swapBuyVerifyUrl,
     swapCarbonReference,
     swapCarbonReferenceContext,

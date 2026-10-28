@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { TradeSnapshot } from './appShared';
 import {
@@ -25,6 +26,8 @@ import {
 import { loadCotiEthersModule } from './appShared';
 import {
   __buildRecurringOrderSnapshotFromViewForTest,
+  __decodeSuccessorAggregateOwnerTermsForTest,
+  __decodeSuccessorRecurringOwnerTermsForTest,
   __getIndexedResultValueForTest,
   __mapPrivateOrderFilledLogsToReceiptsForTest,
   __mergeWalletTradeSnapshotsForTest,
@@ -40,13 +43,193 @@ import {
   isDirectTradeEscrowConfigured,
   resolvePrivateTokenAllowanceWritePlan,
   resolvePrivateTokenSpendReadiness,
+  revealSuccessorAggregateOrRecurringPositionTerms,
   resolveOtcFeeEscrowContractConfig,
+  successorDexAdmissionAvailable,
+  successorDexPositionFamilyForKind,
   resolveTradingContractAddressesFromRegistryValue,
   resolveTradeEscrowContractConfig
 } from './appChain';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
+
+describe('successor Position NFT public identity', () => {
+  it('maps all five authority strategy kinds without using seed metadata', () => {
+    expect([1, 2, 3, 4, 5].map(successorDexPositionFamilyForKind)).toEqual([
+      'Aggregate', 'Fixed', 'Range', 'Recurring', 'Recurring'
+    ]);
+    expect(() => successorDexPositionFamilyForKind(0)).toThrow(/invalid strategy kind/);
+    expect(() => successorDexPositionFamilyForKind(6)).toThrow(/invalid strategy kind/);
+  });
+});
+
+describe('successor owner-private position terms', () => {
+  it('uses only the owner authority endpoint for Recurring terms', () => {
+    const source = readFileSync(new URL('./appChain.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain('SUCCESSOR_DEX_RECURRING_HOST_ABI');
+    expect(source).not.toContain('function getPositionCiphertexts(uint256 positionId)');
+    const revealStart = source.indexOf('export const revealSuccessorAggregateOrRecurringPositionTerms');
+    const revealEnd = source.indexOf('export type SuccessorDexAdmissionCapacity', revealStart);
+    const revealSource = source.slice(revealStart, revealEnd);
+    expect(revealSource).toContain("getFunction('reencryptMyPositionTerms')");
+    expect(revealSource.indexOf('if (!aesKey)')).toBeLessThan(
+      revealSource.indexOf("getFunction('reencryptMyPositionTerms')")
+    );
+  });
+
+  it('does not request or decode owner terms without an AES key', async () => {
+    let addressReads = 0;
+    const signer = {
+      getAddress: async () => {
+        addressReads += 1;
+        return '0x0000000000000000000000000000000000000001';
+      },
+      getUserOnboardInfo: () => ({})
+    };
+    await expect(revealSuccessorAggregateOrRecurringPositionTerms({
+      manifest: {
+        contracts: {
+          'work-authority': { address: '0x0000000000000000000000000000000000000002' }
+        }
+      } as never,
+      position: {
+        family: 'Aggregate',
+        kind: 1,
+        owner: '0x0000000000000000000000000000000000000001',
+        ownershipRevision: 1,
+        positionId: '7'
+      },
+      signer: signer as never
+    })).rejects.toThrow('Unlock privacy');
+    expect(addressReads).toBe(0);
+  });
+
+  it('maps all Aggregate and Recurring owner ciphertext fields in canonical order', async () => {
+    const cotiEthers = await loadCotiEthersModule();
+    const coder = cotiEthers.AbiCoder.defaultAbiCoder();
+    const aggregateCiphertexts = [
+      11n, 12n, 13n,
+      14n, 15n, 16n, 17n,
+      1n, 18n, 19n, 20n, 1_001_499n,
+      21n, 22n, 23n, 24n,
+      9_000_000_000n, 9_100_000_000n
+    ];
+    const aggregateEncoded = coder.encode([
+      'tuple(uint256[18] userCiphertexts,uint64 revision,uint64 actionCount)'
+    ], [[aggregateCiphertexts, 3n, 4n]]);
+    expect(__decodeSuccessorAggregateOwnerTermsForTest({
+      decrypt: (value) => value,
+      encoded: aggregateEncoded,
+      positionId: '41'
+    })).toEqual({
+      accrued0: 14n,
+      accrued1: 15n,
+      accrued2: 16n,
+      accrued3: 17n,
+      actionCount: 4,
+      currentMidpointQ: 9_100_000_000n,
+      family: 'Aggregate',
+      laneMode: 1,
+      maxInventory0Lots: 22n,
+      maxInventory1Lots: 24n,
+      minInventory0Lots: 21n,
+      minInventory1Lots: 23n,
+      positionId: '41',
+      principal0Lots: 11n,
+      principal1Lots: 12n,
+      revision: 3,
+      spreadFactorPpm: 1_001_499n,
+      startingMidpointQ: 9_000_000_000n,
+      targetLots: 18n,
+      totalMemberShares: 13n,
+      virtual0Lots: 19n,
+      virtual1Lots: 20n
+    });
+
+    const recurringCiphertexts = [
+      0n, 1n,
+      100_000_000n, 200_000_000n,
+      150_000_000n, 250_000_000n,
+      30n, 40n, 5n, 6n, 7n, 8n, 9n, 10n,
+      11n, 12n, 1n, 0n, 13n, 14n, 15n, 16n, 17n
+    ];
+    const recurringEncoded = coder.encode([
+      'tuple(uint256[23] userCiphertexts,uint64 revision,uint64 actionCount,uint64 runCount,uint8 recurringClass,bool paused)'
+    ], [[recurringCiphertexts, 8n, 9n, 10n, 2n, true]]);
+    expect(__decodeSuccessorRecurringOwnerTermsForTest({
+      decrypt: (value) => value,
+      encoded: recurringEncoded,
+      positionId: '42'
+    })).toEqual({
+      actionCount: 9,
+      activationOutput0Lots: 30n,
+      activationOutput1Lots: 40n,
+      activeIndex: 1,
+      cooldownActions: 13n,
+      cycleCount: 15n,
+      cycleLimit: 14n,
+      endPrice0Q: 150_000_000n,
+      endPrice1Q: 250_000_000n,
+      family: 'Recurring',
+      inventory0Lots: 11n,
+      inventory1Lots: 12n,
+      lastSwitchRun: 17n,
+      minimumOutput0Lots: 5n,
+      minimumOutput1Lots: 6n,
+      nextMinimumInventory0Lots: 9n,
+      nextMinimumInventory1Lots: 10n,
+      originIndex: 0,
+      paused: true,
+      positionId: '42',
+      recurringClass: 'RR',
+      revision: 8,
+      runCount: 10,
+      side0: 0,
+      side1: 1,
+      startPrice0Q: 100_000_000n,
+      startPrice1Q: 200_000_000n,
+      threshold0Lots: 7n,
+      threshold1Lots: 8n,
+      transitionCount: 16n
+    });
+  });
+});
+
+describe('successor strategy admission capacity', () => {
+  it('uses the corrected live adapter result and fails closed when it is absent', () => {
+    const snapshot = {
+      admissionCapacityByPair: {
+        'BCN/HBR': {
+          Aggregate: {
+            adapterAddress: '0x0000000000000000000000000000000000000001',
+            available: true,
+            bridgeAddress: '0x0000000000000000000000000000000000000002',
+            capacityModel: 'multi-position-count',
+            currentPositionCount: '7',
+            occupiedPositionId: null,
+            remainingCapacity: 'unbounded-by-adapter',
+            sourceId: 1
+          },
+          Fixed: {
+            adapterAddress: '0x0000000000000000000000000000000000000003',
+            available: false,
+            bridgeAddress: '0x0000000000000000000000000000000000000004',
+            capacityModel: 'reusable-single-active-slot',
+            currentPositionCount: '1',
+            occupiedPositionId: '9',
+            remainingCapacity: '0',
+            sourceId: 2
+          }
+        }
+      }
+    } satisfies Parameters<typeof successorDexAdmissionAvailable>[0];
+    expect(successorDexAdmissionAvailable(snapshot, 'BCN/HBR', 'Aggregate')).toBe(true);
+    expect(successorDexAdmissionAvailable(snapshot, 'BCN/HBR', 'Fixed')).toBe(false);
+    expect(successorDexAdmissionAvailable(snapshot, 'BCN/HBR', 'Range')).toBe(false);
+    expect(successorDexAdmissionAvailable(snapshot, 'HBR/EMBR', 'Aggregate')).toBe(false);
+  });
+});
 
 describe('trade escrow contract resolution', () => {
   it('keeps the current V1 OTC and hidden-size private-order contracts active', () => {
@@ -606,13 +789,13 @@ describe('private limit fill history fallbacks', () => {
       [
         {
           args: [8n, otherFiller],
-          blockNumber: 3,
+          blockNumber: 2,
           index: 0,
           transactionHash: '0xother'
         },
         {
           args: [8n, filler],
-          blockNumber: 2,
+          blockNumber: 3,
           index: 4,
           transactionHash: '0xsecond'
         },
@@ -636,9 +819,9 @@ describe('private limit fill history fallbacks', () => {
         txHash: '0xfirst'
       },
       {
-        fillIndex: 2,
+        fillIndex: 3,
         filler,
-        blockNumber: 2,
+        blockNumber: 3,
         txHash: '0xsecond'
       }
     ]);

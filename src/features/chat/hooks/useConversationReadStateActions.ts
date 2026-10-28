@@ -10,6 +10,8 @@ import type { StateUpdate } from '../../../shared/state/storeUtils';
 type UseConversationReadStateActionsArgs = {
   activeContact: string | null;
   activeGroupId: number | null;
+  directChatV2Enabled: boolean;
+  groupChatV2Enabled: boolean;
   groups: GroupSummary[];
   groupsRef: MutableRefObject<GroupSummary[]>;
   lastReadAllTsRef: MutableRefObject<number>;
@@ -47,9 +49,37 @@ const latestIncomingTimestamp = (messages: ChatMessage[]): number => {
   return latest;
 };
 
+export const shouldUseLegacyConversationReadState = (
+  readStateFeaturesEnabled: boolean,
+  v2Enabled: boolean
+): boolean => readStateFeaturesEnabled && !v2Enabled;
+
+export const selectLegacyUnreadTargets = ({
+  directChatV2Enabled,
+  groupChatV2Enabled,
+  unreadContacts,
+  unreadGroups
+}: {
+  directChatV2Enabled: boolean;
+  groupChatV2Enabled: boolean;
+  unreadContacts: Record<string, boolean>;
+  unreadGroups: Record<string, boolean>;
+}): Readonly<{ addresses: string[]; groupKeys: string[] }> => ({
+  addresses: directChatV2Enabled
+    ? []
+    : Object.keys(unreadContacts).filter((address) => isWalletAddress(address)),
+  groupKeys: groupChatV2Enabled
+    ? []
+    : Object.keys(unreadGroups).filter(
+      (groupKey) => Number.isFinite(Number(groupKey)) && Number(groupKey) > 0
+    )
+});
+
 export default function useConversationReadStateActions({
   activeContact,
   activeGroupId,
+  directChatV2Enabled,
+  groupChatV2Enabled,
   groups,
   groupsRef,
   lastReadAllTsRef,
@@ -67,8 +97,9 @@ export default function useConversationReadStateActions({
   unreadMapRef,
   walletAddress
 }: UseConversationReadStateActionsArgs) {
+  const ownerDataScopeKey = walletAddress.trim().toLowerCase();
   const markConversationAsRead = useCallback((contactAddress?: string | null) => {
-    if (!readStateFeaturesEnabled || !contactAddress) {
+    if (!shouldUseLegacyConversationReadState(readStateFeaturesEnabled, directChatV2Enabled) || !contactAddress) {
       return;
     }
 
@@ -111,6 +142,7 @@ export default function useConversationReadStateActions({
     lastReadAllTsRef,
     lastReadByContactRef,
     messagesByContact,
+    directChatV2Enabled,
     readStateFeaturesEnabled,
     setLastReadAllTs,
     setUnreadMap,
@@ -119,7 +151,11 @@ export default function useConversationReadStateActions({
   ]);
 
   const markGroupConversationAsRead = useCallback((groupId?: number | null) => {
-    if (!readStateFeaturesEnabled || !Number.isFinite(groupId) || (groupId ?? 0) <= 0) {
+    if (
+      !shouldUseLegacyConversationReadState(readStateFeaturesEnabled, groupChatV2Enabled) ||
+      !Number.isFinite(groupId) ||
+      (groupId ?? 0) <= 0
+    ) {
       return;
     }
 
@@ -160,6 +196,7 @@ export default function useConversationReadStateActions({
     }
   }, [
     groupsRef,
+    groupChatV2Enabled,
     lastReadAllTsRef,
     lastReadByGroupRef,
     messagesByGroup,
@@ -177,10 +214,12 @@ export default function useConversationReadStateActions({
 
     const previousUnreadContacts = unreadMapRef.current || {};
     const previousUnreadGroups = unreadGroupMapRef.current || {};
-    const unreadAddresses = Object.keys(previousUnreadContacts).filter((address) => isWalletAddress(address));
-    const unreadGroupKeys = Object.keys(previousUnreadGroups).filter(
-      (groupKey) => Number.isFinite(Number(groupKey)) && Number(groupKey) > 0
-    );
+    const { addresses: unreadAddresses, groupKeys: unreadGroupKeys } = selectLegacyUnreadTargets({
+      directChatV2Enabled,
+      groupChatV2Enabled,
+      unreadContacts: previousUnreadContacts,
+      unreadGroups: previousUnreadGroups
+    });
     if (unreadAddresses.length === 0 && unreadGroupKeys.length === 0) {
       return;
     }
@@ -215,10 +254,14 @@ export default function useConversationReadStateActions({
 
     lastReadByContactRef.current = nextReadByContact;
     lastReadByGroupRef.current = nextReadByGroup;
-    unreadMapRef.current = {};
-    unreadGroupMapRef.current = {};
-    setUnreadMap({});
-    setUnreadGroupMap({});
+    if (!directChatV2Enabled) {
+      unreadMapRef.current = {};
+      setUnreadMap({});
+    }
+    if (!groupChatV2Enabled) {
+      unreadGroupMapRef.current = {};
+      setUnreadGroupMap({});
+    }
 
     if (nextGlobalReadTs > lastReadAllTsRef.current) {
       lastReadAllTsRef.current = nextGlobalReadTs;
@@ -226,6 +269,8 @@ export default function useConversationReadStateActions({
     }
   }, [
     groupsRef,
+    directChatV2Enabled,
+    groupChatV2Enabled,
     lastReadAllTsRef,
     lastReadByContactRef,
     lastReadByGroupRef,
@@ -261,7 +306,7 @@ export default function useConversationReadStateActions({
     setUnreadMap,
     unreadGroupMapRef,
     unreadMapRef,
-    walletAddress
+    ownerDataScopeKey
   ]);
 
   useEffect(() => {

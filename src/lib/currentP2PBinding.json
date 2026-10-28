@@ -1,0 +1,355 @@
+{
+  "schemaVersion": 1,
+  "status": "book-and-link-native-verified-other-protocols-prepared",
+  "chainId": "7082400",
+  "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+  "owner": "0x5dfcee20b5a3fdd3577436a32f62d4c0b39e979d",
+  "sourceRecordSha256": "a9c6bcafad6888fab047eed600ed5d52fac1a68d4a21025b30a41d9b5ba681c0",
+  "priorSourceRecordSha256": "707d6c4f65a2942f1105a22d38a6230f21471a33bd0c18c0315f1580ee4c5fc5",
+  "bookProofSha256": "f8cadcaeec1c00d12d8c70e136d05abf0959363a04e720e5618a58bf26d80cf8",
+  "directStatus": "native-private-forward-verified",
+  "directProofSha256": "08979c2937e3668ee448708ca47df9b8dae002eeada54b37550fe8aa79e6355b",
+  "directAppActivated": true,
+  "directCounterStatus": "native-private-counter-verified",
+  "directCounterProofSha256": "7f11689253477f072f696cb1b101e34a889037dd12b92f4902c754194e5d67dd",
+  "directCounterAppActivated": true,
+  "directPublicStatus": "native-public-forward-verified",
+  "directPublicProofSha256": "18b37378130dc3c5312b4f8f375195a9e4dab450abd1622339fbf4f9302059d6",
+  "directPublicAppActivated": true,
+  "directPublicCounterStatus": "native-public-counter-verified",
+  "directPublicCounterProofSha256": "6b5073ba0497f435f1b64ece1d084d249211743a8e3161a05ca35e56a6b0229e",
+  "directPublicCounterAppActivated": true,
+  "registrationRecordSha256": "a9c6bcafad6888fab047eed600ed5d52fac1a68d4a21025b30a41d9b5ba681c0",
+  "components": [
+    {
+      "contract": "ChainWhisperP2PTokenValidation",
+      "address": "0xdb637ead4d85299eb0a83146d669947afd7992ab",
+      "runtimeBytecodeHash": "0x0e9af4fbde3ad9f68c22a616f9b167e1484c2360f11db73fd7a7f125f94e1353",
+      "deploymentBlock": "10225073",
+      "deploymentBlockHash": "0x1d34add3f4d9a183cfebf6c8f9c567449f79a0fef6bc04ab48b7677eb30ce69d"
+    },
+    {
+      "contract": "ChainWhisperP2PDisclosure",
+      "address": "0xf34b134a46874855bdec1ccdbcdafbda13bd3bc4",
+      "runtimeBytecodeHash": "0x7224db1da08953ad7dd40961cfc24e610850503986e97844ce20f2453b028dd8",
+      "deploymentBlock": "10288980",
+      "deploymentBlockHash": "0x88e6c89df7c51263bf69ee2c54daf895753cc5fb8c0f84a2a2d5e00e950b079a"
+    },
+    {
+      "contract": "ChainWhisperPrivateBookMath",
+      "address": "0x5d352629c640222dda714ba7c2b7425014ed5ff4",
+      "runtimeBytecodeHash": "0x7df0fc7b9dbcae23b0123227b0d0901dd56e548f962e59a450b14bf5e82390d7",
+      "deploymentBlock": "10238601",
+      "deploymentBlockHash": "0x3bc2b39d44e7ad05d17c4fb6d91ed72c51455306e178cabc177c387796f7bd29"
+    },
+    {
+      "contract": "ChainWhisperLinkPrivateMath",
+      "address": "0x6f1697d753cb25ed86e3fb5d6847f5fcea34e546",
+      "runtimeBytecodeHash": "0x1b276701e91e98a07340d93fc1de832c8073673d5d6e5f32401f271606076caf",
+      "deploymentBlock": "10252411",
+      "deploymentBlockHash": "0x75608fc34b91b0e8e4c3ecee01743edb39b336866b160e1b3c61e1e8e2b67c96"
+    },
+    {
+      "contract": "ChainWhisperStandardOTCEscrowV2",
+      "address": "0xbc6c3499e559bc31c0f9f41429a0afe5e3561679",
+      "runtimeBytecodeHash": "0xf4eb4024cef08e941ac04b268d2db28d1eec5757423e0fbb46a5ffdc637c70cd",
+      "deploymentBlock": "10288990",
+      "deploymentBlockHash": "0x63ebce2d8ebb4a3911a8bb9dee2b8f87b86041cef97856fac8b4c068f0562185",
+      "protocol": "standard-v2"
+    },
+    {
+      "contract": "ChainWhisperPrivateOTCEscrowV2",
+      "address": "0xb91cf8c8c1b1617cdb621548d6db25b1f8246f29",
+      "runtimeBytecodeHash": "0x13922e9f286dab357b6cd703473e91eee45000bb4ff0b2a72176d53a1058471c",
+      "deploymentBlock": "10289000",
+      "deploymentBlockHash": "0xfcc8a3b77727e06c92d9b65d8161e1dc69094662925b610269482f044fc20eea",
+      "protocol": "private-v2"
+    },
+    {
+      "contract": "ChainWhisperDirectOTCEscrowV2",
+      "address": "0xd46cd0ab08d94cb831a82424475a8d7250673528",
+      "runtimeBytecodeHash": "0x0e94365a3069d33fdfe596f345697f8e0a30d6dedc9e476c5b99a9a5cf3290d7",
+      "deploymentBlock": "10289009",
+      "deploymentBlockHash": "0xda1b4e64b8983f2a56b91243f7b4a54376b2de8f2bf5105b7982bf7859725ba4",
+      "protocol": "direct-v2"
+    },
+    {
+      "contract": "ChainWhisperLinkOTCEscrowV2",
+      "address": "0x4fc159a563ca9d6ba86dfd907e25614b2abf356d",
+      "runtimeBytecodeHash": "0xfe9122304075a56f514edaf896f84bee1f705987d1c63a2dd69678fce3bd0866",
+      "deploymentBlock": "10289019",
+      "deploymentBlockHash": "0xf2c9d36dd2184b8e7ef1757e166c2b983fd112d8e14c10fd4ea89467bc395754",
+      "protocol": "link-v2"
+    },
+    {
+      "contract": "ChainWhisperCounterOTCEscrowV2",
+      "address": "0x69df60ee74cab3e97621cc183890a79fb412e0b3",
+      "runtimeBytecodeHash": "0x1a613f9b82edbbcc902d9c09d3c544ec4dbafa2641a1921d32ae27efcc33d9a5",
+      "deploymentBlock": "10289029",
+      "deploymentBlockHash": "0xb27275b270e86390199dd8ad728eb3f7e0ad803de143b689fd85c13be49a8160",
+      "protocol": "counter-v2"
+    }
+  ],
+  "retainedBooks": [
+    {
+      "contractAddress": "0x53d5a94a884533df7e79bef37a4818f5c5746787",
+      "runtimeBytecodeHash": "0x33596e7f6b54d9579728c7e11bc56e958359fb5068dce5a0e081649fdf412683",
+      "deploymentBlock": "10225098"
+    },
+    {
+      "contractAddress": "0x846340d4d85b91542d386688249169146ec73215",
+      "runtimeBytecodeHash": "0x0aa1dec469d330aa19c98359a695c793809dd33b4b14460b1891887d740ac151",
+      "deploymentBlock": "10235920"
+    }
+  ],
+  "retainedLinks": [
+    {
+      "contractAddress": "0xcdf70597ebd1e4eb440e292a23003d129d9c5859",
+      "runtimeBytecodeHash": "0x074062a395d26e4f421f5b75a4b6f96f206996285fdd56566d96576ce41ff384",
+      "deploymentBlock": "10225108"
+    }
+  ],
+  "linkStatus": "native-verified",
+  "linkProofSha256": "707d6c4f65a2942f1105a22d38a6230f21471a33bd0c18c0315f1580ee4c5fc5",
+  "linkSetupProofSha256": "d67ec1793cb81f227a4fd1271c3747907e07382e00ad8913cd1f426ada6cbbf3",
+  "privateCounterStatus": "native-private-book-link-counter-verified",
+  "privateCounterProofs": [
+    {
+      "parentProtocol": "private-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0xc47c9b7d8c882a9c103d21e6d61702d210ddca6f",
+      "parentRuntimeHash": "0xd6cad7ae0951b41edc13f23c247bfb0cec4e554e4b89746e477fe23a423435ae",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "proofSha256": "5e9b6abb5032bd954618f57921ea82ccc7f54ea45f900cfdf93a3a001f7d7be6"
+    },
+    {
+      "parentProtocol": "link-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0xe74a14c96217e38735329c0f04392699ad26fe07",
+      "parentRuntimeHash": "0xc179812ed29a2cdd533c3807ef31fac29a7e9fb5c0d398fabc39bdd5ff566bce",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "proofSha256": "6a311cece5f5c19e05e0c6cebe9d1f6c54bd2b70d18813c96fc8565796cf7f52"
+    }
+  ],
+  "privateExternalCounterAppState": "active",
+  "publicBookLinkStatus": "native-public-book-link-counter-verified",
+  "publicBookLinkProofs": [
+    {
+      "parentProtocol": "standard-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0x8822bfefa12ebb0c5054a041119df088d7286902",
+      "parentRuntimeHash": "0xf4eb4024cef08e941ac04b268d2db28d1eec5757423e0fbb46a5ffdc637c70cd",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "forwardProofSha256": "c5a5d8ebee79bc2510ac9dd289e75a829099be4684c71929b9d1f2f6d25d208a",
+      "counterProofSha256": "c5a5d8ebee79bc2510ac9dd289e75a829099be4684c71929b9d1f2f6d25d208a"
+    },
+    {
+      "parentProtocol": "link-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "parent": "0xe74a14c96217e38735329c0f04392699ad26fe07",
+      "parentRuntimeHash": "0xc179812ed29a2cdd533c3807ef31fac29a7e9fb5c0d398fabc39bdd5ff566bce",
+      "counter": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+      "counterRuntimeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+      "forwardProofSha256": "4ce3546bfa53adf6713c28ca805ce1a6d6d724b8317b445edf87566e41967271",
+      "counterProofSha256": "b5db54d849f7e1aaab0effb928e538a005cc890908545235eae3ae3449e13465"
+    }
+  ],
+  "publicBookLinkAppState": "active",
+  "repairQualification": {
+    "status": "unchanged-financial-core-qualified",
+    "appState": "active",
+    "chainId": "7082400",
+    "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+    "candidateSha256": "4e687adb7422fab0c2c9071ecfb2fa7b2b6859d3ca2013fcf5e8b3784a521e94",
+    "proofSha256": "55832bf27a4b5a3705026763f6b87d2eade8945e7e562cadf5cd2da2387df823",
+    "previousBindingSha256": "a3e7e39d5ef865a9922da8d8d4f0e8fd7c117ac8dc4929714ce0f72b56f29d97",
+    "targets": [
+      {
+        "protocol": "standard-v2",
+        "contractAddress": "0xbc6c3499e559bc31c0f9f41429a0afe5e3561679",
+        "runtimeBytecodeHash": "0xf4eb4024cef08e941ac04b268d2db28d1eec5757423e0fbb46a5ffdc637c70cd"
+      },
+      {
+        "protocol": "private-v2",
+        "contractAddress": "0xb91cf8c8c1b1617cdb621548d6db25b1f8246f29",
+        "runtimeBytecodeHash": "0x13922e9f286dab357b6cd703473e91eee45000bb4ff0b2a72176d53a1058471c"
+      },
+      {
+        "protocol": "direct-v2",
+        "contractAddress": "0xd46cd0ab08d94cb831a82424475a8d7250673528",
+        "runtimeBytecodeHash": "0x0e94365a3069d33fdfe596f345697f8e0a30d6dedc9e476c5b99a9a5cf3290d7"
+      },
+      {
+        "protocol": "link-v2",
+        "contractAddress": "0x4fc159a563ca9d6ba86dfd907e25614b2abf356d",
+        "runtimeBytecodeHash": "0xfe9122304075a56f514edaf896f84bee1f705987d1c63a2dd69678fce3bd0866"
+      },
+      {
+        "protocol": "counter-v2",
+        "contractAddress": "0x69df60ee74cab3e97621cc183890a79fb412e0b3",
+        "runtimeBytecodeHash": "0x1a613f9b82edbbcc902d9c09d3c544ec4dbafa2641a1921d32ae27efcc33d9a5"
+      }
+    ]
+  },
+  "retainedFinancialGraphs": [
+    {
+      "previousBindingSha256": "a3e7e39d5ef865a9922da8d8d4f0e8fd7c117ac8dc4929714ce0f72b56f29d97",
+      "proofSha256": "55832bf27a4b5a3705026763f6b87d2eade8945e7e562cadf5cd2da2387df823",
+      "deployments": [
+        {
+          "protocol": "standard-v2",
+          "chainId": "7082400",
+          "contractAddress": "0x8822bfefa12ebb0c5054a041119df088d7286902",
+          "runtimeBytecodeHash": "0xf4eb4024cef08e941ac04b268d2db28d1eec5757423e0fbb46a5ffdc637c70cd",
+          "deploymentBlock": "10225093"
+        },
+        {
+          "protocol": "private-v2",
+          "chainId": "7082400",
+          "contractAddress": "0xc47c9b7d8c882a9c103d21e6d61702d210ddca6f",
+          "runtimeBytecodeHash": "0xd6cad7ae0951b41edc13f23c247bfb0cec4e554e4b89746e477fe23a423435ae",
+          "deploymentBlock": "10238610"
+        },
+        {
+          "protocol": "direct-v2",
+          "chainId": "7082400",
+          "contractAddress": "0xca2555ef16418fa8970552149f5febe88723ecce",
+          "runtimeBytecodeHash": "0x11c3177b38ad65bf312d9db6174742a99fdc4eae48ff5dee636d90b35854208a",
+          "deploymentBlock": "10225103"
+        },
+        {
+          "protocol": "link-v2",
+          "chainId": "7082400",
+          "contractAddress": "0xe74a14c96217e38735329c0f04392699ad26fe07",
+          "runtimeBytecodeHash": "0xc179812ed29a2cdd533c3807ef31fac29a7e9fb5c0d398fabc39bdd5ff566bce",
+          "deploymentBlock": "10252421"
+        },
+        {
+          "protocol": "counter-v2",
+          "chainId": "7082400",
+          "contractAddress": "0x46e37e5a14df8abf060775d86d4f9bbeff713811",
+          "runtimeBytecodeHash": "0x040c69f6ee07eb56179cc3cbed6d90fca88e8abef7c43faf5440bc392cdf635b",
+          "deploymentBlock": "10225113"
+        }
+      ]
+    }
+  ],
+  "tradeBalanceProofs": [
+    {
+      "protocol": "private-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "contractAddress": "0xb91cf8c8c1b1617cdb621548d6db25b1f8246f29",
+      "runtimeBytecodeHash": "0x13922e9f286dab357b6cd703473e91eee45000bb4ff0b2a72176d53a1058471c",
+      "proofSha256": "21bc2750676b085fa41675c17a638b67afd1d0554f474ee8f125bb3a0ff94ff5",
+      "nativeStatus": "native-trade-balance-verified",
+      "appState": "active",
+      "variants": [
+        "private-pair"
+      ]
+    },
+    {
+      "protocol": "direct-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "contractAddress": "0xd46cd0ab08d94cb831a82424475a8d7250673528",
+      "runtimeBytecodeHash": "0x0e94365a3069d33fdfe596f345697f8e0a30d6dedc9e476c5b99a9a5cf3290d7",
+      "proofSha256": "851cce1696cde06b12431001946241abf0ea337e4c8c48f54e60be8185d10e85",
+      "nativeStatus": "native-trade-balance-verified",
+      "appState": "active",
+      "variants": [
+        "private-pair"
+      ]
+    },
+    {
+      "protocol": "link-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "contractAddress": "0x4fc159a563ca9d6ba86dfd907e25614b2abf356d",
+      "runtimeBytecodeHash": "0xfe9122304075a56f514edaf896f84bee1f705987d1c63a2dd69678fce3bd0866",
+      "proofSha256": "55832bf27a4b5a3705026763f6b87d2eade8945e7e562cadf5cd2da2387df823",
+      "nativeStatus": "shared-native-variant-qualified",
+      "nativeVariant": "stored-ct",
+      "producerProtocol": "private-v2",
+      "appState": "active",
+      "variants": [
+        "private-pair"
+      ]
+    },
+    {
+      "protocol": "counter-v2",
+      "chainId": "7082400",
+      "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+      "contractAddress": "0x69df60ee74cab3e97621cc183890a79fb412e0b3",
+      "runtimeBytecodeHash": "0x1a613f9b82edbbcc902d9c09d3c544ec4dbafa2641a1921d32ae27efcc33d9a5",
+      "proofSha256": "55832bf27a4b5a3705026763f6b87d2eade8945e7e562cadf5cd2da2387df823",
+      "nativeStatus": "shared-native-variant-qualified",
+      "nativeVariant": "caller-gt",
+      "producerProtocol": "direct-v2",
+      "appState": "active",
+      "variants": [
+        "private-pair"
+      ]
+    }
+  ],
+  "bookBudgetStatus": "native-book-budget-verified",
+  "bookBudgetAppState": "active",
+  "bookBudgetProof": {
+    "chainId": "7082400",
+    "genesisHash": "0xdb0c31fec249b8bd6ec2d866ec8ec5d17bee2d7ff690bbe8190d813b92b29e8a",
+    "book": "0xb91cf8c8c1b1617cdb621548d6db25b1f8246f29",
+    "bookRuntimeHash": "0x13922e9f286dab357b6cd703473e91eee45000bb4ff0b2a72176d53a1058471c",
+    "proofSha256": "21bc2750676b085fa41675c17a638b67afd1d0554f474ee8f125bb3a0ff94ff5"
+  },
+  "registeredTokens": [
+    {
+      "address": "0x6e3d27341b860e6e63513b102c7d547ce0171f11",
+      "kind": "erc20",
+      "symbol": "cwPTA",
+      "decimals": 6,
+      "runtimeBytecodeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a"
+    },
+    {
+      "address": "0x9bd3fa3dbc87b74e167bcd85744d6e199c5109eb",
+      "kind": "erc20",
+      "symbol": "cwPTB",
+      "decimals": 6,
+      "runtimeBytecodeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a"
+    },
+    {
+      "address": "0xe595f63789d1d31b4b7c0bee69062daf5be81ac8",
+      "kind": "private-erc20",
+      "symbol": "BCN",
+      "decimals": 6,
+      "runtimeBytecodeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0"
+    },
+    {
+      "address": "0x5181b25e7ad744e635fe048d388fd820f943e582",
+      "kind": "private-erc20",
+      "symbol": "HBR",
+      "decimals": 6,
+      "runtimeBytecodeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0"
+    },
+    {
+      "address": "0x99b7d4cef854ca380be0c49863f761670a57f0b3",
+      "kind": "private-erc20",
+      "symbol": "EMBR",
+      "decimals": 6,
+      "runtimeBytecodeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0"
+    },
+    {
+      "address": "0x8e8f1142efe829fbdf2fecba7a2fa0e472b5b703",
+      "kind": "private-erc20",
+      "symbol": "ORBT",
+      "decimals": 6,
+      "runtimeBytecodeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0"
+    }
+  ]
+}

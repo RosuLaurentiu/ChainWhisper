@@ -164,6 +164,16 @@
     gap: 5px;
   }
 
+  .top-header .top-header-mobile-network .app-network-menu {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 62px);
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(100dvh - 74px);
+    overflow-y: auto;
+  }
+
   .top-header .top-header-brand-actions,
   .top-header .top-header-mobile-app-nav {
     display: none;
@@ -853,22 +863,41 @@
   }
 
   .top-header .top-header-mobile-app-nav {
-    display: block;
+    display: flex;
+    align-items: stretch;
     border-top: 1px solid rgba(74, 64, 112, 0.42);
     background: rgba(10, 10, 18, 0.82);
+    overflow: visible;
+  }
+
+  .top-header .top-header-mobile-app-nav > .app-header-nav {
+    flex: 1 1 auto;
+    min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
   }
 
-  .top-header .top-header-mobile-app-nav::-webkit-scrollbar {
+  .top-header .top-header-mobile-app-nav > .app-header-nav::-webkit-scrollbar {
     display: none;
   }
 
-  .top-header .top-header-mobile-app-nav .app-header-nav {
+  .top-header .top-header-mobile-app-nav > .app-header-nav {
     display: flex;
     gap: 0;
-    min-width: max-content;
     padding: 0 10px;
+  }
+
+  .top-header .top-header-mobile-network-strip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    padding: 2px 8px 2px 0;
+  }
+
+  .top-header .top-header-mobile-network-strip .app-network-switcher > summary {
+    min-height: 32px;
+    padding-inline: 8px;
+    font-size: 0.7rem;
   }
 
   .top-header .top-header-mobile-app-nav .app-header-nav button {
@@ -2595,6 +2624,16 @@
   .app-shell-home .landing-module-cta {
     width: 100%;
     justify-content: center;
+  }
+
+  .chat-contact-name-editor {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .chat-contact-name-editor input {
+    width: 100%;
   }
 
   .treasury-performance-panel .treasury-chart-surface {
@@ -4397,9 +4436,7 @@ summary:focus-visible,
 [contenteditable="true"]:focus-visible,
 [tabindex]:not([tabindex="-1"]):focus-visible,
 .message-reply-action:focus-visible,
-.message-react-action:focus-visible,
-.wallet-meta input.topup-slider:focus-visible,
-.topup-modal input.topup-slider:focus-visible {
+.message-react-action:focus-visible {
   outline: 2px solid rgba(196, 181, 253, 0.9);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.18);
@@ -5131,11 +5168,11 @@ summary:focus:not(:focus-visible),
 }
 
 .app-shell-trades :is(button, a, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid rgba(80, 0, 133, 0.86);
+  outline: 2px solid var(--ux-focus-ring, #c4b5fd);
   outline-offset: 2px;
   box-shadow:
     0 0 0 4px rgba(139, 92, 246, 0.18),
-    0 0 18px rgba(80, 0, 133, 0.24);
+    0 0 18px rgba(139, 92, 246, 0.3);
 }
 
 .app-shell-trades :is(
@@ -5369,6 +5406,15 @@ summary:focus:not(:focus-visible),
     justify-self: stretch;
     width: 100%;
   }
+
+  .app-shell-trades .p2p-action-notice button,
+  .app-shell-trades .p2p-action-notice a {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 12px;
+  }
 }
 
 .app-shell-trades .p2p-action-notice strong {
@@ -5390,6 +5436,17 @@ summary:focus:not(:focus-visible),
   white-space: nowrap;
 }
 
+.app-shell-trades .p2p-action-notice button {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .app-shell-trades .p2p-action-notice-dot {
   width: 8px;
   height: 8px;
@@ -5401,6 +5458,16 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-action-notice-pending {
   border-color: rgba(139, 92, 246, 0.68);
   color: #ede9fe;
+}
+
+.app-shell-trades .p2p-action-notice-wallet {
+  border-color: rgba(139, 92, 246, 0.52);
+  color: #ede9fe;
+}
+
+.app-shell-trades .p2p-action-notice-wallet .p2p-action-notice-dot {
+  background: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.14);
 }
 
 .app-shell-trades .p2p-action-notice-pending .p2p-action-notice-dot {
@@ -5420,6 +5487,12 @@ summary:focus:not(:focus-visible),
 .app-shell-trades .p2p-action-notice-error {
   border-color: rgba(239, 102, 102, 0.58);
   color: #fecaca;
+}
+
+.app-shell-trades .p2p-action-notice-error strong {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .app-shell-trades .p2p-action-notice-error .p2p-action-notice-dot {
@@ -6273,6 +6346,10 @@ summary:focus:not(:focus-visible),
     gap: 10px;
     overflow: hidden;
     padding: 14px 16px 12px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-create:has(> .testnet-token-tools:not(:empty)) {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
 
   .app-shell-trades .p2p-trading-shell-create > .standalone-trade-create-panel {
@@ -7408,6 +7485,22 @@ summary:focus:not(:focus-visible),
   grid-column: auto;
 }
 
+.app-shell-trades .p2p-action-notice-uncertain {
+  border-color: rgba(245, 184, 73, 0.58);
+  color: #fde7b0;
+}
+
+.app-shell-trades .p2p-action-notice-uncertain strong {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.app-shell-trades .p2p-action-notice-uncertain .p2p-action-notice-dot {
+  background: #f5b849;
+  box-shadow: 0 0 0 3px rgba(245, 184, 73, 0.14);
+}
+
 .app-shell-trades .p2p-agent-panel {
   width: min(100%, 920px);
   max-width: 920px;
@@ -7617,7 +7710,8 @@ summary:focus:not(:focus-visible),
     padding: 0 2px 2px;
   }
 
-  .app-shell-trades .p2p-agent-hero strong {
+  .app-shell-trades .p2p-agent-hero strong,
+  .app-shell-trades .p2p-agent-hero h1 {
     font-size: 1.02rem;
   }
 

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OTC_V2_BACKGROUND_TOKEN_INFO_LOAD_OPTIONS,
   resolveBalanceWeiAfterRefresh,
   resolvePrivateBalanceAesReady,
   resolvePrivateBalanceWeiAfterRefresh,
   resolvePrivateBalanceStateAfterRefresh,
+  resolveDisplayedTradeRequiredFeeWei,
   shouldRefreshPrivateTokenInfoForWallet
 } from './useP2PTradeTokenData';
 
@@ -59,5 +61,17 @@ describe('wallet balance refresh helpers', () => {
         walletHasAes: true
       })
     ).toBe(false);
+  });
+
+  it('uses the explicit zero-fee V2 policy instead of waiting on a legacy escrow fee read', () => {
+    expect(resolveDisplayedTradeRequiredFeeWei({ overrideFeeWei: 0n })).toBe(0n);
+    expect(resolveDisplayedTradeRequiredFeeWei({ cachedFeeWei: 25n, overrideFeeWei: 0n })).toBe(0n);
+    expect(resolveDisplayedTradeRequiredFeeWei({ cachedFeeWei: 25n })).toBe(25n);
+    expect(resolveDisplayedTradeRequiredFeeWei({})).toBeNull();
+  });
+
+  it('keeps verified V2 token metadata visible during background reconciliation', () => {
+    expect(OTC_V2_BACKGROUND_TOKEN_INFO_LOAD_OPTIONS).toEqual({ silent: true });
+    expect(Object.isFrozen(OTC_V2_BACKGROUND_TOKEN_INFO_LOAD_OPTIONS)).toBe(true);
   });
 });

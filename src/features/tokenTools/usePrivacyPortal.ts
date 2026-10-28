@@ -7,7 +7,7 @@ import {
   type Dispatch,
   type SetStateAction
 } from 'react';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import {
   estimatePrivacyPortalNativeDepositGasReserveWei,
   estimatePrivacyPortalQuoteGas,
@@ -36,7 +36,7 @@ const QUOTE_DEBOUNCE_MS = 320;
 
 export type PrivacyPortalSignerBundle = {
   cacheKey: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
 };
 
 type UsePrivacyPortalArgs = {

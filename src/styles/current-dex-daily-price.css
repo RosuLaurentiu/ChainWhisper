@@ -1,0 +1,15 @@
+.dex-market-chart-samples { grid-template-rows: auto auto minmax(260px, 1fr) auto; }
+.dex-market-chart-samples .dex-market-chart-actions > div { grid-template-columns: repeat(3, minmax(44px, 1fr)); }
+.dex-market-chart-samples .dex-market-chart-actions button { min-height: 44px; }
+.dex-market-history-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; color: #aaa7b8; font-size: 0.75rem; }
+.dex-market-history-state strong, .dex-market-history-state > span { flex-basis: 100%; }
+.dex-market-history-state strong { color: #e8e4f3; }
+.dex-market-history-state details { flex-basis: 100%; }
+.dex-market-history-state summary { cursor: pointer; min-height: 28px; display: flex; align-items: center; color: #c9c5d4; }
+.dex-market-history-state summary:focus-visible { outline: 2px solid #a879ff; outline-offset: 2px; }
+.dex-market-history-state button { min-height: 44px; padding: 6px 10px; border: 1px solid var(--approved-border-soft); border-radius: 6px; background: transparent; color: #c9c5d4; }
+.dex-market-history-data { min-width: 0; max-height: 180px; overflow: auto; color: #aaa7b8; font-size: 0.72rem; }
+.dex-market-history-data summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: #c9c5d4; }
+.dex-market-history-data table { min-width: 570px; width: 100%; border-collapse: collapse; }
+.dex-market-history-data th, .dex-market-history-data td { padding: 8px; border-bottom: 1px solid var(--approved-border-soft); text-align: left; }
+.dex-market-history-data caption { text-align: left; padding: 8px; }

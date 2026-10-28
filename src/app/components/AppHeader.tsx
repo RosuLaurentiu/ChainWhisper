@@ -22,6 +22,8 @@ type AppHeaderProps = {
   homeControl?: ReactNode;
   appNavigationControl?: ReactNode;
   navigationControl?: ReactNode;
+  notificationControl?: ReactNode;
+  networkControl?: ReactNode;
   walletControl?: ReactNode;
   title?: string;
   subtitle?: string;
@@ -50,6 +52,8 @@ export default function AppHeader({
   homeControl,
   appNavigationControl,
   navigationControl,
+  notificationControl,
+  networkControl,
   walletControl,
   title = 'ChainWhisper',
   subtitle = '',
@@ -64,13 +68,17 @@ export default function AppHeader({
   const mobileAppNavigationControl = isMobileNav ? appNavigationControl : null;
   const desktopNavigationControl = !isMobileNav ? navigationControl : null;
   const mobileNavigationControl = isMobileNav ? navigationControl : null;
+  const desktopNotificationControl = !isMobileNav ? notificationControl : null;
+  const mobileNotificationControl = isMobileNav ? notificationControl : null;
+  const desktopNetworkControl = !isMobileNav ? networkControl : null;
+  const mobileNetworkControl = isMobileNav ? networkControl : null;
   const desktopWalletControl = !isMobileNav ? walletControl : null;
   const mobileWalletControl = isMobileNav ? walletControl : null;
   const desktopHomeControl = !isMobileNav ? homeControl : null;
   const mobileHomeControl = isMobileNav ? homeControl : null;
   const hasMobileMenuContent = Boolean(brandActions || debugControl || hasNavLinks);
   const showInlineMobileSoundToggle =
-    isMobileNav && shouldShowSoundToggle && !hasMobileMenuContent;
+    isMobileNav && shouldShowSoundToggle && !notificationControl;
   const mobileLinksMenuToggleControl =
     isMobileNav && hasMobileMenuContent ? (
       <button
@@ -138,6 +146,7 @@ export default function AppHeader({
       )}
     </button>
   ) : null;
+  const standaloneSoundToggleControl = notificationControl ? null : soundToggleControl;
   const helpControl = onOpenHelp ? (
     <button
       type="button"
@@ -164,17 +173,19 @@ export default function AppHeader({
   const mobileHelpControl = isMobileNav ? helpControl : null;
   const desktopHelpControl = isMobileNav ? null : helpControl;
   const desktopBrandActionContent =
-    !isMobileNav && (brandActions || desktopHomeControl || soundToggleControl) ? (
+    !isMobileNav && (brandActions || desktopHomeControl) ? (
       <>
         {brandActions}
         {desktopHomeControl}
-        {soundToggleControl}
       </>
     ) : null;
   const desktopUtilityActions =
-    desktopHelpControl || desktopWalletControl || debugControl ? (
+    standaloneSoundToggleControl || desktopHelpControl || desktopNotificationControl || desktopNetworkControl || desktopWalletControl || debugControl ? (
       <>
+        {desktopNetworkControl}
         {desktopWalletControl}
+        {desktopNotificationControl}
+        {standaloneSoundToggleControl}
         {debugControl}
         {desktopHelpControl}
       </>
@@ -182,12 +193,16 @@ export default function AppHeader({
   const mobileWalletSlot = mobileWalletControl ? (
     <div className="top-header-mobile-wallet top-header-mobile-wallet-inline">{mobileWalletControl}</div>
   ) : null;
+  const mobileNetworkStripSlot = mobileNetworkControl ? (
+    <div className="top-header-mobile-network top-header-mobile-network-strip">{mobileNetworkControl}</div>
+  ) : null;
   const mobileUtilityCluster =
-    mobileHomeControl || mobileLinksMenuToggleControl || showInlineMobileSoundToggle ? (
+    mobileHomeControl || mobileLinksMenuToggleControl || mobileNotificationControl || showInlineMobileSoundToggle ? (
       <div className="top-header-mobile-utility-cluster">
         {mobileHomeControl ? <div className="top-header-mobile-home">{mobileHomeControl}</div> : null}
         {mobileLinksMenuToggleControl}
-        {showInlineMobileSoundToggle ? soundToggleControl : null}
+        {mobileNotificationControl}
+        {showInlineMobileSoundToggle && !mobileNotificationControl ? soundToggleControl : null}
       </div>
     ) : null;
   const mobileTopActions =
@@ -295,8 +310,11 @@ export default function AppHeader({
         </div>
       </div>
 
-      {mobileAppNavigationControl ? (
-        <div className="top-header-mobile-app-nav">{mobileAppNavigationControl}</div>
+      {mobileAppNavigationControl || mobileNetworkStripSlot ? (
+        <div className="top-header-mobile-app-nav">
+          {mobileAppNavigationControl}
+          {mobileNetworkStripSlot}
+        </div>
       ) : null}
 
       {isMobileNav && hasMobileMenuContent ? (
@@ -306,10 +324,10 @@ export default function AppHeader({
           className={mobileLinksOpen ? 'top-header-mobile-links open' : 'top-header-mobile-links'}
           hidden={!mobileLinksOpen}
         >
-          {brandActions || (!showInlineMobileSoundToggle && soundToggleControl) || debugControl ? (
+          {brandActions || (!showInlineMobileSoundToggle && standaloneSoundToggleControl) || debugControl ? (
             <div className="top-header-mobile-utility-row">
               {brandActions}
-              {!showInlineMobileSoundToggle ? soundToggleControl : null}
+              {!showInlineMobileSoundToggle ? standaloneSoundToggleControl : null}
               {debugControl}
             </div>
           ) : null}

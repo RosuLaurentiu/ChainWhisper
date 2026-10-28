@@ -9,6 +9,7 @@ type MessageActionsProps = {
   sendingReaction: boolean;
   reactionDisabled: boolean;
   reactionTitle: string;
+  reactionDisclosure?: string;
   draftTradeDisabled?: boolean;
   draftTradeLoading?: boolean;
   draftTradeTitle?: string;
@@ -27,6 +28,7 @@ export default function MessageActions({
   sendingReaction,
   reactionDisabled,
   reactionTitle,
+  reactionDisclosure,
   draftTradeDisabled = false,
   draftTradeLoading = false,
   draftTradeTitle = 'Draft trade',
@@ -141,8 +143,14 @@ export default function MessageActions({
           className="message-reaction-picker"
           role="dialog"
           aria-label="Pick reaction"
+          aria-describedby={reactionDisclosure ? `${pickerId}-disclosure` : undefined}
           onKeyDown={handlePickerKeyDown}
         >
+          {reactionDisclosure ? (
+            <p id={`${pickerId}-disclosure`} className="message-reaction-disclosure">
+              {reactionDisclosure}
+            </p>
+          ) : null}
           {DEFAULT_REACTION_EMOJIS.map((emoji) => (
             <button
               key={`${message.id}-${emoji}`}
@@ -152,6 +160,7 @@ export default function MessageActions({
               }}
               disabled={sendingReaction || reactedEmojiSet.has(emoji)}
               title={reactedEmojiSet.has(emoji) ? `Already reacted with ${emoji}` : `React with ${emoji}`}
+              aria-label={reactionDisclosure ? `Public on-chain reaction ${emoji}` : `Reaction ${emoji}`}
             >
               {emoji}
             </button>

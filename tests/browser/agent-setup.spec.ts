@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('ChainWhisper Agent Setup', () => {
-  test('uses three keyboard-complete tabs and previews coming-soon setup without wallet or payment side effects', async ({
+  test('uses three keyboard-reachable navigation buttons and previews coming-soon setup without wallet or payment side effects', async ({
     page
   }) => {
     const tradeAgentPaymentRequests: Array<{ body: string | null; url: string }> = [];
@@ -17,20 +17,23 @@ test.describe('ChainWhisper Agent Setup', () => {
     await page.setViewportSize({ width: 1440, height: 950 });
     await page.goto('/otc/agent');
 
-    const tabs = page.getByRole('tab');
+    const tabs = page.getByRole('navigation', { name: 'Agent tools' }).getByRole('button');
     await expect(tabs).toHaveCount(3);
-    const helpTab = page.getByRole('tab', { name: 'App Help' });
-    const tradeTab = page.getByRole('tab', { name: 'Trade Agent' });
-    const setupTab = page.getByRole('tab', { name: 'Agent Setup' });
+    const helpTab = page.getByRole('button', { name: 'App Help', exact: true });
+    const tradeTab = page.getByRole('button', { name: 'Trade Agent', exact: true });
+    const setupTab = page.getByRole('button', { name: 'MCP for agents', exact: true });
 
     await helpTab.focus();
-    await helpTab.press('End');
+    await helpTab.press('Tab');
+    await expect(tradeTab).toBeFocused();
+    await tradeTab.press('Tab');
+    await setupTab.press('Enter');
     await expect(setupTab).toBeFocused();
-    await expect(setupTab).toHaveAttribute('aria-selected', 'true');
+    await expect(setupTab).toHaveAttribute('aria-current', 'page');
     await expect(
-      page.getByText('ChainWhisper MCP setup is coming soon.', { exact: true }),
+      page.getByText('Add ChainWhisper to your agent', { exact: true }),
     ).toBeVisible();
-    await expect(page.getByText('Preview how it works.')).toBeVisible();
+    await expect(page.getByText('Preview command only. Installation becomes available with the public beta.')).toBeVisible();
     await expect(page.getByText('Coming soon', { exact: true })).toBeVisible();
     await expect(
       page.getByText('One package. Two local connections. Private negotiation included.')
@@ -73,20 +76,23 @@ test.describe('ChainWhisper Agent Setup', () => {
     await expect(page.getByText('Preview setup prompt')).toBeVisible();
     await expect(page.getByText('Preview only', { exact: true })).toBeVisible();
     await expect(page.getByText(/Free preview. No wallet connection or WISP payment/)).toBeVisible();
-    expect(tradeAgentPaymentRequests).toEqual([]);
+    // Fee estimates are unsigned reads. Setup must not request paid execution.
+    expect(tradeAgentPaymentRequests.map(request => JSON.parse(request.body ?? '{}').kind)).toEqual(tradeAgentPaymentRequests.map(() => 'estimate'));
 
-    await setupTab.press('ArrowRight');
-    await expect(helpTab).toBeFocused();
-    await helpTab.press('ArrowRight');
+    await setupTab.press('Shift+Tab');
     await expect(tradeTab).toBeFocused();
-    await tradeTab.press('ArrowRight');
+    await tradeTab.press('Shift+Tab');
+    await expect(helpTab).toBeFocused();
+    await helpTab.press('Tab');
+    await expect(tradeTab).toBeFocused();
+    await tradeTab.press('Tab');
     await expect(setupTab).toBeFocused();
   });
 
   test('stacks setup content without horizontal overflow on mobile', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/otc/agent');
-    await page.getByRole('tab', { name: 'Agent Setup' }).click();
+    await page.getByRole('button', { name: 'MCP for agents', exact: true }).click();
 
     await expect(
       page.getByText('One package. Two local connections. Private negotiation included.')
@@ -110,7 +116,7 @@ test.describe('ChainWhisper Agent Setup', () => {
   test('uses the outer workspace scrollbar for the expanded setup prompt', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto('/otc/agent');
-    await page.getByRole('tab', { name: 'Agent Setup' }).click();
+    await page.getByRole('button', { name: 'MCP for agents', exact: true }).click();
 
     const workspace = page.locator('.p2p-agent-section');
     const setupContent = page.locator('.p2p-agent-setup-panel');
@@ -179,3 +185,5 @@ test.describe('ChainWhisper Agent Setup', () => {
     expect(finalLinkBounds.bottom).toBeLessThanOrEqual(workspaceBounds.bottom + 1);
   });
 });
+
+

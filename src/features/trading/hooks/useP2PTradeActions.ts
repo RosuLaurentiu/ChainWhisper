@@ -1,140 +1,33 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import {
   buildTradeSnapshotKey,
   formatTokenAmount,
-  loadCotiEthersModule,
   parseTokenAmountInput,
-  type TradeAssetPayload,
   type TradeSnapshot
 } from '../../../lib/appShared';
 import { getOnChainFailureMessage } from '../../../lib/appHelpers';
 import {
-  acceptDirectVisibleTradeOnChain,
-  acceptCounterTradeAndCloseParentOnChain,
-  acceptTradeOnChain,
-  cancelTradeOnChain,
-  declineTradeOnChain,
-  fillPrivateFixedPriceTradeOnChain,
-  fillTradeOnChain
-} from '../../../lib/tradeActions';
-import { resolveTradeEscrowContractConfig, revealDirectTradeTermsForWallet } from '../../../lib/appChain';
-import { canUseWalletAuthorityForDirectAccess } from '../../../lib/tradeCounterSupport';
-import { doesAccessSecretMatchHash, normalizeAccessHash, PRIVATE_LINK_SECRET_MISMATCH_MESSAGE } from '../../../lib/tradeLinks';
-import { ZERO_TRADE_TAKER_ADDRESS } from '../../../lib/tradePerspective';
-import { isHiddenLiquidityTrade } from '../../../lib/p2pTradeView';
-import type { P2PActionNoticeInput } from '../../../lib/p2pActionNotice';
-import { isTradeActionConfirmationCancelledError, type TradeFundingPreflightInput } from '../../../lib/tradeActionConfirm';
+  getP2PActionFailureStatus,
+  type P2PActionNoticeInput
+} from '../../../lib/p2pActionNotice';
+import {
+  isTradeActionConfirmationCancelledError,
+  type TradeFundingPreflightInput
+} from '../../../lib/tradeActionConfirm';
 import { formatWalletFundAmount } from '../../../lib/walletFunds';
+import type { OtcV2ActionRuntime } from '../../../lib/otcV2ActionRuntime';
+import { buildPrivateBookV2FillAction, getPrivateBookV2Projection } from '../../../lib/privateBookV2Consumer';
+import { buildPrivateBookV2Review, executePrivateBookV2Review } from '../../../lib/privateBookV2Review';
+import { isPrivateBookV2RuntimeHash, type PrivateBookV2Action } from '../../../lib/privateBookV2Actions';
+import { isDirectTradeSnapshot } from '../../../lib/p2pTradeView';
+import {
+  buildOtcV2ConditionalApproval,
+  buildOtcV2ConfirmationDetails
+} from '../../../lib/otcV2Confirmation';
 
-type TradeSigner = JsonRpcSigner | Wallet;
+type TradeSigner = JsonRpcSigner;
 export type CounterAcceptMode = 'close-related' | 'fill';
-
-const getSnapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContract'>): string =>
-  buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
-
-const isPrivateTradeAsset = (asset?: Pick<TradeAssetPayload, 'kind'> | null): boolean => asset?.kind === 'private-erc20';
-
-const normalizeAddress = (address?: string | null): string => address?.trim().toLowerCase() ?? '';
-
-const assetsUseSameToken = (left: TradeAssetPayload, right: TradeAssetPayload): boolean =>
-  left.kind === right.kind &&
-  left.kind !== 'native' &&
-  Boolean(left.tokenAddress && right.tokenAddress) &&
-  normalizeAddress(left.tokenAddress) === normalizeAddress(right.tokenAddress);
-
-const assertAccessSecretMatchesSnapshot = async (
-  snapshot: TradeSnapshot,
-  accessSecret: string,
-  walletAddress: string
-): Promise<void> => {
-  if (!snapshot.hasAccessHash) {
-    return;
-  }
-  if (canUseWalletAuthorityForDirectAccess(snapshot, walletAddress)) {
-    return;
-  }
-  if (!accessSecret) {
-    throw new Error('This trade needs its full private link before it can be filled.');
-  }
-  if (!normalizeAccessHash(snapshot.accessHash)) {
-    throw new Error('This private link could not be verified. Open the full Share link from the maker and try again.');
-  }
-
-  const cotiEthers = await loadCotiEthersModule();
-  if (!doesAccessSecretMatchHash(accessSecret, snapshot.accessHash, cotiEthers.keccak256)) {
-    throw new Error(PRIVATE_LINK_SECRET_MISMATCH_MESSAGE);
-  }
-};
-
-const getRemainingRequestAmount = (trade: TradeSnapshot): bigint => {
-  try {
-    const escrowConfig = resolveTradeEscrowContractConfig(trade.escrowContract);
-    if (escrowConfig.directVisible) {
-      return BigInt(trade.request.amount);
-    }
-    if (isHiddenLiquidityTrade(trade)) {
-      return BigInt(trade.request.amount);
-    }
-    return BigInt(trade.fillState?.remainingRequestAmount ?? trade.request.amount);
-  } catch {
-    return 0n;
-  }
-};
-
-const getRemainingOfferAmount = (trade: TradeSnapshot): bigint => {
-  try {
-    if (isHiddenLiquidityTrade(trade)) {
-      return BigInt(trade.offer.amount);
-    }
-    return BigInt(trade.fillState?.remainingOfferAmount ?? trade.offer.amount);
-  } catch {
-    return 0n;
-  }
-};
-
-const withTradeAssetAmount = (asset: TradeAssetPayload, amount: bigint): TradeAssetPayload => ({
-  ...asset,
-  amount: amount.toString()
-});
-
-const hasPositiveTradeAmount = (value?: string | null): boolean => {
-  const normalized = value?.trim() ?? '';
-  return /^\d+$/.test(normalized) && BigInt(normalized) > 0n;
-};
-
-const hasHydratedTradeAmounts = (snapshot: Pick<TradeSnapshot, 'offer' | 'request'>): boolean =>
-  hasPositiveTradeAmount(snapshot.offer.amount) && hasPositiveTradeAmount(snapshot.request.amount);
-
-const carryKnownDirectTerms = (latestSnapshot: TradeSnapshot, sourceSnapshot: TradeSnapshot): TradeSnapshot => {
-  const latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
-  if (
-    !latestEscrowConfig.directVisible ||
-    hasHydratedTradeAmounts(latestSnapshot) ||
-    !hasHydratedTradeAmounts(sourceSnapshot)
-  ) {
-    return latestSnapshot;
-  }
-
-  const nextFillState =
-    latestSnapshot.status === 'open'
-      ? {
-          ...latestSnapshot.fillState,
-          remainingOfferAmount: sourceSnapshot.offer.amount,
-          remainingRequestAmount: sourceSnapshot.request.amount,
-          filledOfferAmount: latestSnapshot.fillState?.filledOfferAmount ?? '0',
-          filledRequestAmount: latestSnapshot.fillState?.filledRequestAmount ?? '0'
-        }
-      : latestSnapshot.fillState;
-
-  return {
-    ...latestSnapshot,
-    offer: { ...latestSnapshot.offer, amount: sourceSnapshot.offer.amount },
-    request: { ...latestSnapshot.request, amount: sourceSnapshot.request.amount },
-    fillState: nextFillState,
-    hiddenLiquidity: false
-  };
-};
 
 type UseP2PTradeActionsArgs = {
   ensureTradeFunding?: (input: TradeFundingPreflightInput) => Promise<void>;
@@ -158,9 +51,12 @@ type UseP2PTradeActionsArgs = {
     action: 'accept' | 'cancel' | 'decline' | 'fill'
   ) => string;
   onActionNotice?: (notice: P2PActionNoticeInput) => void;
+  otcV2ActionRuntime?: OtcV2ActionRuntime | null;
+  refreshOneOffV2Trades?: () => void;
 };
 
 type UseP2PTradeActionsResult = {
+  changePrivateBookBudgetVisibility: (snapshot: TradeSnapshot, visible: boolean) => Promise<void>;
   acceptTrade: (snapshot: TradeSnapshot, counterAcceptMode?: CounterAcceptMode) => Promise<void>;
   cancelTrade: (snapshot: TradeSnapshot) => Promise<void>;
   declineTrade: (snapshot: TradeSnapshot) => Promise<void>;
@@ -171,603 +67,540 @@ type UseP2PTradeActionsResult = {
 export type TradeFillActionOptions = Partial<
   Pick<
     TradeFundingPreflightInput,
-    'actionLabel' | 'confirmButtonLabel' | 'confirmMessage' | 'confirmTitle' | 'confirmationPolicy' | 'tradeSummary'
+    | 'actionLabel'
+    | 'confirmButtonLabel'
+    | 'confirmMessage'
+    | 'confirmationStats'
+    | 'confirmTitle'
+    | 'confirmationPolicy'
+    | 'tradeSummary'
   >
 > & {
   openAfterAction?: boolean;
   rememberTerminalReturn?: boolean;
 };
 
+const snapshotKey = (snapshot: Pick<TradeSnapshot, 'tradeId' | 'escrowContract'>): string =>
+  buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
+
+const remainingRequest = (snapshot: TradeSnapshot): bigint =>
+  BigInt(snapshot.fillState?.remainingRequestAmount ?? snapshot.request.amount);
+
+const remainingOffer = (snapshot: TradeSnapshot): bigint =>
+  BigInt(snapshot.fillState?.remainingOfferAmount ?? snapshot.offer.amount);
+
+const requirePositiveAmounts = (snapshot: TradeSnapshot): Readonly<{
+  offer: bigint;
+  request: bigint;
+}> => {
+  const offer = remainingOffer(snapshot);
+  const request = remainingRequest(snapshot);
+  if (offer <= 0n || request <= 0n) {
+    throw new Error('This OTC V2 order has no remaining amount.');
+  }
+  return Object.freeze({ offer, request });
+};
+
 export default function useP2PTradeActions({
   ensureTradeFunding,
-  getTradeSigner,
-  getTradeSignerForWallet,
   mergeTradeSnapshot,
   openTrade,
   rememberTradeTerminalReturn,
-  refreshTradeDataInBackground,
   readTradeDetail,
-  resolveKnownTradeAccessSecret,
-  rememberTradeAccessSecret,
-  resolvedRouteAccessSecret,
-  routeEscrowContract,
-  routeTradeId,
   runTradeWalletPromptFlow,
   setTradeActionError,
   walletAddress,
-  resolveActionWalletAddress,
-  onActionNotice
+  onActionNotice,
+  otcV2ActionRuntime,
+  refreshOneOffV2Trades
 }: UseP2PTradeActionsArgs): UseP2PTradeActionsResult {
   const [processingTradeActionId, setProcessingTradeActionId] = useState('');
 
-  const resolveAccessSecretForSnapshot = useCallback(
-    (snapshot: TradeSnapshot): string =>
-      routeTradeId === snapshot.tradeId &&
-      buildTradeSnapshotKey(routeTradeId, routeEscrowContract) === getSnapshotKey(snapshot) &&
-      resolvedRouteAccessSecret
-        ? resolvedRouteAccessSecret
-        : resolveKnownTradeAccessSecret(snapshot.tradeId, snapshot.escrowContract),
-    [resolveKnownTradeAccessSecret, resolvedRouteAccessSecret, routeEscrowContract, routeTradeId]
-  );
+  const notify = useCallback((input: Omit<P2PActionNoticeInput, 'surface'>) => {
+    onActionNotice?.({ ...input, surface: 'terminal' });
+  }, [onActionNotice]);
 
-  const notifyTerminalAction = useCallback(
-    (input: Omit<P2PActionNoticeInput, 'surface'>) => {
-      onActionNotice?.({
-        ...input,
-        surface: 'terminal'
+  const requireV2 = useCallback(async (snapshot: TradeSnapshot) => {
+    const identity = snapshot.v2;
+    if (!identity) {
+      throw new Error('Legacy OTC orders are read-only. Create or use an OTC V2 order.');
+    }
+    if (!otcV2ActionRuntime || !otcV2ActionRuntime.isCurrent()) {
+      throw new Error('This OTC V2 order is unavailable in the current wallet session.');
+    }
+    const runtime = await otcV2ActionRuntime.forReference?.({ chainId: identity.chainId, contractAddress: identity.contractAddress, orderId: String(snapshot.tradeId) }) ?? otcV2ActionRuntime;
+    if (!runtime.isCurrent()) throw new Error('The referenced OTC runtime is closed.');
+    const deployment = runtime.deployments[identity.protocol];
+    if (
+      identity.chainId !== deployment.chainId ||
+      identity.contractAddress.toLowerCase() !== deployment.contractAddress.toLowerCase() ||
+      snapshot.escrowContract?.toLowerCase() !== deployment.contractAddress.toLowerCase()
+    ) {
+      throw new Error('This order does not match the verified OTC V2 deployment.');
+    }
+    const privateBook = getPrivateBookV2Projection(snapshot);
+    if (identity.protocol === 'private-v2' &&
+        (Boolean(privateBook) !== (isPrivateBookV2RuntimeHash(deployment.runtimeBytecodeHash)))) {
+      throw new Error('Private book terms do not match the verified runtime. Refresh the order.');
+    }
+    return Object.freeze({ identity, runtime });
+  }, [otcV2ActionRuntime]);
+
+  const runAction = useCallback(async ({
+    action,
+    snapshot,
+    operation
+  }: {
+    action: P2PActionNoticeInput['action'];
+    snapshot: TradeSnapshot;
+    operation: (markPending: () => void) => Promise<{
+      txHash: string;
+      refreshDisplay: ReadonlyArray<() => void>;
+    } | undefined>;
+  }) => {
+    const tradeKey = snapshotKey(snapshot);
+    setTradeActionError('');
+    setProcessingTradeActionId(tradeKey);
+    notify({ action, status: 'wallet', tradeKey });
+    try {
+      let pendingMarked = false;
+      const markPending = () => {
+        if (pendingMarked) return;
+        pendingMarked = true;
+        notify({ action, status: 'pending', tradeKey });
+      };
+      const result = await runTradeWalletPromptFlow(() => operation(markPending));
+      if (!result) return undefined;
+      // Execution has returned its confirmed receipt. Display failures cannot undo it.
+      let message: string | undefined;
+      for (const refresh of result.refreshDisplay) {
+        try {
+          await refresh();
+        } catch {
+          message = 'Transaction confirmed. The trade display needs a refresh. Do not submit this action again.';
+        }
+      }
+      if (message) setTradeActionError(message);
+      notify({ action, status: 'success', tradeKey, txHash: result.txHash, message });
+      return result;
+    } catch (error) {
+      if (isTradeActionConfirmationCancelledError(error)) {
+        notify({ action, message: 'Action cancelled', status: 'info', tradeKey });
+        return undefined;
+      }
+      const fallback = action === 'budget-visibility' ? 'Failed to change budget visibility.'
+        : action === 'decline' ? 'Failed to refuse trade.' : `Failed to ${action} trade.`;
+      const message = getOnChainFailureMessage(error, fallback);
+      setTradeActionError(message);
+      notify({ action, message, status: getP2PActionFailureStatus(message), tradeKey });
+      return undefined;
+    } finally {
+      setProcessingTradeActionId('');
+    }
+  }, [notify, runTradeWalletPromptFlow, setTradeActionError]);
+
+  const runPrivateBookReview = useCallback(async (
+    runtime: OtcV2ActionRuntime, snapshot: TradeSnapshot, action: PrivateBookV2Action, markPending: () => void
+  ) => {
+    if (action.kind === 'budget-visibility' && runtime.privateBook?.budgetVisibilityAvailable !== true) throw new Error('Budget visibility is unavailable.');
+    if (!ensureTradeFunding) throw new Error('Private book actions require transaction review.');
+    if (!getPrivateBookV2Projection(snapshot)) throw new Error('Refresh the current private book order before acting.');
+    const review = await buildPrivateBookV2Review({ runtime, action, resolveTokenMetadata: (kind, address) => {
+      const asset = [snapshot.offer, snapshot.request].find(item => item.kind === kind && item.tokenAddress?.toLowerCase() === address.toLowerCase());
+      if (!asset) throw new Error('Private book token differs from the reviewed order.');
+      return { symbol: asset.symbol, decimals: asset.decimals };
+    } });
+    const payment = action.kind === 'fill'
+      ? action.terms.mode === 'private-pair' ? BigInt(action.terms.maxRequestAmount)
+        : action.terms.mode === 'private-offer-public-request' ? BigInt(action.terms.publicRequestAmount)
+          : BigInt(action.terms.maxPrivateRequestAmount)
+      : 0n;
+    const confirmed = await executePrivateBookV2Review({ runtime, review, confirm: async details => {
+      const visibilityLabel = action.kind === 'budget-visibility' ? action.visible ? 'Publish original budget' : 'Hide budget' : undefined;
+      await ensureTradeFunding({
+        actionLabel: visibilityLabel ?? (action.kind === 'fill' ? 'fill trade' : 'cancel order'),
+        confirmButtonLabel: visibilityLabel ?? (action.kind === 'fill' ? 'Confirm maximum payment' : 'Cancel order'),
+        confirmTitle: visibilityLabel ?? (action.kind === 'fill' ? 'Review maximum payment' : 'Confirm cancellation'),
+        confirmationPolicy: 'always', confirmMessage: details.confirmMessage,
+        confirmationStats: details.confirmationStats, tradeSummary: details.tradeSummary,
+        requirements: payment > 0n ? [{ asset: snapshot.request, amountWei: payment, reason: 'maximum trade payment' }] : []
       });
-    },
-    [onActionNotice]
-  );
-  const getSignerForActionWallet = useCallback(
-    async (actionWalletAddress: string, requireAes: boolean): Promise<TradeSigner> => {
-      if (getTradeSignerForWallet) {
-        return getTradeSignerForWallet(actionWalletAddress, requireAes);
-      }
-      if (actionWalletAddress.trim().toLowerCase() !== walletAddress.trim().toLowerCase()) {
-        throw new Error('This action requires the owner wallet signer.');
-      }
-      return getTradeSigner(requireAes);
-    },
-    [getTradeSigner, getTradeSignerForWallet, walletAddress]
-  );
+      markPending();
+      return true;
+    } });
+    if (!confirmed) throw new Error('Private book action was not confirmed.');
+    return confirmed;
+  }, [ensureTradeFunding]);
 
-  const acceptTrade = useCallback(
-    async (snapshot: TradeSnapshot, counterAcceptMode: CounterAcceptMode = 'close-related') => {
-      const tradeKey = getSnapshotKey(snapshot);
-      if (!walletAddress) {
-        const message = 'Connect a wallet first.';
-        setTradeActionError(message);
-        notifyTerminalAction({ action: 'accept', message, status: 'error', tradeKey });
-        return;
-      }
-
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(tradeKey);
-        notifyTerminalAction({ action: 'accept', status: 'pending', tradeKey });
-        const actionResult = await runTradeWalletPromptFlow(async () => {
-        const actionWalletAddress = resolveActionWalletAddress?.(snapshot, 'accept') || walletAddress;
-        let accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        let latestSnapshot = carryKnownDirectTerms(
-          (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot,
-          snapshot
-        );
-        let latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
-        const directTermsNeedHydration = latestEscrowConfig.directVisible && !hasHydratedTradeAmounts(latestSnapshot);
-        const directRevealNeedsAes =
-          directTermsNeedHydration &&
-          !accessSecret &&
-          canUseWalletAuthorityForDirectAccess(latestSnapshot, actionWalletAddress);
-        const signer = await getSignerForActionWallet(
-          actionWalletAddress,
-          isPrivateTradeAsset(latestSnapshot.request) || directRevealNeedsAes
-        );
-        if (directTermsNeedHydration) {
-          const revealResult = await revealDirectTradeTermsForWallet({
-            snapshot: latestSnapshot,
-            walletAddress: actionWalletAddress,
-            signer,
-            accessSecret: accessSecret || undefined
-          });
-          if (!revealResult.ok) {
-            throw new Error(revealResult.message);
-          }
-          latestSnapshot = revealResult.snapshot;
-          latestEscrowConfig = resolveTradeEscrowContractConfig(latestSnapshot.escrowContract);
-          if (revealResult.recoveredAccessSecret) {
-            accessSecret = revealResult.recoveredAccessSecret;
-            rememberTradeAccessSecret?.(latestSnapshot.tradeId, revealResult.recoveredAccessSecret, latestSnapshot.escrowContract);
-          }
+  const acceptTrade = useCallback(async (snapshot: TradeSnapshot) => {
+    if (!walletAddress) {
+      const tradeKey = snapshotKey(snapshot);
+      const message = 'Connect a wallet first.';
+      setTradeActionError(message);
+      notify({ action: 'accept', message, status: 'error', tradeKey });
+      return;
+    }
+    await runAction({
+      action: 'accept',
+      snapshot,
+      operation: async (markPending) => {
+        rememberTradeTerminalReturn(snapshot.tradeId, undefined, snapshot.escrowContract);
+        const latest = (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
+        const v2 = await requireV2(latest);
+        if (v2.identity.protocol === 'private-v2' && isPrivateBookV2RuntimeHash(v2.runtime.deployments['private-v2'].runtimeBytecodeHash)) {
+          throw new Error('Enter a maximum payment. Private book inventory cannot be accepted as a fixed full amount.');
         }
-        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, actionWalletAddress);
-        const directWalletAuthority =
-          latestEscrowConfig.directVisible && canUseWalletAuthorityForDirectAccess(latestSnapshot, actionWalletAddress);
-        const remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
-        if (remainingRequestAmount <= 0n) {
-          throw new Error('This trade has no remaining amount to accept.');
-        }
-        const acceptRequestAsset = withTradeAssetAmount(latestSnapshot.request, remainingRequestAmount);
+        const amounts = requirePositiveAmounts(latest);
+        const tradeSummary = [
+          { label: 'Trade', value: `#${latest.tradeId}` },
+          { label: 'You pay', value: formatWalletFundAmount(amounts.request, latest.request) },
+          { label: 'You buy', value: formatWalletFundAmount(amounts.offer, latest.offer) }
+        ];
+        const approval = buildOtcV2ConditionalApproval({
+          amountWei: amounts.request,
+          kind: latest.request.kind === 'native' ? 'none' : latest.request.kind,
+          symbol: latest.request.symbol
+        });
+        const confirmation = buildOtcV2ConfirmationDetails({
+          approvals: approval ? [approval] : [],
+          cotiPrivateInputCount:
+            v2.identity.protocol === 'private-v2' ||
+            (v2.identity.protocol === 'direct-v2' && latest.request.kind === 'private-erc20')
+              ? 1
+              : 0,
+          summaryRows: tradeSummary
+        });
         await ensureTradeFunding?.({
           actionLabel: 'accept trade',
-          tradeSummary: [
-            {
-              label: 'Trade',
-              value: `#${latestSnapshot.tradeId}`
-            },
-            {
-              label: 'You pay',
-              value: formatWalletFundAmount(remainingRequestAmount, latestSnapshot.request)
-            },
-            {
-              label: 'You buy',
-              value: formatWalletFundAmount(getRemainingOfferAmount(latestSnapshot), latestSnapshot.offer)
-            }
-          ],
-          requirements: [
-            {
-              asset: latestSnapshot.request,
-              amountWei: remainingRequestAmount,
-              reason: 'trade payment'
-            }
-          ]
+          confirmButtonLabel: 'Buy',
+          confirmMessage: confirmation.confirmMessage,
+          confirmationPolicy: 'always',
+          confirmationStats: confirmation.confirmationStats,
+          confirmTitle: 'Review purchase',
+          tradeSummary: confirmation.tradeSummary,
+          requirements: [{ asset: latest.request, amountWei: amounts.request, reason: 'trade payment' }]
         });
-        const fillDirectCounterOnly = Boolean(
-          latestSnapshot.counterParentTradeId &&
-          counterAcceptMode === 'fill' &&
-          latestEscrowConfig.directVisible
-        );
-        let canUseCloseFirstParentBalance = false;
-        if (
-          latestSnapshot.counterParentTradeId &&
-          counterAcceptMode === 'close-related' &&
-          acceptRequestAsset.kind === 'private-erc20'
-        ) {
-          const parentSnapshot = await readTradeDetail(
-            latestSnapshot.counterParentTradeId,
-            latestSnapshot.counterParentEscrow || latestSnapshot.escrowContract
-          ).catch(() => null);
-          canUseCloseFirstParentBalance = Boolean(
-            parentSnapshot &&
-            normalizeAddress(parentSnapshot.maker) === normalizeAddress(actionWalletAddress) &&
-            assetsUseSameToken(parentSnapshot.offer, acceptRequestAsset)
+        markPending();
+
+        let transactionHash: string;
+        if (v2.identity.protocol === 'standard-v2') {
+          const quote = await v2.runtime.quoteStandard(latest.tradeId, amounts.request);
+          if (quote.revision !== v2.identity.revision) {
+            throw new Error('This Standard OTC V2 quote is stale. Refresh and review it again.');
+          }
+          transactionHash = (await v2.runtime.standard({
+            kind: 'fill',
+            tradeId: latest.tradeId,
+            expectedRevision: quote.revision,
+            requestAmountIn: quote.requestAmountIn,
+            minOfferAmountOut: quote.offerAmountOut,
+            requestAsset: latest.request.kind === 'native'
+              ? { assetType: 'native' }
+              : { assetType: 'erc20', token: latest.request.tokenAddress }
+          })).transactionHash;
+        } else if (v2.identity.protocol === 'private-v2') {
+          if (!v2.identity.revision || !v2.identity.privateMode) {
+            throw new Error('Private OTC V2 revision or mode is unavailable.');
+          }
+          const terms = v2.identity.privateMode === 'fully-private'
+            ? { mode: 'fully-private' as const, maxRequestAmount: amounts.request, minOfferAmount: amounts.offer }
+            : v2.identity.privateMode === 'private-offer-public-request'
+              ? { mode: 'private-offer-public-request' as const, publicRequestAmount: amounts.request, minPrivateOfferAmount: amounts.offer }
+              : { mode: 'public-offer-private-request' as const, publicOfferAmount: amounts.offer, maxPrivateRequestAmount: amounts.request };
+          transactionHash = (await v2.runtime.privateTrade({
+            kind: 'fill', orderId: latest.tradeId, expectedRevision: v2.identity.revision, terms
+          })).transactionHash;
+        } else if (latest.request.kind === 'private-erc20') {
+          if (!latest.request.tokenAddress) throw new Error('Direct private request token is unavailable.');
+          transactionHash = (await v2.runtime.direct({
+            kind: 'accept-private',
+            tradeId: latest.tradeId,
+            expectedRequestAmount: amounts.request,
+            requestToken: latest.request.tokenAddress
+          })).transactionHash;
+        } else {
+          transactionHash = (await v2.runtime.direct({
+            kind: 'accept-public',
+            tradeId: latest.tradeId,
+            expectedOfferAmount: amounts.offer,
+            expectedRequestAmount: amounts.request,
+            requestAsset: latest.request.kind === 'native'
+              ? { assetType: 'native' }
+              : { assetType: 'erc20', token: latest.request.tokenAddress }
+          })).transactionHash;
+        }
+        return { txHash: transactionHash, refreshDisplay: [
+          () => refreshOneOffV2Trades?.(),
+          () => openTrade(latest.tradeId, undefined, latest.escrowContract)
+        ] };
+      }
+    });
+  }, [
+    ensureTradeFunding,
+    notify,
+    openTrade,
+    readTradeDetail,
+    refreshOneOffV2Trades,
+    rememberTradeTerminalReturn,
+    requireV2,
+    runPrivateBookReview,
+    runAction,
+    setTradeActionError,
+    walletAddress
+  ]);
+
+  const partialFillTrade = useCallback(async (
+    snapshot: TradeSnapshot,
+    amountInput: string,
+    options?: TradeFillActionOptions
+  ) => {
+    if (!walletAddress) {
+      const tradeKey = snapshotKey(snapshot);
+      const message = 'Connect a wallet first.';
+      setTradeActionError(message);
+      notify({ action: 'fill', message, status: 'error', tradeKey });
+      return;
+    }
+    if (snapshot.counterParentTradeId) {
+      const tradeKey = snapshotKey(snapshot);
+      const message = 'Counter offers are accepted in full.';
+      setTradeActionError(message);
+      notify({ action: 'fill', message, status: 'error', tradeKey });
+      return;
+    }
+    await runAction({
+      action: 'fill',
+      snapshot,
+      operation: async (markPending) => {
+        if (options?.rememberTerminalReturn !== false) {
+          rememberTradeTerminalReturn(snapshot.tradeId, undefined, snapshot.escrowContract);
+        }
+        const latest = (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
+        if (isDirectTradeSnapshot(latest)) {
+          throw new Error('Direct OTC offers are accepted in full and do not support partial fills.');
+        }
+        const v2 = await requireV2(latest);
+        const requestedAmount = parseTokenAmountInput(amountInput, latest.request.decimals);
+        if (requestedAmount === null || requestedAmount <= 0n) {
+          throw new Error(`Enter a valid ${latest.request.symbol} amount to fill.`);
+        }
+        if (v2.identity.protocol === 'private-v2' && isPrivateBookV2RuntimeHash(v2.runtime.deployments['private-v2'].runtimeBytecodeHash)) {
+          const action = buildPrivateBookV2FillAction(latest, requestedAmount);
+          const confirmed = await runPrivateBookReview(v2.runtime, latest, action, markPending);
+          return { txHash: confirmed.transactionHash, refreshDisplay: [
+            () => { if (options?.openAfterAction !== false) openTrade(latest.tradeId, undefined, latest.escrowContract); },
+            () => refreshOneOffV2Trades?.()
+          ] };
+        }
+        const amounts = requirePositiveAmounts(latest);
+        if (requestedAmount > amounts.request) {
+          throw new Error(
+            `Only ${formatTokenAmount(amounts.request, latest.request.decimals, 6)} ${latest.request.symbol} remains.`
           );
         }
-        if (latestSnapshot.counterParentTradeId && counterAcceptMode === 'fill' && !latestEscrowConfig.directVisible) {
-          throw new Error('Normal counter fill is available for Direct OTC counter offers.');
-        }
-        const shouldUsePrivateFillPath =
-          fillDirectCounterOnly ||
-          ((isHiddenLiquidityTrade(latestSnapshot) || latestEscrowConfig.directVisible) && !latestSnapshot.counterParentTradeId);
-        const hiddenFillResult = shouldUsePrivateFillPath
-          ? fillDirectCounterOnly
-            ? await acceptDirectVisibleTradeOnChain({
-                signer,
-                ownerAddress: actionWalletAddress,
-                tradeId: latestSnapshot.tradeId,
-                requestAsset: acceptRequestAsset,
-                requestAmountWei: remainingRequestAmount,
-                escrowContract: latestSnapshot.escrowContract,
-                accessSecret: accessSecret || undefined,
-                useDirectWalletAuthority: directWalletAuthority
-              }).then((result) => ({
-                filledTxHash: result.acceptedTxHash,
-                fullyFilled: true
-              }))
-            : await fillPrivateFixedPriceTradeOnChain({
-                signer,
-                ownerAddress: actionWalletAddress,
-                tradeId: latestSnapshot.tradeId,
-                requestAsset: acceptRequestAsset,
-                requestAmountWei: remainingRequestAmount,
-                escrowContract: latestSnapshot.escrowContract,
-                accessSecret: accessSecret || undefined,
-                useDirectWalletAuthority: directWalletAuthority
-              })
-          : null;
-        const { acceptedTxHash } =
-          hiddenFillResult !== null
-            ? { acceptedTxHash: hiddenFillResult.filledTxHash }
-            : latestSnapshot.counterParentTradeId
-              ? await acceptCounterTradeAndCloseParentOnChain({
-                  signer,
-                  ownerAddress: actionWalletAddress,
-                  tradeId: latestSnapshot.tradeId,
-                  requestAsset: acceptRequestAsset,
-                  requestAmountWei: remainingRequestAmount,
-                  escrowContract: latestSnapshot.escrowContract,
-                  accessSecret: accessSecret || undefined,
-                  useDirectWalletAuthority: directWalletAuthority,
-                  skipPrivateTokenBalanceCheck: canUseCloseFirstParentBalance
-                })
-              : await acceptTradeOnChain({
-                  signer,
-                  ownerAddress: actionWalletAddress,
-                  tradeId: latestSnapshot.tradeId,
-                  requestAsset: acceptRequestAsset,
-                  requestAmountWei: remainingRequestAmount,
-                  accessSecret: accessSecret || undefined
-                });
-        const acceptedViaCounter = Boolean(latestSnapshot.counterParentTradeId);
-        const closedRelatedCounter = Boolean(latestSnapshot.counterParentTradeId && counterAcceptMode === 'close-related');
-        const nextSnapshot: TradeSnapshot = {
-          ...latestSnapshot,
-          taker:
-            (acceptedViaCounter || !isHiddenLiquidityTrade(latestSnapshot) || hiddenFillResult?.fullyFilled) &&
-            latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
-              ? actionWalletAddress
-              : latestSnapshot.taker,
-          status: acceptedViaCounter
-            ? 'accepted'
-            : isHiddenLiquidityTrade(latestSnapshot)
-            ? hiddenFillResult?.fullyFilled
-              ? 'accepted'
-              : 'open'
-            : 'accepted',
-          fillState: isHiddenLiquidityTrade(latestSnapshot)
-            ? latestSnapshot.fillState
-            : {
-                remainingOfferAmount: '0',
-                remainingRequestAmount: '0',
-                filledOfferAmount: latestSnapshot.offer.amount,
-                filledRequestAmount: latestSnapshot.request.amount
-              },
-          acceptedTxHash
-        };
-        mergeTradeSnapshot(nextSnapshot);
-        openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
-        if (closedRelatedCounter) {
-          refreshTradeDataInBackground(latestSnapshot.counterParentTradeId, undefined, signer);
-        }
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        return {
-          txHash: acceptedTxHash,
-          requestedFill:
-            shouldUsePrivateFillPath && !fillDirectCounterOnly
-              ? {
-                  amountWei: remainingRequestAmount.toString(),
-                  asset: latestSnapshot.request,
-                  role: 'sold' as const,
-                  privateLiquidity: true
-                }
-              : undefined
-        };
-        });
-        notifyTerminalAction({
-          action: 'accept',
-          status: 'success',
-          tradeKey,
-          txHash: actionResult.txHash,
-          requestedFill: actionResult.requestedFill
-        });
-      } catch (error) {
-        if (isTradeActionConfirmationCancelledError(error)) {
-          notifyTerminalAction({ action: 'accept', message: 'Action cancelled', status: 'info', tradeKey });
-          return;
-        }
-        const message = error instanceof Error ? error.message : 'Failed to accept trade.';
-        const actionError = getOnChainFailureMessage(error, message);
-        setTradeActionError(actionError);
-        notifyTerminalAction({ action: 'accept', message: actionError, status: 'error', tradeKey });
-      } finally {
-        setProcessingTradeActionId('');
-      }
-    },
-    [
-      ensureTradeFunding,
-      getSignerForActionWallet,
-      mergeTradeSnapshot,
-      openTrade,
-      rememberTradeTerminalReturn,
-      rememberTradeAccessSecret,
-      refreshTradeDataInBackground,
-      readTradeDetail,
-      resolveAccessSecretForSnapshot,
-      resolveActionWalletAddress,
-      runTradeWalletPromptFlow,
-      setTradeActionError,
-      notifyTerminalAction,
-      walletAddress
-    ]
-  );
-
-  const partialFillTrade = useCallback(
-    async (snapshot: TradeSnapshot, amountInput: string, options?: TradeFillActionOptions) => {
-      const tradeKey = getSnapshotKey(snapshot);
-      if (!walletAddress) {
-        const message = 'Connect a wallet first.';
-        setTradeActionError(message);
-        notifyTerminalAction({ action: 'fill', message, status: 'error', tradeKey });
-        return;
-      }
-      if (snapshot.counterParentTradeId) {
-        const message = 'Counter offers use full-size fill, or close the parent first and accept.';
-        setTradeActionError(message);
-        notifyTerminalAction({ action: 'fill', message, status: 'error', tradeKey });
-        return;
-      }
-
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(tradeKey);
-        notifyTerminalAction({ action: 'fill', status: 'pending', tradeKey });
-        const actionResult = await runTradeWalletPromptFlow(async () => {
-        const actionWalletAddress = resolveActionWalletAddress?.(snapshot, 'fill') || walletAddress;
-        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        if (options?.rememberTerminalReturn !== false) {
-          rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        }
-        const latestSnapshot = (await readTradeDetail(snapshot.tradeId, snapshot.escrowContract)) ?? snapshot;
-        if (latestSnapshot.counterParentTradeId) {
-          throw new Error('Counter offers use full-size fill, or close the parent first and accept.');
-        }
-
-        let requestedAmount: bigint;
-        let remainingRequestAmount = 0n;
-        const latestSnapshotHiddenLiquidity = isHiddenLiquidityTrade(latestSnapshot);
-        if (latestSnapshotHiddenLiquidity) {
-          const parsedRequestAmount = parseTokenAmountInput(amountInput, latestSnapshot.request.decimals);
-          if (parsedRequestAmount === null || parsedRequestAmount <= 0n) {
-            throw new Error(`Enter a valid ${latestSnapshot.request.symbol} amount to pay.`);
-          }
-          requestedAmount = parsedRequestAmount;
-          if (requestedAmount <= 0n) {
-            throw new Error('This trade price cannot be filled.');
-          }
-        } else {
-          const parsedRequestAmount = parseTokenAmountInput(amountInput, latestSnapshot.request.decimals);
-          if (parsedRequestAmount === null || parsedRequestAmount <= 0n) {
-            throw new Error(`Enter a valid ${latestSnapshot.request.symbol} amount to fill.`);
-          }
-          requestedAmount = parsedRequestAmount;
-          remainingRequestAmount = getRemainingRequestAmount(latestSnapshot);
-          if (requestedAmount > remainingRequestAmount) {
-            throw new Error(
-              `Only ${formatTokenAmount(remainingRequestAmount, latestSnapshot.request.decimals, 6)} ${latestSnapshot.request.symbol} remains.`
-            );
-          }
-        }
-
-        await assertAccessSecretMatchesSnapshot(latestSnapshot, accessSecret, actionWalletAddress);
-        const directWalletAuthority =
-          resolveTradeEscrowContractConfig(latestSnapshot.escrowContract).directVisible &&
-          canUseWalletAuthorityForDirectAccess(latestSnapshot, actionWalletAddress);
-
-        const defaultTradeSummary = [
-          {
-            label: 'Trade',
-            value: `#${latestSnapshot.tradeId}`
-          },
-          {
-            label: 'You pay',
-            value: formatWalletFundAmount(requestedAmount, latestSnapshot.request)
-          },
-          {
-            label: 'Receive',
-            value: latestSnapshotHiddenLiquidity
-              ? latestSnapshot.offer.symbol
-              : formatWalletFundAmount(
-                  (requestedAmount * getRemainingOfferAmount(latestSnapshot)) / remainingRequestAmount,
-                  latestSnapshot.offer
-              )
-          }
+        const offerEstimate = (requestedAmount * amounts.offer) / amounts.request;
+        const tradeSummary = options?.tradeSummary ?? [
+          { label: 'Trade', value: `#${latest.tradeId}` },
+          { label: 'You pay', value: formatWalletFundAmount(requestedAmount, latest.request) },
+          { label: 'Receive', value: formatWalletFundAmount(offerEstimate, latest.offer) }
         ];
+        const approval = buildOtcV2ConditionalApproval({
+          amountWei: requestedAmount,
+          kind: latest.request.kind === 'native' ? 'none' : latest.request.kind,
+          symbol: latest.request.symbol
+        });
+        const confirmation = buildOtcV2ConfirmationDetails({
+          approvals: approval ? [approval] : [],
+          cotiPrivateInputCount: v2.identity.protocol === 'private-v2' ? 1 : 0,
+          summaryRows: tradeSummary
+        });
         await ensureTradeFunding?.({
           actionLabel: options?.actionLabel ?? 'fill trade',
           confirmButtonLabel: options?.confirmButtonLabel,
-          confirmMessage: options?.confirmMessage,
+          confirmMessage: options?.confirmMessage ?? confirmation.confirmMessage,
+          confirmationStats: confirmation.confirmationStats,
           confirmTitle: options?.confirmTitle,
-          confirmationPolicy: options?.confirmationPolicy,
-          tradeSummary: options?.tradeSummary ?? defaultTradeSummary,
-          requirements: [
-            {
-              asset: latestSnapshot.request,
-              amountWei: requestedAmount,
-              reason: 'trade payment'
-            }
-          ]
+          confirmationPolicy: 'always',
+          tradeSummary: confirmation.tradeSummary,
+          requirements: [{ asset: latest.request, amountWei: requestedAmount, reason: 'trade payment' }]
         });
-        const signer = await getSignerForActionWallet(actionWalletAddress, isPrivateTradeAsset(latestSnapshot.request));
-        const fillResult = latestSnapshotHiddenLiquidity
-          ? await fillPrivateFixedPriceTradeOnChain({
-              signer,
-              ownerAddress: actionWalletAddress,
-              tradeId: snapshot.tradeId,
-              requestAsset: withTradeAssetAmount(latestSnapshot.request, requestedAmount),
-              requestAmountWei: requestedAmount,
-              escrowContract: latestSnapshot.escrowContract,
-              accessSecret: accessSecret || undefined,
-              useDirectWalletAuthority: directWalletAuthority
-            })
-          : await fillTradeOnChain({
-              signer,
-              ownerAddress: actionWalletAddress,
-              tradeId: snapshot.tradeId,
-              requestAsset: withTradeAssetAmount(latestSnapshot.request, requestedAmount),
-              requestAmountWei: requestedAmount,
-              accessSecret: accessSecret || undefined
-            });
-        if (latestSnapshotHiddenLiquidity) {
-          const privateFillFullyFilled = 'fullyFilled' in fillResult && fillResult.fullyFilled;
-          if (privateFillFullyFilled) {
-            mergeTradeSnapshot({
-              ...latestSnapshot,
-              taker:
-                latestSnapshot.taker.toLowerCase() === ZERO_TRADE_TAKER_ADDRESS.toLowerCase()
-                  ? actionWalletAddress
-                  : latestSnapshot.taker,
-              status: 'accepted',
-              acceptedTxHash: fillResult.filledTxHash
-            });
+        markPending();
+
+        let transactionHash: string;
+        if (v2.identity.protocol === 'standard-v2') {
+          const quote = await v2.runtime.quoteStandard(latest.tradeId, requestedAmount);
+          if (quote.revision !== v2.identity.revision) {
+            throw new Error('This Standard OTC V2 quote is stale. Refresh and review it again.');
           }
+          transactionHash = (await v2.runtime.standard({
+            kind: 'fill',
+            tradeId: latest.tradeId,
+            expectedRevision: quote.revision,
+            requestAmountIn: quote.requestAmountIn,
+            minOfferAmountOut: quote.offerAmountOut,
+            requestAsset: latest.request.kind === 'native'
+              ? { assetType: 'native' }
+              : { assetType: 'erc20', token: latest.request.tokenAddress }
+          })).transactionHash;
         } else {
-          const remainingAfterFill =
-            requestedAmount >= remainingRequestAmount ? 0n : remainingRequestAmount - requestedAmount;
-          const remainingOfferBeforeFill = getRemainingOfferAmount(latestSnapshot);
-          const offerAmountOut =
-            remainingAfterFill === 0n
-              ? remainingOfferBeforeFill
-              : (requestedAmount * remainingOfferBeforeFill) / remainingRequestAmount;
-          const remainingOfferAfterFill =
-            offerAmountOut >= remainingOfferBeforeFill ? 0n : remainingOfferBeforeFill - offerAmountOut;
-          const previousWalletOfferAmount = BigInt(latestSnapshot.walletFillState?.offerAmountReceived ?? '0');
-          const previousWalletRequestAmount = BigInt(latestSnapshot.walletFillState?.requestAmountPaid ?? '0');
-          mergeTradeSnapshot({
-            ...latestSnapshot,
-            status: remainingAfterFill === 0n ? 'accepted' : latestSnapshot.status,
-            fillState: {
-              remainingOfferAmount: remainingOfferAfterFill.toString(),
-              remainingRequestAmount: remainingAfterFill.toString(),
-              filledOfferAmount: (BigInt(latestSnapshot.fillState?.filledOfferAmount ?? '0') + offerAmountOut).toString(),
-              filledRequestAmount: (BigInt(latestSnapshot.fillState?.filledRequestAmount ?? '0') + requestedAmount).toString()
-            },
-            walletFillState: {
-              offerAmountReceived: (previousWalletOfferAmount + offerAmountOut).toString(),
-              requestAmountPaid: (previousWalletRequestAmount + requestedAmount).toString()
-            }
-          });
+          if (!v2.identity.revision || !v2.identity.privateMode) {
+            throw new Error('Private OTC V2 revision or mode is unavailable.');
+          }
+          const minimumOffer = (requestedAmount * amounts.offer) / amounts.request;
+          if (minimumOffer <= 0n) throw new Error('This private fill is too small at the current order price.');
+          const terms = v2.identity.privateMode === 'fully-private'
+            ? { mode: 'fully-private' as const, maxRequestAmount: requestedAmount, minOfferAmount: minimumOffer }
+            : v2.identity.privateMode === 'private-offer-public-request'
+              ? { mode: 'private-offer-public-request' as const, publicRequestAmount: requestedAmount, minPrivateOfferAmount: minimumOffer }
+              : { mode: 'public-offer-private-request' as const, publicOfferAmount: minimumOffer, maxPrivateRequestAmount: requestedAmount };
+          transactionHash = (await v2.runtime.privateTrade({
+            kind: 'fill', orderId: latest.tradeId, expectedRevision: v2.identity.revision, terms
+          })).transactionHash;
         }
-        if (options?.openAfterAction !== false) {
-          openTrade(latestSnapshot.tradeId, accessSecret || undefined, latestSnapshot.escrowContract);
+        return { txHash: transactionHash, refreshDisplay: [
+          () => { if (options?.openAfterAction !== false) openTrade(latest.tradeId, undefined, latest.escrowContract); },
+          () => refreshOneOffV2Trades?.()
+        ] };
+      }
+    });
+  }, [
+    ensureTradeFunding,
+    notify,
+    openTrade,
+    readTradeDetail,
+    refreshOneOffV2Trades,
+    rememberTradeTerminalReturn,
+    requireV2,
+    runPrivateBookReview,
+    runAction,
+    setTradeActionError,
+    walletAddress
+  ]);
+
+  const cancelTrade = useCallback(async (snapshot: TradeSnapshot) => {
+    await runAction({
+      action: 'cancel',
+      snapshot,
+      operation: async (markPending) => {
+        rememberTradeTerminalReturn(snapshot.tradeId, undefined, snapshot.escrowContract);
+        const v2 = await requireV2(snapshot);
+        if (v2.identity.protocol === 'private-v2' && isPrivateBookV2RuntimeHash(v2.runtime.deployments['private-v2'].runtimeBytecodeHash)) {
+          const confirmed = await runPrivateBookReview(v2.runtime, snapshot, { kind: 'cancel', orderId: snapshot.tradeId }, markPending);
+          return { txHash: confirmed.transactionHash, refreshDisplay: [() => refreshOneOffV2Trades?.()] };
         }
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        return {
-          txHash: fillResult.filledTxHash,
-          requestedFill: latestSnapshotHiddenLiquidity
-            ? {
-                amountWei: requestedAmount.toString(),
-                asset: latestSnapshot.request,
-                role: 'sold' as const,
-                privateLiquidity: true
-              }
-            : undefined
-        };
+        const confirmation = buildOtcV2ConfirmationDetails({
+          cotiPrivateInputCount: 0,
+          summaryRows: [{ label: 'Order', value: `#${snapshot.tradeId}` }]
         });
-        notifyTerminalAction({
-          action: 'fill',
-          status: 'success',
-          tradeKey,
-          txHash: actionResult.txHash,
-          requestedFill: actionResult.requestedFill
+        await ensureTradeFunding?.({
+          actionLabel: 'cancel order',
+          confirmButtonLabel: 'Cancel order',
+          confirmMessage: confirmation.confirmMessage,
+          confirmationPolicy: 'always',
+          confirmationStats: confirmation.confirmationStats,
+          confirmTitle: 'Confirm cancellation',
+          requirements: [],
+          tradeSummary: confirmation.tradeSummary
         });
-      } catch (error) {
-        if (isTradeActionConfirmationCancelledError(error)) {
-          notifyTerminalAction({ action: 'fill', message: 'Action cancelled', status: 'info', tradeKey });
-          return;
+        markPending();
+        const confirmed = v2.identity.protocol === 'standard-v2'
+          ? await v2.runtime.standard({ kind: 'cancel', tradeId: snapshot.tradeId })
+          : v2.identity.protocol === 'private-v2'
+            ? await v2.runtime.privateTrade({ kind: 'cancel', orderId: snapshot.tradeId })
+            : await v2.runtime.direct({ kind: 'cancel', tradeId: snapshot.tradeId });
+        return { txHash: confirmed.transactionHash, refreshDisplay: [
+          () => mergeTradeSnapshot({ ...snapshot, status: 'cancelled' }),
+          () => refreshOneOffV2Trades?.()
+        ] };
+      }
+    });
+  }, [
+    ensureTradeFunding,
+    mergeTradeSnapshot,
+    refreshOneOffV2Trades,
+    rememberTradeTerminalReturn,
+    requireV2,
+    runPrivateBookReview,
+    runAction
+  ]);
+
+  const changePrivateBookBudgetVisibility = useCallback(async (snapshot: TradeSnapshot, visible: boolean) => {
+    if (otcV2ActionRuntime?.privateBook?.budgetVisibilityAvailable !== true || snapshot.v2?.protocol !== 'private-v2' || !getPrivateBookV2Projection(snapshot)) {
+      const message = 'Budget visibility is unavailable.'; setTradeActionError(message);
+      notify({ action: 'budget-visibility', status: 'error', tradeKey: snapshotKey(snapshot), message }); return;
+    }
+    try {
+      const selected = await requireV2(snapshot);
+      if (selected.runtime.privateBook?.budgetVisibilityAvailable !== true) throw new Error('Budget visibility is unavailable.');
+    } catch {
+      const message = 'Budget visibility is unavailable.'; setTradeActionError(message);
+      notify({ action: 'budget-visibility', status: 'error', tradeKey: snapshotKey(snapshot), message }); return;
+    }
+    await runAction({ action: 'budget-visibility', snapshot, operation: async markPending => {
+      const latest = await readTradeDetail(snapshot.tradeId, snapshot.escrowContract);
+      if (!latest || latest.tradeId !== snapshot.tradeId || latest.escrowContract?.toLowerCase() !== snapshot.escrowContract?.toLowerCase()) {
+        throw new Error('Refresh the current Book order before changing budget visibility.');
+      }
+      const v2 = await requireV2(latest), projection = getPrivateBookV2Projection(latest);
+      if (v2.identity.protocol !== 'private-v2' || !projection || !walletAddress || latest.maker.toLowerCase() !== walletAddress.toLowerCase()) {
+        throw new Error('Only the maker can change this Book budget visibility.');
+      }
+      if (latest.status !== 'open' || !latest.v2?.revision || latest.v2.revision !== snapshot.v2?.revision) {
+        throw new Error('Book revision changed. Refresh the order before changing budget visibility.');
+      }
+      if (typeof visible !== 'boolean' || typeof projection.publicBudgetVisibility !== 'boolean') {
+        throw new Error('Budget visibility is unavailable. Refresh the order.');
+      }
+      if (projection.publicBudgetVisibility === visible) {
+        notify({ action: 'budget-visibility', status: 'info', tradeKey: snapshotKey(latest), message: 'Budget visibility is unchanged.' });
+        return undefined;
+      }
+      const confirmed = await runPrivateBookReview(v2.runtime, latest,
+        { kind: 'budget-visibility', orderId: latest.tradeId, expectedRevision: latest.v2.revision, visible }, markPending);
+      return { txHash: confirmed.transactionHash, refreshDisplay: [() => refreshOneOffV2Trades?.()] };
+    } });
+  }, [notify, otcV2ActionRuntime, readTradeDetail, refreshOneOffV2Trades, requireV2, runAction, runPrivateBookReview, setTradeActionError, walletAddress]);
+
+  const declineTrade = useCallback(async (snapshot: TradeSnapshot) => {
+    await runAction({
+      action: 'decline',
+      snapshot,
+      operation: async (markPending) => {
+        rememberTradeTerminalReturn(snapshot.tradeId, undefined, snapshot.escrowContract);
+        const v2 = await requireV2(snapshot);
+        if (v2.identity.protocol !== 'direct-v2') {
+          throw new Error('Only Direct OTC V2 offers can be declined.');
         }
-        const message = error instanceof Error ? error.message : 'Failed to fill trade.';
-        const actionError = getOnChainFailureMessage(error, message);
-        setTradeActionError(actionError);
-        notifyTerminalAction({ action: 'fill', message: actionError, status: 'error', tradeKey });
-      } finally {
-        setProcessingTradeActionId('');
-      }
-    },
-    [
-      getSignerForActionWallet,
-      ensureTradeFunding,
-      mergeTradeSnapshot,
-      openTrade,
-      rememberTradeTerminalReturn,
-      refreshTradeDataInBackground,
-      readTradeDetail,
-      resolveAccessSecretForSnapshot,
-      resolveActionWalletAddress,
-      runTradeWalletPromptFlow,
-      setTradeActionError,
-      notifyTerminalAction,
-      walletAddress
-    ]
-  );
-
-  const cancelTrade = useCallback(
-    async (snapshot: TradeSnapshot) => {
-      const tradeKey = getSnapshotKey(snapshot);
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(tradeKey);
-        notifyTerminalAction({ action: 'cancel', status: 'pending', tradeKey });
-        const actionResult = await runTradeWalletPromptFlow(async () => {
-        const actionWalletAddress = resolveActionWalletAddress?.(snapshot, 'cancel') || walletAddress;
-        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        const signer = await getSignerForActionWallet(actionWalletAddress, false);
-        const result = await cancelTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
-        const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'cancelled' };
-        mergeTradeSnapshot(nextSnapshot);
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        return result;
+        const confirmation = buildOtcV2ConfirmationDetails({
+          cotiPrivateInputCount: 0,
+          summaryRows: [{ label: 'Offer', value: `#${snapshot.tradeId}` }]
         });
-        notifyTerminalAction({ action: 'cancel', status: 'success', tradeKey, txHash: actionResult.txHash });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to cancel trade.';
-        const actionError = getOnChainFailureMessage(error, message);
-        setTradeActionError(actionError);
-        notifyTerminalAction({ action: 'cancel', message: actionError, status: 'error', tradeKey });
-      } finally {
-        setProcessingTradeActionId('');
-      }
-    },
-    [
-      getSignerForActionWallet,
-      mergeTradeSnapshot,
-      refreshTradeDataInBackground,
-      rememberTradeTerminalReturn,
-      resolveAccessSecretForSnapshot,
-      resolveActionWalletAddress,
-      runTradeWalletPromptFlow,
-      setTradeActionError,
-      notifyTerminalAction
-    ]
-  );
-
-  const declineTrade = useCallback(
-    async (snapshot: TradeSnapshot) => {
-      const tradeKey = getSnapshotKey(snapshot);
-      setTradeActionError('');
-      try {
-        setProcessingTradeActionId(tradeKey);
-        notifyTerminalAction({ action: 'decline', status: 'pending', tradeKey });
-        const actionResult = await runTradeWalletPromptFlow(async () => {
-        const actionWalletAddress = resolveActionWalletAddress?.(snapshot, 'decline') || walletAddress;
-        const accessSecret = resolveAccessSecretForSnapshot(snapshot);
-        rememberTradeTerminalReturn(snapshot.tradeId, accessSecret || undefined, snapshot.escrowContract);
-        const signer = await getSignerForActionWallet(actionWalletAddress, false);
-        const result = await declineTradeOnChain({ signer, tradeId: snapshot.tradeId, escrowContract: snapshot.escrowContract });
-        const nextSnapshot: TradeSnapshot = { ...snapshot, status: 'declined' };
-        mergeTradeSnapshot(nextSnapshot);
-        refreshTradeDataInBackground(snapshot.tradeId, snapshot.escrowContract, signer);
-        return result;
+        await ensureTradeFunding?.({
+          actionLabel: 'refuse offer',
+          confirmButtonLabel: 'Refuse offer',
+          confirmMessage: confirmation.confirmMessage,
+          confirmationPolicy: 'always',
+          confirmationStats: confirmation.confirmationStats,
+          confirmTitle: 'Confirm refusal',
+          requirements: [],
+          tradeSummary: confirmation.tradeSummary
         });
-        notifyTerminalAction({ action: 'decline', status: 'success', tradeKey, txHash: actionResult.txHash });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to refuse trade.';
-        const actionError = getOnChainFailureMessage(error, message);
-        setTradeActionError(actionError);
-        notifyTerminalAction({ action: 'decline', message: actionError, status: 'error', tradeKey });
-      } finally {
-        setProcessingTradeActionId('');
+        markPending();
+        const confirmed = await v2.runtime.direct({ kind: 'decline', tradeId: snapshot.tradeId });
+        return { txHash: confirmed.transactionHash, refreshDisplay: [
+          () => mergeTradeSnapshot({ ...snapshot, status: 'declined' }),
+          () => refreshOneOffV2Trades?.()
+        ] };
       }
-    },
-    [
-      getSignerForActionWallet,
-      mergeTradeSnapshot,
-      refreshTradeDataInBackground,
-      rememberTradeTerminalReturn,
-      resolveAccessSecretForSnapshot,
-      resolveActionWalletAddress,
-      runTradeWalletPromptFlow,
-      setTradeActionError,
-      notifyTerminalAction
-    ]
-  );
+    });
+  }, [
+    ensureTradeFunding,
+    mergeTradeSnapshot,
+    refreshOneOffV2Trades,
+    rememberTradeTerminalReturn,
+    requireV2,
+    runAction
+  ]);
 
-  return {
-    acceptTrade,
-    cancelTrade,
-    declineTrade,
-    partialFillTrade,
-    processingTradeActionId
-  };
+  return { acceptTrade, cancelTrade, changePrivateBookBudgetVisibility, declineTrade, partialFillTrade, processingTradeActionId };
 }

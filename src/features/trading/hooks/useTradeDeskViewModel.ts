@@ -12,7 +12,7 @@ import {
   type TradeCreateMode
 } from '../components/P2PTradingPage.helpers';
 
-type RouteSurfaceView = 'swap' | 'agent' | 'public' | 'create' | 'recurring' | 'trade' | 'counter' | 'mine' | null;
+type RouteSurfaceView = 'swap' | 'agent' | 'public' | 'create' | 'recurring' | 'trade' | 'counter' | 'mine' | 'pools' | null;
 
 type UseTradeDeskViewModelArgs = {
   counterParentTrade: TradeSnapshot | null;
@@ -106,28 +106,33 @@ export default function useTradeDeskViewModel({
   const tradeDeskIdentity =
     routeSurfaceView === 'mine'
       ? {
-          title: 'Orders',
-          copy: 'Offers and history.'
+          title: 'My trades',
+          copy: 'Review received offers, manage active ones, and revisit history.'
         }
       : routeSurfaceView === 'swap'
         ? {
-            title: 'Trade',
-            copy: 'Swap from the best order, create a limit offer, or open recurring liquidity.'
+            title: 'Offers',
+            copy: 'Compare one-order P2P rates around the Carbon market reference.'
           }
+        : routeSurfaceView === 'pools'
+          ? {
+              title: 'Recurring Limit Strategies',
+              copy: 'Manage fixed bid/ask Position NFTs and hidden private limit intents.'
+            }
         : routeSurfaceView === 'agent'
           ? {
               title: 'Trade Agent',
               copy: 'Ask for quote help, order explanations, and trade drafts.'
             }
           : {
-              title: 'OTC Desk',
-              copy: 'Wallet-to-wallet escrow offers.'
+              title: 'Offers',
+              copy: 'Compare one-order P2P rates around the Carbon market reference.'
             };
 
   const createDeskIdentity = counterParentTrade
     ? {
         title: 'Counter Offer',
-        copy: 'Reply with a direct OTC quote.'
+        copy: 'Reply with a direct P2P quote.'
       }
     : editingTrade || editingRecurringOrder
       ? {
@@ -136,12 +141,12 @@ export default function useTradeDeskViewModel({
         }
       : tradeCreateMode === 'recurring'
         ? {
-            title: 'Trade',
-            copy: 'Create reusable two-sided OTC liquidity.'
+            title: 'Create',
+            copy: 'Create reusable two-sided P2P liquidity.'
           }
         : {
-            title: 'Trade',
-            copy: 'Create a limit OTC offer.'
+            title: 'Create',
+            copy: 'Create a one-off or recurring P2P offer.'
           };
 
   return {

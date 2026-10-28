@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { memo, useCallback, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import DirectChatCompose, { type ChatComposerPromptEstimate } from './DirectChatCompose';
 import ChatImage from '../../../shared/components/chat/ChatImage';
 import MessageActions from '../../../shared/components/chat/MessageActions';
@@ -30,6 +30,7 @@ import {
   extractTradeTerminalPathFromMessage,
   type LinkedTradeContext
 } from '../../../lib/linkedTradeContext';
+import { isSupportedDirectTradeV2Escrow } from '../../../lib/directTradeV2Deployment';
 import { getCounterOfferUnavailableReason } from '../../../lib/tradeCounterSupport';
 
 type MessageReactionSummary = {
@@ -42,7 +43,43 @@ const isInChatTradeOffer = (offer: TradeOfferMessagePayload): boolean =>
   !offer.hiddenLiquidity &&
   offer.escrowContract.toLowerCase() !== PRIVATE_TRADE_ESCROW_CONTRACT_ADDRESS.toLowerCase();
 
+export const canShowInChatTradeOffer = (
+  offer: TradeOfferMessagePayload,
+  privacyUnlocked: boolean
+): boolean => privacyUnlocked && isInChatTradeOffer(offer);
+
 const DIRECT_MESSAGE_SKELETON_ROWS = [0, 1, 2, 3, 4];
+
+export const hasDirectMessageReplyReference = (message: ChatMessage): boolean => Boolean(
+  message.replyToMessageId ||
+  message.replyToText ||
+  message.replyToTxHash ||
+  typeof message.replyToBlockNumber === 'number'
+);
+
+export const getDirectReplyActionPolicy = ({
+  directChatV2RepliesEnabled,
+  message,
+  walletPromptSensitiveActionsDisabled,
+  walletPromptSensitiveActionsTitle
+}: {
+  directChatV2RepliesEnabled: boolean;
+  message: ChatMessage;
+  walletPromptSensitiveActionsDisabled: boolean;
+  walletPromptSensitiveActionsTitle: string;
+}): Readonly<{ disabled: boolean; title: string }> => {
+  if (!walletPromptSensitiveActionsDisabled) return { disabled: false, title: 'Reply' };
+  if (!directChatV2RepliesEnabled) {
+    return { disabled: true, title: walletPromptSensitiveActionsTitle };
+  }
+  if (!message.directV2) {
+    return {
+      disabled: true,
+      title: 'Direct Chat V2 replies can target only new-protocol messages.'
+    };
+  }
+  return { disabled: false, title: 'Reply' };
+};
 
 const getTradeReferenceLabel = (reference: TradeMessageReferencePayload): string =>
   `Trade #${reference.tradeId}`;
@@ -54,12 +91,20 @@ type DirectChatPanelProps = {
   activeContact: string;
   activeContactMeta?: Contact;
   isSelfChat: boolean;
-  activeConversationMuted: boolean;
   activeConversationHidden: boolean;
   activeConversationStateSyncPending: boolean;
   walletPromptSensitiveActionsDisabled: boolean;
   walletPromptSensitiveActionsTitle: string;
-  onToggleConversationMute: () => void;
+  chatReactionsV1Enabled: boolean;
+  directChatV2RepliesEnabled: boolean;
+  pendingNativeCreditLabel: string;
+  withdrawingNativeCredit: boolean;
+  onWithdrawNativeCredit: () => void;
+  directChatV2KeyRotationEnabled: boolean;
+  rotatingDirectChatV2Key: boolean;
+  onRotateDirectChatV2Key: () => void;
+  onToggleConversationHidden: () => void;
+  onSaveContactName: (name: string) => Promise<boolean>;
   onLoadFullConversationHistory: () => void;
   syncingHistory: boolean;
   chatMessagesRef: Ref<HTMLDivElement>;
@@ -78,6 +123,7 @@ type DirectChatPanelProps = {
   getReactionsForMessage: (message: ChatMessage) => MessageReactionSummary[];
   onJumpToReferencedMessage: (
     replyToMessageId?: string,
+    replyToMessageAnchor?: string,
     replyToText?: string,
     replyToTxHash?: string,
     replyToBlockNumber?: number,
@@ -85,9 +131,12 @@ type DirectChatPanelProps = {
   ) => void;
   getReplyReferenceFallbackLabel: (message: ChatMessage) => string;
   tradeSnapshotsById: Record<string, TradeSnapshot>;
+  supportedTradeEscrowContract?: string;
+  supportedTradeEscrowContracts?: readonly string[];
   linkedTradeContext?: LinkedTradeContext | null;
   linkedTradeContextShareCopied?: boolean;
   walletAddress: string;
+  privacyUnlocked: boolean;
   processingTradeActionId: string;
   onCopyLinkedTradeContextLink: (value: string) => void;
   draftingTradeMessageId?: string;
@@ -99,6 +148,7 @@ type DirectChatPanelProps = {
   onNegotiateLinkedTrade?: (context: LinkedTradeContext) => void;
   onDismissLinkedTradeContext: () => void;
   onOpenTradeTerminalPath: (path: string) => void;
+  onRevealTradeTerms?: (offer: TradeOfferMessagePayload) => Promise<void>;
   onAcceptTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
   onDeclineTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
   onCounterTrade: (offer: TradeOfferMessagePayload, sourceMessage: ChatMessage) => Promise<void>;
@@ -112,6 +162,7 @@ type DirectChatPanelProps = {
   onTipTokenSelectionChange: (selection: TipTokenSelection) => void;
   rewardTokenSymbol: string;
   privateRewardTokenSymbol: string;
+  nativeTipsOnly: boolean;
   tipAmountInput: string;
   onTipAmountInputChange: (value: string) => void;
   activeTipTokenSymbol: string;
@@ -148,12 +199,20 @@ function DirectChatPanel({
   activeContact,
   activeContactMeta,
   isSelfChat,
-  activeConversationMuted,
   activeConversationHidden,
   activeConversationStateSyncPending,
   walletPromptSensitiveActionsDisabled,
   walletPromptSensitiveActionsTitle,
-  onToggleConversationMute,
+  chatReactionsV1Enabled,
+  directChatV2RepliesEnabled,
+  pendingNativeCreditLabel,
+  withdrawingNativeCredit,
+  onWithdrawNativeCredit,
+  directChatV2KeyRotationEnabled,
+  rotatingDirectChatV2Key,
+  onRotateDirectChatV2Key,
+  onToggleConversationHidden,
+  onSaveContactName,
   onLoadFullConversationHistory,
   syncingHistory,
   chatMessagesRef,
@@ -173,9 +232,12 @@ function DirectChatPanel({
   onJumpToReferencedMessage,
   getReplyReferenceFallbackLabel,
   tradeSnapshotsById,
+  supportedTradeEscrowContract,
+  supportedTradeEscrowContracts,
   linkedTradeContext,
   linkedTradeContextShareCopied = false,
   walletAddress,
+  privacyUnlocked,
   processingTradeActionId,
   onCopyLinkedTradeContextLink,
   draftingTradeMessageId = '',
@@ -187,6 +249,7 @@ function DirectChatPanel({
   onNegotiateLinkedTrade,
   onDismissLinkedTradeContext,
   onOpenTradeTerminalPath,
+  onRevealTradeTerms,
   onAcceptTrade,
   onDeclineTrade,
   onCounterTrade,
@@ -200,6 +263,7 @@ function DirectChatPanel({
   onTipTokenSelectionChange,
   rewardTokenSymbol,
   privateRewardTokenSymbol,
+  nativeTipsOnly,
   tipAmountInput,
   onTipAmountInputChange,
   activeTipTokenSymbol,
@@ -232,6 +296,8 @@ function DirectChatPanel({
   tradeToggleTitle
 }: DirectChatPanelProps) {
   const [tradeCardExpandedState, setTradeCardExpandedState] = useState<Record<string, boolean>>({});
+  const [savedNameInput, setSavedNameInput] = useState(activeContactMeta?.savedName ?? '');
+  const [savingContactName, setSavingContactName] = useState(false);
   const chatMessagesNodeRef = useRef<HTMLDivElement | null>(null);
   const setChatMessagesNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -246,9 +312,13 @@ function DirectChatPanel({
     },
     [chatMessagesRef]
   );
-  const activeContactLabel = activeContactMeta?.name
-    ? `${activeContactMeta.name} (${shortenAddress(activeContact)})`
+  const activeContactName = activeContactMeta?.savedName?.trim() || activeContactMeta?.name?.trim();
+  const activeContactLabel = activeContactName
+    ? `${activeContactName} (${shortenAddress(activeContact)})`
     : shortenAddress(activeContact);
+  useEffect(() => {
+    setSavedNameInput(activeContactMeta?.savedName ?? '');
+  }, [activeContact, activeContactMeta?.savedName]);
   const { visibleTradeOfferIds, latestTradeResponsesById, latestTradeId } = useMemo(() => {
     const nextVisibleTradeOfferIds = new Set<string>();
     const nextLatestTradeResponsesById: Record<string, TradeResponseMessagePayload> = {};
@@ -286,6 +356,11 @@ function DirectChatPanel({
           return false;
         }
 
+        const parsedTradeOffer = parseTradeOfferMessagePayload(message.text);
+        if (parsedTradeOffer && !canShowInChatTradeOffer(parsedTradeOffer, privacyUnlocked)) {
+          return false;
+        }
+
         const parsedTradeResponse = parseTradeResponseMessagePayload(message.text);
         return !(
           parsedTradeResponse &&
@@ -295,7 +370,7 @@ function DirectChatPanel({
               visibleTradeOfferIds.has(buildTradeSnapshotKey(parsedTradeResponse.counterTradeId, parsedTradeResponse.escrowContract))))
         );
       }),
-    [activeMessages, isReactionOnlyMessage, visibleTradeOfferIds]
+    [activeMessages, isReactionOnlyMessage, privacyUnlocked, visibleTradeOfferIds]
   );
   const messageVirtualizer = useVirtualizer({
     count: renderableMessages.length,
@@ -332,6 +407,34 @@ function DirectChatPanel({
       <div className="chat-header">
         <strong>{isSelfChat ? `${activeContactLabel} (self)` : activeContactLabel}</strong>
         <div className="chat-header-actions">
+          {!isSelfChat ? (
+            <form
+              className="chat-contact-name-editor"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (savingContactName) return;
+                setSavingContactName(true);
+                void onSaveContactName(savedNameInput).finally(() => setSavingContactName(false));
+              }}
+            >
+              <input
+                value={savedNameInput}
+                onChange={(event) => setSavedNameInput(event.currentTarget.value)}
+                maxLength={32}
+                placeholder="Saved as"
+                aria-label="Private saved contact name"
+                disabled={savingContactName || walletPromptSensitiveActionsDisabled}
+              />
+              <button
+                type="submit"
+                className="contact"
+                disabled={savingContactName || walletPromptSensitiveActionsDisabled}
+                title="Save a private name for this contact"
+              >
+                {savingContactName ? 'Saving...' : 'Save as'}
+              </button>
+            </form>
+          ) : null}
           {pendingTradeAgentRetry ? (
             <span
               className="chat-header-state"
@@ -342,12 +445,8 @@ function DirectChatPanel({
               Agent retry ready
             </span>
           ) : null}
-          {activeConversationMuted || activeConversationHidden ? (
-            <span className="chat-header-state">
-              {activeConversationMuted ? 'Muted' : null}
-              {activeConversationMuted && activeConversationHidden ? ' | ' : null}
-              {activeConversationHidden ? 'Hidden' : null}
-            </span>
+          {activeConversationHidden ? (
+            <span className="chat-header-state">Hidden</span>
           ) : null}
           {activeConversationStateSyncPending ? (
             <span className="chat-header-sync" role="status" aria-live="polite" aria-label="Saving conversation">
@@ -358,19 +457,43 @@ function DirectChatPanel({
             <button
               type="button"
               className="contact"
-              onClick={onToggleConversationMute}
+              onClick={onToggleConversationHidden}
               disabled={activeConversationStateSyncPending || walletPromptSensitiveActionsDisabled}
               title={
                 walletPromptSensitiveActionsDisabled
                   ? walletPromptSensitiveActionsTitle
                   : activeConversationStateSyncPending
                   ? 'Waiting for confirmation...'
-                  : activeConversationMuted
-                    ? 'Unmute conversation'
-                    : 'Mute conversation'
+                  : activeConversationHidden
+                    ? 'Unhide conversation'
+                    : 'Hide conversation'
               }
             >
-              {activeConversationStateSyncPending ? 'Saving...' : activeConversationMuted ? 'Unmute' : 'Mute'}
+              {activeConversationStateSyncPending ? 'Saving...' : activeConversationHidden ? 'Unhide' : 'Hide'}
+            </button>
+          ) : null}
+          {pendingNativeCreditLabel ? (
+            <button
+              type="button"
+              className="contact"
+              onClick={onWithdrawNativeCredit}
+              disabled={withdrawingNativeCredit}
+              title="Claim native COTI tips credited by Direct Chat V2"
+            >
+              {withdrawingNativeCredit
+                ? 'Claiming tips...'
+                : `Claim ${pendingNativeCreditLabel}`}
+            </button>
+          ) : null}
+          {directChatV2KeyRotationEnabled && !isSelfChat ? (
+            <button
+              type="button"
+              className="contact"
+              onClick={onRotateDirectChatV2Key}
+              disabled={rotatingDirectChatV2Key}
+              title="Rotate the conversation encryption key. Existing messages remain readable."
+            >
+              {rotatingDirectChatV2Key ? 'Rotating key...' : 'Rotate key'}
             </button>
           ) : null}
           <button type="button" className="contact" onClick={onLoadFullConversationHistory} disabled={syncingHistory}>
@@ -438,16 +561,27 @@ function DirectChatPanel({
             const reactedEmojiSet = new Set(
               messageReactions.filter((reaction) => reaction.reactedByMe).map((reaction) => reaction.emoji)
             );
+            const directChatV2Finalizing = message.directV2?.finality === 'confirmed';
             const deliveryLabel =
               message.deliveryState === 'pending'
                 ? 'Sending...'
                 : message.deliveryState === 'sent'
-                  ? 'Sent'
+                  ? directChatV2Finalizing
+                    ? 'Sent · finalizing (about 25s)'
+                    : 'Sent'
                   : message.deliveryState === 'failed'
                     ? 'Failed'
                     : '';
             const showMessageMeta =
               !parsedTradeOffer || message.deliveryState === 'pending' || message.deliveryState === 'failed';
+            const replyAction = getDirectReplyActionPolicy({
+              directChatV2RepliesEnabled,
+              message,
+              walletPromptSensitiveActionsDisabled,
+              walletPromptSensitiveActionsTitle
+            });
+            const chatReactionV1Allowed = chatReactionsV1Enabled &&
+              Boolean(message.directV2);
 
             return (
               <div
@@ -473,11 +607,28 @@ function DirectChatPanel({
                 >
                   <MessageActions
                     message={message}
-                    pickerOpen={!walletPromptSensitiveActionsDisabled && reactionPickerMessageId === message.id}
+                    pickerOpen={
+                      (!walletPromptSensitiveActionsDisabled || chatReactionV1Allowed) &&
+                      reactionPickerMessageId === message.id
+                    }
                     reactedEmojiSet={reactedEmojiSet}
                     sendingReaction={sendingReaction}
-                    reactionDisabled={!message.txHash || sendingReaction || walletPromptSensitiveActionsDisabled}
-                    reactionTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'React'}
+                    reactionDisabled={
+                      !message.txHash || sendingReaction ||
+                      (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
+                    }
+                    reactionTitle={
+                      walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
+                        ? walletPromptSensitiveActionsTitle
+                        : chatReactionV1Allowed
+                          ? 'React publicly on-chain · 1 wallet transaction'
+                          : 'React'
+                    }
+                    reactionDisclosure={
+                      chatReactionV1Allowed
+                        ? 'Emoji reactions are public on-chain and need one wallet transaction.'
+                        : undefined
+                    }
                     draftTradeDisabled={walletPromptSensitiveActionsDisabled || draftingTradeMessageId === message.id}
                     draftTradeLoading={draftingTradeMessageId === message.id}
                     draftTradeTitle={
@@ -487,20 +638,21 @@ function DirectChatPanel({
                           ? 'Drafting trade...'
                           : `Draft trade · ${draftTradeFeeLabel}`
                     }
-                    replyDisabled={walletPromptSensitiveActionsDisabled}
-                    replyTitle={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : 'Reply'}
+                    replyDisabled={replyAction.disabled}
+                    replyTitle={replyAction.title}
                     onDraftTradeFromMessage={canDraftTradeFromMessage ? onDraftTradeFromMessage : undefined}
                     onToggleReactionPicker={onToggleReactionPicker}
                     onSendReaction={onSendReaction}
                     onReplyToMessage={onReplyToMessage}
                   />
-                  {message.replyToText || message.replyToTxHash || typeof message.replyToBlockNumber === 'number' ? (
+                  {hasDirectMessageReplyReference(message) ? (
                     <button
                       type="button"
                       className="message-reply"
                       onClick={() =>
                         onJumpToReferencedMessage(
                           message.replyToMessageId,
+                          message.replyToMessageAnchor,
                           message.replyToText,
                           message.replyToTxHash,
                           message.replyToBlockNumber,
@@ -542,6 +694,10 @@ function DirectChatPanel({
                         parsedTradeOffer.escrowContract
                       );
 
+                      const unsupportedTradeCard = !isSupportedDirectTradeV2Escrow(
+                        parsedTradeOffer.escrowContract, supportedTradeEscrowContracts, supportedTradeEscrowContract
+                      );
+
                       return (
                         <TradeOfferCard
                           offer={parsedTradeOffer}
@@ -559,7 +715,17 @@ function DirectChatPanel({
                               [tradeKey]: !(previous[tradeKey] ?? defaultExpanded)
                             }));
                           }}
-                          onOpenTerminal={() => onOpenTradeTerminalPath(terminalPath)}
+                          termsUnavailableReason={unsupportedTradeCard
+                            ? 'Archived offer details are unavailable on this network.'
+                            : undefined}
+                          onOpenTerminal={unsupportedTradeCard
+                            ? undefined
+                            : () => onOpenTradeTerminalPath(terminalPath)}
+                          onRevealTerms={onRevealTradeTerms
+                            ? () => {
+                                onRevealTradeTerms(parsedTradeOffer).catch(() => {});
+                              }
+                            : undefined}
                           onAccept={() => {
                             onAcceptTrade(parsedTradeOffer, message).catch(() => {});
                           }}
@@ -607,9 +773,13 @@ function DirectChatPanel({
                             !message.txHash ||
                             sendingReaction ||
                             reaction.reactedByMe ||
-                            walletPromptSensitiveActionsDisabled
+                            (walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed)
                           }
-                          title={walletPromptSensitiveActionsDisabled ? walletPromptSensitiveActionsTitle : undefined}
+                          title={
+                            walletPromptSensitiveActionsDisabled && !chatReactionV1Allowed
+                              ? walletPromptSensitiveActionsTitle
+                              : undefined
+                          }
                           aria-label={`${reaction.reactedByMe ? 'Your reaction' : 'Reaction'} ${reaction.emoji}, ${
                             reaction.count
                           } ${reaction.count === 1 ? 'reaction' : 'reactions'}`}
@@ -661,6 +831,7 @@ function DirectChatPanel({
         onTipTokenSelectionChange={onTipTokenSelectionChange}
         rewardTokenSymbol={rewardTokenSymbol}
         privateRewardTokenSymbol={privateRewardTokenSymbol}
+        nativeTipsOnly={nativeTipsOnly}
         tipAmountInput={tipAmountInput}
         onTipAmountInputChange={onTipAmountInputChange}
         activeTipTokenSymbol={activeTipTokenSymbol}

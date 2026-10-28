@@ -33,10 +33,12 @@ export const GROUP_JOIN_CODE_PREFIX = 'coti-group-code-v2:';
 export const LEGACY_GROUP_INVITE_CODE_PREFIX = 'coti-group-code-v1:';
 export const GROUP_TITLE_METADATA_PREFIX = '[[coti-group:v1]]';
 export const GROUP_TITLE_COMPACT_PREFIX = 'cg3:';
+export const GROUP_PRIVATE_TITLE_LABEL = 'Private group';
 export const GROUP_TITLE_ENCRYPTION_VERSION = 3;
 export const GROUP_TITLE_KEY_MATERIAL = 'chainwhisper-group-title-aes-v1';
 export const GROUP_JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const GROUP_JOIN_CODE_LENGTH = 5;
+export const GROUP_JOIN_CODE_LENGTH = 26;
+export const LEGACY_GROUP_JOIN_CODE_LENGTH = 5;
 export const GROUP_JOIN_CODE_SIGNER_KEY_PREFIX = 'coti-group-join-key-v1:';
 export const GROUP_JOIN_CODE_PROOF_DOMAIN = 'COTI_GROUP_JOIN_CODE_PROOF_V1';
 export const GROUP_JOIN_CODE_SIGNATURE_WINDOW_SECONDS = 15 * 60;
@@ -117,14 +119,12 @@ export const decryptGroupTitle = async (ivRaw: string, ciphertextRaw: string): P
 };
 
 export const generateRandomGroupJoinCode = (): string => {
-  const values = new Uint8Array(GROUP_JOIN_CODE_LENGTH);
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    crypto.getRandomValues(values);
-  } else {
-    for (let index = 0; index < values.length; index += 1) {
-      values[index] = Math.floor(Math.random() * 256);
-    }
+  if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') {
+    throw new Error('Secure join-code generation is unavailable in this browser.');
   }
+
+  const values = new Uint8Array(GROUP_JOIN_CODE_LENGTH);
+  crypto.getRandomValues(values);
 
   let compactCode = '';
   for (let index = 0; index < values.length; index += 1) {
@@ -132,6 +132,27 @@ export const generateRandomGroupJoinCode = (): string => {
   }
 
   return compactCode.slice(0, GROUP_JOIN_CODE_LENGTH);
+};
+
+export const normalizeGroupJoinCode = (
+  value: unknown,
+  { allowLegacy }: { allowLegacy: boolean }
+): string | null => {
+  const normalizedCode = String(value ?? '').replace(/\0/g, '').trim().toUpperCase();
+  const hasSupportedLength =
+    normalizedCode.length === GROUP_JOIN_CODE_LENGTH ||
+    (allowLegacy && normalizedCode.length === LEGACY_GROUP_JOIN_CODE_LENGTH);
+  if (!hasSupportedLength) {
+    return null;
+  }
+
+  for (const character of normalizedCode) {
+    if (!GROUP_JOIN_CODE_ALPHABET.includes(character)) {
+      return null;
+    }
+  }
+
+  return normalizedCode;
 };
 
 export const encodeGroupInviteCode = (payload: GroupInviteCodePayload): string => {
@@ -172,7 +193,7 @@ export const parseGroupInviteCode = (input: string): GroupInviteCodePayload | nu
     const expiresAt = Number.isFinite(expiresAtRaw) && expiresAtRaw > 0 ? Math.floor(expiresAtRaw) : 0;
     const inviter = typeof parsed.inviter === 'string' ? parsed.inviter.trim() : undefined;
     if (version === 2) {
-      const code = typeof parsed.code === 'string' ? parsed.code.trim() : '';
+      const code = normalizeGroupJoinCode(parsed.code, { allowLegacy: true });
       if (!Number.isFinite(groupId) || groupId <= 0 || !code) {
         return null;
       }
@@ -203,7 +224,7 @@ export const parseGroupInviteCode = (input: string): GroupInviteCodePayload | nu
   }
 
   const groupId = Number(raw.slice(0, delimiterIndex).trim());
-  const code = raw.slice(delimiterIndex + 1).trim();
+  const code = normalizeGroupJoinCode(raw.slice(delimiterIndex + 1), { allowLegacy: true });
   if (!Number.isFinite(groupId) || groupId <= 0 || !code) {
     return null;
   }
@@ -236,7 +257,8 @@ export const encodeStoredGroupTitle = async (title: string, isPrivate: boolean):
     return '';
   }
 
-  const encryptedPayload = await encryptGroupTitle(normalizedTitle);
+  const storedTitle = isPrivate ? GROUP_PRIVATE_TITLE_LABEL : normalizedTitle;
+  const encryptedPayload = await encryptGroupTitle(storedTitle);
   if (!encryptedPayload) {
     throw new Error('Group title encryption is unavailable in this browser.');
   }
@@ -249,7 +271,7 @@ export const parseStoredGroupTitle = async (rawTitle: string, groupId?: number):
   const normalizedRawTitle = normalizeContactName(rawTitle);
   const fallbackTitle =
     typeof groupId === 'number' && Number.isFinite(groupId) && groupId > 0 ? `Group ${Math.floor(groupId)}` : 'Group';
-  const privateFallbackTitle = 'Private group';
+  const privateFallbackTitle = GROUP_PRIVATE_TITLE_LABEL;
   if (!normalizedRawTitle) {
     return {
       title: fallbackTitle,

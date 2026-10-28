@@ -21,19 +21,13 @@ import { buildVisibleTradingBalanceItems, type TradingBalanceDisplayItem } from 
 
 type ComposerCombinedBalance = Pick<
   CombinedWalletAssetBalance,
-  'combinedBalanceWei' | 'ownerPrivacyRequired' | 'availableLabel' | 'breakdownLabel' | 'splitLabel'
+  'combinedBalanceWei' | 'privacyRequired' | 'availableLabel' | 'breakdownLabel' | 'splitLabel'
 >;
 
 type UseP2PTradingBalancesArgs = {
   customTradeTokenInfoByAddress: Record<string, TradeCustomTokenInfo>;
   isPrivateTokenSnapStale: (address: string) => boolean;
   nativeBalanceWei: bigint | null;
-  ownerCustomTradeTokenInfoByAddress: Record<string, TradeCustomTokenInfo>;
-  ownerNativeBalanceWei: bigint | null;
-  ownerPrivateRewardTokenBalanceState: PrivateTokenBalanceState;
-  ownerRewardTokenBalanceWei: bigint | null;
-  ownerWalletCanReadPrivate: boolean;
-  ownerWalletKey: string;
   privateRewardTokenBalanceState: PrivateTokenBalanceState;
   privateRewardTokenBalanceWei: bigint | null;
   privateRewardTokenDecimals: number;
@@ -53,12 +47,6 @@ export default function useP2PTradingBalances({
   customTradeTokenInfoByAddress,
   isPrivateTokenSnapStale,
   nativeBalanceWei,
-  ownerCustomTradeTokenInfoByAddress,
-  ownerNativeBalanceWei,
-  ownerPrivateRewardTokenBalanceState,
-  ownerRewardTokenBalanceWei,
-  ownerWalletCanReadPrivate,
-  ownerWalletKey,
   privateRewardTokenBalanceState,
   privateRewardTokenBalanceWei,
   privateRewardTokenDecimals,
@@ -75,21 +63,12 @@ export default function useP2PTradingBalances({
         : privateRewardTokenBalanceState,
     [isPrivateTokenSnapStale, privateRewardTokenBalanceState]
   );
-  const ownerPWispFooterBalanceState = useMemo(
-    () =>
-      ownerPrivateRewardTokenBalanceState.status === 'ready' && !ownerWalletCanReadPrivate
-        ? ({ status: 'locked' } as const)
-        : ownerPrivateRewardTokenBalanceState,
-    [ownerPrivateRewardTokenBalanceState, ownerWalletCanReadPrivate]
-  );
-
-  const hasSeparateOwnerWallet = Boolean(ownerWalletKey && ownerWalletKey !== walletKey);
 
   const visibleTradingBalances = useMemo<TradingBalanceDisplayItem[]>(
-    () => [
-      ...buildVisibleTradingBalanceItems({
-        accountLabel: 'In ChainWhisper',
-        accountRole: 'chainwhisper',
+    () =>
+      buildVisibleTradingBalanceItems({
+        accountLabel: 'Connected wallet',
+        accountRole: 'owner',
         customTradeTokenInfoByAddress,
         nativeBalanceWei,
         privateRewardTokenBalanceState: pWispFooterBalanceState,
@@ -100,29 +79,9 @@ export default function useP2PTradingBalances({
         rewardTokenSymbol,
         walletKey
       }),
-      ...buildVisibleTradingBalanceItems({
-        accountLabel: 'In owner wallet',
-        accountRole: 'owner',
-        customTradeTokenInfoByAddress: ownerCustomTradeTokenInfoByAddress,
-        nativeBalanceWei: hasSeparateOwnerWallet ? ownerNativeBalanceWei : null,
-        privateRewardTokenBalanceState: ownerPWispFooterBalanceState,
-        privateRewardTokenDecimals,
-        privateRewardTokenSymbol,
-        rewardTokenBalanceWei: hasSeparateOwnerWallet ? ownerRewardTokenBalanceWei : null,
-        rewardTokenDecimals,
-        rewardTokenSymbol,
-        walletKey: hasSeparateOwnerWallet ? ownerWalletKey : ''
-      })
-    ],
     [
       customTradeTokenInfoByAddress,
-      hasSeparateOwnerWallet,
       nativeBalanceWei,
-      ownerCustomTradeTokenInfoByAddress,
-      ownerNativeBalanceWei,
-      ownerPWispFooterBalanceState,
-      ownerRewardTokenBalanceWei,
-      ownerWalletKey,
       pWispFooterBalanceState,
       privateRewardTokenDecimals,
       privateRewardTokenSymbol,
@@ -137,38 +96,29 @@ export default function useP2PTradingBalances({
     const balances: Record<string, ComposerCombinedBalance> = {};
     const addBalance = (
       asset: ResolvedTradeToken,
-      chainwhisperBalanceWei: bigint | null,
-      ownerBalanceWei: bigint | null,
-      ownerPrivacyRequired = false
+      balanceWei: bigint | null,
+      privacyRequired = false
     ) => {
       const key = buildTradeComposerAssetBalanceKey(asset);
-      if (!key) {
-        return;
-      }
+      if (!key) return;
       const combined = buildCombinedWalletAssetBalance({
         asset,
-        chainwhisperBalanceWei,
-        ownerBalanceWei,
-        ownerPrivacyRequired
+        balanceWei,
+        privacyRequired
       });
       balances[key] = {
         combinedBalanceWei: combined.combinedBalanceWei,
-        ownerPrivacyRequired: combined.ownerPrivacyRequired,
+        privacyRequired: combined.privacyRequired,
         availableLabel: combined.availableLabel,
         breakdownLabel: combined.breakdownLabel,
         splitLabel: combined.splitLabel
       };
     };
 
-    addBalance(
-      { kind: 'native', symbol: TIP_NATIVE_TOKEN_SYMBOL, decimals: 18 },
-      nativeBalanceWei,
-      hasSeparateOwnerWallet ? ownerNativeBalanceWei : null
-    );
+    addBalance({ kind: 'native', symbol: TIP_NATIVE_TOKEN_SYMBOL, decimals: 18 }, nativeBalanceWei);
     addBalance(
       { kind: 'erc20', tokenAddress: REWARD_TOKEN_ADDRESS, symbol: rewardTokenSymbol, decimals: rewardTokenDecimals },
-      rewardTokenBalanceWei,
-      hasSeparateOwnerWallet ? ownerRewardTokenBalanceWei : null
+      rewardTokenBalanceWei
     );
     addBalance(
       {
@@ -178,54 +128,29 @@ export default function useP2PTradingBalances({
         decimals: privateRewardTokenDecimals
       },
       privateRewardTokenBalanceWei,
-      hasSeparateOwnerWallet && ownerPrivateRewardTokenBalanceState.status === 'ready'
-        ? ownerPrivateRewardTokenBalanceState.balanceWei
-        : null,
-      Boolean(hasSeparateOwnerWallet && ownerPrivateRewardTokenBalanceState.status !== 'ready')
+      pWispFooterBalanceState.status !== 'ready'
     );
 
-    for (const [key, info] of Object.entries(customTradeTokenInfoByAddress)) {
-      const tokenAddress = info.address;
-      if (!isWalletAddress(tokenAddress)) {
-        continue;
-      }
-      const ownerInfo = ownerCustomTradeTokenInfoByAddress[key];
+    for (const info of Object.values(customTradeTokenInfoByAddress)) {
+      if (!isWalletAddress(info.address)) continue;
       if (info.kind === 'private-erc20') {
-        const ownerState = ownerInfo?.privateBalanceState;
         addBalance(
-          {
-            kind: 'private-erc20',
-            tokenAddress,
-            symbol: info.symbol,
-            decimals: info.decimals
-          },
+          { kind: 'private-erc20', tokenAddress: info.address, symbol: info.symbol, decimals: info.decimals },
           info.privateBalanceState?.status === 'ready' ? info.privateBalanceState.balanceWei : info.balanceWei,
-          hasSeparateOwnerWallet && ownerState?.status === 'ready' ? ownerState.balanceWei : null,
-          Boolean(hasSeparateOwnerWallet && ownerState?.status !== 'ready')
+          info.privateBalanceState?.status !== 'ready'
         );
       } else {
         addBalance(
-          {
-            kind: 'erc20',
-            tokenAddress,
-            symbol: info.symbol,
-            decimals: info.decimals
-          },
-          info.balanceWei,
-          hasSeparateOwnerWallet ? ownerInfo?.balanceWei ?? null : null
+          { kind: 'erc20', tokenAddress: info.address, symbol: info.symbol, decimals: info.decimals },
+          info.balanceWei
         );
       }
     }
-
     return balances;
   }, [
     customTradeTokenInfoByAddress,
-    hasSeparateOwnerWallet,
     nativeBalanceWei,
-    ownerCustomTradeTokenInfoByAddress,
-    ownerNativeBalanceWei,
-    ownerPrivateRewardTokenBalanceState,
-    ownerRewardTokenBalanceWei,
+    pWispFooterBalanceState.status,
     privateRewardTokenBalanceWei,
     privateRewardTokenDecimals,
     privateRewardTokenSymbol,
@@ -235,77 +160,34 @@ export default function useP2PTradingBalances({
   ]);
 
   const resolveFundingBalanceForAsset = useCallback(
-    (
-      asset: Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'symbol' | 'decimals'>,
-      role: 'chainwhisper' | 'owner'
-    ): FundingBalance => {
-      const useOwner = role === 'owner';
-      if (useOwner && !hasSeparateOwnerWallet) {
-        return { balanceWei: null, privacyRequired: false };
-      }
-
-      if (asset.kind === 'native') {
-        return {
-          balanceWei: useOwner ? ownerNativeBalanceWei : nativeBalanceWei,
-          privacyRequired: false
-        };
-      }
-
+    (asset: Pick<TradeAssetPayload, 'kind' | 'tokenAddress' | 'symbol' | 'decimals'>): FundingBalance => {
+      if (asset.kind === 'native') return { balanceWei: nativeBalanceWei, privacyRequired: false };
       const tokenAddress = asset.tokenAddress?.trim() ?? '';
-      if (!isWalletAddress(tokenAddress)) {
-        return { balanceWei: null, privacyRequired: false };
-      }
-
+      if (!isWalletAddress(tokenAddress)) return { balanceWei: null, privacyRequired: false };
       const tokenKey = tokenAddress.toLowerCase();
       if (asset.kind === 'erc20') {
         if (tokenKey === REWARD_TOKEN_ADDRESS.toLowerCase()) {
-          return {
-            balanceWei: useOwner ? ownerRewardTokenBalanceWei : rewardTokenBalanceWei,
-            privacyRequired: false
-          };
+          return { balanceWei: rewardTokenBalanceWei, privacyRequired: false };
         }
-        const customKey = buildTradeCustomTokenInfoKey('erc20', tokenAddress);
-        const info = useOwner
-          ? ownerCustomTradeTokenInfoByAddress[customKey]
-          : customTradeTokenInfoByAddress[customKey];
+        const info = customTradeTokenInfoByAddress[buildTradeCustomTokenInfoKey('erc20', tokenAddress)];
         return { balanceWei: info?.balanceWei ?? null, privacyRequired: false };
       }
-
       if (tokenKey === PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()) {
-        const state = useOwner ? ownerPrivateRewardTokenBalanceState : pWispFooterBalanceState;
         return {
-          balanceWei: state.status === 'ready' ? state.balanceWei : null,
-          privacyRequired: state.status !== 'ready'
+          balanceWei: pWispFooterBalanceState.status === 'ready' ? pWispFooterBalanceState.balanceWei : null,
+          privacyRequired: pWispFooterBalanceState.status !== 'ready'
         };
       }
-
-      const customKey = buildTradeCustomTokenInfoKey('private-erc20', tokenAddress);
-      const state = (useOwner
-        ? ownerCustomTradeTokenInfoByAddress[customKey]
-        : customTradeTokenInfoByAddress[customKey]
-      )?.privateBalanceState;
+      const state = customTradeTokenInfoByAddress[
+        buildTradeCustomTokenInfoKey('private-erc20', tokenAddress)
+      ]?.privateBalanceState;
       return {
         balanceWei: state?.status === 'ready' ? state.balanceWei : null,
         privacyRequired: state?.status !== 'ready'
       };
     },
-    [
-      customTradeTokenInfoByAddress,
-      hasSeparateOwnerWallet,
-      nativeBalanceWei,
-      ownerCustomTradeTokenInfoByAddress,
-      ownerNativeBalanceWei,
-      ownerPrivateRewardTokenBalanceState,
-      ownerRewardTokenBalanceWei,
-      pWispFooterBalanceState,
-      rewardTokenBalanceWei
-    ]
+    [customTradeTokenInfoByAddress, nativeBalanceWei, pWispFooterBalanceState, rewardTokenBalanceWei]
   );
 
-  return {
-    combinedBalanceByAssetKey,
-    pWispFooterBalanceState,
-    resolveFundingBalanceForAsset,
-    visibleTradingBalances
-  };
+  return { combinedBalanceByAssetKey, pWispFooterBalanceState, resolveFundingBalanceForAsset, visibleTradingBalances };
 }

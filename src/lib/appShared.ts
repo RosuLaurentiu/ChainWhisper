@@ -1,4 +1,4 @@
 export * from './appShared/core';
 export * from './appShared/parsers';
-export * from './appShared/burnerVault';
+export * from './appShared/memoSecurity';
 

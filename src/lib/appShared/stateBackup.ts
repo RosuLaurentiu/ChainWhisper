@@ -1,4 +1,4 @@
-import { unzlibSync, zlibSync } from 'fflate';
+import { zlibSync } from 'fflate';
 import {
   base64ToBytes,
   bytesToBase64,
@@ -17,6 +17,12 @@ import {
   type ReadCursorPayload,
   type StateBackupPayload
 } from './core';
+import { unzlibBounded } from './boundedCompression';
+import { MAX_STATE_BACKUP_PLAINTEXT_BYTES } from './memoSecurity';
+
+const MAX_STATE_BACKUP_COMPRESSED_OVERHEAD_BYTES = 1024;
+
+const maxBase64LengthForBytes = (maxBytes: number): number => Math.ceil(maxBytes / 3) * 4;
 
 export const normalizeBackupAddressToken = (value: unknown): string | null => {
   const token = String(value ?? '').trim().toLowerCase();
@@ -124,6 +130,16 @@ export const parseStateBackupText = (text: string): StateBackupPayload | null =>
   if (!text.startsWith(STATE_BACKUP_PREFIX)) {
     return null;
   }
+  if (
+    text.length >
+    STATE_BACKUP_PREFIX.length +
+      STATE_BACKUP_COMPRESSED_PREFIX.length +
+      maxBase64LengthForBytes(
+        MAX_STATE_BACKUP_PLAINTEXT_BYTES + MAX_STATE_BACKUP_COMPRESSED_OVERHEAD_BYTES
+      )
+  ) {
+    return null;
+  }
 
   try {
     let rawPayload = text.slice(STATE_BACKUP_PREFIX.length).trim();
@@ -133,16 +149,27 @@ export const parseStateBackupText = (text: string): StateBackupPayload | null =>
 
     if (rawPayload.startsWith(STATE_BACKUP_COMPRESSED_PREFIX)) {
       const encodedCompressed = rawPayload.slice(STATE_BACKUP_COMPRESSED_PREFIX.length);
-      if (!encodedCompressed) {
+      if (
+        !encodedCompressed ||
+        encodedCompressed.length >
+          maxBase64LengthForBytes(
+            MAX_STATE_BACKUP_PLAINTEXT_BYTES + MAX_STATE_BACKUP_COMPRESSED_OVERHEAD_BYTES
+          )
+      ) {
         return null;
       }
 
       const compressedBytes = base64ToBytes(encodedCompressed);
-      const inflatedBytes = unzlibSync(compressedBytes);
+      const inflatedBytes = unzlibBounded(compressedBytes, MAX_STATE_BACKUP_PLAINTEXT_BYTES);
       rawPayload = TEXT_DECODER.decode(inflatedBytes).trim();
       if (!rawPayload) {
         return null;
       }
+    } else if (
+      rawPayload.length > MAX_STATE_BACKUP_PLAINTEXT_BYTES ||
+      TEXT_ENCODER.encode(rawPayload).length > MAX_STATE_BACKUP_PLAINTEXT_BYTES
+    ) {
+      return null;
     }
 
     const parsed = JSON.parse(rawPayload) as any;

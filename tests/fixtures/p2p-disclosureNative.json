@@ -1,0 +1,124 @@
+{
+  "registrations": [
+    {
+      "token": "0xe595F63789D1D31B4b7c0Bee69062Daf5BE81ac8",
+      "symbol": "BCN",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0xe595F63789D1D31B4b7c0Bee69062Daf5BE81ac8",
+      "symbol": "BCN",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0xe595F63789D1D31B4b7c0Bee69062Daf5BE81ac8",
+      "symbol": "BCN",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x5181B25e7AD744E635fe048D388Fd820f943e582",
+      "symbol": "HBR",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x5181B25e7AD744E635fe048D388Fd820f943e582",
+      "symbol": "HBR",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x5181B25e7AD744E635fe048D388Fd820f943e582",
+      "symbol": "HBR",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x99B7D4CEF854CA380Be0c49863F761670A57F0B3",
+      "symbol": "EMBR",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x99B7D4CEF854CA380Be0c49863F761670A57F0B3",
+      "symbol": "EMBR",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x99B7D4CEF854CA380Be0c49863F761670A57F0B3",
+      "symbol": "EMBR",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x8e8f1142EFE829fbDF2FEcBa7A2fa0e472B5b703",
+      "symbol": "ORBT",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x8e8f1142EFE829fbDF2FEcBa7A2fa0e472B5b703",
+      "symbol": "ORBT",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x8e8f1142EFE829fbDF2FEcBa7A2fa0e472B5b703",
+      "symbol": "ORBT",
+      "tokenRuntimeHash": "0x0f9deefd8ba4019d903d9aa463895a27ec84d83dc981ba76529d4f29f7ed78f0",
+      "privateToken": true
+    },
+    {
+      "token": "0x6E3D27341B860e6e63513b102C7D547ce0171F11",
+      "symbol": "cwPTA",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    },
+    {
+      "token": "0x6E3D27341B860e6e63513b102C7D547ce0171F11",
+      "symbol": "cwPTA",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    },
+    {
+      "token": "0x6E3D27341B860e6e63513b102C7D547ce0171F11",
+      "symbol": "cwPTA",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    },
+    {
+      "token": "0x6E3D27341B860e6e63513b102C7D547ce0171F11",
+      "symbol": "cwPTA",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    },
+    {
+      "token": "0x9BD3fa3dBC87B74E167bcd85744D6e199C5109eb",
+      "symbol": "cwPTB",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    },
+    {
+      "token": "0x9BD3fa3dBC87B74E167bcd85744D6e199C5109eb",
+      "symbol": "cwPTB",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    },
+    {
+      "token": "0x9BD3fa3dBC87B74E167bcd85744D6e199C5109eb",
+      "symbol": "cwPTB",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    },
+    {
+      "token": "0x9BD3fa3dBC87B74E167bcd85744D6e199C5109eb",
+      "symbol": "cwPTB",
+      "tokenRuntimeHash": "0x6e14af7b6fb121249622b4ceb12078e8694e450f846798a71f6be78ded1b679a",
+      "privateToken": false
+    }
+  ]
+}

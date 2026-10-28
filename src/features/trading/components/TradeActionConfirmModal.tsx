@@ -1,15 +1,17 @@
-import { useRef } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { useModalA11y } from '../../../shared/hooks/useModalA11y';
 import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
 
 type TradeActionConfirmModalProps = {
   confirmation: TradeActionConfirmModel | null;
+  details?: ReactNode;
   onCancel: () => void;
   onConfirm: () => void;
 };
 
 export default function TradeActionConfirmModal({
   confirmation,
+  details,
   onCancel,
   onConfirm
 }: TradeActionConfirmModalProps) {
@@ -29,21 +31,25 @@ export default function TradeActionConfirmModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="trade-action-confirm-title"
+        aria-describedby={confirmation.message ? 'trade-action-confirm-message' : undefined}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <h3 id="trade-action-confirm-title">{confirmation.title}</h3>
-        <p className="modal-copy">{confirmation.message}</p>
+        <div className="trade-action-confirm-content">
+          <header className="trade-action-confirm-heading">
+            <h3 id="trade-action-confirm-title">{confirmation.title}</h3>
+            {confirmation.message ? <p id="trade-action-confirm-message" className="modal-copy">{confirmation.message}</p> : null}
+          </header>
 
         {confirmation.summaryRows.length > 0 ? (
-          <div className="trade-action-confirm-summary" aria-label="Trade summary">
+          <dl className="trade-action-confirm-summary" aria-label="Trade summary">
             {confirmation.summaryRows.map((row) => (
               <div key={`${row.label}:${row.value}`}>
-                <span>{row.label}</span>
-                <strong>{row.value}</strong>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
               </div>
             ))}
-          </div>
+          </dl>
         ) : null}
 
         {confirmation.fundingMoves.length > 0 ? (
@@ -61,19 +67,23 @@ export default function TradeActionConfirmModal({
           </div>
         ) : null}
 
-        <div className="topup-stats-grid trade-action-confirm-stats">
+        {confirmation.stats.length > 0 ? <div className="trade-action-confirm-stats-grid trade-action-confirm-stats" aria-label="Action details">
           {confirmation.stats.map((stat) => (
-            <div key={`${stat.label}:${stat.value}`} className="topup-stat">
+            <div key={`${stat.label}:${stat.value}`} className="trade-action-confirm-stat">
               <span>{stat.label}</span>
               <strong>{stat.value}</strong>
             </div>
           ))}
+        </div> : null}
+        {details}
         </div>
 
         <div className="modal-actions">
-          <button type="button" className="connect-btn" onClick={onCancel}>
-            Cancel
-          </button>
+          {confirmation.secondaryLabel !== null ? (
+            <button type="button" className="connect-btn" onClick={onCancel}>
+              {confirmation.secondaryLabel ?? 'Cancel'}
+            </button>
+          ) : null}
           <button type="button" className="connect-btn wallet-primary-action" onClick={onConfirm}>
             {confirmation.primaryLabel}
           </button>

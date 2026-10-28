@@ -160,11 +160,12 @@ describe('ChainWhisper WISP receipt and account-race semantics', () => {
       assertReady,
       submit: async () => ({
         hash: '0xconfirmed',
-        wait: async () => {
-          activeAccount = 'replacement';
-          return { status: 1n };
-        }
+        wait: async () => ({ status: 1n })
       }),
+      waitForReceipt: async () => {
+        activeAccount = 'replacement';
+        return { status: 1n };
+      },
       onProgress: (stage) => stages.push(stage)
     });
 
@@ -182,6 +183,7 @@ describe('ChainWhisper WISP receipt and account-race semantics', () => {
       submitAndConfirmChainWhisperWispConversion({
         assertReady: async () => undefined,
         submit: async () => ({ wait: async () => ({ status: 0 }) }),
+        waitForReceipt: async () => ({ status: 0 }),
         onProgress: (stage) => stages.push(stage)
       })
     ).rejects.toThrow('ChainWhisper WISP conversion failed on-chain.');
@@ -196,7 +198,8 @@ describe('ChainWhisper WISP receipt and account-race semantics', () => {
         assertReady: async () => {
           throw new Error('The active wallet account changed during the privacy conversion.');
         },
-        submit
+        submit,
+        waitForReceipt: async () => ({ status: 1 })
       })
     ).rejects.toThrow('active wallet account changed');
     expect(submit).not.toHaveBeenCalled();

@@ -1,31 +1,12 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import { useCallback, useEffect, type MutableRefObject } from 'react';
 import {
-  acceptGroupInviteOnChain,
-  createGroupOnChain,
-  declineGroupInviteOnChain,
-  disbandGroupOnChain,
-  handoffAdminAndLeaveGroupOnChain,
-  inviteMembersToGroupOnChain,
-  leaveGroupOnChain,
-  removeMemberFromGroupOnChain,
-  renameGroupOnChain
-} from '../../../lib/groupActions';
-import {
-  createGroupJoinCode,
-  fetchActiveJoinCodesForAdmin,
-  hasActiveLegacyGroupInvite,
-  joinWithGroupCode,
-  revokeGroupJoinCode
-} from '../../../lib/groupJoinCodes';
-import {
-  COTI_NETWORK,
   getGroupActionErrorMessage,
   getGroupCreateErrorMessage,
   getGroupJoinErrorMessage,
-  GROUP_ADMIN_BURN_ADDRESS,
+  getProviderErrorMessage,
+  GROUP_JOIN_CODE_SIGNATURE_WINDOW_SECONDS,
+  GROUP_PRIVATE_TITLE_LABEL,
   isWalletAddress,
-  mergeOnboardInfo,
   normalizeContactName,
   parseGroupInviteCode,
   parseGroupJoinCodeFromPayload,
@@ -35,12 +16,15 @@ import {
   type GroupSummary,
   type SyncGroupOptions
 } from '../../../lib/appShared';
-import type { GroupJoinCodeMode } from '../groupUiStore';
-
-type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
-  cacheKey: string;
-};
+import type { GeneratedGroupJoinCode, GroupJoinCodeMode } from '../groupUiStore';
+import type { GroupChatV2SessionController } from '../../../lib/groupChatV2Session';
+import {
+  createGroupChatV2JoinCodeMaterial,
+  encodeGroupChatV2JoinInvite,
+  parseGroupChatV2JoinCodeUses,
+  readGroupChatV2JoinCodeMaterial,
+  signGroupChatV2JoinProof
+} from '../../../lib/groupChatV2JoinCode';
 
 type StateSetter<T> = (next: T | ((previous: T) => T)) => void;
 
@@ -49,18 +33,17 @@ type UseGroupAdminActionsArgs = {
   activeGroupIdRef: MutableRefObject<number | null>;
   activeGroupMeta: GroupSummary | null;
   activateGroup: (groupId: number) => void;
-  chainId: number | null;
   currentWalletKeyRef: MutableRefObject<string>;
   generatedGroupInviteCode: string;
   generatedGroupJoinCodeHash: string;
-  getMemoSigner: () => Promise<MemoSignerBundle>;
+  groupChatV2Session: GroupChatV2SessionController | null;
+  isGroupChatV2ScopeCurrent: () => boolean;
   groupInviteMembersInput: string;
   groupInviteTtlInput: string;
   groupJoinCodeInput: string;
   groupJoinCodeMaxUsesInput: string;
   groupJoinCodeMode: GroupJoinCodeMode;
   groupRenameInput: string;
-  hasAesReady: boolean;
   isActiveGroupAdmin: boolean;
   newGroupIsPrivate: boolean;
   newGroupMembersInput: string;
@@ -69,8 +52,7 @@ type UseGroupAdminActionsArgs = {
   setActiveGroupId: StateSetter<number | null>;
   setActiveGroupJoinCodes: StateSetter<ActiveGroupJoinCode[]>;
   setError: (message: string) => void;
-  setGeneratedGroupInviteCode: StateSetter<string>;
-  setGeneratedGroupJoinCodeHash: StateSetter<string>;
+  setGeneratedGroupJoinCode: StateSetter<GeneratedGroupJoinCode | null>;
   setGroupInviteMembersInput: StateSetter<string>;
   setGroupJoinCodeInput: StateSetter<string>;
   setGroupRenameInput: StateSetter<string>;
@@ -81,43 +63,44 @@ type UseGroupAdminActionsArgs = {
   setNewGroupTitle: StateSetter<string>;
   setProcessingGroupAction: StateSetter<boolean>;
   setRevokingGroupJoinCodeHash: StateSetter<string>;
-  setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>;
   setShowQuickActionsModal: StateSetter<boolean>;
-  setStatus: (message: string) => void;
-  runWalletTransactionFlow: <T>(operation: () => Promise<T>) => Promise<T>;
   syncGroupData: (options?: SyncGroupOptions) => Promise<void>;
   walletAddress: string;
 };
 
-const updateOnboardInfo = (
-  setSessionOnboardInfo: Dispatch<SetStateAction<Record<string, OnboardInfo>>>,
-  cacheKey: string,
-  onboardInfo: OnboardInfo | undefined
-) => {
-  setSessionOnboardInfo((previous) => ({
-    ...previous,
-    [cacheKey]: mergeOnboardInfo(previous[cacheKey], onboardInfo)
-  }));
-};
+const GROUP_CHAT_V2_REQUIRED_ERROR =
+  'Group Chat V2 is unavailable. No legacy group transaction was sent.';
+
+export const isGroupAdminActionContextCurrent = ({
+  activeGroupIdRef,
+  currentWalletKeyRef,
+  groupId,
+  walletKey
+}: {
+  activeGroupIdRef: MutableRefObject<number | null>;
+  currentWalletKeyRef: MutableRefObject<string>;
+  groupId: number;
+  walletKey: string;
+}): boolean =>
+  activeGroupIdRef.current === groupId && currentWalletKeyRef.current === walletKey;
 
 export default function useGroupAdminActions({
   activeGroupId,
   activeGroupIdRef,
   activeGroupMeta,
   activateGroup,
-  chainId,
   currentWalletKeyRef,
   generatedGroupInviteCode,
   generatedGroupJoinCodeHash,
-  getMemoSigner,
+  groupChatV2Session,
   groupInviteMembersInput,
   groupInviteTtlInput,
   groupJoinCodeInput,
   groupJoinCodeMaxUsesInput,
   groupJoinCodeMode,
   groupRenameInput,
-  hasAesReady,
   isActiveGroupAdmin,
+  isGroupChatV2ScopeCurrent,
   newGroupIsPrivate,
   newGroupMembersInput,
   newGroupTitle,
@@ -125,8 +108,7 @@ export default function useGroupAdminActions({
   setActiveGroupId,
   setActiveGroupJoinCodes,
   setError,
-  setGeneratedGroupInviteCode,
-  setGeneratedGroupJoinCodeHash,
+  setGeneratedGroupJoinCode,
   setGroupInviteMembersInput,
   setGroupJoinCodeInput,
   setGroupRenameInput,
@@ -137,86 +119,27 @@ export default function useGroupAdminActions({
   setNewGroupTitle,
   setProcessingGroupAction,
   setRevokingGroupJoinCodeHash,
-  setSessionOnboardInfo,
   setShowQuickActionsModal,
-  setStatus,
-  runWalletTransactionFlow,
   syncGroupData,
   walletAddress
 }: UseGroupAdminActionsArgs) {
-  const getMemoSignerRef = useRef(getMemoSigner);
-  getMemoSignerRef.current = getMemoSigner;
-
   const loadActiveJoinCodesForGroup = useCallback(
-    async (groupId: number, options?: { silent?: boolean }) => {
-      const requestedWalletAddress = walletAddress.trim();
-      const requestedWalletKey = requestedWalletAddress.toLowerCase();
-      if (
-        !Number.isFinite(groupId) ||
-        groupId <= 0 ||
-        !requestedWalletAddress ||
-        !isWalletAddress(requestedWalletAddress) ||
-        !hasAesReady ||
-        !isActiveGroupAdmin ||
-        chainId !== COTI_NETWORK.chainIdDecimal
-      ) {
-        setActiveGroupJoinCodes([]);
-        setLoadingActiveGroupJoinCodes(false);
-        return;
-      }
-
-      try {
-        setLoadingActiveGroupJoinCodes(true);
-        const { signer, cacheKey } = await getMemoSignerRef.current();
-        const nextActiveCodes = await fetchActiveJoinCodesForAdmin({
-          groupId,
-          signer,
-          requestedWalletAddress
-        });
-        if (
-          currentWalletKeyRef.current !== requestedWalletKey ||
-          activeGroupIdRef.current !== groupId
-        ) {
-          return;
-        }
-        setActiveGroupJoinCodes(nextActiveCodes);
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      } catch (loadError) {
-        setActiveGroupJoinCodes([]);
-        if (!options?.silent) {
-          const message = loadError instanceof Error ? loadError.message : 'Failed to load active join codes.';
-          setError(message);
-        }
-      } finally {
-        if (
-          currentWalletKeyRef.current === requestedWalletKey &&
-          activeGroupIdRef.current === groupId
-        ) {
-          setLoadingActiveGroupJoinCodes(false);
-        }
-      }
+    async (_groupId: number, _options?: { silent?: boolean }) => {
+      // Group Chat V2 codes are discovered from events. Only the code generated in
+      // this session is retained by the UI; no legacy admin read/write path remains.
+      setActiveGroupJoinCodes([]);
+      setLoadingActiveGroupJoinCodes(false);
     },
-    [
-      activeGroupIdRef,
-      chainId,
-      currentWalletKeyRef,
-      hasAesReady,
-      isActiveGroupAdmin,
-      setActiveGroupJoinCodes,
-      setError,
-      setLoadingActiveGroupJoinCodes,
-      setSessionOnboardInfo,
-      walletAddress
-    ]
+    [setActiveGroupJoinCodes, setLoadingActiveGroupJoinCodes]
   );
 
   useEffect(() => {
     if (
       activeGroupId === null ||
       !walletAddress ||
-      !hasAesReady ||
+      !groupChatV2Session ||
       !isActiveGroupAdmin ||
-      chainId !== COTI_NETWORK.chainIdDecimal
+      !isGroupChatV2ScopeCurrent()
     ) {
       setActiveGroupJoinCodes([]);
       setLoadingActiveGroupJoinCodes(false);
@@ -228,9 +151,9 @@ export default function useGroupAdminActions({
   }, [
     activeGroupId,
     activeGroupMeta?.lastBlock,
-    chainId,
-    hasAesReady,
+    groupChatV2Session,
     isActiveGroupAdmin,
+    isGroupChatV2ScopeCurrent,
     loadActiveJoinCodesForGroup,
     setActiveGroupJoinCodes,
     setLoadingActiveGroupJoinCodes,
@@ -241,6 +164,11 @@ export default function useGroupAdminActions({
   const revokeJoinCodeForActiveGroup = useCallback(
     async (codeHashInput: string, displayCode?: string) => {
       setError('');
+
+      if (!groupChatV2Session) {
+        setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+        return;
+      }
 
       if (activeGroupId === null) {
         setError('Select a group first.');
@@ -270,20 +198,11 @@ export default function useGroupAdminActions({
       try {
         setProcessingGroupAction(true);
         setRevokingGroupJoinCodeHash(normalizedCodeHash);
-        await runWalletTransactionFlow(async () => {
-          const { signer, cacheKey } = await getMemoSigner();
-          await revokeGroupJoinCode({
-            signer,
-            groupId: activeGroupId,
-            codeHash: normalizedCodeHash
-          });
-
-          updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-        });
+        if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+        await groupChatV2Session.revokeJoinCode(BigInt(activeGroupId), normalizedCodeHash);
 
         if (generatedGroupJoinCodeHash.trim().toLowerCase() === normalizedCodeHash) {
-          setGeneratedGroupInviteCode('');
-          setGeneratedGroupJoinCodeHash('');
+          setGeneratedGroupJoinCode(null);
         }
 
         await loadActiveJoinCodesForGroup(activeGroupId, { silent: true });
@@ -299,17 +218,15 @@ export default function useGroupAdminActions({
     [
       activeGroupId,
       generatedGroupJoinCodeHash,
-      getMemoSigner,
+      groupChatV2Session,
       isActiveGroupAdmin,
+      isGroupChatV2ScopeCurrent,
       loadActiveJoinCodesForGroup,
       processingGroupAction,
-      runWalletTransactionFlow,
       setError,
-      setGeneratedGroupInviteCode,
-      setGeneratedGroupJoinCodeHash,
+      setGeneratedGroupJoinCode,
       setProcessingGroupAction,
       setRevokingGroupJoinCodeHash,
-      setSessionOnboardInfo,
       syncGroupData
     ]
   );
@@ -317,7 +234,14 @@ export default function useGroupAdminActions({
   const createGroup = useCallback(async () => {
     setError('');
 
-    const title = normalizeContactName(newGroupTitle ?? '');
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
+
+    const title = newGroupIsPrivate
+      ? GROUP_PRIVATE_TITLE_LABEL
+      : normalizeContactName(newGroupTitle ?? '');
     if (!title) {
       setError('Enter a group title.');
       return;
@@ -329,23 +253,19 @@ export default function useGroupAdminActions({
     );
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await createGroupOnChain({
-          signer,
-          title,
-          isPrivate: newGroupIsPrivate,
-          initialMembers
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      const created = await groupChatV2Session.create(initialMembers);
+      const createdGroupId = Number(created.group.groupId);
+      if (!Number.isSafeInteger(createdGroupId) || createdGroupId <= 0) {
+        throw new Error('Created Group Chat V2 ID is outside the UI range.');
+      }
 
       setNewGroupTitle('');
       setNewGroupIsPrivate(false);
       setNewGroupMembersInput('');
       await syncGroupData({ deep: true });
       setShowQuickActionsModal(false);
+      if (isGroupChatV2ScopeCurrent()) activateGroup(createdGroupId);
     } catch (createGroupError) {
       const message = getGroupCreateErrorMessage(createGroupError, 'Failed to create group.');
       setError(message);
@@ -353,17 +273,17 @@ export default function useGroupAdminActions({
       setProcessingGroupAction(false);
     }
   }, [
-    getMemoSigner,
+    activateGroup,
+    groupChatV2Session,
+    isGroupChatV2ScopeCurrent,
     newGroupIsPrivate,
     newGroupMembersInput,
     newGroupTitle,
-    runWalletTransactionFlow,
     setError,
     setNewGroupIsPrivate,
     setNewGroupMembersInput,
     setNewGroupTitle,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     setShowQuickActionsModal,
     syncGroupData,
     walletAddress
@@ -371,6 +291,11 @@ export default function useGroupAdminActions({
 
   const inviteMembersToActiveGroup = useCallback(async () => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
 
     if (activeGroupId === null) {
       setError('Select a group first.');
@@ -404,17 +329,8 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await inviteMembersToGroupOnChain({
-          signer,
-          groupId: activeGroupId,
-          accounts,
-          ttlSeconds: ttlParsed
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.inviteMembers(BigInt(activeGroupId), accounts, BigInt(ttlParsed));
 
       setGroupInviteMembersInput('');
       await syncGroupData({ deep: true });
@@ -427,21 +343,25 @@ export default function useGroupAdminActions({
   }, [
     activeGroupId,
     activeGroupMeta,
-    getMemoSigner,
+    groupChatV2Session,
     groupInviteMembersInput,
     groupInviteTtlInput,
     isActiveGroupAdmin,
-    runWalletTransactionFlow,
+    isGroupChatV2ScopeCurrent,
     setError,
     setGroupInviteMembersInput,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData,
     walletAddress
   ]);
 
   const generateJoinCodeForActiveGroup = useCallback(async () => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
 
     if (activeGroupId === null) {
       setError('Select a group first.');
@@ -458,28 +378,63 @@ export default function useGroupAdminActions({
       return;
     }
     const ttlSeconds = ttlHours * 60 * 60;
+    const groupId = activeGroupId;
     const requestedWalletAddress = walletAddress.trim();
+    const requestedWalletKey = requestedWalletAddress.toLowerCase();
 
     try {
       setProcessingGroupAction(true);
-      const nextJoinCode = await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        const generatedJoinCode = await createGroupJoinCode({
-          groupId: activeGroupId,
-          signer,
-          requestedWalletAddress,
-          ttlSeconds,
-          groupJoinCodeMode,
-          groupJoinCodeMaxUsesInput
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-        return generatedJoinCode;
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      const material = createGroupChatV2JoinCodeMaterial();
+      const uses = parseGroupChatV2JoinCodeUses(groupJoinCodeMode, groupJoinCodeMaxUsesInput);
+      await groupChatV2Session.createJoinCode({
+        groupId: BigInt(groupId),
+        codeHash: material.codeHash,
+        proofSigner: material.proofSigner,
+        ttl: BigInt(ttlSeconds),
+        uses
       });
-      setGeneratedGroupInviteCode(nextJoinCode.generatedGroupInviteCode);
-      setGeneratedGroupJoinCodeHash(nextJoinCode.codeHash);
+      const stored = await groupChatV2Session.inspectJoinCode(BigInt(groupId), material.codeHash);
+      if (
+        !stored.active ||
+        !stored.effective ||
+        stored.proofSigner.toLowerCase() !== material.proofSigner.toLowerCase()
+      ) {
+        throw new Error('Created Group Chat V2 join code failed canonical verification.');
+      }
+      const expiresAt = Number(stored.expiresAt);
+      if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
+        throw new Error('Created Group Chat V2 join code has an invalid expiration.');
+      }
+      const nextJoinCode = {
+        generatedGroupInviteCode: encodeGroupChatV2JoinInvite({
+          groupId,
+          code: material.code,
+          expiresAt,
+          inviter: requestedWalletAddress
+        }),
+        codeHash: material.codeHash
+      };
 
-      loadActiveJoinCodesForGroup(activeGroupId, { silent: true }).catch(() => {});
+      if (
+        !isGroupAdminActionContextCurrent({
+          activeGroupIdRef,
+          currentWalletKeyRef,
+          groupId,
+          walletKey: requestedWalletKey
+        })
+      ) {
+        return;
+      }
+
+      setGeneratedGroupJoinCode({
+        groupId,
+        walletKey: requestedWalletKey,
+        inviteCode: nextJoinCode.generatedGroupInviteCode,
+        codeHash: nextJoinCode.codeHash
+      });
+
+      loadActiveJoinCodesForGroup(groupId, { silent: true }).catch(() => {});
       await syncGroupData({ background: true, overviewOnly: true });
     } catch (joinCodeError) {
       const message = getGroupActionErrorMessage(joinCodeError, 'Failed to create join code.');
@@ -489,18 +444,18 @@ export default function useGroupAdminActions({
     }
   }, [
     activeGroupId,
-    getMemoSigner,
+    activeGroupIdRef,
+    currentWalletKeyRef,
+    groupChatV2Session,
     groupInviteTtlInput,
     groupJoinCodeMaxUsesInput,
     groupJoinCodeMode,
     isActiveGroupAdmin,
+    isGroupChatV2ScopeCurrent,
     loadActiveJoinCodesForGroup,
-    runWalletTransactionFlow,
     setError,
-    setGeneratedGroupInviteCode,
-    setGeneratedGroupJoinCodeHash,
+    setGeneratedGroupJoinCode,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData,
     walletAddress
   ]);
@@ -525,38 +480,40 @@ export default function useGroupAdminActions({
 
   const acceptGroupInvite = useCallback(async (groupId: number) => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await acceptGroupInviteOnChain({
-          signer,
-          groupId
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.acceptInvite(BigInt(groupId));
 
       await syncGroupData({ deep: true });
       activateGroup(groupId);
     } catch (acceptError) {
-      const message = acceptError instanceof Error ? acceptError.message : 'Failed to accept invite.';
+      const message = getProviderErrorMessage(acceptError, 'Failed to accept invite.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
     }
   }, [
     activateGroup,
-    getMemoSigner,
-    runWalletTransactionFlow,
+    groupChatV2Session,
+    isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData
   ]);
 
   const joinGroupWithCode = useCallback(async () => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
 
     if (processingGroupAction) {
       return;
@@ -582,40 +539,40 @@ export default function useGroupAdminActions({
 
     const parsedJoinCode = parseGroupJoinCodeFromPayload(parsedCode);
     if (!parsedJoinCode) {
-      try {
-        const hasLegacyInvite = await hasActiveLegacyGroupInvite({
-          groupId: parsedCode.groupId,
-          walletAddress: requestedWalletAddress,
-          nowTs
-        });
-
-        if (!hasLegacyInvite) {
-          setError('Legacy group code detected, but no active on-chain invite exists for this wallet.');
-          return;
-        }
-
-        setGroupJoinCodeInput('');
-        await acceptGroupInvite(parsedCode.groupId);
-        setShowQuickActionsModal(false);
-      } catch (legacyJoinError) {
-        const message = legacyJoinError instanceof Error ? legacyJoinError.message : 'Failed to join group with legacy code.';
-        setError(message);
-      }
+      setError('Legacy group codes are read-only after Group Chat V2 activation. Ask for a new code.');
       return;
     }
 
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await joinWithGroupCode({
-          signer,
-          parsedJoinCode,
-          chainId,
-          nowTs
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      const material = readGroupChatV2JoinCodeMaterial(parsedJoinCode.code);
+      const [group, stored] = await Promise.all([
+        groupChatV2Session.inspect(BigInt(parsedJoinCode.groupId)),
+        groupChatV2Session.inspectJoinCode(BigInt(parsedJoinCode.groupId), material.codeHash)
+      ]);
+      if (
+        !stored.active ||
+        !stored.effective ||
+        stored.proofSigner.toLowerCase() !== material.proofSigner.toLowerCase()
+      ) {
+        throw new Error('This Group Chat V2 code is inactive or has the wrong proof signer.');
+      }
+      const signatureDeadline = BigInt(nowTs + GROUP_JOIN_CODE_SIGNATURE_WINDOW_SECONDS);
+      const digest = await groupChatV2Session.readJoinProofDigest({
+        groupId: BigInt(parsedJoinCode.groupId),
+        codeHash: material.codeHash,
+        generation: stored.generation,
+        expectedAdminRevision: group.adminRevision,
+        signatureDeadline
+      });
+      await groupChatV2Session.joinWithCode({
+        groupId: BigInt(parsedJoinCode.groupId),
+        codeHash: material.codeHash,
+        generation: stored.generation,
+        expectedAdminRevision: group.adminRevision,
+        signatureDeadline,
+        signature: await signGroupChatV2JoinProof(material.code, digest)
       });
 
       setGroupJoinCodeInput('');
@@ -629,17 +586,14 @@ export default function useGroupAdminActions({
       setProcessingGroupAction(false);
     }
   }, [
-    acceptGroupInvite,
     activateGroup,
-    chainId,
-    getMemoSigner,
+    groupChatV2Session,
     groupJoinCodeInput,
     processingGroupAction,
-    runWalletTransactionFlow,
+    isGroupChatV2ScopeCurrent,
     setError,
     setGroupJoinCodeInput,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     setShowQuickActionsModal,
     syncGroupData,
     walletAddress
@@ -647,6 +601,11 @@ export default function useGroupAdminActions({
 
   const removeMemberFromActiveGroup = useCallback(async (account: string) => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
 
     if (activeGroupId === null) {
       setError('Select a group first.');
@@ -670,34 +629,62 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await removeMemberFromGroupOnChain({
-          signer,
-          groupId: activeGroupId,
-          account
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.removeMembers(BigInt(activeGroupId), [account]);
 
       await syncGroupData({ deep: true });
     } catch (removeError) {
-      const message = removeError instanceof Error ? removeError.message : 'Failed to remove member.';
+      const message = getProviderErrorMessage(removeError, 'Failed to remove member.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
     }
   }, [
     activeGroupId,
-    getMemoSigner,
+    groupChatV2Session,
     isActiveGroupAdmin,
-    runWalletTransactionFlow,
+    isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData,
     walletAddress
+  ]);
+
+  const transferAdminToMember = useCallback(async (account: string) => {
+    setError('');
+    if (!groupChatV2Session) {
+      setError('Direct member administration transfer is available with Group Chat V2.');
+      return;
+    }
+    if (activeGroupId === null || !isActiveGroupAdmin || !isWalletAddress(account)) {
+      setError('Select a valid group member while connected as the group admin.');
+      return;
+    }
+    const memberKey = account.trim().toLowerCase();
+    if (!(activeGroupMeta?.members ?? []).some((member) => member.toLowerCase() === memberKey)) {
+      setError('The new Group Chat V2 admin must already be an active member.');
+      return;
+    }
+    if (!window.confirm(`Transfer group administration to ${shortenAddress(account)}?`)) return;
+    try {
+      setProcessingGroupAction(true);
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.transferAdmin(BigInt(activeGroupId), account);
+      await syncGroupData({ deep: true });
+    } catch (transferError) {
+      setError(getGroupActionErrorMessage(transferError, 'Failed to transfer group administration.'));
+    } finally {
+      setProcessingGroupAction(false);
+    }
+  }, [
+    activeGroupId,
+    activeGroupMeta?.members,
+    groupChatV2Session,
+    isActiveGroupAdmin,
+    isGroupChatV2ScopeCurrent,
+    setError,
+    setProcessingGroupAction,
+    syncGroupData
   ]);
 
   const beginRenameActiveGroup = useCallback(() => {
@@ -733,6 +720,11 @@ export default function useGroupAdminActions({
   const renameActiveGroup = useCallback(async () => {
     setError('');
 
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
+
     if (activeGroupId === null) {
       setError('Select a group first.');
       return;
@@ -756,17 +748,8 @@ export default function useGroupAdminActions({
 
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await renameGroupOnChain({
-          signer,
-          groupId,
-          title: nextTitle,
-          isPrivate: Boolean(activeGroupMeta?.isPrivate)
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.setMetadata(BigInt(groupId), nextTitle);
 
       cancelRenameActiveGroup();
       await syncGroupData({ deep: true });
@@ -780,18 +763,22 @@ export default function useGroupAdminActions({
     activeGroupId,
     activeGroupMeta,
     cancelRenameActiveGroup,
-    getMemoSigner,
+    groupChatV2Session,
     groupRenameInput,
     isActiveGroupAdmin,
-    runWalletTransactionFlow,
+    isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData
   ]);
 
   const leaveActiveGroup = useCallback(async () => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
 
     if (activeGroupId === null) {
       setError('Select a group first.');
@@ -800,24 +787,19 @@ export default function useGroupAdminActions({
 
     const groupId = activeGroupId;
     const groupLabel = `${activeGroupMeta?.title ?? 'Group'} (#${groupId})`;
-    const leaveMessage = isActiveGroupAdmin
-      ? `Leave ${groupLabel} as admin?\n\nIf you are the only member, the group will be disbanded. Otherwise admin rights transfer to another member automatically.`
-      : `Leave ${groupLabel}?`;
+    if (isActiveGroupAdmin && (activeGroupMeta?.memberCount ?? 0) > 1) {
+      setError('Transfer Group Chat V2 administration to another member before leaving.');
+      return;
+    }
+    const leaveMessage = `Leave ${groupLabel}?`;
     if (!window.confirm(leaveMessage)) {
       return;
     }
 
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await leaveGroupOnChain({
-          signer,
-          groupId
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.leave(BigInt(groupId));
 
       if (activeGroupIdRef.current === groupId) {
         setActiveGroupId(null);
@@ -833,76 +815,27 @@ export default function useGroupAdminActions({
     activeGroupId,
     activeGroupIdRef,
     activeGroupMeta,
-    getMemoSigner,
+    groupChatV2Session,
     isActiveGroupAdmin,
-    runWalletTransactionFlow,
+    isGroupChatV2ScopeCurrent,
     setActiveGroupId,
     setError,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData
   ]);
 
   const handoffAdminAndLeaveActiveGroup = useCallback(async () => {
     setError('');
-
-    if (activeGroupId === null) {
-      setError('Select a group first.');
-      return;
-    }
-    if (!isActiveGroupAdmin) {
-      setError('Only the group admin can use burn and leave.');
-      return;
-    }
-
-    const groupId = activeGroupId;
-    const groupLabel = `${activeGroupMeta?.title ?? 'Group'} (#${groupId})`;
-    const burnAddress = GROUP_ADMIN_BURN_ADDRESS;
-    const confirmationMessage = `Leave ${groupLabel} as admin?\n\nThis adds ${burnAddress} to the group (if needed), transfers admin to that burn wallet, and then leaves from your current wallet.\n\nThis action is irreversible.`;
-    if (!window.confirm(confirmationMessage)) {
-      return;
-    }
-
-    try {
-      setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await handoffAdminAndLeaveGroupOnChain({
-          signer,
-          groupId
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
-
-      if (activeGroupIdRef.current === groupId) {
-        setActiveGroupId(null);
-      }
-      await syncGroupData({ deep: true });
-      setStatus(`Left group. Admin was transferred to burn wallet ${shortenAddress(burnAddress)}.`);
-    } catch (handoffError) {
-      const message = getGroupActionErrorMessage(handoffError, 'Failed to transfer admin to burn wallet and leave group.');
-      setError(message);
-    } finally {
-      setProcessingGroupAction(false);
-    }
-  }, [
-    activeGroupId,
-    activeGroupIdRef,
-    activeGroupMeta,
-    getMemoSigner,
-    isActiveGroupAdmin,
-    runWalletTransactionFlow,
-    setActiveGroupId,
-    setError,
-    setProcessingGroupAction,
-    setSessionOnboardInfo,
-    setStatus,
-    syncGroupData
-  ]);
+    setError('Group Chat V2 requires transferring administration to an existing consenting member before leaving.');
+  }, [setError]);
 
   const disbandActiveGroup = useCallback(async () => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
 
     if (activeGroupId === null) {
       setError('Select a group first.');
@@ -914,26 +847,17 @@ export default function useGroupAdminActions({
     }
 
     const groupId = activeGroupId;
-    const currentMemberCount = Math.max(0, activeGroupMeta?.memberCount ?? activeGroupMeta?.members.length ?? 0);
-    const confirmationMessage = `Disband this group now? This will permanently remove the group and all ${currentMemberCount} member records.`;
+    const confirmationMessage = 'Archive this group? New messages will stop. Existing messages and authorized history remain available.';
     if (!window.confirm(confirmationMessage)) {
       return;
     }
 
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await disbandGroupOnChain({
-          signer,
-          groupId
-        });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.disband(BigInt(groupId));
 
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
-
-      setGeneratedGroupInviteCode('');
-      setGeneratedGroupJoinCodeHash('');
+      setGeneratedGroupJoinCode(null);
       if (activeGroupIdRef.current === groupId) {
         setActiveGroupId(null);
       }
@@ -947,46 +871,40 @@ export default function useGroupAdminActions({
   }, [
     activeGroupId,
     activeGroupIdRef,
-    activeGroupMeta,
-    getMemoSigner,
+    groupChatV2Session,
     isActiveGroupAdmin,
-    runWalletTransactionFlow,
+    isGroupChatV2ScopeCurrent,
     setActiveGroupId,
     setError,
-    setGeneratedGroupInviteCode,
-    setGeneratedGroupJoinCodeHash,
+    setGeneratedGroupJoinCode,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData
   ]);
 
   const declineGroupInvite = useCallback(async (groupId: number) => {
     setError('');
+
+    if (!groupChatV2Session) {
+      setError(GROUP_CHAT_V2_REQUIRED_ERROR);
+      return;
+    }
     try {
       setProcessingGroupAction(true);
-      await runWalletTransactionFlow(async () => {
-        const { signer, cacheKey } = await getMemoSigner();
-        await declineGroupInviteOnChain({
-          signer,
-          groupId
-        });
-
-        updateOnboardInfo(setSessionOnboardInfo, cacheKey, signer.getUserOnboardInfo());
-      });
+      if (!isGroupChatV2ScopeCurrent()) throw new Error('Group Chat V2 wallet scope changed.');
+      await groupChatV2Session.declineInvite(BigInt(groupId));
 
       await syncGroupData({ deep: true });
     } catch (declineError) {
-      const message = declineError instanceof Error ? declineError.message : 'Failed to decline invite.';
+      const message = getProviderErrorMessage(declineError, 'Failed to decline invite.');
       setError(message);
     } finally {
       setProcessingGroupAction(false);
     }
   }, [
-    getMemoSigner,
-    runWalletTransactionFlow,
+    groupChatV2Session,
+    isGroupChatV2ScopeCurrent,
     setError,
     setProcessingGroupAction,
-    setSessionOnboardInfo,
     syncGroupData
   ]);
 
@@ -1005,6 +923,7 @@ export default function useGroupAdminActions({
     removeMemberFromActiveGroup,
     renameActiveGroup,
     revokeGeneratedJoinCodeForActiveGroup,
-    revokeJoinCodeForActiveGroup
+    revokeJoinCodeForActiveGroup,
+    transferAdminToMember
   };
 }

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildLinkTradeV2Path } from './linkTradeV2Links';
 import {
   WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY,
+  WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY,
   WALLET_BOOTSTRAP_HISTORY_STATE_KEY,
   buildWalletBootstrapDappTargetUrl,
   buildWalletBootstrapPath,
@@ -57,6 +59,60 @@ const createHistory = () => {
   };
   return history;
 };
+
+describe('Link V2 credential through wallet bootstrap', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const secret = `0x${'ab'.repeat(32)}`;
+  const path = buildLinkTradeV2Path({ chainId: '7082400', escrow: `0x${'11'.repeat(20)}`,
+    id: '9007199254740993', revision: '2', credentialEpoch: '1' }, secret);
+  const publicPath = path.split('#')[0], fragment = `#secret=${secret}`;
+  it('carries the credential in the bootstrap fragment, never in its HTTP query', () => {
+    const target = new URL(buildWalletBootstrapPath(path, 'https://chainwhisper.example'), 'https://chainwhisper.example');
+    expect(target.search).not.toContain(secret);
+    expect(target.searchParams.get('p')).toBe(publicPath);
+    expect(target.hash).toBe(fragment);
+    expect(resolveWalletBootstrapActiveRoute({ historyState: null, storage: createMemoryStorage(),
+      location: createLocation(target.pathname, target.search, target.hash) })).toBe(path);
+  });
+  it('keeps public recovery records while preserving the live fragment across freeze and reload', () => {
+    const history = createHistory(), storage = createMemoryStorage(), persisted = createMemoryStorage();
+    const location = createLocation('/wallet-connect', `?p=${encodeURIComponent(publicPath)}`, fragment);
+    vi.stubGlobal('window', { location, history, localStorage: persisted, sessionStorage: storage });
+    const record = writeWalletBootstrapActiveRouteState(path, { location, history, storage, now: 1000 });
+    expect(record?.activePath).toBe(publicPath);
+    expect(JSON.stringify(record)).not.toContain(secret);
+    expect(JSON.stringify(history.state)).not.toContain(secret);
+    expect(storage.getItem(WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY)).not.toContain(secret);
+    expect(persisted.getItem(WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY)).not.toContain(secret);
+    expect(JSON.parse(persisted.getItem(WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY) ?? '{}').activePath).toBe(publicPath);
+    expect(history.entries[history.entries.length - 1]?.url).toBe(`/wallet-connect${fragment}`);
+    const stable = createLocation('/wallet-connect', '', fragment);
+    expect(resolveWalletBootstrapActiveRoute({ historyState: history.state, location: stable, storage })).toBe(path);
+    expect(freezeWalletBootstrapUrlAfterEntry({ history, location: stable, storage })).toBe(path);
+    expect(history.entries[history.entries.length - 1]?.url).toBe(`/wallet-connect${fragment}`);
+    writeWalletBootstrapActiveRouteState('/chat', { history, location: stable, storage, now: 1001 });
+    expect(history.entries[history.entries.length - 1]?.url).toBe('/wallet-connect');
+  });
+  it('does not accept a new-format credential embedded in the redirected query', () => {
+    const location = createLocation('/wallet-connect', `?p=${encodeURIComponent(path)}`);
+    expect(resolveWalletBootstrapActiveRoute({ historyState: null, location, storage: createMemoryStorage() }))
+      .not.toBe(path);
+  });
+  it('preserves the outer fragment when forwarding an existing bootstrap URL to MetaMask', () => {
+    const bootstrap = buildWalletBootstrapPath(path, 'https://chainwhisper.example');
+    expect(buildWalletBootstrapDappTargetUrl(`https://chainwhisper.example${bootstrap}`))
+      .toBe(`chainwhisper.example${bootstrap}`);
+  });
+  it('discards malformed recovery paths and never crashes on an invalid live fragment', () => {
+    const storage = createMemoryStorage(), location = createLocation('/wallet-connect', '', '#secret=broken');
+    expect(writeWalletBootstrapActiveRoutePath('/otc/order/link/lv2.broken', { storage, location })).toBeNull();
+    const historyState = { [WALLET_BOOTSTRAP_HISTORY_STATE_KEY]: {
+      activePath: '/otc/order/link/lv2.broken', entryPath: publicPath, timestamp: 1000 } };
+    expect(resolveWalletBootstrapActiveRoute({ historyState, storage, location })).toBe('/');
+    writeWalletBootstrapActiveRoutePath(publicPath, { storage, location, now: 1000 });
+    expect(resolveWalletBootstrapActiveRoute({ historyState: null, storage, location })).toBe(publicPath);
+  });
+});
 
 describe('wallet bootstrap route helpers', () => {
   afterEach(() => {

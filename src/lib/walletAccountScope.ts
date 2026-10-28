@@ -18,6 +18,8 @@ export type WalletAccountScope = {
 
 export type TradeWalletAction = 'accept' | 'cancel' | 'decline' | 'fill';
 
+export type WalletReadSignerRoute = 'owner';
+
 const normalizeAddress = (address?: string | null): string => String(address ?? '').trim();
 
 const normalizeKey = (address?: string | null): string => normalizeAddress(address).toLowerCase();
@@ -26,85 +28,49 @@ const buildReadAccount = ({
   address,
   canReadPrivate,
   isActionAccount,
-  role
 }: {
   address: string;
   canReadPrivate: boolean;
   isActionAccount: boolean;
-  role: WalletAccountRole;
 }): WalletReadAccount => ({
   address,
   key: address.toLowerCase(),
-  role,
-  label: role === 'owner' ? 'Owner wallet' : 'ChainWhisper account',
+  role: 'owner',
+  label: 'Connected wallet',
   canReadPrivate,
   isActionAccount
 });
 
 export const buildWalletAccountScope = ({
-  actionAddress,
-  actionAesReady,
   ownerAddress,
   ownerAesReady
 }: {
-  actionAddress?: string | null;
-  actionAesReady: boolean;
   ownerAddress?: string | null;
   ownerAesReady: boolean;
 }): WalletAccountScope => {
-  const normalizedActionAddress = normalizeAddress(actionAddress);
   const normalizedOwnerAddress = normalizeAddress(ownerAddress);
-  const actionAccount = isWalletAddress(normalizedActionAddress)
+  const connectedAddress = isWalletAddress(normalizedOwnerAddress) ? normalizedOwnerAddress : '';
+  const connectedAccount = connectedAddress
     ? buildReadAccount({
-        address: normalizedActionAddress,
-        canReadPrivate: actionAesReady,
-        isActionAccount: true,
-        role: 'chainwhisper'
-      })
-    : null;
-  const ownerAccount = isWalletAddress(normalizedOwnerAddress)
-    ? buildReadAccount({
-        address: normalizedOwnerAddress,
+        address: connectedAddress,
         canReadPrivate: ownerAesReady,
-        isActionAccount: false,
-        role: 'owner'
+        isActionAccount: true
       })
     : null;
-
-  const byKey = new Map<string, WalletReadAccount>();
-  if (actionAccount) {
-    byKey.set(actionAccount.key, actionAccount);
-  }
-  if (ownerAccount) {
-    const existing = byKey.get(ownerAccount.key);
-    if (!existing) {
-      byKey.set(ownerAccount.key, ownerAccount);
-    } else {
-      byKey.set(ownerAccount.key, {
-        ...existing,
-        canReadPrivate: existing.canReadPrivate || ownerAccount.canReadPrivate,
-        isActionAccount: existing.isActionAccount || ownerAccount.isActionAccount
-      });
-    }
-  }
-
-  const readAccounts = Array.from(byKey.values());
+  const readAccounts = connectedAccount ? [connectedAccount] : [];
   return {
-    actionAccount,
-    ownerAccount,
+    actionAccount: connectedAccount,
+    ownerAccount: connectedAccount,
     readAccounts,
     readAccountKeys: readAccounts.map((account) => account.key)
   };
 };
 
-export const getWalletAccountRoleLabel = (role?: WalletAccountRole): string =>
-  role === 'owner' ? 'Owner wallet' : role === 'chainwhisper' ? 'ChainWhisper account' : '';
-
 export const getWalletActionAccount = (accounts: WalletReadAccount[]): WalletReadAccount | null =>
   accounts.find((account) => account.isActionAccount) ?? null;
 
 export const getWalletOwnerAccount = (accounts: WalletReadAccount[]): WalletReadAccount | null =>
-  accounts.find((account) => account.role === 'owner') ?? null;
+  accounts.find((account) => account.isActionAccount && account.role === 'owner') ?? null;
 
 export const buildWalletReadAccountsKey = (
   accounts: WalletReadAccount[],
@@ -118,55 +84,43 @@ export const buildWalletReadAccountsKey = (
     )
     .join('|');
 
-type WalletScopedMessage = {
-  accountAddress?: string;
-  accountRole?: WalletAccountRole;
-  id?: string;
-};
-
-const findReadAccountForMessage = (
-  message: WalletScopedMessage | null | undefined,
-  readAccounts: WalletReadAccount[]
-): WalletReadAccount | null => {
-  const accountKey = normalizeKey(message?.accountAddress);
-  if (!accountKey) {
-    return null;
-  }
-  return readAccounts.find((account) => account.key === accountKey) ?? null;
-};
-
-export const resolveConversationActionAccount = ({
-  fallbackAddress,
-  messages,
-  readAccounts,
-  replyTarget
+export const resolveWalletReadSignerRoute = ({
+  account,
+  ownerAddress
 }: {
-  fallbackAddress: string;
-  messages: WalletScopedMessage[];
-  readAccounts: WalletReadAccount[];
-  replyTarget?: WalletScopedMessage | null;
-}): WalletReadAccount | null => {
-  const actionAccount = getWalletActionAccount(readAccounts);
-  const ownerAccount = getWalletOwnerAccount(readAccounts);
-  const fallbackKey = normalizeKey(fallbackAddress);
-  const fallbackAccount = readAccounts.find((account) => account.key === fallbackKey) ?? null;
-
-  const replyAccount = findReadAccountForMessage(replyTarget, readAccounts);
-  if (replyAccount) {
-    return replyAccount;
+  account: WalletReadAccount;
+  ownerAddress: string;
+}): WalletReadSignerRoute => {
+  const accountAddressKey = normalizeKey(account.address);
+  const accountKey = normalizeKey(account.key);
+  if (
+    !isWalletAddress(account.address) ||
+    !isWalletAddress(account.key) ||
+    accountAddressKey !== accountKey
+  ) {
+    throw new Error('The wallet read account is malformed. Refresh the wallet session and try again.');
   }
 
-  const messageAccounts = messages
-    .map((message) => findReadAccountForMessage(message, readAccounts))
-    .filter((account): account is WalletReadAccount => Boolean(account));
-  if (actionAccount && messageAccounts.some((account) => account.key === actionAccount.key)) {
-    return actionAccount;
-  }
-  if (ownerAccount && messageAccounts.length > 0 && messageAccounts.every((account) => account.key === ownerAccount.key)) {
-    return ownerAccount;
+  if (
+    account.isActionAccount &&
+    account.role === 'owner' &&
+    accountKey === normalizeKey(ownerAddress)
+  ) {
+    return 'owner';
   }
 
-  return actionAccount ?? fallbackAccount ?? ownerAccount;
+  throw new Error('The wallet read scope changed. Refresh the wallet session and try again.');
+};
+
+export const assertWalletReadSignerMatchesAccount = (
+  account: WalletReadAccount,
+  signerAddress: string
+): void => {
+  const signerKey = normalizeKey(signerAddress);
+  const accountKey = normalizeKey(account.key);
+  if (!isWalletAddress(signerAddress) || !accountKey || signerKey !== accountKey) {
+    throw new Error('The wallet signer changed. Refresh the wallet session and try again.');
+  }
 };
 
 const tradeMatchesAccountKey = (
@@ -193,15 +147,10 @@ export const getTradeAccountPerspectiveAddress = (
   scope: Pick<WalletAccountScope, 'actionAccount' | 'ownerAccount'>
 ): string => {
   const actionKey = scope.actionAccount?.key ?? '';
-  const ownerKey = scope.ownerAccount?.key ?? '';
   const accountAddress = normalizeAddress(trade.accountAddress);
 
   if (actionKey && tradeMatchesAccountKey(trade, actionKey)) {
     return scope.actionAccount?.address ?? accountAddress;
-  }
-
-  if (ownerKey && tradeMatchesAccountKey(trade, ownerKey)) {
-    return scope.ownerAccount?.address ?? accountAddress;
   }
 
   return scope.actionAccount?.address ?? accountAddress;
@@ -218,24 +167,10 @@ export const resolveTradeActionWalletAddress = ({
   readAccounts: WalletReadAccount[];
   trade: Pick<TradeSnapshot, 'maker' | 'taker' | 'walletHasFill' | 'accountAddress' | 'accountRole' | 'accountMatches'>;
 }): string => {
-  if (action === 'fill') {
-    return fallbackAddress;
-  }
-
-  const ownerAccount = getWalletOwnerAccount(readAccounts);
-  if (!ownerAccount) {
-    return fallbackAddress;
-  }
-
-  const actionAccount = getWalletActionAccount(readAccounts);
-  const fallbackKey = normalizeKey(fallbackAddress);
-  const actionKey = actionAccount?.key || fallbackKey;
-  if (tradeMatchesAccountKey(trade, actionKey)) {
-    return fallbackAddress;
-  }
-
-  const ownerMatches = trade.accountRole === 'owner' || tradeMatchesAccountKey(trade, ownerAccount.key);
-  return ownerMatches ? ownerAccount.address : fallbackAddress;
+  void action;
+  void readAccounts;
+  void trade;
+  return fallbackAddress;
 };
 
 export const mergeWalletAccountMatches = (
@@ -245,17 +180,17 @@ export const mergeWalletAccountMatches = (
   const matches = new Map<string, { address: string; role: WalletAccountRole }>();
   for (const match of [...(existing?.accountMatches ?? []), ...(incoming.accountMatches ?? [])]) {
     const key = match.address.trim().toLowerCase();
-    if (isWalletAddress(key)) {
-      matches.set(key, { address: match.address, role: match.role });
+    if (isWalletAddress(key) && match.role === 'owner') {
+      matches.set(key, { address: match.address, role: 'owner' });
     }
   }
-  if (incoming.accountAddress && incoming.accountRole) {
+  if (incoming.accountAddress && incoming.accountRole === 'owner') {
     matches.set(incoming.accountAddress.trim().toLowerCase(), {
       address: incoming.accountAddress,
       role: incoming.accountRole
     });
   }
-  if (existing?.accountAddress && existing.accountRole) {
+  if (existing?.accountAddress && existing.accountRole === 'owner') {
     matches.set(existing.accountAddress.trim().toLowerCase(), {
       address: existing.accountAddress,
       role: existing.accountRole

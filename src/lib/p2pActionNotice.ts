@@ -1,10 +1,11 @@
 import type { TradeAssetPayload } from './appShared';
 
-export type P2PActionNoticeStatus = 'pending' | 'success' | 'error' | 'info';
+export type P2PActionNoticeStatus = 'wallet' | 'pending' | 'success' | 'error' | 'uncertain' | 'info';
 export type P2PActionNoticeSurface = 'terminal' | 'composer' | 'history';
 export type P2PActionNoticeAction =
   | 'accept'
   | 'cancel'
+  | 'budget-visibility'
   | 'counter'
   | 'create-offer'
   | 'create-recurring-order'
@@ -30,6 +31,11 @@ export type P2PActionNoticeInput = {
   };
 };
 
+const UNCERTAIN_OUTCOME_PATTERN = /(?:transaction|action|trade|order).*(?:submitted|broadcast).*(?:confirmation|receipt).*(?:timed out|unavailable)|(?:confirmation|receipt).*(?:timed out|unavailable).*(?:submitted|broadcast)/iu;
+
+export const getP2PActionFailureStatus = (message: string): Extract<P2PActionNoticeStatus, 'error' | 'uncertain'> =>
+  UNCERTAIN_OUTCOME_PATTERN.test(message.trim()) ? 'uncertain' : 'error';
+
 export type P2PActionNotice = P2PActionNoticeInput & {
   id: string;
   message: string;
@@ -39,6 +45,7 @@ export type P2PActionNotice = P2PActionNoticeInput & {
 const successMessageByAction: Record<P2PActionNoticeAction, string> = {
   accept: 'Offer accepted',
   cancel: 'Offer cancelled',
+  'budget-visibility': 'Budget visibility changed',
   counter: 'Counter sent',
   'create-offer': 'Offer opened',
   'create-recurring-order': 'Order opened',
@@ -55,6 +62,9 @@ export const getP2PActionNoticeMessage = ({
   message,
   status
 }: Pick<P2PActionNoticeInput, 'action' | 'message' | 'status'>): string => {
+  if (status === 'wallet') {
+    return 'Confirm this action in your wallet';
+  }
   if (status === 'pending') {
     return 'Confirming on-chain...';
   }
@@ -63,6 +73,9 @@ export const getP2PActionNoticeMessage = ({
   }
   if (status === 'error') {
     return message?.trim() || 'Action failed';
+  }
+  if (status === 'uncertain') {
+    return message?.trim() || 'Confirmation is still uncertain. Check wallet activity before retrying.';
   }
   return message?.trim() || successMessageByAction[action];
 };
@@ -76,3 +89,6 @@ export const buildP2PActionNotice = (input: P2PActionNoticeInput): P2PActionNoti
     createdAt
   };
 };
+
+export const getP2PActionNoticeAutoDismissMs = (status: P2PActionNoticeStatus): number | null =>
+  status === 'success' || status === 'info' ? 6500 : null;

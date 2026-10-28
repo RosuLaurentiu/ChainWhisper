@@ -9,6 +9,7 @@
     "supabase": "npm:@supabase/supabase-js@2.111.0"
   },
   "tasks": {
-    "check": "deno check index.ts"
+    "check": "deno check index.ts index.test.ts",
+    "test": "deno test --allow-env index.test.ts"
   }
 }

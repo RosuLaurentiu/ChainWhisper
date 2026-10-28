@@ -1,5 +1,26 @@
 # Project Notes For Future App Work
 
+## Current DEX beta delivery
+
+For DEX work, use the [root instructions](../AGENTS.md), the architecture's
+[beta completion boundary](../ARCHITECTURE.md#dex-beta-completion-boundary) and
+the [current roadmap](../MASTER_ROADMAP.md#remaining-dex-beta-path). Backlog is the
+only planner. Existing non-DEX sections below are not a new DEX scope or authority.
+
+The DEX beta is a complete user App on the admitted COTI Testnet candidate, not the
+Mainnet hub deployment. Include market price/freshness and daily chart, both swap
+modes and protections, four-token funding, Your Positions, My Orders, My Activity,
+supported services and safe exits. Reuse existing views/readers and receipt state;
+normal use needs no chat, manual work files or routine NFT-ID entry. Keep the keeper
+on public pending work and permitted steps; private result checks belong to the
+owner App. No new runner, indexer, wallet model or design overhaul is required.
+
+CW-009.03 collects the App deliveries; .01-.04 own keeper/swaps and owner controls,
+CW-032.02 owns funding and CW-033.01 owns DEX activity. Collect timing, cost and
+handoff from these same journeys. Preserve current candidate checks, privacy,
+exact accounting, recovery and all live holds. Follow root proportional checks;
+instruction-only changes need text/link checks, not contract or Testnet reruns.
+
 ## Product Shape
 
 This repository is a Vite + React + TypeScript project for ChainWhisper, a privacy-first blockchain messenger and trading hub built on COTI Mainnet (chain ID `2632500`). The runtime is an app hub where each page behaves like its own app but shares wallet, network, trade, and account logic.
@@ -10,7 +31,7 @@ Current route behavior is intentional:
 - `/chat` - main encrypted messaging app for direct chat and group chat. `/messages` and `/messenger` are aliases.
 - `/otc` and nested `/otc/...` - canonical OTC trading app. `/trades` and `/otcdesk` are legacy aliases that must keep resolving.
 - `/portal` - canonical Privacy Portal app for official COTI public/private token bridges. `/swap`, `/shield`, and `/whisper-shield` are aliases.
-- `/treasury` - Treasury Data analytics. `/treasury-data` is an alias. No wallet interaction needed.
+- `/tvl` - canonical COTI Private TVL analytics. `/private-tvl`, `/treasury`, and `/treasury-data` are aliases. No wallet interaction needed.
 
 ## Navigation Rules
 
@@ -22,31 +43,32 @@ Current route behavior is intentional:
 
 ## Wallet Rules
 
-- Chat, OTC Trading, and Privacy Portal use the owner-first ChainWhisper account model: MetaMask/browser wallet is owner login, recovery, funding, and fallback; the ChainWhisper account is the default chat/trading/conversion account.
-- Connect/recover the owner-linked ChainWhisper account automatically after owner privacy is available. If no account exists, show create/import/recover setup actions.
+- Chat, OTC, and Privacy Portal use one connected owner wallet. Supported sessions are MetaMask and CipherTrade, including injected desktop/mobile providers and the CipherTrade Mobile WalletConnect path.
+- Direct Chat V2, Group Chat V2, Reactions V1, and trading contracts use that selected owner directly. Issue signer capabilities only from the exact live, lease-guarded EIP-1193 session and COTI `BrowserProvider`; never accept a local `Wallet`, generic RPC signer, app wallet, burner, executor registry, or silent fallback.
+- Do not add local account creation, private-key custody, account recovery vaults, secondary wallet balances, or move-funds flows back into the app.
 - Home and Treasury are non-interactive pages and must not show wallet controls.
 - Shared rule: if a wallet is already connected when navigating between apps, keep it connected. Do not disconnect or re-prompt.
-- Keep the ChainWhisper account vault behavior consistent between chat, trades, and shield. Internal `burner` naming can remain where risky to rename, but user-facing text should say ChainWhisper account, owner wallet, or browser wallet.
-- Read/display can include both owner wallet and ChainWhisper account activity where supported; new messages, new trades, counters, and normal app actions default to the ChainWhisper account.
-- Owner-wallet signing should be limited to funding/recovery and existing owner-targeted fallback actions where the current contract requires the owner address.
+- Historical protocol versions may remain readable where needed, but every active write is owner-only and versioned; never dual-write, downgrade, or retry through an obsolete signer after a V2 failure.
+- MetaMask privacy unlock uses the COTI Snap. CipherTrade sessions use explicit, session-only COTI privacy onboarding; never persist the resulting AES key or private wallet material in local storage, Supabase, logs, or application state beyond the live wallet session.
 
 ## Chat App - Feature Summary
 
 ### Direct Chat
 
-- Encrypted 1-to-1 messaging via COTI garbled circuits.
+- Legacy direct chat encrypts through COTI per message. Direct Chat V2 instead creates one COTI-protected epoch seed, shares participant-specific envelopes once per epoch, and uses local AES-256-GCM plus one ordinary MetaMask transaction per message.
 - Emoji reactions on messages.
 - Replies with a message reference.
 - Tips sent inline in chat.
 - In-chat trading: a trade offer created inside a DM is a direct trade between the two participants.
 - Unlisted orders should not be auto-posted into chat, but a copied trade link may be pasted and rendered as a link.
-- Mute/hide per conversation; state is persisted on-chain as an encrypted hidden message.
-- Read/unread state is a single global timestamp (`lastReadAllTs`). Saved on-chain when all messages are read. Do not introduce per-conversation on-chain read state because it does not scale.
+- Legacy mute/hide and contact preferences may remain readable, but V2 preferences must not create encrypted maintenance messages merely to persist UI state.
+- Legacy read/unread uses the global on-chain `lastReadAllTs` self-memo. V2 uses a per-wallet, per-conversation finalized message-ID cursor advanced only after viewport acknowledgement, persisted locally and synchronized across tabs without a wallet prompt. Never put a per-read cursor, plaintext, ciphertext, or epoch key on-chain. Any later cross-device service must be owner-authenticated and cursor-only.
 
 ### Group Chat
 
-- Similar to direct chat but with multiple participants.
-- Group menu and group admin options include add/remove members, admin controls, leave, handoff, rename, and disband.
+- Group Chat V2 uses the same one-seed-per-membership-epoch and AES-GCM message model as Direct V2, with caller-only epoch-envelope synchronization and direct MetaMask authority.
+- Group creation activates only the consenting creator. Other addresses are invited and become members only through their own accept/join transaction; do not reintroduce forced `addMembers` behavior.
+- Group menu and group admin options include invite/accept/decline/revoke, remove members, join codes, admin handoff, leave, optional encrypted metadata, rekey, and disband.
 - Group invites support expiry and join codes.
 - Group sync is split between overview, active-message, and active-member/member-event paths. Preserve that split so opening one group does not force broad overview scans.
 - Group chat shares direct-chat link rendering for HTTP(S) URLs and internal trade links. Keep pasted private-order links as links only, not auto-posted trade cards.
@@ -57,8 +79,7 @@ Current route behavior is intentional:
 - Incremental (`updateHead`) syncs scan only new blocks.
 - WS subscriptions trigger debounced incremental syncs on message and group events.
 - Active direct conversations and active groups should refresh the focused thread first; broad overview work should stay secondary.
-- Read/unread state is backed up as an on-chain self-memo.
-- Block cache (`restoreCache`) skips re-scanning already-indexed read-state backup blocks on reconnect.
+- The on-chain read-state self-memo and `restoreCache` optimization are legacy-only. V2 history uses safe-head scans, canonical block-hash checkpoints, bounded overlap/replay, contiguous stable message IDs, and V2-only orphan removal; V2 unread uses the finalized cursor described above.
 
 ## OTC Trading App - Feature Summary
 
@@ -80,7 +101,7 @@ Current route behavior is intentional:
 - Hidden-amount private orders must hide private token amounts and private fill amounts from public/detail views. Public views should prioritize price ratio, order direction, expiry, and access type.
 - Hidden-amount private orders and private recurring orders use user-scoped private ledger snapshots and fill receipts. Makers can reveal their own live budget/liquidity and progress from Orders once privacy is available. Fillers can reveal their own buy/sell history even when an order is only partially filled. Do not expose maker-only values in the public explorer view.
 - For hidden-amount standard trades, private fill receipts can be the only revealed source for the payment side when public request terms are hidden. Keep card and order-review progress summaries two-sided whenever receipt amounts are available.
-- Owner recovery/privacy uses the COTI MetaMask Snap where available. Keep owner AES and ChainWhisper-account AES state separate; do not let the active ChainWhisper account privacy state stand in for owner recovery privacy.
+- Owner privacy uses the COTI MetaMask Snap for MetaMask sessions and explicit session-only COTI onboarding for CipherTrade sessions. Never persist privacy AES material outside the live wallet session.
 - Hidden-amount private-order fills are settled by the contract from the taker payment amount; the contract path handles partial fill/overshoot privately where private tokens are involved.
 - Recurring orders live in the Trade page. They are reusable two-sided OTC orders, not cadence/timer orders: maker buy fills add base inventory to the sell side, and maker sell fills add quote inventory to the buy side. Recurring private-token orders must offer explicit `Private liquidity` and `Visible amounts` paths.
 - Recurring inventory is live order liquidity, not normal unused funds. Makers can edit prices, per-side amounts, and add/remove liquidity in place without changing the order link. The normal closing action should read as "Close order" and return remaining inventory.
@@ -124,7 +145,7 @@ Current route behavior is intentional:
 - OTC should feel like a focused order-based trading app: clear buy/sell direction, consistent price basis, concise ratio display, direct action buttons, peer/settlement language, and low visual noise.
 - Hidden-amount private-order cards should lead with price ratio and direction. Do not show one side's amount if the other side is hidden.
 - Keep display text consistent: use "You sell", "You buy", "Buyer pays", "Price ratio", "Private liquidity", "Visible amounts", and "Unlisted" consistently across explorer cards, detail cards, and in-chat cards.
-- Wallet/privacy readiness states should be clear enough that users know whether they need to connect owner wallet, unlock privacy, recover/create a ChainWhisper account, move funds, or use an owner-wallet fallback.
+- Wallet/privacy readiness states should clearly tell users whether they need to connect MetaMask or CipherTrade, select the correct network, or unlock privacy for the connected owner.
 
 ## Project Structure
 
@@ -133,9 +154,9 @@ Current route behavior is intentional:
 - `src/features/chat/` - direct-chat components, chat UI Zustand store, message sync/actions, reactions, tips, attachments, read state, and direct message send/tip actions.
 - `src/features/groups/` - group chat components, group UI Zustand store, group sync orchestration, group admin actions, invites, member events, and group message sends.
 - `src/features/trading/` - OTC Trading page, Trade/Desk/Agent/Orders surfaces, Trade Agent panel/session/actions, terminal renderers, order cards, swap quote state, balances, recurring order actions, and in-chat trade actions.
-- `src/features/wallet/` - shared wallet header, ChainWhisper account vault, owner onboarding/recovery, account funds modals, readiness, wallet preference, and transfer flows.
+- `src/features/wallet/` - shared wallet header, owner-session onboarding, lease-guarded signer capabilities, privacy readiness, network selection, and wallet preference.
 - `src/features/tokenTools/` - Privacy Portal page/state/actions, WISP recovery view/actions, reward-token metrics, and token-tool UI Zustand store.
-- `src/features/treasury/` - Treasury Data page plus live/feed/on-chain data loading and normalization.
+- `src/features/treasury/` - COTI Private TVL presentation and cached loading. TVL is the official bridge reserve; private liabilities are coverage evidence and are never counted twice.
 - `src/shared/` - reusable cross-feature UI, chat rendering pieces, modal/clipboard/virtual-scroll hooks, block timestamp cache, and small state utilities.
 - `src/shell/` - top-level route parsing, canonical route paths, aliases, realtime status helpers, and browser-location sync.
 - `src/lib/` - non-React chain, wallet, trade, parsing, storage, encoding, COTI provider, and contract helpers.
@@ -144,17 +165,17 @@ Current route behavior is intentional:
 
 ## Important Source Map
 
-- `src/app/lazyRoutes.tsx` - lazy-loaded page modules and preload hooks for Chat, OTC Trading, Privacy Portal, and Treasury.
+- `src/app/lazyRoutes.tsx` - lazy-loaded page modules and preload hooks for Chat, Trading, Privacy Portal, and COTI Private TVL.
 - `src/features/trading/components/P2PTradingPage.tsx` - standalone OTC trading app. Internal P2P/terminal names still exist; user-facing language should be Trade, Desk, Agent, Orders, and Order.
 - `src/features/trading/components/TradeAgentPanel.tsx`, `src/features/trading/hooks/useP2PTradeAgentSession.ts`, `src/features/trading/hooks/useP2PTradeAgentActions.ts`, and `src/lib/tradeAgent.ts` - Trade Agent UI, session state, paid action handling, response normalization, fees, and action labels.
 - `src/features/trading/components/TradeComposerPanel.tsx` - shared trade create/edit form.
 - `src/features/trading/components/TradeOfferCard.tsx` - trade card used for shared links and in-chat rendering.
-- `src/features/treasury/components/TreasuryPage.tsx` and `src/features/treasury/treasuryData.ts` - Treasury Data presentation and data normalization.
+- `src/features/treasury/components/PrivateTvlPage.tsx`, `src/features/treasury/privateTvlData.ts`, `src/lib/privateTvl.ts`, and `src/lib/appChain.ts` - COTI Private TVL presentation, caching, canonical accounting, and block-pinned bridge/Band reads.
 - `src/features/tokenTools/components/TokenSwapPage.tsx` - unified Privacy Portal conversion presentation, including the ChainWhisper WISP pair and collapsed legacy recovery UI.
 - `src/shared/components/chat/MessageTextWithLinks.tsx` and `src/lib/chatLinks.ts` - shared chat link rendering and internal app-link interception.
-- `src/lib/appShared.ts` - compatibility barrel for `src/lib/appShared/core.ts`, `src/lib/appShared/parsers.ts`, and `src/lib/appShared/burnerVault.ts`. Prefer direct imports when touching nearby code.
-- `src/features/wallet/hooks/useWalletOnboarding.ts` and `src/features/wallet/hooks/useBurnerWallet.ts` - reusable owner wallet, ChainWhisper account, recovery, and onboarding hooks.
-- `src/lib/appWalletRecovery.ts`, `src/lib/burnerWalletVault.ts`, `src/lib/walletAccountScope.ts`, and `src/lib/walletFunds.ts` - recovery payloads, local account vaults, owner + ChainWhisper read scope, and move/withdraw funding helpers.
+- `src/lib/appShared.ts` - compatibility barrel for `src/lib/appShared/core.ts` and `src/lib/appShared/parsers.ts`. Prefer direct imports when touching nearby code.
+- `src/features/wallet/hooks/useWalletOnboarding.ts`, `src/features/wallet/ownerCotiMetaMaskCapability.ts`, and `src/lib/walletConnectMobile.ts` - reusable owner-wallet onboarding, lease-guarded COTI capabilities, and CipherTrade Mobile WalletConnect session handling.
+- `src/lib/walletAccountScope.ts` and `src/lib/walletFunds.ts` - single connected-owner read scope and owner balance/allowance helpers. They must not recreate a second account or internal funding path.
 - `src/features/trading/hooks/useInChatTradeActions.ts` and `src/features/chat/hooks/useDirectMessageActions.ts` - DM trade and direct message/tip action orchestration.
 - `src/features/groups/hooks/useGroupAdminActions.ts` and `src/features/groups/hooks/useGroupDataSync.ts` - group admin actions and group sync orchestration.
 - `src/lib/groupMessageSync.ts` - active-group message and member-event sync helpers.

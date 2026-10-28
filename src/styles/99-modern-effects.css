@@ -344,7 +344,6 @@ button:not(:disabled):active,
 
 :is(
   .p2p-wallet-menu,
-  .p2p-app-wallet-switch-menu,
   .privacy-mobile-token-menu.is-summary,
   .privacy-mobile-token-menu.is-inline,
   .message-reaction-picker,
@@ -364,7 +363,6 @@ button:not(:disabled):active,
 :is(
   button.copied,
   .contact-copy.copied,
-  .burner-address-btn.copied,
   .p2p-wallet-mode-copy.copied,
   .p2p-wallet-menu-address-button.copied,
   .trade-card-link-button.copied,

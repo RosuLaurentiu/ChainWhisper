@@ -2,6 +2,9 @@ import { closeDetailsOnEscape } from '../../../shared/components/a11y';
 
 type GroupActionControlsProps = {
   isActiveGroupAdmin: boolean;
+  isPrivateGroup: boolean;
+  supportsEncryptedPrivateTitle?: boolean;
+  consentOnlyAdminTransfer?: boolean;
   groupRenameOpen: boolean;
   groupRenameInput: string;
   onGroupRenameInputChange: (value: string) => void;
@@ -18,6 +21,9 @@ type GroupActionControlsProps = {
 
 export default function GroupActionControls({
   isActiveGroupAdmin,
+  isPrivateGroup,
+  supportsEncryptedPrivateTitle = false,
+  consentOnlyAdminTransfer = false,
   groupRenameOpen,
   groupRenameInput,
   onGroupRenameInputChange,
@@ -32,7 +38,14 @@ export default function GroupActionControls({
   onDisband
 }: GroupActionControlsProps) {
   const renameControl = isActiveGroupAdmin ? (
-    groupRenameOpen ? (
+    isPrivateGroup && !supportsEncryptedPrivateTitle ? (
+      <div className="group-private-title-control">
+        <span>Private groups use a generic public label.</span>
+        <button type="button" className="contact" onClick={onSubmitRename} disabled={processingGroupAction}>
+          {processingGroupAction ? 'Saving...' : 'Reset legacy title'}
+        </button>
+      </div>
+    ) : groupRenameOpen ? (
       <form
         className="group-rename-form"
         onSubmit={(event) => {
@@ -70,14 +83,16 @@ export default function GroupActionControls({
 
   const adminDangerControls = isActiveGroupAdmin ? (
     <>
-      <button
-        type="button"
-        className="contact group-danger-button"
-        onClick={onHandoffAdminAndLeave}
-        disabled={processingGroupAction}
-      >
-        {processingGroupAction ? 'Working...' : 'Burn & Leave'}
-      </button>
+      {consentOnlyAdminTransfer ? null : (
+        <button
+          type="button"
+          className="contact group-danger-button"
+          onClick={onHandoffAdminAndLeave}
+          disabled={processingGroupAction}
+        >
+          {processingGroupAction ? 'Working...' : 'Burn & Leave'}
+        </button>
+      )}
       <button
         type="button"
         className="contact group-danger-button group-danger-button-strong"

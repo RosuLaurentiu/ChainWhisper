@@ -50,6 +50,7 @@ type GroupChatComposeProps = {
   onSendMessage: () => void;
   maxMessageLength: number;
   onMessageInputChange: (value: string) => void;
+  promptEstimate?: Readonly<{ tone: 'ok' | 'warning'; label: string }> | null;
 };
 
 export default function GroupChatCompose({
@@ -87,7 +88,8 @@ export default function GroupChatCompose({
   onDismissImageAttachmentStatus,
   onSendMessage,
   maxMessageLength,
-  onMessageInputChange
+  onMessageInputChange,
+  promptEstimate
 }: GroupChatComposeProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [msgLength, setMsgLength] = useState(0);
@@ -239,9 +241,10 @@ export default function GroupChatCompose({
           <div
             ref={composerRef}
             className="chat-compose-editor"
-            contentEditable
+            contentEditable={!processingGroupAction}
             suppressContentEditableWarning
             role="textbox"
+            aria-disabled={processingGroupAction}
             aria-multiline={true}
             aria-label="Group message"
             data-placeholder="Type a group message"
@@ -311,6 +314,11 @@ export default function GroupChatCompose({
             >
               {msgLength}/{maxMessageLength}
             </span>
+          </div>
+        ) : null}
+        {promptEstimate ? (
+          <div className={`chat-compose-prompt-estimate ${promptEstimate.tone}`}>
+            {promptEstimate.label}
           </div>
         ) : null}
         <div className="group-compose-actions group-compose-actions-single">

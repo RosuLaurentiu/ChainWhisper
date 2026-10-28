@@ -16,6 +16,12 @@ type MessageBlockLike = {
   blockNumber?: number;
 };
 
+export const shouldRunLegacyDirectBackgroundSync = ({
+  directChatV2Enabled
+}: {
+  directChatV2Enabled: boolean;
+}): boolean => !directChatV2Enabled;
+
 const toSafeBlockNumber = (value: unknown): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;

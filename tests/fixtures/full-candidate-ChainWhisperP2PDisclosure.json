@@ -1,0 +1,161 @@
+{
+  "contractName": "ChainWhisperP2PDisclosure",
+  "sourceName": "contracts/p2p/ChainWhisperP2PDisclosure.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "BalanceAccessDenied",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidRecipient",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OnlyTradeMaker",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "StaleBalanceSnapshot",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "tradeId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "recipient",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "allowed",
+          "type": "bool"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "generation",
+          "type": "uint64"
+        }
+      ],
+      "name": "TradeBalanceConsent",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "tradeId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "recipient",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "revision",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "generation",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "status",
+          "type": "uint8"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "userCiphertext",
+              "type": "tuple"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct utUint256",
+          "name": "remaining",
+          "type": "tuple"
+        }
+      ],
+      "name": "TradeBalanceSnapshot",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "tradeId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "visible",
+          "type": "bool"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "TradeBudgetVisibility",
+      "type": "event"
+    }
+  ]
+}

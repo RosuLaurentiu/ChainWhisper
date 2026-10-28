@@ -159,6 +159,25 @@
   color: #ecfdf5;
 }
 
+.p2p-wallet-primary-spinner {
+  flex: 0 0 auto;
+  color: #bca7ff;
+  animation: coti-spin 0.85s linear infinite;
+}
+
+.wallet-header-panel.is-wallet-busy .wallet-primary-action {
+  cursor: wait;
+  opacity: 1;
+  color: #ded7f2;
+}
+
+.p2p-swap-venue-switch button.active:first-child,
+.p2p-swap-venue-switch button.active:last-child {
+  border-color: rgba(167, 139, 250, 0.58);
+  background: linear-gradient(180deg, rgba(109, 40, 217, 0.72), rgba(76, 29, 149, 0.7));
+  color: #f5f3ff;
+}
+
 .p2p-swap-link-panel {
   display: grid;
   gap: 6px;
@@ -289,7 +308,8 @@
   white-space: nowrap;
 }
 
-.p2p-swap-card-body input {
+.p2p-swap-card-body input,
+.p2p-swap-card-body output {
   min-width: 0;
   flex: 1 1 auto;
   border: 0;
@@ -301,6 +321,1066 @@
   letter-spacing: 0;
   outline: none;
   padding: 0;
+}
+
+.p2p-swap-card-body output {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p2p-private-liquidity-notice {
+  text-align: left;
+}
+
+.p2p-swap-order-empty.p2p-private-liquidity-notice strong {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.p2p-private-liquidity-notice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.p2p-private-liquidity-notice-head .standalone-trade-secondary-btn {
+  flex: 0 0 auto;
+}
+
+.p2p-liquidity-availability {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 700;
+  gap: 0.42rem;
+  margin-top: 0.38rem;
+}
+
+.p2p-liquidity-availability i {
+  background: #788094;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgb(120 128 148 / 12%);
+  display: block;
+  height: 0.52rem;
+  width: 0.52rem;
+}
+
+.p2p-liquidity-availability.is-available {
+  color: #62d99a;
+}
+
+.p2p-liquidity-availability.is-available i {
+  background: #39d98a;
+  box-shadow: 0 0 0 3px rgb(57 217 138 / 16%), 0 0 10px rgb(57 217 138 / 45%);
+}
+
+.p2p-liquidity-availability.is-loading {
+  color: #e9bd60;
+}
+
+.p2p-liquidity-availability.is-loading i {
+  background: #e9bd60;
+}
+
+.p2p-liquidity-availability.is-error {
+  color: #ff7f8f;
+}
+
+.p2p-liquidity-availability.is-error i {
+  background: #ff6177;
+}
+
+.p2p-private-liquidity-panel .p2p-swap-quote-card label,
+.p2p-private-liquidity-panel .p2p-swap-order-summary label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.p2p-private-liquidity-panel .p2p-swap-quote-card select,
+.p2p-private-liquidity-panel .p2p-swap-order-summary select {
+  min-height: 32px;
+  border: 1px solid rgba(74, 64, 112, 0.68);
+  border-radius: 6px;
+  background: rgba(16, 16, 27, 0.9);
+  color: var(--text);
+  font: inherit;
+  font-weight: 850;
+  padding: 4px 8px;
+}
+
+.p2p-private-liquidity-warning {
+  color: #f7c873;
+}
+
+.p2p-private-liquidity-warning-notice {
+  border-color: rgba(247, 200, 115, 0.28);
+  background: rgba(90, 57, 18, 0.18);
+}
+
+.p2p-private-liquidity-workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.p2p-private-liquidity-workspace-tabs {
+  justify-self: start;
+}
+
+.p2p-private-liquidity-workspace-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 10px;
+  background: rgba(9, 9, 17, 0.86);
+  padding: 16px;
+}
+
+.p2p-private-liquidity-price-chart {
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(116, 88, 214, 0.52);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 84% 0%, rgba(123, 73, 224, 0.15), transparent 38%),
+    rgba(11, 10, 21, 0.94);
+  padding: 16px;
+}
+
+.p2p-private-liquidity-price-chart > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.p2p-private-liquidity-price-chart h3,
+.p2p-private-liquidity-price-chart p {
+  margin: 0;
+}
+
+.p2p-private-liquidity-price-mode {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin: 0 0 4px 8px;
+  border: 1px solid rgba(242, 190, 89, 0.48);
+  border-radius: 999px;
+  background: rgba(126, 84, 16, 0.2);
+  color: #f6cf7a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  padding: 4px 7px;
+  text-transform: uppercase;
+}
+
+.p2p-private-liquidity-price-mode.is-live {
+  border-color: rgba(55, 213, 165, 0.42);
+  background: rgba(32, 126, 99, 0.14);
+  color: #75e6c1;
+}
+
+.p2p-private-liquidity-price-chart p,
+.p2p-private-liquidity-price-latest span,
+.p2p-private-liquidity-price-latest small {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-price-latest {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  text-align: right;
+}
+
+.p2p-private-liquidity-price-latest strong {
+  font-size: 1.3rem;
+}
+
+.p2p-private-liquidity-price-latest small.is-rising {
+  color: #68dfbc;
+}
+
+.p2p-private-liquidity-price-latest small.is-falling {
+  color: #ff8ca2;
+}
+
+.p2p-private-liquidity-price-ohlc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  border-top: 1px solid rgba(91, 77, 139, 0.34);
+  border-bottom: 1px solid rgba(91, 77, 139, 0.34);
+  color: #81789f;
+  font-size: 0.75rem;
+  padding: 8px 0;
+}
+
+.p2p-private-liquidity-price-ohlc strong {
+  margin-left: 4px;
+  color: #dcd3fa;
+  font-variant-numeric: tabular-nums;
+}
+
+.p2p-private-liquidity-price-timeframes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.p2p-private-liquidity-price-timeframes button {
+  border: 1px solid rgba(114, 98, 166, 0.48);
+  border-radius: 999px;
+  background: rgba(29, 25, 47, 0.72);
+  color: var(--muted);
+  min-height: 34px;
+  padding: 5px 10px;
+}
+
+.p2p-private-liquidity-price-timeframes button.active {
+  border-color: rgba(166, 119, 255, 0.78);
+  background: rgba(112, 66, 207, 0.28);
+  color: #f4efff;
+}
+
+.p2p-private-liquidity-price-plot {
+  min-width: 0;
+  height: 300px;
+  border-radius: 8px;
+  background: rgba(5, 6, 12, 0.42);
+}
+
+.p2p-private-liquidity-price-tooltip {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(147, 110, 226, 0.66);
+  border-radius: 8px;
+  background: rgba(10, 9, 18, 0.96);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
+  padding: 10px 12px;
+}
+
+.p2p-private-liquidity-price-tooltip span,
+.p2p-private-liquidity-price-tooltip small {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-price-tooltip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  gap: 4px 12px;
+  margin: 4px 0;
+}
+
+.p2p-private-liquidity-price-tooltip-grid span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.p2p-private-liquidity-price-tooltip-grid b {
+  color: #f4efff;
+  font-variant-numeric: tabular-nums;
+}
+
+.p2p-private-liquidity-price-state {
+  display: grid;
+  gap: 6px;
+  min-height: 190px;
+  place-content: center;
+  border: 1px dashed rgba(111, 94, 165, 0.42);
+  border-radius: 9px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.p2p-private-liquidity-price-state p {
+  max-width: 52ch;
+}
+
+.p2p-private-liquidity-price-state.is-error {
+  border-color: rgba(241, 105, 127, 0.5);
+  color: #ffadb9;
+}
+
+.p2p-private-liquidity-market-head {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.4fr) repeat(4, minmax(90px, 1fr));
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.p2p-private-liquidity-market-list,
+.p2p-private-liquidity-owned-list {
+  display: grid;
+  gap: 8px;
+}
+
+.p2p-private-liquidity-market-list article {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.4fr) repeat(4, minmax(90px, 1fr));
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid rgba(74, 64, 112, 0.36);
+  padding-top: 8px;
+}
+
+.p2p-private-liquidity-market-pair,
+.p2p-private-liquidity-owned-list article > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.p2p-private-liquidity-market-pair {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.p2p-private-liquidity-market-pair:hover,
+.p2p-private-liquidity-market-pair:focus-visible,
+.p2p-private-liquidity-market-list article.is-price-selected .p2p-private-liquidity-market-pair {
+  background: rgba(112, 72, 215, 0.14);
+  outline: 1px solid rgba(157, 114, 255, 0.48);
+}
+
+.p2p-private-liquidity-market-pair:disabled {
+  cursor: default;
+}
+
+.p2p-private-liquidity-market-list small,
+.p2p-private-liquidity-owned-list span,
+.p2p-private-liquidity-owned-list small {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-owned-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(74, 64, 112, 0.46);
+  border-radius: 8px;
+  background: rgba(19, 17, 31, 0.74);
+  padding: 12px;
+}
+
+.p2p-private-liquidity-hidden-intents {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid rgba(74, 64, 112, 0.46);
+  margin-top: 4px;
+  padding-top: 14px;
+}
+
+.p2p-private-liquidity-settlement-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(139, 92, 246, 0.32);
+  border-radius: 8px;
+  background: rgba(76, 29, 149, 0.1);
+  padding: 12px;
+}
+
+.p2p-private-liquidity-settlement-control > div {
+  display: grid;
+  gap: 4px;
+}
+
+.p2p-private-liquidity-settlement-control p {
+  margin: 0;
+}
+
+.p2p-private-liquidity-settlement-control small {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-settlement-control button {
+  flex: 0 0 auto;
+}
+
+.p2p-private-liquidity-hidden-intent-list {
+  display: grid;
+  gap: 10px;
+}
+
+.p2p-private-liquidity-hidden-intent-list > article {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(74, 64, 112, 0.46);
+  border-radius: 8px;
+  background: rgba(19, 17, 31, 0.74);
+  padding: 12px;
+}
+
+.p2p-private-liquidity-hidden-intent-head,
+.p2p-private-liquidity-hidden-intent-list footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.p2p-private-liquidity-hidden-intent-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.p2p-private-liquidity-hidden-intent-head span,
+.p2p-private-liquidity-hidden-intent-list footer > span,
+.p2p-private-liquidity-hidden-intent-list > p {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-hidden-intent-head > span {
+  border: 1px solid rgba(74, 64, 112, 0.58);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.p2p-private-liquidity-hidden-intent-head > span.is-open {
+  border-color: rgba(52, 211, 153, 0.38);
+  color: #6ee7b7;
+}
+
+.p2p-private-liquidity-hidden-intent-list dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.p2p-private-liquidity-hidden-intent-list dl > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border-radius: 6px;
+  background: rgba(8, 8, 15, 0.58);
+  padding: 8px;
+}
+
+.p2p-private-liquidity-hidden-intent-list dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.p2p-private-liquidity-hidden-intent-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.p2p-private-liquidity-create-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.p2p-private-liquidity-create-grid > div {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(74, 64, 112, 0.46);
+  border-radius: 8px;
+  background: rgba(19, 17, 31, 0.74);
+  padding: 14px;
+}
+
+.p2p-private-liquidity-create-grid span,
+.p2p-private-liquidity-create-grid small {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-position-form,
+.p2p-private-liquidity-action-form {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(74, 64, 112, 0.52);
+  border-radius: 10px;
+  background: rgba(13, 12, 23, 0.7);
+  padding: 14px;
+}
+
+.p2p-private-liquidity-token-pair,
+.p2p-private-liquidity-form-sections,
+.p2p-private-liquidity-action-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.p2p-private-liquidity-form-sections {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.p2p-private-liquidity-create-flow {
+  display: grid;
+  gap: 10px;
+}
+
+.p2p-private-liquidity-create-step {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.85fr) minmax(280px, 1.15fr);
+  align-items: end;
+  gap: 16px;
+  border: 1px solid rgba(74, 64, 112, 0.4);
+  border-radius: 9px;
+  background: rgba(19, 17, 31, 0.56);
+  padding: 14px;
+}
+
+.p2p-private-liquidity-create-step > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.p2p-private-liquidity-create-step > div:first-child > span,
+.p2p-private-liquidity-matched-budget > span,
+.p2p-private-liquidity-create-preview span {
+  color: #bfaeff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.p2p-private-liquidity-create-step small,
+.p2p-private-liquidity-matched-budget small,
+.p2p-private-liquidity-create-preview small {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-budget-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.42fr);
+  gap: 8px;
+}
+
+.p2p-private-liquidity-matched-budget {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 3px;
+  border-radius: 7px;
+  background: rgba(119, 73, 225, 0.1);
+  padding: 10px 12px;
+}
+
+.p2p-private-liquidity-spread-control {
+  display: grid;
+  gap: 8px;
+}
+
+.p2p-private-liquidity-spread-presets {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.p2p-private-liquidity-spread-presets button {
+  border: 1px solid rgba(74, 64, 112, 0.68);
+  border-radius: 7px;
+  background: rgba(10, 9, 18, 0.92);
+  color: var(--muted);
+  padding: 8px;
+}
+
+.p2p-private-liquidity-spread-presets button[aria-pressed='true'] {
+  border-color: rgba(145, 94, 255, 0.9);
+  background: rgba(119, 73, 225, 0.3);
+  color: #fff;
+}
+
+.p2p-private-liquidity-create-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.p2p-private-liquidity-create-preview > div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(74, 64, 112, 0.42);
+  border-radius: 8px;
+  background: rgba(8, 8, 15, 0.58);
+  padding: 12px;
+}
+
+.p2p-private-liquidity-limit-ticket {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(74, 64, 112, 0.46);
+  border-radius: 10px;
+  background: rgba(19, 17, 31, 0.56);
+  padding: 14px;
+}
+
+.p2p-private-liquidity-side-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border-radius: 9px;
+  background: rgba(8, 8, 15, 0.58);
+  padding: 5px;
+}
+
+.p2p-private-liquidity-side-toggle button {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 900;
+  padding: 10px;
+}
+
+.p2p-private-liquidity-side-toggle button.is-active.is-buy {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.14);
+  color: #a7f3d0;
+}
+
+.p2p-private-liquidity-side-toggle button.is-active.is-sell {
+  border-color: rgba(244, 63, 94, 0.5);
+  background: rgba(244, 63, 94, 0.12);
+  color: #fecdd3;
+}
+
+.p2p-private-liquidity-limit-fields,
+.p2p-private-liquidity-limit-advanced-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.p2p-private-liquidity-input-with-token {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 1px solid rgba(74, 64, 112, 0.68);
+  border-radius: 7px;
+  background: rgba(10, 9, 18, 0.92);
+}
+
+.p2p-private-liquidity-input-with-token input {
+  border: 0;
+  background: transparent;
+}
+
+.p2p-private-liquidity-input-with-token strong {
+  color: #cfc2ff;
+  font-size: 0.76rem;
+  padding: 0 11px;
+  white-space: nowrap;
+}
+
+.p2p-private-liquidity-limit-total {
+  display: grid;
+  gap: 3px;
+  border-radius: 8px;
+  background: rgba(119, 73, 225, 0.1);
+  padding: 11px 12px;
+}
+
+.p2p-private-liquidity-limit-total span {
+  color: #bfaeff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.p2p-private-liquidity-limit-total small,
+.p2p-private-liquidity-limit-advanced summary {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-limit-advanced {
+  border: 1px solid rgba(74, 64, 112, 0.4);
+  border-radius: 8px;
+  background: rgba(8, 8, 15, 0.42);
+  padding: 11px 12px;
+}
+
+.p2p-private-liquidity-limit-advanced summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.p2p-private-liquidity-limit-advanced-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 12px;
+}
+
+.p2p-private-liquidity-position-form label,
+.p2p-private-liquidity-action-form label,
+.p2p-private-liquidity-form-sections fieldset {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.p2p-private-liquidity-form-sections fieldset {
+  border: 1px solid rgba(74, 64, 112, 0.4);
+  border-radius: 8px;
+  margin: 0;
+  padding: 12px;
+}
+
+.p2p-private-liquidity-form-sections legend,
+.p2p-private-liquidity-position-form label > span,
+.p2p-private-liquidity-action-form label > span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.p2p-private-liquidity-form-sections p,
+.p2p-private-liquidity-pair-summary {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.p2p-private-liquidity-position-form input,
+.p2p-private-liquidity-position-form select,
+.p2p-private-liquidity-action-form input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid rgba(74, 64, 112, 0.68);
+  border-radius: 7px;
+  background: rgba(10, 9, 18, 0.92);
+  color: var(--text);
+  padding: 10px 11px;
+}
+
+.p2p-private-liquidity-action-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.p2p-private-liquidity-action-form-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.p2p-private-liquidity-action-form-head small {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-action-message {
+  border: 1px solid rgba(74, 64, 112, 0.52);
+  border-radius: 7px;
+  color: var(--muted);
+  padding: 10px;
+}
+
+.p2p-private-liquidity-action-message.is-success {
+  border-color: rgba(34, 197, 94, 0.42);
+  color: #86efac;
+}
+
+.p2p-private-liquidity-action-message.is-error {
+  border-color: rgba(244, 63, 94, 0.42);
+  color: #fda4af;
+}
+
+.p2p-private-liquidity-private-error {
+  color: #fda4af !important;
+}
+
+.p2p-private-liquidity-position-manager {
+  display: grid;
+  gap: 14px;
+}
+
+.p2p-private-liquidity-manager-head,
+.p2p-private-liquidity-activation,
+.p2p-private-liquidity-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.p2p-private-liquidity-manager-head > div:first-child,
+.p2p-private-liquidity-activation > div,
+.p2p-private-liquidity-activity-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.p2p-private-liquidity-manager-head span,
+.p2p-private-liquidity-manager-head small,
+.p2p-private-liquidity-manager-grid span,
+.p2p-private-liquidity-manager-grid small,
+.p2p-private-liquidity-activity span,
+.p2p-private-liquidity-activity small,
+.p2p-private-liquidity-activity p {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-status {
+  border: 1px solid rgba(74, 64, 112, 0.68);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 900;
+  padding: 5px 10px;
+}
+
+.p2p-private-liquidity-status-active {
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
+
+.p2p-private-liquidity-status-paused {
+  border-color: rgba(247, 200, 115, 0.4);
+  color: #f7c873;
+}
+
+.p2p-private-liquidity-status-closed {
+  color: var(--muted);
+}
+
+.p2p-private-liquidity-activation {
+  border: 1px solid rgba(247, 200, 115, 0.32);
+  border-radius: 8px;
+  background: rgba(90, 57, 18, 0.18);
+  padding: 12px;
+}
+
+.p2p-private-liquidity-activation p {
+  margin: 0;
+}
+
+.p2p-private-liquidity-manager-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.p2p-private-liquidity-manager-grid > section,
+.p2p-private-liquidity-activity {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(74, 64, 112, 0.46);
+  border-radius: 8px;
+  background: rgba(19, 17, 31, 0.74);
+  padding: 12px;
+}
+
+.p2p-private-liquidity-manager-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.p2p-private-liquidity-manager-actions button {
+  flex: 1 1 150px;
+}
+
+.p2p-private-liquidity-danger {
+  border-color: rgba(244, 63, 94, 0.42);
+  color: #fda4af;
+}
+
+.p2p-private-liquidity-activity ol {
+  display: grid;
+  gap: 7px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.p2p-private-liquidity-activity li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid rgba(74, 64, 112, 0.36);
+  padding-top: 7px;
+}
+
+.p2p-private-liquidity-activity li > div {
+  display: grid;
+  gap: 2px;
+}
+
+.p2p-private-liquidity-activity li.is-failed {
+  border-top-color: rgba(244, 63, 94, 0.42);
+}
+
+.p2p-private-liquidity-activity li.is-failed > div:nth-child(2) > span {
+  color: #fda4af;
+  font-weight: 850;
+}
+
+.p2p-private-liquidity-slippage-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.p2p-private-liquidity-slippage-input input {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  border-radius: 7px;
+  background: rgba(8, 8, 15, 0.72);
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.p2p-private-liquidity-slippage-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.p2p-private-liquidity-slippage-presets button {
+  min-height: 34px;
+  border: 1px solid rgba(74, 64, 112, 0.7);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.p2p-private-liquidity-slippage-presets button.is-active {
+  border-color: rgba(139, 92, 246, 0.75);
+  background: rgba(124, 58, 237, 0.26);
+  color: #f2edff;
+}
+
+@media (max-width: 720px) {
+  .p2p-private-liquidity-price-chart > header {
+    flex-direction: column;
+  }
+
+  .p2p-private-liquidity-price-latest {
+    text-align: left;
+  }
+
+  .p2p-private-liquidity-price-timeframes {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .p2p-private-liquidity-price-plot {
+    height: 260px;
+  }
+
+  .p2p-private-liquidity-price-timeframes button {
+    min-height: 40px;
+    min-width: 52px;
+  }
+
+  .p2p-private-liquidity-notice-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .p2p-private-liquidity-market-head {
+    display: none;
+  }
+
+  .p2p-private-liquidity-market-list article {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .p2p-private-liquidity-market-pair {
+    grid-column: 1 / -1;
+  }
+
+  .p2p-private-liquidity-owned-list article {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .p2p-private-liquidity-hidden-intent-list dl {
+    grid-template-columns: 1fr;
+  }
+
+  .p2p-private-liquidity-hidden-intent-head,
+  .p2p-private-liquidity-hidden-intent-list footer,
+  .p2p-private-liquidity-settlement-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .p2p-private-liquidity-create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .p2p-private-liquidity-token-pair,
+  .p2p-private-liquidity-form-sections,
+  .p2p-private-liquidity-create-step,
+  .p2p-private-liquidity-create-preview,
+  .p2p-private-liquidity-limit-fields,
+  .p2p-private-liquidity-limit-advanced-fields,
+  .p2p-private-liquidity-budget-input,
+  .p2p-private-liquidity-action-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .p2p-private-liquidity-spread-presets {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .p2p-private-liquidity-action-form-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .p2p-private-liquidity-manager-head,
+  .p2p-private-liquidity-activation,
+  .p2p-private-liquidity-activity-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .p2p-private-liquidity-manager-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .p2p-private-liquidity-activity li {
+    grid-template-columns: 1fr;
+  }
 }
 
 .p2p-swap-card-body .trade-token-select {
@@ -503,9 +1583,11 @@
   text-transform: uppercase;
 }
 
-.p2p-agent-hero strong {
+.p2p-agent-hero strong,
+.p2p-agent-hero h1 {
   display: block;
   font-size: 1.18rem;
+  margin: 0;
   line-height: 1.1;
 }
 
@@ -1414,6 +2496,346 @@
   padding: 0 12px;
 }
 
+.testnet-token-admission {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.7fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin: 0 0 16px;
+  padding: 16px 18px;
+  border: 1px solid rgba(154, 116, 255, 0.35);
+  border-radius: 14px;
+  background: linear-gradient(115deg, rgba(119, 76, 226, 0.14), rgba(15, 17, 29, 0.92));
+}
+
+.testnet-token-tools {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.testnet-token-tools:empty {
+  display: none;
+}
+
+.testnet-token-tools > :last-child {
+  margin-bottom: 0;
+}
+
+.testnet-qa-checklist {
+  margin: 0 0 16px;
+  border: 1px solid rgba(104, 184, 255, 0.32);
+  border-radius: 14px;
+  background: linear-gradient(115deg, rgba(47, 111, 177, 0.12), rgba(15, 17, 29, 0.92));
+}
+
+.testnet-qa-checklist > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 76px;
+  padding: 14px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.testnet-qa-checklist > summary::-webkit-details-marker {
+  display: none;
+}
+
+.testnet-qa-checklist > summary > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.testnet-qa-checklist > summary small,
+.testnet-qa-intro p,
+.testnet-qa-row small {
+  color: var(--text-muted, #aaa8b8);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.testnet-qa-summary-progress {
+  flex: 0 0 auto;
+  color: #b8dcff;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.testnet-qa-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.testnet-qa-intro p {
+  max-width: 820px;
+  margin: 0;
+}
+
+.testnet-qa-intro button,
+.testnet-qa-row button {
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid rgba(135, 184, 231, 0.38);
+  border-radius: 8px;
+  background: transparent;
+  color: #cfe9ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.testnet-qa-intro button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.testnet-qa-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 16px 18px 18px;
+}
+
+.testnet-qa-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.testnet-qa-group h3 {
+  margin: 0;
+  color: #d8eaff;
+  font-size: 0.76rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.testnet-qa-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(135, 184, 231, 0.16);
+  border-radius: 9px;
+  background: rgba(8, 10, 19, 0.42);
+}
+
+.testnet-qa-row.is-complete {
+  border-color: rgba(94, 210, 168, 0.34);
+  background: rgba(38, 128, 101, 0.08);
+}
+
+.testnet-qa-row label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.testnet-qa-row input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: #79d8b6;
+}
+
+.testnet-qa-row label > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.testnet-qa-row strong {
+  color: #efeff7;
+  font-size: 0.78rem;
+}
+
+.testnet-token-faucet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin: 0 0 16px;
+  padding: 16px 18px;
+  border: 1px solid rgba(94, 210, 168, 0.34);
+  border-radius: 14px;
+  background: linear-gradient(115deg, rgba(42, 151, 123, 0.13), rgba(15, 17, 29, 0.92));
+}
+
+.testnet-token-faucet-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.testnet-token-faucet-copy p {
+  margin: 0;
+  color: var(--text-muted, #aaa8b8);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.testnet-token-faucet-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.testnet-token-faucet-list > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(139, 92, 246, 0.24);
+  border-radius: 9px;
+  background: rgba(8, 10, 19, 0.48);
+}
+
+.testnet-token-faucet-list > span.is-complete {
+  border-color: rgba(94, 210, 168, 0.38);
+}
+
+.testnet-token-faucet-list strong {
+  color: #f1effa;
+  font-size: 0.78rem;
+}
+
+.testnet-token-faucet-list small {
+  overflow: hidden;
+  color: var(--text-muted, #aaa8b8);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.testnet-token-faucet-list button {
+  margin-top: 5px;
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 0.68rem;
+}
+
+.testnet-token-admission-copy,
+.testnet-token-admission-progress,
+.testnet-token-admission-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.testnet-token-admission-copy p,
+.testnet-token-admission-progress small,
+.testnet-token-admission-actions small,
+.testnet-token-admission-notice,
+.testnet-token-admission-error {
+  margin: 0;
+  color: var(--text-muted, #aaa8b8);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.testnet-token-admission-kicker {
+  color: #bca7ff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.testnet-token-admission-progress-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #e9e5f5;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.testnet-token-admission-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.testnet-token-admission-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8157f5, #bb9aff);
+  transition: width 180ms ease;
+}
+
+.testnet-token-admission-actions {
+  min-width: 180px;
+}
+
+.testnet-token-admission-actions button {
+  min-height: 36px;
+  padding: 7px 13px;
+  border: 1px solid rgba(169, 136, 255, 0.48);
+  border-radius: 9px;
+  background: #7952e8;
+  color: #fff;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.testnet-token-admission-actions button.secondary {
+  background: transparent;
+  color: #d8ccff;
+}
+
+.testnet-token-admission-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.testnet-token-admission-error {
+  grid-column: 1 / -1;
+  color: #ffb5b5;
+}
+
+.testnet-token-admission-notice {
+  grid-column: 1 / -1;
+  color: #91e4c5;
+}
+
+@media (max-width: 860px) {
+  .testnet-token-admission,
+  .testnet-token-faucet {
+    grid-template-columns: 1fr;
+  }
+
+  .testnet-token-admission-actions {
+    min-width: 0;
+  }
+
+  .testnet-qa-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .testnet-qa-intro {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .p2p-terminal-history-note {
   color: #d8d0ff;
   font-weight: 750;
@@ -1494,34 +2916,6 @@
   stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.p2p-app-wallet-switch-menu-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.p2p-app-wallet-switch-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 34;
-  display: grid;
-  gap: 6px;
-  width: min(226px, calc(100vw - 32px));
-  border: 1px solid rgba(74, 64, 112, 0.74);
-  border-radius: 10px;
-  background: rgba(13, 13, 22, 0.98);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
-  padding: 9px;
-}
-
-.p2p-app-wallet-switch-menu > span {
-  color: var(--muted);
-  font-size: 0.66rem;
-  font-weight: 900;
-  text-transform: uppercase;
 }
 
 .p2p-wallet-status {
@@ -1647,6 +3041,10 @@
   .p2p-wallet-mode-copy.copied::after,
   .p2p-wallet-menu-address-button.copied::after,
   .wallet-header-panel.is-wallet-busy .p2p-wallet-status-indicator i {
+    animation: none;
+  }
+
+  .p2p-wallet-primary-spinner {
     animation: none;
   }
 }
@@ -2148,8 +3546,7 @@
   max-width: none;
 }
 
-.p2p-wallet-menu .p2p-wallet-action,
-.p2p-app-wallet-switch-menu .p2p-wallet-action {
+.p2p-wallet-menu .p2p-wallet-action {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -2251,8 +3648,7 @@
   margin-top: 1px;
 }
 
-.p2p-wallet-menu .p2p-wallet-action.active::before,
-.p2p-app-wallet-switch-menu .p2p-wallet-action.active::before {
+.p2p-wallet-menu .p2p-wallet-action.active::before {
   content: "";
   width: 7px;
   height: 7px;
@@ -3252,6 +4648,33 @@
   padding: 8px 12px;
 }
 
+.p2p-product-navigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.p2p-product-navigation::-webkit-scrollbar {
+  display: none;
+}
+
+.p2p-product-tabs {
+  padding-right: 8px;
+  border-right: 1px solid rgba(167, 139, 250, 0.28);
+}
+
+.p2p-product-tabs button {
+  background: rgba(10, 9, 20, 0.92);
+}
+
+.p2p-product-view-tabs button {
+  border-color: rgba(102, 116, 151, 0.48);
+  background: rgba(18, 18, 30, 0.84);
+}
+
 .p2p-balances-sheet-contracts {
   min-height: 44px;
   border: 1px solid rgba(95, 76, 148, 0.68);
@@ -4144,7 +5567,8 @@
   margin-bottom: 2px;
 }
 
-.p2p-trading-shell-drawer-open .p2p-agent-hero strong {
+.p2p-trading-shell-drawer-open .p2p-agent-hero strong,
+.p2p-trading-shell-drawer-open .p2p-agent-hero h1 {
   font-size: 1.08rem;
 }
 
@@ -7606,6 +9030,10 @@ button.p2p-carbon-price-reference:focus-visible {
     overflow: hidden;
   }
 
+  .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):has(> .testnet-token-tools:not(:empty)) {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
   .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine) .p2p-public-trades-section {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
@@ -7626,6 +9054,10 @@ button.p2p-carbon-price-reference:focus-visible {
     grid-template-rows: auto minmax(0, 1fr) auto;
     align-content: stretch;
     overflow: hidden;
+  }
+
+  .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open):has(> .testnet-token-tools:not(:empty)) {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
 
   .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-section {

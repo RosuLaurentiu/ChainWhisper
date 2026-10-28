@@ -2,7 +2,7 @@ export type ChatMessageLinkPart =
   | { type: 'text'; text: string }
   | { external: boolean; href: string; text: string; type: 'link' };
 
-const MESSAGE_LINK_PATTERN = /(https?:\/\/[^\s<>"']+|\/(?:otcdesk|otc|trades)(?:\/[^\s<>"']*)?)/gi;
+const MESSAGE_LINK_PATTERN = /(https?:\/\/[^\s<>"']+|\/(?:dex|otcdesk|otc|trades)(?:\/[^\s<>"']*)?)/gi;
 const TRAILING_LINK_PUNCTUATION_PATTERN = /[),.!?;:]+$/;
 
 const splitTrailingLinkPunctuation = (value: string): { linkText: string; trailingText: string } => {
@@ -37,8 +37,12 @@ const isInternalAppPathname = (pathname: string): boolean => {
     normalizedPathname === '/shield' ||
     normalizedPathname === '/swap' ||
     normalizedPathname === '/whisper-shield' ||
+    normalizedPathname === '/tvl' ||
+    normalizedPathname === '/private-tvl' ||
     normalizedPathname === '/treasury' ||
     normalizedPathname === '/treasury-data' ||
+    normalizedPathname === '/dex' ||
+    normalizedPathname.startsWith('/dex/') ||
     normalizedPathname === '/otc' ||
     normalizedPathname.startsWith('/otc/') ||
     normalizedPathname === '/otcdesk' ||

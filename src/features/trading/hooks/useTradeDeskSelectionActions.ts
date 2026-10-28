@@ -57,10 +57,14 @@ export default function useTradeDeskSelectionActions({
     if (!selectedMyTradeDetailKey) {
       return;
     }
+    if (tradeFilterRouteScope !== 'mine') {
+      setSelectedMyTradeDetailKey('');
+      return;
+    }
     if (!selectedMyTradeDetail) {
       setSelectedMyTradeDetailKey('');
     }
-  }, [selectedMyTradeDetail, selectedMyTradeDetailKey, setSelectedMyTradeDetailKey]);
+  }, [selectedMyTradeDetail, selectedMyTradeDetailKey, setSelectedMyTradeDetailKey, tradeFilterRouteScope]);
 
   return useCallback((trade: TradeSnapshot) => {
     if (!canOpenMyTradeTerminal(trade, selectedMyTradeGroupId)) {

@@ -25,12 +25,8 @@ const persistSoundEnabled = (soundEnabled: boolean) => {
 
 type ChatUiState = {
   newContact: string;
-  newContactName: string;
   showHiddenContacts: boolean;
-  editingContactAddress: string | null;
-  editingContactName: string;
   showQuickActionsModal: boolean;
-  showTopUpModal: boolean;
   quickActionTab: QuickActionTab;
   messageInput: string;
   persistedContactOrder: string[];
@@ -52,12 +48,8 @@ type ChatUiState = {
   tipTokenSelection: TipTokenSelection;
   tipAmountInput: string;
   setNewContact: (next: StateUpdate<string>) => void;
-  setNewContactName: (next: StateUpdate<string>) => void;
   setShowHiddenContacts: (next: StateUpdate<boolean>) => void;
-  setEditingContactAddress: (next: StateUpdate<string | null>) => void;
-  setEditingContactName: (next: StateUpdate<string>) => void;
   setShowQuickActionsModal: (next: StateUpdate<boolean>) => void;
-  setShowTopUpModal: (next: StateUpdate<boolean>) => void;
   setQuickActionTab: (next: StateUpdate<QuickActionTab>) => void;
   setMessageInput: (next: StateUpdate<string>) => void;
   setPersistedContactOrder: (next: StateUpdate<string[]>) => void;
@@ -82,12 +74,8 @@ type ChatUiState = {
 
 export const useChatUiStore = create<ChatUiState>((set) => ({
   newContact: '',
-  newContactName: '',
   showHiddenContacts: false,
-  editingContactAddress: null,
-  editingContactName: '',
   showQuickActionsModal: false,
-  showTopUpModal: false,
   quickActionTab: 'contact',
   messageInput: '',
   persistedContactOrder: [],
@@ -109,16 +97,10 @@ export const useChatUiStore = create<ChatUiState>((set) => ({
   tipTokenSelection: 'coti',
   tipAmountInput: '',
   setNewContact: (next) => set((state) => ({ newContact: resolveStateUpdate(next, state.newContact) })),
-  setNewContactName: (next) => set((state) => ({ newContactName: resolveStateUpdate(next, state.newContactName) })),
   setShowHiddenContacts: (next) =>
     set((state) => ({ showHiddenContacts: resolveStateUpdate(next, state.showHiddenContacts) })),
-  setEditingContactAddress: (next) =>
-    set((state) => ({ editingContactAddress: resolveStateUpdate(next, state.editingContactAddress) })),
-  setEditingContactName: (next) =>
-    set((state) => ({ editingContactName: resolveStateUpdate(next, state.editingContactName) })),
   setShowQuickActionsModal: (next) =>
     set((state) => ({ showQuickActionsModal: resolveStateUpdate(next, state.showQuickActionsModal) })),
-  setShowTopUpModal: (next) => set((state) => ({ showTopUpModal: resolveStateUpdate(next, state.showTopUpModal) })),
   setQuickActionTab: (next) => set((state) => ({ quickActionTab: resolveStateUpdate(next, state.quickActionTab) })),
   setMessageInput: (next) => set((state) => ({ messageInput: resolveStateUpdate(next, state.messageInput) })),
   setPersistedContactOrder: (next) =>

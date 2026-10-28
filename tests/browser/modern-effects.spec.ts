@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { installPortalOwner } from './fixtures/portal-owner';
 
 const expectNoHorizontalOverflow = async (page: Page) => {
   const overflow = await page.evaluate(
@@ -75,7 +76,7 @@ test.describe('modern effects', () => {
         routeOverflow: route ? getComputedStyle(route).overflowY : '',
         routeTop: route ? Math.round(route.getBoundingClientRect().top) : -1,
         routeRight: route ? Math.round(route.getBoundingClientRect().right) : -1,
-        viewportWidth: window.innerWidth,
+        viewportWidth: document.body.clientWidth,
         headerBottom: header ? Math.round(header.getBoundingClientRect().bottom) : -2,
         routeAnimation: route ? getComputedStyle(route).animationName : '',
         sectionAnimation: firstSection ? getComputedStyle(firstSection).animationName : '',
@@ -88,8 +89,8 @@ test.describe('modern effects', () => {
       hover: '150ms',
       enter: '180ms',
       feedback: '220ms',
-      scrollbarThumb: 'rgba(139, 92, 246, 0.58)',
-      scrollbarTrack: 'rgba(10, 10, 18, 0.34)',
+      scrollbarThumb: '#42454f',
+      scrollbarTrack: '#08090b',
       documentCanScroll: false,
       homeCanScroll: true,
       homeOverflow: 'hidden',
@@ -114,7 +115,7 @@ test.describe('modern effects', () => {
         routeTop: route ? Math.round(route.getBoundingClientRect().top) : -1,
         routeRight: route ? Math.round(route.getBoundingClientRect().right) : -1,
         headerBottom: header ? Math.round(header.getBoundingClientRect().bottom) : -2,
-        viewportWidth: window.innerWidth
+        viewportWidth: document.body.clientWidth
       };
     });
 
@@ -130,7 +131,9 @@ test.describe('modern effects', () => {
 
   test('animates mobile token selection and privacy direction feedback without overflow', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
+    await installPortalOwner(page);
     await page.goto('/portal');
+    await page.getByRole('button', { name: 'Connect MetaMask or CipherTrade', exact: true }).click();
 
     const picker = page.locator('.privacy-mobile-token-picker > button');
     await expect(picker).toContainText('COTI / p.COTI');
@@ -185,7 +188,9 @@ test.describe('modern effects', () => {
 
   test('fits the inline Privacy Portal workspace on desktop', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
+    await installPortalOwner(page);
     await page.goto('/portal');
+    await page.getByRole('button', { name: 'Connect MetaMask or CipherTrade', exact: true }).click();
 
     await expect(page.locator('.swap-action-btn')).toBeVisible();
     await expect(page.locator('.privacy-token-list > button.active')).toContainText('COTI / p.COTI');
@@ -223,43 +228,24 @@ test.describe('modern effects', () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test('crossfades Treasury controls without animating financial chart paths', async ({ page }) => {
+  test('keeps Private TVL verification states readable without animating financial values', async ({ page }) => {
     await mockTreasurySources(page);
     await page.goto('/treasury');
-
-    const chart = page.locator('.treasury-chart-content');
-    await expect(chart).toBeVisible();
-    await page.getByRole('button', { name: 'Active gCOTI', exact: true }).click();
-
-    expect(await chart.evaluate((element) => getComputedStyle(element).animationName)).toBe(
-      'cw-chart-crossfade'
-    );
-    expect(
-      await page.locator('.recharts-line-curve').first().evaluate((element) => getComputedStyle(element).animationName)
-    ).toBe('none');
-    const scrollBoundary = await page.evaluate(() => {
-      const header = document.querySelector<HTMLElement>('.top-header');
-      const shell = document.querySelector<HTMLElement>('.treasury-shell');
-      return {
-        documentCanScroll:
-          document.documentElement.scrollHeight > document.documentElement.clientHeight + 1,
-        shellCanScroll: shell ? shell.scrollHeight > shell.clientHeight + 1 : false,
-        shellOverflow: shell ? getComputedStyle(shell).overflowY : '',
-        shellTop: shell ? Math.round(shell.getBoundingClientRect().top) : -1,
-        headerBottom: header ? Math.round(header.getBoundingClientRect().bottom) : -2
-      };
-    });
-
-    expect(scrollBoundary).toEqual({
-      documentCanScroll: false,
-      shellCanScroll: true,
-      shellOverflow: 'auto',
-      shellTop: scrollBoundary.headerBottom,
-      headerBottom: scrollBoundary.headerBottom
-    });
+    const unavailable = page.getByRole('heading', { name: 'Private TVL is temporarily unavailable', exact: true });
+    await expect(unavailable).toBeVisible();
+    await expect(page.getByText('No estimates shown', { exact: true })).toBeVisible();
+    expect(await page.locator('.treasury-readiness-grid').evaluate(element => getComputedStyle(element).animationName)).toBe('none');
+    const boundary = await page.locator('.treasury-shell').evaluate(element => ({
+      overflow: getComputedStyle(element).overflowY,
+      top: Math.round(element.getBoundingClientRect().top),
+      headerBottom: Math.round(document.querySelector('.top-header')!.getBoundingClientRect().bottom)
+    }));
+    expect(boundary.overflow).toBe('auto');
+    expect(boundary.top).toBe(boundary.headerBottom);
+    await page.getByRole('button', { name: 'Retry verification' }).click();
+    await expect(unavailable).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
-
   test('resolves nonessential movement immediately for reduced motion', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.goto('/');
@@ -277,3 +263,5 @@ test.describe('modern effects', () => {
     expect(reducedMotion.orbitIterations).toBe('1');
   });
 });
+
+

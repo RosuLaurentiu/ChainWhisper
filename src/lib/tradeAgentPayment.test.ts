@@ -15,6 +15,7 @@ import {
   type TradeAgentPaymentRequest,
   type TradeAgentPaymentRetryRecord
 } from './tradeAgentPayment';
+import { encodeTradeLink } from './tradeLinks';
 
 const PAYER = '0x1111111111111111111111111111111111111111';
 const RECIPIENT = TRADE_AGENT_PAYMENT_FEE_RECIPIENT.toLowerCase();
@@ -120,6 +121,37 @@ describe('tradeAgentPayment', () => {
     expect(stableStringifyTradeAgentPaymentValue({ z: 1, a: { y: 2, x: 3 } })).toBe(
       '{"a":{"x":3,"y":2},"z":1}'
     );
+  });
+
+  it('rejects bare wallet credentials and encoded private trade links before quoting', async () => {
+    const privateCode = encodeTradeLink(22, `0x${'ab'.repeat(32)}`);
+    const privatePath = `/otcdesk/terminal/l/${privateCode}`;
+    const nestedRedirect = Array.from({ length: 6 }).reduce<string>(
+      (value) => `?p=${encodeURIComponent(value)}`,
+      privatePath
+    );
+    const unsafePrompts = [
+      'test test test test test test test test test test test junk',
+      'cd'.repeat(32),
+      privatePath,
+      encodeURIComponent(privatePath),
+      nestedRedirect,
+      `?noise=%ZZ&p=${encodeURIComponent(privatePath)}`,
+      privateCode
+    ];
+
+    for (const prompt of unsafePrompts) {
+      await expect(hashTradeAgentPaymentRequest({ ...request, prompt })).rejects.toThrow('private material');
+    }
+  });
+
+  it('allows ordinary prose and encoded public trade links in payment requests', async () => {
+    const publicCode = encodeTradeLink(22);
+
+    await expect(hashTradeAgentPaymentRequest({
+      ...request,
+      prompt: `Explain the public order /otcdesk/terminal/l/${publicCode}`
+    })).resolves.toMatch(/^0x[0-9a-f]{64}$/u);
   });
 
   it('builds the exact read-only recovery message expected by the Edge Function', () => {
@@ -425,6 +457,51 @@ describe('tradeAgentPayment', () => {
       prompt: changedRequest.prompt,
       paymentTxHash: PAYMENT_HASH
     });
+  });
+
+  it('preserves an outstanding paid request and reuses only its exact retry', async () => {
+    const storage = createMemoryStorage();
+    const paidRequest = await createRetryRecord();
+    writeTradeAgentPaymentRetry(paidRequest, storage, NOW);
+    const changedRequest = { ...request, prompt: 'Buy 11 COTI with WISP.' };
+    const conflictingCallbacks = createCallbacks();
+
+    await expect(
+      orchestrateTradeAgentPayment({
+        callbacks: conflictingCallbacks,
+        rejectConflictingRetry: true,
+        request: changedRequest,
+        storage,
+        now: () => NOW
+      })
+    ).rejects.toThrow('Recover the existing paid Trade Agent request');
+    expect(conflictingCallbacks.createQuote).not.toHaveBeenCalled();
+    expect(conflictingCallbacks.signAuthorization).not.toHaveBeenCalled();
+    expect(conflictingCallbacks.transferPayment).not.toHaveBeenCalled();
+    expect(conflictingCallbacks.runRequest).not.toHaveBeenCalled();
+    expect(readTradeAgentPaymentRetry(storage, NOW)).toEqual(paidRequest);
+
+    const exactRetryCallbacks = createCallbacks({
+      requestId: REQUEST_ID,
+      status: 'completed',
+      response: { answer: 'Recovered without another charge.' }
+    });
+    await expect(
+      orchestrateTradeAgentPayment({
+        callbacks: exactRetryCallbacks,
+        rejectConflictingRetry: true,
+        request,
+        storage,
+        now: () => NOW
+      })
+    ).resolves.toMatchObject({
+      status: 'completed',
+      response: { answer: 'Recovered without another charge.' }
+    });
+    expect(exactRetryCallbacks.createQuote).not.toHaveBeenCalled();
+    expect(exactRetryCallbacks.signAuthorization).not.toHaveBeenCalled();
+    expect(exactRetryCallbacks.transferPayment).not.toHaveBeenCalled();
+    expect(exactRetryCallbacks.runRequest).toHaveBeenCalledTimes(1);
   });
 
   it('rejects and removes corrupt or legacy retry storage', () => {

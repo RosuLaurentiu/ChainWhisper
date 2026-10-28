@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
+import type { JsonRpcSigner } from '@coti-io/coti-ethers';
 import {
   buildTradeCustomTokenInfoKey,
   getVerifiedEcosystemToken,
@@ -12,7 +12,6 @@ import {
 } from '../../../lib/appChain';
 import {
   COTI_NETWORK,
-  createCotiBrowserProvider,
   ERC20_TOKEN_ABI,
   FALLBACK_REWARD_TOKEN_DECIMALS,
   isWalletAddress,
@@ -23,28 +22,65 @@ import {
   PRIVATE_ERC20_TOKEN_VNEXT_ABI,
   PRIVATE_REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_ADDRESS,
-  shortenAddress,
-  type Eip1193Provider
+  shortenAddress
 } from '../../../lib/appShared';
+import type { WalletWatchedToken } from './useWalletTokenWatchlist';
 
 type UseOwnerWalletBalancesArgs = {
-  browserProvider: Eip1193Provider | null;
   chainId: number | null;
-  getConnectedProvider: () => Eip1193Provider | null;
-  ownerAesKey: string;
+  getOwnerReadSigner: (requirePrivacy: boolean) => Promise<JsonRpcSigner>;
   ownerAesReady: boolean;
   ownerWalletAddress: string;
   refreshNonce: number;
+  includeCustomTokens?: boolean;
+  watchedTokens?: readonly WalletWatchedToken[];
+};
+
+const EMPTY_WATCHED_TOKENS: readonly WalletWatchedToken[] = [];
+
+type OwnerPrivateBalanceReaders = {
+  readCurrentPrivateBalance?: typeof readCurrentPrivateErc20BalanceWei;
+  readLegacyPrivateBalance?: typeof readLegacyPrivateRewardBalanceWei;
+};
+
+export const loadOwnerPrivateTokenBalances = async ({
+  getOwnerReadSigner,
+  ownerWalletAddress,
+  readCurrentPrivateBalance = readCurrentPrivateErc20BalanceWei,
+  readLegacyPrivateBalance = readLegacyPrivateRewardBalanceWei
+}: {
+  getOwnerReadSigner: (requirePrivacy: boolean) => Promise<JsonRpcSigner>;
+  ownerWalletAddress: string;
+} & OwnerPrivateBalanceReaders): Promise<{
+  legacyPrivateBalanceWei: bigint | null;
+  ownerPrivateSigner: JsonRpcSigner;
+  privateBalanceWei: bigint | null;
+}> => {
+  const ownerPrivateSigner = await getOwnerReadSigner(true);
+  const privateBalanceWei = await readCurrentPrivateBalance(
+    PRIVATE_REWARD_TOKEN_ADDRESS,
+    ownerWalletAddress,
+    ownerPrivateSigner
+  ).catch(() => null);
+  const legacyPrivateBalanceWei = await readLegacyPrivateBalance(
+    ownerWalletAddress,
+    ownerPrivateSigner
+  ).catch(() => null);
+  return {
+    legacyPrivateBalanceWei,
+    ownerPrivateSigner,
+    privateBalanceWei
+  };
 };
 
 export default function useOwnerWalletBalances({
-  browserProvider,
   chainId,
-  getConnectedProvider,
-  ownerAesKey,
+  getOwnerReadSigner,
   ownerAesReady,
   ownerWalletAddress,
-  refreshNonce
+  refreshNonce,
+  includeCustomTokens = true,
+  watchedTokens = EMPTY_WATCHED_TOKENS
 }: UseOwnerWalletBalancesArgs) {
   const [ownerNativeBalanceWei, setOwnerNativeBalanceWei] = useState<bigint | null>(null);
   const [ownerRewardTokenBalanceWei, setOwnerRewardTokenBalanceWei] = useState<bigint | null>(null);
@@ -67,6 +103,7 @@ export default function useOwnerWalletBalances({
     const loadOwnerNativeBalance = async () => {
       try {
         const readProvider = await loadCotiReadProvider(true);
+        if (cancelled) return;
         const nativeBalance = (await readProvider.getBalance(ownerWalletAddress)) as bigint;
         if (!cancelled) {
           setOwnerNativeBalanceWei(nativeBalance);
@@ -99,52 +136,74 @@ export default function useOwnerWalletBalances({
     }
 
     const loadOwnerTokenBalances = async () => {
+      let ownerPrivateSigner: JsonRpcSigner | null = null;
       setOwnerTokenBalancesLoading(true);
+      setOwnerCustomTradeTokenInfoByAddress((previous) => Object.fromEntries(
+        Object.entries(previous).map(([key, entry]) => [
+          key,
+          entry.kind === 'private-erc20'
+            ? {
+                ...entry,
+                aesReady: ownerAesReady,
+                balanceWei: null,
+                loading: true,
+                privateBalanceState: { status: 'locked' as const }
+              }
+            : entry
+        ])
+      ));
       try {
         const cotiEthers = await loadCotiEthersModule();
+        if (cancelled) return;
         const readProvider = await loadCotiReadProvider(true);
+        if (cancelled) return;
         const rewardTokenContract = new cotiEthers.Contract(REWARD_TOKEN_ADDRESS, ERC20_TOKEN_ABI, readProvider);
         const rewardBalanceRaw = await rewardTokenContract.balanceOf(ownerWalletAddress).catch(() => null);
+        if (cancelled) return;
         const ownerWalletKey = ownerWalletAddress.trim().toLowerCase();
         const builtInTokenAddressSet = new Set([
           REWARD_TOKEN_ADDRESS.toLowerCase(),
           PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase(),
           LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS.toLowerCase()
         ]);
-        const customTokenRequests = VERIFIED_ECOSYSTEM_TOKENS.filter(
-          (token) => !builtInTokenAddressSet.has(token.address.toLowerCase())
-        );
-        let ownerPrivateSigner: JsonRpcSigner | null = null;
+        const customTokenRequests = includeCustomTokens ? Array.from(
+          new Map(
+            [
+              ...VERIFIED_ECOSYSTEM_TOKENS.map((token) => ({
+                address: token.address,
+                kind: token.kind,
+                symbol: token.symbol
+              })),
+              ...watchedTokens
+                .filter((token) => token.chainId === chainId)
+                .map((token) => ({
+                  address: token.tokenAddress,
+                  kind: token.kind,
+                  symbol: shortenAddress(token.tokenAddress)
+                }))
+            ]
+              .filter((token) => !builtInTokenAddressSet.has(token.address.toLowerCase()))
+              .map((token) => [`${token.kind}:${token.address.toLowerCase()}`, token] as const)
+          ).values()
+        ) : [];
         let privateBalanceWei: bigint | null = null;
         let legacyPrivateBalanceWei: bigint | null = null;
 
         if (ownerAesReady) {
           try {
-            const ownerAesKeyForRead = ownerAesKey.trim();
-            const provider = browserProvider ?? getConnectedProvider();
-            if (!ownerAesKeyForRead || !provider) {
-              throw new Error('Owner privacy is locked.');
-            }
-            const cotiBrowserProvider = await createCotiBrowserProvider(provider);
-            const signer = await cotiBrowserProvider.getSigner(ownerWalletAddress, {
-              aesKey: ownerAesKeyForRead
-            } as OnboardInfo);
-            signer.disableAutoOnboard();
-            ownerPrivateSigner = signer;
-            privateBalanceWei = await readCurrentPrivateErc20BalanceWei(
-              PRIVATE_REWARD_TOKEN_ADDRESS,
-              ownerWalletAddress,
-              signer
-            ).catch(() => null);
-            legacyPrivateBalanceWei = await readLegacyPrivateRewardBalanceWei(
-              ownerWalletAddress,
-              signer
-            ).catch(() => null);
+            const privateBalances = await loadOwnerPrivateTokenBalances({
+              getOwnerReadSigner,
+              ownerWalletAddress
+            });
+            ownerPrivateSigner = privateBalances.ownerPrivateSigner;
+            privateBalanceWei = privateBalances.privateBalanceWei;
+            legacyPrivateBalanceWei = privateBalances.legacyPrivateBalanceWei;
           } catch {
             privateBalanceWei = null;
             legacyPrivateBalanceWei = null;
           }
         }
+        if (cancelled) return;
         const ownerCustomEntries = await Promise.all(
           customTokenRequests.map(async (token): Promise<TradeCustomTokenInfo> => {
             const fallbackTokenSymbol = getVerifiedEcosystemToken(token.address)?.symbol ?? shortenAddress(token.address);
@@ -163,7 +222,7 @@ export default function useOwnerWalletBalances({
 
               if (token.kind === 'private-erc20') {
                 const balanceWei =
-                  ownerPrivateSigner !== null
+                  ownerPrivateSigner !== null && !cancelled
                     ? await readCurrentPrivateErc20BalanceWei(
                         token.address,
                         ownerWalletAddress,
@@ -189,7 +248,7 @@ export default function useOwnerWalletBalances({
                 };
               }
 
-              const balanceRaw = await tokenContract.balanceOf(ownerWalletAddress).catch(() => null);
+              const balanceRaw = cancelled ? null : await tokenContract.balanceOf(ownerWalletAddress).catch(() => null);
               return {
                 kind: token.kind,
                 address: token.address.trim().toLowerCase(),
@@ -248,13 +307,13 @@ export default function useOwnerWalletBalances({
       cancelled = true;
     };
   }, [
-    browserProvider,
     chainId,
-    getConnectedProvider,
-    ownerAesKey,
+    getOwnerReadSigner,
+    includeCustomTokens,
     ownerAesReady,
     ownerWalletAddress,
-    refreshNonce
+    refreshNonce,
+    watchedTokens
   ]);
 
   return {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { REWARD_TOKEN_ADDRESS, shortenAddress } from './appShared';
 import {
   GCOTI_TOKEN_ADDRESS,
@@ -50,6 +50,39 @@ const verifiedTokenValue = (symbol: string): string => {
 };
 
 describe('trade composer private token visibility', () => {
+  it('offers only the six registered Testnet presets plus native while resolving historical token metadata', async () => {
+    vi.resetModules();
+    vi.doMock('./chainWhisperTestnetCandidate', async importOriginal => ({ ...await importOriginal<typeof import('./chainWhisperTestnetCandidate')>(),
+      CHAINWHISPER_TESTNET_CANDIDATE_CONFIG: { status: 'active', components: {
+        publicTestTokenA: { address: `0x${'11'.repeat(20)}` }, publicTestTokenB: { address: `0x${'12'.repeat(20)}` },
+        privateTestTokenA: { address: `0x${'13'.repeat(20)}` }, privateTestTokenB: { address: `0x${'14'.repeat(20)}` }
+      } } }));
+    try {
+      const helpers = await import('./appHelpers'), composer = await import('./tradeComposer');
+      const defaults = helpers.TESTNET_CANDIDATE_TRADE_TOKEN_SELECTIONS;
+      const model = composer.deriveTradeComposerModel({ ...baseParams, tradeOfferTokenSelection: defaults.privateBase, tradeRequestTokenSelection: defaults.privateQuote });
+      expect(model.tradeTokenOptions.map(option => option.value)).toEqual(['coti', ...helpers.SELECTABLE_TRADE_TOKENS.map(token => token.address)]);
+      expect(model.selectedTradeOfferToken).toMatchObject({ tokenAddress: defaults.privateBase, kind: 'private-erc20', symbol: 'BCN', decimals: 6 });
+      expect(model.selectedTradeRequestToken).toMatchObject({ tokenAddress: defaults.privateQuote, kind: 'private-erc20', symbol: 'HBR', decimals: 6 });
+      expect(model.tradeTokenOptions.filter(option => option.kindLabel === 'Private').map(option => option.symbol)).toEqual(['BCN', 'HBR', 'EMBR', 'ORBT']);
+      for (const old of helpers.TESTNET_CANDIDATE_TOKENS) {
+        expect(model.tradeTokenOptions.some(option => option.value === old.address)).toBe(false);
+        expect(composer.resolveSelectedTradeToken({ selection: old.address, rewardTokenSymbol: 'WISP', rewardTokenDecimals: 18,
+          privateRewardTokenSymbol: 'p.WISP', privateRewardTokenDecimals: 18 })).toMatchObject({ tokenAddress: old.address, kind: old.kind });
+      }
+    } finally { vi.doUnmock('./chainWhisperTestnetCandidate'); vi.resetModules(); }
+  });
+  it('does not turn a zero protocol fee into a loading or insufficient-balance error', () => {
+    const model = deriveTradeComposerModel({
+      ...baseParams,
+      tipNativeBalanceWei: null,
+      tradeRequiredFeeWei: 0n
+    });
+
+    expect(model.tradeComposerFieldErrors.fee).toBeUndefined();
+    expect(model.tradeFeeSummaryLabel).toBe('Fee: 0 COTI');
+  });
+
   it('keeps public and private create token options in matching asset order', () => {
     const model = deriveTradeComposerModel(baseParams);
     const optionValues = model.tradeTokenOptions.map((option) => option.value);
@@ -124,7 +157,7 @@ describe('trade composer private token visibility', () => {
     });
 
     expect(model.hiddenLiquidityActive).toBe(false);
-    expect(model.canHidePrivateLiquidity).toBe(false);
+    expect(model.canHidePrivateLiquidity).toBe(true);
     expect(model.tradeComposerFieldErrors.general).toBeUndefined();
     expect(model.canSendTradeOffer).toBe(true);
   });
@@ -231,6 +264,8 @@ describe('trade composer private token visibility', () => {
 
     expect(model.tradeOfferBalanceSummaryLabel).toBe('123.456 WISP');
     expect(model.tradeRequestBalanceSummaryLabel).toBe('2 COTI');
+    expect(model.tradeRequestMaxInputValue).toBe('2');
+    expect(model.canUseTradeRequestMax).toBe(true);
   });
 
   it('uses combined owner and ChainWhisper balances for max and validation', () => {
@@ -277,7 +312,7 @@ describe('trade composer private token visibility', () => {
     expect(model.tradeComposerFieldErrors.general).toBeUndefined();
   });
 
-  it('rejects hidden amount mode when the offered token is public', () => {
+  it('supports private request amounts with a public offered token', () => {
     const model = deriveTradeComposerModel({
       ...baseParams,
       tradeOfferTokenSelection: 'wisp',
@@ -286,8 +321,30 @@ describe('trade composer private token visibility', () => {
       rewardTokenBalanceWei: 100_000_000n
     });
 
+    expect(model.hiddenLiquidityActive).toBe(true);
+    expect(model.tradeComposerFieldErrors.general).toBeUndefined();
+    expect(model.canSendTradeOffer).toBe(true);
+    expect(model.hiddenPriceOfferAmountWei).toBe(1_000_000n);
+    expect(model.hiddenPriceRequestAmountWei).toBe(200_000n);
+  });
+
+  it('rejects private mode for a public-token pair', () => {
+    const model = deriveTradeComposerModel({ ...baseParams, tradeOfferTokenSelection: 'wisp',
+      tradeRequestTokenSelection: 'coti', tradeHidePrivateLiquidity: true, rewardTokenBalanceWei: 100_000_000n });
     expect(model.hiddenLiquidityActive).toBe(false);
-    expect(model.tradeComposerFieldErrors.general).toBe('Private liquidity requires the token you sell to be private.');
+    expect(model.tradeComposerFieldErrors.general).toBe('Private liquidity requires a private token on either side.');
+    expect(model.canSendTradeOffer).toBe(false);
+  });
+
+  it('keeps same-private-token and unavailable-path guards', () => {
+    const same = deriveTradeComposerModel({ ...baseParams, tradeRequestTokenSelection: 'pwisp', tradeHidePrivateLiquidity: true });
+    expect(same.canHidePrivateLiquidity).toBe(false);
+    expect(same.tradeComposerFieldErrors.general).toBe('Choose two different assets for the trade.');
+    expect(same.canSendTradeOffer).toBe(false);
+    const model = deriveTradeComposerModel({ ...baseParams, tradeOfferTokenSelection: 'wisp', tradeRequestTokenSelection: 'pwisp',
+      tradeHidePrivateLiquidity: true, rewardTokenBalanceWei: 100_000_000n, hiddenLiquidityUnavailableMessage: 'This path is unavailable.' });
+    expect(model.canHidePrivateLiquidity).toBe(false);
+    expect(model.tradeComposerFieldErrors.general).toBe('This path is unavailable.');
     expect(model.canSendTradeOffer).toBe(false);
   });
 });

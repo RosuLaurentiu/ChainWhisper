@@ -7,6 +7,23 @@ import { resolveStateUpdate, type StateUpdate } from '../../shared/state/storeUt
 
 export type GroupJoinCodeMode = 'single' | 'multi';
 export type GroupInviteMenuView = 'invite' | 'code';
+export type GeneratedGroupJoinCode = {
+  groupId: number;
+  walletKey: string;
+  inviteCode: string;
+  codeHash: string;
+};
+
+export const getGeneratedGroupJoinCodeForContext = (
+  generatedCode: GeneratedGroupJoinCode | null,
+  groupId: number | null,
+  walletAddress: string
+): GeneratedGroupJoinCode | null => {
+  const walletKey = walletAddress.trim().toLowerCase();
+  return generatedCode?.groupId === groupId && generatedCode.walletKey === walletKey
+    ? generatedCode
+    : null;
+};
 
 type GroupUiState = {
   newGroupTitle: string;
@@ -16,8 +33,7 @@ type GroupUiState = {
   groupInviteTtlInput: string;
   groupJoinCodeMode: GroupJoinCodeMode;
   groupJoinCodeMaxUsesInput: string;
-  generatedGroupInviteCode: string;
-  generatedGroupJoinCodeHash: string;
+  generatedGroupJoinCode: GeneratedGroupJoinCode | null;
   activeGroupJoinCodes: ActiveGroupJoinCode[];
   loadingActiveGroupJoinCodes: boolean;
   revokingGroupJoinCodeHash: string;
@@ -37,8 +53,7 @@ type GroupUiState = {
   setGroupInviteTtlInput: (next: StateUpdate<string>) => void;
   setGroupJoinCodeMode: (next: StateUpdate<GroupJoinCodeMode>) => void;
   setGroupJoinCodeMaxUsesInput: (next: StateUpdate<string>) => void;
-  setGeneratedGroupInviteCode: (next: StateUpdate<string>) => void;
-  setGeneratedGroupJoinCodeHash: (next: StateUpdate<string>) => void;
+  setGeneratedGroupJoinCode: (next: StateUpdate<GeneratedGroupJoinCode | null>) => void;
   setActiveGroupJoinCodes: (next: StateUpdate<ActiveGroupJoinCode[]>) => void;
   setLoadingActiveGroupJoinCodes: (next: StateUpdate<boolean>) => void;
   setRevokingGroupJoinCodeHash: (next: StateUpdate<string>) => void;
@@ -61,8 +76,7 @@ export const useGroupUiStore = create<GroupUiState>((set) => ({
   groupInviteTtlInput: '8',
   groupJoinCodeMode: 'single',
   groupJoinCodeMaxUsesInput: String(DEFAULT_GROUP_JOIN_CODE_MULTI_USES),
-  generatedGroupInviteCode: '',
-  generatedGroupJoinCodeHash: '',
+  generatedGroupJoinCode: null,
   activeGroupJoinCodes: [],
   loadingActiveGroupJoinCodes: false,
   revokingGroupJoinCodeHash: '',
@@ -88,10 +102,8 @@ export const useGroupUiStore = create<GroupUiState>((set) => ({
     set((state) => ({ groupJoinCodeMode: resolveStateUpdate(next, state.groupJoinCodeMode) })),
   setGroupJoinCodeMaxUsesInput: (next) =>
     set((state) => ({ groupJoinCodeMaxUsesInput: resolveStateUpdate(next, state.groupJoinCodeMaxUsesInput) })),
-  setGeneratedGroupInviteCode: (next) =>
-    set((state) => ({ generatedGroupInviteCode: resolveStateUpdate(next, state.generatedGroupInviteCode) })),
-  setGeneratedGroupJoinCodeHash: (next) =>
-    set((state) => ({ generatedGroupJoinCodeHash: resolveStateUpdate(next, state.generatedGroupJoinCodeHash) })),
+  setGeneratedGroupJoinCode: (next) =>
+    set((state) => ({ generatedGroupJoinCode: resolveStateUpdate(next, state.generatedGroupJoinCode) })),
   setActiveGroupJoinCodes: (next) =>
     set((state) => ({ activeGroupJoinCodes: resolveStateUpdate(next, state.activeGroupJoinCodes) })),
   setLoadingActiveGroupJoinCodes: (next) =>

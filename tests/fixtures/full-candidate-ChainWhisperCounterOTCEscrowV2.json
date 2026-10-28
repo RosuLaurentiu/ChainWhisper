@@ -1,0 +1,1442 @@
+{
+  "contractName": "ChainWhisperCounterOTCEscrowV2",
+  "sourceName": "contracts/p2p/ChainWhisperCounterOTCEscrowV2.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "initialOwner",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "CounterDepthExceeded",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InexactTokenTransfer",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidAmount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidExpiry",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidMode",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidParent",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidProposal",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidStatus",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OnlyMaker",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OnlyTaker",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "PrivateTokenPublic",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TermsUnavailable",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TokenChanged",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum ChainWhisperCounterOTCEscrowV2.Status",
+          "name": "status",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "actor",
+          "type": "address"
+        }
+      ],
+      "name": "CounterClosed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "maker",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "taker",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "rootKey",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "parentProposal",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "depth",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "offerToken",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "requestToken",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "privatePair",
+          "type": "bool"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "publicOffer",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "publicRequest",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "expiresAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "CounterOpened",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "recipient",
+          "type": "address"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "userCiphertext",
+              "type": "tuple"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct utUint256",
+          "name": "offer",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "userCiphertext",
+              "type": "tuple"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct utUint256",
+          "name": "request",
+          "type": "tuple"
+        }
+      ],
+      "name": "CounterPrivateTerms",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "rootKey",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "chainId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "parent",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "parentId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "revision",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "credentialEpoch",
+          "type": "uint64"
+        }
+      ],
+      "name": "CounterRootBound",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "previousOwner",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "OwnershipTransferred",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "parent",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "codeHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "approved",
+          "type": "bool"
+        }
+      ],
+      "name": "ParentApproval",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "MAX_COUNTER_DEPTH",
+      "outputs": [
+        {
+          "internalType": "uint8",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "MAX_TTL",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            }
+          ],
+          "internalType": "struct itUint256",
+          "name": "reviewedOffer",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            }
+          ],
+          "internalType": "struct itUint256",
+          "name": "reviewedRequest",
+          "type": "tuple"
+        }
+      ],
+      "name": "acceptPrivateCounter",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint128",
+              "name": "offer",
+              "type": "uint128"
+            },
+            {
+              "internalType": "uint128",
+              "name": "request",
+              "type": "uint128"
+            }
+          ],
+          "internalType": "struct ChainWhisperCounterOTCEscrowV2.Amounts",
+          "name": "reviewed",
+          "type": "tuple"
+        }
+      ],
+      "name": "acceptPublicCounter",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "approvedParentCodeHash",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "cancelCounter",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "contractVersion",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "parentId",
+          "type": "uint256"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            }
+          ],
+          "internalType": "struct itUint256",
+          "name": "offer",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            }
+          ],
+          "internalType": "struct itUint256",
+          "name": "request",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint64",
+          "name": "expiresAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "createPrivateChild",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "escrow",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "revision",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "credentialEpoch",
+              "type": "uint64"
+            }
+          ],
+          "internalType": "struct IChainWhisperCounterParent.Reference",
+          "name": "ref",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            }
+          ],
+          "internalType": "struct itUint256",
+          "name": "offer",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextHigh",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "ctUint128",
+                  "name": "ciphertextLow",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct ctUint256",
+              "name": "ciphertext",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            }
+          ],
+          "internalType": "struct itUint256",
+          "name": "request",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint64",
+          "name": "expiresAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "createPrivateCounter",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "parentId",
+          "type": "uint256"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint128",
+              "name": "offer",
+              "type": "uint128"
+            },
+            {
+              "internalType": "uint128",
+              "name": "request",
+              "type": "uint128"
+            }
+          ],
+          "internalType": "struct ChainWhisperCounterOTCEscrowV2.Amounts",
+          "name": "amounts",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint64",
+          "name": "expiresAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "createPublicChild",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "escrow",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "revision",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "credentialEpoch",
+              "type": "uint64"
+            }
+          ],
+          "internalType": "struct IChainWhisperCounterParent.Reference",
+          "name": "ref",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint128",
+              "name": "offer",
+              "type": "uint128"
+            },
+            {
+              "internalType": "uint128",
+              "name": "request",
+              "type": "uint128"
+            }
+          ],
+          "internalType": "struct ChainWhisperCounterOTCEscrowV2.Amounts",
+          "name": "amounts",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint64",
+          "name": "expiresAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "createPublicCounter",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "declineCounter",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getCounter",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "maker",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "taker",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "offerToken",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "requestToken",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "offerCodeHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "requestCodeHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "rootKey",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "parentProposal",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint64",
+              "name": "expiresAt",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint8",
+              "name": "depth",
+              "type": "uint8"
+            },
+            {
+              "internalType": "enum ChainWhisperCounterOTCEscrowV2.Status",
+              "name": "status",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bool",
+              "name": "privatePair",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "offerLocked",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct ChainWhisperCounterOTCEscrowV2.Proposal",
+          "name": "proposal",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint128",
+              "name": "offer",
+              "type": "uint128"
+            },
+            {
+              "internalType": "uint128",
+              "name": "request",
+              "type": "uint128"
+            }
+          ],
+          "internalType": "struct ChainWhisperCounterOTCEscrowV2.Amounts",
+          "name": "amounts",
+          "type": "tuple"
+        },
+        {
+          "internalType": "enum ChainWhisperCounterOTCEscrowV2.Status",
+          "name": "effectiveStatus",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "key",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getCounterRoot",
+      "outputs": [
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "chainId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "escrow",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "id",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "revision",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "credentialEpoch",
+                  "type": "uint64"
+                }
+              ],
+              "internalType": "struct IChainWhisperCounterParent.Reference",
+              "name": "ref",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "address",
+                  "name": "maker",
+                  "type": "address"
+                },
+                {
+                  "internalType": "address",
+                  "name": "offerToken",
+                  "type": "address"
+                },
+                {
+                  "internalType": "address",
+                  "name": "requestToken",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "offerCodeHash",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "requestCodeHash",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "privatePair",
+                  "type": "bool"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "open",
+                  "type": "bool"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "revision",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "credentialEpoch",
+                  "type": "uint64"
+                },
+                {
+                  "internalType": "uint64",
+                  "name": "expiresAt",
+                  "type": "uint64"
+                }
+              ],
+              "internalType": "struct IChainWhisperCounterParent.Context",
+              "name": "context",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "parentCodeHash",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct ChainWhisperCounterOTCEscrowV2.Root",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getTermsForAccount",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "bool",
+              "name": "initialized",
+              "type": "bool"
+            },
+            {
+              "components": [
+                {
+                  "components": [
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextHigh",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextLow",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct ctUint256",
+                  "name": "ciphertext",
+                  "type": "tuple"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextHigh",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextLow",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct ctUint256",
+                  "name": "userCiphertext",
+                  "type": "tuple"
+                }
+              ],
+              "internalType": "struct utUint256",
+              "name": "offer",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "components": [
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextHigh",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextLow",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct ctUint256",
+                  "name": "ciphertext",
+                  "type": "tuple"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextHigh",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextLow",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct ctUint256",
+                  "name": "userCiphertext",
+                  "type": "tuple"
+                }
+              ],
+              "internalType": "struct utUint256",
+              "name": "request",
+              "type": "tuple"
+            }
+          ],
+          "internalType": "struct ChainWhisperCounterOTCEscrowV2.Terms",
+          "name": "terms",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "recipient",
+          "type": "address"
+        }
+      ],
+      "name": "getTradeBalanceAccess",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint64",
+              "name": "generation",
+              "type": "uint64"
+            },
+            {
+              "internalType": "bool",
+              "name": "allowed",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct ChainWhisperP2PDisclosure.Grant",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getTradeBalanceSnapshot",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "bool",
+              "name": "initialized",
+              "type": "bool"
+            },
+            {
+              "internalType": "uint64",
+              "name": "revision",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "generation",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint8",
+              "name": "status",
+              "type": "uint8"
+            },
+            {
+              "components": [
+                {
+                  "components": [
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextHigh",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextLow",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct ctUint256",
+                  "name": "ciphertext",
+                  "type": "tuple"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextHigh",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "ctUint128",
+                      "name": "ciphertextLow",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct ctUint256",
+                  "name": "userCiphertext",
+                  "type": "tuple"
+                }
+              ],
+              "internalType": "struct utUint256",
+              "name": "remaining",
+              "type": "tuple"
+            }
+          ],
+          "internalType": "struct ChainWhisperP2PDisclosure.Snapshot",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "nextProposalId",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "owner",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "reclaimUnavailableCounter",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        }
+      ],
+      "name": "refreshTradeBalanceSnapshot",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "renounceOwnership",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "parent",
+          "type": "address"
+        },
+        {
+          "internalType": "bool",
+          "name": "approved",
+          "type": "bool"
+        }
+      ],
+      "name": "setParentApproval",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "recipient",
+          "type": "address"
+        },
+        {
+          "internalType": "bool",
+          "name": "allowed",
+          "type": "bool"
+        }
+      ],
+      "name": "setTradeBalanceAccess",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "transferOwnership",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "winner",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ]
+}

@@ -29,7 +29,7 @@ type CombinedBalanceByAssetKey = Record<
   string,
   {
     combinedBalanceWei: bigint | null;
-    ownerPrivacyRequired?: boolean;
+    privacyRequired?: boolean;
     availableLabel?: string;
     breakdownLabel?: string;
     splitLabel?: string;
@@ -320,6 +320,7 @@ export default function useP2PTradeComposerModel({
 
   return {
     ensureDistinctSwapTokenSelection,
+    resolveSwapTokenSelection,
     swapBuyToken,
     swapBuyTokenKey,
     swapSellToken,

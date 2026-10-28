@@ -20,7 +20,7 @@ export default function useP2PAppHelp({ active, currentPath }: UseP2PAppHelpArgs
       id: 'app-help:intro',
       role: 'assistant',
       title: 'App Help',
-      text: 'Ask about accounts, privacy, chat, OTC, Privacy Portal, or Treasury Data.'
+      text: 'Ask about accounts, privacy, chat, P2P trading, the Privacy Portal, or COTI Private TVL.'
     }
   ]);
   const [appHelpLoading, setAppHelpLoading] = useState(false);

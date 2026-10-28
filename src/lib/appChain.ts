@@ -1,12 +1,13 @@
-import type { JsonRpcSigner, Wallet } from '@coti-io/coti-ethers';
-import { decryptUint256, type ctUint256 } from '@coti-io/coti-sdk-typescript';
+import { AbiCoder, type JsonRpcSigner } from '@coti-io/coti-ethers';
+import { CONFIGURED_COTI_NETWORK } from './chainWhisperNetworks';
+export { readCurrentDexGraph, readCurrentDexOperation, readCurrentDexPrincipalReceipt, readCurrentDexIssuedQuote } from './dexV2Chain';
+export { readCurrentDexDailyPrice } from './currentDexDailyPrice';
+export { readOfficialTestnetGas } from './officialTestnetFaucet';
+export { readCurrentSharedDexTestTokens } from './currentSharedDexTokenRead';
+import { decryptUint, decryptUint256, type ctUint256 } from '@coti-io/coti-sdk-typescript';
 import {
   ERC20_TOKEN_ABI,
   FALLBACK_REWARD_TOKEN_DECIMALS,
-  GROUP_CHAT_CONTRACT_ABI,
-  GROUP_CHAT_CONTRACT_ADDRESS,
-  GROUP_SUBMIT_GAS_BUFFER,
-  GROUP_SUBMIT_GAS_LIMIT_MAX,
   LEGACY_PRIVATE_REWARD_TOKEN_ADDRESS,
   MAX_ERC20_APPROVAL,
   OTC_HISTORY_READER_CONTRACT_ABI,
@@ -53,10 +54,12 @@ import {
   type TradeRecoveryPayload
 } from './tradeRecoveryPayload';
 import { normalizeAccessHash } from './tradeLinks';
+import { waitForPublicTransactionReceipt } from './publicTransactionReceipt';
 import {
   COTI_PRIVACY_PORTAL_CHAIN_ID,
   PRIVACY_ERC20_BRIDGE_ABI,
   PRIVACY_NATIVE_BRIDGE_ABI,
+  PRIVACY_TOKEN_PAIRS,
   applyPrivacyPortalGasMargin,
   buildPrivacyPortalQuoteKey,
   buildPrivacyPortalTransactionCall,
@@ -80,6 +83,14 @@ import {
   type PrivacyTokenPair
 } from './privacyPortal';
 import {
+  BAND_STANDARD_REFERENCE_ABI,
+  PRIVATE_TVL_BAND_PROXY_BY_CHAIN_ID,
+  PRIVATE_TVL_DEFAULT_MAX_PRICE_AGE_SECONDS,
+  buildPrivateTvlSnapshot,
+  type PrivateTvlBridgeObservation,
+  type PrivateTvlSnapshot
+} from './privateTvl';
+import {
   CHAINWHISPER_WISP_BRIDGE_PAIR,
   buildChainWhisperWispCall,
   buildChainWhisperWispQuoteKey,
@@ -97,11 +108,40 @@ import {
   type ChainWhisperWispVerification,
   type ChainWhisperWispVerificationIssue
 } from './wispPrivacyBridge';
+import {
+  buildTestnetFaucetTransactionRequest,
+  validateTestnetFaucetTransaction
+} from './chainWhisperTestnetFaucet';
+import {
+  assertOwnerTradeV2CapabilitySnapshotCurrent,
+  getOwnerTradeV2CapabilityBinding,
+  waitForOwnerTradeV2Receipt,
+  type OwnerTradeV2MetaMaskCapability
+} from './ownerTradeV2Capability';
+import {
+  reconcileOwnedPositionIds,
+  type PositionNftTransfer
+} from './positionNftHistory';
+import type {
+  SuccessorDexAdmissionCapacityModel,
+  SuccessorDexAdmissionFamily,
+  SuccessorDexManifest,
+  SuccessorDexPair,
+  SuccessorDexToken
+} from './successorDexDeployment';
 
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const ACCEPTED_TX_LOOKBACK_BLOCKS = 100_000;
 const PRIVATE_TOKEN_WRITE_GAS_LIMIT = 6_000_000n;
 const PRIVATE_TOKEN_EXACT_APPROVAL_GAS_FALLBACK = 12_000_000n;
+
+const waitForAppChainReceipt = (
+  transaction: Readonly<{ hash?: unknown }>,
+  label: string
+): Promise<unknown> => waitForPublicTransactionReceipt({
+  transactionHash: transaction.hash,
+  label
+});
 
 type PrivateTokenSpendReadinessInput = {
   requiredAmountWei: bigint;
@@ -774,14 +814,14 @@ const normalizeCtUint256Value = (encryptedValue: unknown): ctUint256 | null => {
   return ciphertextHigh === null || ciphertextLow === null ? null : { ciphertextHigh, ciphertextLow };
 };
 
-const readSignerAesKey = (signer: Wallet | JsonRpcSigner): string | null => {
+const readSignerAesKey = (signer: JsonRpcSigner): string | null => {
   const onboardInfo = signer.getUserOnboardInfo();
   return typeof onboardInfo?.aesKey === 'string' && onboardInfo.aesKey.trim() ? onboardInfo.aesKey.trim() : null;
 };
 
 const decryptPrivateUintValueWithCurrentAes = async (
   encryptedValue: unknown,
-  signer: Wallet | JsonRpcSigner
+  signer: JsonRpcSigner
 ): Promise<bigint | null> => {
   const ctUint256Value = normalizeCtUint256Value(encryptedValue);
   if (ctUint256Value) {
@@ -805,7 +845,7 @@ const decryptPrivateUintValueWithCurrentAes = async (
 
 const decryptPrivateUintValue = async (
   encryptedValue: unknown,
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   recoverOnFailure = false
 ): Promise<bigint | null> => {
   void recoverOnFailure;
@@ -848,16 +888,37 @@ export const __normalizeCurrentPrivateTokenBalanceWeiForTest = normalizeCurrentP
 
 const decryptPrivateTokenBalanceWei = async (
   encryptedValue: unknown,
-  signer: Wallet | JsonRpcSigner
+  signer: JsonRpcSigner
 ): Promise<bigint | null> => {
   const firstAttempt = await decryptPrivateUintValueWithCurrentAes(encryptedValue, signer);
   return normalizeCurrentPrivateTokenBalanceWei(firstAttempt);
 };
 
+export const readSuccessorPrivateErc20BalanceWei = async (
+  tokenAddress: string,
+  ownerAddress: string,
+  signer: JsonRpcSigner
+): Promise<bigint | null> => {
+  const cotiEthers = await loadCotiEthersModule();
+  const readProvider = await loadCotiReadProvider(true);
+  const tokenInterface = new cotiEthers.Interface(PRIVATE_ERC20_TOKEN_VNEXT_ABI);
+  try {
+    const result = await readProvider.call({
+      from: ownerAddress,
+      to: tokenAddress,
+      data: tokenInterface.encodeFunctionData('balanceOf(address)', [ownerAddress])
+    });
+    const decoded = tokenInterface.decodeFunctionResult('balanceOf(address)', result);
+    return decryptPrivateTokenBalanceWei(decoded?.[0] ?? null, signer);
+  } catch {
+    return null;
+  }
+};
+
 export const readCurrentPrivateErc20BalanceWei = async (
   tokenAddress: string,
   ownerAddress: string,
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   recoverOnFailure = false
 ): Promise<bigint | null> => {
   const cotiEthers = await loadCotiEthersModule();
@@ -932,7 +993,7 @@ export const readCurrentPrivateErc20BalanceWei = async (
 
 export const readLegacyPrivateRewardBalanceWei = async (
   ownerAddress: string,
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   recoverOnFailure = false
 ): Promise<bigint | null> => {
   const cotiEthers = await loadCotiEthersModule();
@@ -1072,7 +1133,7 @@ export const readDirectTermPayloadForAccount = async ({
   tradeId: number;
   escrowContract?: string;
   walletAddress: string;
-  signer?: Wallet | JsonRpcSigner;
+  signer?: JsonRpcSigner;
 }): Promise<string | null> => {
   if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(walletAddress)) {
     return null;
@@ -1125,7 +1186,7 @@ export const readDirectAccessSecretForAccount = async ({
   tradeId: number;
   escrowContract?: string;
   walletAddress: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
 }): Promise<string | null> => {
   if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(walletAddress)) {
     return null;
@@ -1174,7 +1235,7 @@ export const revealDirectTradeTermsForWallet = async ({
 }: {
   snapshot: TradeSnapshot;
   walletAddress: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   accessSecret?: string;
 }): Promise<DirectTermsRevealResult> => {
   const config = resolveTradeEscrowContractConfig(snapshot.escrowContract);
@@ -1362,7 +1423,7 @@ export const readPrivateTradeRemainingOfferWei = async ({
   tradeId: number;
   escrowContract?: string;
   makerAddress: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
 }): Promise<bigint | null> => {
   if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(makerAddress)) {
     return null;
@@ -1405,7 +1466,7 @@ export const readPrivateTradeRemainingOfferWei = async ({
 
 const decryptRecurringReceiptAmount = async (
   encryptedValue: unknown,
-  signer: Wallet | JsonRpcSigner
+  signer: JsonRpcSigner
 ): Promise<string | undefined> => {
   const value = await decryptPrivateUintValue(extractUserCiphertext(encryptedValue), signer, true);
   return value === null ? undefined : value.toString();
@@ -1436,7 +1497,7 @@ export const fetchRecurringPrivateFillReceiptsForWallet = async ({
   contractAddress?: string;
   orderId: number;
   walletAddress: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   fromBlock?: number;
 }): Promise<RecurringPrivateExecutionPayload[]> => {
   if (!Number.isSafeInteger(orderId) || orderId <= 0 || !isWalletAddress(walletAddress)) {
@@ -1598,7 +1659,7 @@ export const fetchRecurringPrivateInventorySnapshotsForWallet = async ({
   contractAddress?: string;
   orderId: number;
   walletAddress: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   fromBlock?: number;
 }): Promise<Array<{ baseInventory?: string; quoteInventory?: string; txHash?: string; blockNumber?: number }>> => {
   if (!Number.isSafeInteger(orderId) || orderId <= 0 || !isWalletAddress(walletAddress)) {
@@ -1776,7 +1837,7 @@ const mapPrivateOrderFilledLogsToReceipts = (
   role: 'maker' | 'filler'
 ): PrivateTradeFillReceiptPayload[] => {
   const walletKey = walletAddress.toLowerCase();
-  return logs
+  const globallySequenced = logs
     .map((log: unknown) => {
       const eventLog = log as {
         args?: {
@@ -1794,9 +1855,6 @@ const mapPrivateOrderFilledLogsToReceipts = (
         return null;
       }
       const filler = String(args.filler ?? args[1] ?? '').trim();
-      if (role !== 'maker' && filler.toLowerCase() !== walletKey) {
-        return null;
-      }
       return {
         filler,
         logIndex:
@@ -1818,6 +1876,9 @@ const mapPrivateOrderFilledLogsToReceipts = (
       ...receipt,
       fillIndex: index + 1
     }));
+  return role === 'maker'
+    ? globallySequenced
+    : globallySequenced.filter((receipt) => receipt.filler.toLowerCase() === walletKey);
 };
 
 export const __mapPrivateOrderFilledLogsToReceiptsForTest = mapPrivateOrderFilledLogsToReceipts;
@@ -1834,7 +1895,7 @@ export const fetchPrivateOrderFillReceiptsForWallet = async ({
   escrowContract?: string;
   role?: 'maker' | 'filler';
   walletAddress: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   fromBlock?: number;
 }): Promise<PrivateTradeFillReceiptPayload[]> => {
   if (!Number.isSafeInteger(tradeId) || tradeId <= 0 || !isWalletAddress(walletAddress)) {
@@ -1918,9 +1979,8 @@ export const fetchPrivateOrderFillReceiptsForWallet = async ({
     throw new Error('Private fill receipts were found, but this wallet AES key could not decrypt them.');
   }
   if (filteredReceipts.length === 0) {
-    const filledFilter = role === 'maker' ? null : walletAddress;
     const filledLogs = await contract.queryFilter(
-      contract.filters.PrivateOrderFilled(BigInt(tradeId), filledFilter),
+      contract.filters.PrivateOrderFilled(BigInt(tradeId), null),
       safeFromBlock,
       'latest'
     );
@@ -1933,7 +1993,7 @@ export const readPrivateTokenAllowanceWei = async (
   tokenAddress: string,
   ownerAddress: string,
   spenderAddress: string,
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   recoverOnFailure = false
 ): Promise<bigint | null> => {
   const cotiEthers = await loadCotiEthersModule();
@@ -1965,7 +2025,7 @@ export const readPrivateTokenAllowanceWei = async (
   }
 };
 
-const resolveTradeAssetSnapshot = async (
+export const resolveTradeAssetSnapshot = async (
   assetTypeRaw: unknown,
   tokenAddressRaw: unknown,
   amountRaw: unknown,
@@ -2284,7 +2344,7 @@ export const recoverTradeAccessPayloadForMaker = async ({
 }: {
   tradeId: number;
   escrowContract?: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   callerAddress?: string;
 }): Promise<TradeRecoveryPayload> => {
   const cotiEthers = await loadCotiEthersModule();
@@ -2637,6 +2697,9 @@ export const fetchTradeSnapshotById = async (
     contractAddresses?: TradingContractAddresses;
   }
 ): Promise<TradeSnapshot> => {
+  if (CONFIGURED_COTI_NETWORK.environment !== 'mainnet') {
+    throw new Error('Legacy trade links require COTI Mainnet. Use the current Testnet order link.');
+  }
   const contractAddresses = options.contractAddresses ?? DEFAULT_TRADING_CONTRACT_ADDRESSES;
   if (options.escrowContract || isRecurringOrderContractAddress(options.escrowContract, contractAddresses)) {
     return fetchTradeSnapshotByIdFromContract(tradeId, options);
@@ -2678,6 +2741,8 @@ export const fetchRecentTradeSnapshots = async (
     limit?: number;
   }
 ): Promise<TradeSnapshot[]> => {
+  // These fixed deployments are Mainnet-only; Testnet discovery uses the V2 catalog.
+  if (CONFIGURED_COTI_NETWORK.environment !== 'mainnet') return [];
   const cotiEthers = await loadCotiEthersModule();
   const readProvider = await loadCotiReadProvider(true);
   const safeLimit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 48)));
@@ -2887,6 +2952,7 @@ export const fetchWalletTradeSnapshots = async (
     limit?: number;
   }
 ): Promise<TradeSnapshot[]> => {
+  if (CONFIGURED_COTI_NETWORK.environment !== 'mainnet') return [];
   if (!isWalletAddress(walletAddress)) {
     return [];
   }
@@ -3034,7 +3100,7 @@ export const fetchWalletTradeSnapshots = async (
 };
 
 const approvePrivateTokenSpender = async (
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   tokenAddress: string,
   spenderAddress: string,
   currentAllowanceWei: bigint | null = null,
@@ -3068,7 +3134,7 @@ const approvePrivateTokenSpender = async (
       spender: string,
       value: unknown,
       overrides: { gasLimit: bigint }
-    ): Promise<{ wait: () => Promise<unknown> }>;
+    ): Promise<{ hash?: unknown; wait: () => Promise<unknown> }>;
     estimateGas: (spender: string, value: unknown) => Promise<bigint>;
   };
   let approvalGasLimit = PRIVATE_TOKEN_WRITE_GAS_LIMIT;
@@ -3078,7 +3144,8 @@ const approvePrivateTokenSpender = async (
       typeof estimatedGas === 'bigint' && estimatedGas > 0n
         ? applyPrivacyPortalGasMargin(estimatedGas)
         : PRIVATE_TOKEN_EXACT_APPROVAL_GAS_FALLBACK;
-    const latestBlock = await signer.provider?.getBlock('latest').catch(() => null) ?? null;
+    const readProvider = await loadCotiReadProvider(true);
+    const latestBlock = await readProvider.getBlock('latest').catch(() => null) ?? null;
     if (!latestBlock || approvalGasLimit > latestBlock.gasLimit) {
       throw new Error('The private token approval gas limit exceeds the current COTI block gas limit.');
     }
@@ -3087,7 +3154,7 @@ const approvePrivateTokenSpender = async (
     await writeFunction(spenderAddress, encryptedApproval, {
       gasLimit: approvalGasLimit
     });
-  const approveReceipt = await approveTx.wait();
+  const approveReceipt = await waitForAppChainReceipt(approveTx, 'Private token approval');
   if (!approveReceipt || Number((approveReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
     throw new Error('Private token approval failed on-chain.');
   }
@@ -3102,7 +3169,7 @@ export const ensurePrivateTokenExactAllowance = async ({
   tokenSymbol = 'private token',
   onBeforeApproval
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   tokenAddress: string;
   spenderAddress: string;
@@ -3157,7 +3224,7 @@ export const ensurePrivateTokenExactAllowance = async ({
         account: string,
         isSpender: boolean,
         overrides: { gasLimit: bigint }
-      ): Promise<{ wait: () => Promise<unknown> }>;
+      ): Promise<{ hash?: unknown; wait: () => Promise<unknown> }>;
       estimateGas: (account: string, isSpender: boolean) => Promise<bigint>;
     };
     const estimatedGas = await reencryptAllowance.estimateGas(spenderAddress, false).catch(() => null);
@@ -3165,13 +3232,16 @@ export const ensurePrivateTokenExactAllowance = async ({
       typeof estimatedGas === 'bigint' && estimatedGas > 0n
         ? applyPrivacyPortalGasMargin(estimatedGas)
         : PRIVATE_TOKEN_EXACT_APPROVAL_GAS_FALLBACK;
-    const latestBlock = await signer.provider?.getBlock('latest').catch(() => null) ?? null;
+    const readProvider = await loadCotiReadProvider(true);
+    const latestBlock = await readProvider.getBlock('latest').catch(() => null) ?? null;
     if (!latestBlock || reencryptGasLimit > latestBlock.gasLimit) {
       throw new Error('The private token allowance refresh gas limit exceeds the current COTI block gas limit.');
     }
-    const reencryptReceipt = await (
-      await reencryptAllowance(spenderAddress, false, { gasLimit: reencryptGasLimit })
-    ).wait();
+    const reencryptTransaction = await reencryptAllowance(spenderAddress, false, { gasLimit: reencryptGasLimit });
+    const reencryptReceipt = await waitForAppChainReceipt(
+      reencryptTransaction,
+      'Private token allowance refresh'
+    );
     assertPrivacyPortalReceipt(reencryptReceipt, 'Private token allowance refresh');
     await assertPrivacyPortalSignerState(signer, ownerAddress);
     allowanceRecoveryWrote = true;
@@ -3253,7 +3323,7 @@ export const ensurePrivateTokenAccountEncryptionAddress = async ({
   encryptionAddress = ownerAddress,
   tokenSymbol = 'private token'
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   tokenAddress: string;
   ownerAddress: string;
   encryptionAddress?: string;
@@ -3296,7 +3366,7 @@ export const ensurePrivateTokenAccountEncryptionAddress = async ({
 };
 
 const refreshPrivateTokenAccountEncryptionAddress = async (
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   tokenAddress: string,
   ownerAddress: string,
   tokenSymbol = 'private token'
@@ -3310,7 +3380,7 @@ const refreshPrivateTokenAccountEncryptionAddress = async (
       ? error
       : new Error(`Unable to refresh private ${tokenSymbol} balance visibility for this wallet.`);
   });
-  const receipt = await tx.wait();
+  const receipt = await waitForAppChainReceipt(tx, `Private ${tokenSymbol} balance visibility refresh`);
   if (!receipt || Number((receipt as { status?: number | bigint }).status ?? 0) !== 1) {
     throw new Error(`Refreshing private ${tokenSymbol} balance visibility failed on-chain.`);
   }
@@ -3325,7 +3395,7 @@ export const ensurePrivateTokenSpendReady = async ({
   tokenSymbol = 'private token',
   skipBalanceCheck = false
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   tokenAddress: string;
   spenderAddress: string;
@@ -3404,7 +3474,7 @@ export const ensureTradeRequestPaymentReady = async ({
   requestAmountWei,
   spenderAddress = TRADE_ESCROW_CONTRACT_ADDRESS
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   requestAsset: TradeAssetPayload;
   requestAmountWei: bigint;
@@ -3437,7 +3507,7 @@ export const ensureTradeRequestPaymentReady = async ({
 };
 
 export const ensureTradeTokenAllowance = async (
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   ownerAddress: string,
   tokenAddress: string,
   requiredAmount: bigint,
@@ -3499,11 +3569,14 @@ export const ensureTradeTokenAllowance = async (
     tokenKind: 'erc20'
   });
   const approveTx = await tokenContract.approve(spenderAddress, MAX_ERC20_APPROVAL);
-  await approveTx.wait();
+  const approveReceipt = await waitForAppChainReceipt(approveTx, 'Public token approval');
+  if (!approveReceipt || Number((approveReceipt as { status?: number | bigint }).status ?? 0) !== 1) {
+    throw new Error('Public token approval failed on-chain.');
+  }
 };
 
 export const ensureTradeFeeTokenAllowance = async (
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   ownerAddress: string,
   requiredAmount: bigint
 ): Promise<void> => {
@@ -3519,73 +3592,6 @@ export const ensureTradeFeeTokenAllowance = async (
       ? publicFeeTokenRaw
       : REWARD_TOKEN_ADDRESS;
   await ensureTradeTokenAllowance(signer, ownerAddress, publicFeeTokenAddress, requiredAmount);
-};
-
-export const ensureGroupTokenFeeAllowance = async (
-  signer: Wallet | JsonRpcSigner,
-  ownerAddress: string,
-  tokenFeeAmount: bigint,
-  privateRewardTokenBalanceWei: bigint | null
-): Promise<void> => {
-  if (tokenFeeAmount <= 0n) {
-    return;
-  }
-
-  if (privateRewardTokenBalanceWei !== null && privateRewardTokenBalanceWei >= tokenFeeAmount) {
-    return;
-  }
-
-  const cotiEthers = await loadCotiEthersModule();
-  const groupContract = new cotiEthers.Contract(GROUP_CHAT_CONTRACT_ADDRESS, GROUP_CHAT_CONTRACT_ABI, signer);
-  const publicFeeTokenRaw = await groupContract.publicFeeToken().catch(() => null);
-  const publicFeeTokenAddress =
-    typeof publicFeeTokenRaw === 'string' && isWalletAddress(publicFeeTokenRaw)
-      ? publicFeeTokenRaw
-      : REWARD_TOKEN_ADDRESS;
-  const publicFeeTokenContract = new cotiEthers.Contract(publicFeeTokenAddress, ERC20_TOKEN_ABI, signer);
-  const allowanceRaw = await publicFeeTokenContract
-    .allowance(ownerAddress, GROUP_CHAT_CONTRACT_ADDRESS)
-    .catch(() => null);
-  const allowance = typeof allowanceRaw === 'bigint' ? allowanceRaw : 0n;
-  if (allowance >= tokenFeeAmount) {
-    return;
-  }
-
-  const approveTx = await publicFeeTokenContract.approve(GROUP_CHAT_CONTRACT_ADDRESS, MAX_ERC20_APPROVAL);
-  await approveTx.wait();
-};
-
-export const resolveGroupSubmitGasLimit = async (
-  contract: unknown,
-  groupId: number,
-  memoTuple: unknown,
-  paymentMode: number,
-  requiredFee: bigint
-): Promise<bigint | null> => {
-  try {
-    const submitWithMode = (contract as { submitGroupMessageWithMode?: unknown }).submitGroupMessageWithMode as
-      | {
-          estimateGas?: (
-            groupIdArg: number,
-            memoTupleArg: unknown,
-            paymentModeArg: number,
-            overrides: { value: bigint }
-          ) => Promise<bigint>;
-        }
-      | undefined;
-    const estimated =
-      submitWithMode?.estimateGas &&
-      (await submitWithMode.estimateGas(groupId, memoTuple, paymentMode, {
-        value: requiredFee
-      }));
-    if (typeof estimated !== 'bigint' || estimated <= 0n) {
-      return null;
-    }
-    const padded = estimated + GROUP_SUBMIT_GAS_BUFFER;
-    return padded > GROUP_SUBMIT_GAS_LIMIT_MAX ? GROUP_SUBMIT_GAS_LIMIT_MAX : padded;
-  } catch {
-    return null;
-  }
 };
 
 const toPrivacyPortalBigInt = (value: unknown, fallback = 0n): bigint => {
@@ -3772,6 +3778,182 @@ export const clearPrivacyPortalVerificationCache = (): void => {
   privacyPortalVerificationCache.clear();
 };
 
+const PRIVATE_TVL_FINALITY_LAG_BLOCKS = 5;
+const PRIVATE_TVL_MAX_FINALITY_LAG_BLOCKS = 100;
+
+type PrivateTvlBridgeReadContract = {
+  totalUserLiability: (overrides: { blockTag: number }) => Promise<unknown>;
+  getBridgeBalance?: (overrides: { blockTag: number }) => Promise<unknown>;
+  privateCoti?: (overrides: { blockTag: number }) => Promise<unknown>;
+  token?: (overrides: { blockTag: number }) => Promise<unknown>;
+  privateToken?: (overrides: { blockTag: number }) => Promise<unknown>;
+};
+
+type PrivateTvlTokenReadContract = {
+  balanceOf: (account: string, overrides: { blockTag: number }) => Promise<unknown>;
+  decimals: (overrides: { blockTag: number }) => Promise<unknown>;
+};
+
+type PrivateTvlBandReadContract = {
+  getReferenceData: (
+    base: string,
+    quote: string,
+    overrides: { blockTag: number }
+  ) => Promise<readonly unknown[]>;
+};
+
+const requirePrivateTvlAddress = (value: unknown, expected: string, label: string): void => {
+  if (!addressesMatch(value, expected)) throw new Error(`${label} does not match the reviewed catalog.`);
+};
+
+/**
+ * Reads the complete official COTI private-bridge TVL at one recent canonical block.
+ * This is keyless and never touches a browser wallet or private balance.
+ */
+export const readOfficialPrivateTvlSnapshot = async ({
+  finalityLagBlocks = PRIVATE_TVL_FINALITY_LAG_BLOCKS,
+  maxPriceAgeSeconds = PRIVATE_TVL_DEFAULT_MAX_PRICE_AGE_SECONDS
+}: {
+  finalityLagBlocks?: number;
+  maxPriceAgeSeconds?: string;
+} = {}): Promise<PrivateTvlSnapshot> => {
+  if (
+    !Number.isSafeInteger(finalityLagBlocks) ||
+    finalityLagBlocks <= 0 ||
+    finalityLagBlocks > PRIVATE_TVL_MAX_FINALITY_LAG_BLOCKS
+  ) {
+    throw new Error('Private TVL finality lag is invalid.');
+  }
+  const [cotiEthers, readProvider] = await Promise.all([
+    loadCotiEthersModule(),
+    loadCotiReadProvider(true)
+  ]);
+  const initialNetwork = await readProvider.getNetwork();
+  if (Number(initialNetwork.chainId) !== COTI_PRIVACY_PORTAL_CHAIN_ID) {
+    throw new Error('Private TVL provider is not connected to COTI Mainnet.');
+  }
+  const latestBlockNumber = await readProvider.getBlockNumber();
+  if (!Number.isSafeInteger(latestBlockNumber) || latestBlockNumber <= finalityLagBlocks) {
+    throw new Error('Private TVL safe head is unavailable.');
+  }
+  const safeBlockNumber = latestBlockNumber - finalityLagBlocks;
+  const safeBlock = await readProvider.getBlock(safeBlockNumber);
+  if (!safeBlock || typeof safeBlock.hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(safeBlock.hash)) {
+    throw new Error('Private TVL safe-head block is unavailable.');
+  }
+  const safeBlockHash = safeBlock.hash;
+  const blockTimestamp = toPrivacyPortalBigInt(safeBlock.timestamp, -1n);
+  if (blockTimestamp <= 0n) throw new Error('Private TVL safe-head timestamp is unavailable.');
+  const bandProxyAddress = PRIVATE_TVL_BAND_PROXY_BY_CHAIN_ID[COTI_PRIVACY_PORTAL_CHAIN_ID];
+  const codeAddresses = new Set<string>([bandProxyAddress]);
+  for (const pair of PRIVACY_TOKEN_PAIRS) {
+    codeAddresses.add(pair.bridgeAddress);
+    codeAddresses.add(pair.privateToken.address);
+    if (pair.publicToken.address) codeAddresses.add(pair.publicToken.address);
+  }
+  const codeResults = await Promise.all(
+    [...codeAddresses].map(async (address) => ({
+      address,
+      code: await readProvider.getCode(address, safeBlockNumber)
+    }))
+  );
+  for (const { address, code } of codeResults) {
+    if (isMissingContractCode(code)) throw new Error(`Private TVL reviewed runtime is missing at ${address}.`);
+  }
+
+  const bandContract = new cotiEthers.Contract(
+    bandProxyAddress,
+    BAND_STANDARD_REFERENCE_ABI,
+    readProvider
+  ) as unknown as PrivateTvlBandReadContract;
+  const observations = await Promise.all(PRIVACY_TOKEN_PAIRS.map(async (pair): Promise<PrivateTvlBridgeObservation> => {
+    const bridgeContract = new cotiEthers.Contract(
+      pair.bridgeAddress,
+      pair.bridgeKind === 'native' ? PRIVACY_NATIVE_BRIDGE_ABI : PRIVACY_ERC20_BRIDGE_ABI,
+      readProvider
+    ) as unknown as PrivateTvlBridgeReadContract;
+    const privateTokenContract = new cotiEthers.Contract(
+      pair.privateToken.address,
+      PRIVATE_ERC20_TOKEN_VNEXT_ABI,
+      readProvider
+    ) as unknown as PrivateTvlTokenReadContract;
+    const publicTokenContract = pair.publicToken.address
+      ? new cotiEthers.Contract(
+          pair.publicToken.address,
+          ERC20_TOKEN_ABI,
+          readProvider
+        ) as unknown as PrivateTvlTokenReadContract
+      : null;
+    const callOptions = { blockTag: safeBlockNumber };
+    const [liabilityRaw, privateDecimalsRaw, bandRaw, reserveRaw, publicDecimalsRaw, linkedPublic, linkedPrivate] =
+      await Promise.all([
+        bridgeContract.totalUserLiability(callOptions),
+        privateTokenContract.decimals(callOptions),
+        bandContract.getReferenceData(pair.oracleSymbol, 'USD', callOptions),
+        pair.bridgeKind === 'native'
+          ? bridgeContract.getBridgeBalance
+            ? bridgeContract.getBridgeBalance(callOptions)
+            : readProvider.getBalance(pair.bridgeAddress, safeBlockNumber)
+          : publicTokenContract?.balanceOf(pair.bridgeAddress, callOptions),
+        publicTokenContract ? publicTokenContract.decimals(callOptions) : Promise.resolve(pair.publicToken.decimals),
+        pair.bridgeKind === 'native'
+          ? Promise.resolve(null)
+          : bridgeContract.token?.(callOptions),
+        pair.bridgeKind === 'native'
+          ? bridgeContract.privateCoti?.(callOptions)
+          : bridgeContract.privateToken?.(callOptions)
+      ]);
+    if (reserveRaw === undefined || linkedPrivate === undefined) {
+      throw new Error(`Private TVL bridge ${pair.id} is missing a reviewed read surface.`);
+    }
+    if (pair.bridgeKind === 'erc20') {
+      if (!pair.publicToken.address || linkedPublic === undefined) {
+        throw new Error(`Private TVL bridge ${pair.id} is missing its public-token relationship.`);
+      }
+      requirePrivateTvlAddress(linkedPublic, pair.publicToken.address, `Private TVL ${pair.id} public token`);
+    }
+    requirePrivateTvlAddress(linkedPrivate, pair.privateToken.address, `Private TVL ${pair.id} private token`);
+    if (
+      Number(toPrivacyPortalBigInt(publicDecimalsRaw, -1n)) !== pair.publicToken.decimals ||
+      Number(toPrivacyPortalBigInt(privateDecimalsRaw, -1n)) !== pair.privateToken.decimals
+    ) {
+      throw new Error(`Private TVL ${pair.id} token decimals do not match the reviewed catalog.`);
+    }
+    if (!Array.isArray(bandRaw) || bandRaw.length < 3) {
+      throw new Error(`Private TVL ${pair.id} Band response is malformed.`);
+    }
+    return Object.freeze({
+      pairId: pair.id,
+      chainId: String(pair.chainId),
+      bridgeAddress: pair.bridgeAddress,
+      blockNumber: String(safeBlockNumber),
+      blockHash: safeBlockHash,
+      blockTimestamp: blockTimestamp.toString(),
+      reserveAtomic: toPrivacyPortalBigInt(reserveRaw).toString(),
+      liabilityAtomic: toPrivacyPortalBigInt(liabilityRaw).toString(),
+      band: Object.freeze({
+        base: pair.oracleSymbol,
+        quote: 'USD',
+        rateE18: toPrivacyPortalBigInt(bandRaw[0]).toString(),
+        lastUpdatedBase: toPrivacyPortalBigInt(bandRaw[1]).toString(),
+        lastUpdatedQuote: toPrivacyPortalBigInt(bandRaw[2]).toString()
+      })
+    });
+  }));
+
+  const [finalNetwork, canonicalBlock] = await Promise.all([
+    readProvider.getNetwork(),
+    readProvider.getBlock(safeBlockNumber)
+  ]);
+  if (
+    Number(finalNetwork.chainId) !== COTI_PRIVACY_PORTAL_CHAIN_ID ||
+    canonicalBlock?.hash?.toLowerCase() !== safeBlockHash.toLowerCase()
+  ) {
+    throw new Error('Private TVL canonical block changed during the read.');
+  }
+  return buildPrivateTvlSnapshot({ observations, bandProxyAddress, maxPriceAgeSeconds });
+};
+
 const requireVerifiedPrivacyPortalPair = async (pair: PrivacyTokenPair): Promise<PrivacyPairVerification> => {
   const verification = await verifyPrivacyPortalPair(pair);
   if (verification.status !== 'ready') {
@@ -3807,7 +3989,7 @@ export const readPrivacyPortalPairMetrics = async ({
 }: {
   pair: PrivacyTokenPair;
   ownerAddress?: string | null;
-  signer?: Wallet | JsonRpcSigner | null;
+  signer?: JsonRpcSigner | null;
 }): Promise<PrivacyPortalPairMetrics> => {
   const account = typeof ownerAddress === 'string' && isWalletAddress(ownerAddress) ? ownerAddress : null;
   const verification = await requireVerifiedPrivacyPortalPair(pair);
@@ -3984,7 +4166,7 @@ const assertPrivacyPortalReceipt = (receipt: unknown, label: string): void => {
 };
 
 const assertPrivacyPortalSignerState = async (
-  signer: Wallet | JsonRpcSigner,
+  signer: JsonRpcSigner,
   expectedAddress: string
 ): Promise<void> => {
   const actualAddress = await signer.getAddress();
@@ -4008,7 +4190,7 @@ const ensurePrivacyPortalPublicAllowance = async ({
   amountWei,
   onProgress
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   pair: PrivacyTokenPair;
   amountWei: bigint;
@@ -4025,12 +4207,14 @@ const ensurePrivacyPortalPublicAllowance = async ({
   }
   if (allowanceWei > 0n) {
     onProgress?.('public-approval-reset');
-    const resetReceipt = await (await tokenContract.approve(pair.bridgeAddress, 0n)).wait();
+    const resetTransaction = await tokenContract.approve(pair.bridgeAddress, 0n);
+    const resetReceipt = await waitForAppChainReceipt(resetTransaction, `${pair.publicToken.symbol} approval reset`);
     assertPrivacyPortalReceipt(resetReceipt, `${pair.publicToken.symbol} approval reset`);
     await assertPrivacyPortalSignerState(signer, ownerAddress);
   }
   onProgress?.('public-approval');
-  const approvalReceipt = await (await tokenContract.approve(pair.bridgeAddress, amountWei)).wait();
+  const approvalTransaction = await tokenContract.approve(pair.bridgeAddress, amountWei);
+  const approvalReceipt = await waitForAppChainReceipt(approvalTransaction, `${pair.publicToken.symbol} approval`);
   assertPrivacyPortalReceipt(approvalReceipt, `${pair.publicToken.symbol} approval`);
   await assertPrivacyPortalSignerState(signer, ownerAddress);
   const refreshedAllowanceWei = toPrivacyPortalBigInt(
@@ -4079,7 +4263,7 @@ export const estimatePrivacyPortalQuoteGas = async ({
   direction,
   amountWei
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   pair: PrivacyTokenPair;
   direction: PrivacyDirection;
@@ -4168,10 +4352,7 @@ export const estimatePrivacyPortalQuoteGas = async ({
       amountWei,
       quote
     });
-    const provider = signer.provider;
-    if (!provider) {
-      throw new Error('The selected signer is not connected to a network provider.');
-    }
+    const provider = await loadCotiReadProvider(true);
     const [feeData, latestBlock] = await Promise.all([
       provider.getFeeData(),
       provider.getBlock('latest')
@@ -4210,13 +4391,804 @@ export const estimatePrivacyPortalQuoteGas = async ({
   }
 };
 
+const SUCCESSOR_DEX_TOKEN_ABI = Object.freeze([
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function faucetAmount() view returns (uint256)',
+  'function faucetClaimed(address account) view returns (bool)',
+  'function publicAmountsEnabled() view returns (bool)'
+]);
+const SUCCESSOR_DEX_POSITION_NFT_ABI = Object.freeze([
+  'event Transfer(address indexed from,address indexed to,uint256 indexed tokenId)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function ownerOf(uint256 tokenId) view returns (address)'
+]);
+const SUCCESSOR_DEX_AUTHORITY_ABI = Object.freeze([
+  'function nextPositionId() view returns (uint256)',
+  'function positionMarketKey(uint256 positionId) view returns (bytes32)',
+  'function ownershipRevision(uint256 positionId) view returns (uint64)',
+  'function positionActive(uint256 positionId) view returns (bool)',
+  'function positionKind(uint256 positionId) view returns (uint8)',
+  'function reencryptMyPositionTerms(uint256 positionId,uint64 expectedOwnershipRevision) returns(bytes)'
+]);
+const SUCCESSOR_DEX_EPOCH_CAPACITY_ABI = Object.freeze([
+  'function sourceCount() view returns (uint8)',
+  'function sources(uint256 index) view returns (address)'
+]);
+const SUCCESSOR_DEX_ADAPTER_IDENTITY_ABI = Object.freeze([
+  'function bound() view returns (bool)',
+  'function pairKey() view returns (bytes32)',
+  'function token0() view returns (address)',
+  'function token1() view returns (address)',
+  'function sourceId() view returns (uint64)'
+]);
+const SUCCESSOR_DEX_AGGREGATE_CAPACITY_ABI = Object.freeze([
+  ...SUCCESSOR_DEX_ADAPTER_IDENTITY_ABI,
+  'function makerPositionCount() view returns (uint256)'
+]);
+const SUCCESSOR_DEX_SINGLE_CAPACITY_ABI = Object.freeze([
+  ...SUCCESSOR_DEX_ADAPTER_IDENTITY_ABI,
+  'function makerPositionId() view returns (uint256)'
+]);
+const SUCCESSOR_DEX_FIXED_HOST_ABI = Object.freeze([
+  'function getFixedLimitPositionCiphertexts(uint256 positionId) view returns(uint256,uint256,uint256,uint256,uint256,uint64 revision,uint64 actionCount,bool initialized,bool closed)',
+  'function getRangePositionCiphertexts(uint256 positionId) view returns(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64 revision,uint64 actionCount,bool initialized,bool closed)'
+]);
+
+export type SuccessorDexTokenFaucetState = Readonly<{
+  address: string;
+  claimed: boolean;
+  decimals: 6;
+  faucetAmount: bigint;
+  name: string;
+  symbol: string;
+}>;
+
+export type SuccessorDexPositionFamily = 'Aggregate' | 'Fixed' | 'Range' | 'Recurring';
+
+export const successorDexPositionFamilyForKind = (kind: number): SuccessorDexPositionFamily => {
+  if (kind === 1) return 'Aggregate';
+  if (kind === 2) return 'Fixed';
+  if (kind === 3) return 'Range';
+  if (kind === 4 || kind === 5) return 'Recurring';
+  throw new Error('Successor Position NFT has an invalid strategy kind.');
+};
+
+export type SuccessorDexPositionState = Readonly<{
+  actionCount: number;
+  closed: boolean;
+  family: SuccessorDexPositionFamily;
+  initialized: boolean;
+  kind: 1 | 2 | 3 | 4 | 5;
+  marketKey: string;
+  owner: string;
+  ownershipRevision: number;
+  pair: readonly [string, string];
+  paused: boolean;
+  positionId: string;
+  recurringClass: 'LL' | 'RR' | null;
+  revision: number;
+  runCount: number;
+  transactionHash: string | null;
+}>;
+
+export type SuccessorAggregateOwnerTerms = Readonly<{
+  accrued0: bigint;
+  accrued1: bigint;
+  accrued2: bigint;
+  accrued3: bigint;
+  actionCount: number;
+  currentMidpointQ: bigint;
+  family: 'Aggregate';
+  laneMode: 0 | 1;
+  maxInventory0Lots: bigint;
+  maxInventory1Lots: bigint;
+  minInventory0Lots: bigint;
+  minInventory1Lots: bigint;
+  positionId: string;
+  principal0Lots: bigint;
+  principal1Lots: bigint;
+  revision: number;
+  spreadFactorPpm: bigint;
+  startingMidpointQ: bigint;
+  targetLots: bigint;
+  totalMemberShares: bigint;
+  virtual0Lots: bigint;
+  virtual1Lots: bigint;
+}>;
+
+export type SuccessorRecurringOwnerTerms = Readonly<{
+  actionCount: number;
+  activationOutput0Lots: bigint;
+  activationOutput1Lots: bigint;
+  activeIndex: 0 | 1;
+  cooldownActions: bigint;
+  cycleCount: bigint;
+  cycleLimit: bigint;
+  endPrice0Q: bigint;
+  endPrice1Q: bigint;
+  family: 'Recurring';
+  inventory0Lots: bigint;
+  inventory1Lots: bigint;
+  lastSwitchRun: bigint;
+  minimumOutput0Lots: bigint;
+  minimumOutput1Lots: bigint;
+  nextMinimumInventory0Lots: bigint;
+  nextMinimumInventory1Lots: bigint;
+  originIndex: 0 | 1;
+  paused: boolean;
+  positionId: string;
+  recurringClass: 'LL' | 'RR';
+  revision: number;
+  runCount: number;
+  side0: 0 | 1;
+  side1: 0 | 1;
+  startPrice0Q: bigint;
+  startPrice1Q: bigint;
+  threshold0Lots: bigint;
+  threshold1Lots: bigint;
+  transitionCount: bigint;
+}>;
+
+export type SuccessorAggregateOrRecurringOwnerTerms =
+  | SuccessorAggregateOwnerTerms
+  | SuccessorRecurringOwnerTerms;
+
+const SUCCESSOR_OWNER_TERMS_CODER = AbiCoder.defaultAbiCoder();
+const SUCCESSOR_OWNER_TERMS_UINT64_MAX = (1n << 64n) - 1n;
+const SUCCESSOR_OWNER_TERMS_MAX_PRICE_Q = 100_000_000_000n;
+
+const successorOwnerTermCiphertexts = (
+  decoded: unknown,
+  expectedLength: number,
+  family: string
+): readonly bigint[] => {
+  const tuple = decoded as { userCiphertexts?: unknown; [key: number]: unknown };
+  const raw = tuple?.userCiphertexts ?? tuple?.[0];
+  if (!raw || typeof raw !== 'object' || !(Symbol.iterator in Object(raw))) {
+    throw new Error(`${family} owner-private terms are incomplete.`);
+  }
+  const values = Array.from(raw as Iterable<unknown>, (value) => BigInt(value as bigint));
+  if (values.length !== expectedLength) {
+    throw new Error(`${family} owner-private terms are incomplete.`);
+  }
+  return values;
+};
+
+const successorOwnerTermUint64 = (value: bigint, label: string): bigint => {
+  if (value < 0n || value > SUCCESSOR_OWNER_TERMS_UINT64_MAX) {
+    throw new Error(`${label} is outside the uint64 domain.`);
+  }
+  return value;
+};
+
+const successorOwnerTermCount = (value: unknown, label: string, minimum: number): number => {
+  const count = Number(value);
+  if (!Number.isSafeInteger(count) || count < minimum) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return count;
+};
+
+const decodeSuccessorAggregateOwnerTerms = ({
+  decrypt,
+  encoded,
+  positionId
+}: {
+  decrypt: (userCiphertext: bigint) => bigint;
+  encoded: string;
+  positionId: string;
+}): SuccessorAggregateOwnerTerms => {
+  const [decoded] = SUCCESSOR_OWNER_TERMS_CODER.decode([
+    'tuple(uint256[18] userCiphertexts,uint64 revision,uint64 actionCount)'
+  ], encoded);
+  const values = successorOwnerTermCiphertexts(decoded, 18, 'Aggregate')
+    .map((ciphertext, index) => successorOwnerTermUint64(
+      BigInt(decrypt(ciphertext)),
+      `Aggregate owner-private field ${index}`
+    ));
+  const revision = successorOwnerTermCount(decoded.revision ?? decoded[1], 'Aggregate revision', 1);
+  const actionCount = successorOwnerTermCount(decoded.actionCount ?? decoded[2], 'Aggregate action count', 1);
+  const laneMode = values[7];
+  if (laneMode !== 0n && laneMode !== 1n) {
+    throw new Error('Aggregate lane mode is invalid.');
+  }
+  if (values[11] === 0n || values[16] === 0n || values[17] === 0n ||
+      values[16] > SUCCESSOR_OWNER_TERMS_MAX_PRICE_Q ||
+      values[17] > SUCCESSOR_OWNER_TERMS_MAX_PRICE_Q) {
+    throw new Error('Aggregate pricing terms are invalid.');
+  }
+  return Object.freeze({
+    accrued0: values[3],
+    accrued1: values[4],
+    accrued2: values[5],
+    accrued3: values[6],
+    actionCount,
+    currentMidpointQ: values[17],
+    family: 'Aggregate',
+    laneMode: Number(laneMode) as 0 | 1,
+    maxInventory0Lots: values[13],
+    maxInventory1Lots: values[15],
+    minInventory0Lots: values[12],
+    minInventory1Lots: values[14],
+    positionId,
+    principal0Lots: values[0],
+    principal1Lots: values[1],
+    revision,
+    spreadFactorPpm: values[11],
+    startingMidpointQ: values[16],
+    targetLots: values[8],
+    totalMemberShares: values[2],
+    virtual0Lots: values[9],
+    virtual1Lots: values[10]
+  });
+};
+
+const decodeSuccessorRecurringOwnerTerms = ({
+  decrypt,
+  encoded,
+  positionId
+}: {
+  decrypt: (userCiphertext: bigint) => bigint;
+  encoded: string;
+  positionId: string;
+}): SuccessorRecurringOwnerTerms => {
+  const [decoded] = SUCCESSOR_OWNER_TERMS_CODER.decode([
+    'tuple(uint256[23] userCiphertexts,uint64 revision,uint64 actionCount,uint64 runCount,uint8 recurringClass,bool paused)'
+  ], encoded);
+  const values = successorOwnerTermCiphertexts(decoded, 23, 'Recurring')
+    .map((ciphertext, index) => successorOwnerTermUint64(
+      BigInt(decrypt(ciphertext)),
+      `Recurring owner-private field ${index}`
+    ));
+  const revision = successorOwnerTermCount(decoded.revision ?? decoded[1], 'Recurring revision', 1);
+  const actionCount = successorOwnerTermCount(decoded.actionCount ?? decoded[2], 'Recurring action count', 1);
+  const runCount = successorOwnerTermCount(decoded.runCount ?? decoded[3], 'Recurring run count', 0);
+  const recurringClassValue = Number(decoded.recurringClass ?? decoded[4]);
+  if ((values[0] !== 0n && values[0] !== 1n) ||
+      (values[1] !== 0n && values[1] !== 1n) ||
+      (values[16] !== 0n && values[16] !== 1n) ||
+      (values[17] !== 0n && values[17] !== 1n) ||
+      (recurringClassValue !== 1 && recurringClassValue !== 2) ||
+      [values[2], values[3], values[4], values[5]].some((value) =>
+        value === 0n || value > SUCCESSOR_OWNER_TERMS_MAX_PRICE_Q
+      )) {
+    throw new Error('Recurring owner-private terms failed validation.');
+  }
+  return Object.freeze({
+    actionCount,
+    activationOutput0Lots: values[6],
+    activationOutput1Lots: values[7],
+    activeIndex: Number(values[16]) as 0 | 1,
+    cooldownActions: values[18],
+    cycleCount: values[20],
+    cycleLimit: values[19],
+    endPrice0Q: values[4],
+    endPrice1Q: values[5],
+    family: 'Recurring',
+    inventory0Lots: values[14],
+    inventory1Lots: values[15],
+    lastSwitchRun: values[22],
+    minimumOutput0Lots: values[8],
+    minimumOutput1Lots: values[9],
+    nextMinimumInventory0Lots: values[12],
+    nextMinimumInventory1Lots: values[13],
+    originIndex: Number(values[17]) as 0 | 1,
+    paused: Boolean(decoded.paused ?? decoded[5]),
+    positionId,
+    recurringClass: recurringClassValue === 1 ? 'LL' : 'RR',
+    revision,
+    runCount,
+    side0: Number(values[0]) as 0 | 1,
+    side1: Number(values[1]) as 0 | 1,
+    startPrice0Q: values[2],
+    startPrice1Q: values[3],
+    threshold0Lots: values[10],
+    threshold1Lots: values[11],
+    transitionCount: values[21]
+  });
+};
+
+export const __decodeSuccessorAggregateOwnerTermsForTest = decodeSuccessorAggregateOwnerTerms;
+export const __decodeSuccessorRecurringOwnerTermsForTest = decodeSuccessorRecurringOwnerTerms;
+
+export const revealSuccessorAggregateOrRecurringPositionTerms = async ({
+  manifest,
+  position,
+  signer
+}: {
+  manifest: SuccessorDexManifest;
+  position: Pick<SuccessorDexPositionState,
+    'family' | 'kind' | 'owner' | 'ownershipRevision' | 'positionId'>;
+  signer: JsonRpcSigner;
+}): Promise<SuccessorAggregateOrRecurringOwnerTerms> => {
+  if (position.family !== 'Aggregate' && position.family !== 'Recurring') {
+    throw new Error('This owner-term decoder supports Aggregate and Recurring positions only.');
+  }
+  if (!Number.isSafeInteger(position.ownershipRevision) || position.ownershipRevision < 1) {
+    throw new Error('Position ownership revision is unavailable. Refresh the position.');
+  }
+  const aesKey = readSignerAesKey(signer);
+  if (!aesKey) throw new Error('Unlock privacy before revealing position terms.');
+  const cotiEthers = await loadCotiEthersModule();
+  if (cotiEthers.getAddress(await signer.getAddress()) !== cotiEthers.getAddress(position.owner)) {
+    throw new Error('Only the current Position NFT owner can reveal these terms.');
+  }
+  const authorityAddress = manifest.contracts['work-authority']?.address;
+  if (!authorityAddress) throw new Error('Successor work authority is missing.');
+  const authority = new cotiEthers.Contract(authorityAddress, SUCCESSOR_DEX_AUTHORITY_ABI, signer);
+  const reencrypt = authority.getFunction('reencryptMyPositionTerms');
+  const encoded = String(await reencrypt.staticCall(
+    BigInt(position.positionId),
+    BigInt(position.ownershipRevision)
+  ));
+  const decrypt = (userCiphertext: bigint) => BigInt(decryptUint(userCiphertext, aesKey));
+  const terms = position.family === 'Aggregate'
+    ? decodeSuccessorAggregateOwnerTerms({ decrypt, encoded, positionId: position.positionId })
+    : decodeSuccessorRecurringOwnerTerms({ decrypt, encoded, positionId: position.positionId });
+  const kindMismatch = terms.family === 'Aggregate'
+    ? position.kind !== 1
+    : position.kind === 4
+      ? terms.recurringClass !== 'LL'
+      : position.kind === 5
+        ? terms.recurringClass !== 'RR'
+        : true;
+  if (kindMismatch) {
+    throw new Error('Owner-private position terms do not match the Position NFT kind.');
+  }
+  return terms;
+};
+
+export type SuccessorDexAdmissionCapacity = Readonly<{
+  adapterAddress: string;
+  available: boolean;
+  bridgeAddress: string;
+  capacityModel: SuccessorDexAdmissionCapacityModel;
+  currentPositionCount: string;
+  occupiedPositionId: string | null;
+  remainingCapacity: 'unbounded-by-adapter' | '0' | '1';
+  sourceId: number;
+}>;
+
+export type SuccessorDexChainSnapshot = Readonly<{
+  admissionCapacityByPair: Readonly<Record<string, Readonly<Partial<
+    Record<SuccessorDexAdmissionFamily, SuccessorDexAdmissionCapacity>
+  >>>>;
+  latestBlock: number;
+  positionOwnersVerified: true;
+  positions: readonly SuccessorDexPositionState[];
+  runtimeCount: number;
+  tokens: readonly SuccessorDexTokenFaucetState[];
+}>;
+
+export const successorDexAdmissionAvailable = (
+  snapshot: Pick<SuccessorDexChainSnapshot, 'admissionCapacityByPair'>,
+  displayPair: string,
+  family: SuccessorDexAdmissionFamily
+): boolean => snapshot.admissionCapacityByPair[displayPair]?.[family]?.available === true;
+
+const readSuccessorDexToken = async ({
+  cotiEthers,
+  manifestToken,
+  provider,
+  walletAddress
+}: {
+  cotiEthers: Awaited<ReturnType<typeof loadCotiEthersModule>>;
+  manifestToken: SuccessorDexToken;
+  provider: Awaited<ReturnType<typeof loadCotiReadProvider>>;
+  walletAddress: string | null;
+}): Promise<SuccessorDexTokenFaucetState> => {
+  const contract = new cotiEthers.Contract(
+    manifestToken.address,
+    SUCCESSOR_DEX_TOKEN_ABI,
+    provider
+  );
+  const [name, symbol, decimals, faucetAmount, publicAmountsEnabled, claimed] = await Promise.all([
+    contract.name(),
+    contract.symbol(),
+    contract.decimals(),
+    contract.faucetAmount(),
+    contract.publicAmountsEnabled(),
+    walletAddress ? contract.faucetClaimed(walletAddress) : Promise.resolve(false)
+  ]);
+  if (String(name) !== manifestToken.name || String(symbol) !== manifestToken.symbol ||
+      BigInt(decimals) !== 6n || BigInt(faucetAmount) !== BigInt(manifestToken.faucetAmountRaw) ||
+      publicAmountsEnabled !== false) {
+    throw new Error(`${manifestToken.symbol} metadata does not match the successor deployment.`);
+  }
+  return Object.freeze({
+    address: manifestToken.address,
+    claimed: claimed === true,
+    decimals: 6,
+    faucetAmount: BigInt(faucetAmount),
+    name: manifestToken.name,
+    symbol: manifestToken.symbol
+  });
+};
+
+const readSuccessorDexPairAdmissionCapacity = async ({
+  cotiEthers,
+  manifest,
+  pair,
+  provider,
+  snapshotBlock
+}: {
+  cotiEthers: Awaited<ReturnType<typeof loadCotiEthersModule>>;
+  manifest: SuccessorDexManifest;
+  pair: SuccessorDexPair;
+  provider: Awaited<ReturnType<typeof loadCotiReadProvider>>;
+  snapshotBlock: number;
+}): Promise<readonly [
+  string,
+  Readonly<Partial<Record<SuccessorDexAdmissionFamily, SuccessorDexAdmissionCapacity>>>
+]> => {
+  const entries = Object.entries(pair.admissionAdapters) as Array<
+    [SuccessorDexAdmissionFamily, NonNullable<SuccessorDexPair['admissionAdapters'][SuccessorDexAdmissionFamily]>]
+  >;
+  if (pair.sourceCount === 0) {
+    if (entries.length !== 0 || pair.epochController !== null) {
+      throw new Error(`${pair.displayPair} sparse admission graph is invalid.`);
+    }
+    return Object.freeze([pair.displayPair, Object.freeze({})] as const);
+  }
+  if (!pair.epochController || entries.length !== pair.sourceCount) {
+    throw new Error(`${pair.displayPair} admission graph is incomplete.`);
+  }
+  const epoch = new cotiEthers.Contract(
+    pair.epochController,
+    SUCCESSOR_DEX_EPOCH_CAPACITY_ABI,
+    provider
+  );
+  const epochSourceCount = BigInt(await epoch.sourceCount({ blockTag: snapshotBlock }));
+  if (epochSourceCount !== BigInt(pair.sourceCount)) {
+    throw new Error(`${pair.displayPair} registered source count changed.`);
+  }
+  const capacities = await Promise.all(entries.map(async ([family, binding]) => {
+    const adapterEntry = manifest.contracts[binding.adapterRoleKey];
+    const bridgeEntry = manifest.contracts[binding.bridgeRoleKey];
+    if (!adapterEntry || !bridgeEntry) {
+      throw new Error(`${pair.displayPair} ${family} admission role is missing.`);
+    }
+    const aggregate = binding.capacityModel === 'multi-position-count';
+    const adapter = new cotiEthers.Contract(
+      adapterEntry.address,
+      aggregate ? SUCCESSOR_DEX_AGGREGATE_CAPACITY_ABI : SUCCESSOR_DEX_SINGLE_CAPACITY_ABI,
+      provider
+    );
+    const [registeredSource, bound, pairKey, token0, token1, sourceId, makerValue] = await Promise.all([
+      epoch.sources(binding.sourceId - 1, { blockTag: snapshotBlock }),
+      adapter.bound({ blockTag: snapshotBlock }),
+      adapter.pairKey({ blockTag: snapshotBlock }),
+      adapter.token0({ blockTag: snapshotBlock }),
+      adapter.token1({ blockTag: snapshotBlock }),
+      adapter.sourceId({ blockTag: snapshotBlock }),
+      aggregate
+        ? adapter.makerPositionCount({ blockTag: snapshotBlock })
+        : adapter.makerPositionId({ blockTag: snapshotBlock })
+    ]);
+    if (bound !== true ||
+        String(pairKey).toLowerCase() !== pair.marketKey.toLowerCase() ||
+        cotiEthers.getAddress(String(token0)).toLowerCase() !== pair.token0.toLowerCase() ||
+        cotiEthers.getAddress(String(token1)).toLowerCase() !== pair.token1.toLowerCase() ||
+        BigInt(sourceId) !== BigInt(binding.sourceId) ||
+        cotiEthers.getAddress(String(registeredSource)).toLowerCase() !==
+          bridgeEntry.address.toLowerCase()) {
+      throw new Error(`${pair.displayPair} ${family} live admission identity is invalid.`);
+    }
+    const makerPositionValue = BigInt(makerValue);
+    const capacity = aggregate
+      ? Object.freeze({
+          adapterAddress: adapterEntry.address,
+          available: true,
+          bridgeAddress: bridgeEntry.address,
+          capacityModel: binding.capacityModel,
+          currentPositionCount: makerPositionValue.toString(),
+          occupiedPositionId: null,
+          remainingCapacity: 'unbounded-by-adapter' as const,
+          sourceId: binding.sourceId
+        })
+      : Object.freeze({
+          adapterAddress: adapterEntry.address,
+          available: makerPositionValue === 0n,
+          bridgeAddress: bridgeEntry.address,
+          capacityModel: binding.capacityModel,
+          currentPositionCount: makerPositionValue === 0n ? '0' : '1',
+          occupiedPositionId: makerPositionValue === 0n ? null : makerPositionValue.toString(),
+          remainingCapacity: makerPositionValue === 0n ? '1' as const : '0' as const,
+          sourceId: binding.sourceId
+        });
+    return [family, capacity] as const;
+  }));
+  return Object.freeze([
+    pair.displayPair,
+    Object.freeze(Object.fromEntries(capacities))
+  ] as const);
+};
+
+/** Reads only public successor deployment identity, faucet state, and owner NFT lifecycle metadata. */
+export const readSuccessorDexDeployment = async ({
+  finalityLagBlocks,
+  manifest,
+  walletAddress = ''
+}: {
+  finalityLagBlocks: number;
+  manifest: SuccessorDexManifest;
+  walletAddress?: string;
+}): Promise<SuccessorDexChainSnapshot> => {
+  if (!Number.isSafeInteger(finalityLagBlocks) || finalityLagBlocks < 1 || finalityLagBlocks > 64) {
+    throw new Error('Successor DEX finality lag is invalid.');
+  }
+  const [cotiEthers, provider] = await Promise.all([
+    loadCotiEthersModule(),
+    loadCotiReadProvider(true)
+  ]);
+  const network = await provider.getNetwork();
+  if (BigInt(network.chainId) !== BigInt(manifest.chainId)) {
+    throw new Error('Successor DEX reader is connected to another chain.');
+  }
+  const latestBlock = await provider.getBlockNumber();
+  if (latestBlock < manifest.deploymentBlockRange[1] + finalityLagBlocks) {
+    throw new Error('Successor DEX deployment is not finalized.');
+  }
+  const snapshotBlock = latestBlock - finalityLagBlocks;
+  const canonicalBlock = await provider.getBlock(snapshotBlock);
+  if (!canonicalBlock?.hash) throw new Error('Successor DEX finalized block is unavailable.');
+  const contracts = Object.entries(manifest.contracts);
+  for (let offset = 0; offset < contracts.length; offset += 8) {
+    const batch = contracts.slice(offset, offset + 8);
+    const codes = await Promise.all(batch.map(([, contract]) => provider.getCode(contract.address)));
+    codes.forEach((code, index) => {
+      if (code === '0x' || cotiEthers.keccak256(code).toLowerCase() !== batch[index][1].runtimeHash) {
+        throw new Error(`${batch[index][0]} runtime does not match the successor manifest.`);
+      }
+    });
+  }
+  const normalizedWallet = walletAddress.trim()
+    ? cotiEthers.getAddress(walletAddress.trim()).toLowerCase()
+    : null;
+  const positionToken = new cotiEthers.Contract(
+    manifest.positionNFT,
+    SUCCESSOR_DEX_POSITION_NFT_ABI,
+    provider
+  );
+  const authorityEntry = manifest.contracts['work-authority'];
+  if (!authorityEntry) throw new Error('Successor DEX work authority is missing.');
+  const authority = new cotiEthers.Contract(authorityEntry.address, SUCCESSOR_DEX_AUTHORITY_ABI, provider);
+  const tokensPromise = Promise.all(manifest.tokens.map((manifestToken) => readSuccessorDexToken({
+      cotiEthers,
+      manifestToken,
+      provider,
+      walletAddress: normalizedWallet
+    })));
+  const admissionCapacityPromise = Promise.all(manifest.pairs.map((pair) =>
+    readSuccessorDexPairAdmissionCapacity({
+      cotiEthers,
+      manifest,
+      pair,
+      provider,
+      snapshotBlock
+    })
+  ));
+  const positions: SuccessorDexPositionState[] = [];
+  if (normalizedWallet) {
+    const [nextPositionIdValue, nftBalanceValue] = await Promise.all([
+      authority.nextPositionId({ blockTag: snapshotBlock }),
+      positionToken.balanceOf(normalizedWallet, { blockTag: snapshotBlock })
+    ]);
+    const nextPositionId = BigInt(nextPositionIdValue);
+    const nftBalance = BigInt(nftBalanceValue);
+    const transferEvent = positionToken.interface.getEvent('Transfer');
+    if (!transferEvent) throw new Error('Successor Position NFT Transfer ABI is unavailable.');
+    const outgoingTopics = positionToken.interface.encodeFilterTopics(transferEvent, [normalizedWallet, null, null]);
+    const incomingTopics = positionToken.interface.encodeFilterTopics(transferEvent, [null, normalizedWallet, null]);
+    const transfers = new Map<string, PositionNftTransfer>();
+    const startBlock = manifest.contracts['position-nft']?.deploymentBlock;
+    if (!Number.isSafeInteger(startBlock) || Number(startBlock) > snapshotBlock) {
+      throw new Error('Successor Position NFT deployment block is invalid.');
+    }
+    for (let fromBlock = Number(startBlock); fromBlock <= snapshotBlock; fromBlock += 10_000) {
+      const toBlock = Math.min(snapshotBlock, fromBlock + 9_999);
+      const logBatches = await Promise.all([outgoingTopics, incomingTopics].map((topics) => provider.getLogs({
+        address: manifest.positionNFT,
+        fromBlock,
+        toBlock,
+        topics
+      })));
+      for (const log of logBatches.flat()) {
+        const parsed = positionToken.interface.parseLog(log);
+        if (!parsed || parsed.name !== 'Transfer' || log.removed) {
+          throw new Error('Successor Position NFT history contains an invalid Transfer log.');
+        }
+        const transfer = Object.freeze({
+          blockNumber: BigInt(log.blockNumber),
+          transactionIndex: BigInt(log.transactionIndex),
+          logIndex: BigInt(log.index),
+          from: String(parsed.args[0]),
+          to: String(parsed.args[1]),
+          positionId: BigInt(parsed.args[2])
+        });
+        const key = `${log.blockHash}:${log.transactionHash}:${log.index}`;
+        const duplicate = transfers.get(key);
+        if (duplicate && (
+          duplicate.blockNumber !== transfer.blockNumber ||
+          duplicate.transactionIndex !== transfer.transactionIndex ||
+          duplicate.logIndex !== transfer.logIndex ||
+          duplicate.from.toLowerCase() !== transfer.from.toLowerCase() ||
+          duplicate.to.toLowerCase() !== transfer.to.toLowerCase() ||
+          duplicate.positionId !== transfer.positionId
+        )) throw new Error('Successor Position NFT history contains conflicting duplicate logs.');
+        transfers.set(key, transfer);
+      }
+    }
+    const ownedPositionIds = reconcileOwnedPositionIds({
+      transfers: [...transfers.values()],
+      owner: normalizedWallet,
+      nextPositionId,
+      nftBalance
+    });
+    const pairByMarketKey = new Map(manifest.pairs.map((pair) => [pair.marketKey.toLowerCase(), pair]));
+    const seedByPositionId = new Map(manifest.strategies.map((seed) => [seed.positionId, seed]));
+    positions.push(...await Promise.all(ownedPositionIds.map(async (positionId): Promise<SuccessorDexPositionState> => {
+      const [ownerValue, marketKeyValue, ownershipRevisionValue, activeValue, kindValue] = await Promise.all([
+        positionToken.ownerOf(positionId, { blockTag: snapshotBlock }),
+        authority.positionMarketKey(positionId, { blockTag: snapshotBlock }),
+        authority.ownershipRevision(positionId, { blockTag: snapshotBlock }),
+        authority.positionActive(positionId, { blockTag: snapshotBlock }),
+        authority.positionKind(positionId, { blockTag: snapshotBlock })
+      ]);
+      const owner = String(ownerValue).toLowerCase();
+      if (owner !== normalizedWallet) throw new Error(`Position ${positionId} owner changed during discovery.`);
+      const marketKey = String(marketKeyValue).toLowerCase();
+      const pairBinding = pairByMarketKey.get(marketKey);
+      if (!pairBinding) throw new Error(`Position ${positionId} uses an unknown canonical market.`);
+      const pairSymbols = pairBinding.displayPair.split('/');
+      if (pairSymbols.length !== 2) throw new Error(`Position ${positionId} pair metadata is invalid.`);
+      const kind = Number(kindValue);
+      const family = successorDexPositionFamilyForKind(kind);
+      const ownershipRevision = Number(ownershipRevisionValue);
+      if (!Number.isSafeInteger(ownershipRevision) || ownershipRevision < 1) {
+        throw new Error(`Position ${positionId} ownership revision is invalid.`);
+      }
+      let actionCount = 0;
+      let closed = !activeValue;
+      let initialized = true;
+      const paused = false;
+      let revision = 0;
+      const runCount = 0;
+      if (family === 'Fixed' || family === 'Range') {
+        const pairSlug = pairBinding.displayPair.replace('/', '-').toLowerCase();
+        const host = manifest.contracts[`spb-${pairSlug}-${family.toLowerCase()}-host`];
+        if (!host) throw new Error(`Position ${positionId} host is missing.`);
+        try {
+          let value: readonly unknown[];
+          let revisionIndex: number;
+          let actionIndex: number;
+          let initializedIndex: number;
+          let closedIndex: number;
+          if (family === 'Fixed') {
+            value = await new cotiEthers.Contract(host.address, SUCCESSOR_DEX_FIXED_HOST_ABI, provider)
+              .getFixedLimitPositionCiphertexts(positionId, { blockTag: snapshotBlock });
+            revisionIndex = 5; actionIndex = 6; initializedIndex = 7; closedIndex = 8;
+          } else {
+            value = await new cotiEthers.Contract(host.address, SUCCESSOR_DEX_FIXED_HOST_ABI, provider)
+              .getRangePositionCiphertexts(positionId, { blockTag: snapshotBlock });
+            revisionIndex = 7; actionIndex = 8; initializedIndex = 9; closedIndex = 10;
+          }
+          actionCount = Number(value[actionIndex]);
+          closed = Boolean(value[closedIndex]);
+          initialized = Boolean(value[initializedIndex]);
+          revision = Number(value[revisionIndex]);
+        } catch (error) {
+          throw new Error(`Position ${positionId} lifecycle state is unavailable: ${error instanceof Error ? error.message : 'unknown host read failure'}`);
+        }
+      }
+      return Object.freeze({
+        actionCount,
+        closed,
+        family,
+        initialized,
+        kind: kind as 1 | 2 | 3 | 4 | 5,
+        marketKey,
+        owner,
+        ownershipRevision,
+        pair: Object.freeze([pairSymbols[0], pairSymbols[1]]) as readonly [string, string],
+        paused,
+        positionId: positionId.toString(),
+        recurringClass: kind === 4 ? 'LL' : kind === 5 ? 'RR' : null,
+        revision,
+        runCount,
+        transactionHash: seedByPositionId.get(positionId.toString())?.transactionHash ?? null
+      });
+    })));
+  }
+  const confirmedBlock = await provider.getBlock(snapshotBlock);
+  if (!confirmedBlock?.hash || confirmedBlock.hash.toLowerCase() !== canonicalBlock.hash.toLowerCase()) {
+    throw new Error('Successor DEX finalized block changed during position discovery.');
+  }
+  const tokens = await tokensPromise;
+  const admissionCapacityByPair = Object.freeze(Object.fromEntries(
+    await admissionCapacityPromise
+  ));
+  return Object.freeze({
+    admissionCapacityByPair,
+    latestBlock: snapshotBlock,
+    positionOwnersVerified: true,
+    positions: Object.freeze(positions),
+    runtimeCount: contracts.length,
+    tokens: Object.freeze(tokens)
+  });
+};
+
+export const claimSuccessorDexTestToken = async ({
+  capability,
+  manifest,
+  onSubmitted,
+  symbol
+}: {
+  capability: OwnerTradeV2MetaMaskCapability;
+  manifest: SuccessorDexManifest;
+  onSubmitted?: (transactionHash: string) => void;
+  symbol: string;
+}): Promise<string> => {
+  const binding = getOwnerTradeV2CapabilityBinding(capability);
+  await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);
+  if (binding.chainId !== BigInt(manifest.chainId)) {
+    throw new Error('Successor DEX faucet requires COTI Testnet.');
+  }
+  const manifestToken = manifest.tokens.find((token) => token.symbol === symbol);
+  if (!manifestToken) throw new Error('The selected successor test token is unavailable.');
+  const [cotiEthers, provider] = await Promise.all([
+    loadCotiEthersModule(),
+    loadCotiReadProvider(true)
+  ]);
+  const before = await readSuccessorDexToken({
+    cotiEthers,
+    manifestToken,
+    provider,
+    walletAddress: binding.ownerAddress
+  });
+  if (before.claimed) throw new Error(`${symbol} was already claimed by this wallet.`);
+  const request = buildTestnetFaucetTransactionRequest({
+    address: manifestToken.address,
+    kind: 'private'
+  });
+  await assertOwnerTradeV2CapabilitySnapshotCurrent(binding);
+  const transaction = await binding.signer.sendTransaction(request);
+  validateTestnetFaucetTransaction(transaction, {
+    expectedChainId: BigInt(manifest.chainId),
+    expectedFrom: binding.ownerAddress,
+    expectedToken: manifestToken.address
+  });
+  const transactionHash = transaction.hash.toLowerCase();
+  onSubmitted?.(transactionHash);
+  const receipt = await waitForOwnerTradeV2Receipt(binding, transactionHash) as {
+    from?: string;
+    hash?: string;
+    status?: bigint | number;
+    to?: string | null;
+  };
+  if (Number(receipt.status) !== 1 || receipt.from?.toLowerCase() !== binding.ownerAddress.toLowerCase() ||
+      receipt.to?.toLowerCase() !== manifestToken.address.toLowerCase()) {
+    throw new Error('Successor DEX faucet receipt does not match the selected claim.');
+  }
+  const after = await readSuccessorDexToken({
+    cotiEthers,
+    manifestToken,
+    provider,
+    walletAddress: binding.ownerAddress
+  });
+  if (!after.claimed) throw new Error('Successor DEX faucet receipt succeeded, but claim state is not visible yet.');
+  return receipt.hash?.toLowerCase() || transactionHash;
+};
+
 export const estimatePrivacyPortalNativeDepositGasReserveWei = async ({
   signer,
   ownerAddress,
   pair,
   amountWei
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   pair: PrivacyTokenPair;
   amountWei: bigint;
@@ -4229,10 +5201,7 @@ export const estimatePrivacyPortalNativeDepositGasReserveWei = async ({
       return 0n;
     }
     await assertPrivacyPortalSignerState(signer, ownerAddress);
-    const provider = signer.provider;
-    if (!provider) {
-      throw new Error('The selected signer is not connected to a network provider.');
-    }
+    const provider = await loadCotiReadProvider(true);
     const [quote, feeData, latestBlock, nativeBalanceWei] = await Promise.all([
       readPrivacyPortalQuote({
         pair,
@@ -4347,7 +5316,7 @@ export const executePrivacyPortalConversion = async ({
   amountWei,
   onProgress
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   pair: PrivacyTokenPair;
   direction: PrivacyDirection;
@@ -4461,10 +5430,7 @@ export const executePrivacyPortalConversion = async ({
       amountWei,
       quote
     });
-    const provider = signer.provider;
-    if (!provider) {
-      throw new Error('The selected signer is not connected to a network provider.');
-    }
+    const provider = await loadCotiReadProvider(true);
     const [latestBlock, feeData, latestNativeBalance] = await Promise.all([
       provider.getBlock('latest'),
       provider.getFeeData(),
@@ -4497,7 +5463,7 @@ export const executePrivacyPortalConversion = async ({
       gasLimit
     });
     onProgress?.('confirming');
-    const receipt = await transaction.wait();
+    const receipt = await waitForAppChainReceipt(transaction, 'Privacy conversion');
     assertPrivacyPortalReceipt(receipt, 'Privacy conversion');
     onProgress?.('complete');
     return {
@@ -4538,7 +5504,7 @@ type ChainWhisperWispPublicTokenContract = {
   approve: (
     spender: string,
     amountWei: bigint
-  ) => Promise<{ wait: () => Promise<unknown> }>;
+  ) => Promise<{ hash?: unknown; wait: () => Promise<unknown> }>;
 };
 
 const chainWhisperWispVerificationCache = new Map<string, ChainWhisperWispVerification>();
@@ -4745,7 +5711,7 @@ const readChainWhisperWispInputBalance = async ({
 }: {
   direction: ChainWhisperWispDirection;
   ownerAddress: string;
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   publicTokenContract: Pick<ChainWhisperWispPublicTokenContract, 'balanceOf'>;
 }): Promise<bigint | null> => {
   if (direction === 'shield') {
@@ -4767,7 +5733,7 @@ export const executeChainWhisperWispBridgeConversion = async ({
   amountWei,
   onProgress
 }: {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   ownerAddress: string;
   direction: ChainWhisperWispDirection;
   amountWei: bigint;
@@ -4785,10 +5751,7 @@ export const executeChainWhisperWispBridgeConversion = async ({
     await requireVerifiedChainWhisperWispBridge();
 
     const cotiEthers = await loadCotiEthersModule();
-    const provider = signer.provider;
-    if (!provider) {
-      throw new Error('The selected signer is not connected to a network provider.');
-    }
+    const provider = await loadCotiReadProvider(true);
     const publicTokenContract = new cotiEthers.Contract(
       CHAINWHISPER_WISP_BRIDGE_PAIR.publicTokenAddress,
       ERC20_TOKEN_ABI,
@@ -4834,7 +5797,7 @@ export const executeChainWhisperWispBridgeConversion = async ({
           CHAINWHISPER_WISP_BRIDGE_PAIR.bridgeAddress,
           approvalAmount
         );
-        const approvalReceipt = await approvalTransaction.wait();
+        const approvalReceipt = await waitForAppChainReceipt(approvalTransaction, 'WISP approval');
         assertPrivacyPortalReceipt(approvalReceipt, 'WISP approval');
         await assertPrivacyPortalSignerState(signer, ownerAddress);
       }
@@ -4923,6 +5886,7 @@ export const executeChainWhisperWispBridgeConversion = async ({
         value: call.valueWei,
         gasLimit
       }),
+      waitForReceipt: (submitted) => waitForAppChainReceipt(submitted, 'ChainWhisper WISP conversion'),
       onProgress
     });
     return {

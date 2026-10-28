@@ -11,7 +11,11 @@ import {
 import {
   canUseWalletAuthorityForDirectAccess
 } from '../../../lib/tradeCounterSupport';
-import { buildTradeTransactionHistoryRows } from '../../../lib/tradeHistory';
+import {
+  aggregateVisibleTradeTransactionHistoryRows,
+  buildTradeTransactionHistoryRows
+} from '../../../lib/tradeHistory';
+import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledger';
 import {
   isZeroTradeTakerAddress,
   resolveTradePriceRatioDisplay,
@@ -74,6 +78,7 @@ type TradeStandardOrderCardProps = {
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
+  canonicalV2Rows?: readonly TradeHistoryV2ExecutionRow[];
 };
 
 export default function TradeStandardOrderCard({
@@ -89,7 +94,8 @@ export default function TradeStandardOrderCard({
   toggleTradeRateDirection,
   resolveKnownTradeAccessSecret,
   buildTradeShareUrl,
-  copyWithFeedback
+  copyWithFeedback,
+  canonicalV2Rows
 }: TradeStandardOrderCardProps): ReactNode {
   const tradeKey = getSnapshotKey(trade);
   const canOpenTerminal = options.canOpenTerminal ?? true;
@@ -124,10 +130,10 @@ export default function TradeStandardOrderCard({
   const isDirectPrivateTerms = termsVisibility === 'direct-private-terms';
   const directTermsHydrated = hasHydratedDirectTradeTerms(trade);
   const completionSummary = getTradeCompletionSummary(trade);
-  const walletHistoryRows = perspectiveWalletKey ? buildTradeTransactionHistoryRows([trade], perspectiveWalletAddress) : [];
-  const revealedWalletHistoryRow = walletHistoryRows.find(
-    (row) => row.bought.visible && row.sold.visible && row.amountVisibility !== 'private-hidden'
-  );
+  const walletHistoryRows = perspectiveWalletKey
+    ? buildTradeTransactionHistoryRows([trade], perspectiveWalletAddress, canonicalV2Rows)
+    : [];
+  const revealedWalletHistoryRow = aggregateVisibleTradeTransactionHistoryRows(walletHistoryRows);
   const hasRevealedWalletHiddenTerms = isHiddenLiquidityTerms && Boolean(revealedWalletHistoryRow);
   const canShowParticipantHiddenTerms =
     isHiddenLiquidityTerms &&

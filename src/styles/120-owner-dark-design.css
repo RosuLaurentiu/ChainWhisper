@@ -1,0 +1,591 @@
+/* CW-035.04: owner-selected charcoal surfaces and purple active states.
+ * This theme follows the existing route layers. It does not hide controls or
+ * change transaction states, privacy or recovery access.
+ */
+:root {
+  --approved-bg: var(--surface-canvas);
+  --approved-panel: var(--surface-base);
+  --approved-panel-raised: var(--surface-raised);
+  --approved-border: var(--border-default);
+  --approved-border-soft: var(--border-subtle);
+  --approved-muted: var(--text-secondary);
+  --approved-purple: var(--brand);
+  --approved-purple-bright: var(--brand-strong);
+  --scrollbar-thumb: #42454f;
+  --scrollbar-thumb-hover: #606471;
+  --scrollbar-track: var(--surface-canvas);
+  --ux-whisper-line: var(--border-default);
+}
+
+/* Neutral foundations, including routes that predate the shared tokens. */
+:root body .app-shell {
+  --approved-bg: var(--surface-canvas);
+  --approved-panel: var(--surface-base);
+  --approved-panel-raised: var(--surface-raised);
+  --approved-border: var(--border-default);
+  --approved-border-soft: var(--border-subtle);
+  --approved-muted: var(--text-secondary);
+  --approved-purple: var(--brand);
+  --approved-purple-bright: var(--brand-strong);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+}
+:root body .app-shell :is(.sr-only, .dex-owner-progress:empty) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+:root body .app-shell :is(.top-header, .top-header-brand, .top-header-main,
+  .top-header-actions, .top-header-bar, .trading-product-bar, .trading-market-context,
+  .app-root, .chat-panel, .chat-shell, .swap-page-shell, .treasury-page-shell,
+  .landing-shell, .standalone-trades-page, .p2p-dashboard, .dex-v2-page) {
+  background: var(--surface-canvas);
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+:root body .app-shell :is(h1, h2, h3, h4) { color: var(--text-primary); }
+:root body .app-shell :is(button, input, select, textarea) { border-radius: 4px; }
+:root body .app-shell :is(input, select, textarea) {
+  background-color: var(--surface-base);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+  accent-color: var(--brand);
+}
+:root body .app-shell :is(input, textarea)::placeholder { color: var(--text-tertiary); opacity: 1; }
+:root body .app-shell :is(button, input, select, textarea, summary, a):focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 3px;
+}
+:root body .app-shell [aria-invalid="true"] { border-color: var(--danger); }
+
+/* A single quiet header. Each selected item keeps its visible purple cue. */
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch,
+  .p2p-trading-desk-tabs, .dex-v2-primary-tabs, .dex-v2-mode-tabs,
+  .dex-v2-desk-tabs, .dex-v2-sub-tabs, .trade-product-tabs) {
+  background: transparent;
+  border-color: var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch,
+  .p2p-trading-desk-tabs, .dex-v2-primary-tabs, .dex-v2-mode-tabs,
+  .dex-v2-desk-tabs, .dex-v2-sub-tabs, .trade-product-tabs) button {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+  box-shadow: none;
+}
+:root body .app-shell :is(.top-header-links, .app-header-nav, .p2p-trade-tabs, .p2p-product-view-tabs, .trading-product-switch,
+  .p2p-trading-desk-tabs, .dex-v2-primary-tabs, .dex-v2-mode-tabs,
+  .dex-v2-desk-tabs, .dex-v2-sub-tabs, .trade-product-tabs) :is(button.active, button[aria-current="page"], button[aria-selected="true"]) {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  border-color: transparent;
+  box-shadow: inset 0 -2px var(--brand-strong);
+}
+:root body .app-shell :is(.app-header-nav, .p2p-product-view-tabs) {
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+}
+:root body .app-shell :is(.app-header-nav, .p2p-product-view-tabs) :is(button.active, button[aria-current="page"]) { background: transparent; }
+:root body .app-shell :is(.app-header-nav, .p2p-trade-tabs, .p2p-agent-mode-toggle) button { border: 0; border-radius: 0; }
+:root body .app-shell :is(.dex-v2-section-tabs, .dex-v2-swap-mode-toggle) button { border-radius: 0; }
+:root body .app-shell .trading-market-change strong { color: var(--text-secondary); }
+:root body .app-shell .trading-market-change[data-price-state="stale"] strong,
+:root body .app-shell .trading-market-change[data-price-state="unavailable"] strong { color: #f6c466; }
+:root body .app-shell .trading-market-change[data-price-state="available"] strong { color: #55d6af; }
+
+/* Inputs stay bounded; supporting sections use spacing and row dividers. */
+:root body .app-shell :is(.dex-v2-swap-card, .dex-v2-test-form,
+  .dex-v2-current-pool, .dex-v2-current-pool-positions, .dex-owner-workspace,
+  .dex-owner-summary, .dex-owner-list, .dex-v2-activity-card,
+  .standalone-trades-section, .standalone-trade-detail-section,
+  .p2p-my-trades-section, .p2p-trade-composer, .trade-composer-panel,
+  .p2p-compose-panel, .p2p-compose-section, .p2p-composer-section,
+  .trade-compose-panel, .trade-compose-section, .trade-compose-header,
+  .trade-compose-footer, .trade-compose-quote-dock) {
+  background: transparent;
+  border-color: var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell :is(.dex-v2-current-amounts > label, .dex-v2-quote-output,
+  .dex-v2-current-advanced, .dex-owner-workspace input,
+  .dex-owner-workspace select, .dex-v2-limit-price-field,
+  .p2p-compose-amount, .p2p-composer-amount-field, .swap-amount-box,
+  .trade-compose-asset-field, .trade-compose-advanced-options,
+  .trade-token-select-dropdown) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell .dex-v2-current-amounts :is(strong, small),
+:root body .app-shell .dex-v2-quote-output :is(strong, small) { color: var(--text-secondary); }
+:root body .app-shell .dex-v2-current-amounts :is(input, output) { color: var(--text-primary); }
+:root body .app-shell :is(.dex-v2-current-direction, .dex-v2-swap-mode-toggle,
+  .dex-v2-current-side-toggle, .dex-v2-setting-presets, .p2p-trade-action-switch) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+:root body .app-shell :is(.dex-v2-current-side-toggle, .dex-v2-setting-presets) button[aria-pressed="true"] {
+  background: #6137a5;
+  color: #fff;
+  border-color: var(--brand-strong);
+  box-shadow: none;
+}
+:root body .app-shell .dex-v2-swap-mode-toggle button[aria-pressed="true"] {
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px var(--brand-strong);
+}
+:root body .app-shell .dex-v2-current-advanced > summary { color: var(--text-primary); }
+:root body .app-shell .dex-v2-current-advanced > summary > span { color: var(--text-secondary); }
+:root body .app-shell :is(.dex-v2-extra-settings, .dex-v2-current-details,
+  .dex-owner-action, .dex-owner-footer, .dex-owner-actions, .dex-history-detail) {
+  background: transparent;
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+:root body .app-shell .dex-owner-workspace { border: 0; padding: 0; }
+:root body .app-shell :is(.dex-v2-extra-settings, .dex-v2-current-details,
+  .dex-owner-action, .dex-owner-footer) > summary { color: var(--text-secondary); }
+:root body .app-shell .dex-v2-current-unlock-note { margin: 4px 0 0; color: var(--text-secondary); font-size: .82rem; line-height: 1.5; }
+:root body .app-shell .dex-v2-current-swap .dex-v2-current-swap-heading { margin: 0; }
+
+/* Primary actions are flat violet. Secondary and disabled controls stay clear. */
+:root body .app-shell :is(.dex-v2-review-button, .landing-action-btn-primary,
+  .landing-module-card-primary .landing-module-cta, .p2p-create-trade-btn,
+  .standalone-trade-primary-btn, .swap-submit-btn, .modal-primary,
+  .chat-placeholder-card > button, .trade-compose-send,
+  .wallet-primary-action:not(.p2p-wallet-address)) {
+  background: var(--brand);
+  color: #fff;
+  border: 1px solid var(--brand);
+  box-shadow: none;
+  filter: none;
+}
+:root body .app-shell :is(.dex-v2-review-button, .landing-action-btn-primary,
+  .standalone-trade-primary-btn, .p2p-create-trade-btn):hover:not(:disabled) {
+  background: #8859d5;
+  border-color: #a17bdf;
+  box-shadow: none;
+}
+:root body .app-shell :is(.standalone-trade-secondary-btn, .landing-action-btn-secondary,
+  .app-help-context-link, .dex-v2-current-actions > button:not(.dex-v2-review-button),
+  .dex-owner-workspace button:not(.dex-owner-danger):not([aria-pressed="true"]),
+  .dex-history-toolbar button:not([aria-pressed="true"]),
+  .p2p-wallet-menu-trigger, .p2p-wallet-privacy-direct, .p2p-wallet-address) {
+  background: var(--surface-base);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+:root body .app-shell button:disabled { filter: none; box-shadow: none; cursor: not-allowed; }
+:root body .app-shell .wallet-header-panel-disconnected .wallet-primary-action {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+/* Chart data, source disclosures and all chart controls remain available. */
+:root body .app-shell .dex-market-chart {
+  background: var(--surface-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell .dex-market-chart-samples { grid-template-rows: auto minmax(260px, 1fr) auto auto; }
+:root body .app-shell .dex-market-chart-legend { flex-direction: column; align-items: flex-start; gap: 6px; }
+:root body .app-shell .dex-market-chart-legend > .candle-up { color: var(--text-primary); font-size: 1rem; font-weight: 650; }
+:root body .app-shell .dex-market-chart-legend > small { margin-left: 0; color: var(--text-secondary); font-size: .875rem; }
+:root body .app-shell .dex-market-chart-actions button {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+:root body .app-shell .dex-market-chart-actions button[aria-pressed="true"] {
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px var(--brand-strong);
+}
+:root body .app-shell :is(.dex-market-chart-tooltip, .dex-market-chart-hover-card) {
+  background: var(--surface-overlay);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+/* Home uses the same calm foundation, with every existing app action retained. */
+:root body .app-shell :is(.landing-hero, .landing-section, .landing-module-card) {
+  background: var(--surface-base);
+  border-color: var(--border-subtle);
+  border-radius: 6px;
+  box-shadow: none;
+}
+:root body .app-shell .landing-hero { padding-block: clamp(32px, 5vh, 60px); }
+:root body .app-shell :is(.landing-module-card, .landing-module-icon, .landing-module-card-primary) {
+  background: transparent;
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+:root body .app-shell :is(.landing-eyebrow, .landing-module-kicker, .landing-module-icon) { color: var(--text-secondary); }
+:root body .app-shell :is(.landing-title, .landing-section-title, .landing-module-card h3) {
+  color: var(--text-primary);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+:root body .app-shell :is(.landing-description, .landing-module-card p) { color: var(--text-secondary); }
+:root body .app-shell .landing-brand-orbit { background: transparent; }
+:root body .app-shell .landing-hero::before,
+:root body .app-shell .landing-section::before,
+:root body .app-shell .landing-brand-orbit::before,
+:root body .app-shell .landing-brand-mark::before { background: none; box-shadow: none; }
+:root body .app-shell .landing-brand-orbit-ring { border-color: var(--border-default); box-shadow: none; }
+:root body .app-shell .landing-brand-mark { background: var(--surface-base); border-color: var(--border-default); box-shadow: none; }
+
+/* Chat/profile/group controls retain their place, sizing and enabled states. */
+:root body .app-shell :is(.contacts-sidebar, .contact-profile-card, .contact-list-panel,
+  .group-list-panel, .chat-header, .chat-toolbar, .chat-composer,
+  .chat-placeholder-card, .chat-readiness-state, .group-header, .group-admin-panel) {
+  background: var(--surface-base);
+  border-color: var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell :is(.contact-profile-editor, .chat-compose-input, .message-input) {
+  background: var(--surface-canvas);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+  border-radius: 4px;
+}
+:root body .app-shell :is(.contact-item, .group-item, .message-bubble) {
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+:root body .app-shell :is(.chat-placeholder-card > span, .contact-profile-label, .contacts-sidebar h3) { color: var(--text-secondary); }
+:root body .app-shell .chat-placeholder-card p { color: var(--text-secondary); }
+:root body .app-shell .chat-readiness-state { width: min(560px, 100%); min-height: 0; padding: 40px 24px; }
+:root body .app-shell .chat-readiness-visual { width: min(360px, 100%); }
+
+/* Portal, analytics and shared windows keep their existing information hierarchy. */
+/* Portaled windows are mounted beside the App shell. */
+:root body :is(.modal-card, .message-reaction-picker, .group-mobile-options-panel) {
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  border-radius: 6px;
+  box-shadow: var(--shadow-raised);
+}
+:root body .modal-card :is(h1, h2, h3, h4) { color: var(--text-primary); }
+:root body .modal-card :is(input, textarea, select) {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  border-radius: 4px;
+}
+:root body .modal-card :is(button, input, textarea, select, a):focus-visible { outline: 2px solid #c4b5fd; outline-offset: 3px; }
+:root body .home-legal-dialog-actions { background: var(--surface-overlay); border-color: var(--border-subtle); }
+:root body .home-legal-dialog-summary { background: var(--surface-raised); color: var(--text-secondary); }
+:root body .home-legal-dialog-actions button { background: var(--surface-base); border-color: var(--border-default); border-radius: 4px; box-shadow: none; }
+:root body .app-shell :is(.swap-card, .swap-panel, .swap-workspace, .swap-summary,
+  .swap-form, .token-swap-card, .treasury-card, .private-tvl-card,
+  .private-tvl-section, .tvl-card, .tvl-stat-card, .treasury-section,
+  .modal-card, .modal-section, .modal-copy, .wallet-picker,
+  .p2p-wallet-menu, .p2p-wallet-network-menu, .trading-market-token-menu,
+  .p2p-terminal-drawer, .p2p-terminal-sheet, .p2p-balances-sheet,
+  .p2p-trade-confirm-modal, .trade-action-confirm-modal, .chat-quick-actions) {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  border-radius: 6px;
+  box-shadow: var(--shadow-raised);
+}
+:root body .app-shell :is(.p2p-wallet-menu, .modal-card, .trading-market-token-menu) { background: var(--surface-overlay); }
+:root body .app-shell :is(.p2p-offers-market-row, .p2p-offers-market-row strong) { color: var(--text-secondary); }
+:root body .app-shell .p2p-offers-market-row::before,
+:root body .app-shell .p2p-offers-market-row::after { background: var(--border-default); }
+:root body .app-shell :is(.p2p-terminal-selection-empty p, .standalone-trades-section-head p) { color: var(--text-secondary); }
+:root body .app-shell .trading-market-token-details { margin-top: 12px; border-top: 1px solid var(--border-subtle); }
+:root body .app-shell .trading-market-token-details > summary { min-height: 40px; padding-block: 10px; color: var(--text-secondary); cursor: pointer; }
+:root body .app-shell .p2p-inline-diagnostics { margin-top: 8px; color: var(--text-secondary); }
+:root body .app-shell .p2p-inline-diagnostics p { overflow-wrap: anywhere; font-size: .78rem; }
+:root body .app-shell-trades .p2p-trading-shell :is(.p2p-trade-workspace-panel,
+  .trade-compose-panel, .trade-compose-section, .p2p-create-terms,
+  .p2p-terminal-selection-empty, .p2p-terminal-header, .p2p-swap-side-switch,
+  .trade-compose-header, .trade-compose-footer, .trade-compose-quote-dock,
+  .trade-compose-limit-price, .p2p-agent-chat-window, .p2p-agent-messages,
+  .p2p-agent-mode-toggle) {
+  background: var(--surface-canvas);
+  border-color: var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell-trades .p2p-trading-shell :is(.trade-compose-asset-field,
+  .trade-compose-advanced-options, .trade-token-select-trigger,
+  .trade-token-select-dropdown, .p2p-trade-access-option) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root body .app-shell-trades .p2p-trading-shell [role="tab"][aria-selected="true"] {
+  background: var(--surface-interactive);
+  border-color: var(--border-default);
+  box-shadow: inset 0 -2px var(--brand-strong);
+  color: var(--text-primary);
+}
+:root body .app-shell-trades .p2p-trading-shell :is(.trade-compose-panel, .p2p-create-terms) { border: 0; }
+:root body .app-shell-trades .p2p-trading-shell .trade-compose-section { border: 0; padding-inline: 0; }
+:root body .app-shell .p2p-agent-mode-toggle button.active {
+  background: var(--surface-interactive);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px var(--brand-strong);
+  border-color: var(--border-default);
+}
+:root body .app-shell .dex-v2-current-direction { border-radius: 50%; color: var(--text-secondary); }
+:root body .app-shell :is(.swap-page-panel, .swap-page-hero, .swap-asset-panel,
+  .swap-asset-panel-output, .swap-pill-switch, .swap-token-chip,
+  .privacy-token-rail, .privacy-connection-context,
+  .treasury-panel, .treasury-stat-card, .treasury-state-card, .treasury-hero,
+  .treasury-meta-card, .treasury-readiness-grid article) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  border-radius: 6px;
+  box-shadow: none;
+}
+:root body .app-shell .privacy-token-rail button[aria-pressed="true"] { background: var(--surface-interactive); box-shadow: inset 2px 0 var(--brand-strong); }
+:root body .app-shell .dex-v2-current-direction svg { color: var(--text-primary); }
+:root body .app-shell .dex-agent-link { background: var(--surface-base); border-color: var(--border-default); color: var(--text-secondary); }
+:root body .app-shell .dex-view-navigation .dex-agent-link {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+:root body .app-shell .dex-view-navigation { align-items: stretch; border-bottom: 1px solid var(--border-subtle); }
+:root body .app-shell .dex-view-navigation > nav.p2p-product-view-tabs { align-self: stretch; padding: 0; border: 0; }
+:root body .app-shell .dex-view-navigation > nav.p2p-product-view-tabs button { min-height: 44px; }
+:root body .app-shell .dex-view-navigation .dex-agent-link[aria-current="page"] { color: var(--text-primary); box-shadow: inset 0 -2px var(--brand-strong); }
+:root body .app-shell-trades .p2p-trading-shell :is(.p2p-agent-chat-window, .p2p-agent-context) {
+  background: var(--surface-base);
+  border-color: var(--border-default);
+  border-radius: 6px;
+  box-shadow: none;
+}
+:root body .app-shell-trades .p2p-trading-shell .p2p-agent-messages { background: transparent; }
+:root body .app-shell .p2p-agent-context article { background: var(--surface-raised); border-color: var(--border-subtle); border-radius: 4px; }
+:root body .app-shell .p2p-agent-context span { color: var(--text-secondary); }
+:root body .app-shell .p2p-agent-prompt { background: transparent; border: 0; border-radius: 0; }
+:root body .app-shell .p2p-agent-prompt textarea { background: var(--surface-raised); border: 1px solid var(--border-default); }
+:root body .app-shell .p2p-agent-composer { background: var(--surface-base); border-color: var(--border-subtle); }
+:root body .app-shell .p2p-agent-empty-state { min-height: 0; overflow: auto; }
+:root body .app-shell .p2p-agent-quick-action-grid button:disabled { opacity: .75; color: var(--text-secondary); background: var(--surface-raised); border-color: var(--border-default); }
+:root body .app-shell .dex-v2-current-amounts > label > strong { font-size: .875rem; }
+:root body .app-shell .dex-market-chart-legend > .candle-up { font-size: 1.2rem; }
+
+@media (min-width: 921px) {
+  /* Both rows share the same tracks and gutters. The chart spans the tab row. */
+  :root body .app-shell-dex-v2 {
+    --dex-workspace-columns: minmax(0, 1.7fr) minmax(360px, 1fr);
+    --dex-workspace-column-gap: 24px;
+    --dex-navigation-height: 58px;
+    --dex-workspace-top-gap: 12px;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-main {
+    padding: 0 24px 24px;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-page > .dex-v2-mode-nav {
+    padding: var(--dex-workspace-top-gap) 24px 4px;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-content-grid:not(.dex-v2-management-grid) {
+    grid-template-columns: var(--dex-workspace-columns);
+    gap: var(--dex-workspace-column-gap);
+    padding: 0;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-form-column {
+    padding: 12px 0 0 20px;
+  }
+  :root body .app-shell-dex-v2 .dex-v2-mode-nav .dex-view-navigation {
+    padding: 0 0 0 20px;
+  }
+  :root body .app-shell .dex-market-chart:not(.is-expanded) {
+    height: calc(100dvh - 190px);
+    min-height: 560px;
+    max-height: 980px;
+  }
+}
+:root body .app-shell .dex-market-chart.is-expanded { height: auto; min-height: 0; max-height: none; }
+
+/* Trade review: one frame for each group, with actions outside the scroll area. */
+:root body .modal-card.trade-action-confirm-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-overlay);
+}
+:root body .trade-action-confirm-content {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 18px;
+  padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+:root body .trade-action-confirm-heading { display: grid; gap: 8px; }
+:root body .trade-action-confirm-heading h3 { margin: 0; font-size: 1.125rem; line-height: 1.35; font-weight: 600; }
+:root body .trade-action-confirm-heading .modal-copy {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: .875rem;
+  font-weight: 400;
+  line-height: 1.5;
+  box-shadow: none;
+}
+:root body .trade-action-confirm-summary {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--surface-base);
+}
+:root body .trade-action-confirm-summary > div {
+  display: grid;
+  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: 16px;
+  padding: 11px 12px;
+}
+:root body .trade-action-confirm-summary > div + div { border-top: 1px solid var(--border-subtle); }
+:root body .trade-action-confirm-summary dt { color: var(--text-secondary); font-size: .8125rem; line-height: 1.5; }
+:root body .trade-action-confirm-summary dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: .875rem;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+:root body .trade-action-confirm-stats {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--border-subtle);
+}
+:root body .trade-action-confirm-stat { gap: 5px; padding: 12px; border: 0; border-radius: 0; background: var(--surface-base); }
+:root body .trade-action-confirm-stat > span { color: var(--text-secondary); font-size: .75rem; }
+:root body .trade-action-confirm-stat > strong { font-family: inherit; font-size: .875rem; font-weight: 600; }
+:root body .trade-action-confirm-funding { gap: 0; padding: 0; border-color: var(--border-default); border-radius: 4px; background: var(--surface-base); }
+:root body .trade-action-confirm-funding > span { padding: 12px; color: var(--text-secondary); font-size: .75rem; font-weight: 500; letter-spacing: 0; text-transform: none; }
+:root body .trade-action-confirm-funding-row { grid-template-columns: 1fr; gap: 6px; padding: 12px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }
+:root body .trade-action-confirm-funding-row :is(strong, small) { overflow: visible; white-space: normal; text-overflow: clip; overflow-wrap: anywhere; text-align: left; }
+:root body .trade-action-confirm-funding-row small { color: var(--text-secondary); font-weight: 400; line-height: 1.5; }
+:root body .trade-action-confirm-details { margin: 0; border-top: 1px solid var(--border-default); }
+:root body .trade-action-confirm-details > summary { min-height: 44px; padding-block: 12px; color: var(--text-secondary); cursor: pointer; font-size: .8125rem; }
+:root body .trade-action-confirm-details > p { margin: 0; color: var(--text-secondary); font-size: .8125rem; line-height: 1.5; }
+:root body .trade-action-confirm-modal > .modal-actions {
+  position: static;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 0;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-default);
+  border-radius: 0;
+  background: var(--surface-overlay);
+  box-shadow: none;
+}
+:root body .trade-action-confirm-modal > .modal-actions button { min-height: 44px; padding: 10px 16px; font-size: .875rem; }
+
+/* Pending, verified and recovery states share one boundary and one set of facts. */
+:root body .app-shell .dex-v2-current-progress { display: grid; gap: 14px; min-width: 0; padding: 16px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--surface-base); }
+:root body .app-shell .dex-v2-current-progress > p { margin: 0; color: var(--text-secondary); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
+:root body .app-shell .dex-v2-current-progress .dex-v2-current-status { color: var(--text-primary); font-size: .875rem; font-weight: 500; text-align: left; }
+:root body .app-shell .dex-v2-current-progress .dex-v2-current-result { color: var(--text-primary); }
+:root body .app-shell .dex-v2-progress-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+:root body .app-shell .dex-v2-progress-facts > div { display: grid; gap: 4px; min-width: 0; }
+:root body .app-shell .dex-v2-progress-facts dt { color: var(--text-secondary); font-size: .75rem; }
+:root body .app-shell .dex-v2-progress-facts dd { margin: 0; color: var(--text-primary); font-size: .8125rem; overflow-wrap: anywhere; }
+:root body .app-shell .dex-v2-progress-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+:root body .app-shell .dex-v2-progress-actions:empty { display: none; }
+:root body .app-shell .dex-v2-progress-actions > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 4px; background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: .8125rem; cursor: pointer; }
+:root body .app-shell .dex-v2-progress-actions > button:disabled { opacity: .55; cursor: not-allowed; }
+:root body .app-shell .dex-v2-recovery-details { margin: 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }
+:root body .app-shell .dex-v2-recovery-details > summary { min-height: 44px; padding-block: 12px; color: var(--text-secondary); cursor: pointer; font-size: .8125rem; }
+:root body .app-shell .dex-v2-recovery-details .dex-v2-current-fields { padding-top: 0; }
+:root body .app-shell .dex-v2-recovery-details .dex-v2-current-fields label { display: grid; gap: 8px; padding: 0; border: 0; }
+:root body .app-shell .dex-v2-recovery-details input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: .8125rem;
+}
+:root body .app-shell .dex-v2-recovery-details input:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+:root body .app-shell .dex-v2-recovery-details small { color: var(--text-secondary); line-height: 1.5; }
+:root body .app-shell .dex-v2-progress-transaction { display: inline-flex; align-items: center; width: fit-content; min-height: 32px; color: var(--brand-strong); font-size: .8125rem; text-decoration: underline; text-underline-offset: 3px; }
+
+@media (max-width: 520px) {
+  :root body .modal-card.trade-action-confirm-modal { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+  :root body .trade-action-confirm-content { gap: 16px; padding: 16px; }
+  :root body .trade-action-confirm-modal > .modal-actions { padding: 12px 16px; }
+  :root body .trade-action-confirm-summary > div { gap: 12px; padding: 10px; }
+}
+
+/* Respect the established compact mobile navigation and keep touch controls usable. */
+@media (max-width: 920px) {
+  :root body .app-shell.app-shell-dex-v2 { grid-template-rows: auto calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px) minmax(0, 1fr); }
+  :root body .app-shell-dex-v2 .trading-product-bar {
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px);
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context) + 44px);
+  }
+  :root body .app-shell-dex-v2 .trading-market-context { grid-template-rows: var(--ux-mobile-trading-nav) var(--ux-mobile-pair-context) 36px; }
+  :root body .app-shell-dex-v2 .trading-market-change { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+}
+@media (max-width: 680px) {
+  :root body .app-shell .landing-hero { padding: 24px 18px; }
+  :root body .app-shell .dex-v2-current-swap { gap: 10px; }
+  :root body .app-shell .dex-market-chart-legend > .candle-up { font-size: .9rem; }
+  :root body .app-shell .dex-market-chart-legend > small { font-size: .72rem; line-height: 1.5; }
+}

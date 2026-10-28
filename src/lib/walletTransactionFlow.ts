@@ -62,6 +62,21 @@ export const shouldIgnoreBrowserWalletRefreshDuringFlow = ({
   return normalizeComparableWalletAddress(selectedWalletKey) !== previous;
 };
 
+export const shouldDeferBrowserWalletChainRefreshDuringPrompt = ({
+  previousChainId,
+  selectedChainId,
+  previousWalletKey,
+  walletPromptActive
+}: {
+  previousChainId?: number | null;
+  selectedChainId?: number | null;
+  previousWalletKey?: string | null;
+  walletPromptActive: boolean;
+}): boolean =>
+  Boolean(normalizeComparableWalletAddress(previousWalletKey)) &&
+  walletPromptActive &&
+  previousChainId !== selectedChainId;
+
 const normalizeProviderKey = (providerKey?: string | null): string =>
   providerKey?.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') || '';
 

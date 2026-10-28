@@ -1,16 +1,18 @@
+import type { OnboardInfo } from '@coti-io/coti-ethers';
 import { describe, expect, it } from 'vitest';
+import { mergeOnboardInfoByAddress, type TradeSnapshot } from './appShared';
 import {
+  assertWalletReadSignerMatchesAccount,
   buildWalletAccountScope,
   buildWalletReadAccountsKey,
   getTradeAccountPerspectiveAddress,
-  resolveConversationActionAccount,
-  resolveTradeActionWalletAddress
+  mergeWalletAccountMatches,
+  resolveTradeActionWalletAddress,
+  resolveWalletReadSignerRoute
 } from './walletAccountScope';
-import { mergeOnboardInfoByAddress, type TradeSnapshot } from './appShared';
-import type { OnboardInfo } from '@coti-io/coti-ethers';
 
 const owner = '0x1111111111111111111111111111111111111111';
-const chainwhisper = '0x2222222222222222222222222222222222222222';
+const staleLegacyAddress = '0x2222222222222222222222222222222222222222';
 const maker = '0x3333333333333333333333333333333333333333';
 const taker = '0x4444444444444444444444444444444444444444';
 
@@ -53,210 +55,127 @@ describe('mergeOnboardInfoByAddress', () => {
   });
 });
 
-describe('buildWalletAccountScope', () => {
-  it('resolves one ChainWhisper action account and one owner read account', () => {
+describe('browser-wallet-only account scope', () => {
+  it('uses one connected browser wallet for actions, reads, and ownership', () => {
     const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
       ownerAddress: owner,
-      ownerAesReady: false
+      ownerAesReady: true
     });
 
-    expect(scope.actionAccount?.address).toBe(chainwhisper);
-    expect(scope.ownerAccount?.address).toBe(owner);
-    expect(scope.readAccounts.map((account) => [account.role, account.canReadPrivate])).toEqual([
-      ['chainwhisper', true],
-      ['owner', false]
+    expect(scope.actionAccount).toBe(scope.ownerAccount);
+    expect(scope.readAccounts).toEqual([
+      expect.objectContaining({
+        address: owner,
+        key: owner.toLowerCase(),
+        label: 'Connected wallet',
+        role: 'owner',
+        canReadPrivate: true,
+        isActionAccount: true
+      })
     ]);
   });
 
-  it('dedupes identical owner and action addresses', () => {
+  it('uses only the browser wallet privacy state', () => {
     const scope = buildWalletAccountScope({
-      actionAddress: owner,
-      actionAesReady: false,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(scope.readAccounts).toHaveLength(1);
-    expect(scope.readAccounts[0]).toMatchObject({
-      address: owner,
-      canReadPrivate: true,
-      isActionAccount: true,
-      role: 'chainwhisper'
-    });
-  });
-});
-
-describe('buildWalletReadAccountsKey', () => {
-  it('builds stable keys with optional privacy state', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
       ownerAddress: owner,
       ownerAesReady: false
     });
 
-    expect(buildWalletReadAccountsKey(scope.readAccounts)).toBe(`chainwhisper:${chainwhisper}|owner:${owner}`);
-    expect(buildWalletReadAccountsKey(scope.readAccounts, { includePrivateReadState: true })).toBe(
-      `chainwhisper:${chainwhisper}:r|owner:${owner}:l`
+    expect(scope.actionAccount?.address).toBe(owner);
+    expect(scope.actionAccount?.canReadPrivate).toBe(false);
+    expect(scope.readAccounts).toHaveLength(1);
+  });
+
+  it('returns an empty scope when no browser wallet is connected', () => {
+    const scope = buildWalletAccountScope({
+      ownerAddress: '',
+      ownerAesReady: false
+    });
+
+    expect(scope.actionAccount).toBeNull();
+    expect(scope.ownerAccount).toBeNull();
+    expect(scope.readAccounts).toEqual([]);
+  });
+
+  it('builds one stable owner key with optional privacy state', () => {
+    const scope = buildWalletAccountScope({
+      ownerAddress: owner,
+      ownerAesReady: true
+    });
+
+    expect(buildWalletReadAccountsKey(scope.readAccounts)).toBe(`owner:${owner}`);
+    expect(buildWalletReadAccountsKey(scope.readAccounts, { includePrivateReadState: true })).toBe(`owner:${owner}:r`);
+  });
+});
+
+describe('browser-wallet signer routing', () => {
+  it('routes the exact connected wallet to the owner signer', () => {
+    const scope = buildWalletAccountScope({
+      ownerAddress: owner,
+      ownerAesReady: true
+    });
+
+    expect(resolveWalletReadSignerRoute({
+      account: scope.actionAccount!,
+      ownerAddress: owner
+    })).toBe('owner');
+    expect(() => assertWalletReadSignerMatchesAccount(scope.actionAccount!, owner)).not.toThrow();
+  });
+
+  it('fails closed for malformed, unknown, or changed signer accounts', () => {
+    const account = buildWalletAccountScope({
+      ownerAddress: owner,
+      ownerAesReady: true
+    }).actionAccount!;
+
+    expect(() => resolveWalletReadSignerRoute({
+      account: { ...account, key: staleLegacyAddress },
+      ownerAddress: owner
+    })).toThrow('malformed');
+    expect(() => resolveWalletReadSignerRoute({
+      account: { ...account, address: maker, key: maker },
+      ownerAddress: owner
+    })).toThrow('read scope changed');
+    expect(() => assertWalletReadSignerMatchesAccount(account, staleLegacyAddress)).toThrow('signer changed');
+  });
+});
+
+describe('browser-wallet action selection', () => {
+  const scope = buildWalletAccountScope({
+    ownerAddress: owner,
+    ownerAesReady: true
+  });
+
+  it('uses the connected wallet for every trade action and perspective', () => {
+    const snapshot = trade({ maker: staleLegacyAddress, taker: owner, accountAddress: staleLegacyAddress, accountRole: 'owner' });
+    expect(getTradeAccountPerspectiveAddress(snapshot, scope)).toBe(owner);
+    for (const action of ['accept', 'cancel', 'decline', 'fill'] as const) {
+      expect(resolveTradeActionWalletAddress({
+        action,
+        fallbackAddress: owner,
+        readAccounts: scope.readAccounts,
+        trade: snapshot
+      })).toBe(owner);
+    }
+  });
+
+  it('keeps only owner-wallet matches when merging trade snapshots', () => {
+    const merged = mergeWalletAccountMatches(
+      trade({ accountMatches: [{ address: owner, role: 'owner' }] }),
+      trade({
+        accountAddress: taker,
+        accountRole: 'owner',
+        accountMatches: [
+          { address: owner, role: 'owner' },
+          { address: staleLegacyAddress, role: 'owner' }
+        ]
+      })
     );
-  });
-});
 
-describe('resolveConversationActionAccount', () => {
-  it('keeps new or mixed conversations on the ChainWhisper account', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(
-      resolveConversationActionAccount({
-        fallbackAddress: chainwhisper,
-        messages: [{ accountAddress: owner, accountRole: 'owner' }, { accountAddress: chainwhisper, accountRole: 'chainwhisper' }],
-        readAccounts: scope.readAccounts
-      })?.address
-    ).toBe(chainwhisper);
-  });
-
-  it('uses owner only for owner-scoped incoming chats', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(
-      resolveConversationActionAccount({
-        fallbackAddress: chainwhisper,
-        messages: [{ accountAddress: owner, accountRole: 'owner' }],
-        readAccounts: scope.readAccounts
-      })?.address
-    ).toBe(owner);
-  });
-
-  it('uses the replied-to message account when it is known', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(
-      resolveConversationActionAccount({
-        fallbackAddress: chainwhisper,
-        messages: [{ accountAddress: chainwhisper, accountRole: 'chainwhisper' }],
-        readAccounts: scope.readAccounts,
-        replyTarget: { accountAddress: owner, accountRole: 'owner' }
-      })?.address
-    ).toBe(owner);
-  });
-});
-
-describe('getTradeAccountPerspectiveAddress', () => {
-  it('prefers ChainWhisper perspective when both accounts match', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(getTradeAccountPerspectiveAddress(trade({ maker: chainwhisper, taker: owner }), scope)).toBe(chainwhisper);
-  });
-
-  it('uses owner perspective for owner-only trades', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(getTradeAccountPerspectiveAddress(trade({ maker, taker: owner, accountAddress: owner, accountRole: 'owner' }), scope)).toBe(
-      owner
-    );
-  });
-
-  it('uses ChainWhisper perspective for filler history snapshots', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(
-      getTradeAccountPerspectiveAddress(
-        trade({
-          accountAddress: chainwhisper,
-          accountRole: 'chainwhisper',
-          accountMatches: [{ address: chainwhisper, role: 'chainwhisper' }],
-          walletHasFill: true
-        }),
-        scope
-      )
-    ).toBe(chainwhisper);
-  });
-});
-
-describe('resolveTradeActionWalletAddress', () => {
-  it('keeps fill and new action flows on the ChainWhisper account', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(
-      resolveTradeActionWalletAddress({
-        action: 'fill',
-        fallbackAddress: chainwhisper,
-        readAccounts: scope.readAccounts,
-        trade: trade({ maker, taker: owner, accountAddress: owner, accountRole: 'owner' })
-      })
-    ).toBe(chainwhisper);
-  });
-
-  it('uses the owner wallet only for existing owner-targeted reactionary actions', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(
-      resolveTradeActionWalletAddress({
-        action: 'accept',
-        fallbackAddress: chainwhisper,
-        readAccounts: scope.readAccounts,
-        trade: trade({ maker, taker: owner, accountAddress: owner, accountRole: 'owner' })
-      })
-    ).toBe(owner);
-  });
-
-  it('prefers the ChainWhisper account when both accounts match the trade', () => {
-    const scope = buildWalletAccountScope({
-      actionAddress: chainwhisper,
-      actionAesReady: true,
-      ownerAddress: owner,
-      ownerAesReady: true
-    });
-
-    expect(
-      resolveTradeActionWalletAddress({
-        action: 'cancel',
-        fallbackAddress: chainwhisper,
-        readAccounts: scope.readAccounts,
-        trade: trade({ maker: chainwhisper, taker: owner, accountAddress: owner, accountRole: 'owner' })
-      })
-    ).toBe(chainwhisper);
+    expect(merged.accountMatches).toEqual([
+      { address: owner, role: 'owner' },
+      { address: staleLegacyAddress, role: 'owner' },
+      { address: taker, role: 'owner' }
+    ]);
   });
 });

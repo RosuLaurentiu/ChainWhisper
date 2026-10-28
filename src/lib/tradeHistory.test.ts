@@ -5,8 +5,14 @@ import {
   type TradeAssetPayload,
   type TradeSnapshot
 } from './appShared';
-import { buildTradeLifecycleHistoryRows, buildTradeTransactionHistoryRows } from './tradeHistory';
+import {
+  aggregateVisibleTradeTransactionHistoryRows,
+  buildTradeLifecycleHistoryRows,
+  buildTradeTransactionHistoryRows
+} from './tradeHistory';
 import { ZERO_TRADE_TAKER_ADDRESS } from './tradePerspective';
+import type { TradeHistoryV2ExecutionRow } from './tradeHistoryV2Ledger';
+import type { TradeHistoryV2CanonicalLifecycleEvent } from './tradeHistoryV2Materialize';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const taker = '0x2222222222222222222222222222222222222222';
@@ -35,6 +41,209 @@ const trade = (overrides: Partial<TradeSnapshot> = {}): TradeSnapshot => ({
 });
 
 describe('buildTradeTransactionHistoryRows', () => {
+  it('uses canonical V2 execution amounts instead of the original order amounts', () => {
+    const contractAddress = '0x5555555555555555555555555555555555555555';
+    const canonicalRow: TradeHistoryV2ExecutionRow = {
+      key: 'canonical-standard-fill-1',
+      protocol: 'standard-v2',
+      order: { chainId: '7082400', contractAddress, orderId: '1' },
+      sequence: '1',
+      maker,
+      participant: filler,
+      side: 'fill',
+      amountState: 'available',
+      amounts: { offerAmount: '125000', requestAmount: '275000' },
+      source: 'public-event',
+      log: {
+        blockNumber: '99',
+        blockHash: `0x${'11'.repeat(32)}`,
+        transactionHash: `0x${'22'.repeat(32)}`,
+        transactionIndex: 2,
+        logIndex: 3
+      }
+    };
+    const [row] = buildTradeTransactionHistoryRows(
+      [trade({
+        escrowContract: contractAddress,
+        taker: ZERO_TRADE_TAKER_ADDRESS,
+        offer: asset('AAA', '9000000'),
+        request: asset('BBB', '18000000'),
+        v2: { protocol: 'standard-v2', chainId: '7082400', contractAddress, revision: '4' }
+      })],
+      maker,
+      [canonicalRow]
+    );
+
+    expect(row).toMatchObject({
+      key: canonicalRow.key,
+      sequence: 1,
+      blockNumber: 99,
+      txHash: canonicalRow.log.transactionHash
+    });
+    expect(row.bought).toMatchObject({ symbol: 'BBB', amount: '275000', visible: true });
+    expect(row.sold).toMatchObject({ symbol: 'AAA', amount: '125000', visible: true });
+  });
+
+  it('aggregates every exact fill before presenting an order-level revealed total', () => {
+    const contractAddress = '0x5555555555555555555555555555555555555555';
+    const canonicalRows: TradeHistoryV2ExecutionRow[] = [
+      {
+        key: 'canonical-private-fill-1',
+        protocol: 'private-v2',
+        order: { chainId: '7082400', contractAddress, orderId: '1' },
+        sequence: '1',
+        maker,
+        participant: filler,
+        side: 'fill',
+        amountState: 'available',
+        amounts: { offerAmount: '125000', requestAmount: '275000' },
+        source: 'participant-receipt',
+        log: {
+          blockNumber: '99',
+          blockHash: `0x${'11'.repeat(32)}`,
+          transactionHash: `0x${'22'.repeat(32)}`,
+          transactionIndex: 2,
+          logIndex: 3
+        }
+      },
+      {
+        key: 'canonical-private-fill-2',
+        protocol: 'private-v2',
+        order: { chainId: '7082400', contractAddress, orderId: '1' },
+        sequence: '2',
+        maker,
+        participant: otherFiller,
+        side: 'fill',
+        amountState: 'available',
+        amounts: { offerAmount: '375000', requestAmount: '825000' },
+        source: 'participant-receipt',
+        log: {
+          blockNumber: '100',
+          blockHash: `0x${'33'.repeat(32)}`,
+          transactionHash: `0x${'44'.repeat(32)}`,
+          transactionIndex: 1,
+          logIndex: 2
+        }
+      }
+    ];
+    const rows = buildTradeTransactionHistoryRows(
+      [trade({
+        escrowContract: contractAddress,
+        taker: ZERO_TRADE_TAKER_ADDRESS,
+        hiddenLiquidity: true,
+        offer: asset('pAAA', '9000000'),
+        request: asset('pBBB', '18000000'),
+        v2: { protocol: 'private-v2', chainId: '7082400', contractAddress, revision: '4' }
+      })],
+      maker,
+      canonicalRows
+    );
+
+    const aggregate = aggregateVisibleTradeTransactionHistoryRows(rows);
+
+    expect(aggregate?.sold).toMatchObject({ symbol: 'pAAA', amount: '500000', visible: true });
+    expect(aggregate?.bought).toMatchObject({ symbol: 'pBBB', amount: '1100000', visible: true });
+    expect(aggregate?.tokenFlows.map((flow) => `${flow.asset.symbol}:${flow.asset.amount}`)).toEqual([
+      'pAAA:500000',
+      'pBBB:1100000'
+    ]);
+  });
+
+  it('does not present a partial sum as an order total when any execution amount is unavailable', () => {
+    const visibleRow = buildTradeTransactionHistoryRows(
+      [trade({
+        tradeId: 7,
+        escrowContract: DIRECT_TRADE_ESCROW_CONTRACT_ADDRESS,
+        offer: asset('pAAA', '125000'),
+        request: asset('pBBB', '275000')
+      })],
+      maker
+    )[0];
+    if (!visibleRow) throw new Error('Expected a visible direct-fill history row.');
+
+    expect(aggregateVisibleTradeTransactionHistoryRows([
+      visibleRow,
+      {
+        ...visibleRow,
+        key: 'hidden-second-fill',
+        amountVisibility: 'private-hidden',
+        bought: { ...visibleRow.bought, visible: false },
+        sold: { ...visibleRow.sold, visible: false },
+        tokenFlows: visibleRow.tokenFlows.map((flow) => ({
+          ...flow,
+          asset: { ...flow.asset, visible: false }
+        }))
+      }
+    ])).toBeUndefined();
+  });
+
+  it('does not fall back to configured V2 order totals when canonical history has no fill', () => {
+    const contractAddress = '0x5555555555555555555555555555555555555555';
+    const rows = buildTradeTransactionHistoryRows(
+      [trade({
+        escrowContract: contractAddress,
+        taker: ZERO_TRADE_TAKER_ADDRESS,
+        walletFillEvents: [{
+          fillIndex: 1,
+          filler,
+          offerAmount: '9000000',
+          requestAmount: '18000000'
+        }],
+        v2: { protocol: 'standard-v2', chainId: '7082400', contractAddress, revision: '4' }
+      })],
+      maker,
+      []
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it('keeps legacy V1 and canonical V2 history separate when numeric order IDs collide', () => {
+    const v2Contract = '0x5555555555555555555555555555555555555555';
+    const canonicalRow: TradeHistoryV2ExecutionRow = {
+      key: 'canonical-private-fill-same-id',
+      protocol: 'private-v2',
+      order: { chainId: '7082400', contractAddress: v2Contract, orderId: '1' },
+      sequence: '1',
+      maker,
+      participant: filler,
+      side: 'fill',
+      amountState: 'available',
+      amounts: { offerAmount: '300', requestAmount: '600' },
+      source: 'participant-receipt',
+      log: {
+        blockNumber: '101', blockHash: `0x${'31'.repeat(32)}`,
+        transactionHash: `0x${'41'.repeat(32)}`, transactionIndex: 0, logIndex: 3
+      }
+    };
+    const rows = buildTradeTransactionHistoryRows([
+      trade({
+        tradeId: 1,
+        status: 'open',
+        walletFillEvents: [{
+          fillIndex: 1,
+          filler,
+          offerAmount: '100',
+          requestAmount: '200',
+          txHash: '0xlegacy'
+        }]
+      }),
+      trade({
+        tradeId: 1,
+        escrowContract: v2Contract,
+        offer: asset('CCC', '900'),
+        request: asset('DDD', '1800'),
+        v2: { protocol: 'private-v2', chainId: '7082400', contractAddress: v2Contract, revision: '2' }
+      })
+    ], maker, [canonicalRow]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ contractAddress: TRADE_ESCROW_CONTRACT_ADDRESS, txHash: '0xlegacy' }),
+      expect.objectContaining({ contractAddress: v2Contract, key: canonicalRow.key, txHash: canonicalRow.log.transactionHash })
+    ]));
+  });
+
   it('does not synthesize visible taker history from wallet fill state alone', () => {
     const rows = buildTradeTransactionHistoryRows(
       [
@@ -308,7 +517,7 @@ describe('buildTradeTransactionHistoryRows', () => {
     expect(row.timestamp).toBeUndefined();
   });
 
-  it('uses recurring terms for private execution logs with hidden event amounts', () => {
+  it('never substitutes configured recurring terms for a hidden partial execution amount', () => {
     const [row] = buildTradeTransactionHistoryRows(
       [
         trade({
@@ -349,13 +558,13 @@ describe('buildTradeTransactionHistoryRows', () => {
       role: 'filler',
       sourceKind: 'recurring',
       counterparty: maker,
-      amountVisibility: 'private-revealed',
+      amountVisibility: 'private-hidden',
       txHash: '0xprivate-public-log',
       blockNumber: 789,
       sequence: 1
     });
-    expect(row.bought).toMatchObject({ symbol: 'pWISP', amount: '100000', visible: true });
-    expect(row.sold).toMatchObject({ symbol: 'HOTDOG', amount: '1000000', visible: true });
+    expect(row.bought).toMatchObject({ symbol: 'pWISP', visible: false });
+    expect(row.sold).toMatchObject({ symbol: 'HOTDOG', visible: false });
   });
 
   it('dedupes recurring public execution fallbacks when private receipts reveal the same fill', () => {
@@ -579,10 +788,10 @@ describe('buildTradeTransactionHistoryRows', () => {
       ])
     );
     expect(rows.find((row) => row.sequence === 1)?.bought).toMatchObject({ amount: '2000000', visible: true });
-    expect(rows.find((row) => row.sequence === 2)?.amountVisibility).toBe('private-revealed');
+    expect(rows.find((row) => row.sequence === 2)?.amountVisibility).toBe('private-hidden');
   });
 
-  it('filters unscoped private recurring execution fallback rows to the current wallet', () => {
+  it('filters public private-recurring observations to the wallet without inventing amounts', () => {
     const rows = buildTradeTransactionHistoryRows(
       [
         trade({
@@ -626,8 +835,9 @@ describe('buildTradeTransactionHistoryRows', () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ txHash: '0xmine', sequence: 1 });
-    expect(rows[0].bought).toMatchObject({ symbol: 'pWISP', amount: '100000', visible: true });
-    expect(rows[0].sold).toMatchObject({ symbol: 'HOTDOG', amount: '1000000', visible: true });
+    expect(rows[0]).toMatchObject({ amountVisibility: 'private-hidden' });
+    expect(rows[0].bought).toMatchObject({ symbol: 'pWISP', visible: false });
+    expect(rows[0].sold).toMatchObject({ symbol: 'HOTDOG', visible: false });
   });
 
   it('does not synthesize wallet fill history while a public offer remains active', () => {
@@ -745,6 +955,195 @@ describe('buildTradeTransactionHistoryRows', () => {
 });
 
 describe('buildTradeLifecycleHistoryRows', () => {
+  it('uses canonical V2 status events instead of synthesizing the latest snapshot lifecycle', () => {
+    const contractAddress = '0x5555555555555555555555555555555555555555';
+    const opened: TradeHistoryV2CanonicalLifecycleEvent = {
+      kind: 'lifecycle',
+      lifecycleKind: 'opened',
+      protocol: 'standard-v2',
+      chainId: '7082400',
+      contractAddress,
+      orderId: '4',
+      maker,
+      createdAt: '123',
+      expiresAt: '0',
+      contractRevision: '1',
+      rootOrderId: '4',
+      log: {
+        blockNumber: '90',
+        blockHash: `0x${'10'.repeat(32)}`,
+        transactionHash: `0x${'20'.repeat(32)}`,
+        transactionIndex: 0,
+        logIndex: 1
+      }
+    };
+    const cancelled: TradeHistoryV2CanonicalLifecycleEvent = {
+      kind: 'lifecycle',
+      lifecycleKind: 'status',
+      protocol: 'standard-v2',
+      chainId: '7082400',
+      contractAddress,
+      orderId: '4',
+      maker,
+      previousStatus: '1',
+      nextStatus: '3',
+      actor: maker,
+      relatedOrderId: '0',
+      contractRevision: '2',
+      log: {
+        blockNumber: '99',
+        blockHash: `0x${'11'.repeat(32)}`,
+        transactionHash: `0x${'22'.repeat(32)}`,
+        transactionIndex: 1,
+        logIndex: 2
+      }
+    };
+    const rows = buildTradeLifecycleHistoryRows(trade({
+      tradeId: 4,
+      escrowContract: contractAddress,
+      status: 'accepted',
+      acceptedTxHash: '0xstale',
+      v2: { protocol: 'standard-v2', chainId: '7082400', contractAddress, revision: '2' }
+    }), [opened, cancelled]);
+
+    expect(rows.map(({ action }) => action)).toEqual(['created', 'cancelled']);
+    expect(rows[1]).toMatchObject({
+      label: 'Cancelled',
+      actor: maker,
+      txHash: cancelled.log.transactionHash,
+      blockNumber: 99
+    });
+  });
+
+  it('shows exact public recurring inventory returned by the canonical settlement event', () => {
+    const contractAddress = '0x6666666666666666666666666666666666666666';
+    const opened: TradeHistoryV2CanonicalLifecycleEvent = {
+      kind: 'lifecycle', lifecycleKind: 'opened', protocol: 'recurring-v2',
+      chainId: '7082400', contractAddress, orderId: '9', maker,
+      createdAt: '12', expiresAt: '0', contractRevision: '1',
+      log: {
+        blockNumber: '90', blockHash: `0x${'30'.repeat(32)}`,
+        transactionHash: `0x${'40'.repeat(32)}`, transactionIndex: 0, logIndex: 1
+      }
+    };
+    const settlement: TradeHistoryV2CanonicalLifecycleEvent = {
+      kind: 'lifecycle',
+      lifecycleKind: 'settlement',
+      protocol: 'recurring-v2',
+      chainId: '7082400',
+      contractAddress,
+      orderId: '9',
+      maker,
+      settledAmounts: { baseAmount: '1250000', quoteAmount: '2750000' },
+      log: {
+        blockNumber: '100',
+        blockHash: `0x${'33'.repeat(32)}`,
+        transactionHash: `0x${'44'.repeat(32)}`,
+        transactionIndex: 0,
+        logIndex: 2
+      }
+    };
+    const rows = buildTradeLifecycleHistoryRows(trade({
+      tradeId: 9,
+      escrowContract: contractAddress,
+      recurringOrder: {
+        orderId: 9,
+        selectedSide: 'sell',
+        mode: 'public',
+        recurringStatus: 'cancelled',
+        baseAsset: asset('AAA', '0'),
+        quoteAsset: asset('BBB', '0'),
+        buyTerms: { baseAmount: '1', quoteAmount: '1' },
+        sellTerms: { baseAmount: '1', quoteAmount: '1' },
+        publicBaseInventory: '0',
+        publicQuoteInventory: '0',
+        buySideOpen: false,
+        sellSideOpen: false,
+        hasPrivateBaseInventory: false,
+        hasPrivateQuoteInventory: false,
+        executionCount: 0,
+        v2: {
+          protocol: 'recurring-v2',
+          chainId: '7082400',
+          contractAddress,
+          revision: '3',
+          pairKey: `0x${'55'.repeat(32)}`
+        }
+      }
+    }), [opened, settlement]);
+
+    expect(rows.map(({ action }) => action)).toEqual(['created', 'settled']);
+    expect(rows[1].returnedAssets).toMatchObject([
+      { symbol: 'AAA', amount: '1250000', visible: true },
+      { symbol: 'BBB', amount: '2750000', visible: true }
+    ]);
+  });
+
+  it('uses canonical replacement and recurring edit events instead of snapshot linkage', () => {
+    const directContract = '0x7777777777777777777777777777777777777777';
+    const directOpened: TradeHistoryV2CanonicalLifecycleEvent = {
+      kind: 'direct-opened', protocol: 'direct-v2', chainId: '7082400',
+      contractAddress: directContract, orderId: '5', maker, taker: filler,
+      parentEscrow: '0x0000000000000000000000000000000000000000', parentTradeId: '0',
+      rootTradeId: '2', counterDepth: '0', offerAssetType: '1', offerToken: directContract,
+      requestAssetType: '1', requestToken: '0x8888888888888888888888888888888888888888',
+      amountMode: 'private', publicAmounts: {}, createdAt: '200', expiresAt: '0',
+      log: {
+        blockNumber: '200', blockHash: `0x${'51'.repeat(32)}`,
+        transactionHash: `0x${'61'.repeat(32)}`, transactionIndex: 0, logIndex: 1
+      }
+    };
+    const replaced: TradeHistoryV2CanonicalLifecycleEvent = {
+      kind: 'lifecycle', lifecycleKind: 'replacement', protocol: 'direct-v2',
+      chainId: '7082400', contractAddress: directContract, orderId: '2',
+      replacementOrderId: '5', rootOrderId: '2',
+      log: {
+        blockNumber: '200', blockHash: `0x${'51'.repeat(32)}`,
+        transactionHash: `0x${'61'.repeat(32)}`, transactionIndex: 0, logIndex: 2
+      }
+    };
+    const directRows = buildTradeLifecycleHistoryRows(trade({
+      tradeId: 5, escrowContract: directContract, replacesTradeId: 999,
+      v2: { protocol: 'direct-v2', chainId: '7082400', contractAddress: directContract, revision: '1' }
+    }), [directOpened, replaced]);
+
+    expect(directRows.map((row) => `${row.action}:${row.detail}`)).toEqual([
+      'created:Direct P2P #5 opened',
+      'edited:Replaces Direct P2P #2'
+    ]);
+    expect(directRows.every((row) => row.txHash === directOpened.log.transactionHash)).toBe(true);
+
+    const recurringContract = '0x9999999999999999999999999999999999999999';
+    const edit: TradeHistoryV2CanonicalLifecycleEvent = {
+      kind: 'lifecycle', lifecycleKind: 'edited', protocol: 'private-recurring-v2',
+      chainId: '7082400', contractAddress: recurringContract, orderId: '7', maker,
+      expiresAt: '999', contractRevision: '2', liquidityChanged: true,
+      log: {
+        blockNumber: '300', blockHash: `0x${'52'.repeat(32)}`,
+        transactionHash: `0x${'62'.repeat(32)}`, transactionIndex: 0, logIndex: 1
+      }
+    };
+    const recurringRows = buildTradeLifecycleHistoryRows(trade({
+      tradeId: 7,
+      escrowContract: recurringContract,
+      recurringOrder: {
+        orderId: 7, selectedSide: 'sell', mode: 'fully-private', recurringStatus: 'active',
+        baseAsset: asset('AAA'), quoteAsset: asset('BBB'),
+        buyTerms: { baseAmount: '1', quoteAmount: '1' },
+        sellTerms: { baseAmount: '1', quoteAmount: '1' },
+        publicBaseInventory: '0', publicQuoteInventory: '0', buySideOpen: true, sellSideOpen: true,
+        hasPrivateBaseInventory: true, hasPrivateQuoteInventory: true, executionCount: 0,
+        v2: { protocol: 'private-recurring-v2', chainId: '7082400', contractAddress: recurringContract, revision: '2', pairKey: `0x${'55'.repeat(32)}` }
+      }
+    }), [edit]);
+    expect(recurringRows).toHaveLength(1);
+    expect(recurringRows[0]).toMatchObject({
+      action: 'edited', label: 'Edited',
+      detail: 'Recurring P2P #7 updated its private terms and liquidity',
+      txHash: edit.log.transactionHash
+    });
+  });
+
   it('adds creation metadata for a standard offer', () => {
     const [row] = buildTradeLifecycleHistoryRows(trade({ tradeId: 4, createdAt: 123 }));
 
@@ -753,7 +1152,7 @@ describe('buildTradeLifecycleHistoryRows', () => {
       sourceKind: 'standard',
       action: 'created',
       label: 'Created',
-      detail: 'P2P OTC #4 opened',
+      detail: 'One-off P2P #4 opened',
       actor: maker,
       timestamp: 123
     });
@@ -770,9 +1169,9 @@ describe('buildTradeLifecycleHistoryRows', () => {
     );
 
     expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
-      'created:P2P OTC #5 opened',
-      'edited:Replaces P2P OTC #2',
-      'replaced:Replaced by P2P OTC #8'
+      'created:One-off P2P #5 opened',
+      'edited:Replaces One-off P2P #2',
+      'replaced:Replaced by One-off P2P #8'
     ]);
   });
 
@@ -804,12 +1203,12 @@ describe('buildTradeLifecycleHistoryRows', () => {
     expect(standardRows[standardRows.length - 1]).toMatchObject({
       action: 'cancelled',
       label: 'Cancelled',
-      detail: 'P2P OTC #1 cancelled'
+      detail: 'One-off P2P #1 cancelled'
     });
     expect(recurringRows[recurringRows.length - 1]).toMatchObject({
       action: 'cancelled',
       label: 'Closed',
-      detail: 'Recurring OTC #7 closed'
+      detail: 'Recurring P2P #7 closed'
     });
   });
 
@@ -824,8 +1223,8 @@ describe('buildTradeLifecycleHistoryRows', () => {
     );
 
     expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
-      'created:P2P OTC #1 opened',
-      'accepted:P2P OTC #5 settled this parent offer'
+      'created:One-off P2P #1 opened',
+      'accepted:One-off P2P #5 settled this parent offer'
     ]);
     expect(rows[1]).toMatchObject({
       label: 'Counter accepted',
@@ -845,8 +1244,8 @@ describe('buildTradeLifecycleHistoryRows', () => {
     );
 
     expect(rows.map((row) => `${row.action}:${row.detail}`)).toEqual([
-      'created:P2P OTC #4 opened',
-      'accepted:P2P OTC #4 accepted as counter to P2P OTC #1'
+      'created:One-off P2P #4 opened',
+      'accepted:One-off P2P #4 accepted as counter to One-off P2P #1'
     ]);
     expect(rows[1]).toMatchObject({
       label: 'Counter accepted',

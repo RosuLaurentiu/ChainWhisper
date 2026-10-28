@@ -1,31 +1,40 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { JsonRpcSigner, OnboardInfo, Wallet } from '@coti-io/coti-ethers';
+import { useCallback, useEffect, useLayoutEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import type { JsonRpcSigner, OnboardInfo } from '@coti-io/coti-ethers';
 import { resolveRecentPeersWithMeta } from '../../../lib/appLookup';
-import { mergeDirectHistoryEntries, resolveDirectUnreadState } from '../../../lib/directConversationSyncHelpers';
+import {
+  buildDirectConversationReadScopeKey,
+  collectMemoSignerOnboardInfoUpdates,
+  filterLegacyConversationPreferenceStateByDirection,
+  mergeDirectHistoryEntries,
+  mergeMemoSignerOnboardInfoUpdates,
+  pruneDirectMessagesOutsideReadScope,
+  resolveDirectUnreadState
+} from '../../../lib/directConversationSyncHelpers';
 import { mergeDirectSyncOptions } from '../../../lib/directSyncPlan';
 import {
+  LEGACY_CHAT_CONTRACT_ABI,
+  LEGACY_CHAT_CONTRACT_ADDRESS
+} from '../../../lib/legacyChatContracts';
+import {
   applyConversationPreferenceStateToContact,
-  AUTO_STATE_BACKUP_BLOCK_DISTANCE,
-  AUTO_STATE_BACKUP_RETRY_BLOCKS,
-  CHAT_CONTRACT_ABI,
-  CHAT_CONTRACT_ADDRESS,
   debugLog,
   extractUserCiphertext,
+  getProviderErrorMessage,
   isWalletAddress,
   loadCotiEthersModule,
   loadCotiReadProvider,
-  mergeOnboardInfo,
   mergeUniqueContacts,
   normalizeConversationPreferenceState,
   normalizeLastReadAllTs,
   parseChatMessagePayload,
   parseStateBackupText,
-  type BackupLocalStateOptions,
+  STATE_BACKUP_MEMO_SECURITY_LIMITS,
   type ChatMessage,
   type Contact,
   type ConversationBlockRange,
   type ConversationPreferenceState,
   type HistoryEntry,
+  type MemoSecurityLimits,
   type RecentPeerMeta,
   type StateBackupPayload,
   type SyncConversationOptions
@@ -42,7 +51,7 @@ import type { WalletReadAccount } from '../../../lib/walletAccountScope';
 
 type StateSetter<T> = (next: T | ((previous: T) => T)) => void;
 type MemoSignerBundle = {
-  signer: Wallet | JsonRpcSigner;
+  signer: JsonRpcSigner;
   cacheKey: string;
 };
 type BlockTimestampProvider = {
@@ -53,33 +62,32 @@ type UseDirectConversationSyncArgs = {
   activeContact: string | null;
   activeGroupId: number | null;
   activeMessagesLength: number;
+  automaticLegacySyncEnabled?: boolean;
   applyStateBackupPayload: (walletKey: string, payload: StateBackupPayload, backupBlockNumber?: number) => void;
-  backupLocalStateToSelf: (options?: BackupLocalStateOptions) => Promise<void>;
   chainId: number | null;
   contacts: Contact[];
   currentWalletKeyRef: MutableRefObject<string>;
   decryptMemoPlaintextWithRecovery: (
-    signer: Wallet | JsonRpcSigner,
+    signer: JsonRpcSigner,
     cacheKey: string,
-    ciphertext: unknown
+    ciphertext: unknown,
+    limits?: MemoSecurityLimits,
+    shouldCommit?: () => boolean
   ) => Promise<string>;
   fetchOnChainNicknames: (addresses: string[]) => Promise<Map<string, string>>;
   getMemoSigner: () => Promise<MemoSignerBundle>;
   getMemoSignerForAccount?: (account: WalletReadAccount) => Promise<MemoSignerBundle>;
   hasAesReady: boolean;
-  lastAutoBackupAttemptBlockRef: MutableRefObject<Record<string, number>>;
   lastReadAllTsRef: MutableRefObject<number>;
   lastReadByContactRef: MutableRefObject<Record<string, number>>;
-  lastStateBackupBlockRef: MutableRefObject<Record<string, number>>;
   messagesByContact: Record<string, ChatMessage[]>;
   notificationSuppressedContactAddressSet: Set<string>;
   parseEncryptedChatMessagePayload: (
-    signer: Wallet | JsonRpcSigner,
+    signer: JsonRpcSigner,
     cacheKey: string,
     ciphertext: unknown
   ) => Promise<ReturnType<typeof parseChatMessagePayload>>;
   pinnedContactStateRef: MutableRefObject<Map<string, { muted?: boolean; hidden?: boolean }>>;
-  readStateFeaturesEnabled: boolean;
   resolveBlockTimestampMap: (
     readProvider: BlockTimestampProvider,
     blockNumbers: Iterable<number>
@@ -188,8 +196,8 @@ const resolveReadableDirectAccounts = (
           canReadPrivate: true,
           isActionAccount: true,
           key: normalized.toLowerCase(),
-          label: 'ChainWhisper account',
-          role: 'chainwhisper'
+          label: 'Connected wallet',
+          role: 'owner'
         }
       ]
     : [];
@@ -220,6 +228,25 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     autoPrefetchedRecentHistoryByContactRef.current = {};
   }, []);
 
+  const directReadScopeKey = buildDirectConversationReadScopeKey(args.walletAddress, args.hasAesReady, args.readAccounts);
+  const readableDirectAccountKeys = resolveReadableDirectAccounts(
+    args.walletAddress,
+    args.hasAesReady,
+    args.readAccounts
+  ).map((account) => account.key);
+  const readableDirectAccountKeysKey = readableDirectAccountKeys.join('|');
+  const previousDirectReadScopeKeyRef = useRef(directReadScopeKey);
+  useLayoutEffect(() => {
+    const readableKeys = new Set(readableDirectAccountKeys);
+    if (previousDirectReadScopeKeyRef.current !== directReadScopeKey) {
+      resetConversationHistoryCaches();
+      previousDirectReadScopeKeyRef.current = directReadScopeKey;
+    }
+    argsRef.current.setMessagesByContact((previous) =>
+      pruneDirectMessagesOutsideReadScope(previous, readableKeys)
+    );
+  }, [directReadScopeKey, readableDirectAccountKeysKey, resetConversationHistoryCaches]);
+
   const syncConversationHistory = useCallback(
     (options?: SyncConversationOptions) => syncConversationHistoryImplRef.current(options),
     []
@@ -243,9 +270,10 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       contract: unknown,
       messageId: string,
       requestedWalletAddress: string,
-      signer: Wallet | JsonRpcSigner,
+      signer: JsonRpcSigner,
       cacheKey: string,
-      readAccount?: WalletReadAccount
+      readAccount?: WalletReadAccount,
+      shouldCommit: () => boolean = () => true
     ): Promise<ParsedDirectMessage | null> => {
       const walletKey = requestedWalletAddress.toLowerCase();
       const view = await readMessageView(contract, messageId, requestedWalletAddress);
@@ -268,9 +296,18 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
       try {
         const parts: string[] = [];
+        const memoSecurityLimits = direction === 'outgoing' && contactKey === walletKey
+          ? STATE_BACKUP_MEMO_SECURITY_LIMITS
+          : undefined;
         const firstCiphertext = extractUserCiphertext(view.ciphertext);
         if (firstCiphertext && firstCiphertext.value.length > 0) {
-          parts.push(await argsRef.current.decryptMemoPlaintextWithRecovery(signer, cacheKey, firstCiphertext));
+          parts.push(await argsRef.current.decryptMemoPlaintextWithRecovery(
+            signer,
+            cacheKey,
+            firstCiphertext,
+            memoSecurityLimits,
+            shouldCommit
+          ));
         }
         for (let chunkIndex = 1; chunkIndex < view.chunkCount; chunkIndex += 1) {
           const chunk = await readMessageChunk(contract, view.id, chunkIndex, requestedWalletAddress);
@@ -278,7 +315,13 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
           if (!chunkCiphertext || chunkCiphertext.value.length === 0) {
             continue;
           }
-          parts.push(await argsRef.current.decryptMemoPlaintextWithRecovery(signer, cacheKey, chunkCiphertext));
+          parts.push(await argsRef.current.decryptMemoPlaintextWithRecovery(
+            signer,
+            cacheKey,
+            chunkCiphertext,
+            memoSecurityLimits,
+            shouldCommit
+          ));
         }
         if (parts.length > 0) {
           plaintext = parts.join('');
@@ -306,7 +349,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
           direction === 'incoming'
             ? parsedMessage.embeddedNickname
             : parsedMessage.embeddedContactName ?? parsedMessage.embeddedNickname,
-        conversationState: normalizedState,
+        conversationState: filterLegacyConversationPreferenceStateByDirection(direction, normalizedState),
         latestIncomingTime: direction === 'incoming' ? view.timestamp || view.blockNumber : undefined,
         entry: shouldSuppressVisibleRow
           ? undefined
@@ -339,7 +382,6 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
   syncConversationHistoryImplRef.current = async (options?: SyncConversationOptions) => {
     const {
-      backupLocalStateToSelf,
       chainId,
       contacts,
       currentWalletKeyRef,
@@ -347,13 +389,10 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       getMemoSigner,
       getMemoSignerForAccount,
       hasAesReady,
-      lastAutoBackupAttemptBlockRef,
       lastReadAllTsRef,
       lastReadByContactRef,
-      lastStateBackupBlockRef,
       notificationSuppressedContactAddressSet,
       pinnedContactStateRef,
-      readStateFeaturesEnabled,
       setContacts,
       setError,
       setMessagesByContact,
@@ -370,6 +409,15 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    const requestedReadScopeKey = buildDirectConversationReadScopeKey(walletAddress, hasAesReady, readAccounts);
+    const isReadScopeCurrent = () => {
+      const current = argsRef.current;
+      return requestedReadScopeKey === buildDirectConversationReadScopeKey(
+        current.walletAddress,
+        current.hasAesReady,
+        current.readAccounts
+      );
+    };
     const readableAccounts = resolveReadableDirectAccounts(walletAddress, hasAesReady, readAccounts);
     if (!requestedWalletAddress || !isWalletAddress(requestedWalletAddress) || readableAccounts.length === 0) {
       return;
@@ -389,9 +437,13 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
-      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
+      const contract = new cotiEthers.Contract(
+        LEGACY_CHAT_CONTRACT_ADDRESS,
+        LEGACY_CHAT_CONTRACT_ABI,
+        readProvider
+      );
       const latestBlock = await readProvider.getBlockNumber();
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
+      if (currentWalletKeyRef.current !== requestedWalletKey || !isReadScopeCurrent()) {
         return;
       }
 
@@ -408,13 +460,16 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
       const discoveredConversationStates = new Map<string, ConversationPreferenceState>();
       const latestIncomingMessageTimeByContact = new Map<string, number>();
       const recentPeersByAccount = new Map<string, RecentPeerMeta[]>();
-      const signerBundles: Array<{ account: WalletReadAccount; signer: Wallet | JsonRpcSigner; cacheKey: string }> = [];
+      const signerBundles: Array<{ account: WalletReadAccount; signer: JsonRpcSigner; cacheKey: string }> = [];
 
       for (const account of readableAccounts) {
         try {
           const signerBundle = getMemoSignerForAccount
             ? await getMemoSignerForAccount(account)
             : await getMemoSigner();
+          if (!isReadScopeCurrent()) {
+            return;
+          }
           signerBundles.push({ account, ...signerBundle });
         } catch (signerError) {
           if (account.isActionAccount) {
@@ -422,7 +477,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
           }
           debugLog('[sync] skipped unreadable owner account', {
             account: account.address,
-            reason: signerError instanceof Error ? signerError.message : String(signerError)
+            reason: getProviderErrorMessage(signerError, 'Owner privacy signer was unavailable.')
           });
         }
       }
@@ -437,6 +492,9 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         const recentPeersWithMeta = useActiveContactOnly
           ? []
           : await resolveRecentPeersWithMeta(contract, accountAddress);
+        if (!isReadScopeCurrent()) {
+          return;
+        }
         recentPeersByAccount.set(accountKey, recentPeersWithMeta);
         const peersToRead = new Map<string, string>();
         const addPeer = (address?: string | null) => {
@@ -464,6 +522,9 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
             const peerKey = peerAddress.toLowerCase();
             const cacheContactKey = buildPerAccountContactKey(accountKey, peerKey);
             const count = await readConversationMessageCount(contract, accountAddress, peerAddress).catch(() => 0);
+            if (!isReadScopeCurrent()) {
+              return;
+            }
             if (count <= 0) {
               hasOlderHistoryByContactRef.current[cacheContactKey] = false;
               continue;
@@ -474,11 +535,25 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
               : Math.min(options?.deep ? CHAT_GC_DEEP_THREAD_PAGE_SIZE : CHAT_GC_THREAD_PAGE_SIZE, count);
             const offset = Math.max(0, count - limit);
             const ids = await readConversationMessageIds(contract, accountAddress, peerAddress, offset, limit);
+            if (!isReadScopeCurrent()) {
+              return;
+            }
             oldestLoadedOffsetByContactRef.current[cacheContactKey] = offset;
             hasOlderHistoryByContactRef.current[cacheContactKey] = offset > 0;
 
             for (const messageId of ids) {
-              const parsed = await parseMessageById(contract, messageId, accountAddress, signer, cacheKey, account);
+              const parsed = await parseMessageById(
+                contract,
+                messageId,
+                accountAddress,
+                signer,
+                cacheKey,
+                account,
+                isReadScopeCurrent
+              );
+              if (!isReadScopeCurrent()) {
+                return;
+              }
               if (!parsed) {
                 continue;
               }
@@ -504,26 +579,31 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         }
       }
 
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
+      if (currentWalletKeyRef.current !== requestedWalletKey || !isReadScopeCurrent()) {
         return;
       }
 
       if (entries.length > 0) {
         setMessagesByContact((previous) =>
-          mergeDirectHistoryEntries(previous, entries, requestedWalletAddress, {
-            pruneOptimisticOutgoing: true
-          })
+          isReadScopeCurrent()
+            ? mergeDirectHistoryEntries(previous, entries, requestedWalletAddress, {
+                pruneOptimisticOutgoing: true
+              })
+            : previous
         );
       }
 
       const onChainNicknames =
         discoveredContacts.size > 0 ? await fetchOnChainNicknames(Array.from(discoveredContacts)) : new Map<string, string>();
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
+      if (currentWalletKeyRef.current !== requestedWalletKey || !isReadScopeCurrent()) {
         return;
       }
 
       if (discoveredContacts.size > 0 || discoveredNicknames.size > 0 || discoveredConversationStates.size > 0) {
         setContacts((previous) => {
+          if (!isReadScopeCurrent()) {
+            return previous;
+          }
           let nextContacts = mergeUniqueContacts(previous, Array.from(discoveredContacts));
           nextContacts = nextContacts.map((contact) => {
             const key = contact.address.toLowerCase();
@@ -543,7 +623,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         });
       }
 
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
+      if (currentWalletKeyRef.current !== requestedWalletKey || !isReadScopeCurrent()) {
         return;
       }
 
@@ -575,23 +655,6 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         setUnreadMap(unreadResolution.nextUnread);
       }
 
-      if (readStateFeaturesEnabled) {
-        const knownBackupBlockNumber = lastStateBackupBlockRef.current[requestedWalletKey];
-        const knownAutoBackupAttemptBlock = lastAutoBackupAttemptBlockRef.current[requestedWalletKey] ?? 0;
-        const blocksSinceAutoBackupAttempt = latestBlock - knownAutoBackupAttemptBlock;
-        const hasLocalStateSnapshot = normalizeLastReadAllTs(lastReadAllTsRef.current) > 0;
-        const shouldAutoBackupForDistance =
-          hasLocalStateSnapshot &&
-          typeof knownBackupBlockNumber === 'number' &&
-          latestBlock - knownBackupBlockNumber >= AUTO_STATE_BACKUP_BLOCK_DISTANCE &&
-          blocksSinceAutoBackupAttempt >= AUTO_STATE_BACKUP_RETRY_BLOCKS;
-
-        if (shouldAutoBackupForDistance) {
-          lastAutoBackupAttemptBlockRef.current[requestedWalletKey] = latestBlock;
-          backupLocalStateToSelf({ force: true, background: true }).catch(() => {});
-        }
-      }
-
       if (useActiveContactOnly && typeof options?.toBlock !== 'number') {
         lastActiveContactSyncedBlockRef.current[`${requestedWalletKey}:${activeContactAddress.toLowerCase()}`] =
           latestBlock;
@@ -599,26 +662,26 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         lastSyncedBlockRef.current[requestedWalletKey] = latestBlock;
       }
 
+      // Lease-guarded signer reads can throw after an account/network/session
+      // change. Resolve them before React enters the state reducer so the
+      // failure becomes a handled sync retry instead of crashing <App>.
+      const onboardInfoUpdates = collectMemoSignerOnboardInfoUpdates(signerBundles);
+      if (!isReadScopeCurrent()) return;
       setSessionOnboardInfo((previous) => {
-        let next = previous;
-        for (const { signer, cacheKey } of signerBundles) {
-          const nextOnboardInfo = signer.getUserOnboardInfo();
-          if (!nextOnboardInfo) {
-            continue;
-          }
-          next = {
-            ...next,
-            [cacheKey]: mergeOnboardInfo(next[cacheKey], nextOnboardInfo)
-          };
+        if (!isReadScopeCurrent()) {
+          return previous;
         }
-        return next;
+        return mergeMemoSignerOnboardInfoUpdates(previous, onboardInfoUpdates);
       });
     } catch (syncError) {
       try {
-        console.error('[sync] ChatGC error', syncError);
+        console.error(
+          '[sync] ChatGC error',
+          getProviderErrorMessage(syncError, 'Legacy chat history synchronization failed.')
+        );
       } catch {}
       if (!options?.background) {
-        setError(syncError instanceof Error ? syncError.message : 'Failed to sync history.');
+        setError(getProviderErrorMessage(syncError, 'Failed to sync history.'));
       }
     } finally {
       syncingHistoryRef.current = false;
@@ -665,6 +728,15 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
     const requestedWalletAddress = walletAddress.trim();
     const requestedWalletKey = requestedWalletAddress.toLowerCase();
+    const requestedReadScopeKey = buildDirectConversationReadScopeKey(walletAddress, hasAesReady, readAccounts);
+    const isReadScopeCurrent = () => {
+      const current = argsRef.current;
+      return requestedReadScopeKey === buildDirectConversationReadScopeKey(
+        current.walletAddress,
+        current.hasAesReady,
+        current.readAccounts
+      );
+    };
     const contactAddress = activeContact.trim();
     if (!isWalletAddress(contactAddress)) {
       return;
@@ -682,19 +754,26 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
 
       const cotiEthers = await loadCotiEthersModule();
       const readProvider = await loadCotiReadProvider(true);
-      const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, readProvider);
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
+      const contract = new cotiEthers.Contract(
+        LEGACY_CHAT_CONTRACT_ADDRESS,
+        LEGACY_CHAT_CONTRACT_ABI,
+        readProvider
+      );
+      if (currentWalletKeyRef.current !== requestedWalletKey || !isReadScopeCurrent()) {
         return;
       }
 
       const entries: HistoryEntry[] = [];
       const discoveredNicknames = new Map<string, string>();
-      const signerBundles: Array<{ account: WalletReadAccount; signer: Wallet | JsonRpcSigner; cacheKey: string }> = [];
+      const signerBundles: Array<{ account: WalletReadAccount; signer: JsonRpcSigner; cacheKey: string }> = [];
       for (const account of readableAccounts) {
         try {
           const signerBundle = getMemoSignerForAccount
             ? await getMemoSignerForAccount(account)
             : await getMemoSigner();
+          if (!isReadScopeCurrent()) {
+            return;
+          }
           signerBundles.push({ account, ...signerBundle });
         } catch (signerError) {
           if (account.isActionAccount) {
@@ -708,6 +787,9 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         const accountKey = account.key || accountAddress.toLowerCase();
         const accountContactCacheKey = buildPerAccountContactKey(accountKey, contactKey);
         const count = await readConversationMessageCount(contract, accountAddress, contactAddress).catch(() => 0);
+        if (!isReadScopeCurrent()) {
+          return;
+        }
         const loadedConfirmedCount = (messagesByContact[contactKey] ?? []).filter(
           (message) =>
             !message.id.startsWith('local-') &&
@@ -724,11 +806,25 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         const nextOffset = Math.max(0, currentOffset - CHAT_GC_THREAD_PAGE_SIZE);
         const limit = currentOffset - nextOffset;
         const ids = await readConversationMessageIds(contract, accountAddress, contactAddress, nextOffset, limit);
+        if (!isReadScopeCurrent()) {
+          return;
+        }
         oldestLoadedOffsetByContactRef.current[accountContactCacheKey] = nextOffset;
         hasOlderHistoryByContactRef.current[accountContactCacheKey] = nextOffset > 0;
 
         for (const messageId of ids) {
-          const parsed = await parseMessageById(contract, messageId, accountAddress, signer, cacheKey, account);
+          const parsed = await parseMessageById(
+            contract,
+            messageId,
+            accountAddress,
+            signer,
+            cacheKey,
+            account,
+            isReadScopeCurrent
+          );
+          if (!isReadScopeCurrent()) {
+            return;
+          }
           if (!parsed) {
             continue;
           }
@@ -741,26 +837,31 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
         }
       }
 
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
+      if (currentWalletKeyRef.current !== requestedWalletKey || !isReadScopeCurrent()) {
         return;
       }
 
       if (entries.length > 0) {
         setMessagesByContact((previous) =>
-          mergeDirectHistoryEntries(previous, entries, requestedWalletAddress, {
-            pruneOptimisticOutgoing: false
-          })
+          isReadScopeCurrent()
+            ? mergeDirectHistoryEntries(previous, entries, requestedWalletAddress, {
+                pruneOptimisticOutgoing: false
+              })
+            : previous
         );
       }
 
       const onChainNicknames = await fetchOnChainNicknames([contactAddress]);
-      if (currentWalletKeyRef.current !== requestedWalletKey) {
+      if (currentWalletKeyRef.current !== requestedWalletKey || !isReadScopeCurrent()) {
         return;
       }
 
       if (discoveredNicknames.size > 0 || onChainNicknames.get(contactKey)) {
-        setContacts((previous) =>
-          previous.map((contact) => {
+        setContacts((previous) => {
+          if (!isReadScopeCurrent()) {
+            return previous;
+          }
+          return previous.map((contact) => {
             const nickname =
               discoveredNicknames.get(contact.address.toLowerCase()) ??
               onChainNicknames.get(contact.address.toLowerCase());
@@ -768,37 +869,40 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
               return contact;
             }
             return { ...contact, name: nickname };
-          })
-        );
+          });
+        });
       }
 
+      const onboardInfoUpdates = collectMemoSignerOnboardInfoUpdates(signerBundles);
+      if (!isReadScopeCurrent()) return;
       setSessionOnboardInfo((previous) => {
-        let next = previous;
-        for (const { signer, cacheKey } of signerBundles) {
-          const nextOnboardInfo = signer.getUserOnboardInfo();
-          if (!nextOnboardInfo) {
-            continue;
-          }
-          next = {
-            ...next,
-            [cacheKey]: mergeOnboardInfo(next[cacheKey], nextOnboardInfo)
-          };
+        if (!isReadScopeCurrent()) {
+          return previous;
         }
-        return next;
+        return mergeMemoSignerOnboardInfoUpdates(previous, onboardInfoUpdates);
       });
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load older history.');
+      setError(getProviderErrorMessage(loadError, 'Failed to load older history.'));
     } finally {
       loadingOlderHistoryRef.current = false;
       setLoadingOlderHistory(false);
     }
   };
 
-  const { activeContact, activeGroupId, activeMessagesLength, hasAesReady, walletAddress, readAccounts } = args;
+  const {
+    activeContact,
+    activeGroupId,
+    activeMessagesLength,
+    automaticLegacySyncEnabled = true,
+    hasAesReady,
+    walletAddress,
+    readAccounts
+  } = args;
   const hasReadableDirectAccount = resolveReadableDirectAccounts(walletAddress, hasAesReady, readAccounts).length > 0;
   useEffect(() => {
     if (
       !activeContact ||
+      !automaticLegacySyncEnabled ||
       activeGroupId !== null ||
       syncingHistoryRef.current ||
       loadingOlderHistoryRef.current ||
@@ -834,6 +938,7 @@ export default function useDirectConversationSync(args: UseDirectConversationSyn
     activeContact,
     activeGroupId,
     activeMessagesLength,
+    automaticLegacySyncEnabled,
     hasReadableDirectAccount,
     loadOlderMessagesForActiveContact,
     walletAddress

@@ -40,8 +40,10 @@ type TradeOfferCardProps = {
   shareLabel?: string;
   shareCopied?: boolean;
   tradeWindowLayout?: boolean;
+  termsUnavailableReason?: string;
   onCopyShareLink?: () => void;
   onOpenTerminal?: () => void;
+  onRevealTerms?: () => void;
   showCounterAction?: boolean;
   counterUnavailableReason?: string;
   showEditAction?: boolean;
@@ -187,6 +189,24 @@ const buildTradeEventLabel = (
     return `Cancelled by ${actorLabel}`;
   }
 
+  if (response.action === 'expired') {
+    return 'Expired';
+  }
+
+  if (response.action === 'superseded') {
+    const selectedTradeId = response.relatedTradeId ?? response.counterTradeId;
+    return selectedTradeId
+      ? `Superseded by offer #${selectedTradeId}`
+      : 'Superseded';
+  }
+
+  if (response.action === 'replaced') {
+    const replacementTradeId = response.relatedTradeId ?? response.counterTradeId;
+    return replacementTradeId
+      ? `Replaced by offer #${replacementTradeId}`
+      : 'Replaced';
+  }
+
   return response.counterTradeId
     ? `Countered by ${actorLabel} -> offer #${response.counterTradeId}`
     : `Countered by ${actorLabel}`;
@@ -263,8 +283,10 @@ export default function TradeOfferCard({
   shareLabel = 'Share',
   shareCopied = false,
   tradeWindowLayout = false,
+  termsUnavailableReason,
   onCopyShareLink,
   onOpenTerminal,
+  onRevealTerms,
   showCounterAction = true,
   counterUnavailableReason,
   showEditAction = false,
@@ -293,6 +315,7 @@ export default function TradeOfferCard({
   const hiddenLiquidity = termsVisibility === 'hidden-liquidity';
   const directPrivateTerms = termsVisibility === 'direct-private-terms';
   const directTermsHydrated = snapshot ? hasHydratedDirectTradeTerms(snapshot) : false;
+  const directTermsPending = directPrivateTerms && !directTermsHydrated;
   const statusLabel = resolveTradeStatus(offer, snapshot, latestResponse);
   const statusClassName = statusLabel.toLowerCase().replace(/\s+/g, '-');
   const isOpen = statusLabel === 'Open' || statusLabel === 'Pending sync';
@@ -630,7 +653,7 @@ export default function TradeOfferCard({
           <div className="trade-card-summary trade-card-summary-loading">
             <div className="trade-card-summary-item trade-card-summary-item-neutral">
               <span className="trade-card-summary-label">Escrow terms</span>
-              <strong>Loading from contract...</strong>
+              <strong>{termsUnavailableReason ?? 'Loading from contract...'}</strong>
             </div>
           </div>
         )
@@ -753,7 +776,7 @@ export default function TradeOfferCard({
             <div className="trade-card-grid">
               <div className="trade-card-asset">
                 <span className="trade-card-label">Escrow terms</span>
-                <strong>Loading from contract...</strong>
+                <strong>{termsUnavailableReason ?? 'Loading from contract...'}</strong>
               </div>
             </div>
           )}
@@ -790,21 +813,35 @@ export default function TradeOfferCard({
                 <button
                   type="button"
                   className="trade-card-action trade-card-action-accept"
-                  onClick={showVisibleFillInline ? () => onPartialFill?.(fillSubmitInput) : onAccept}
-                  title={isCounterTrade && isTaker ? 'Close the parent first, accept this counter, then close sibling counters.' : undefined}
+                  onClick={
+                    directTermsPending
+                      ? onRevealTerms
+                      : showVisibleFillInline
+                        ? () => onPartialFill?.(fillSubmitInput)
+                        : onAccept
+                  }
+                  title={
+                    directTermsPending
+                      ? 'Unlock privacy and refresh to reveal the exact Direct offer terms.'
+                      : isCounterTrade && isTaker
+                        ? 'Close the parent first, accept this counter, then close sibling counters.'
+                        : undefined
+                  }
                   disabled={
                     showVisibleFillInline
                       ? partialFillDisabled || !fillCanSubmit
-                      : actionPending || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)
+                      : actionPending || (directTermsPending && !onRevealTerms) || (canAcceptOpenTakerTrade && !hasWalletForOpenAccept)
                   }
                 >
                   {actionPending
                     ? 'Processing...'
-                    : hasWalletForOpenAccept
-                      ? isCounterTrade && isTaker
-                        ? 'Close parent & accept'
-                        : 'Buy'
-                    : 'Connect wallet to buy'}
+                    : directTermsPending
+                      ? 'Reveal terms to continue'
+                      : hasWalletForOpenAccept
+                        ? isCounterTrade && isTaker
+                          ? 'Close parent & accept'
+                          : 'Buy'
+                        : 'Connect wallet to buy'}
                 </button>
               ) : null}
               {!hiddenLiquidity && isCounterTrade && isTaker && onFillCounter ? (

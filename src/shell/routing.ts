@@ -3,7 +3,7 @@ import {
   resolveWalletBootstrapTargetPath
 } from '../lib/walletBootstrapRoute';
 
-export type AppPage = 'home' | 'chat' | 'swap' | 'treasury' | 'trades';
+export type AppPage = 'home' | 'chat' | 'swap' | 'dex' | 'treasury' | 'trades';
 
 export type AppRoute = {
   page: AppPage;
@@ -13,8 +13,9 @@ const CANONICAL_APP_PATHS: Record<AppPage, string> = {
   home: '/',
   chat: '/chat',
   swap: '/portal',
-  treasury: '/treasury',
-  trades: '/otc'
+  dex: '/dex',
+  treasury: '/tvl',
+  trades: '/otc/desk'
 };
 
 export const normalizeAppPathname = (pathname: string): string => {
@@ -32,6 +33,15 @@ export const getPathForAppPage = (page: AppPage): string => {
   return CANONICAL_APP_PATHS[page] ?? '/';
 };
 
+export const resolveCanonicalTradingPath = (path: string): string => {
+  const pathname = resolveRoutePathname(path).toLowerCase();
+  if (pathname === '/otc' || pathname === '/otcdesk') return '/otc/desk';
+  if (pathname === '/dex/desk') return '/dex/strategies';
+  if (pathname === '/dex/orders' || pathname.startsWith('/dex/orders/')) return '/dex/positions';
+  if (pathname === '/otc/pools' || pathname.startsWith('/otc/pools/')) return '/dex/positions';
+  return path;
+};
+
 export const getTitleForAppPage = (page: AppPage): string =>
   page === 'home'
     ? 'ChainWhisper'
@@ -39,9 +49,11 @@ export const getTitleForAppPage = (page: AppPage): string =>
       ? 'Encrypted Chat | ChainWhisper'
       : page === 'swap'
         ? 'Privacy Portal | ChainWhisper'
+        : page === 'dex'
+          ? 'Private DEX | ChainWhisper'
         : page === 'trades'
-          ? 'OTC Desk | ChainWhisper'
-          : 'Treasury Data | ChainWhisper';
+          ? 'Trading | ChainWhisper'
+          : 'COTI Private TVL | ChainWhisper';
 
 export const resolveNavigationPathFromLocation = (): string => {
   if (typeof window === 'undefined') {
@@ -100,12 +112,17 @@ export const stripStaleTradeSearchParams = (pathname: string, search: string): s
 };
 
 export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
-  const normalizedPathname = resolveRoutePathname(path).toLowerCase();
+  const normalizedPathname = resolveRoutePathname(resolveCanonicalTradingPath(path)).toLowerCase();
   if (normalizedPathname === '/' || normalizedPathname === '/home') {
     return { page: 'home' };
   }
 
-  if (normalizedPathname === '/treasury' || normalizedPathname === '/treasury-data') {
+  if (
+    normalizedPathname === '/tvl' ||
+    normalizedPathname === '/private-tvl' ||
+    normalizedPathname === '/treasury' ||
+    normalizedPathname === '/treasury-data'
+  ) {
     return { page: 'treasury' };
   }
 
@@ -116,6 +133,10 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     normalizedPathname === '/whisper-shield'
   ) {
     return { page: 'swap' };
+  }
+
+  if (normalizedPathname === '/dex' || normalizedPathname.startsWith('/dex/')) {
+    return { page: 'dex' };
   }
 
   if (
@@ -143,8 +164,11 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     normalizedHash === 'swap' ||
     normalizedHash === 'shield' ||
     normalizedHash === 'whisper-shield' ||
+    normalizedHash === 'tvl' ||
+    normalizedHash === 'private-tvl' ||
     normalizedHash === 'treasury' ||
     normalizedHash === 'treasury-data' ||
+    normalizedHash === 'dex' ||
     normalizedHash === 'otcdesk' ||
     normalizedHash === 'otc' ||
     normalizedHash === 'trades'
@@ -155,8 +179,11 @@ export const resolveAppRouteFromPath = (path: string, hash = ''): AppRoute => {
     if (normalizedHash === 'portal' || normalizedHash === 'shield' || normalizedHash === 'whisper-shield') {
       return { page: 'swap' };
     }
-    if (normalizedHash === 'treasury-data') {
+    if (normalizedHash === 'tvl' || normalizedHash === 'private-tvl' || normalizedHash === 'treasury-data') {
       return { page: 'treasury' };
+    }
+    if (normalizedHash === 'dex') {
+      return { page: 'dex' };
     }
     if (normalizedHash === 'otcdesk' || normalizedHash === 'otc') {
       return { page: 'trades' };

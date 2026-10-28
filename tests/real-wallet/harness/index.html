@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChainWhisper Chat V2 prompt measurement</title>
+    <style>
+      body { background: #120d1b; color: #f4efff; font: 16px/1.5 system-ui; margin: 0; padding: 32px; }
+      main { margin: auto; max-width: 760px; }
+      button { display: block; margin: 12px 0; padding: 10px 14px; }
+      [data-status="running"] { color: #ffd166; }
+      [data-status="success"] { color: #7ee787; }
+      [data-status="error"] { color: #ff7b72; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ChainWhisper Chat V2 prompt measurement</h1>
+      <p>Dedicated test wallets only. Unlock and approve in MetaMask manually. The COTI AES key stays in page memory for this run, is never displayed or persisted, and is cleared at teardown.</p>
+      <button data-action="connect-wallet">Connect wallet</button><output data-phase="wallet-connect" data-status="idle">Idle</output>
+      <button data-action="unlock-snap">Unlock COTI privacy</button><output data-phase="snap-unlock" data-status="idle">Idle</output>
+      <button data-action="attest">Attest exact deployment</button><output data-phase="deployment-attestation" data-status="idle">Idle</output>
+      <button data-action="create">Create conversation</button><output data-phase="warm-create" data-status="idle">Idle</output>
+      <button data-action="recover">Recover conversation envelope</button><output data-phase="envelope-recovery" data-status="idle">Idle</output>
+      <button data-action="send">Send fixed test message</button><output data-phase="warm-send" data-status="idle">Idle</output>
+      <button data-action="rotate">Rotate conversation key</button><output data-phase="warm-rotate" data-status="idle">Idle</output>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

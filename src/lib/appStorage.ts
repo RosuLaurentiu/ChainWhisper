@@ -1,6 +1,6 @@
 import { isWalletAddress } from './appShared';
 
-export type WalletPreferenceKind = 'app' | 'browser';
+export type WalletPreferenceKind = 'browser';
 
 export type WalletPreference = {
   version: 1;
@@ -40,10 +40,6 @@ export const normalizeWalletPreference = (value: unknown): WalletPreference | nu
   const record = value as { version?: unknown; kind?: unknown; browserWalletId?: unknown };
   if (record.version !== 1) {
     return null;
-  }
-
-  if (record.kind === 'app') {
-    return { version: 1, kind: 'app' };
   }
 
   if (record.kind === 'browser') {

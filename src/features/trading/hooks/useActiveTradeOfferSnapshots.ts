@@ -1,11 +1,9 @@
 import { useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { isInChatTradeOffer } from '../../../app/appHelpers';
-import { fetchTradeSnapshotById } from '../../../lib/appChain';
+import { isSupportedDirectTradeV2Escrow } from '../../../lib/directTradeV2Deployment';
 import {
   buildTradeSnapshotKey,
-  isWalletAddress,
   parseTradeOfferMessagePayload,
-  TRADE_ESCROW_CONTRACT_ADDRESS,
   type ChatMessage,
   type TradeOfferMessagePayload,
   type TradeSnapshot
@@ -13,19 +11,62 @@ import {
 
 type UseActiveTradeOfferSnapshotsArgs = {
   activeMessages: ChatMessage[];
-  privateRewardTokenDecimals: number;
-  privateRewardTokenSymbol: string;
-  rewardTokenDecimals: number;
-  rewardTokenSymbol: string;
+  privateTermsEnabled: boolean;
+  supportedEscrowContract?: string;
+  supportedEscrowContracts?: readonly string[];
+  resolveTradeSnapshotForOffer: (
+    offer: TradeOfferMessagePayload,
+    options?: Readonly<{ allowPrivatePrompt?: boolean }>
+  ) => Promise<TradeSnapshot>;
   setTradeSnapshotsById: Dispatch<SetStateAction<Record<string, TradeSnapshot>>>;
+};
+
+export const loadActiveTradeOfferSnapshots = async ({
+  offers,
+  privateTermsEnabled,
+  supportedEscrowContract,
+  supportedEscrowContracts,
+  resolveTradeSnapshotForOffer
+}: {
+  offers: readonly TradeOfferMessagePayload[];
+  privateTermsEnabled: boolean;
+  supportedEscrowContract?: string;
+  supportedEscrowContracts?: readonly string[];
+  resolveTradeSnapshotForOffer: (
+    offer: TradeOfferMessagePayload,
+    options?: Readonly<{ allowPrivatePrompt?: boolean }>
+  ) => Promise<TradeSnapshot>;
+}): Promise<TradeSnapshot[]> => {
+  const uniqueOffers = Array.from(
+    new Map(
+      offers.map((offer) => [
+        buildTradeSnapshotKey(offer.tradeId, offer.escrowContract),
+        offer
+      ])
+    ).values()
+  );
+  const snapshots: TradeSnapshot[] = [];
+  for (const offer of uniqueOffers) {
+    if (!isSupportedDirectTradeV2Escrow(offer.escrowContract, supportedEscrowContracts, supportedEscrowContract)) {
+      continue;
+    }
+    try {
+      snapshots.push(await resolveTradeSnapshotForOffer(offer, {
+        allowPrivatePrompt: privateTermsEnabled
+      }));
+    } catch {
+      // A failed card must not block the remaining active offers.
+    }
+  }
+  return snapshots;
 };
 
 export default function useActiveTradeOfferSnapshots({
   activeMessages,
-  privateRewardTokenDecimals,
-  privateRewardTokenSymbol,
-  rewardTokenDecimals,
-  rewardTokenSymbol,
+  privateTermsEnabled,
+  supportedEscrowContract,
+  supportedEscrowContracts,
+  resolveTradeSnapshotForOffer,
   setTradeSnapshotsById
 }: UseActiveTradeOfferSnapshotsArgs) {
   const activeTradeOffers = useMemo(
@@ -37,48 +78,36 @@ export default function useActiveTradeOfferSnapshots({
   );
 
   useEffect(() => {
-    if (!TRADE_ESCROW_CONTRACT_ADDRESS || !isWalletAddress(TRADE_ESCROW_CONTRACT_ADDRESS) || activeTradeOffers.length === 0) {
+    if (activeTradeOffers.length === 0) {
       return;
     }
 
     let cancelled = false;
 
     const loadTradeSnapshots = async () => {
-      const nextSnapshots = await Promise.all(
-        Array.from(
-          new Map(
-            activeTradeOffers.map((offer) => [
-              buildTradeSnapshotKey(offer.tradeId, offer.escrowContract),
-              offer
-            ])
-          ).values()
-        ).map(async (offer) => {
-          try {
-            return await fetchTradeSnapshotById(offer.tradeId, {
-              rewardTokenSymbol,
-              rewardTokenDecimals,
-              privateRewardTokenSymbol,
-              privateRewardTokenDecimals,
-              escrowContract: offer.escrowContract,
-              accessSecret: offer.accessSecret
-            });
-          } catch {
-            return null;
-          }
-        })
-      );
+      const nextSnapshots = await loadActiveTradeOfferSnapshots({
+        offers: activeTradeOffers,
+        privateTermsEnabled,
+        supportedEscrowContract,
+        supportedEscrowContracts,
+        resolveTradeSnapshotForOffer
+      });
 
       if (cancelled) {
         return;
       }
 
+      if (nextSnapshots.length === 0) {
+        return;
+      }
+
       setTradeSnapshotsById((previous) => {
-        const next = { ...previous };
+        let next = previous;
         for (const snapshot of nextSnapshots) {
-          if (!snapshot) {
-            continue;
-          }
-          next[buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract)] = snapshot;
+          const key = buildTradeSnapshotKey(snapshot.tradeId, snapshot.escrowContract);
+          if (previous[key] === snapshot) continue;
+          if (next === previous) next = { ...previous };
+          next[key] = snapshot;
         }
         return next;
       });
@@ -91,10 +120,10 @@ export default function useActiveTradeOfferSnapshots({
     };
   }, [
     activeTradeOffers,
-    privateRewardTokenDecimals,
-    privateRewardTokenSymbol,
-    rewardTokenDecimals,
-    rewardTokenSymbol,
+    privateTermsEnabled,
+    supportedEscrowContract,
+    supportedEscrowContracts,
+    resolveTradeSnapshotForOffer,
     setTradeSnapshotsById
   ]);
 }

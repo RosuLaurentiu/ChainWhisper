@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { TradeSnapshot } from '../../../lib/appShared';
 import { getSnapshotKey } from '../../../lib/p2pTradeView';
+import type { TradeHistoryV2ExecutionRow } from '../../../lib/tradeHistoryV2Ledger';
 import type { WalletReadAccount } from '../../../lib/walletAccountScope';
 import type {
   MyTradeGroupView,
@@ -21,6 +22,7 @@ export type TradeOrderCardProps = {
   resolveKnownTradeAccessSecret: (tradeId: number, escrowContract?: string) => string;
   buildTradeShareUrl: (tradeId: number, accessSecret?: string, escrowContract?: string) => string;
   copyWithFeedback: (value: string, feedbackKey: string) => Promise<void>;
+  canonicalV2Rows?: readonly TradeHistoryV2ExecutionRow[];
 };
 
 type TradeOverviewCardProps = TradeOrderCardProps & {
@@ -41,7 +43,8 @@ export function TradeOverviewCard({
   toggleTradeRateDirection,
   resolveKnownTradeAccessSecret,
   buildTradeShareUrl,
-  copyWithFeedback
+  copyWithFeedback,
+  canonicalV2Rows
 }: TradeOverviewCardProps) {
   if (trade.recurringOrder) {
     return (
@@ -74,6 +77,7 @@ export function TradeOverviewCard({
       resolveKnownTradeAccessSecret={resolveKnownTradeAccessSecret}
       buildTradeShareUrl={buildTradeShareUrl}
       copyWithFeedback={copyWithFeedback}
+      canonicalV2Rows={canonicalV2Rows}
     />
   );
 }

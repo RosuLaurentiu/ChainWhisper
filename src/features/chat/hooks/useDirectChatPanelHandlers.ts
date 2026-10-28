@@ -13,6 +13,8 @@ type StateUpdate<T> = T | ((previous: T) => T);
 
 type UseDirectChatPanelHandlersArgs = {
   browserWalletLiteMode: boolean;
+  chatReactionsV1Enabled: boolean;
+  directChatV2RepliesEnabled: boolean;
   sendDirectImageMessage: (file: File) => Promise<void>;
   sendMessage: () => Promise<void>;
   sendTipToActiveContact: (token: TipTokenSelection, amountWei: bigint) => Promise<void>;
@@ -34,6 +36,8 @@ type UseDirectChatPanelHandlersArgs = {
 
 export default function useDirectChatPanelHandlers({
   browserWalletLiteMode,
+  chatReactionsV1Enabled,
+  directChatV2RepliesEnabled,
   sendDirectImageMessage,
   sendMessage,
   sendTipToActiveContact,
@@ -104,19 +108,23 @@ export default function useDirectChatPanelHandlers({
   }, []);
 
   const handleToggleReactionPicker = useCallback((messageId: string) => {
-    if (browserWalletLiteMode) {
+    if (browserWalletLiteMode && !chatReactionsV1Enabled) {
       return;
     }
     setReactionPickerMessageId((previous) => (previous === messageId ? null : messageId));
-  }, [browserWalletLiteMode, setReactionPickerMessageId]);
+  }, [browserWalletLiteMode, chatReactionsV1Enabled, setReactionPickerMessageId]);
 
   const handleReplyToMessage = useCallback((message: ChatMessage) => {
-    if (browserWalletLiteMode) {
-      setError('Use the ChainWhisper account to send replies.');
+    if (browserWalletLiteMode && !directChatV2RepliesEnabled) {
+      setError('Direct Chat V2 must be active before the connected wallet can send replies.');
+      return;
+    }
+    if (directChatV2RepliesEnabled && !message.directV2) {
+      setError('Direct Chat V2 replies can target only messages from the new chat protocol.');
       return;
     }
     setReplyingToMessage(message);
-  }, [browserWalletLiteMode, setError, setReplyingToMessage]);
+  }, [browserWalletLiteMode, directChatV2RepliesEnabled, setError, setReplyingToMessage]);
 
   const tipSendStateRef = useRef({ tipTokenSelection, tipAmountWeiFromInput });
   tipSendStateRef.current = { tipTokenSelection, tipAmountWeiFromInput };

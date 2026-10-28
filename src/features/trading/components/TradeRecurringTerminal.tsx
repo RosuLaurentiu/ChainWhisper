@@ -68,6 +68,7 @@ type TradeRecurringTerminalProps = {
   toggleMakerControls: (surface: 'terminal', tradeKey: string) => void;
   toggleTradeRateDirection: (tradeId: number, escrowContract?: string) => void;
   updateRecurringOrderStatus: (snapshot: TradeSnapshot, action: RecurringStatusAction) => Promise<void>;
+  showHistoryControl?: boolean;
 };
 
 export default function TradeRecurringTerminal({
@@ -98,7 +99,8 @@ export default function TradeRecurringTerminal({
   resolveTerminalAssetBalanceLabel,
   toggleMakerControls,
   toggleTradeRateDirection,
-  updateRecurringOrderStatus
+  updateRecurringOrderStatus,
+  showHistoryControl = true
 }: TradeRecurringTerminalProps) {
   const recurring = snapshot.recurringOrder;
   if (!recurring) {
@@ -587,7 +589,7 @@ export default function TradeRecurringTerminal({
         </section>
       </div>
 
-      {historyConfig ? (
+      {showHistoryControl && historyConfig ? (
         <TradeTerminalHistoryMobileControls
           config={historyConfig}
           sheetKey={terminalHistorySheetKey}

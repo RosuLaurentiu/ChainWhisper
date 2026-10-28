@@ -1,8 +1,10 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { BACKGROUND_DEEP_SYNC_DELAY_MS } from '../../../app/appHelpers';
 import {
-  CHAT_CONTRACT_ABI,
-  CHAT_CONTRACT_ADDRESS,
+  LEGACY_CHAT_CONTRACT_ABI,
+  LEGACY_CHAT_CONTRACT_ADDRESS
+} from '../../../lib/legacyChatContracts';
+import {
   COTI_NETWORK,
   getCotiWsLastHealthyAt,
   isWalletAddress,
@@ -33,6 +35,7 @@ type UseDirectConversationRealtimeSyncArgs = {
   chainId: number | null;
   conversationDeepBackfillDoneRef: MutableRefObject<Record<string, boolean>>;
   isSyncingConversationHistoryRef: MutableRefObject<boolean>;
+  legacyEnabled?: boolean;
   onChainNicknameCacheRef: MutableRefObject<Record<string, string | null>>;
   readableWalletAccountKeys: string;
   readableWalletAccounts: WalletReadAccount[];
@@ -48,6 +51,7 @@ export default function useDirectConversationRealtimeSync({
   chainId,
   conversationDeepBackfillDoneRef,
   isSyncingConversationHistoryRef,
+  legacyEnabled = true,
   onChainNicknameCacheRef,
   readableWalletAccountKeys,
   readableWalletAccounts,
@@ -61,7 +65,12 @@ export default function useDirectConversationRealtimeSync({
     const directRealtimeAccounts = readableWalletAccounts.filter(
       (account) => account.canReadPrivate && isWalletAddress(account.address)
     );
-    if (!walletAddress || chainId !== COTI_NETWORK.chainIdDecimal || directRealtimeAccounts.length === 0) {
+    if (
+      !legacyEnabled ||
+      !walletAddress ||
+      chainId !== COTI_NETWORK.chainIdDecimal ||
+      directRealtimeAccounts.length === 0
+    ) {
       setDirectRealtimeStatus('idle');
       return;
     }
@@ -198,7 +207,11 @@ export default function useDirectConversationRealtimeSync({
           await wsProvider.getBlockNumber();
         }
         markCotiWsHealthyNow();
-        const contract = new cotiEthers.Contract(CHAT_CONTRACT_ADDRESS, CHAT_CONTRACT_ABI, wsProvider);
+        const contract = new cotiEthers.Contract(
+          LEGACY_CHAT_CONTRACT_ADDRESS,
+          LEGACY_CHAT_CONTRACT_ABI,
+          wsProvider
+        );
 
         const directMessageFilters = directRealtimeAccounts.flatMap((account) => [
           contract.filters.MessageSubmitted(null, account.address, null),
@@ -330,6 +343,7 @@ export default function useDirectConversationRealtimeSync({
     chainId,
     conversationDeepBackfillDoneRef,
     isSyncingConversationHistoryRef,
+    legacyEnabled,
     onChainNicknameCacheRef,
     readableWalletAccountKeys,
     readableWalletAccounts,

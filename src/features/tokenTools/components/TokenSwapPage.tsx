@@ -44,11 +44,13 @@ export type WispRecoveryView = {
   canShield: boolean;
   canUnshield: boolean;
   canLegacyUnshield: boolean;
+  canEarlierLegacyUnshield: boolean;
   publicSymbol: string;
   privateSymbol: string;
   legacyPrivateSymbol?: string;
   inputSymbol: string;
   feeLabel: string;
+  liquidityLabel: string;
   contractUrl: string;
   legacyContractUrl?: string;
   busy: boolean;
@@ -69,9 +71,6 @@ export type TokenSwapPageProps = {
   onTokenSearchChange: (value: string) => void;
   privacyDirection: PrivacyDirection;
   onPrivacyDirectionChange: (direction: PrivacyDirection) => void;
-  activePortalAccount: 'chainwhisper' | 'owner';
-  showPortalAccountTabs: boolean;
-  onPortalAccountChange: (value: 'chainwhisper' | 'owner') => void;
   amountInput: string;
   onAmountInputChange: (value: string) => void;
   onMaxAmount: () => void;
@@ -297,7 +296,6 @@ function WispConversionCard({
   walletAddress,
   onCotiNetwork,
   hasAesReady,
-  activePortalAccount,
   onCurrentDirectionChange,
   legacyExpanded,
   onLegacyExpandedChange,
@@ -308,14 +306,14 @@ function WispConversionCard({
   walletAddress: string;
   onCotiNetwork: boolean;
   hasAesReady: boolean;
-  activePortalAccount: 'chainwhisper' | 'owner';
   onCurrentDirectionChange: (direction: 'shield' | 'unshield') => void;
   legacyExpanded: boolean;
   onLegacyExpandedChange: (open: boolean) => void;
   legacyDisabled: boolean;
   onOpenHelp?: (reason: AppHelpReason) => void;
 }) {
-  const isLegacyActive = recovery.direction === 'legacy-unshield';
+  const isLegacyActive = recovery.direction === 'legacy-unshield' ||
+    recovery.direction === 'legacy-unshield-earlier';
   const isToPrivate = recovery.direction === 'shield';
   const inputSymbol = isToPrivate ? recovery.publicSymbol : recovery.privateSymbol;
   const outputSymbol = isToPrivate ? recovery.privateSymbol : recovery.publicSymbol;
@@ -335,7 +333,7 @@ function WispConversionCard({
       ? 'Switch to COTI Mainnet to convert WISP.'
       : !hasAesReady
         ? 'Unlock privacy to view and use pWISP.'
-        : `Private balances are available for the ${activePortalAccount === 'owner' ? 'owner wallet' : 'ChainWhisper account'}.`;
+        : 'Private balances are available for the connected wallet.';
   const readinessHelpReason: AppHelpReason | null = !walletAddress
     ? 'wallet-needed'
     : !onCotiNetwork
@@ -586,9 +584,29 @@ function LegacyWispRecovery({
       </summary>
       <div className="privacy-recovery-body">
         <p>
-          Only use this for pWISP created by the previous ChainWhisper bridge. This recovery path can only
-          return legacy pWISP to public WISP.
+          The old pWISP supply is backed across two verified legacy vaults. Select one vault per transaction;
+          this recovery path can only return legacy pWISP to public WISP.
         </p>
+        <div className="swap-pill-switch privacy-legacy-vault-switch" role="group" aria-label="Legacy recovery vault">
+          <button
+            type="button"
+            className={recovery.direction === 'legacy-unshield' ? 'swap-pill-option active' : 'swap-pill-option'}
+            onClick={() => recovery.onDirectionChange('legacy-unshield')}
+            disabled={recovery.busy || disabled || !recovery.canLegacyUnshield}
+            aria-pressed={recovery.direction === 'legacy-unshield'}
+          >
+            Newer legacy vault
+          </button>
+          <button
+            type="button"
+            className={recovery.direction === 'legacy-unshield-earlier' ? 'swap-pill-option active' : 'swap-pill-option'}
+            onClick={() => recovery.onDirectionChange('legacy-unshield-earlier')}
+            disabled={recovery.busy || disabled || !recovery.canEarlierLegacyUnshield}
+            aria-pressed={recovery.direction === 'legacy-unshield-earlier'}
+          >
+            Earlier legacy vault
+          </button>
+        </div>
         <div className="privacy-recovery-input">
           <label htmlFor="wisp-legacy-amount">Amount to recover</label>
           <div>
@@ -606,6 +624,8 @@ function LegacyWispRecovery({
           <small>Legacy balance: {recovery.inputBalanceLabel}</small>
         </div>
         <div className="privacy-recovery-meta">
+          <span>Selected vault liquidity</span>
+          <strong>{recovery.liquidityLabel}</strong>
           <span>Network fee</span>
           <strong>{recovery.feeLabel}</strong>
           {recovery.legacyContractUrl ? (
@@ -618,7 +638,13 @@ function LegacyWispRecovery({
           className="connect-btn privacy-recovery-action"
           type="button"
           onClick={() => recovery.onSubmit().catch(() => {})}
-          disabled={disabled || !recovery.canLegacyUnshield || !recovery.canSubmit}
+          disabled={
+            disabled ||
+            (recovery.direction === 'legacy-unshield-earlier'
+              ? !recovery.canEarlierLegacyUnshield
+              : !recovery.canLegacyUnshield) ||
+            !recovery.canSubmit
+          }
         >
           {recovery.buttonLabel}
         </button>
@@ -643,9 +669,6 @@ export default function TokenSwapPage({
   onTokenSearchChange,
   privacyDirection,
   onPrivacyDirectionChange,
-  activePortalAccount,
-  showPortalAccountTabs,
-  onPortalAccountChange,
   amountInput,
   onAmountInputChange,
   onMaxAmount,
@@ -738,7 +761,7 @@ export default function TokenSwapPage({
       ? 'Switch to COTI Mainnet to use the selected bridge.'
       : !hasAesReady
         ? 'Unlock privacy to view private balances.'
-        : `Private balances are available for the ${activePortalAccount === 'owner' ? 'owner wallet' : 'ChainWhisper account'}.`;
+        : 'Private balances are available for the connected wallet.';
   const readinessHelpReason: AppHelpReason | null = !walletAddress
     ? 'wallet-needed'
     : !onCotiNetwork
@@ -800,7 +823,10 @@ export default function TokenSwapPage({
     if (selectionLocked || !recovery) {
       return;
     }
-    if (recovery.direction === 'legacy-unshield') {
+    if (
+      recovery.direction === 'legacy-unshield' ||
+      recovery.direction === 'legacy-unshield-earlier'
+    ) {
       recovery.onDirectionChange('unshield');
     }
     setLegacyExpanded(false);
@@ -842,28 +868,6 @@ export default function TokenSwapPage({
               </a>
             </p>
           </div>
-          {showPortalAccountTabs ? (
-            <div className="swap-pill-switch swap-account-switch" role="group" aria-label="Privacy Portal account">
-              <button
-                type="button"
-                className={activePortalAccount === 'chainwhisper' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => onPortalAccountChange('chainwhisper')}
-                disabled={selectionLocked}
-                aria-pressed={activePortalAccount === 'chainwhisper'}
-              >
-                ChainWhisper
-              </button>
-              <button
-                type="button"
-                className={activePortalAccount === 'owner' ? 'swap-pill-option active' : 'swap-pill-option'}
-                onClick={() => onPortalAccountChange('owner')}
-                disabled={selectionLocked}
-                aria-pressed={activePortalAccount === 'owner'}
-              >
-                Owner
-              </button>
-            </div>
-          ) : null}
         </div>
 
         <div className="privacy-mobile-token-picker">
@@ -964,13 +968,46 @@ export default function TokenSwapPage({
             </a>
           </aside>
 
-          {wispSelected && recovery ? (
+          {!walletAddress ? (
+            <section className="swap-card privacy-connection-card" aria-labelledby="privacy-connection-title">
+              <span className="privacy-connection-icon" aria-hidden="true">
+                <LockKeyhole size={24} />
+              </span>
+              <div className="privacy-connection-copy">
+                <span>Selected pair</span>
+                <h2 id="privacy-connection-title">Connect wallet</h2>
+                <p>
+                  {wispSelected
+                    ? 'Connect in the header for balances and recovery.'
+                    : 'Connect in the header to view balances and convert.'}
+                </p>
+              </div>
+              <div className="privacy-connection-facts" aria-label="Selected conversion context">
+                <span>
+                  <strong>{wispSelected ? 'ChainWhisper bridge' : 'Official COTI bridge'}</strong>
+                  <small>Verified conversion route</small>
+                </span>
+                <span>
+                  <strong>{wispSelected ? 'Private recovery' : '1:1 before portal fee'}</strong>
+                  <small>{wispSelected ? 'Legacy options stay available after connection' : 'Live fee and minimum appear after connection'}</small>
+                </span>
+              </div>
+              {onOpenHelp ? (
+                <button
+                  type="button"
+                  className="app-help-context-link privacy-connection-help"
+                  onClick={() => onOpenHelp('wallet-needed')}
+                >
+                  Need help connecting?
+                </button>
+              ) : null}
+            </section>
+          ) : wispSelected && recovery ? (
             <WispConversionCard
               recovery={recovery}
               walletAddress={walletAddress}
               onCotiNetwork={onCotiNetwork}
               hasAesReady={hasAesReady}
-              activePortalAccount={activePortalAccount}
               onCurrentDirectionChange={selectCurrentWispDirection}
               legacyExpanded={legacyExpanded}
               onLegacyExpandedChange={toggleLegacyRecovery}
@@ -1176,7 +1213,7 @@ export default function TokenSwapPage({
               </div>
             ) : null}
             {statusMessage ? <p className="swap-status-note">{statusMessage}</p> : null}
-            {error ? (
+            {walletAddress && error ? (
               <div className="swap-error-row">
                 <p className="error swap-error">{error}</p>
                 <button type="button" onClick={onRefresh} disabled={loading}>Retry</button>

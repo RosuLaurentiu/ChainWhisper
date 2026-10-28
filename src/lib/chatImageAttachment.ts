@@ -2,13 +2,14 @@ import {
   confirmChatImageUpload,
   createEncryptedImageTagFromFile,
   getImageFileValidationError,
-  parseImageTag,
-  type ChatImageConversationKind
+  type ChatImageConversationKind,
+  type ChatImageUploadAuthorization
 } from './imagePull';
 import { buildImageAttachmentStatus, type ImageAttachmentPreviewState } from './imageAttachmentPreview';
 
 type SendChatImageAttachmentOptions = {
   clearImageAttachmentStatus: () => void;
+  conversationTarget: string;
   failureFallbackMessage: string;
   file: File;
   isTargetCurrent: () => boolean;
@@ -16,6 +17,7 @@ type SendChatImageAttachmentOptions = {
   missingTargetMessage: string;
   sendImageTag: (imageTag: string) => Promise<string | undefined>;
   senderAddress: string;
+  uploadAuthorization: ChatImageUploadAuthorization;
   setError: (message: string) => void;
   setUploadingImage: (uploading: boolean) => void;
   showImageAttachmentStatus: (status: ImageAttachmentPreviewState) => void;
@@ -32,8 +34,12 @@ const createImagePreviewUrl = (file: File): string | undefined => {
   }
 };
 
+// Direct and Group share this preview controller; only its latest upload owns cleanup.
+const activeImageUploads = new WeakMap<() => void, symbol>();
+
 export async function sendChatImageAttachment({
   clearImageAttachmentStatus,
+  conversationTarget,
   failureFallbackMessage,
   file,
   isTargetCurrent,
@@ -41,6 +47,7 @@ export async function sendChatImageAttachment({
   missingTargetMessage,
   sendImageTag,
   senderAddress,
+  uploadAuthorization,
   setError,
   setUploadingImage,
   showImageAttachmentStatus,
@@ -48,10 +55,10 @@ export async function sendChatImageAttachment({
   targetMissing,
   uploadingImage
 }: SendChatImageAttachmentOptions): Promise<void> {
-  setError('');
-  if (uploadingImage) {
+  if (uploadingImage || !isTargetCurrent()) {
     return;
   }
+  setError('');
 
   if (targetMissing) {
     setError(missingTargetMessage);
@@ -68,6 +75,10 @@ export async function sendChatImageAttachment({
   }
 
   const previewUrl = createImagePreviewUrl(file);
+  const upload = Symbol();
+  activeImageUploads.set(clearImageAttachmentStatus, upload);
+  const ownsUpload = () => activeImageUploads.get(clearImageAttachmentStatus) === upload;
+  const canUpdateStatus = () => ownsUpload() && isTargetCurrent();
 
   try {
     showImageAttachmentStatus(
@@ -80,9 +91,14 @@ export async function sendChatImageAttachment({
       )
     );
     setUploadingImage(true);
-    const imageTag = await createEncryptedImageTagFromFile(file, kind, senderAddress);
-    const parsedImageTag = parseImageTag(imageTag);
-    if (!isTargetCurrent()) {
+    const preparedImage = await createEncryptedImageTagFromFile(
+      file,
+      kind,
+      senderAddress,
+      conversationTarget,
+      uploadAuthorization
+    );
+    if (!canUpdateStatus()) {
       throw new Error(targetChangedMessage);
     }
 
@@ -95,26 +111,35 @@ export async function sendChatImageAttachment({
         previewUrl
       )
     );
-    const txHash = await sendImageTag(imageTag);
-    if (!parsedImageTag || !txHash) {
-      const message = 'Image message was sent, but the server could not confirm image retention.';
-      setError(message);
-      showImageAttachmentStatus(buildImageAttachmentStatus(file, 'error', 'Image was sent', message, previewUrl));
+    const txHash = await sendImageTag(preparedImage.imageTag);
+    if (!txHash) {
+      if (canUpdateStatus()) {
+        const message = 'Image message was sent, but the server could not confirm image retention.';
+        setError(message);
+        showImageAttachmentStatus(buildImageAttachmentStatus(file, 'error', 'Image was sent', message, previewUrl));
+      }
       return;
     }
 
-    showImageAttachmentStatus(
-      buildImageAttachmentStatus(
-        file,
-        'pending',
-        'Confirming image storage',
-        'Message confirmed on COTI. Marking the encrypted upload as retained.',
-        previewUrl
-      )
-    );
+    if (canUpdateStatus()) {
+      showImageAttachmentStatus(
+        buildImageAttachmentStatus(
+          file,
+          'pending',
+          'Confirming image storage',
+          'Message confirmed on COTI. Marking the encrypted upload as retained.',
+          previewUrl
+        )
+      );
+    }
     try {
-      await confirmChatImageUpload(parsedImageTag.blobId, txHash);
+      await confirmChatImageUpload(
+        preparedImage.blobId,
+        txHash,
+        preparedImage.confirmationToken
+      );
     } catch (confirmError) {
+      if (!canUpdateStatus()) return;
       const message = confirmError instanceof Error ? confirmError.message : 'Image retention confirmation failed.';
       setError(message);
       showImageAttachmentStatus(
@@ -122,18 +147,19 @@ export async function sendChatImageAttachment({
       );
       return;
     }
-    clearImageAttachmentStatus();
+    if (canUpdateStatus()) clearImageAttachmentStatus();
   } catch (imageError) {
     const message = imageError instanceof Error ? imageError.message : failureFallbackMessage;
-    if (!isTargetCurrent()) {
-      clearImageAttachmentStatus();
-      return;
-    }
+    if (!canUpdateStatus()) return;
     setError(message);
     showImageAttachmentStatus(
       buildImageAttachmentStatus(file, 'error', 'Image was not sent', message, previewUrl, file)
     );
   } finally {
-    setUploadingImage(false);
+    if (!canUpdateStatus() && previewUrl) URL.revokeObjectURL(previewUrl);
+    if (ownsUpload()) {
+      activeImageUploads.delete(clearImageAttachmentStatus);
+      setUploadingImage(false);
+    }
   }
 }

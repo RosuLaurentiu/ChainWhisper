@@ -114,6 +114,111 @@ describe('AppHeader mobile navigation', () => {
     );
   });
 
+  it('keeps a standalone sound bell after the account context when no notification center exists', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav={false}
+        soundEnabled
+        onToggleMobileLinksOpen={vi.fn()}
+        onToggleSound={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        networkControl={<button type="button">Network</button>}
+        showSoundToggle
+      />
+    );
+
+    expect(markup).toContain('aria-label="Disable notification sound"');
+    expect(markup.indexOf('>Network</button>')).toBeLessThan(markup.indexOf('sound-toggle-btn'));
+  });
+
+  it('places the network selector before the wallet on desktop', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav={false}
+        onToggleMobileLinksOpen={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        networkControl={<button type="button">Network</button>}
+        walletControl={<button type="button">Wallet</button>}
+      />
+    );
+    expect(markup.indexOf('>Network</button>')).toBeLessThan(markup.indexOf('>Wallet</button>'));
+  });
+
+  it('orders desktop utilities as network, wallet, then notifications', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav={false}
+        onToggleMobileLinksOpen={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        notificationControl={<button type="button">Trades bell</button>}
+        networkControl={<button type="button">Network</button>}
+        walletControl={<button type="button">Wallet</button>}
+      />
+    );
+    expect(markup.indexOf('>Network</button>')).toBeLessThan(markup.indexOf('>Wallet</button>'));
+    expect(markup.indexOf('>Wallet</button>')).toBeLessThan(markup.indexOf('>Trades bell</button>'));
+  });
+
+  it('does not duplicate a standalone sound bell when notifications own that setting', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav={false}
+        soundEnabled
+        onToggleMobileLinksOpen={vi.fn()}
+        onToggleSound={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        notificationControl={<button type="button">Trades bell with sound setting</button>}
+        showSoundToggle
+      />
+    );
+    expect(markup).toContain('Trades bell with sound setting');
+    expect(markup).not.toContain('sound-toggle-btn');
+  });
+
+  it('keeps the trade notification control available in the mobile utility cluster', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav
+        onToggleMobileLinksOpen={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        notificationControl={<button type="button">Trades bell</button>}
+      />
+    );
+    expect(markup).toMatch(
+      /class="top-header-mobile-utility-cluster"[\s\S]*>Trades bell<\/button>/
+    );
+  });
+
+  it('places the network selector in the slim mobile app strip', () => {
+    const markup = renderToStaticMarkup(
+      <AppHeader
+        headerRef={{ current: null }}
+        mobileLinksOpen={false}
+        isMobileNav
+        onToggleMobileLinksOpen={vi.fn()}
+        onCloseMobileLinks={vi.fn()}
+        appNavigationControl={<nav aria-label="ChainWhisper apps">Apps</nav>}
+        networkControl={<button type="button">Network</button>}
+        walletControl={<button type="button">Wallet</button>}
+      />
+    );
+
+    expect(markup).toMatch(
+      /class="top-header-mobile-app-nav"[\s\S]*aria-label="ChainWhisper apps"[\s\S]*top-header-mobile-network-strip[\s\S]*>Network<\/button>/
+    );
+    expect(markup.indexOf('>Wallet</button>')).toBeLessThan(markup.indexOf('top-header-mobile-app-nav'));
+  });
+
   it('renders a sound-only mobile utility directly instead of opening an empty menu', () => {
     const markup = renderToStaticMarkup(
       <AppHeader

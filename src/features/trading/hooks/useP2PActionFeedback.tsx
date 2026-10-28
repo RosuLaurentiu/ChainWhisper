@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   buildP2PActionNotice,
+  getP2PActionNoticeAutoDismissMs,
   type P2PActionNotice,
   type P2PActionNoticeInput,
   type P2PActionNoticeSurface
@@ -13,7 +14,7 @@ import {
   type OtcSwapIntent
 } from '../../../lib/otcSwapIntent';
 import { buildTransactionExplorerUrl } from '../../../lib/p2pTradeView';
-import type { TradeActionConfirmModel } from '../../../lib/tradeActionConfirm';
+import useTradeActionConfirmationState from './useTradeActionConfirmationState';
 
 type UseP2PActionFeedbackArgs = {
   activeTerminalSwapIntentRef: MutableRefObject<OtcSwapIntent | null>;
@@ -27,8 +28,11 @@ export default function useP2PActionFeedback({
   const [lastCopiedKey, setLastCopiedKey] = useState('');
   const [lastViewedTxKey, setLastViewedTxKey] = useState('');
   const [actionNotice, setActionNotice] = useState<P2PActionNotice | null>(null);
-  const [tradeActionConfirmation, setTradeActionConfirmation] = useState<TradeActionConfirmModel | null>(null);
-  const tradeActionConfirmationResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const {
+    confirmation: tradeActionConfirmation,
+    requestConfirmation: requestTradeActionConfirmation,
+    resolveConfirmation: resolveTradeActionConfirmation
+  } = useTradeActionConfirmationState();
 
   const copyWithFeedback = useCallback(async (value: string, key: string) => {
     await navigator.clipboard.writeText(value);
@@ -116,7 +120,9 @@ export default function useP2PActionFeedback({
     if (
       noticeMatchesSwapIntent &&
       (notice.action === 'fill' || notice.action === 'accept') &&
-      notice.status !== 'pending'
+      notice.status !== 'wallet' &&
+      notice.status !== 'pending' &&
+      notice.status !== 'uncertain'
     ) {
       clearPendingOtcSwapIntent();
       activeTerminalSwapIntentRef.current = null;
@@ -124,37 +130,16 @@ export default function useP2PActionFeedback({
     setActionNotice(buildP2PActionNotice(notice));
   }, [activeTerminalSwapIntentRef, setSwapFillNotes]);
 
-  const requestTradeActionConfirmation = useCallback((confirmation: TradeActionConfirmModel): Promise<boolean> => {
-    tradeActionConfirmationResolveRef.current?.(false);
-    setTradeActionConfirmation(confirmation);
-    return new Promise((resolve) => {
-      tradeActionConfirmationResolveRef.current = resolve;
-    });
-  }, []);
-
-  const resolveTradeActionConfirmation = useCallback((confirmed: boolean) => {
-    const resolve = tradeActionConfirmationResolveRef.current;
-    tradeActionConfirmationResolveRef.current = null;
-    setTradeActionConfirmation(null);
-    resolve?.(confirmed);
-  }, []);
-
-  useEffect(
-    () => () => {
-      tradeActionConfirmationResolveRef.current?.(false);
-      tradeActionConfirmationResolveRef.current = null;
-    },
-    []
-  );
-
   useEffect(() => {
-    if (!actionNotice || actionNotice.status === 'pending') {
+    if (!actionNotice) {
       return;
     }
+    const dismissAfterMs = getP2PActionNoticeAutoDismissMs(actionNotice.status);
+    if (dismissAfterMs === null) return;
 
     const timeoutId = window.setTimeout(() => {
       setActionNotice((current) => (current?.id === actionNotice.id ? null : current));
-    }, 6500);
+    }, dismissAfterMs);
 
     return () => window.clearTimeout(timeoutId);
   }, [actionNotice]);
@@ -177,7 +162,7 @@ export default function useP2PActionFeedback({
       return (
         <div
           className={`p2p-action-notice p2p-action-notice-${actionNotice.status}`}
-          role={actionNotice.status === 'error' ? 'alert' : 'status'}
+          role={actionNotice.status === 'error' || actionNotice.status === 'uncertain' ? 'alert' : 'status'}
           aria-live="polite"
         >
           <span className="p2p-action-notice-dot" aria-hidden="true" />
@@ -194,10 +179,15 @@ export default function useP2PActionFeedback({
               {txLinkFeedback.label}
             </a>
           ) : null}
+          {actionNotice.status === 'error' || actionNotice.status === 'uncertain' ? (
+            <button type="button" onClick={clearActionNotice}>
+              Dismiss
+            </button>
+          ) : null}
         </div>
       );
     },
-    [actionNotice, getTransactionLinkFeedbackProps]
+    [actionNotice, clearActionNotice, getTransactionLinkFeedbackProps]
   );
 
   return {

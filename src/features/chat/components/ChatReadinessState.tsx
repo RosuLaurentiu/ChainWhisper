@@ -2,12 +2,13 @@ import AnimatedOwlSecurityOverlay from '../../../assets/chainwhisper-owl-securit
 import EnhancedOwlSecurityBackground from '../../../assets/chainwhisper-owl-security-background-enhanced-4k.webp';
 
 type ChatReadinessStateProps = {
+  error?: string;
   onOpenHelp: () => void;
 };
 
-export default function ChatReadinessState({ onOpenHelp }: ChatReadinessStateProps) {
+export default function ChatReadinessState({ error = '', onOpenHelp }: ChatReadinessStateProps) {
   return (
-    <section className="chat-readiness-state" role="status" aria-live="polite">
+    <section className="chat-readiness-state" aria-labelledby="chat-readiness-title">
       <div className="chat-readiness-visual" aria-hidden="true">
         <img
           className="chat-readiness-art chat-readiness-art-base"
@@ -21,9 +22,10 @@ export default function ChatReadinessState({ onOpenHelp }: ChatReadinessStatePro
         />
       </div>
       <div className="chat-readiness-copy">
-        <strong>Wallet needed</strong>
-        <p>Use the header wallet control to connect or unlock your ChainWhisper account.</p>
+        <h2 id="chat-readiness-title">Wallet needed</h2>
+        <p>Connect a wallet in the header, then unlock privacy.</p>
       </div>
+      {error ? <p className="chat-readiness-error" role="alert">{error}</p> : null}
       <button type="button" className="app-help-context-link chat-readiness-action" onClick={onOpenHelp}>
         Get help
       </button>

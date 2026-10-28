@@ -23,10 +23,10 @@ describe('resolveTradeAgentReadiness', () => {
     });
   });
 
-  it('requires a ChainWhisper account even when a prompt is present', () => {
+  it('requires a connected supported wallet even when a prompt is present', () => {
     expect(resolve({ hasAccount: false, prompt: 'Compare prices.' })).toEqual({
       kind: 'account-needed',
-      message: 'Connect your ChainWhisper account to use the Trade Agent.',
+      message: 'Connect MetaMask or CipherTrade to use the Trade Agent.',
       canSubmit: false
     });
   });
@@ -34,7 +34,7 @@ describe('resolveTradeAgentReadiness', () => {
   it('enables a ready request only when the prompt and account are available', () => {
     expect(resolve({ prompt: 'Compare prices.' })).toEqual({
       kind: 'ready',
-      message: 'Paid from your ChainWhisper account.',
+      message: 'Paid from your connected wallet.',
       canSubmit: true
     });
   });

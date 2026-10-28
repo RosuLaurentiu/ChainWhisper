@@ -1,3 +1,5 @@
+import { linkTradeV2Fragment, parseLinkTradeV2Path, restoreLinkTradeV2Fragment, stripLinkTradeV2Secret } from './linkTradeV2Links';
+
 export const WALLET_BOOTSTRAP_PATH = '/wallet-connect';
 export const WALLET_BOOTSTRAP_ACTIVE_ROUTE_STORAGE_KEY = 'chainwhisper:wallet-bootstrap-active-route:v1';
 export const WALLET_BOOTSTRAP_PERSISTED_ROUTE_STORAGE_KEY = 'chainwhisper:wallet-bootstrap-persisted-route:v1';
@@ -39,8 +41,12 @@ const isAllowedBootstrapTargetPathname = (pathname: string): boolean => {
     lowerPathname === '/shield' ||
     lowerPathname === '/swap' ||
     lowerPathname === '/whisper-shield' ||
+    lowerPathname === '/tvl' ||
+    lowerPathname === '/private-tvl' ||
     lowerPathname === '/treasury' ||
     lowerPathname === '/treasury-data' ||
+    lowerPathname === '/dex' ||
+    lowerPathname.startsWith('/dex/') ||
     lowerPathname === '/otc' ||
     lowerPathname.startsWith('/otc/') ||
     lowerPathname === '/otcdesk' ||
@@ -173,8 +179,8 @@ const normalizeRouteRecord = (
   origin = getOrigin(),
   options: { maxAgeMs?: number; now?: number } = {}
 ): WalletBootstrapRouteRecord | null => {
-  const activePath = normalizeWalletBootstrapTargetPath(value?.activePath, origin);
-  const entryPath = normalizeWalletBootstrapTargetPath(value?.entryPath, origin);
+  const activePath = stripLinkTradeV2Secret(normalizeWalletBootstrapTargetPath(value?.activePath, origin));
+  const entryPath = stripLinkTradeV2Secret(normalizeWalletBootstrapTargetPath(value?.entryPath, origin));
   const timestamp = typeof value?.timestamp === 'number' ? value.timestamp : 0;
   if (options.maxAgeMs && (!timestamp || (options.now ?? Date.now()) - timestamp > options.maxAgeMs)) {
     return null;
@@ -183,14 +189,16 @@ const normalizeRouteRecord = (
 };
 
 export const getWalletBootstrapEntryPathFromLocation = (
-  location: Pick<Location, 'search' | 'origin'> | null = getWindowLocation()
+  location: (Pick<Location, 'search' | 'origin'> & Partial<Pick<Location, 'hash'>>) | null = getWindowLocation()
 ): string => {
   if (!location) {
     return '';
   }
 
   try {
-    return normalizeWalletBootstrapTargetPath(new URLSearchParams(location.search).get('p'), getOrigin(location));
+    const path = normalizeWalletBootstrapTargetPath(new URLSearchParams(location.search).get('p'), getOrigin(location));
+    if (linkTradeV2Fragment(path)) return '';
+    return restoreLinkTradeV2Fragment(path, location.hash ?? '');
   } catch {
     return '';
   }
@@ -304,7 +312,7 @@ const shouldUseStoredRouteRecord = (
   record: WalletBootstrapRouteRecord | null,
   entryParamPresent: boolean,
   entryPath: string
-): record is WalletBootstrapRouteRecord => Boolean(record && (!entryParamPresent || record.entryPath === entryPath));
+): record is WalletBootstrapRouteRecord => Boolean(record && (!entryParamPresent || record.entryPath === stripLinkTradeV2Secret(entryPath)));
 
 export const writeWalletBootstrapActiveRoutePath = (
   targetPath: string,
@@ -319,7 +327,7 @@ export const writeWalletBootstrapActiveRoutePath = (
   const location = options.location ?? getWindowLocation();
   const origin = options.origin ?? getOrigin(location);
   const storage = options.storage ?? getSessionStorage();
-  const activePath = normalizeWalletBootstrapTargetPath(targetPath, origin);
+  const activePath = stripLinkTradeV2Secret(normalizeWalletBootstrapTargetPath(targetPath, origin));
   if (!storage || !activePath) {
     return null;
   }
@@ -329,11 +337,11 @@ export const writeWalletBootstrapActiveRoutePath = (
       ? getWalletBootstrapEntryPathFromLocation(location)
       : '';
   const previousRecord = readWalletBootstrapRouteRecord(storage, origin);
-  const entryPath =
+  const entryPath = stripLinkTradeV2Secret(
     normalizeWalletBootstrapTargetPath(options.entryPath, origin) ||
     currentEntryPath ||
     previousRecord?.entryPath ||
-    activePath;
+    activePath);
   const record: WalletBootstrapRouteRecord = {
     activePath,
     entryPath,
@@ -395,7 +403,7 @@ export const writeWalletBootstrapActiveRouteState = (
   const nextState = mergeHistoryState(history.state, record);
   try {
     const update = options.replace ? history.replaceState.bind(history) : history.pushState.bind(history);
-    update(nextState, '', WALLET_BOOTSTRAP_PATH);
+    update(nextState, '', WALLET_BOOTSTRAP_PATH + linkTradeV2Fragment(normalizeWalletBootstrapTargetPath(targetPath, origin)));
     logWalletBootstrapDiagnostic('bootstrap-route-state-updated', {
       mode: options.replace ? 'replace' : 'push',
       routeKey: sanitizeBootstrapPathForDiagnostics(record.activePath)
@@ -426,15 +434,15 @@ export const resolveWalletBootstrapActiveRoute = (
   const persistedRoute = readWalletBootstrapPersistedRouteRecord(getLocalStorage(), origin);
 
   if (shouldUseStoredRouteRecord(historyRoute, entryParamPresent, entryPath)) {
-    return historyRoute.activePath;
+    return restoreLinkTradeV2Fragment(historyRoute.activePath, location.hash);
   }
 
   if (shouldUseStoredRouteRecord(storedRoute, entryParamPresent, entryPath)) {
-    return storedRoute.activePath;
+    return restoreLinkTradeV2Fragment(storedRoute.activePath, location.hash);
   }
 
   if (shouldUseStoredRouteRecord(persistedRoute, entryParamPresent, entryPath)) {
-    return persistedRoute.activePath;
+    return restoreLinkTradeV2Fragment(persistedRoute.activePath, location.hash);
   }
 
   if (entryPath) {
@@ -491,7 +499,8 @@ export const freezeWalletBootstrapUrlAfterEntry = (
     });
   }
 
-  const wasStable = isWalletBootstrapStableUrl(location.pathname, location.search) && !location.hash;
+  const wasStable = isWalletBootstrapStableUrl(location.pathname, location.search) &&
+    (!location.hash || Boolean(parseLinkTradeV2Path(resolveWalletBootstrapActiveRoute(options))));
   const targetPath = resolveWalletBootstrapActiveRoute({
     location,
     storage: options.storage
@@ -565,7 +574,8 @@ export const freezeDirectMetaMaskMobileRoute = (
 
 export const buildWalletBootstrapPath = (targetPath: string, origin = getOrigin()): string => {
   const normalizedTargetPath = normalizeWalletBootstrapTargetPath(targetPath, origin) || DEFAULT_BOOTSTRAP_TARGET_PATH;
-  return `${WALLET_BOOTSTRAP_PATH}?p=${encodeURIComponent(normalizedTargetPath)}`;
+  return `${WALLET_BOOTSTRAP_PATH}?p=${encodeURIComponent(stripLinkTradeV2Secret(normalizedTargetPath))}` +
+    linkTradeV2Fragment(normalizedTargetPath);
 };
 
 export const resolveWalletBootstrapTargetPathFromUrl = (dappUrl: string): string => {
@@ -577,10 +587,7 @@ export const resolveWalletBootstrapTargetPathFromUrl = (dappUrl: string): string
   try {
     const parsedUrl = new URL(trimmed.match(/^https?:\/\//i) ? trimmed : `https://${trimmed}`);
     if (isWalletBootstrapRoute(parsedUrl.pathname)) {
-      return normalizeWalletBootstrapTargetPath(
-        new URLSearchParams(parsedUrl.search).get('p'),
-        parsedUrl.origin
-      ) || DEFAULT_BOOTSTRAP_TARGET_PATH;
+      return getWalletBootstrapEntryPathFromLocation(parsedUrl) || DEFAULT_BOOTSTRAP_TARGET_PATH;
     }
 
     return normalizeWalletBootstrapTargetPath(

@@ -12,7 +12,7 @@ import type {
   TerminalReturnSurface
 } from '../components/P2PTradingPage.helpers';
 
-type DeskNavigationPath = '/otc' | '/otc/agent' | '/otc/desk' | '/otc/orders';
+type DeskNavigationPath = '/otc' | '/otc/agent' | '/otc/desk' | '/otc/limit' | '/otc/orders';
 
 type UseP2PTradeDeskNavigationArgs = {
   buildCurrentTradeSurfacePath: (view: Parameters<typeof buildTradeSurfacePath>[0], tradeMode?: TradeEntryMode) => string;
@@ -83,7 +83,8 @@ export default function useP2PTradeDeskNavigation({
         return;
       }
       mobileTerminalReturnSurfaceRef.current = surface;
-      mobileDeskScrollRef.current[surface] = getTradingShellScrollTop();
+      // The retained swap and public routes both show Offers.
+      mobileDeskScrollRef.current[surface === 'swap' ? 'public' : surface] = getTradingShellScrollTop();
     },
     [getTradingShellScrollTop, isMobileNav, mobileDeskScrollRef, mobileTerminalReturnSurfaceRef, route.view]
   );
@@ -93,7 +94,7 @@ export default function useP2PTradeDeskNavigation({
       if (!isMobileNav) {
         return;
       }
-      const top = mobileDeskScrollRef.current[surface] ?? 0;
+      const top = mobileDeskScrollRef.current[surface === 'swap' ? 'public' : surface] ?? 0;
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
           const shell = document.querySelector<HTMLElement>('.standalone-trades-shell');
@@ -188,19 +189,24 @@ export default function useP2PTradeDeskNavigation({
     const shell = document.querySelector<HTMLElement>('.standalone-trades-shell');
     if (shell) {
       shell.scrollTo({ top: 0, behavior: 'smooth' });
-      if (route.view === 'public' || route.view === 'mine') {
-        mobileDeskScrollRef.current[route.view] = 0;
+      if (route.view === 'public' || route.view === 'swap' || route.view === 'mine') {
+        mobileDeskScrollRef.current[route.view === 'swap' ? 'public' : route.view] = 0;
       }
       return;
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (route.view === 'public' || route.view === 'mine') {
-      mobileDeskScrollRef.current[route.view] = 0;
+    if (route.view === 'public' || route.view === 'swap' || route.view === 'mine') {
+      mobileDeskScrollRef.current[route.view === 'swap' ? 'public' : route.view] = 0;
     }
   }, [mobileDeskScrollRef, route.view]);
 
   const navigateDeskView = useCallback(
     (path: DeskNavigationPath) => {
+      if (path === '/otc/limit') {
+        resetTerminalInputs();
+        navigateToTradePath(path);
+        return;
+      }
       const openingTradeSurface = path === '/otc';
       const targetSurface =
         path === '/otc/orders' ? 'mine' : path === '/otc/desk' ? 'public' : path === '/otc/agent' ? 'agent' : 'swap';
@@ -225,10 +231,13 @@ export default function useP2PTradeDeskNavigation({
       }
       if (isMobileNav) {
         const targetView = targetSurface;
+        // Both retained Offers route views use the same active tab and scroll state.
+        const currentDeskView = route.view === 'swap' ? 'public' : route.view;
+        const targetDeskView = targetView === 'swap' ? 'public' : targetView;
         const returningFromTerminal =
           emptyTerminalDrawerOpen || route.view === 'trade' || (route.view === 'mine' && Boolean(selectedMyTradeDetailKey));
         if (
-          route.view === targetView &&
+          currentDeskView === targetDeskView &&
           !emptyTerminalDrawerOpen &&
           !(route.view === 'mine' && selectedMyTradeDetailKey)
         ) {
@@ -237,7 +246,7 @@ export default function useP2PTradeDeskNavigation({
         }
         resetTerminalInputs();
         navigateToTradePath(path);
-        if (returningFromTerminal && (targetView === 'public' || targetView === 'mine')) {
+        if (returningFromTerminal) {
           restoreMobileDeskScroll(targetView);
         }
         return;

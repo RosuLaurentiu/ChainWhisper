@@ -1,0 +1,1083 @@
+/* Approved UX implementation layer. Keep changes tied to UX_UI_IMPLEMENTATION_PLAN.md. */
+
+:root {
+  --ux-mobile-app-header: 52px;
+  --ux-mobile-global-nav: 42px;
+  --ux-mobile-trading-nav: 36px;
+  --ux-mobile-pair-context: 46px;
+  --ux-mobile-workspace-nav: 50px;
+  --ux-focus-ring: #c4b5fd;
+  --ux-whisper-line: linear-gradient(90deg, #a855f7, #8b5cf6 48%, #22d3ee);
+}
+
+/* The semantic market divider is the restrained ChainWhisper signature line. */
+.app-shell-trades .p2p-offers-market-row::before,
+.app-shell-trades .p2p-offers-market-row::after {
+  background: var(--ux-whisper-line);
+}
+
+.app-shell-trades .p2p-offers-market-row::after {
+  transform: scaleX(-1);
+}
+
+@keyframes cw-ratio-flip {
+  from {
+    opacity: 0.35;
+    transform: translateY(3px);
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.trading-ratio-value {
+  transform-origin: left center;
+  animation: cw-ratio-flip 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Trading adds a product switch between the global header and its workspace. */
+.app-shell.app-shell-trades,
+.app-shell.app-shell-dex-v2 {
+  grid-template-rows: auto 42px minmax(0, 1fr);
+}
+
+.wallet-header-panel-connected {
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.wallet-header-panel-connected .p2p-wallet-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.wallet-header-panel-connected .p2p-wallet-primary-wrap,
+.wallet-header-panel-connected .wallet-primary-action,
+.wallet-header-panel-connected .p2p-wallet-menu-trigger,
+.wallet-header-panel-connected .p2p-wallet-privacy-direct {
+  min-height: 40px;
+}
+
+.wallet-header-panel-connected .p2p-wallet-privacy-direct {
+  width: 40px;
+  min-width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(14, 15, 25, 0.82);
+  color: #a78bfa;
+}
+
+.wallet-header-panel-connected .p2p-wallet-privacy-ready {
+  color: #6ee7b7;
+}
+
+.wallet-header-panel-connected .p2p-wallet-privacy-direct:not(:disabled):hover,
+.wallet-header-panel-connected .p2p-wallet-privacy-direct:not(:disabled):focus-visible {
+  border-color: rgba(167, 139, 250, 0.62);
+  background: rgba(124, 58, 237, 0.16);
+}
+
+.wallet-header-panel-connected .p2p-wallet-privacy-direct:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.wallet-header-panel-connected .p2p-wallet-menu-trigger {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+}
+
+.wallet-header-panel-connected .p2p-wallet-menu-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.wallet-header-panel-connected .p2p-wallet-status-text {
+  display: none;
+}
+
+.wallet-header-panel-connected :is(
+  .wallet-primary-action,
+  .p2p-wallet-privacy-direct,
+  .p2p-wallet-menu-trigger
+):focus-visible {
+  outline: 2px solid var(--ux-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Offers keeps pair, equation, direction, and amount visually distinct. */
+.app-shell-trades .p2p-offers-shared-context {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, auto) 38px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  background: rgba(7, 8, 16, 0.78);
+  padding: 3px 5px 3px 12px;
+}
+
+.app-shell-trades .p2p-offers-shared-context > strong {
+  color: #f8f7ff;
+  font-size: 0.8rem;
+}
+
+.app-shell-trades .p2p-offers-shared-context > span {
+  overflow: hidden;
+  color: var(--p2p-muted);
+  font-size: 0.74rem;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell-trades .p2p-offers-shared-context > .p2p-offers-ratio-reverse {
+  width: 38px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(167, 139, 250, 0.24);
+  border-radius: 8px;
+  background: rgba(124, 58, 237, 0.1);
+  color: #c4b5fd;
+}
+
+.app-shell-trades .p2p-offers-pair-trigger {
+  min-width: 0;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: #f8f7ff;
+  padding: 0;
+}
+
+.app-shell-trades .p2p-offers-pair-trigger strong {
+  overflow: hidden;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell-trades .p2p-offers-pair-trigger[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
+}
+
+.app-shell-trades .p2p-offers-ratio-basis {
+  color: #c4b5fd;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.app-shell-trades .p2p-offer-rate-outcome {
+  min-width: 150px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  text-align: right;
+}
+
+.app-shell-trades .p2p-offer-rate-outcome small {
+  color: var(--p2p-muted);
+  font-size: 0.68rem;
+}
+
+.app-shell-trades .p2p-offer-rate-outcome strong {
+  display: inline-flex;
+  align-items: center;
+  color: #c084fc;
+  font-size: 0.76rem;
+}
+
+.app-shell-trades .p2p-offer-rate-row-selected {
+  border-color: rgba(34, 211, 238, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(168, 85, 247, 0.55);
+}
+
+.app-shell-trades .p2p-offers-private-link-tool {
+  border: 1px dashed rgba(167, 139, 250, 0.22);
+  border-radius: 10px;
+  background: rgba(8, 8, 15, 0.54);
+}
+
+.app-shell-trades .p2p-offers-private-link-tool > summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+  padding: 0 10px;
+  color: #c4b5fd;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.app-shell-trades .p2p-offers-private-link-tool > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell-trades .p2p-offers-private-link-tool[open] > summary {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.app-shell-trades .p2p-offers-private-link-tool .p2p-offers-link {
+  margin: 8px;
+}
+
+.app-shell-trades .p2p-offers-chart {
+  border: 1px dashed rgba(167, 139, 250, 0.22);
+  border-radius: 10px;
+  background: rgba(8, 8, 15, 0.54);
+}
+
+.app-shell-trades .p2p-offers-chart > summary {
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  padding: 0 10px;
+  color: #c084fc;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.app-shell-trades .p2p-offers-chart > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell-trades .p2p-offers-chart[open] > summary {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.app-shell-trades .p2p-offers-chart[open] > summary > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.app-shell-trades .p2p-offers-chart-body {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+}
+
+.app-shell-trades .p2p-offers-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  color: var(--p2p-muted);
+  font-size: 0.68rem;
+}
+
+.app-shell-trades .p2p-offers-chart-legend .is-market {
+  color: #67e8f9;
+}
+
+.app-shell-trades .p2p-offers-chart-legend .is-order {
+  color: #c084fc;
+}
+
+.app-shell-trades .p2p-offers-chart-plot {
+  height: 150px;
+}
+
+.app-shell-trades .p2p-offers-chart-body > p,
+.app-shell-trades .p2p-offers-chart-empty {
+  margin: 0;
+  color: var(--p2p-muted);
+  font-size: 0.66rem;
+  line-height: 1.4;
+}
+
+.app-shell-trades .p2p-offers-chart-empty {
+  padding: 14px 10px;
+}
+
+/* Trade is a review step: a contextual desktop rail and a focused mobile view. */
+.app-shell-trades .standalone-trade-detail-section > .standalone-trades-section-head {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  width: 100%;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(10, 9, 18, 0.96);
+}
+
+.app-shell-trades .standalone-trade-detail-section > .standalone-trades-section-head .standalone-trade-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.app-shell-trades .p2p-trade-window-warning {
+  border: 0;
+  background: rgba(124, 58, 237, 0.08);
+}
+
+.app-shell-trades .p2p-terminal-shell-standard {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.app-shell-trades .p2p-terminal-head {
+  border-bottom-color: rgba(148, 163, 184, 0.14);
+}
+
+.app-shell-trades .p2p-terminal-access-summary {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 9px;
+  background: rgba(8, 9, 16, 0.76);
+  padding: 9px 10px;
+}
+
+.app-shell-trades .p2p-terminal-access-summary strong {
+  color: #f5f3ff;
+  font-size: 0.76rem;
+}
+
+.app-shell-trades .p2p-terminal-access-summary span,
+.app-shell-trades .p2p-terminal-private-fill-note {
+  color: var(--p2p-muted);
+  font-size: 0.71rem;
+  line-height: 1.4;
+}
+
+.app-shell-trades .p2p-terminal-access-summary.is-private {
+  border-color: rgba(192, 132, 252, 0.28);
+  background: rgba(126, 34, 206, 0.08);
+}
+
+.app-shell-trades .p2p-terminal-private-fill-note {
+  margin: 0;
+  border-left: 2px solid #a855f7;
+  padding: 2px 0 2px 9px;
+}
+
+.app-shell-trades .p2p-terminal-market,
+.app-shell-trades .p2p-terminal-ticket {
+  border-color: rgba(148, 163, 184, 0.14);
+  background: rgba(7, 8, 15, 0.66);
+}
+
+.app-shell-trades .p2p-terminal-price-card {
+  min-height: 88px;
+}
+
+.app-shell-trades .p2p-terminal-details {
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.app-shell-trades .p2p-terminal-details > summary {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: #c4b5fd;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.app-shell-trades .p2p-terminal-details[open] > summary {
+  margin-bottom: 7px;
+}
+
+.app-shell-trades .p2p-terminal-details .p2p-terminal-stat-grid,
+.app-shell-trades .p2p-terminal-details .p2p-terminal-token-actions,
+.app-shell-trades .p2p-terminal-details .p2p-terminal-toolbar {
+  margin-top: 7px;
+}
+
+.app-shell-trades .p2p-terminal-details .p2p-terminal-toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+/* Create starts with a clear audience choice; contract and fee mechanics remain secondary. */
+.app-shell-trades .trade-compose-settings-slot-primary {
+  margin: 0;
+}
+
+.app-shell-trades .p2p-trade-access-workspace {
+  display: grid;
+  gap: 8px;
+}
+
+.app-shell-trades .p2p-trade-access-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.app-shell-trades .p2p-trade-access-heading > span {
+  color: #a78bfa;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-shell-trades .p2p-trade-access-heading > strong {
+  color: #f8f7ff;
+  font-size: 0.86rem;
+}
+
+.app-shell-trades .p2p-trade-access-heading > p {
+  margin: 0;
+  color: var(--p2p-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.app-shell-trades .p2p-trade-access-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.7fr);
+  gap: 8px;
+  align-items: stretch;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button {
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 9px;
+  background: rgba(8, 9, 16, 0.7);
+  color: #aea7c4;
+  padding: 8px;
+  text-align: left;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button strong {
+  overflow: hidden;
+  color: inherit;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button small {
+  overflow: hidden;
+  color: var(--p2p-muted);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button.active {
+  border-color: rgba(168, 85, 247, 0.72);
+  background: rgba(124, 58, 237, 0.16);
+  color: #f5f3ff;
+  box-shadow: inset 0 -2px 0 rgba(34, 211, 238, 0.55);
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.app-shell-trades .p2p-private-link-readiness {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  border-radius: 9px;
+  background: linear-gradient(100deg, rgba(124, 58, 237, 0.11), rgba(34, 211, 238, 0.04));
+  color: #c4b5fd;
+  padding: 9px 10px;
+}
+
+.app-shell-trades .p2p-private-link-readiness > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.app-shell-trades .p2p-private-link-readiness strong,
+.app-shell-trades .p2p-private-link-readiness small {
+  line-height: 1.35;
+}
+
+.app-shell-trades .p2p-private-link-readiness strong {
+  color: #f5f3ff;
+  font-size: 0.72rem;
+}
+
+.app-shell-trades .p2p-private-link-readiness small {
+  color: var(--p2p-muted);
+  font-size: 0.64rem;
+}
+
+.app-shell-trades .p2p-private-link-readiness em {
+  border: 1px solid rgba(168, 85, 247, 0.34);
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.12);
+  color: #c4b5fd;
+  padding: 4px 7px;
+  font-size: 0.6rem;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  gap: 3px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 9px;
+  background: rgba(7, 8, 15, 0.62);
+  padding: 8px 10px;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary > span {
+  color: var(--p2p-muted);
+  font-size: 0.64rem;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary > strong {
+  color: #f5f3ff;
+  font-size: 0.7rem;
+  text-align: right;
+}
+
+.app-shell-trades .p2p-trade-access-settings .standalone-trade-access-summary > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--p2p-muted);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+.app-shell-trades .p2p-direct-recipient {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 9px;
+  background: rgba(124, 58, 237, 0.06);
+  padding: 8px 10px;
+}
+
+.app-shell-trades .p2p-direct-recipient > span {
+  color: #c4b5fd;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.app-shell-trades .trade-compose-advanced-options {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 9px;
+  background: rgba(7, 8, 15, 0.62);
+}
+
+.app-shell-trades .trade-compose-advanced-options > summary {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+  padding: 0 10px;
+  color: #c4b5fd;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.app-shell-trades .trade-compose-advanced-options > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell-trades .trade-compose-advanced-options > summary small {
+  overflow: hidden;
+  color: var(--p2p-muted);
+  font-size: 0.64rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell-trades .trade-compose-advanced-options[open] > summary {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.app-shell-trades .trade-compose-advanced-options[open] > summary > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.app-shell-trades .trade-compose-advanced-body {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.app-shell-trades .trade-compose-advanced-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.65fr);
+  gap: 8px;
+}
+
+.app-shell-trades .trade-compose-footer {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+}
+
+.app-shell-trades .trade-compose-submit-context {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: var(--p2p-muted);
+  font-size: 0.66rem;
+}
+
+.app-shell-trades .trade-compose-submit-context strong {
+  color: #e9e5f7;
+}
+
+@media (min-width: 921px) {
+  .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open):has(> .p2p-advanced-tools),
+  .app-shell-trades .p2p-trading-shell-create:not(.p2p-trading-shell-drawer-open):has(> .p2p-advanced-tools),
+  .app-shell-trades .p2p-trading-shell-has-overview:not(.p2p-trading-shell-drawer-open):not(.p2p-trading-shell-mine):has(> .p2p-advanced-tools) {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-advanced-tools,
+  .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-section-disconnected {
+    align-self: start;
+  }
+
+  .app-shell-trades .p2p-trading-shell-mine:not(.p2p-trading-shell-drawer-open) .p2p-my-trades-section-disconnected {
+    grid-template-rows: auto;
+    align-items: start;
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 480px);
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open .p2p-offers-workspace {
+    display: grid;
+    padding: 0;
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open .p2p-offers-panel {
+    width: 100%;
+    margin: 0;
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 920px) {
+  :root {
+    --header-height: var(--ux-mobile-app-header);
+  }
+
+  .top-header .top-header-mobile-wallet-inline .p2p-wallet-menu {
+    position: fixed;
+    top: calc(var(--ux-mobile-app-header) + env(safe-area-inset-top, 0px));
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: calc(100dvh - var(--ux-mobile-app-header) - 16px - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .app-shell.app-shell-trades {
+    grid-template-rows: auto calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context)) minmax(0, 1fr);
+    align-content: stretch;
+  }
+
+  .top-header .top-header-bar,
+  .top-header.top-header-no-links .top-header-bar,
+  .top-header.top-header-no-links.top-header-has-wallet .top-header-bar {
+    min-height: var(--ux-mobile-app-header);
+    height: var(--ux-mobile-app-header);
+  }
+
+  .app-shell-trades .trading-product-bar {
+    min-height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context));
+    height: calc(var(--ux-mobile-trading-nav) + var(--ux-mobile-pair-context));
+    padding-block: 2px;
+  }
+
+  .top-header .top-header-brand,
+  .top-header.top-header-no-links .top-header-brand {
+    padding-block: 5px;
+  }
+
+  .top-header .top-header-brand-logo {
+    width: 28px;
+    height: 28px;
+  }
+
+  .top-header .top-header-mobile-app-nav {
+    min-height: var(--ux-mobile-global-nav);
+    grid-template-columns: minmax(0, 1fr);
+    border-bottom: 0;
+    padding: 0 5px;
+  }
+
+  .top-header .top-header-mobile-app-nav .app-header-nav {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    overflow: visible;
+  }
+
+  .top-header .top-header-mobile-app-nav .app-header-nav button {
+    min-width: 0;
+    min-height: var(--ux-mobile-global-nav);
+    padding: 0 3px;
+    font-size: 0.75rem;
+    white-space: normal;
+  }
+
+  .top-header .top-header-mobile-app-nav .app-header-nav button::after {
+    height: 2px;
+  }
+
+  .top-header .top-header-mobile-network-strip {
+    display: none;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected {
+    width: auto;
+    display: grid;
+    grid-template-columns: minmax(0, auto) 38px;
+    gap: 2px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected .p2p-wallet-status {
+    grid-template-columns: minmax(64px, auto) 38px;
+    gap: 2px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected :is(
+    .p2p-wallet-primary-wrap,
+    .wallet-primary-action,
+    .p2p-wallet-privacy-direct,
+    .p2p-wallet-menu-trigger
+  ) {
+    min-height: 38px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected .p2p-wallet-privacy-direct,
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected .p2p-wallet-menu-trigger {
+    width: 38px;
+    min-width: 38px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected .wallet-primary-action {
+    width: auto;
+    min-width: 64px;
+    padding-inline: 8px;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected .wallet-primary-action span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .top-header .top-header-mobile-wallet-inline .wallet-header-panel-connected .p2p-wallet-menu-icon {
+    display: block;
+  }
+
+  .top-header .top-header-mobile-utility-cluster .sound-toggle-btn {
+    display: none;
+  }
+
+  .app-shell-trades .p2p-offers-workspace {
+    padding: 0 7px calc(var(--ux-mobile-workspace-nav) + 10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-shell-trades .p2p-offers-panel {
+    gap: 9px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 5px 0 8px;
+  }
+
+  .app-shell-trades .p2p-offers-shared-context {
+    grid-template-columns: minmax(0, 1fr) minmax(140px, auto) 34px;
+    min-height: 36px;
+    padding-left: 9px;
+  }
+
+  .app-shell-trades .p2p-offers-shared-context > .p2p-offers-ratio-reverse {
+    width: 34px;
+    height: 32px;
+  }
+
+  .app-shell-trades .p2p-offers-pair-row {
+    gap: 5px;
+  }
+
+  .app-shell-trades .p2p-advanced-tools,
+  .app-shell-trades .p2p-mobile-balance-fab {
+    display: none !important;
+  }
+
+  .app-shell-trades .standalone-trades-shell {
+    overflow-x: hidden !important;
+    scrollbar-width: none;
+  }
+
+  .app-shell-trades .standalone-trades-shell::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .app-shell-trades .p2p-offers-controls {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .app-shell-trades .p2p-offer-rate-row {
+    display: grid;
+    grid-template-columns: minmax(88px, 0.8fr) minmax(92px, 0.8fr) minmax(105px, 1fr);
+    gap: 8px;
+    padding: 9px 8px;
+  }
+
+  .app-shell-trades .p2p-offer-rate-outcome {
+    min-width: 0;
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open {
+    padding: 0;
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open > :is(
+    .p2p-market-overview,
+    .p2p-offers-workspace,
+    .p2p-public-trades-section,
+    .p2p-my-trades-section,
+    .p2p-agent-section,
+    .p2p-footer-links,
+    .p2p-mobile-balance-fab
+  ) {
+    display: none !important;
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open .standalone-trade-detail-section {
+    grid-row: 1;
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+    overflow-y: auto;
+    border: 0;
+    border-radius: 0;
+    padding: 0 8px calc(var(--ux-mobile-workspace-nav) + 14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open .standalone-trade-detail-section > .standalone-trades-section-head {
+    min-height: 44px;
+    margin: 0 -8px;
+    width: calc(100% + 16px);
+    padding: 5px 9px;
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open .p2p-terminal-ticket {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app-shell-trades .p2p-trading-shell-drawer-open .p2p-terminal-primary-action {
+    position: sticky;
+    bottom: calc(var(--ux-mobile-workspace-nav) + env(safe-area-inset-bottom, 0px));
+    z-index: 3;
+    min-height: 46px;
+    box-shadow: 0 -10px 24px rgba(5, 5, 12, 0.9);
+  }
+
+  .app-shell-trades .p2p-keyboard-open > .p2p-secondary-nav-mobile,
+  .app-shell-trades .p2p-keyboard-open .p2p-trade-tabs {
+    display: none !important;
+  }
+
+  .app-shell-trades .p2p-keyboard-open .p2p-offers-workspace {
+    padding-bottom: 10px;
+  }
+
+  .app-shell-trades .p2p-trade-access-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button {
+    min-height: 54px;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 4px;
+    padding: 7px 4px;
+    text-align: center;
+  }
+
+  .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button > span {
+    justify-items: center;
+  }
+
+  .app-shell-trades .trade-compose-advanced-settings,
+  .app-shell-trades .trade-compose-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell-trades .p2p-private-link-readiness {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .app-shell-trades .p2p-private-link-readiness em {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .app-shell-trades .trade-compose-submit-context {
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 430px) {
+  .top-header .top-header-brand-copy {
+    display: none;
+  }
+
+  .top-header .top-header-brand,
+  .top-header.top-header-no-links .top-header-brand {
+    padding-left: 8px;
+  }
+
+  .top-header .top-header-mobile-app-nav .app-header-nav button {
+    font-size: 0.72rem;
+    line-height: 1.05;
+  }
+
+  .app-shell-trades .p2p-offers-shared-context {
+    grid-template-columns: minmax(0, 1fr) auto 32px;
+    gap: 6px;
+  }
+
+  .app-shell-trades .p2p-offers-shared-context > span {
+    max-width: 155px;
+    font-size: 0.68rem;
+  }
+
+  .app-shell-trades .p2p-offers-pair-row {
+    grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
+  }
+
+  .app-shell-trades .p2p-offers-token-select > span {
+    font-size: 0.62rem;
+  }
+
+  .app-shell-trades .p2p-offer-rate-row {
+    grid-template-columns: minmax(80px, 0.75fr) minmax(82px, 0.8fr) minmax(96px, 1fr);
+    gap: 5px;
+  }
+
+  .app-shell-trades .p2p-offer-rate-source > span > strong,
+  .app-shell-trades .p2p-offer-rate-price > strong {
+    font-size: 0.74rem;
+  }
+
+  .app-shell-trades .p2p-offer-rate-outcome small {
+    font-size: 0.62rem;
+  }
+
+  .app-shell-trades .p2p-trade-access-heading > p,
+  .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button small {
+    display: none;
+  }
+
+  .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button {
+    min-height: 48px;
+  }
+
+  .app-shell-trades .p2p-trade-access-settings .standalone-trade-visibility button strong {
+    font-size: 0.66rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .top-header .top-header-mobile-app-nav .app-header-nav button {
+    font-size: 0.68rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trading-ratio-value {
+    animation: none !important;
+  }
+
+  .trading-product-switch button,
+  .p2p-trade-tabs button,
+  .p2p-offer-rate-row,
+  .wallet-header-panel button {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+:where(.app-visually-hidden) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

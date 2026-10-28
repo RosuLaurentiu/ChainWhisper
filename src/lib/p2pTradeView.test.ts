@@ -6,6 +6,7 @@ import {
   getMakerPrivateProgressSummary,
   getRecurringTerminalSideState,
   getTradeCompletionSummary,
+  formatTradeContractIdLabel,
   getTradeDisplayTerms,
   getTradeTermsVisibility,
   hasHydratedDirectTradeTerms,
@@ -217,6 +218,37 @@ describe('p2pTradeView helpers', () => {
     expect(getMakerPrivateProgressSummary(directCounter)).toBeNull();
   });
 
+  it('recognizes a manifest-addressed Direct V2 order without relying on the legacy address constant', () => {
+    const directV2 = baseTrade({
+      escrowContract: '0x7777777777777777777777777777777777777777',
+      isPublic: false,
+      hiddenLiquidity: true,
+      offer: token('cwTPB', '0'),
+      request: token('cwTPQ', '0'),
+      directTermsMetadata: {
+        hasTermsPayload: false,
+        offerAmountPrivate: true,
+        requestAmountPrivate: true
+      },
+      v2: {
+        protocol: 'direct-v2',
+        chainId: '7082400',
+        contractAddress: '0x7777777777777777777777777777777777777777',
+        amountMode: 'private'
+      }
+    });
+
+    expect(getTradeTermsVisibility(directV2)).toBe('direct-private-terms');
+    expect(formatTradeContractIdLabel(directV2)).toBe(`Direct P2P #${directV2.tradeId}`);
+    expect(isHiddenLiquidityTrade(directV2)).toBe(false);
+    expect(hasHydratedDirectTradeTerms(directV2)).toBe(false);
+    expect(hasHydratedDirectTradeTerms({
+      ...directV2,
+      offer: token('cwTPB', '1500000'),
+      request: token('cwTPQ', '3000000')
+    })).toBe(true);
+  });
+
   it('still recovers maker payloads for unhydrated Direct trades even when the link secret is already known', () => {
     const maker = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const directCounter = baseTrade({
@@ -272,11 +304,57 @@ describe('p2pTradeView helpers', () => {
     );
   });
 
-  it('allows editing only unfilled open public maker trades', () => {
+  it('allows editing only unfilled open public or authorized V2 maker trades', () => {
     const trade = baseTrade();
 
     expect(canEditPublicTrade(trade, trade.maker.toLowerCase())).toBe(true);
     expect(canEditPublicTrade({ ...trade, isPublic: false }, trade.maker.toLowerCase())).toBe(false);
+    expect(canEditPublicTrade({
+      ...trade,
+      isPublic: false,
+      v2: {
+        protocol: 'direct-v2',
+        chainId: '7082400',
+        contractAddress: '0x7777777777777777777777777777777777777777',
+        amountMode: 'private'
+      }
+    }, trade.maker.toLowerCase())).toBe(true);
+    expect(canEditPublicTrade({
+      ...trade,
+      isPublic: false,
+      hiddenLiquidity: true,
+      makerPrivateProgress: {
+        initialOfferAmount: trade.offer.amount,
+        remainingOfferAmount: trade.offer.amount,
+        filledOfferAmount: '0'
+      },
+      v2: {
+        protocol: 'private-v2',
+        chainId: '7082400',
+        contractAddress: '0x6666666666666666666666666666666666666666',
+        revision: '1',
+        amountMode: 'private',
+        privateMode: 'fully-private'
+      }
+    }, trade.maker.toLowerCase())).toBe(true);
+    expect(canEditPublicTrade({
+      ...trade,
+      isPublic: false,
+      hiddenLiquidity: true,
+      makerPrivateProgress: {
+        initialOfferAmount: trade.offer.amount,
+        remainingOfferAmount: (BigInt(trade.offer.amount) - 1n).toString(),
+        filledOfferAmount: '1'
+      },
+      v2: {
+        protocol: 'private-v2',
+        chainId: '7082400',
+        contractAddress: '0x6666666666666666666666666666666666666666',
+        revision: '2',
+        amountMode: 'private',
+        privateMode: 'fully-private'
+      }
+    }, trade.maker.toLowerCase())).toBe(false);
     expect(
       canEditPublicTrade(
         {
@@ -293,7 +371,7 @@ describe('p2pTradeView helpers', () => {
     ).toBe(false);
   });
 
-  it('filters malformed browser-stored trade secrets and private liquidity', () => {
+  it('purges browser-stored trade secrets and private-liquidity amounts', () => {
     const storage = new Map<string, string>();
     vi.stubGlobal('window', {
       localStorage: {
@@ -312,6 +390,12 @@ describe('p2pTradeView helpers', () => {
     storage.set('coti-private-trade-liquidity-v1', JSON.stringify({
       '0x1111111111111111111111111111111111111111:9': '999'
     }));
+    storage.set(
+      'coti-private-trade-liquidity-v1:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      JSON.stringify({
+        '0x1111111111111111111111111111111111111111:7': '987:654'
+      })
+    );
     storePrivateTradeLiquidity(
       {
         '0x1111111111111111111111111111111111111111:7': '123:456',
@@ -330,10 +414,11 @@ describe('p2pTradeView helpers', () => {
       '0x1111111111111111111111111111111111111111:7': `0x${'c'.repeat(64)}`
     });
     expect(storage.has('coti-trade-access-secrets-v1')).toBe(false);
-    expect(loadStoredPrivateTradeLiquidity('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toEqual({
-      '0x1111111111111111111111111111111111111111:7': '123:456'
-    });
+    expect(loadStoredPrivateTradeLiquidity('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toEqual({});
     expect(storage.has('coti-private-trade-liquidity-v1')).toBe(false);
+    expect(
+      storage.has('coti-private-trade-liquidity-v1:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+    ).toBe(false);
     expect(loadStoredPrivateTradeLiquidity('0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')).toEqual({});
 
     vi.unstubAllGlobals();

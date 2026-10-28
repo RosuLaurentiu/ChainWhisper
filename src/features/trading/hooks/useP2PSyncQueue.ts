@@ -52,6 +52,7 @@ export default function useP2PSyncQueue({
 }: UseP2PSyncQueueArgs) {
   const queuedTradeDataRefreshRef = useRef<QueuedTradeDataRefresh | null>(null);
   const p2pSyncTimerRef = useRef<number | null>(null);
+  const walletConnected = Boolean(walletAddress.trim());
 
   const mergeQueuedP2PSync = useCallback((request: QueuedTradeDataRefresh) => {
     queuedTradeDataRefreshRef.current = mergeP2PSyncRequests(queuedTradeDataRefreshRef.current, request);
@@ -65,7 +66,7 @@ export default function useP2PSyncQueue({
         domains.has('balances')
           ? refreshAllTradingBalances({ reason: request.reason === 'manual' ? 'manual' : 'trade-action', signer: request.signer, silent })
           : Promise.resolve(),
-        domains.has('wallet-trades') && walletAddress
+        domains.has('wallet-trades') && walletConnected
           ? refreshMyTrades({ silent })
           : Promise.resolve(),
         domains.has('public-trades')
@@ -76,7 +77,7 @@ export default function useP2PSyncQueue({
           : Promise.resolve(null)
       ]);
     },
-    [refreshAllTradingBalances, refreshMyTrades, refreshPublicTrades, refreshTradeDetail, walletAddress]
+    [refreshAllTradingBalances, refreshMyTrades, refreshPublicTrades, refreshTradeDetail, walletConnected]
   );
 
   const flushQueuedP2PSync = useCallback(() => {
